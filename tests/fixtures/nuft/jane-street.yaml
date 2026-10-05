@@ -1,0 +1,22 @@
+name: "Example Trading"
+website: "https://trading.example.invalid/careers/open-roles/?type=students-and-new-grads&location=new-york"
+locations: "NYC"
+notes: "Synthetic trading firm with multiple role types and an ML specialization."
+roles:
+  - role_type: "QT"
+    links:
+      - url: "https://trading.example.invalid/careers/position/900041/"
+
+  - role_type: "QR"
+    links:
+      - url: "https://trading.example.invalid/careers/position/900042/"
+      - url: "https://trading.example.invalid/careers/position/900043/"
+        label: "ML"
+
+  - role_type: "SWE"
+    links:
+      - url: "https://trading.example.invalid/careers/position/900044/"
+
+  - role_type: "FPGA"
+    links:
+      - url: "https://trading.example.invalid/careers/position/900045/"

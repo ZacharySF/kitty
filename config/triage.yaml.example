@@ -1,0 +1,13 @@
+# Copy locally with `applyai init`; edit the ignored runtime YAML, not this template.
+model: claude-sonnet-5-5
+effort: low
+max_cost_usd_per_run: 5.0
+max_description_chars: 8000
+max_output_tokens: 2000
+est_output_tokens: 600
+prices:
+  input: 2.0
+  output: 10.0
+  cache_write_1h: 4.0
+  cache_read: 0.2
+  batch_discount: 0.5

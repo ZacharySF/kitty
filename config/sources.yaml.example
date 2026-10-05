@@ -1,0 +1,223 @@
+# Copy locally with `applyai init`; edit the ignored runtime YAML, not this template.
+close_after_missed_runs: 3
+sources:
+  simplify2027:
+    kind: repo
+    enabled: true
+    fragile: false
+    min_interval_seconds: 5
+    cache_ttl_minutes: 360
+  nuft2027:
+    kind: repo
+    enabled: true
+    fragile: false
+    min_interval_seconds: 5
+    cache_ttl_minutes: 360
+  vansh2027:
+    kind: repo
+    enabled: true
+    fragile: false
+    min_interval_seconds: 5
+    cache_ttl_minutes: 360
+  speedyapply2027:
+    kind: repo
+    enabled: true
+    fragile: true
+    min_interval_seconds: 5
+    cache_ttl_minutes: 360
+  greenhouse:
+    kind: ats
+    enabled: true
+    fragile: false
+    min_interval_seconds: 2
+    cache_ttl_minutes: 180
+  lever:
+    kind: ats
+    enabled: true
+    fragile: false
+    min_interval_seconds: 2
+    cache_ttl_minutes: 180
+  ashby:
+    kind: ats
+    enabled: true
+    fragile: false
+    min_interval_seconds: 2
+    cache_ttl_minutes: 180
+  smartrecruiters:
+    kind: ats
+    enabled: true
+    fragile: false
+    min_interval_seconds: 2
+    cache_ttl_minutes: 180
+  workable:
+    kind: ats
+    enabled: true
+    fragile: false
+    min_interval_seconds: 5
+    cache_ttl_minutes: 180
+  workday:
+    kind: ats
+    enabled: true
+    fragile: true
+    min_interval_seconds: 2
+    cache_ttl_minutes: 180
+    options:
+      search_queries:
+      - intern
+      - co-op
+      - student
+      max_results_per_query: 500
+      parallel_boards: 4
+  jobspy:
+    kind: aggregator
+    enabled: true
+    fragile: true
+    min_interval_seconds: 15
+    cache_ttl_minutes: 720
+    options:
+      sites:
+      - indeed
+      results_wanted: 50
+      hours_old: 1440
+      max_terms_per_track: 0
+      max_terms_by_track:
+        parttime: 0
+      locations:
+      - United States
+      - Remote
+  usajobs:
+    kind: gov
+    enabled: false
+    fragile: false
+    min_interval_seconds: 3
+    cache_ttl_minutes: 360
+    options:
+      queries:
+      - HiringPath: student
+      - PositionTitle: intern
+      results_per_page: 250
+      max_pages: 4
+  starbucks:
+    kind: employer
+    enabled: false
+    fragile: false
+    min_interval_seconds: 2
+    cache_ttl_minutes: 360
+    options:
+      locations: []
+      max_pages: 6
+  local_employers:
+    kind: employer
+    enabled: false
+    fragile: true
+    min_interval_seconds: 5
+    cache_ttl_minutes: 360
+    options:
+      search_queries: [""]
+      max_pages_per_query: 20
+      max_postings_per_board: 300
+      parallel_boards: 3
+      # Configure your own Texas commute-proxy cities and verified public Jibe/
+      # Oracle boards. No personal location or guessed opening is shipped here.
+      allow_cities: []
+      boards: []
+  hackernews:
+    kind: forum
+    enabled: true
+    fragile: false
+    min_interval_seconds: 3
+    cache_ttl_minutes: 720
+  employers:
+    kind: employer
+    enabled: true
+    fragile: true
+    min_interval_seconds: 2
+    cache_ttl_minutes: 360
+    options:
+      search_queries:
+      - intern
+      - co-op
+      - student
+      max_pages_per_query: 30
+      max_postings_per_board: 500
+      parallel_boards: 4
+      boards:
+      - company: Texas Instruments
+        kind: oracle
+        url: https://careers.ti.com/en/sites/CX
+        api_url: https://edbz.fa.us2.oraclecloud.com/hcmRestApi/resources/latest
+        site: CX
+      - company: AMD
+        kind: jibe
+        url: https://careers.amd.com/careers-home/jobs
+        api_url: https://careers.amd.com
+      - company: Dell
+        kind: oracle
+        url: https://enterpriseplatform.dell.com/en/sites/CX_1001
+        api_url: https://enterpriseplatform.dell.com/hcmRestApi/resources/latest
+        site: CX_1001
+      - company: Lockheed Martin
+        kind: eightfold
+        url: https://lockheedmartin.eightfold.ai/careers
+        api_url: https://lockheedmartin.eightfold.ai
+        domain: lockheedmartin.com
+      - company: Northrop Grumman
+        kind: eightfold
+        url: https://jobs.northropgrumman.com/careers
+        api_url: https://jobs.northropgrumman.com
+        domain: ngc.com
+      - company: Schneider Electric
+        kind: jibe
+        url: https://careers.se.com/jobs
+        api_url: https://careers.se.com
+      - company: Eaton
+        kind: eightfold
+        url: https://eaton.eightfold.ai/careers
+        api_url: https://eaton.eightfold.ai
+        domain: eaton.com
+      - company: Siemens
+        kind: siemens
+        url: https://jobs.siemens.com/en_US/externaljobs
+  research:
+    kind: research
+    enabled: true
+    fragile: true
+    min_interval_seconds: 3
+    cache_ttl_minutes: 720
+    options:
+      channels:
+      - tamu_sreu
+      - doe_suli
+      - nasa_ostem
+      - nsf_reu
+      max_directory_rows: 500
+  yc_internships:
+    kind: startup
+    enabled: true
+    fragile: true
+    min_interval_seconds: 3
+    cache_ttl_minutes: 720
+    options:
+      directory_urls:
+      - https://www.ycombinator.com/internships
+      - https://www.ycombinator.com/jobs/role/software-engineer/intern
+      max_details: 60
+      max_inactive_days: 180
+  websearch:
+    kind: web
+    enabled: true
+    fragile: true
+    min_interval_seconds: 3
+    cache_ttl_minutes: 720
+    options:
+      enable_search: false
+      max_queries: 4
+      max_results: 5
+      max_pages: 20
+      seed_urls: []
+  manual:
+    kind: manual
+    enabled: true
+    fragile: false
+    min_interval_seconds: 0
+    cache_ttl_minutes: 0

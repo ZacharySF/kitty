@@ -1,0 +1,29 @@
+# Copy to profile.yaml (gitignored), or run `applyai init`.
+# The form filler copies facts exactly as written. Fill in only your own facts;
+# blank fields are not filled into applications. Do not commit the local file.
+name: ""
+first_name: ""                 # optional; defaults to the first word of name
+last_name: ""                  # optional; defaults to the last word of name
+email: ""
+phone: ""
+linkedin: ""
+github: ""
+website: ""
+
+school: ""
+school_city: ""                # optional; distinguishes campuses in dropdowns
+degree: ""
+major: ""
+discipline: ""                 # optional; defaults to major
+discipline_by_track: {}         # optional: track name -> discipline
+standing: ""
+graduation: ""                 # YYYY-MM, when known
+
+home_city: ""
+home_state: ""
+city_by_track: {}               # optional: track name -> city in the same state
+country: ""
+commute_radius_miles: 0         # set your own commute preference
+open_to_remote: false          # opt in if this matches your preferences
+work_authorization: ""          # never inferred or invented
+targets: []

@@ -1,0 +1,72 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Ashby-like form</title></head>
+<body>
+<script src="guard.js"></script>
+<form class="ashby-application-form" onsubmit="return false">
+  <div class="_root ashby-application-form-autofill-input-root">
+    <div class="_title">Autofill from resume</div>
+    <input type="file" id="autofill-input">
+    <button type="submit">Upload file</button>
+  </div>
+
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required ashby-application-form-question-title" for="_systemfield_name">Name</label>
+    <input type="text" id="_systemfield_name" name="_systemfield_name" placeholder="Type here..." required>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required ashby-application-form-question-title" for="pref">Preferred Name</label>
+    <input type="text" id="pref" name="pref" placeholder="Type here..." required>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required ashby-application-form-question-title" for="_systemfield_email">Email</label>
+    <input type="email" id="_systemfield_email" name="_systemfield_email" required>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading ashby-application-form-question-title" for="gh">GitHub or Portfolio URL</label>
+    <input type="text" id="gh" name="gh">
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required ashby-application-form-question-title" for="school">College or University</label>
+    <input type="text" id="school" name="school" required>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required ashby-application-form-question-title" for="major">Major or Field of Study</label>
+    <input type="text" id="major" name="major" required>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading ashby-application-form-question-title" for="grad">Graduation Year</label>
+    <input type="text" id="grad" name="grad">
+  </div>
+
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading ashby-application-form-question-title">How did you hear about this position?</label>
+    <div class="ashby-application-form-input-checkbox-group">
+      <div class="_option"><input type="checkbox" id="hear-0" name="LinkedIn"><label for="hear-0" class="option-label">LinkedIn</label></div>
+      <div class="_option"><input type="checkbox" id="hear-1" name="Company careers page"><label for="hear-1" class="option-label">Company careers page</label></div>
+      <div class="_option"><input type="checkbox" id="hear-2" name="Referral"><label for="hear-2" class="option-label">Referral</label></div>
+    </div>
+  </div>
+
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required ashby-application-form-question-title">What is your work authorization status?</label>
+    <fieldset class="ashby-application-form-input-radio-group">
+      <div class="_option"><input type="radio" id="auth-0" name="auth"><label for="auth-0" class="option-label">US Citizen or Permanent Resident</label></div>
+      <div class="_option"><input type="radio" id="auth-1" name="auth"><label for="auth-1" class="option-label">F1 / Stem OPT</label></div>
+    </fieldset>
+  </div>
+
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required ashby-application-form-question-title">Are you able to work in-person in San Jose this summer?</label>
+    <div class="_yesno"><button type="submit">Yes</button><button type="submit">No</button>
+      <input type="checkbox" name="yesno" style="display:none"></div>
+  </div>
+
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required ashby-application-form-question-title" for="_systemfield_resume">Resume</label>
+    <input type="file" id="_systemfield_resume" required>
+    <button type="submit">Upload File</button>
+  </div>
+
+  <button type="submit">Submit Application</button>
+</form>
+</body></html>

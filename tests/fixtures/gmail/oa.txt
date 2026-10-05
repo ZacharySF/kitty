@@ -1,0 +1,14 @@
+From: HackerRank <support@assessment.example.invalid>
+Subject: Example Capital Securities invites you to take a coding test
+
+Hi Sample Candidate,
+
+Thank you for applying to Example Capital Securities! As a next step in the process,
+please complete the online assessment for the Software Engineering Intern
+position. The HackerRank test takes 90 minutes and must be completed within
+7 days.
+
+Start your test: https://assessment.example.invalid/test/synthetic-oa-001
+
+Good luck!
+Example Capital Securities Campus Recruiting

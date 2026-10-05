@@ -1,0 +1,13 @@
+From: Example Trading <no-reply@greenhouse-mail.example.invalid>
+Subject: Thank you for applying to Example Trading
+
+Hi Sample Candidate,
+
+Thank you for applying to the Software Engineer Internship at Example Trading. We
+have received your application and our team will review it shortly.
+
+If your background is a good fit, a recruiter will reach out to schedule an
+interview. Should you be selected to move forward, we will contact you with
+next steps.
+
+Example Trading Recruiting

@@ -1,0 +1,5 @@
+# Edit the ignored watchlist.yaml to choose companies to poll.
+# ats: greenhouse | lever | ashby | smartrecruiters | workday | workable | none
+# Workday slugs use tenant/wdN/site. ats: none needs a reason in notes.
+# Company selections and discovery results are private runtime data.
+companies: []

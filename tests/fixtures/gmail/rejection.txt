@@ -1,0 +1,16 @@
+From: Example Trading Recruiting <no-reply@trading.example.invalid>
+Subject: Your application to Example Trading
+
+Hi Sample Candidate,
+
+Thank you for your interest in Example Trading and for taking the time to
+interview with our team for the Software Engineer Internship.
+
+We appreciate the effort you put into the process. Unfortunately, we have
+decided not to proceed with your candidacy at this time. We received a large
+number of applications and the decision was a difficult one.
+
+We encourage you to apply again in the future.
+
+Best,
+Example Trading Recruiting

@@ -1,0 +1,21 @@
+<!doctype html><html><body>
+<h1>Fixture role</h1>
+<button type="button" data-automation-id="jobPostingApplyButton">Apply</button>
+<script>
+window.__entries = 0; window.__submitted = 0;
+document.addEventListener('submit', e => { window.__submitted++; e.preventDefault(); });
+document.querySelector('button').onclick = () => {
+  window.__entries++;
+  document.body.innerHTML = '<button type="button" data-automation-id="applyManually">Apply Manually</button>';
+  document.querySelector('button').onclick = () => {
+    window.__entries++;
+    document.body.innerHTML = '<p>Loading application...</p>';
+    setTimeout(() => {
+      document.body.innerHTML = '<h1>Create Account</h1><form>' +
+        '<label>Email<input type="email" name="email"></label>' +
+        '<label>Password<input type="password" name="password"></label>' +
+        '<button type="submit">Create Account</button></form>';
+    }, 2200);
+  };
+};
+</script></body></html>

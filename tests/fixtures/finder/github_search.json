@@ -1,0 +1,65 @@
+{
+ "total_count": 634,
+ "incomplete_results": false,
+ "items": [
+  {
+   "name": "axi",
+   "full_name": "example-rtl/axi",
+   "description": "Synthetic FPGA and hardware repository.",
+   "topics": [
+    "asic",
+    "axi",
+    "axi4",
+    "axi4-lite",
+    "fpga",
+    "hardware",
+    "ip",
+    "network-on-chip",
+    "rtl",
+    "systemverilog"
+   ],
+   "stargazers_count": 1711,
+   "html_url": "https://example.com/fixtures/163",
+   "owner": {
+    "login": "example-rtl",
+    "type": "Organization"
+   }
+  },
+  {
+   "name": "uhd",
+   "full_name": "example-radio/uhd",
+   "description": "Synthetic FPGA and hardware repository.",
+   "topics": [
+    "driver",
+    "fpga",
+    "sdr",
+    "uhd",
+    "usrp"
+   ],
+   "stargazers_count": 1285,
+   "html_url": "https://example.com/fixtures/164",
+   "owner": {
+    "login": "example-radio",
+    "type": "Organization"
+   }
+  },
+  {
+   "name": "FPGA",
+   "full_name": "example-user/FPGA",
+   "description": "Synthetic FPGA and hardware repository.",
+   "topics": [
+    "fpga",
+    "pynq",
+    "verilog",
+    "vivado",
+    "xilinx"
+   ],
+   "stargazers_count": 5767,
+   "html_url": "https://example.com/fixtures/165",
+   "owner": {
+    "login": "example-user",
+    "type": "User"
+   }
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+From: Example Devices <talent@devices.example.invalid>
+Subject: Your internship offer from Example Devices
+
+Dear Sample Candidate,
+
+Congratulations! We are pleased to offer you the position of Embedded Software
+Intern for Summer 2027. Your offer letter is attached; please review and sign
+it within 10 business days.
+
+Sincerely,
+TI University Recruiting

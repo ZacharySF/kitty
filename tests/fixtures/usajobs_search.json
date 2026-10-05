@@ -1,0 +1,191 @@
+{
+ "LanguageCode": "EN",
+ "SearchParameters": {},
+ "SearchResult": {
+  "SearchResultCount": 4,
+  "SearchResultCountAll": 4,
+  "SearchResultItems": [
+   {
+    "MatchedObjectId": "1053",
+    "MatchedObjectDescriptor": {
+     "PositionID": "EXAMPLE-1053",
+     "PositionTitle": "Pathways Intern - Electrical Engineering",
+     "PositionURI": "https://example.com/fixtures/146",
+     "ApplyURI": [
+      "https://example.com/fixtures/147/apply"
+     ],
+     "PositionLocationDisplay": "Houston, Texas",
+     "PositionLocation": [
+      {
+       "LocationName": "Houston, Texas",
+       "CountryCode": "United States",
+       "CountrySubDivisionCode": "Texas",
+       "CityName": "Houston, Texas",
+       "Longitude": -95.0931,
+       "Latitude": 29.5593
+      }
+     ],
+     "OrganizationName": "Example Federal Organization",
+     "DepartmentName": "Example Federal Department",
+     "JobCategory": [
+      {
+       "Name": "Electrical Engineering",
+       "Code": "0850"
+      }
+     ],
+     "JobGrade": [
+      {
+       "Code": "GS"
+      }
+     ],
+     "PositionSchedule": [
+      {
+       "Name": "Full-time",
+       "Code": "1"
+      }
+     ],
+     "PositionOfferingType": [
+      {
+       "Name": "Internships",
+       "Code": "15328"
+      }
+     ],
+     "QualificationSummary": "You must be enrolled at least half-time in an accredited college pursuing a bachelor's degree in electrical engineering.",
+     "PositionRemuneration": [
+      {
+       "MinimumRange": "38000",
+       "MaximumRange": "46000",
+       "RateIntervalCode": "PA",
+       "Description": "Per Year"
+      }
+     ],
+     "PositionStartDate": "2026-09-15T00:00:00.0000",
+     "PositionEndDate": "2026-10-15T23:59:59.9970",
+     "PublicationStartDate": "2026-09-15T00:00:00.0000",
+     "ApplicationCloseDate": "2026-10-15T23:59:59.9970",
+     "UserArea": {
+      "Details": {
+       "JobSummary": "Synthetic Join Example Space Center as a Pathways intern for Summer 2027 supporting avionics and power systems test.",
+       "MajorDuties": [
+        "Support avionics bench testing.",
+        "Document test procedures."
+       ],
+       "Education": "Current student status required.",
+       "LowGrade": "04",
+       "HighGrade": "05",
+       "HiringPath": [
+        "student"
+       ],
+       "WhoMayApply": {
+        "Name": "",
+        "Code": ""
+       }
+      },
+      "IsRadialSearch": false
+     }
+    },
+    "RelevanceRank": 0
+   },
+   {
+    "MatchedObjectId": "1054",
+    "MatchedObjectDescriptor": {
+     "PositionID": "EXAMPLE-1054",
+     "PositionTitle": "Engineering Technician",
+     "PositionURI": "https://example.com/fixtures/148",
+     "ApplyURI": [
+      "https://example.com/fixtures/149/apply"
+     ],
+     "PositionLocationDisplay": "Springfield, Texas",
+     "PositionLocation": [
+      {
+       "LocationName": "Springfield, Texas",
+       "CountryCode": "United States",
+       "CountrySubDivisionCode": "Texas",
+       "CityName": "Springfield, Texas"
+      }
+     ],
+     "OrganizationName": "Example Federal Organization",
+     "DepartmentName": "Example Federal Department",
+     "QualificationSummary": "Open to current students under the Pathways Internship Program.",
+     "PublicationStartDate": "2026-09-20T00:00:00.0000",
+     "ApplicationCloseDate": "2026-10-04T23:59:59.9970",
+     "UserArea": {
+      "Details": {
+       "JobSummary": "Synthetic Student trainee supporting coastal engineering projects.",
+       "MajorDuties": "Assist engineers with field data collection.",
+       "HiringPath": [
+        "student"
+       ]
+      }
+     }
+    }
+   },
+   {
+    "MatchedObjectId": "1055",
+    "MatchedObjectDescriptor": {
+     "PositionID": "EXAMPLE-1055",
+     "PositionTitle": "IT Specialist (INFOSEC)",
+     "PositionURI": "https://example.com/fixtures/150",
+     "ApplyURI": [
+      "https://example.com/fixtures/151/apply"
+     ],
+     "PositionLocationDisplay": "Washington, District of Columbia",
+     "PositionLocation": [
+      {
+       "LocationName": "Washington, District of Columbia",
+       "CountryCode": "United States"
+      }
+     ],
+     "OrganizationName": "Example Federal Organization",
+     "DepartmentName": "Example Federal Department",
+     "QualificationSummary": "One year of specialized experience at the GS-11 level.",
+     "PublicationStartDate": "2026-09-18T00:00:00.0000",
+     "UserArea": {
+      "Details": {
+       "JobSummary": "Synthetic Protect example agency networks.",
+       "HiringPath": [
+        "public",
+        "fed-competitive"
+       ]
+      }
+     }
+    }
+   },
+   {
+    "MatchedObjectId": "1056",
+    "MatchedObjectDescriptor": {
+     "PositionID": "EXAMPLE-1056",
+     "PositionTitle": "Computer Engineer Intern",
+     "PositionURI": "https://example.com/fixtures/152",
+     "ApplyURI": [],
+     "PositionLocationDisplay": "Multiple Locations",
+     "PositionLocation": [
+      {
+       "LocationName": "Dahlgren, Virginia",
+       "CountryCode": "United States"
+      },
+      {
+       "LocationName": "Crane, Indiana",
+       "CountryCode": "United States"
+      }
+     ],
+     "OrganizationName": "Example Federal Organization",
+     "DepartmentName": "Example Federal Department",
+     "PublicationStartDate": "2026-09-01T00:00:00.0000",
+     "UserArea": {
+      "Details": {
+       "JobSummary": "Synthetic FPGA and embedded firmware work.",
+       "HiringPath": [
+        "public"
+       ]
+      }
+     }
+    }
+   }
+  ],
+  "UserArea": {
+   "NumberOfPages": "1",
+   "IsRadialSearch": false
+  }
+ }
+}

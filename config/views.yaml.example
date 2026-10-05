@@ -1,0 +1,34 @@
+# Saved views for the list screens. Copy to views.yaml (gitignored).
+# `key` is the number key that selects the view; they also show in the command palette.
+# Any filter left out is simply not applied.
+views:
+  - key: 1
+    title: New - last 14 days
+    filters:
+      posted_within_days: 14
+      queue_state: [new, queued]
+      eligibility: [eligible, boosted, ambiguous, unknown]
+  - key: 2
+    title: A-tier not applied
+    filters:
+      tier: [A]
+      not_applied: true
+  - key: 3
+    title: Follow-ups due
+    filters:
+      next_action_due: true
+  - key: 4
+    title: All jobs
+    filters: {}
+  - key: 5
+    title: Apply queue - filled, submit then s
+    filters:
+      queue_state: [queued]
+      not_applied: true
+  - key: 6
+    title: Nearby part-time - all posting dates
+    filters:
+      track: [parttime]
+      queue_state: [new, queued]
+      eligibility: [eligible, boosted, ambiguous, unknown]
+      not_applied: true

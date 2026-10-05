@@ -1,0 +1,109 @@
+[
+ {
+  "name": "Example Circuits",
+  "slug": "example-circuits",
+  "website": "https://example.com/fixtures/166",
+  "all_locations": "London, England, United Kingdom",
+  "long_description": "Synthetic electronics manufacturing and robotics company.",
+  "one_liner": "Synthetic electronics manufacturing and robotics company.",
+  "team_size": 58,
+  "tags": [
+   "Hard Tech",
+   "Hardware",
+   "Robotics",
+   "Manufacturing",
+   "Automation"
+  ],
+  "industries": [
+   "Industrials",
+   "Manufacturing and Robotics"
+  ],
+  "isHiring": true,
+  "batch": "Winter 2012",
+  "status": "Active",
+  "regions": [
+   "United Kingdom",
+   "Europe",
+   "Remote",
+   "Partly Remote"
+  ],
+  "url": "https://example.com/fixtures/167"
+ },
+ {
+  "name": "Example Firmware",
+  "slug": "example-firmware",
+  "website": "https://example.com/fixtures/168",
+  "all_locations": "San Francisco, CA, USA",
+  "long_description": "Synthetic embedded firmware development company.",
+  "one_liner": "Synthetic embedded firmware development company.",
+  "team_size": 3,
+  "tags": [],
+  "industries": [
+   "B2B",
+   "Engineering, Product and Design"
+  ],
+  "isHiring": true,
+  "batch": "Summer 2025",
+  "status": "Active",
+  "regions": [
+   "United States of America",
+   "America / Canada"
+  ],
+  "url": "https://example.com/fixtures/169"
+ },
+ {
+  "name": "Example Simulation",
+  "slug": "example-simulation",
+  "website": "https://example.com/fixtures/170",
+  "all_locations": "Waterloo, ON, Canada",
+  "long_description": "Synthetic hardware simulation and embedded firmware company.",
+  "one_liner": "Synthetic hardware simulation and embedded firmware company.",
+  "team_size": 4,
+  "tags": [
+   "Artificial Intelligence",
+   "Developer Tools",
+   "Hardware",
+   "Semiconductors",
+   "Electronics"
+  ],
+  "industries": [
+   "B2B",
+   "Engineering, Product and Design"
+  ],
+  "isHiring": true,
+  "batch": "Fall 2026",
+  "status": "Active",
+  "regions": [
+   "Canada",
+   "America / Canada"
+  ],
+  "url": "https://example.com/fixtures/171"
+ },
+ {
+  "name": "Example Tax",
+  "slug": "example-tax",
+  "website": "https://example.com/fixtures/172",
+  "all_locations": "Lisbon, Lisbon, Portugal",
+  "long_description": "Synthetic tax and accounting company.",
+  "one_liner": "Synthetic tax and accounting company.",
+  "team_size": 10,
+  "tags": [
+   "Fintech",
+   "SaaS",
+   "B2B",
+   "LegalTech"
+  ],
+  "industries": [
+   "B2B",
+   "Finance and Accounting"
+  ],
+  "isHiring": true,
+  "batch": "Winter 2019",
+  "status": "Active",
+  "regions": [
+   "Portugal",
+   "Europe"
+  ],
+  "url": "https://example.com/fixtures/173"
+ }
+]

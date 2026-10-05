@@ -1,0 +1,51 @@
+# Copy locally with `applyai init`; edit the ignored runtime YAML, not this template.
+groups:
+  - name: programming
+    terms:
+      - term: Python
+        aliases: [Python]
+      - term: C
+        cased: [C]
+      - term: C++
+        aliases: [C++]
+      - term: JavaScript
+        aliases: [JavaScript]
+      - term: SQL
+        aliases: [SQL]
+      - term: Linux
+        aliases: [Linux]
+      - term: Git
+        cased: [Git, git]
+      - term: Testing
+        aliases: [unit testing, integration testing, test automation]
+  - name: electronics
+    terms:
+      - term: Firmware
+        aliases: [firmware]
+      - term: RTOS
+        aliases: [RTOS, real-time operating system]
+      - term: Circuit design
+        aliases: [circuit design, schematic capture]
+      - term: Oscilloscope
+        aliases: [oscilloscope]
+      - term: Troubleshooting
+        aliases: [troubleshooting, debugging, fault isolation]
+  - name: customer_service
+    terms:
+      - term: Customer service
+        aliases: [customer service, customer support]
+      - term: Cash handling
+        aliases: [cash handling, cash register]
+      - term: Point of sale
+        aliases: [point of sale]
+        cased: [POS]
+      - term: Food safety
+        aliases: [food safety, food handling]
+      - term: Espresso
+        aliases: [espresso]
+  - name: general
+    terms:
+      - term: Communication
+        aliases: [communication skills, technical communication, communicate effectively]
+      - term: Teamwork
+        aliases: [teamwork, collaborate, collaboration]

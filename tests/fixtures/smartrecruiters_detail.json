@@ -1,0 +1,37 @@
+{
+ "id": "1026",
+ "name": "Finance Intern - Undergrad Summer 2027",
+ "postingUrl": "https://example.com/smartrecruiters/1026",
+ "applyUrl": "https://example.com/smartrecruiters/1026/apply",
+ "jobAd": {
+  "sections": {
+   "companyDescription": {
+    "title": "Company Description",
+    "text": "<p>Synthetic finance internship for students pursuing a bachelor’s degree. Available for a 12-week summer placement.</p>"
+   },
+   "jobDescription": {
+    "title": "Job Description",
+    "text": "<p>Synthetic finance internship for students pursuing a bachelor’s degree. Available for a 12-week summer placement.</p>"
+   },
+   "qualifications": {
+    "title": "Qualifications",
+    "text": "<p>Synthetic finance internship for students pursuing a bachelor’s degree. Available for a 12-week summer placement.</p>"
+   },
+   "additionalInformation": {
+    "title": "Additional Information",
+    "text": "<p>Synthetic finance internship for students pursuing a bachelor’s degree. Available for a 12-week summer placement.</p>"
+   }
+  }
+ },
+ "releasedDate": "2026-09-29T00:37:47.509Z",
+ "location": {
+  "city": "Santa Clara",
+  "region": "CALIFORNIA",
+  "country": "us",
+  "address": "100 Example Avenue",
+  "postalCode": "95054",
+  "remote": false,
+  "hybrid": true,
+  "fullLocation": "Santa Clara, CALIFORNIA, United States"
+ }
+}

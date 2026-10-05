@@ -1,0 +1,10 @@
+# Copy locally with `applyai init`; edit the ignored runtime YAML, not this template.
+followup_days:
+- 7
+- 14
+- 21
+archive_after_days: 21
+deadline_window_days: 7
+watch_hours: 4
+autofill_cap: 10
+autofill_pause_seconds: 15

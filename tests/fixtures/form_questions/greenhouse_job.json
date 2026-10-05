@@ -1,0 +1,361 @@
+{
+ "id": 1070,
+ "title": "Spring 2027 Silicon Engineering Internship/Co-op",
+ "questions": [
+  {
+   "description": null,
+   "label": "First Name",
+   "required": true,
+   "fields": [
+    {
+     "name": "first_name",
+     "type": "input_text",
+     "values": []
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "Email",
+   "required": true,
+   "fields": [
+    {
+     "name": "email",
+     "type": "input_text",
+     "values": []
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "Resume/CV",
+   "required": true,
+   "fields": [
+    {
+     "name": "resume",
+     "type": "input_file",
+     "values": []
+    },
+    {
+     "name": "resume_text",
+     "type": "textarea",
+     "values": []
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "Why do you want to work at Example Space?",
+   "required": true,
+   "fields": [
+    {
+     "name": "question_1",
+     "type": "textarea",
+     "values": []
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "LinkedIn Profile",
+   "required": false,
+   "fields": [
+    {
+     "name": "question_1071",
+     "type": "input_text",
+     "values": []
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "Please select your enrollment status:",
+   "required": true,
+   "fields": [
+    {
+     "name": "question_1072",
+     "type": "multi_value_single_select",
+     "values": [
+      {
+       "label": "I will be enrolled in a bachelor’s degree program by the start of employment",
+       "value": 248745193002
+      },
+      {
+       "label": "I will be enrolled in a graduate degree program by the start of employment",
+       "value": 248745194002
+      },
+      {
+       "label": "None of the above",
+       "value": 248745195002
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "Can you perform all of the essential functions of this role with or without reasonable accommodations?",
+   "required": true,
+   "fields": [
+    {
+     "name": "question_1073",
+     "type": "multi_value_single_select",
+     "values": [
+      {
+       "label": "Yes",
+       "value": 1
+      },
+      {
+       "label": "No",
+       "value": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "How did you hear about this job?",
+   "required": true,
+   "fields": [
+    {
+     "name": "question_1074",
+     "type": "multi_value_single_select",
+     "values": [
+      {
+       "label": "Campus - Example Space event (indicate below)",
+       "value": 248745477002
+      },
+      {
+       "label": "Careers site",
+       "value": 248745478002
+      },
+      {
+       "label": "Event (indicate below)",
+       "value": 248745479002
+      },
+      {
+       "label": "Friend or family (non-employee)",
+       "value": 248745480002
+      },
+      {
+       "label": "Glassdoor",
+       "value": 248745481002
+      },
+      {
+       "label": "I am a current Example Space employee",
+       "value": 248745482002
+      },
+      {
+       "label": "Indeed",
+       "value": 248745483002
+      },
+      {
+       "label": "LinkedIn",
+       "value": 248745484002
+      },
+      {
+       "label": "News/Media",
+       "value": 248745485002
+      },
+      {
+       "label": "Other (indicate below)",
+       "value": 248745486002
+      },
+      {
+       "label": "Referred by Example Space employee (name below)",
+       "value": 248745487002
+      },
+      {
+       "label": "Contacted by Example Space recruiter (name below)",
+       "value": 248745488002
+      },
+      {
+       "label": "X/Twitter",
+       "value": 248745489002
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "Please specify",
+   "required": false,
+   "fields": [
+    {
+     "name": "question_1075",
+     "type": "input_text",
+     "values": []
+    }
+   ]
+  }
+ ],
+ "location_questions": [
+  {
+   "description": null,
+   "label": "Longitude",
+   "required": true,
+   "fields": [
+    {
+     "name": "longitude",
+     "type": "input_hidden",
+     "values": []
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "Latitude",
+   "required": true,
+   "fields": [
+    {
+     "name": "latitude",
+     "type": "input_hidden",
+     "values": []
+    }
+   ]
+  },
+  {
+   "description": null,
+   "label": "Location",
+   "required": true,
+   "fields": [
+    {
+     "name": "location",
+     "type": "input_text",
+     "values": []
+    }
+   ]
+  }
+ ],
+ "compliance": [
+  {
+   "type": "eeoc",
+   "description": "(trimmed)",
+   "questions": [
+    {
+     "required": false,
+     "label": "VeteranStatus",
+     "fields": [
+      {
+       "name": "veteran_status",
+       "type": "multi_value_single_select",
+       "values": [
+        {
+         "label": "I don't wish to answer",
+         "value": "3"
+        },
+        {
+         "label": "I identify as one or more of the classifications of a protected veteran",
+         "value": "2"
+        },
+        {
+         "label": "I am not a protected veteran",
+         "value": "1"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "eeoc",
+   "description": "(trimmed)",
+   "questions": [
+    {
+     "required": false,
+     "label": "Race",
+     "fields": [
+      {
+       "name": "race",
+       "type": "multi_value_single_select",
+       "values": [
+        {
+         "label": "Decline To Self Identify",
+         "value": "8"
+        },
+        {
+         "label": "Two or More Races",
+         "value": "7"
+        },
+        {
+         "label": "Native Hawaiian or Other Pacific Islander",
+         "value": "6"
+        },
+        {
+         "label": "White",
+         "value": "5"
+        },
+        {
+         "label": "Hispanic or Latino",
+         "value": "4"
+        },
+        {
+         "label": "Black or African American",
+         "value": "3"
+        },
+        {
+         "label": "Asian",
+         "value": "2"
+        },
+        {
+         "label": "American Indian or Alaskan Native",
+         "value": "1"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "required": false,
+     "label": "Gender",
+     "fields": [
+      {
+       "name": "gender",
+       "type": "multi_value_single_select",
+       "values": [
+        {
+         "label": "Decline To Self Identify",
+         "value": "3"
+        },
+        {
+         "label": "Female",
+         "value": "2"
+        },
+        {
+         "label": "Male",
+         "value": "1"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "demographic_questions": {
+  "header": "Voluntary self-identification",
+  "questions": [
+   {
+    "id": 1,
+    "label": "What is your sexual orientation?",
+    "required": false,
+    "type": "multi_value_single_select",
+    "answer_options": [
+     {
+      "id": 1,
+      "label": "Heterosexual",
+      "free_form": false
+     },
+     {
+      "id": 2,
+      "label": "I prefer not to say",
+      "free_form": false
+     }
+    ]
+   }
+  ]
+ }
+}

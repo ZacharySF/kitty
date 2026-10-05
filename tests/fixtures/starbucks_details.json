@@ -1,0 +1,15 @@
+{
+ "status": 200,
+ "data": {
+  "id": 1050,
+  "name": "barista - Store# 101, Example Cafe",
+  "publicUrl": "https://example.com/fixtures/145",
+  "efcustomTextPayRange": [
+   "15.25 to 17.31 USD"
+  ],
+  "standardizedLocations": [
+   "Riverton, IL, US"
+  ],
+  "jobDescription": "<p>Synthetic barista position with part-time hours and a flexible schedule.</p>"
+ }
+}

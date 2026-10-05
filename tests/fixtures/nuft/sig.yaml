@@ -1,0 +1,29 @@
+name: "Example Markets"
+website: "https://markets.example.invalid/intern-openings"
+locations: "Bala Cynwyd, Chicago, NYC"
+notes: "Synthetic market-making firm with city and degree-qualified role labels."
+roles:
+  - role_type: "QT"
+    links:
+      - url: "https://markets.example.invalid/quantitative-trading-internships-co-ops/jobs/900046"
+        label: "Chicago"
+      - url: "https://markets.example.invalid/quantitative-trading-internships-co-ops/jobs/900047"
+        label: "NYC"
+
+  - role_type: "QR"
+    links:
+      - url: "https://markets.example.invalid/quantitative-systematic-trading-quantitative-research/jobs/900048"
+        label: "Master's (Bala Cynwyd)"
+      - url: "https://markets.example.invalid/phds-postdocs/jobs/900049"
+        label: "Master's (NYC)"
+      - url: "https://markets.example.invalid/phds-postdocs/jobs/900050"
+        label: "PhD (Bala Cynwyd)"
+      - url: "https://markets.example.invalid/phds-postdocs/jobs/900051"
+        label: "PhD (NYC)"
+
+  - role_type: "SWE"
+    links:
+      - url: "https://markets.example.invalid/intern-co-op/jobs/900052"
+        label: "Quantitative Strategy Developer"
+      - url: "https://markets.example.invalid/intern-co-op-technology/jobs/900053"
+        label: "Trading System Engineering"

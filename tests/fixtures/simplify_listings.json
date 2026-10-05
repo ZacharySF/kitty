@@ -1,0 +1,185 @@
+[
+ {
+  "source": "Simplify",
+  "category": "Software",
+  "company_name": "Example Staffing",
+  "id": "1019",
+  "title": "Software Engineer Intern",
+  "active": true,
+  "terms": [
+   "Winter 2025",
+   "Spring 2025",
+   "Summer 2025",
+   "Fall 2025",
+   "Winter 2026",
+   "Spring 2026",
+   "Summer 2026",
+   "Fall 2026",
+   "Winter 2027",
+   "Spring 2027",
+   "Summer 2027",
+   "Fall 2027"
+  ],
+  "date_updated": 1770966733,
+  "date_posted": 1770966733,
+  "url": "https://jobs.ashbyhq.com/example/00000000-0000-4000-8000-000000000128/application",
+  "locations": [
+   "SF"
+  ],
+  "company_url": "https://example.com/fixtures/129",
+  "is_visible": true,
+  "sponsorship": "Other",
+  "degrees": [
+   "Bachelor's"
+  ]
+ },
+ {
+  "source": "Simplify",
+  "category": "Software",
+  "company_name": "Example Cloud",
+  "id": "1020",
+  "title": "Software Engineer Intern",
+  "active": true,
+  "terms": [
+   "Summer 2027"
+  ],
+  "date_updated": 1778193534,
+  "date_posted": 1778191473,
+  "url": "https://example.wd1.myworkdayjobs.com/External/job/US/Example-Intern_R130",
+  "locations": [
+   "Palo Alto, CA",
+   "Seattle, WA",
+   "Indianapolis, IN",
+   "SF",
+   "NYC",
+   "Bellevue, WA",
+   "Atlanta, GA",
+   "Burlington, MA"
+  ],
+  "company_url": "https://example.com/fixtures/131",
+  "is_visible": true,
+  "sponsorship": "Other",
+  "degrees": [
+   "Bachelor's"
+  ]
+ },
+ {
+  "source": "Simplify",
+  "category": "AI/ML/Data",
+  "company_name": "Example Video",
+  "id": "1021",
+  "title": "Research Scientist Intern - Example Video Search / Generative AI - LLM",
+  "active": true,
+  "terms": [
+   "Summer 2027"
+  ],
+  "date_updated": 1776406681,
+  "date_posted": 1776406269,
+  "url": "https://example.com/fixtures/132",
+  "locations": [
+   "San Jose, CA"
+  ],
+  "company_url": "https://example.com/fixtures/133",
+  "is_visible": true,
+  "sponsorship": "Other",
+  "degrees": [
+   "PhD"
+  ]
+ },
+ {
+  "source": "Simplify",
+  "category": "Software",
+  "company_name": "Example Streams",
+  "id": "1022",
+  "title": "Software Engineer Intern",
+  "active": false,
+  "terms": [
+   "Winter 2026",
+   "Spring 2027",
+   "Summer 2027"
+  ],
+  "date_updated": 1770131513,
+  "date_posted": 1770131513,
+  "url": "https://jobs.ashbyhq.com/example/00000000-0000-4000-8000-000000000134/application",
+  "locations": [
+   "Remote in UK"
+  ],
+  "company_url": "https://example.com/fixtures/135",
+  "is_visible": true,
+  "sponsorship": "Other",
+  "degrees": [
+   "Bachelor's",
+   "Master's"
+  ]
+ },
+ {
+  "source": "Simplify",
+  "category": "AI/ML/Data",
+  "company_name": "Example Education",
+  "id": "1023",
+  "title": "Data Scientist",
+  "active": false,
+  "terms": [
+   "Summer 2026"
+  ],
+  "date_updated": 1770074744,
+  "date_posted": 1770074744,
+  "url": "https://example.wd1.myworkdayjobs.com/External/job/US/Example-Intern_R136",
+  "locations": [
+   "Reston, VA"
+  ],
+  "company_url": "https://example.com/fixtures/137",
+  "is_visible": true,
+  "sponsorship": "Other",
+  "degrees": [
+   "Bachelor's",
+   "Master's"
+  ]
+ },
+ {
+  "date_updated": 1782222208,
+  "sponsorship": "Other",
+  "active": true,
+  "degrees": [
+   "Bachelor's"
+  ],
+  "url": "https://example.com/fixtures/138",
+  "company_name": "Example Computing",
+  "title": "Software Development Internship",
+  "locations": [
+   "Alexandria, VA"
+  ],
+  "terms": [
+   "Summer 2027"
+  ],
+  "category": "Software Engineering",
+  "source": "DereC4",
+  "id": "1024",
+  "date_posted": 1782222208,
+  "company_url": "",
+  "is_visible": true
+ },
+ {
+  "source": "Simplify",
+  "category": "Hardware",
+  "company_name": "Example Hardware Trading",
+  "id": "1025",
+  "title": "Hardware Engineer Intern",
+  "active": true,
+  "terms": [
+   "Summer 2027"
+  ],
+  "date_updated": 1782945181,
+  "date_posted": 1782944922,
+  "url": "https://job-boards.greenhouse.io/example/jobs/139",
+  "locations": [
+   "Chicago, IL"
+  ],
+  "company_url": "https://example.com/fixtures/140",
+  "is_visible": true,
+  "sponsorship": "Other",
+  "degrees": [
+   "Bachelor's"
+  ]
+ }
+]

@@ -1,0 +1,293 @@
+# Copy locally with `applyai init`; edit the ignored runtime YAML, not this template.
+tracks:
+- name: quant
+  weekly_target: 0
+  triage_depth: rules
+  default_resume: general
+  search_terms:
+  - quantitative trading intern
+  - quantitative research intern
+  - quantitative developer intern
+  - trading intern
+  - quant intern
+  - low latency intern
+  - trading systems intern
+  - trading infrastructure intern
+  - market data intern
+  sources:
+  - simplify2027
+  - vansh2027
+  - speedyapply2027
+  - nuft2027
+  - greenhouse
+  - lever
+  - ashby
+  - smartrecruiters
+  - workable
+  - workday
+  - jobspy
+  - hackernews
+  - usajobs
+  - employers
+  - yc_internships
+  - websearch
+  location_rules:
+    allow_remote: true
+    countries:
+    - US
+  eligibility_rules: {}
+- name: gpu
+  weekly_target: 0
+  triage_depth: rules
+  default_resume: general
+  search_terms:
+  - GPU software intern
+  - CUDA intern
+  - performance engineering intern
+  - graphics engineering intern
+  - ML systems intern
+  - GPU intern
+  - GPU architecture intern
+  - graphics intern
+  - machine learning systems intern
+  sources:
+  - simplify2027
+  - vansh2027
+  - speedyapply2027
+  - greenhouse
+  - lever
+  - ashby
+  - smartrecruiters
+  - workable
+  - workday
+  - jobspy
+  - hackernews
+  - usajobs
+  - employers
+  - yc_internships
+  - websearch
+  location_rules:
+    allow_remote: true
+    countries:
+    - US
+  eligibility_rules: {}
+- name: cpu
+  weekly_target: 0
+  triage_depth: rules
+  default_resume: general
+  search_terms:
+  - computer architecture intern
+  - RTL design intern
+  - verification intern
+  - ASIC intern
+  - FPGA intern
+  - silicon validation intern
+  - performance modeling intern
+  - FPGA engineer intern
+  - digital design intern
+  - computer hardware intern
+  - hardware verification intern
+  - physical design intern
+  - CPU design intern
+  - processor architecture intern
+  - chip design intern
+  sources:
+  - simplify2027
+  - vansh2027
+  - speedyapply2027
+  - nuft2027
+  - greenhouse
+  - lever
+  - ashby
+  - smartrecruiters
+  - workable
+  - workday
+  - jobspy
+  - hackernews
+  - usajobs
+  - employers
+  - yc_internships
+  - websearch
+  location_rules:
+    allow_remote: true
+    countries:
+    - US
+  eligibility_rules: {}
+- name: embedded
+  weekly_target: 0
+  triage_depth: rules
+  default_resume: general
+  search_terms:
+  - embedded software intern
+  - firmware intern
+  - embedded systems intern
+  - edge ML intern
+  - embedded linux intern
+  - hardware engineer intern
+  - PCB design intern
+  - embedded firmware intern
+  - robotics software intern
+  - electronics engineering intern
+  sources:
+  - simplify2027
+  - vansh2027
+  - speedyapply2027
+  - greenhouse
+  - lever
+  - ashby
+  - smartrecruiters
+  - workable
+  - workday
+  - jobspy
+  - usajobs
+  - hackernews
+  - employers
+  - yc_internships
+  - websearch
+  location_rules:
+    allow_remote: true
+    countries:
+    - US
+  eligibility_rules: {}
+- name: software
+  weekly_target: 0
+  triage_depth: rules
+  default_resume: general
+  search_terms:
+  - software engineer intern
+  - backend engineer intern
+  - systems software intern
+  - infrastructure intern
+  - platform engineering intern
+  - distributed systems intern
+  - low latency software intern
+  - linux intern
+  - linux kernel intern
+  - site reliability intern
+  - SRE intern
+  - devops intern
+  - web applications intern
+  - data engineer intern
+  - systems engineering intern
+  - compiler intern
+  - software development intern
+  sources:
+  - simplify2027
+  - vansh2027
+  - speedyapply2027
+  - nuft2027
+  - greenhouse
+  - lever
+  - ashby
+  - smartrecruiters
+  - workable
+  - workday
+  - jobspy
+  - hackernews
+  - usajobs
+  - employers
+  - yc_internships
+  - websearch
+  location_rules:
+    allow_remote: true
+    countries:
+    - US
+  eligibility_rules: {}
+- name: power
+  weekly_target: 0
+  triage_depth: rules
+  default_resume: general
+  search_terms:
+  - power systems intern
+  - electrical engineering intern
+  - controls engineering intern
+  - test engineering intern
+  - field engineering intern
+  - substation engineering intern
+  - transmission and distribution intern
+  - electro optic intern
+  - power electronics intern
+  - instrumentation intern
+  sources:
+  - simplify2027
+  - vansh2027
+  - speedyapply2027
+  - greenhouse
+  - lever
+  - ashby
+  - smartrecruiters
+  - workable
+  - workday
+  - jobspy
+  - usajobs
+  - employers
+  - yc_internships
+  - websearch
+  location_rules:
+    allow_remote: true
+    countries:
+    - US
+  eligibility_rules: {}
+- name: research
+  weekly_target: 0
+  triage_depth: rules
+  default_resume: general
+  search_terms:
+  - undergraduate research
+  - research experience
+  - research internship
+  - summer research
+  - OSTEM
+  - SULI
+  sources:
+  - research
+  location_rules:
+    allow_remote: true
+    countries:
+    - US
+  eligibility_rules: {}
+- name: parttime
+  weekly_target: 0
+  triage_depth: rules
+  default_resume: general
+  search_terms:
+  - part time
+  - barista
+  - student worker
+  - cashier
+  - sales associate
+  - tutor
+  - lab assistant
+  - IT help desk
+  - shift supervisor
+  - retail associate
+  - store associate
+  - team member
+  - crew member
+  - stocker
+  - grocery clerk
+  - food service
+  - server
+  - host
+  - busser
+  - dishwasher
+  - cook
+  - bakery
+  - housekeeper
+  - room attendant
+  - front desk
+  - guest service
+  - customer service
+  - receptionist
+  - delivery driver
+  - recreation attendant
+  - lifeguard
+  sources:
+  - jobspy
+  - starbucks
+  - local_employers
+  location_rules:
+    allow_remote: true
+    countries:
+    - US
+  eligibility_rules: {}

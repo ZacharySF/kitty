@@ -1,0 +1,77 @@
+{
+ "total": 2,
+ "jobPostings": [
+  {
+   "title": "Audio Systems Engineering Co-Op",
+   "externalPath": "/job/Boston-MA/Audio-Systems-Engineering-Co-Op_R101",
+   "timeType": "Full time",
+   "locationsText": "Boston, MA",
+   "postedOn": "Posted 7 Days Ago",
+   "bulletFields": [
+    "R101"
+   ]
+  },
+  {
+   "title": "Mechanical Sourcing Co-op",
+   "externalPath": "/job/Boston-MA/Mechanical-Sourcing-Co-op_R102",
+   "timeType": "Full time",
+   "locationsText": "Boston, MA",
+   "postedOn": "Posted 7 Days Ago",
+   "bulletFields": [
+    "R102"
+   ]
+  }
+ ],
+ "facets": [
+  {
+   "facetParameter": "jobFamilyGroup",
+   "descriptor": "Job Category",
+   "values": [
+    {
+     "descriptor": "Internships",
+     "id": "1066",
+     "count": 7
+    }
+   ]
+  },
+  {
+   "facetParameter": "workerSubType",
+   "descriptor": "Job Type",
+   "values": [
+    {
+     "descriptor": "Intern (Fixed Term) (Trainee)",
+     "id": "1067",
+     "count": 7
+    }
+   ]
+  },
+  {
+   "facetParameter": "timeType",
+   "descriptor": "Full/Part-time",
+   "values": [
+    {
+     "descriptor": "Full time",
+     "id": "1068",
+     "count": 7
+    }
+   ]
+  },
+  {
+   "facetParameter": "locationMainGroup",
+   "values": [
+    {
+     "facetParameter": "locations",
+     "descriptor": "Locations",
+     "values": [
+      {
+       "descriptor": "Boston, MA",
+       "id": "1069",
+       "count": 7
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "userAuthenticated": false
+}

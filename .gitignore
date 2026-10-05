@@ -1,0 +1,25 @@
+# Secrets and private runtime configuration. Share *.yaml.example only.
+.env
+.env.*
+!.env.example
+config/*.yaml
+config/*.yml
+config/gmail_client.json
+PRIVATE_CONTEXT.md
+
+# my resumes
+resumes/*
+!resumes/.gitkeep
+
+# Found jobs, application history, credentials, exports, and caches stay local.
+data/*
+!data/.gitkeep
+.cache/
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.private/

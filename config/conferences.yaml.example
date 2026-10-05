@@ -1,0 +1,10 @@
+# Exhibitor / sponsor lists for the Stage 5 finder. Copy to conferences.yaml.
+# Either give a URL to scrape, or paste company names directly under `companies`.
+conferences:
+  - name: Hot Chips
+    url: https://hotchips.org/sponsors/
+    areas: [comp_arch_rtl, gpu_cuda]
+  - name: Embedded World
+    url: null
+    areas: [embedded_edge_ml]
+    companies: []

@@ -1,0 +1,22 @@
+# Focus areas for the Stage 5 niche-company finder.
+# per_run_quota caps how many candidate firms each area may contribute to one run,
+# so a single area cannot eat the whole run cap.
+areas:
+  - name: gpu_cuda
+    keywords: [CUDA, GPU kernel, Triton, ROCm, tensor core, performance engineering]
+    per_run_quota: 3
+  - name: comp_arch_rtl
+    keywords: [RTL, Verilog, SystemVerilog, ASIC, FPGA, silicon validation, performance modeling]
+    per_run_quota: 3
+  - name: embedded_edge_ml
+    keywords: [embedded, firmware, RTOS, microcontroller, edge ML, TinyML]
+    per_run_quota: 3
+  - name: audio_dsp_ml
+    keywords: [DSP, audio, signal processing, acoustics]
+    per_run_quota: 2
+  - name: avionics
+    keywords: [avionics, DO-178C, flight software, aerospace embedded]
+    per_run_quota: 2
+  - name: quant
+    keywords: [quantitative trading, quant research, market making, low latency, prop trading]
+    per_run_quota: 3

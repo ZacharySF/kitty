@@ -1,0 +1,59 @@
+{
+ "status": 200,
+ "data": {
+  "positions": [
+   {
+    "id": 1051,
+    "name": "shift supervisor - Store# 101, Example Cafe",
+    "standardizedLocations": [
+     "Riverton, IL, US"
+    ],
+    "postedTs": 1787803200,
+    "positionUrl": "/careers/job/1051",
+    "department": "Shift Supervisor",
+    "locations": [
+     "100 Example Avenue, Riverton, Illinois, United States"
+    ]
+   },
+   {
+    "id": 1050,
+    "name": "barista - Store# 101, Example Cafe",
+    "standardizedLocations": [
+     "Riverton, IL, US"
+    ],
+    "postedTs": 1783915200,
+    "positionUrl": "/careers/job/1050",
+    "department": "Barista",
+    "locations": [
+     "100 Example Avenue, Riverton, Illinois, United States"
+    ]
+   },
+   {
+    "id": 1052,
+    "name": "barista - Store# 101, Example Cafe",
+    "standardizedLocations": [
+     "Riverton, IL, US"
+    ],
+    "postedTs": 1788321600,
+    "positionUrl": "/careers/job/1052",
+    "department": "Barista",
+    "locations": [
+     "100 Example Avenue, Riverton, Illinois, United States"
+    ]
+   },
+   {
+    "id": 999,
+    "name": "barista - Store# 101, Example Cafe",
+    "standardizedLocations": [
+     "Houston, TX, US"
+    ],
+    "postedTs": 1787803200,
+    "positionUrl": "/careers/job/1051",
+    "department": "Shift Supervisor",
+    "locations": [
+     "100 Example Avenue, Riverton, Illinois, United States"
+    ]
+   }
+  ]
+ }
+}

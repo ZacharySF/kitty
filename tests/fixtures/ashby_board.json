@@ -1,0 +1,44 @@
+{
+ "jobs": [
+  {
+   "id": "1001",
+   "title": "PhD Autonomy Engineer Intern - Computer Vision / Deep Learning Summer 2027",
+   "employmentType": "Intern",
+   "location": "Zurich, Switzerland",
+   "secondaryLocations": [],
+   "publishedAt": "2026-09-03T23:26:05.937+00:00",
+   "isListed": true,
+   "workplaceType": "Hybrid",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Zurich",
+     "addressCountry": "Switzerland",
+     "addressLocality": "Zurich"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/example/1001",
+   "applyUrl": "https://jobs.ashbyhq.com/example/1001/application",
+   "descriptionPlain": "Synthetic PhD internship in computer vision and deep learning in Switzerland."
+  },
+  {
+   "id": "1002",
+   "title": "Senior Autonomy Engineer, Data Curation",
+   "employmentType": "FullTime",
+   "location": "San Mateo, California, United States",
+   "secondaryLocations": [],
+   "publishedAt": "2026-06-04T17:36:23.056+00:00",
+   "isListed": true,
+   "workplaceType": "Hybrid",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "California",
+     "addressCountry": "United States",
+     "addressLocality": "San Mateo"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/example/1002",
+   "applyUrl": "https://jobs.ashbyhq.com/example/1002/application",
+   "descriptionPlain": "Synthetic senior autonomy engineering position in the United States."
+  }
+ ]
+}

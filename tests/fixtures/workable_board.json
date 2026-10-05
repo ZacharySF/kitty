@@ -1,0 +1,96 @@
+{
+ "name": "Example Aviation",
+ "description": "<p>Synthetic example role supporting engineering projects.</p>",
+ "jobs": [
+  {
+   "title": "Embedded Software Engineer (Manufacturing Test Development)",
+   "shortcode": "EXAMPLE156",
+   "code": "",
+   "employment_type": "",
+   "telecommuting": false,
+   "department": "Software Engineering",
+   "url": "https://apply.workable.com/example/j/EXAMPLE156/",
+   "shortlink": "https://apply.workable.com/j/EXAMPLE156",
+   "application_url": "https://apply.workable.com/example/j/EXAMPLE156/apply/",
+   "published_on": "2026-08-25",
+   "created_at": "2026-07-08",
+   "country": "United States",
+   "city": "Brea",
+   "state": "California",
+   "education": "",
+   "experience": "",
+   "function": "Engineering",
+   "industry": "Aviation & Aerospace",
+   "locations": [
+    {
+     "country": "United States",
+     "countryCode": "US",
+     "city": "Brea",
+     "region": "California",
+     "hidden": false
+    }
+   ],
+   "description": "<p>Synthetic example role supporting engineering projects.</p>"
+  },
+  {
+   "title": "Intern - Software Engineering (Summer 2027)",
+   "shortcode": "EXAMPLE158",
+   "code": "",
+   "employment_type": "Part-time",
+   "telecommuting": false,
+   "department": "Software Engineering",
+   "url": "https://apply.workable.com/example/j/EXAMPLE158/",
+   "shortlink": "https://apply.workable.com/j/EXAMPLE158",
+   "application_url": "https://apply.workable.com/example/j/EXAMPLE158/apply/",
+   "published_on": "2026-09-15",
+   "created_at": "2026-09-15",
+   "country": "United States",
+   "city": "Laramie",
+   "state": "Wyoming",
+   "education": "Bachelor's Degree",
+   "experience": "Internship",
+   "function": "Engineering",
+   "industry": "Aviation & Aerospace",
+   "locations": [
+    {
+     "country": "United States",
+     "countryCode": "US",
+     "city": "Laramie",
+     "region": "Wyoming",
+     "hidden": false
+    }
+   ],
+   "description": "<p>Synthetic example role supporting engineering projects.</p>"
+  },
+  {
+   "title": "Software Engineer II",
+   "shortcode": "EXAMPLE160",
+   "code": "",
+   "employment_type": "Full-time",
+   "telecommuting": false,
+   "department": "Software Engineering",
+   "url": "https://apply.workable.com/example/j/EXAMPLE160/",
+   "shortlink": "https://apply.workable.com/j/EXAMPLE160",
+   "application_url": "https://apply.workable.com/example/j/EXAMPLE160/apply/",
+   "published_on": "2026-10-01",
+   "created_at": "2026-10-01",
+   "country": "United States",
+   "city": "Laramie",
+   "state": "Wyoming",
+   "education": "Bachelor's Degree",
+   "experience": "Mid-Senior level",
+   "function": "Engineering",
+   "industry": "Aviation & Aerospace",
+   "locations": [
+    {
+     "country": "United States",
+     "countryCode": "US",
+     "city": "Laramie",
+     "region": "Wyoming",
+     "hidden": false
+    }
+   ],
+   "description": "<p>Synthetic example role supporting engineering projects.</p>"
+  }
+ ]
+}

@@ -1,0 +1,47 @@
+[
+ {
+  "additionalPlain": "Synthetic example role supporting engineering projects.",
+  "categories": {
+   "commitment": "Internship",
+   "location": "Paris, France",
+   "team": "Echo",
+   "allLocations": [
+    "Paris, France"
+   ]
+  },
+  "createdAt": 1778517108152,
+  "descriptionPlain": "Synthetic example role supporting engineering projects.",
+  "id": "1017",
+  "lists": [],
+  "text": "Deployment Strategist, Internship",
+  "country": "FR",
+  "workplaceType": "onsite",
+  "hostedUrl": "https://jobs.lever.co/example/1017",
+  "applyUrl": "https://jobs.lever.co/example/1017/apply"
+ },
+ {
+  "additionalPlain": "Synthetic position requiring current authorization to work in Singapore.",
+  "categories": {
+   "commitment": "Full-time",
+   "location": "Singapore, Singapore",
+   "team": "Administrative",
+   "allLocations": [
+    "Singapore, Singapore"
+   ]
+  },
+  "createdAt": 1786469891368,
+  "descriptionPlain": "Synthetic example role supporting engineering projects.",
+  "id": "1018",
+  "lists": [
+   {
+    "text": "Administrative Business Partner (Foundry)",
+    "content": "<p>Synthetic example role supporting engineering projects.</p>"
+   }
+  ],
+  "text": "Administrative Business Partner",
+  "country": "SG",
+  "workplaceType": "hybrid",
+  "hostedUrl": "https://jobs.lever.co/example/1018",
+  "applyUrl": "https://jobs.lever.co/example/1018/apply"
+ }
+]

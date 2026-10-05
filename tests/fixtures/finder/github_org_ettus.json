@@ -1,0 +1,10 @@
+{
+ "login": "example-radio",
+ "name": "Example Radio",
+ "blog": "example.com",
+ "description": "Synthetic software-defined radio and FPGA company.",
+ "is_verified": true,
+ "location": "Austin, TX",
+ "public_repos": 27,
+ "type": "Organization"
+}

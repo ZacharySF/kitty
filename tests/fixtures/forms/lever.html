@@ -1,0 +1,122 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Lever-like form</title>
+<style>.dropdown-container, .dropdown-no-results, .dropdown-loading-results { display: none; }</style></head>
+<body>
+<script src="guard.js"></script>
+<form id="application-form" action="https://example.invalid/apply" method="post">
+  <ul>
+    <li class="application-question resume"><label>
+      <div class="application-label">Resume/CV<span class="required">✱</span></div>
+      <div class="application-field"><input type="file" name="resume" id="resume-upload-input"></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Full name<span class="required">✱</span></div>
+      <div class="application-field"><input type="text" name="name" required></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Email<span class="required">✱</span></div>
+      <div class="application-field"><input type="email" name="email" required></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Phone<span class="required">✱</span></div>
+      <div class="application-field"><input type="text" name="phone" required></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Current location<span class="required">✱</span></div>
+      <div class="application-field"><input type="text" name="location" id="location-input" class="location-input" required>
+        <input type="hidden" name="selectedLocation" id="selected-location">
+        <div class="dropdown-container"><div class="dropdown-results"></div>
+        <div class="dropdown-no-results">No location found. Try entering a different location</div>
+        <div class="dropdown-loading-results">Loading</div></div></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Current company</div>
+      <div class="application-field"><input type="text" name="org"></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">LinkedIn URL</div>
+      <div class="application-field"><input type="text" name="urls[LinkedIn]"></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">GitHub URL</div>
+      <div class="application-field"><input type="text" name="urls[GitHub]"></div>
+    </label></li>
+  </ul>
+
+  <ul>
+    <li class="application-question custom-question">
+      <div class="application-label"><div class="text">Will you now or in the future require sponsorship?<span class="required">✱</span></div></div>
+      <div class="application-field required-field"><ul>
+        <li><label><input type="radio" name="cards[abc][field0]" value="Yes" required><span class="application-answer-alternative">Yes</span></label></li>
+        <li><label><input type="radio" name="cards[abc][field0]" value="No" required><span class="application-answer-alternative">No</span></label></li>
+      </ul></div>
+    </li>
+    <li class="application-question custom-question">
+      <div class="application-label"><div class="text">Describe a hardware project you are proud of.<span class="required">✱</span></div></div>
+      <div class="application-field"><textarea name="cards[abc][field1]" required></textarea></div>
+    </li>
+  </ul>
+
+  <label class="application-dropdown">Gender
+    <select name="eeo[gender]"><option value="">Select ...</option><option>Male</option><option>Female</option></select>
+  </label>
+
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<script>
+  // Lever's location box (jobs.lever.co/js/retrieveLocations.js): each key press restarts a
+  // 0.5 s timer, then the server is asked while "Loading" shows. This server is slow (2.5 s;
+  // Lever's took over 1.5 s live). A place sticks only when a suggestion gets mousedown, which
+  // also fills the hidden selectedLocation; leaving the box while the list is open empties
+  // both. An answer that arrives after that still lands in the closed (hidden) list.
+  const box = document.getElementById('location-input');
+  const selected = document.getElementById('selected-location');
+  const container = box.parentElement.querySelector('.dropdown-container');
+  const results = container.querySelector('.dropdown-results');
+  const loading = container.querySelector('.dropdown-loading-results');
+  const noResults = container.querySelector('.dropdown-no-results');
+  const places = ['Arlington, TX, USA', 'Arlington, VA, USA', 'Austin, TX, USA'];
+  const show = (element, on) => { element.style.display = on ? 'flex' : 'none'; };
+  const empty = () => { results.innerHTML = ''; show(noResults, false); show(loading, false); };
+  let timer = null;
+  const search = () => {
+    empty();
+    const typed = box.value.toLowerCase();
+    if (!typed) return;
+    show(loading, true);
+    setTimeout(() => {
+      show(loading, false);
+      const found = places.filter(p => p.toLowerCase().startsWith(typed));
+      found.forEach((place, index) => {
+        const item = document.createElement('div');
+        item.className = 'dropdown-location';
+        item.id = 'location-' + index;
+        item.textContent = place;
+        results.appendChild(item);
+      });
+      show(noResults, !found.length);
+    }, 2500);
+  };
+  box.addEventListener('input', () => show(container, true));
+  box.addEventListener('keydown', e => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) return;
+    clearTimeout(timer);
+    timer = setTimeout(search, 500);
+  });
+  box.addEventListener('blur', () => {
+    if (getComputedStyle(container).display === 'none') return;
+    show(container, false);
+    empty();
+    box.value = '';                                           // typed text alone does not stick
+    selected.value = '';
+  });
+  document.addEventListener('mousedown', e => {
+    const item = e.target.closest('.dropdown-location');
+    if (!item) return;
+    show(container, false);
+    box.value = item.textContent;
+    selected.value = JSON.stringify({name: item.textContent, id: item.id});
+    empty();
+  });
+</script>
+</body></html>

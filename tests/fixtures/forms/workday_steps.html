@@ -1,0 +1,28 @@
+<!doctype html><html><body>
+<div data-automation-id="progressBar"><span data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</span></div>
+<form id="workday-application">
+<section id="information">
+<label>First Name <input name="first_name" autocomplete="given-name" required></label>
+<label>Resume <input name="resume" type="file" required></label>
+</section>
+<section id="questions" hidden>
+<label>Preferred shift <select name="shift" required><option value="">Choose</option><option>Morning</option><option>Evening</option></select></label>
+<label>Why this position? <textarea name="motivation" required></textarea></label>
+</section>
+<section id="review" hidden><h2>Review your application</h2></section>
+<button type="button" data-automation-id="bottom-navigation-next-button">Save and Continue</button>
+</form>
+<script>
+window.__steps = 0; window.__submitted = 0; window.__uploads = 0;
+document.querySelector('[name=resume]').addEventListener('change', () => window.__uploads++);
+document.addEventListener('submit', e => { window.__submitted++; e.preventDefault(); });
+const button = document.querySelector('button');
+button.addEventListener('click', () => {
+  if (button.textContent === 'Submit') { window.__submitted++; return; }
+  const step = window.__steps++;
+  document.querySelector(step === 0 ? '#information' : '#questions').hidden = true;
+  document.querySelector(step === 0 ? '#questions' : '#review').hidden = false;
+  document.querySelector('[data-automation-id=progressBarActiveStep]').textContent = step === 0 ? 'current step 5 of 6 Application Questions' : 'current step 6 of 6 Review';
+  if (step === 1) button.textContent = 'Submit';
+});
+</script></body></html>

@@ -1,0 +1,54 @@
+[
+ {
+  "date_updated": 1785124648,
+  "url": "https://job-boards.greenhouse.io/example/jobs/153",
+  "locations": [
+   "New York, NY"
+  ],
+  "sponsorship": "Other",
+  "active": true,
+  "company_name": "Example Partners",
+  "title": "Software Engineering Intern",
+  "source": "vanshb03",
+  "id": "1057",
+  "date_posted": 1785124648,
+  "company_url": "",
+  "is_visible": true,
+  "season": "Summer"
+ },
+ {
+  "date_updated": 1785252404,
+  "url": "https://example.wd1.myworkdayjobs.com/External/job/US/Example-Intern_R154",
+  "locations": [
+   "Melbourne, FL"
+  ],
+  "sponsorship": "Other",
+  "active": false,
+  "company_name": "Example Aerospace",
+  "title": "Software Engineer Intern",
+  "season": "Summer",
+  "source": "DereC4",
+  "id": "1058",
+  "date_posted": 1785007755,
+  "company_url": "",
+  "is_visible": true
+ },
+ {
+  "date_updated": 1749260792,
+  "url": "https://example.com/fixtures/155",
+  "locations": [
+   "New York, NY",
+   "San Francisco, CA"
+  ],
+  "sponsorship": "Other",
+  "active": true,
+  "company_name": "Example Payroll",
+  "title": "Frontend Software Engineer Intern",
+  "season": "Winter",
+  "source": "vanshb03",
+  "id": "1059",
+  "date_posted": 1749260792,
+  "company_url": "",
+  "is_visible": true
+ }
+]

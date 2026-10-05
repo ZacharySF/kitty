@@ -1,0 +1,8 @@
+# Copy to answers.yaml (gitignored). Start empty: only you can supply these facts.
+# Missing answers go to the unanswered-questions queue, never to an invented answer.
+# Each entry has question and answer; category is optional.
+# match: whole-word phrases matching alternate wording. Ambiguous matches are unused.
+# choices: truthful alternate wording for dropdowns without the exact answer.
+# companies / exclude_companies: scope by company-name phrases.
+# tracks / exclude_tracks: scope by track names.
+answers: []

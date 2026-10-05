@@ -1,0 +1,13 @@
+From: Example Logic Recruiting <recruiting@logic.example.invalid>
+Subject: Next steps - Example Logic FPGA Engineer Intern
+
+Hi Sample Candidate,
+
+Thanks for your time on the assessment. We were impressed and would like to
+invite you to interview with our hardware team.
+
+Please share your availability for a 45 minute video call over the next two
+weeks using the link below.
+
+Kind regards,
+Example Logic Campus Team

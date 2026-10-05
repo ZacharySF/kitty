@@ -1,0 +1,231 @@
+{
+ "offset": 0,
+ "limit": 100,
+ "totalFound": 2,
+ "content": [
+  {
+   "id": "1026",
+   "name": "Finance Intern - Undergrad Summer 2027",
+   "uuid": "1027",
+   "jobAdId": "1028",
+   "defaultJobAd": true,
+   "refNumber": "1029",
+   "company": {
+    "identifier": "Example Workflow",
+    "name": "Example Workflow"
+   },
+   "releasedDate": "2026-09-29T00:37:47.509Z",
+   "location": {
+    "city": "Santa Clara",
+    "region": "CALIFORNIA",
+    "country": "us",
+    "address": "100 Example Avenue",
+    "postalCode": "95054",
+    "remote": false,
+    "hybrid": true,
+    "fullLocation": "Santa Clara, CALIFORNIA, United States"
+   },
+   "industry": {
+    "id": "it_and_services",
+    "label": "Information Technology And Services"
+   },
+   "department": {
+    "id": "1030",
+    "label": "Finance & Accounting"
+   },
+   "function": {
+    "id": "other",
+    "label": "Other"
+   },
+   "typeOfEmployment": {
+    "id": "intern",
+    "label": "Intern"
+   },
+   "experienceLevel": {
+    "id": "not_applicable",
+    "label": "Not Applicable"
+   },
+   "customField": [
+    {
+     "fieldId": "1031",
+     "fieldLabel": "Recruiting Team",
+     "valueId": "early-in-career",
+     "valueLabel": "Global Emerging Talent"
+    },
+    {
+     "fieldId": "1032",
+     "fieldLabel": "Region",
+     "valueId": "1033",
+     "valueLabel": "AMS - North America and Canada"
+    },
+    {
+     "fieldId": "1034",
+     "fieldLabel": "Job Location",
+     "valueId": "L_SJC005",
+     "valueLabel": "100 Example Avenue, Santa Clara, California, United States"
+    },
+    {
+     "fieldId": "1035",
+     "fieldLabel": "Employee Type",
+     "valueId": "1036",
+     "valueLabel": "Intern (Fixed Term)"
+    },
+    {
+     "fieldId": "1037",
+     "fieldLabel": "Department",
+     "valueId": "1030",
+     "valueLabel": "Finance & Accounting"
+    },
+    {
+     "fieldId": "COUNTRY",
+     "fieldLabel": "Country/Region",
+     "valueId": "us",
+     "valueLabel": "United States"
+    },
+    {
+     "fieldId": "1038",
+     "fieldLabel": "Brands",
+     "valueId": "default",
+     "valueLabel": "Example Workflow"
+    },
+    {
+     "fieldId": "1039",
+     "fieldLabel": "Cost Center",
+     "valueId": "EXAMPLE",
+     "valueLabel": "Example Department"
+    },
+    {
+     "fieldId": "1040",
+     "fieldLabel": "Work Persona",
+     "valueId": "1041",
+     "valueLabel": "Flexible or Remote"
+    },
+    {
+     "fieldId": "1042",
+     "fieldLabel": "Job Posting Type",
+     "valueId": "intern",
+     "valueLabel": "Intern"
+    }
+   ],
+   "visibility": "PUBLIC",
+   "ref": "https://example.com/smartrecruiters/1026",
+   "language": {
+    "code": "en",
+    "label": "English",
+    "labelNative": "English (US)"
+   }
+  },
+  {
+   "id": "1043",
+   "name": "Software Engineer",
+   "uuid": "1044",
+   "jobAdId": "1045",
+   "defaultJobAd": true,
+   "refNumber": "1046",
+   "company": {
+    "identifier": "Example Workflow",
+    "name": "Example Workflow"
+   },
+   "releasedDate": "2026-09-30T17:04:15.127Z",
+   "location": {
+    "city": "Santa Clara",
+    "region": "CALIFORNIA",
+    "country": "us",
+    "address": "100 Example Avenue",
+    "postalCode": "95054",
+    "remote": false,
+    "hybrid": true,
+    "fullLocation": "Santa Clara, CALIFORNIA, United States"
+   },
+   "industry": {
+    "id": "it_and_services",
+    "label": "Information Technology And Services"
+   },
+   "department": {
+    "id": "1047",
+    "label": "Engineering, Infrastructure and Operations"
+   },
+   "function": {
+    "id": "engineering",
+    "label": "Engineering"
+   },
+   "typeOfEmployment": {
+    "id": "permanent",
+    "label": "Full-time"
+   },
+   "experienceLevel": {
+    "id": "not_applicable",
+    "label": "Not Applicable"
+   },
+   "customField": [
+    {
+     "fieldId": "1031",
+     "fieldLabel": "Recruiting Team",
+     "valueId": "early-in-career",
+     "valueLabel": "Global Emerging Talent"
+    },
+    {
+     "fieldId": "1032",
+     "fieldLabel": "Region",
+     "valueId": "1033",
+     "valueLabel": "AMS - North America and Canada"
+    },
+    {
+     "fieldId": "1034",
+     "fieldLabel": "Job Location",
+     "valueId": "L_SJC005",
+     "valueLabel": "100 Example Avenue, Santa Clara, California, United States"
+    },
+    {
+     "fieldId": "1035",
+     "fieldLabel": "Employee Type",
+     "valueId": "1048",
+     "valueLabel": "Regular"
+    },
+    {
+     "fieldId": "1037",
+     "fieldLabel": "Department",
+     "valueId": "1047",
+     "valueLabel": "Engineering, Infrastructure and Operations"
+    },
+    {
+     "fieldId": "COUNTRY",
+     "fieldLabel": "Country/Region",
+     "valueId": "us",
+     "valueLabel": "United States"
+    },
+    {
+     "fieldId": "1038",
+     "fieldLabel": "Brands",
+     "valueId": "default",
+     "valueLabel": "Example Workflow"
+    },
+    {
+     "fieldId": "1039",
+     "fieldLabel": "Cost Center",
+     "valueId": "EXAMPLE",
+     "valueLabel": "Example Department"
+    },
+    {
+     "fieldId": "1040",
+     "fieldLabel": "Work Persona",
+     "valueId": "1049",
+     "valueLabel": "Flexible"
+    },
+    {
+     "fieldId": "1042",
+     "fieldLabel": "Job Posting Type",
+     "valueId": "early-career",
+     "valueLabel": "Early Career"
+    }
+   ],
+   "visibility": "PUBLIC",
+   "ref": "https://example.com/smartrecruiters/1043",
+   "language": {
+    "code": "en",
+    "label": "English",
+    "labelNative": "English (US)"
+   }
+  }
+ ]
+}
