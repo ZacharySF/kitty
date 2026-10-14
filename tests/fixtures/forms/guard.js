@@ -7,7 +7,10 @@ document.addEventListener('click', e => { if (e.target.closest('button')) window
 document.addEventListener('keydown', e => { if (e.key === 'Enter') window.__enterPresses++; }, true);
 
 // A react-select-like search box: typing (or the Down arrow) opens a role=listbox of role=option choices.
-function searchBox(input, choices, {initialChoices = choices, delay = 0, commit = true} = {}) {
+function searchBox(input, choices, {
+  initialChoices = choices, delay = 0, commit = true,
+  valueClass = 'select__single-value', rejectOnBlur = false, disabledChoices = [],
+} = {}) {
   const control = input.closest('.select__control');
   const value = control.querySelector('.select__value');
   const list = document.createElement('div');
@@ -27,10 +30,16 @@ function searchBox(input, choices, {initialChoices = choices, delay = 0, commit 
       const option = document.createElement('div');
       option.setAttribute('role', 'option');
       option.textContent = choice;
+      if (disabledChoices.includes(choice)) option.setAttribute('aria-disabled', 'true');
+      option.addEventListener('mousedown', e => e.preventDefault());
       option.addEventListener('click', () => {
-        if (!commit) return;
-        value.innerHTML = '<span class="select__single-value">' + choice + '</span>';
-        input.value = '';
+        if (!commit || disabledChoices.includes(choice)) return;
+        if (commit === 'query') {
+          input.value = choice; // Looks filled, but there is no committed selection.
+        } else {
+          value.innerHTML = '<span class="' + valueClass + '">' + choice + '</span>';
+          input.value = '';
+        }
         list.innerHTML = '';
         input.removeAttribute('aria-controls');
       });
@@ -50,4 +59,9 @@ function searchBox(input, choices, {initialChoices = choices, delay = 0, commit 
     }
   });
   input.addEventListener('keydown', e => { if (e.key === 'ArrowDown') render(); });
+  input.addEventListener('blur', () => {
+    list.innerHTML = '';
+    input.removeAttribute('aria-controls');
+    if (rejectOnBlur) value.innerHTML = '';
+  });
 }

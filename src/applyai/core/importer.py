@@ -64,6 +64,7 @@ def build_mapping(
     normalized = {_normalize_header(h): h for h in headers}
     for field_name, aliases in DEFAULT_ALIASES.items():
         for alias in aliases:
+            alias = _normalize_header(alias)
             if alias in normalized:
                 mapping[field_name] = normalized[alias]
                 break

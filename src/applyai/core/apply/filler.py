@@ -13,22 +13,27 @@ and records the application when the tab shows the confirmation page (watch.py).
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import sqlite3
 import time
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from applyai.config import Config
 from applyai.core import jobs as jobs_core
 from applyai.core import questions as questions_core
 from applyai.core import resumes as resumes_core
 from applyai.core.resume_versions import default_resume
-from applyai.core.apply.bidi import Bidi, BidiError, Frame, SessionBusy, Tab, open_session, open_tab
+from applyai.core.apply.auth import authenticate, google_session
+from applyai.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, Tab, open_session, open_tab
 from applyai.core.apply.browser import (
     BrowserError, busy_message, ensure_firefox, headless_firefox, hide_automation,
 )
+from applyai.core.apply.credentials import CredentialError, load_credentials
 from applyai.core.apply.fields import (
     TEXT_KINDS, FormField, Plan, is_affirmative, is_resume_input, lookup_answer, match_option,
     plan_for,
@@ -98,6 +103,87 @@ def resume_file(settings: Settings, resume: Resume) -> Path:
     return path if path.is_absolute() else settings.root / path
 
 
+class ApprovalError(UnsafeAction):
+    """A reviewed web preparation no longer matches its inputs."""
+
+
+APPROVAL_CHANGED = "Preparation approval changed or is missing; review the plan again before filling."
+
+
+@dataclass(frozen=True)
+class FillApproval:
+    """Immutable reviewed job and resume identity; never resolve a new default."""
+
+    job_id: int
+    url: str
+    apply_url: str | None
+    company: str
+    tracks: tuple[str, ...]
+    resume_id: int | None
+    file_hash: str | None
+    file_path: str | None
+
+    def resume(self, conn: sqlite3.Connection, settings: Settings, job: Job) -> Resume | None:
+        if (job.id, job.url, job.apply_url, job.company_name, tuple(job.tracks)) != (
+            self.job_id, self.url, self.apply_url, self.company, self.tracks
+        ):
+            raise ApprovalError(APPROVAL_CHANGED)
+        if self.resume_id is None:
+            return None
+        resume = resumes_core.get_resume(conn, self.resume_id)
+        if resume is None or (resume.file_hash, resume.file_path) != (self.file_hash, self.file_path):
+            raise ApprovalError(APPROVAL_CHANGED)
+        try:
+            path = resume_file(settings, resume)
+            if not path.is_file() or resumes_core.file_hash(path) != self.file_hash:
+                raise ApprovalError(APPROVAL_CHANGED)
+        except OSError:
+            raise ApprovalError(APPROVAL_CHANGED) from None
+        return resume
+
+
+def _upload_approved(
+    frame: Frame, key: str, path: Path, approval: FillApproval,
+    conn: sqlite3.Connection, settings: Settings,
+) -> None:
+    job = jobs_core.get_job(conn, approval.job_id)
+    if job is None or approval.resume(conn, settings, job) is None:
+        raise ApprovalError(APPROVAL_CHANGED)
+    try:
+        content = path.read_bytes()
+    except OSError:
+        raise ApprovalError(APPROVAL_CHANGED) from None
+    if hashlib.sha256(content).hexdigest() != approval.file_hash:
+        raise ApprovalError(APPROVAL_CHANGED)
+    # Firefox can read its File object at the later human submit, after the worker
+    # exits. Keep a private, content-addressed artifact instead of a temporary or
+    # mutable library path. Never overwrite an existing approved artifact.
+    folder = settings.data_dir / "approved_resumes"
+    frozen = folder / f"{approval.file_hash}.pdf"
+    try:
+        if folder.is_symlink():
+            raise ApprovalError(APPROVAL_CHANGED)
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not frozen.exists() and not frozen.is_symlink():
+            with tempfile.NamedTemporaryFile(dir=folder) as staged:
+                staged.write(content)
+                staged.flush()
+                os.fchmod(staged.fileno(), 0o400)
+                try:
+                    os.link(staged.name, frozen)
+                except FileExistsError:
+                    pass
+        if frozen.is_symlink() or not frozen.is_file():
+            raise ApprovalError(APPROVAL_CHANGED)
+        with os.fdopen(os.open(frozen, os.O_RDONLY | os.O_NOFOLLOW), "rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        if digest != approval.file_hash:
+            raise ApprovalError(APPROVAL_CHANGED)
+    except OSError:
+        raise ApprovalError(APPROVAL_CHANGED) from None
+    upload(frame, key, frozen)
+
+
 # ------------------------------------------------------------- the form
 
 
@@ -117,11 +203,12 @@ def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan) -> 
             return True
         searches = [plan.search_text] if plan.search_text else list(dict.fromkeys(plan.candidates))[:4]
         return any(pick_from_search(frame, form_field.key, text, plan.candidates,
-                                    location=plan.location) for text in searches)
+                                    location=plan.location, prefix=not plan.exact_choices) for text in searches)
     if (form_field.kind == "checkbox" and len(form_field.options) == 1 and plan.from_answers
             and is_affirmative(plan.candidates[0])):
         return tick(frame, form_field.option_keys[0])          # "I agree to ..." with answer Yes
-    index = match_option(plan.candidates, form_field.options, location=plan.location)
+    index = match_option(plan.candidates, form_field.options, location=plan.location,
+                         prefix=not plan.exact_choices)
     if index is None:
         return False
     if form_field.kind == "select":
@@ -134,6 +221,7 @@ def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan) -> 
 def fill_form(
     page: Tab, config: Config, resume_path: Path | None, *, company: str | None = None,
     tracks: Sequence[str] = (), preserve_existing: bool = False,
+    upload_resume: Callable[[Frame, str, Path], None] | None = None,
 ) -> FormResult:
     """Fill every field on the open page that profile.yaml / answers.yaml covers.
 
@@ -157,7 +245,7 @@ def fill_form(
             result.blocker = ("Resume upload deferred to protect retained answers from resume parsing; "
                               "attach it manually and review your values before retrying.")
         else:
-            upload(frames[target.frame], target.key, resume_path)
+            (upload_resume or upload)(frames[target.frame], target.key, resume_path)
             result.filled.append("resume")
             if not wait_for_uploads(page):
                 result.fields_found = len(fields)
@@ -221,7 +309,7 @@ def _record(
 
 def fill_job(
     page: Tab, conn: sqlite3.Connection, settings: Settings, config: Config, job: Job,
-    *, resume_tab: bool = False,
+    *, resume_tab: bool = False, approval: FillApproval | None = None,
 ) -> FillReport:
     """Prepare verified pages conservatively; retain a known tab instead of navigating it."""
     ats = detect_ats(job.apply_url or job.url)
@@ -229,20 +317,54 @@ def fill_job(
     report = FillReport(job_id=job.id, company=job.company_name, title=job.title, url=url,
                         ats=ats, resume_label=None, filled=[], unanswered=[], status="attempted",
                         resumed=resume_tab, resume_id=job.resume_id if resume_tab else None)
-    resume = choose_resume(conn, config, job)
+    try:
+        resume = approval.resume(conn, settings, job) if approval is not None else choose_resume(conn, config, job)
+    except ApprovalError as exc:
+        return _error_report(job.id, job, str(exc))
     resume_path = resume_file(settings, resume) if resume is not None else None
     if resume_path is not None and not resume_path.is_file():
+        if approval is not None:
+            return _error_report(job.id, job, APPROVAL_CHANGED)
         resume_path = None
-    record_attempt(conn, job.id, "attempted", context_id=page.context, url=url)
+    record_attempt(conn, job.id, "attempted", context_id=page.context, url=page.bidi.redact(url))
     resume_verified = False
     visited: set[str] = set()
     previous: str | None = None
+    authentication_attempted = False
+    policy = config.apply.authentication
     try:
         if not resume_tab:
             page.goto(url)
         settle(page)
         for _ in range(12):
             before = wait_for_page(page, previous=previous)
+            if authentication_attempted and not policy.approves(page.main.url):
+                report.status, report.note = "blocked", "login: redirected to an unapproved origin; continue manually."
+                break
+            if before.blocker and before.blocker.startswith("login:") and policy.enabled:
+                if authentication_attempted:
+                    report.status, report.note = "blocked", "login: authentication did not advance; continue manually (no automatic retry)."
+                    break
+                if not policy.approves(page.main.url) or not policy.approves(before.url):
+                    report.status, report.note = "blocked", "login: this origin is not approved for credentials."
+                    break
+                authentication_attempted = True
+                if policy.account_mode == "google":
+                    authentication = google_session(page, policy, config.profile.email.strip())
+                else:
+                    try:
+                        credentials = load_credentials(settings)
+                    except CredentialError as exc:
+                        report.status, report.note = "blocked", str(exc)
+                        break
+                    page.bidi.protect_secrets(credentials.email, credentials.password)
+                    authentication = authenticate(page, policy, credentials)
+                if not authentication.acted:
+                    report.status, report.note = "blocked", authentication.blocker or before.blocker
+                    break
+                previous = before.signature
+                settle(page)
+                continue
             if before.blocker:
                 report.status, report.note = "blocked", before.blocker
                 break
@@ -258,8 +380,18 @@ def fill_job(
             if not (before.step or before.boundary):
                 report.status, report.note = "blocked", "Unsupported application page: no recognized form or safe entry; continue manually."
                 break
-            result = fill_form(page, config, resume_path, company=job.company_name,
-                               tracks=job.tracks, preserve_existing=resume_tab)
+            result = fill_form(
+                page, config, resume_path, company=job.company_name,
+                tracks=job.tracks, preserve_existing=resume_tab,
+                upload_resume=(lambda frame, key, path: _upload_approved(
+                    frame, key, path, approval, conn, settings
+                )) if approval is not None else None,
+            )
+            # A site can echo account values in field labels or errors. Never persist
+            # those echoes in preparation evidence or the unanswered-questions queue.
+            result.filled = [page.bidi.redact(value) for value in result.filled]
+            result.unanswered = [page.bidi.redact(value) for value in result.unanswered]
+            result.to_log = [value for value in result.to_log if page.bidi.redact(value) == value]
             report.pages += 1
             _record(conn, job, resume, result)
             report.filled.extend(name for name in result.filled if name not in report.filled)
@@ -276,6 +408,10 @@ def fill_job(
             after = inspect_page(page)
             if after.blocker:
                 report.status, report.note = "blocked", after.blocker
+                break
+            if after.unsupported_required:
+                report.status = "blocked"
+                report.note = "unsupported: required custom controls need manual completion. Review any fields already filled."
                 break
             if result.unanswered or after.errors:
                 report.status = "partial" if result.fields_found else "blocked"
@@ -305,14 +441,16 @@ def fill_job(
             report.status, report.note = "blocked", "Application step limit reached; continue manually."
     except (BidiError, UnsafeAction) as exc:
         report.status = "blocked"
-        report.error = str(exc).strip().splitlines()[0][:300]
+        report.error = page.bidi.redact(str(exc)).strip().splitlines()[0][:300]
         report.note = report.error
     try:
         current_url = page.main.url
     except BidiError:
         current_url = url
+    report.url = page.bidi.redact(report.url)
+    report.note = page.bidi.redact(report.note) if report.note else None
     record_attempt(conn, job.id, report.status, blocker=report.note if report.status != "ready" else None,
-                   context_id=page.context, url=current_url)
+                   context_id=page.context, url=page.bidi.redact(current_url))
     if job.fill_context_id and not resume_tab:
         restart = "Previous tab unavailable; restarted known fields. Manual values are not restored."
         report.note = f"{report.note} {restart}" if report.note else restart
@@ -361,6 +499,17 @@ def _retained_tab(bidi: Bidi, job: Job) -> Tab | None:
         old, current = urlsplit(job.fill_url), urlsplit(context.get("url", ""))
         if (old.scheme, old.netloc, old.path, old.query) == (current.scheme, current.netloc, current.path, current.query):
             return Tab(bidi, context["context"])
+        # SSO may change a path, but a retained tab can also have been used to
+        # browse another posting. Require the original posting's identity.
+        from applyai.config import _authentication_origin
+        from applyai.core.apply.watch import posting_key
+        key = posting_key(job.url) or posting_key(job.apply_url or "")
+        if (job.fill_blocker and job.fill_blocker.startswith("login: Google session:") and
+                key is not None and posting_key(context.get("url", "")) == key and
+                _authentication_origin(context.get("url", "")) ==
+                _authentication_origin(job.apply_url or job.url) and
+                _authentication_origin(context.get("url", "")) is not None):
+            return Tab(bidi, context["context"])
         # Workday steps can change path without changing this retained application.
         source = urlsplit(job.url)
         source_path = unquote(source.path).split("/")
@@ -379,6 +528,7 @@ def _fill_all(
     bidi: Bidi, conn: sqlite3.Connection, settings: Settings, config: Config,
     job_ids: list[int], say: Callable[[str], None], *, keep_open: bool,
     watch: Watch | None = None, background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
+    approvals: Mapping[int, FillApproval] | None = None,
 ) -> list[FillReport]:
     """Fill each job in its own new tab, pausing `pause` seconds between jobs.
 
@@ -397,18 +547,46 @@ def _fill_all(
         if job is None:
             reports.append(_error_report(job_id, None, f"no job with id {job_id}"))
             continue
+        approval = approvals.get(job_id) if approvals is not None else None
+        if approvals is not None:
+            try:
+                if approval is None:
+                    raise ApprovalError(APPROVAL_CHANGED)
+                approval.resume(conn, settings, job)
+            except ApprovalError as exc:
+                reports.append(_error_report(job_id, job, str(exc)))
+                continue
         say(f"[{position + 1}/{len(job_ids)}] {job.company_name} - {job.title}")
-        retained = _retained_tab(bidi, job)
-        tab = retained or open_tab(bidi, background=background)
-        first_tab = first_tab or tab
-        report = fill_job(tab, conn, settings, config, job, resume_tab=retained is not None)
-        reports.append(report)
-        if not keep_open:
-            tab.close()
-        elif watch is not None and report.ats in RULES:
-            watch.tabs.append(_watched_tab(job, tab, report))
+        try:
+            retained = _retained_tab(bidi, job)
+            tab = retained or open_tab(bidi, background=background)
+            first_tab = first_tab or tab
+            report = fill_job(tab, conn, settings, config, job, resume_tab=retained is not None,
+                              approval=approval)
+            reports.append(report)
+            if not keep_open:
+                tab.close()
+            elif watch is not None and report.ats in RULES:
+                watch.tabs.append(_watched_tab(job, tab, report))
+        except BidiError as exc:
+            message = bidi.redact(str(exc)).strip().splitlines()[0][:300]
+            # An unavailable later tab must not erase reports already prepared.
+            # If cleanup failed after reporting this job, keep its actual result.
+            if not reports or reports[-1].job_id != job_id:
+                reports.append(_error_report(job_id, job, message))
+            say(f"Browser stopped this job: {message}")
+            if isinstance(exc, ConnectionLost):
+                for remaining_id in job_ids[position + 1:]:
+                    reports.append(_error_report(
+                        remaining_id, jobs_core.get_job(conn, remaining_id),
+                        "Browser disconnected before this job could be prepared; reconnect Firefox and review a new plan.",
+                    ))
+                break
     if first_tab is not None and keep_open and not background:
-        first_tab.activate()
+        try:
+            first_tab.activate()
+        except BidiError as exc:
+            say(f"Could not focus the prepared tab: {bidi.redact(str(exc))[:300]}")
     return reports
 
 
@@ -417,15 +595,18 @@ def _fill_and_watch(
     job_ids: list[int], say: Callable[[str], None], *, keep_open: bool,
     on_filled: Callable[[list[FillReport]], None], watch: Watch | None,
     background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
+    approvals: Mapping[int, FillApproval] | None = None,
 ) -> list[FillReport]:
     """Fill, hand the reports over, then (with a Watch) watch the tabs in the same session.
 
     Tabs carried over in `watch.tabs` are found again first (their ids are per session).
     """
+    emit = say
+    say = lambda message: emit(bidi.redact(message))
     if watch is not None and watch.tabs:
         watch.tabs[:] = reattach(bidi, watch.tabs)
     reports = _fill_all(bidi, conn, settings, config, job_ids, say, keep_open=keep_open,
-                        watch=watch, background=background, pause=pause)
+                        watch=watch, background=background, pause=pause, approvals=approvals)
     on_filled(reports)
     if watch is None or not watch.tabs or watch.stop.is_set():
         return reports
@@ -448,6 +629,7 @@ def fill_jobs(
     watch: Watch | None = None,
     background: bool = False,
     pause: float = PAUSE_BETWEEN_JOBS,
+    approvals: Mapping[int, FillApproval] | None = None,
 ) -> list[FillReport]:
     """Open each job's application form in the applyai Firefox window and fill it.
 
@@ -460,18 +642,27 @@ def fill_jobs(
     `headless=True` uses a throwaway invisible browser instead (tests, smoke
     runs); its tabs stay open only while a watch runs. `background` opens
     the tabs behind the one in front (autofill), and `pause` is the wait in
-    seconds between two jobs.
+    seconds between two jobs. Web callers supply immutable `approvals`; all are
+    checked before opening Firefox and again before each upload. CLI/TUI callers
+    without approvals retain their normal pinned-or-default selection.
     """
     say = progress or (lambda message: None)
     watch = watch if watch is not None and watch.hours > 0 else None
     on_filled = on_filled or (lambda reports: None)
     conn = connect(settings.db_path)
     try:
+        if approvals is not None:
+            for job_id in job_ids:
+                job = jobs_core.get_job(conn, job_id)
+                approval = approvals.get(job_id)
+                if job is None or approval is None:
+                    raise ApprovalError(APPROVAL_CHANGED)
+                approval.resume(conn, settings, job)
         if headless:
             with headless_firefox(settings) as bidi:
                 return _fill_and_watch(bidi, conn, settings, config, job_ids, say,
                                        keep_open=watch is not None, on_filled=on_filled,
-                                       watch=watch, background=background, pause=pause)
+                                       watch=watch, background=background, pause=pause, approvals=approvals)
         say("opening the applyai Firefox window")
         port = ensure_firefox(settings)
         try:
@@ -483,7 +674,7 @@ def fill_jobs(
         try:
             return _fill_and_watch(bidi, conn, settings, config, job_ids, say, keep_open=True,
                                    on_filled=on_filled, watch=watch, background=background,
-                                   pause=pause)
+                                   pause=pause, approvals=approvals)
         finally:
             bidi.close()                  # ends remote control only: the window and tabs stay
     except (BrowserError, BidiError) as exc:

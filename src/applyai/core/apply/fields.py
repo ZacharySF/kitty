@@ -75,6 +75,7 @@ class Plan:
     search_text: str | None = None    # what to type into a search-as-you-type box
     location: bool = False            # compare options as places ("Austin, Texas" == "Austin, TX")
     from_answers: bool = False
+    exact_choices: bool = False       # majors must not match a different program by prefix
 
 
 # ------------------------------------------------------------------ labels
@@ -122,6 +123,21 @@ def lookup_answer(
     return None
 
 
+def _undecorated_option(text: str) -> str:
+    """Drop only an acronym that spells the initials of the complete option name."""
+    leading = re.fullmatch(r"\s*([A-Z]{2,10})\s+[-–—:]\s+(.+?)\s*", text)
+    trailing = re.fullmatch(r"\s*(.+?)\s+\(([A-Z]{2,10})\)\s*", text)
+    if leading:
+        acronym, name = leading.groups()
+    elif trailing:
+        name, acronym = trailing.groups()
+    else:
+        return norm_question(text)
+    words = norm_question(name).split()
+    initials = "".join(word[0] for word in words if word not in {"and", "of", "the"})
+    return norm_question(name) if initials == acronym.lower() else norm_question(text)
+
+
 def match_option(
     candidates: tuple[str, ...] | list[str],
     options: tuple[str, ...] | list[str],
@@ -131,24 +147,35 @@ def match_option(
 ) -> int | None:
     """Index of the option that matches a candidate value, or None.
 
-    A match is either equal after normalization, or the only option that starts
-    with the value as whole words ("Yes" picks "Yes, I am authorized" when no
-    other option starts with "Yes"). `prefix=False` allows only equal matches,
-    for lists that may show just some of the choices. With `location=True`,
-    places compare by city and state so "Arlington, Texas, United States"
-    == "Arlington, TX".
+    Each candidate's exact match precedes its acronym-decorated equivalents,
+    before trying alternate candidates. Unique whole-word prefixes come last.
+    Decoration must spell the full name's initials, e.g. "ECE - Electrical and
+    Computer Engineering". Duplicate
+    matches are ambiguous, not a reason to choose the first row. `prefix=False`
+    excludes extensions such as a different engineering technology program.
+    With `location=True`, places compare by city and state.
     """
     normalize: Callable[[str], str] = norm_location if location else norm_question
     normalized = [normalize(option) for option in options]
+    wanted_values = [wanted for candidate in candidates if (wanted := normalize(candidate))]
+    undecorated = [] if location else [_undecorated_option(option) for option in options]
     for candidate in candidates:
         wanted = normalize(candidate)
         if not wanted:
             continue
-        if wanted in normalized:
-            return normalized.index(wanted)
-        prefixed = [i for i, text in enumerate(normalized) if text.startswith(wanted + " ")]
-        if prefix and len(prefixed) == 1:
-            return prefixed[0]
+        exact = [i for i, text in enumerate(normalized) if text == wanted]
+        if exact:
+            return exact[0] if len(exact) == 1 else None
+        if not location:
+            wanted = _undecorated_option(candidate)
+            equivalent = [i for i, text in enumerate(undecorated) if wanted and text == wanted]
+            if equivalent:
+                return equivalent[0] if len(equivalent) == 1 else None
+    if prefix:
+        for wanted in wanted_values:
+            prefixed = [i for i, text in enumerate(normalized) if text.startswith(wanted + " ")]
+            if prefixed:
+                return prefixed[0] if len(prefixed) == 1 else None
     return None
 
 
@@ -266,7 +293,7 @@ def _major_names(major: str) -> tuple[str, ...]:
     if base.lower().startswith("general ") and len(base.split()) > 1:
         field_name = base.split(" ", 1)[1]
         names += [f"{field_name} (General)", f"{field_name}, General"]
-    if base.lower() in _ECE_HALVES:
+    if base.lower() in _ECE_HALVES or base.lower() in {name.lower() for name in _ECE_NAMES}:
         names += _ECE_NAMES
     return tuple(dict.fromkeys(names))
 
@@ -329,7 +356,7 @@ def profile_plan(field: FormField, profile: Profile, *, tracks: Sequence[str] = 
         r"major or field of study|field of study or major|major field of study|concentration)",
         words,
     ):
-        return plan("major", *_major_names(profile.discipline_for(tracks)))
+        return Plan("major", _major_names(profile.discipline_for(tracks)), exact_choices=True)
     if _full(r"(your )?(current )?country( of residence)?", words):
         return plan("country", *_country_names(profile.country))
     if (short or choice) and is_graduation_question(words):

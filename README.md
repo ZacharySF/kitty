@@ -27,7 +27,9 @@ src/applyai/
   tui/            Textual screens
   cli.py          the command line
   mcp_server.py   the MCP server (`applyai mcp`), a thin layer like the CLI
+  web_server.py   loopback-only website adapter (`applyai-web`)
 tests/            pytest, including headless TUI tests
+web/              Svelte 5 / TypeScript website; built assets in ignored web/dist/
 ```
 
 The layout rule: nothing under `core/` imports Textual or Typer, so the CLI, the
@@ -64,6 +66,185 @@ uv run applyai --demo tui           # learn the keys without touching real data
 
 `--demo` uses `data/demo.db`. `demo reset` refuses to write to any file that is
 not named `demo.db`, so it cannot wipe real applications.
+
+## Local website
+
+The Svelte website uses the same Python core and SQLite database as the CLI/TUI.
+Its workbench builds on the Inference website template with a dark-fantasy theme:
+charcoal and muted violet surfaces, antique-gold accents, serif headings and
+etched borders. The body font is self-hosted; headings use system serif fonts.
+The supplied artwork stays bundled at `web/public/art/application-background.png`.
+No Rust service is needed because the existing core already owns the behavior.
+
+From the project root, with Node 22+ and npm available:
+
+```bash
+npm --prefix web ci
+npm --prefix web run build
+uv run applyai-web                 # http://127.0.0.1:8765
+```
+
+On NixOS without Node on PATH, prefix either npm command with
+`nix shell nixpkgs#nodejs_22 --command`.
+Use the printed `127.0.0.1` address, not `localhost`: the server validates its
+exact loopback Host/Origin. `--port`, `--root` and `--static-dir` override the port,
+workspace and built-asset directory. The refresh button and command palette reload
+configuration from disk; saves in My profile reload it automatically.
+
+For safe exploration without touching real jobs, runtime YAML or resumes:
+
+```bash
+uv run applyai-web --demo --port 8766
+```
+
+Unlike CLI `--demo`, the website demo creates a disposable temporary workspace
+from public examples; edits disappear when the process exits. External discovery,
+browser filling, Gmail, notifications and paid operations are disabled. Synthetic
+text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
+be registered inside the disposable workspace.
+
+### Start here
+
+Home shows a three-step guide and checks whether your name/email and a usable
+resume PDF are saved. These checks describe saved data, not application readiness.
+
+1. **My profile → My resumes:** enter your verified details in the ordinary form,
+   review the save, then upload a resume PDF. Blank fields stay blank. Basic-form
+   saves preserve other profile settings and reject stale edits; leaving with an
+   unsaved profile, configuration or answer draft prompts before discarding it.
+2. **Find jobs → Saved jobs:** search for a role or company. Open a job to read it,
+   or select checkboxes and click **Save selected**. Your shortlist is in Saved jobs.
+3. **Select jobs → Prepare selected:** review the included jobs, exact resumes and
+   missing information. Approved preparation opens Firefox and fills known fields.
+   Check each form and submit it yourself. **My applications** tracks the outcomes.
+
+**Prepare applications** also lists recommended open, unsubmitted A/B jobs.
+Alternative groups, job limits and browser progress remain under preparation
+options. **More filters** exposes ranking, source and other filters; selected-job
+actions and job details have their own expandable advanced controls.
+
+The sidebar keeps the daily flow and setup links visible. **More tools** contains
+new jobs, the application list, reminders, job sources, company discovery, reports,
+email updates, ranking and application questions. Configuration/YAML, imports,
+diagnostics, schedules and resume-generation/version tools remain available in
+labeled expandable sections. **How to apply** returns to the guide; hotkeys reveal
+collapsed controls before focusing them.
+
+The website supports:
+
+- Structured daily brief: track goals, deadlines, follow-ups, quiet applications,
+  expected openings, source problems, mail proposals and outstanding questions.
+- Inbox, ranked opportunities, A/B apply queue, saved views, source/eligibility/
+  status/date filters, favorites and selection across pages.
+- Manual posting entry, optional public-page metadata lookup, track/tier decisions,
+  deadline overrides, persistent notes, queue/skip/later and durable ineligibility.
+- Pipeline, reminders, explicit recording of an already-submitted application,
+  configured follow-ups, dated evidence and append-only status undo.
+- Resume registration/upload, vocabulary coaching with posting evidence, audited
+  candidate generation, exact diff/fact/PDF review, promotion and rollback.
+  Historical application resumes stay pinned.
+- Browser application preparation for selected jobs, the A/B queue or capped
+  favorites. Preflight shows the chosen resumes and blockers. Approval is bound
+  to the reviewed job/configuration/PDF identities; changes require another review.
+  Hash-addressed approved PDF copies stay in private runtime data so later human
+  submission uses the approved bytes.
+- Screening-question logging/collection and user-authored saved answers. Unknown
+  answers remain blank. No applicant facts or screening responses are invented.
+- Editable basic profile details without YAML, plus validated, stale-safe advanced
+  configuration editing, previewed CSV import, local diagnostics, schedule
+  generation and explicitly authorized notifications.
+- Source health, run-one/discover, enable/disable and bounded posting refresh.
+  Discovery is restricted to enabled free adapters; paid web search is excluded.
+- Company-finder proposals and explicit watchlist approval/rejection.
+- Read-only Gmail authorization/checking and explicit status-proposal decisions.
+- Rules-only triage, fresh cost estimates, capped paid immediate/batch runs and
+  collection of existing batch results. Paid operations require explicit approval.
+- Outcome reports and formula-safe CSV/ZIP or JSON exports of jobs, applications
+  and status history.
+
+**Fast favoriting:** press **Ctrl+F** (⌘F on macOS), type a search, then right-click
+a result to save it. In New jobs, Ctrl+F searches company names literally; `/`
+searches titles and companies. Mark checkboxes (Shift-click for a page range), or
+choose **Select all matching** to include every matching page, then right-click
+any marked result to save the whole selection. **Save selected** also works on
+touchscreens. Right-click always saves;
+it does not toggle saved jobs off. `*` toggles a selection off only if all are
+already favorites. Selection is limited to 10,000 results; narrow larger searches.
+
+**Keyboard:** F1–F10 mirror the primary TUI sections; Ctrl/⌘K opens command and job
+search; `?` shows the full contextual shortcut reference. Arrow keys navigate
+jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
+`k` queue state, `R` resume, `e` notes, `s` status, `u` undo, `d` deadline,
+`n` next action and `o` posting. In Prepare applications, `a` records a submission,
+`s` skips, `l` defers, `x` marks ineligible and `n`/`p` move between rows.
+`f` favorites first, then opens preparation; Shift+F plans favorite autofill.
+Letter shortcuts pause while typing or using dialogs. Native browser print,
+reload and close-tab shortcuts are not intercepted.
+
+**Preparation is not submission:** Firefox fills supported fields with your
+verified profile/answers and attaches the approved resume. Review every answer
+and press the employer's final Submit yourself. MFA, CAPTCHAs, consent and unknown
+questions remain manual. The latest preparation results show filled fields and
+remaining blockers directly, rather than hiding them under advanced options.
+A later tab/browser failure preserves earlier job results.
+
+**Employer accounts:** save the account email and password in
+`.private/application-credentials.env` (owner-only mode `600`). In the website's
+review plan, choose **Sign in** for existing accounts or **Create account** for
+new ones, review the exact HTTPS websites listed, and check the authorization
+box. This authorizes only that run, not a global policy change. Use separate runs
+when sites need different account actions; ApplyAI cannot determine whether you
+already have an account. Credentials are never displayed in the website.
+Changed credentials, account choices or destinations require a fresh review.
+Verification, consent, CAPTCHA and unsupported signup forms still need you.
+
+**Google sign-in:** choose **Google — reuse my signed-in job account** in the
+website's review plan. The displayed identity comes from **My profile → email**;
+this mode does not load or send the private employer password. Check that email,
+review the employer origins and authorize the run.
+
+- Use the dedicated **Firefox window opened by ApplyAI**, not everyday Chrome.
+  Its `data/firefox` profile persists job-site cookies between preparation runs.
+- If the account is not signed in, finish Google sign-in manually in that Firefox.
+  ApplyAI can select one exact, already signed-in account on a recognized Google
+  chooser; it never adds an account, enters a Google password, or accepts permissions.
+- After a manual handoff, return to the same employer application tab and review a
+  new plan. Retained fields are reused only when the application identity can be
+  verified; a different posting or an unidentifiable changed URL is not adopted.
+
+Both same-tab flows and new popups explicitly associated with the employer tab
+are supported. Unrelated tabs are never selected. Unrecognized chooser markup,
+Google security blocks, verification and consent remain manual. Google Drive's
+resume-picker button is not account sign-in; the filler attaches the approved
+local PDF instead. Google reuse is authorized through the website, not by setting
+`account_mode: google` alone in CLI/TUI configuration.
+
+The optional watcher records only supported confirmation evidence after your own
+submission; stopping releases browser control without closing your prepared tabs.
+Ctrl+C waits for background work so accepted paid batch IDs/results can be
+persisted before the server exits.
+
+The server binds only to `127.0.0.1`, checks Host/Origin and browser fetch metadata,
+requires JSON plus a custom header for mutations, denies framing/CORS, and only
+serves registered, hash-verified PDFs. This is a trusted-user local application,
+not a remotely deployable multi-user service.
+
+For frontend development, keep the API at port 8765 and run
+`npm --prefix web run dev` in a second terminal. Vite proxies `/api` only after
+validating the local browser origin. `npm --prefix web run check` checks Svelte
+and TypeScript. Backend verification uses isolated synthetic workspaces:
+
+```bash
+uv run pytest -q tests/test_web_server.py tests/test_web_jobs.py tests/test_web_tasks.py \
+  tests/test_web_automation.py tests/test_web_resumes.py tests/test_web_profile.py \
+  tests/test_web_insights.py
+```
+
+For browser smoke checks, use the disposable demo, not real application records.
+Check simple profile save and discard protection, PDF upload, the home setup
+checklist, Ctrl+F, cross-page selection/right-click, preparation-plan review,
+disclosure hotkeys, append-only status undo and desktop/mobile layouts.
+Demo restrictions intentionally prevent testing live employer, Gmail or paid calls.
 
 ## Finding jobs (Stage 2)
 
@@ -329,17 +510,59 @@ Comboboxes first open their existing option list and select an exact matching va
 (including configured/profile aliases) without typing. If no matching choice appears
 during the short list probe, they fall back to search; asynchronous location searches
 retain their loading wait. A choice must remain selected after blur to count as filled.
+Verified acronym decorations are equivalent to the full option name, so
+`ECE - Electrical and Computer Engineering` can match the saved full major.
+Ambiguous/disabled choices are refused; a major never matches a different program
+merely because its name starts the same way. Editable search text is not proof of
+a selection, and failed choices clear that query.
 Recognized Workday pages can follow guarded Apply/Apply Manually entry and
-non-final Next/Continue steps to Review. Account requirements vary by employer;
-authentication gates require human handling. Unknown structures, final actions
-and consent controls are never clicked.
+non-final Next/Continue steps to Review. Account requirements vary by employer.
+Unknown structures, final actions and consent controls are never clicked.
+Required native resume uploads inside labelled ARIA upload groups are supported.
+When Greenhouse removes the file input after upload, its visible filename/removal
+receipt can verify the retained attachment. Pending, failed or incomplete receipts
+cannot establish readiness.
+An unrelated unsupported required widget no longer prevents known fields and the
+resume from being filled, but it still blocks advancing or claiming readiness.
+Job-description pages without a recognized application entry remain manual;
+opening a tab alone is not reported as successful preparation.
+
+Sign-in automation is off by default. The website can authorize one reviewed run
+as described above. For CLI/TUI policy, put the account in
+`.private/application-credentials.env` (`APPLICATION_ACCOUNT_EMAIL=...` and
+`APPLICATION_ACCOUNT_PASSWORD=...`, `chmod 600`) and list each site's exact HTTPS
+origin in `config/apply.yaml`:
+
+```yaml
+authentication:
+  enabled: true
+  allow_account_creation: false   # true also lets it fill Create account / Sign up forms
+  account_mode: recognized       # login or create explicitly chooses an account action
+  approved_origins:
+    - https://example.wd5.myworkdayjobs.com
+```
+
+`recognized` only handles an already displayed account form. Explicit `login` or
+`create` can first follow one unambiguous approved account-entry link or
+non-submitting button. `create` also requires `allow_account_creation: true`.
+At most one credential request is sent per job attempt, with no retries or
+login/signup fallback. A sent request is not proof an account was created;
+the filler checks whether the site advances to the application.
+
+Employer-password mode handles only a plain form: one email/username box, the password (plus
+confirmation boxes for a new account) and a single Sign in / Create account
+button, posting to the same approved origin. CAPTCHA widgets (even a passive
+badge), MFA or email codes, consent checkboxes or "by signing in you agree"
+text, extra fields, other SSO-only pages, GET forms, cross-origin frames and boxes
+already holding other values all stop for manual handling. The credentials are
+redacted from reports, stored notes and browser-error text.
 
 The [application autonomy and privacy research](docs/APPLICATION_AUTONOMY_RESEARCH.md)
 records provider account capabilities, implemented preparation/resumption
-boundaries and remaining tenant-specific gaps. There is no automatic account
-creation or promise of unattended support for every site.
-Browser-signal suppression is not anonymity; required accounts, verification,
-CAPTCHAs, unknown answers, and final submission still need an appropriate handoff.
+boundaries and remaining tenant-specific gaps. There is no promise of unattended
+support for every site.
+Browser-signal suppression is not anonymity; verification, CAPTCHAs, consent,
+unknown answers, and final submission still need an appropriate handoff.
 
 The window is system Firefox (`$APPLYAI_FIREFOX` or `firefox` on PATH) started with
 remote control (WebDriver BiDi) on `127.0.0.1:9333` (`APPLYAI_BROWSER_PORT`). While
@@ -376,7 +599,7 @@ questions the filler logged are listed too.
 - `applyai autofill [--limit N] [--track T] [--no-watch] [--detach] [--dry-run]` (or `F`
   on the Apply tab, `f` on a ★ job there, or `f` on Inbox / Jobs with nothing marked)
   fills my favorites' forms in background tabs of the applyai Firefox, only those in the
-  track the screen is filtered on (`c` on Inbox / Jobs, `t` on Apply; `--track`),
+  track the screen is filtered on (`c` on Inbox / Jobs / Apply; `--track`),
   best first, at most `autofill_cap` per run (config/apply.yaml, default 10), waiting
   `autofill_pause_seconds` (default 15) between jobs. **It never submits.** It skips
   closed, applied, skipped / not eligible and verified ready-for-review favorites,
@@ -477,12 +700,22 @@ Register it in an MCP client:
 }
 ```
 
-Tools: `today`, `list_jobs`, `get_job`, `weekly_progress`, `list_questions`,
-`finder_candidates`, `list_proposals`, `mark_applied`, `set_status`, `skip_job`,
-`mark_not_eligible`, `confirm_proposal`, `reject_proposal`, `run_discover`. None of
-them submits anything, writes or suggests screening answers, or writes resume
-text; `mark_applied` only records an application I already submitted. Finder
-approvals stay in the TUI. Each call opens and closes its own database connection.
+Tools: `today`, `list_jobs`, `get_job`, `preparation_plan`, `weekly_progress`,
+`list_questions`, `finder_candidates`, `list_proposals`, `list_resume_versions`,
+`get_resume_version`, `mark_applied`, `set_status`, `skip_job`, `mark_not_eligible`,
+`confirm_proposal`, `reject_proposal`, `run_discover`. None submits anything,
+writes or suggests screening answers, or writes resume text; `mark_applied` only
+records an application I already submitted. Finder approvals stay in the TUI.
+Each call opens and closes its own database connection.
+
+`preparation_plan(track?, limit?)` lets an agent inspect the same favorites-first,
+track-scoped batch as local autofill, with the configured hard cap and reasons for
+leaving jobs out. `list_jobs`, `get_job` and selected plan jobs expose stored
+preparation states, attempt/readiness timestamps and blockers, not browser-control
+identifiers. This is a local snapshot, not a live browser check or a reservation:
+ready means verified at the last attempt, not submitted. Planning does not open
+Firefox, contact employers, fill forms or change applications/statuses; normal
+workspace initialization may still migrate SQLite and sync local configuration.
 
 ## Resumes and the resume coach
 
@@ -493,11 +726,19 @@ Choose labels and track mappings for your own files in local configuration.
 Resume sources, generated documents and any rendering scripts containing personal
 content must remain in the ignored `resumes/` directory.
 
+**Resume (`F7`) opens the resume library:** all active registered files, including
+variants that are not a track default. Select a row to see its full local path and
+description; `Enter` or `o` opens that PDF in the local viewer. The table shows
+effective default-track assignments and missing files. `r` refreshes the library;
+browsing or opening a PDF never changes a default or an application attachment.
 
-The Resume screen (`F7`, or `applyai coach [--track T]`) counts, per track, how
-often postings mention each term in `config/resume_terms.yaml`, with resume-line
-and job-description evidence. Counts are vocabulary measurements, not an ATS score
-or proof of experience. The coach remains read-only; candidate generation is separate.
+
+The **Posting evidence** tab within Resume (`F7`, or `applyai coach [--track T]`)
+counts, per track, how often postings mention each term in
+`config/resume_terms.yaml`, with resume-line and job-description evidence.
+Counts are vocabulary measurements, not an ATS score or proof of experience.
+`t` / `T` changes the coach/candidate track, not the all-resumes library.
+The coach remains read-only; candidate generation is separate.
 
 ### Local deterministic editing
 
@@ -557,7 +798,7 @@ The tabs at the top of every screen follow a job's life, left to right, and can
 be clicked: **Today** `F1` (what is due, what is new) → **Inbox** `F2` (decide on
 new postings) → **Apply** `F3` (the apply session) → **Jobs** `F4` (everything
 kept) → **Pipeline** `F5` (applications by stage) → **Sources** `F6` (where
-postings come from), then **Resume** `F7` (what postings ask for), **Profile**
+postings come from), then **Resume** `F7` (resume library and posting evidence), **Profile**
 `F8` (facts, resumes, preferences, answers), **Finder** `F9` (companies to
 watch) and **Reports** `F10` (who hears back, export). The line under the tabs says what the current screen is for. On Today
 every line that needs action is a link to the screen that handles it.
@@ -582,7 +823,7 @@ on Today hides itself on terminals shorter than 36 rows.
 | `f` | fill & open the application form(s): marked Inbox rows, or the selected job. On Inbox / Jobs with nothing marked, and on Apply when the job shown is ★ (or `v` is on), every waiting favorite in the current track instead (like `F`). On Apply a plain fill moves to the next job; filled jobs wait at the end of the queue |
 | `*` `v` | Inbox / Jobs / Apply / Job Detail: star or unstar (marked rows or the selected job); show favorites only |
 | `F` | Apply: autofill the current track's favorites in background tabs (never submits) |
-| `c` | Inbox / Jobs: show one track only (quant, parttime, ...) or every track again; on Jobs it narrows whichever saved view is on |
+| `c` | Inbox / Jobs / Apply: choose one track (quant, parttime, ...) or every track; Escape keeps the current selection. On Jobs it narrows the saved view; on Apply it also scopes favorite filling |
 | `esc` | back from Job Detail |
 | `space` | Inbox: mark a row; `t` tier, `g` add track, `x` skip act on every marked row |
 | `w` | Inbox: last 14 days / all new jobs |
@@ -594,8 +835,9 @@ on Today hides itself on terminals shorter than 36 rows.
 | `u` | undo the last status change (status changes only) |
 | `n` `d` | next action date+note, deadline |
 | `k` `t` `R` `e` | queue state, tier, resume pick, my notes |
-| `t` `T` | Resume screen: next / previous track |
+| `t` `T` | Resume screen: next / previous coach and candidate track; the library still lists every resume |
 | `g` `v` `b` | Resume screen: generate local candidate, versions/exact review, rollback default |
+| `enter` `o` | Resume library: open the selected local PDF without changing its default or attachments |
 | `o` `p` `x` | Resume review: open PDF, explicitly approve/promote, reject |
 | `e` `n` | Profile screen: edit a config file in `$EDITOR`, add a resume |
 | `o` | open the posting in my normal browser |

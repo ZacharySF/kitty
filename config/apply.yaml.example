@@ -8,3 +8,12 @@ deadline_window_days: 7
 watch_hours: 4
 autofill_cap: 10
 autofill_pause_seconds: 15
+# CLI/TUI account automation is off unless enabled here; the website can authorize a reviewed run.
+# Credentials come only from .private/application-credentials.env (APPLICATION_ACCOUNT_EMAIL,
+# APPLICATION_ACCOUNT_PASSWORD, chmod 600), and go only to exact approved HTTPS origins.
+# CAPTCHA, MFA, email verification, consent and the application's submit stay yours.
+authentication:
+  enabled: false
+  allow_account_creation: false
+  account_mode: recognized  # login or create can follow one clear account-entry link
+  approved_origins: []   # e.g. https://example.wd5.myworkdayjobs.com

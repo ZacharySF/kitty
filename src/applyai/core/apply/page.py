@@ -21,6 +21,68 @@ from applyai.core.apply.fields import FormField, clean_label, match_option
 #: Frames that never hold the application form.
 _SKIP_FRAMES = ("recaptcha", "hcaptcha", "googleapis.com", "about:blank", "google.com/maps")
 
+# Only a single native upload can represent a labelled ARIA upload group.
+# Other custom questions containing native descendants still need review.
+_UPLOAD_GROUP_JS = r"""
+input => {
+  if (!input.matches('input[type=file]') || input.disabled) return null;
+  const group = input.closest('[role=group][aria-labelledby]');
+  if (!group || group.querySelectorAll('input[type=file]').length !== 1) return null;
+  const visible = e => e.getClientRects().length &&
+    getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  const others = group.querySelectorAll('input:not([type=file]):not([type=hidden]):not([type=button]):not([type=submit]), textarea, select');
+  return [...others].some(visible) ? null : group;
+}
+"""
+
+# Greenhouse replaces its native file input with this receipt after upload.
+# A filename alone is insufficient: require the labelled upload group, removal
+# control, and absence of pending/error/editable states.
+_UPLOADED_FILE_GROUP_JS = r"""
+group => {
+  const visible = e => !!e && !!e.getClientRects().length &&
+    getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  if (!group.matches('.file-upload[role=group][aria-labelledby]') || !visible(group) ||
+      group.getAttribute('aria-invalid') === 'true') return false;
+  if (group.querySelector('input:not([type=hidden]):not([type=button]):not([type=submit]), textarea, select')) return false;
+  if ([...group.querySelectorAll('[role=progressbar], [aria-busy=true], [aria-invalid=true], .helper-text--error')]
+      .some(visible)) return false;
+  const receipts = [...group.querySelectorAll('.file-upload__filename')].filter(visible);
+  if (receipts.length !== 1) return false;
+  const receipt = receipts[0];
+  const filename = receipt.querySelector('p.body');
+  const remove = receipt.querySelectorAll('button[type=button][aria-label="Remove file"]');
+  return visible(filename) && !!filename.textContent.trim() && remove.length === 1 &&
+    visible(remove[0]) && !remove[0].disabled && remove[0].getAttribute('aria-disabled') !== 'true';
+}
+"""
+
+#: Committed values, never the combobox's editable search query. React Select
+#: uses both class-name prefixes and generated CSS suffixes across ATS versions.
+_COMBO_VALUES_JS = r"""
+box => {
+  if (!box?.isConnected) return [];
+  const shown = e => e.getClientRects().length > 0 &&
+    getComputedStyle(e).visibility !== 'hidden';
+  const control = box.closest('[class*=control]') || box.parentElement;
+  const values = [...control.querySelectorAll(
+    '[class*=single-value], [class*=multi-value], [class$="-singleValue"], [class$="-multiValue"]'
+  )].filter(shown).map(e => e.innerText.trim()).filter(Boolean);
+  if (values.length) return values;
+  const location = box.parentElement.querySelector('input[name=selectedLocation]');
+  if (location?.value && box.value) {
+    try {
+      const selected = JSON.parse(location.value);
+      return selected.name === box.value ? [box.value] : [];
+    } catch {
+      return location.value === box.value ? [box.value] : [];
+    }
+  }
+  return [];
+}
+"""
+
+
 #: Collects every input / textarea / select with its label and state.
 #: Labels come from aria-labelledby, <label>, aria-label, then the nearest
 #: question heading above the element (Lever and Ashby put the question in a
@@ -88,11 +150,9 @@ _READ_FIELDS_JS = r"""
     /[*✱]\s*$/.test(clean(node.textContent)) ||
     /required/i.test(String(node.className)) ||
     !!node.querySelector('[class*=required]'));
-  const comboHasValue = el => {
-    const control = el.closest('[class*=control]');
-    return !!(control && control.querySelector('[class*=single-value], [class*=multi-value]'));
-  };
+  const comboValues = (""" + _COMBO_VALUES_JS + r""");
 
+  const uploadGroupFor = (""" + _UPLOAD_GROUP_JS + r""");
   const rows = [];
   for (const el of document.querySelectorAll('input, textarea, select')) {
     const tag = el.tagName.toLowerCase();
@@ -109,6 +169,8 @@ _READ_FIELDS_JS = r"""
     }
     const key = keyOf(el);
     const question = questionEl(el);
+    const uploadGroup = type === 'file' ? uploadGroupFor(el) : null;
+    const uploadLabel = uploadGroup ? ownLabel(uploadGroup) : '';
     const own = ownLabel(el);
     let kind = tag === 'textarea' ? 'textarea' : tag === 'select' ? 'select' : 'text';
     if (choice || type === 'file') kind = type;
@@ -116,31 +178,41 @@ _READ_FIELDS_JS = r"""
     // Lever's location box: a plain input followed by a suggestions dropdown.
     if (tag === 'input' && type === 'text' && el.parentElement &&
         el.parentElement.querySelector('[class*=dropdown-results]')) kind = 'combobox';
-    const label = choice || type === 'file'
+    const label = uploadLabel || (choice || type === 'file'
       ? (question ? textOf(question) : own)
-      : (own || (question ? textOf(question) : ''));
+      : (own || (question ? textOf(question) : '')));
     let blank = !el.value;
     if (choice) blank = !el.checked;
     if (type === 'file') blank = !(el.files && el.files.length);
-    if (kind === 'combobox') blank = !comboHasValue(el) && !el.value;
+    if (kind === 'combobox') blank = comboValues(el).length === 0;
     if (tag === 'select') blank = !el.value || el.selectedIndex < 0;
-    if (kind === 'combobox') {
-      const selectedLocation = el.parentElement?.querySelector('input[name=selectedLocation]');
-      if (selectedLocation) blank = !selectedLocation.value;
-    }
     rows.push({
       key, kind, type, label, option: choice ? own : '',
       name: el.getAttribute('name') || '', id: el.id || '',
       autocomplete: el.getAttribute('autocomplete') || '',
       required: !!el.required || el.getAttribute('aria-required') === 'true' ||
+                uploadGroup?.getAttribute('aria-required') === 'true' ||
                 looksRequired(ownLabelEl(el)) || looksRequired(question),
       options: tag === 'select'
-        ? Array.from(el.options).filter(o => o.value !== '').map(o => clean(o.textContent))
+        ? Array.from(el.options).filter(o => o.value !== '' && !o.disabled && !o.parentElement.disabled).map(o => clean(o.textContent))
         : [],
       blank,
       invalid: el.getAttribute('aria-invalid') === 'true' ||
                (!!el.willValidate && !el.validity.valid),
       autofill: !!el.closest('[class*=autofill]'),
+    });
+  }
+  const uploadedGroup = (""" + _UPLOADED_FILE_GROUP_JS + r""");
+  for (const group of document.querySelectorAll('.file-upload[role=group][aria-labelledby]')) {
+    if (!uploadedGroup(group)) continue;
+    const label = ownLabel(group);
+    if (!label) continue;
+    rows.push({
+      key: keyOf(group), kind: 'file', type: 'file', label, option: '',
+      name: '', id: '', autocomplete: '',
+      required: group.getAttribute('aria-required') === 'true',
+      options: [], blank: false, invalid: false,
+      autofill: !!group.closest('[class*=autofill]'),
     });
   }
   return rows;
@@ -325,20 +397,24 @@ _SELECT_JS = r"""
 (key, text) => {
   const el = globalThis.applyaiByKey.get(key);
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-  const option = Array.from(el.options).find(o => clean(o.textContent) === text);
-  if (!option) return false;
+  const options = Array.from(el.options).filter(
+    o => clean(o.textContent) === text && !o.disabled && !o.parentElement.disabled
+  );
+  if (options.length !== 1) return false;
+  const option = options[0];
   el.focus();
   option.selected = true;
   el.dispatchEvent(new Event('input', {bubbles: true}));
   el.dispatchEvent(new Event('change', {bubbles: true}));
   el.blur();
-  return true;
+  return el.isConnected && option.isConnected && option.selected &&
+    el.selectedOptions.length === 1 && el.selectedOptions[0] === option;
 }
 """
 
 
 def choose_select(frame: Frame, key: str, option_text: str) -> bool:
-    """Pick an option of a native <select> by its visible text; False if it has none such."""
+    """Pick one native option and verify its selected state after blur."""
     _guard(frame, key)
     return bool(frame.call(_SELECT_JS, key, option_text))
 
@@ -399,33 +475,34 @@ _LOADING_SELECTOR = ".dropdown-loading-results, [aria-busy=true]"
 #: keeps adding the answer of an old search to its closed (hidden) list.
 #: `want` picks what to return about them.
 _SUGGESTIONS_JS = r"""
-(key, index, want) => {
+(key, index, want, expected = null) => {
   const box = globalThis.applyaiByKey.get(key);
+  if (want === 'selected') return (""" + _COMBO_VALUES_JS + r""")(box);
+  if (!box?.isConnected) return want === 'list' ? {texts: [], loading: false} : null;
   const listId = box.getAttribute('aria-controls') || box.getAttribute('aria-owns');
   const scope = listId ? document.getElementById(listId) : box.parentElement;
   const selector = listId ? '[role=option]' : '[role=option], .__CLASS__';
-  const shown = e => e.getClientRects().length > 0;
-  const options = scope ? Array.from(scope.querySelectorAll(selector)).filter(shown) : [];
+  const shown = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const options = scope ? Array.from(scope.querySelectorAll(selector)).filter(
+    e => shown(e) && e.getAttribute('aria-disabled') !== 'true' && !e.disabled
+  ) : [];
   if (want === 'list') {
     const busy = scope ? [scope, ...scope.querySelectorAll('__LOADING__')] : [];
     return {texts: options.map(o => o.innerText),
             loading: busy.some(e => e.matches('__LOADING__') && shown(e))};
   }
-  if (want === 'selected') {
-    const control = box.closest('[class*=control]') || box.parentElement;
-    const values = Array.from(control.querySelectorAll(
-      '[class*=single-value], [class*=multi-value]'
-    )).filter(shown).map(e => e.innerText);
-    if (values.length) return values;
-    // Lever must retain its hidden selectedLocation, not merely the search text.
-    const location = box.parentElement.querySelector('input[name=selectedLocation]');
-    if (location && !location.value) return [];
-    return !options.length && box.value ? [box.value] : [];
-  }
   const option = options[index];
-  if (!option) return null;
+  if (!option || option.getAttribute('aria-disabled') === 'true') return null;
+  const title = e => e.innerText.split(/\r?\n/).map(s => s.replace(/\s+/g, ' ').trim()).find(Boolean) || '';
+  if (expected !== null && title(option) !== expected) return null;
+  const targets = globalThis.applyaiSuggestionTargets ??= new Map();
+  if (want === 'check') targets.set(key, option);
+  else if (targets.get(key) !== option) return null;
   if (want === 'node') return option;
   if (want === 'click') {
+    const role = option.getAttribute('role'), tag = option.tagName.toLowerCase();
+    if ((role !== 'option' && !option.classList.contains('__CLASS__')) ||
+        ['button', 'input', 'a'].includes(tag)) return false;
     // the events a mouse click sends: Lever picks a place on mousedown, react-select on click
     for (const type of ['mousedown', 'mouseup', 'click'])
       option.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, button: 0}));
@@ -449,7 +526,8 @@ _ARROW_DOWN = "\ue015"
 
 
 def pick_from_search(
-    frame: Frame, key: str, search_text: str, candidates: tuple[str, ...], *, location: bool
+    frame: Frame, key: str, search_text: str, candidates: tuple[str, ...], *,
+    location: bool, prefix: bool = True,
 ) -> bool:
     """Type into a search-as-you-type box and click the suggestion that matches.
 
@@ -462,7 +540,7 @@ def pick_from_search(
     frame.call(_CLEAR_JS, key)                     # empty it and keep the focus there ...
     frame.type(typed)                              # ... then real key presses open the list
     options = _wait_for_options(frame, key)
-    return _click_match(frame, key, options, candidates, location=location, prefix=True)
+    return _click_match(frame, key, options, candidates, location=location, prefix=prefix)
 
 
 def pick_from_list(
@@ -492,17 +570,25 @@ def _click_match(
     if index is None:
         frame.call(_FILL_JS, key, "")
         return False
-    found = frame.call(_SUGGESTIONS_JS, key, index, "check")
+    found = frame.call(_SUGGESTIONS_JS, key, index, "check", options[index])
     if found is None or _option_title(found["text"]) != options[index]:
+        frame.call(_FILL_JS, key, "")
         return False
     role, tag, css = found["role"], found["tag"], found["css"]
     if (role != "option" and _SUGGESTION_CLASS not in css) or tag in ("button", "input", "a"):
         raise UnsafeAction(f"refusing to click <{tag} role={role}>")
-    option = frame.node(_SUGGESTIONS_JS, key, index, "node")
-    if found["reachable"] and option is not None:
-        frame.click(option)
-    else:
-        frame.call(_SUGGESTIONS_JS, key, index, "click")
+    option = frame.node(_SUGGESTIONS_JS, key, index, "node", options[index])
+    if option is None:
+        frame.call(_FILL_JS, key, "")
+        return False
+    try:
+        if found["reachable"]:
+            frame.click(option)
+        else:
+            frame.call(_SUGGESTIONS_JS, key, index, "click", options[index])
+    except BidiError:
+        frame.call(_FILL_JS, key, "")
+        raise
     frame.call("(key) => globalThis.applyaiByKey.get(key).blur()", key)
     deadline = time.monotonic() + 0.8
     while time.monotonic() < deadline:
@@ -510,6 +596,7 @@ def _click_match(
         if match_option((options[index],), selected, location=location, prefix=False) is not None:
             return True
         time.sleep(0.1)
+    frame.call(_FILL_JS, key, "")
     return False
 
 

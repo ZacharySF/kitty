@@ -19,7 +19,7 @@ from applyai.core.apply.bidi import Tab, open_tab
 from applyai.core.apply.browser import headless_firefox
 from applyai.core.apply.fields import FormField, graduation_answer_spellings, match_option, plan_for
 from applyai.core.apply.filler import _apply_plan, _watched_tab, choose_resume, fill_job, fill_jobs
-from applyai.core.apply.page import pick_from_list, read_fields
+from applyai.core.apply.page import choose_select, pick_from_list, pick_from_search, read_fields
 from applyai.core.apply.urls import detect_ats, form_url
 from applyai.settings import Settings, find_firefox
 
@@ -302,6 +302,154 @@ def test_major_option_click_must_commit_a_selected_value(space, page):
     _assert_nothing_submitted(page)
 
 
+@pytest.mark.parametrize("value_class", ["select__single-value", "css-19bb58m-singleValue"])
+@pytest.mark.parametrize("search_only", [False, True])
+def test_saved_combined_discipline_selects_decorated_ece_and_survives_blur(
+    space, page, value_class, search_only,
+):
+    choice = "ECE - Electrical and Computer Engineering"
+    frame, major = _major_picker(
+        page, [choice, "Electrical and Computer Engineering Technology"],
+        valueClass=value_class, **({"initialChoices": []} if search_only else {}),
+    )
+    profile = space.config.profile.model_copy(update={
+        "major": "Electrical and Computer Engineering", "discipline": None, "discipline_by_track": {},
+    })
+    plan = plan_for(replace(major, label="Discipline"), replace(space.config, profile=profile))
+    assert plan.exact_choices
+    assert _apply_plan([frame], major, plan)
+    assert _value(page, "#major") == ""
+    assert _parent_text(page, "#major") == choice
+    assert not next(f for f in read_fields([frame]) if f.key == major.key).blank
+    assert _js(page, "() => document.activeElement.id") != "major"
+    assert _js(page, "() => window.__unrelatedClicks") == 0
+    _assert_nothing_submitted(page)
+
+
+@pytest.mark.parametrize("settings", [
+    {"commit": False}, {"commit": "query"}, {"rejectOnBlur": True},
+])
+def test_typed_discipline_is_not_selection_and_failed_click_clears_query(space, page, settings):
+    choice = "ECE - Electrical and Computer Engineering"
+    frame, major = _major_picker(page, [choice], **settings)
+    assert not pick_from_search(
+        frame, major.key, "Electrical and Computer Engineering",
+        ("Electrical and Computer Engineering",), location=False, prefix=False,
+    )
+    assert _value(page, "#major") == ""
+    assert next(f for f in read_fields([frame]) if f.key == major.key).blank
+    _assert_nothing_submitted(page)
+
+
+def test_read_fields_does_not_treat_closed_typed_query_as_selected(page):
+    frame, major = _major_picker(page, ["ECE - Electrical and Computer Engineering"])
+    _js(page, "() => { document.querySelector('#major').value = 'Electrical and Computer Engineering'; }")
+    assert next(f for f in read_fields([frame]) if f.key == major.key).blank
+    _assert_nothing_submitted(page)
+
+
+@pytest.mark.parametrize("choices", [
+    ["ECE - Electrical and Computer Engineering", "ECE — Electrical and Computer Engineering"],
+    ["Electrical and Computer Engineering", "Electrical and Computer Engineering"],
+    ["Electrical and Computer Engineering Technology"],
+    ["XYZ - Electrical and Computer Engineering"],
+])
+def test_discipline_refuses_ambiguous_or_different_programs(space, page, choices):
+    frame, major = _major_picker(page, choices)
+    profile = space.config.profile.model_copy(update={
+        "major": "Electrical and Computer Engineering", "discipline": None, "discipline_by_track": {},
+    })
+    plan = plan_for(major, replace(space.config, profile=profile))
+    assert not _apply_plan([frame], major, plan)
+    assert _value(page, "#major") == ""
+    assert next(f for f in read_fields([frame]) if f.key == major.key).blank
+    assert _js(page, "() => window.__unrelatedClicks") == 0
+    _assert_nothing_submitted(page)
+
+
+def test_disabled_custom_discipline_is_not_an_available_choice(page):
+    choice = "ECE - Electrical and Computer Engineering"
+    frame, major = _major_picker(page, [choice], disabledChoices=[choice])
+    assert not pick_from_list(frame, major.key, ("Electrical and Computer Engineering",), location=False)
+    assert _value(page, "#major") == ""
+    assert next(f for f in read_fields([frame]) if f.key == major.key).blank
+    _assert_nothing_submitted(page)
+
+
+@pytest.mark.parametrize("replace_after_check", [False, True])
+def test_stale_or_replaced_discipline_option_clears_query(page, monkeypatch, replace_after_check):
+    from applyai.core.apply import page as page_core
+
+    choice = "ECE - Electrical and Computer Engineering"
+    frame, major = _major_picker(page, [choice])
+    _js(page, """() => {
+        const input = document.querySelector('#major');
+        input.value = 'Electrical and Computer Engineering';
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        window.__replacementClicks = 0;
+    }""")
+    original_call = type(frame).call
+    if replace_after_check:
+        def replace_option(self, fn, *args, **kwargs):
+            result = original_call(self, fn, *args, **kwargs)
+            if fn == page_core._SUGGESTIONS_JS and len(args) > 2 and args[2] == "check":
+                _js(page, """() => {
+                    const old = document.querySelector('#major-listbox [role=option]');
+                    const replacement = old.cloneNode(true);
+                    replacement.onclick = () => window.__replacementClicks++;
+                    old.replaceWith(replacement);
+                }""")
+            return result
+        monkeypatch.setattr(type(frame), "call", replace_option)
+    else:
+        _js(page, "() => document.querySelector('#major-listbox [role=option]').textContent = 'Mechanical Engineering'")
+    assert not page_core._click_match(
+        frame, major.key, [choice], ("Electrical and Computer Engineering",),
+        location=False, prefix=False,
+    )
+    assert _value(page, "#major") == ""
+    assert _js(page, "() => window.__replacementClicks") == 0
+    _assert_nothing_submitted(page)
+
+
+@pytest.mark.parametrize("reject_on_blur", [False, True])
+def test_native_discipline_selects_unique_decorated_ece_and_checks_blur(
+    space, page, reject_on_blur,
+):
+    page.goto((FORMS / "greenhouse.html").as_uri())
+    _js(page, """(reject) => {
+        const old = document.querySelector('#major').parentElement;
+        old.innerHTML = `<select id="major" aria-label="Discipline">
+          <option value="">Select...</option>
+          <option value="wrong">Electrical and Computer Engineering Technology</option>
+          <option value="ece">ECE - Electrical and Computer Engineering</option>
+          <option value="disabled" disabled>Electrical and Computer Engineering</option>
+        </select>`;
+        if (reject) document.querySelector('#major').onblur = e => { e.target.value = ''; };
+    }""", reject_on_blur)
+    field = next(f for f in read_fields([page.main]) if f.element_id == "major")
+    profile = space.config.profile.model_copy(update={
+        "major": "Electrical and Computer Engineering", "discipline": None, "discipline_by_track": {},
+    })
+    assert "Electrical and Computer Engineering" not in field.options
+    plan = plan_for(field, replace(space.config, profile=profile))
+    assert _apply_plan([page.main], field, plan) is not reject_on_blur
+    assert _value(page, "#major") == ("" if reject_on_blur else "ece")
+    _assert_nothing_submitted(page)
+
+
+def test_native_select_refuses_duplicate_visible_options(page):
+    page.goto((FORMS / "greenhouse.html").as_uri())
+    _js(page, """() => {
+        document.querySelector('#gender').innerHTML =
+          '<option value="">Select...</option><option value="a">Same</option><option value="b">Same</option>';
+    }""")
+    field = next(f for f in read_fields([page.main]) if f.element_id == "gender")
+    assert not choose_select(page.main, field.key, "Same")
+    assert _value(page, "#gender") == ""
+    _assert_nothing_submitted(page)
+
+
 def test_fill_jobs_reports_each_job_and_never_records_an_application(space):
     if find_firefox() is None:
         pytest.skip("firefox is not on PATH")
@@ -343,6 +491,39 @@ def test_option_matching_is_exact_or_a_unique_prefix():
     assert match_option(["Maybe"], ["Yes", "No"]) is None
     places = ["Arlington, Virginia, United States", "Arlington, Texas, United States"]
     assert match_option(["Arlington, TX"], places, location=True) == 1
+
+
+def test_option_matching_prefers_exact_candidates_before_prefixes_and_decorations():
+    assert match_option(["Yes", "No"], ["Yes, sometimes", "No"]) == 1
+    options = ["ECE - Electrical and Computer Engineering", "Electrical and Computer Engineering"]
+    assert match_option(["Electrical and Computer Engineering"], options, prefix=False) == 1
+    assert match_option(["Electrical Engineering", "Electrical and Computer Engineering"],
+                        ["Electrical and Computer Engineering", "Electrical Engineering"]) == 1
+    assert match_option(["Electrical Engineering", "Electrical and Computer Engineering"],
+                        ["Electrical and Computer Engineering", "EE - Electrical Engineering"],
+                        prefix=False) == 1
+
+
+@pytest.mark.parametrize("option", [
+    "ECE - Electrical and Computer Engineering",
+    "ECE — Electrical and Computer Engineering",
+    "Electrical and Computer Engineering (ECE)",
+])
+def test_option_acronym_decoration_requires_equivalent_complete_name(option):
+    major = "Electrical and Computer Engineering"
+    assert match_option([major], [option], prefix=False) == 0
+    assert match_option([option], [major], prefix=False) == 0
+    assert match_option(["Electrical Engineering"], [option], prefix=False) is None
+    assert match_option([major], ["XYZ - " + major], prefix=False) is None
+    assert match_option([major], ["ECE - " + major + " Technology"], prefix=False) is None
+    assert match_option([major], ["Unrelated " + major], prefix=False) is None
+
+
+def test_duplicate_exact_and_decorated_options_are_ambiguous():
+    major = "Electrical and Computer Engineering"
+    assert match_option([major], [major, major]) is None
+    assert match_option([major], ["ECE - " + major, major + " (ECE)"], prefix=False) is None
+    assert match_option(["Yes", "No"], ["Yes", "YES", "No"]) is None
 
 
 def _field(label: str, kind: str = "text", **extra) -> FormField:
@@ -787,6 +968,168 @@ def test_required_wrapper_must_have_a_readable_validated_value(space, page, cont
     _assert_nothing_submitted(page)
 
 
+def test_required_native_upload_inherits_group_label_and_requiredness(space, page):
+    from applyai.core.apply.page import form_frames, read_fields
+    from applyai.core.apply.preflight import inspect_page
+
+    job = _safety_form(space, page)
+    _js(page, """() => {
+        const input = document.querySelector('[name=resume]');
+        input.parentElement.outerHTML = `<div role="group" aria-labelledby="upload-label-resume" aria-required="true">
+            <div id="upload-label-resume">Resume/CV<span class="required">*</span></div>
+            <div class="file-upload__wrapper"><div class="button-container">
+                <div class="secondary-button"><div>
+                    <label for="resume">Attach</label>
+                    <input id="resume" name="resume" type="file" style="position:absolute;opacity:0" accept=".pdf">
+                </div></div>
+            </div></div></div>`;
+    }""")
+    upload = next(field for field in read_fields(form_frames(page)) if field.kind == 'file')
+    assert upload.required
+    assert 'Resume/CV' in upload.label
+    assert not inspect_page(page).unsupported_required
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert _value(page, '[name=first_name]') == 'Pat'
+    assert _files(page, '[name=resume]') == ['resume.pdf']
+    assert result.status == 'ready'
+    _assert_nothing_submitted(page)
+
+
+def _replacing_resume_upload(page):
+    _js(page, """() => {
+        const input = document.querySelector('[name=resume]');
+        input.parentElement.outerHTML = `<div class="file-upload" role="group"
+            aria-labelledby="upload-label-resume" aria-required="true">
+            <div id="upload-label-resume">Resume/CV<span class="required">*</span></div>
+            <div class="file-upload__wrapper"><label>Attach
+              <input id="resume" name="resume" type="file"></label></div></div>`;
+        document.querySelector('[name=resume]').addEventListener('change', event => {
+            if (!event.target.files.length) return;
+            const wrapper = event.target.closest('.file-upload__wrapper');
+            const name = event.target.files[0].name;
+            wrapper.innerHTML = `<div class="file-upload__filename">
+                <p class="body body__secondary"></p>
+                <button type="button" aria-label="Remove file">Remove</button></div>`;
+            wrapper.querySelector('p').textContent = name;
+        });
+    }""")
+
+
+def test_uploaded_resume_receipt_survives_removed_input_and_resume(space, page):
+    job = _safety_form(space, page)
+    _replacing_resume_upload(page)
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert result.status == 'ready'
+    assert _js(page, "() => document.querySelector('.file-upload__filename p').textContent") == 'resume.pdf'
+    assert _js(page, "() => document.querySelector('input[type=file]')") is None
+    assert result.resume_id is not None
+    _js(page, "() => document.querySelector('[name=first_name]').value = 'Manual retained name'")
+    retained = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert retained.status == 'ready'
+    assert _value(page, '[name=first_name]') == 'Manual retained name'
+    _assert_nothing_submitted(page)
+
+
+@pytest.mark.parametrize('state', ['pending', 'error', 'missing-filename', 'missing-remove'])
+def test_incomplete_upload_receipt_cannot_prove_resume_readiness(space, page, state):
+    job = _safety_form(space, page)
+    _replacing_resume_upload(page)
+    _attach_fixture_resume(space, page)
+    _js(page, """state => {
+        const group = document.querySelector('.file-upload');
+        if (state === 'pending') group.insertAdjacentHTML('beforeend', '<div aria-busy="true">Uploading</div>');
+        if (state === 'error') group.insertAdjacentHTML('beforeend', '<p class="helper-text--error">Upload failed</p>');
+        if (state === 'missing-filename') group.querySelector('.file-upload__filename p').textContent = '';
+        if (state === 'missing-remove') group.querySelector('button').remove();
+    }""", state)
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert result.status == 'blocked'
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+    _assert_nothing_submitted(page)
+
+
+def test_unknown_required_widget_does_not_prevent_known_fields_and_resume(space, page):
+    job = _safety_form(space, page)
+    _js(page, """() => {
+        const question = document.createElement('div');
+        question.setAttribute('role', 'radiogroup');
+        question.setAttribute('aria-required', 'true');
+        question.innerHTML = '<p>Employer-specific required choice</p><button type="button">One</button><button type="button">Two</button>';
+        window.__customChoices = 0;
+        question.onclick = () => window.__customChoices++;
+        document.querySelector('form').appendChild(question);
+    }""")
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert _value(page, '[name=first_name]') == 'Pat'
+    assert _files(page, '[name=resume]') == ['resume.pdf']
+    assert result.status == 'blocked'
+    assert result.note.startswith('unsupported:')
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+    assert _js(page, '() => window.__customChoices') == 0
+    _assert_nothing_submitted(page)
+
+
+def test_new_required_custom_widget_prevents_step_advance(page):
+    from applyai.core.apply.preflight import advance, inspect_page
+    from applyai.core.apply.page import UnsafeAction
+
+    page.goto((FORMS / 'workday_steps.html').as_uri())
+    _js(page, "() => document.querySelectorAll('[required]').forEach(e => e.required = false)")
+    reviewed = inspect_page(page)
+    _js(page, """() => {
+        const control = document.createElement('div');
+        control.setAttribute('role', 'radiogroup');
+        control.setAttribute('aria-required', 'true');
+        control.innerHTML = '<button type="button">Unrecognized choice</button>';
+        document.body.appendChild(control);
+    }""")
+    with pytest.raises(UnsafeAction):
+        advance(reviewed, 'workday')
+    assert inspect_page(page).unsupported_required
+    assert _js(page, '() => [window.__steps, window.__submitted]') == [0, 0]
+
+
+@pytest.mark.parametrize('disconnect', [False, True])
+def test_later_browser_failure_preserves_completed_job_reports(space, monkeypatch, disconnect):
+    from types import SimpleNamespace
+    from applyai.core.apply import filler
+    from applyai.core.apply.bidi import ConnectionLost, TabClosed
+
+    postings = [_job(space, name) for name in ('greenhouse', 'lever', 'unanswered')]
+    opened = []
+    prepared = []
+
+    def open_next(*args, **kwargs):
+        opened.append(len(opened))
+        if len(opened) == 2:
+            error = ConnectionLost if disconnect else TabClosed
+            raise error('browser disconnected' if disconnect else 'no such frame: closed tab')
+        return SimpleNamespace(context=str(len(opened)), activate=lambda: None)
+
+    def prepare(tab, conn, settings, config, job, **kwargs):
+        prepared.append(job.id)
+        return filler.FillReport(job.id, job.company_name, job.title, job.url,
+                                 'greenhouse', 'general', ['First Name', 'resume'], [], 'ready')
+
+    monkeypatch.setattr(filler, 'open_tab', open_next)
+    monkeypatch.setattr(filler, 'fill_job', prepare)
+    reports = filler._fill_all(
+        SimpleNamespace(redact=lambda value: value), space.conn, space.settings,
+        space.config, [job.id for job in postings], lambda message: None,
+        keep_open=True, pause=0,
+    )
+    assert [report.job_id for report in reports] == [job.id for job in postings]
+    assert reports[0].status == 'ready'
+    assert reports[1].status == 'error'
+    if disconnect:
+        assert prepared == [postings[0].id]
+        assert reports[2].status == 'error'
+        assert 'before this job' in reports[2].error
+    else:
+        assert prepared == [postings[0].id, postings[2].id]
+        assert reports[2].status == 'ready'
+
+
 @pytest.mark.parametrize("retained_upload", [False, True])
 def test_pending_upload_never_becomes_ready_even_with_local_file_selected(
     space, page, monkeypatch, retained_upload,
@@ -906,3 +1249,106 @@ def test_workday_prefixed_review_stops_without_waiting_for_missing_fields(page):
     assert state.step == "current step 6 of 6 Review"
     assert not state.has_fields
     assert _js(page, "() => [window.__steps, window.__submitted]") == [0, 0]
+
+
+def _approval(space, job):
+    from applyai.core.apply.filler import FillApproval
+    resume = choose_resume(space.conn, space.config, job)
+    return FillApproval(job.id, job.url, job.apply_url, job.company_name, tuple(job.tracks),
+                        resume.id, resume.file_hash, resume.file_path)
+
+
+@pytest.mark.parametrize("change", ["missing", "bytes", "record", "url"])
+def test_approved_fill_fails_before_browser_if_inputs_changed(space, monkeypatch, change):
+    from applyai.core.apply import filler
+    job = _job(space, "greenhouse")
+    approval = _approval(space, job)
+    approvals = {job.id: approval}
+    if change == "missing":
+        approvals.clear()
+    elif change == "bytes":
+        Path(approval.file_path).write_bytes(b"%PDF-1.4\n% changed resume\n")
+    elif change == "record":
+        replacement = space.settings.root / "replacement.pdf"
+        replacement.write_bytes(b"%PDF-1.4\n% different registered resume\n")
+        resumes_core.add_resume(space.conn, space.track.default_resume, replacement)
+    else:
+        space.conn.execute("UPDATE jobs SET apply_url=? WHERE id=?",
+                           ("https://example.invalid/changed", job.id))
+    monkeypatch.setattr(filler, "ensure_firefox", lambda *a: pytest.fail("Must reject before browser"))
+    with pytest.raises(filler.ApprovalError, match="review the plan again"):
+        filler.fill_jobs(space.settings, space.config, [job.id], approvals=approvals)
+
+
+def test_approved_fill_uploads_only_reviewed_bytes_after_default_changes(space, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from applyai.core.apply import filler
+    job = _job(space, "greenhouse")
+    approval = _approval(space, job)
+    expected = Path(approval.file_path).read_bytes()
+    second = space.settings.root / "new-default.pdf"
+    second.write_bytes(b"%PDF-1.4\n% different default resume\n")
+    replacement = resumes_core.add_resume(space.conn, "New default", second)
+    space.conn.execute("INSERT INTO resume_default_overrides (track, resume_id) VALUES (?, ?)",
+                       (space.track.name, replacement.id))
+    monkeypatch.setattr(filler, "choose_resume", lambda *a: pytest.fail("Approval must never re-resolve a default"))
+    bidi = SimpleNamespace(redact=lambda value: value)
+    tab = SimpleNamespace(bidi=bidi, context="approved-tab", goto=lambda url: None,
+                          close=lambda: None, main=SimpleNamespace(url=job.url))
+    @contextmanager
+    def browser(settings):
+        yield bidi
+    monkeypatch.setattr(filler, "headless_firefox", browser)
+    monkeypatch.setattr(filler, "_retained_tab", lambda *a: None)
+    monkeypatch.setattr(filler, "open_tab", lambda *a, **k: tab)
+    monkeypatch.setattr(filler, "settle", lambda *a, **k: None)
+    monkeypatch.setattr(filler, "wait_for_page", lambda *a, **k: SimpleNamespace(
+        blocker=None, signature="form", entry=False, step=True, boundary=True,
+    ))
+    monkeypatch.setattr(filler, "inspect_page", lambda *a: SimpleNamespace(
+        blocker=None, errors=[], review=True, boundary=True, unsupported_required=False,
+    ))
+    uploaded = []
+    monkeypatch.setattr(filler, "upload", lambda frame, key, path: uploaded.append((path, path.read_bytes())))
+    def form(page, config, path, *, upload_resume, **kwargs):
+        assert path == Path(approval.file_path)
+        upload_resume(None, "resume-input", path)
+        return filler.FormResult(filled=["resume"], resume_uploaded=True, resume_verified=True, fields_found=1)
+    monkeypatch.setattr(filler, "fill_form", form)
+    reports = filler.fill_jobs(space.settings, space.config, [job.id], headless=True,
+                               approvals={job.id: approval})
+    assert reports[0].status == "ready"
+    assert reports[0].resume_id == approval.resume_id
+    assert jobs_core.get_job(space.conn, job.id).resume_id == approval.resume_id
+    assert len(uploaded) == 1
+    frozen, content = uploaded[0]
+    assert content == expected
+    assert frozen != Path(approval.file_path)
+    assert frozen.read_bytes() == expected  # survives worker return for human submit
+    assert frozen.stat().st_mode & 0o777 == 0o400
+    watched = _watched_tab(job, tab, reports[0])
+    assert watched.resume_id == approval.resume_id
+
+
+@pytest.mark.parametrize("change", ["changed", "missing", "symlink", "corrupt_snapshot"])
+def test_approved_upload_checks_source_and_snapshot_at_upload(space, monkeypatch, change):
+    from applyai.core.apply import filler
+    job = _job(space, "greenhouse")
+    approval = _approval(space, job)
+    path = Path(approval.file_path)
+    if change == "changed":
+        path.write_bytes(b"%PDF-1.4\n% changed after browser began\n")
+    elif change == "missing":
+        path.unlink()
+    else:
+        folder = space.settings.data_dir / "approved_resumes"
+        folder.mkdir(parents=True)
+        frozen = folder / f"{approval.file_hash}.pdf"
+        if change == "symlink":
+            frozen.symlink_to(path)
+        else:
+            frozen.write_bytes(b"not the reviewed bytes")
+    monkeypatch.setattr(filler, "upload", lambda *a: pytest.fail("Unapproved bytes must not upload"))
+    with pytest.raises(filler.ApprovalError, match="review the plan again"):
+        filler._upload_approved(None, "resume-input", path, approval, space.conn, space.settings)

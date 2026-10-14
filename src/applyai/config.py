@@ -10,11 +10,16 @@ location back onto the YAML node tree, which is why the raw text is composed
 from __future__ import annotations
 
 from dataclasses import dataclass
+from ipaddress import IPv4Address, IPv6Address
 from pathlib import Path
+import re
 from typing import Any, Iterable, Literal, Sequence
+from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel, ConfigDict, Field, PrivateAttr, StrictBool, ValidationError, field_validator, model_validator,
+)
 
 AtsKind = Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "workable"]
 #: "none" = no board I can poll; the reason (and the real ATS, if known) goes in notes.
@@ -517,6 +522,85 @@ class TriageFile(_Base):
 # --------------------------------------------------------------------- apply
 
 
+def _authentication_origin(url: str, *, origin_only: bool = False) -> str | None:
+    """Use a deliberately narrow URL grammar, avoiding browser/parser disagreement."""
+    if not isinstance(url, str) or not url or any(
+        char.isspace() or ord(char) < 32 or ord(char) == 127 or char == "\\"
+        for char in url
+    ):
+        return None
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme != "https" or not parsed.netloc or "@" in parsed.netloc:
+            return None
+        if origin_only and (parsed.path not in ("", "/") or "?" in url or "#" in url):
+            return None
+        host = parsed.hostname
+        if not host or not host.isascii() or "%" in host:
+            return None
+        if ":" in host:
+            host = f"[{IPv6Address(host).compressed}]"
+            if not parsed.netloc.startswith("["):
+                return None
+        else:
+            if len(host) > 253 or any(
+                not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                for label in host.split(".")
+            ):
+                return None
+            # Browsers interpret abbreviated, octal and hexadecimal IPv4 hosts.
+            # Require canonical dotted decimal rather than blessing a spelling
+            # that another URL parser can send to a different host.
+            last_label = host.rsplit(".", 1)[-1]
+            if last_label.isdigit() or re.fullmatch(r"0x[0-9a-f]+", last_label):
+                if str(IPv4Address(host)) != host:
+                    return None
+        port = parsed.port
+        if parsed.netloc.endswith(":") or (port is not None and not 1 <= port <= 65535):
+            return None
+        return f"https://{host}" + (f":{port}" if port not in (None, 443) else "")
+    except ValueError:
+        return None
+
+
+class AuthenticationSettings(_Base):
+    """Explicit local approval only; neither discovered jobs nor ATS names opt in."""
+
+    enabled: StrictBool = False
+    allow_account_creation: StrictBool = False
+    approved_origins: list[str] = Field(default_factory=list)
+    #: Reviewed per-run choice; legacy policies use only the already recognized form.
+    account_mode: Literal["recognized", "login", "create", "google"] = "recognized"
+    _credential_binding: str | None = PrivateAttr(default=None)
+    # Google session reuse is authorized only by a reviewed website run.
+    _google_email: str | None = PrivateAttr(default=None)
+
+    @field_validator("approved_origins")
+    @classmethod
+    def _exact_origins(cls, value: list[str]) -> list[str]:
+        origins: list[str] = []
+        for item in value:
+            origin = _authentication_origin(item, origin_only=True)
+            if origin is None:
+                raise ValueError("approved_origins must contain exact HTTPS origins only")
+            if origin not in origins:
+                origins.append(origin)
+        return origins
+
+    @model_validator(mode="after")
+    def _explicit_opt_in(self) -> AuthenticationSettings:
+        if self.enabled and not self.approved_origins:
+            raise ValueError("enabled authentication requires approved_origins")
+        if self.allow_account_creation and not self.enabled:
+            raise ValueError("account creation requires enabled authentication")
+        return self
+
+    def approves(self, url: str) -> bool:
+        """Approve only an enabled, exact HTTPS origin, including nondefault port."""
+        origin = _authentication_origin(url)
+        return self.enabled and origin is not None and origin in self.approved_origins
+
+
 class ApplyFile(_Base):
     """config/apply.yaml - the Stage 4 daily-flow settings (reminders and the digest)."""
 
@@ -533,6 +617,8 @@ class ApplyFile(_Base):
     autofill_cap: int = Field(default=10, ge=1)
     #: Seconds autofill waits between one job's form and the next: polite over fast.
     autofill_pause_seconds: float = Field(default=15.0, ge=2)
+    #: Login and account creation remain off unless explicitly approved locally.
+    authentication: AuthenticationSettings = Field(default_factory=AuthenticationSettings)
 
     @field_validator("followup_days")
     @classmethod

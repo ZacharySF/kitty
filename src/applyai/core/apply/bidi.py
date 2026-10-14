@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,13 @@ from typing import Any
 
 from websockets.exceptions import WebSocketException
 from websockets.sync.client import ClientConnection, connect
+
+from applyai.core.apply.credentials import redact
+
+# Wire-level DEBUG output includes script arguments (and therefore passwords).
+# An unregistered, disabled logger cannot inherit application/root debug handlers.
+_TRANSPORT_LOGGER = logging.Logger("applyai.bidi.transport")
+_TRANSPORT_LOGGER.disabled = True
 
 #: Name of the private script realm the filler's JavaScript runs in.
 SANDBOX = "applyai"
@@ -61,10 +69,13 @@ class Bidi:
     """One WebDriver BiDi session with a running Firefox."""
 
     def __init__(self, url: str) -> None:
+        self._secrets: tuple[str, ...] = ()
         try:
             # legacy=True: a plain connection object, closed in close() (the session
             # spans many calls, so a `with` block does not fit)
-            self._ws: ClientConnection = connect(url, max_size=None, open_timeout=5, legacy=True)
+            self._ws: ClientConnection = connect(
+                url, max_size=None, open_timeout=5, legacy=True, logger=_TRANSPORT_LOGGER,
+            )
         except (OSError, WebSocketException) as exc:
             raise BidiError(f"cannot reach Firefox at {url}: {exc}") from exc
         self._ids = itertools.count(1)
@@ -79,6 +90,14 @@ class Bidi:
                 raise SessionBusy("Firefox already has a remote-control session "
                                   "(it allows one at a time)") from exc
             raise BidiError(f"Firefox would not start a remote-control session ({exc})") from exc
+
+    def protect_secrets(self, *values: str) -> None:
+        """Keep credentials local to this session's diagnostic redactor."""
+        self._secrets = tuple(dict.fromkeys((*self._secrets, *values)))
+
+    def redact(self, text: str) -> str:
+        """Sanitize page/transport diagnostics before displaying or persisting them."""
+        return redact(text, self._secrets)
 
     def command(self, method: str, params: dict[str, Any], *, timeout: float = 30.0) -> dict:
         """Send one command and wait for its reply. Events and late replies are skipped."""
@@ -98,10 +117,14 @@ class Bidi:
                     continue
                 if message.get("type") == "error":
                     error_class = TabClosed if message.get("error") == "no such frame" else BidiError
-                    raise error_class(f"{method}: {message.get('error')}: {message.get('message')}")
+                    raise error_class(self.redact(
+                        f"{method}: {message.get('error')}: {message.get('message')}"
+                    )) from None
                 return message.get("result", {})
         except WebSocketException as exc:
-            raise ConnectionLost(f"lost the connection to Firefox during {method}: {exc}") from exc
+            raise ConnectionLost(self.redact(
+                f"lost the connection to Firefox during {method}: {exc}"
+            )) from None
 
     def close(self) -> None:
         """End the session. Firefox and its tabs keep running."""
@@ -164,7 +187,9 @@ class Frame:
         }, timeout=timeout + 5)
         if reply.get("type") == "exception":
             details = reply.get("exceptionDetails", {})
-            raise BidiError(f"page script failed: {details.get('text', 'unknown error')}")
+            raise BidiError(self.bidi.redact(
+                f"page script failed: {details.get('text', 'unknown error')}"
+            )) from None
         return reply.get("result", {})
 
     def click(self, shared_id: str) -> None:

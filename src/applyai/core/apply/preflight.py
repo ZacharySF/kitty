@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 import time
 
 from applyai.core.apply.bidi import Frame, Tab
-from applyai.core.apply.page import UnsafeAction, form_frames
+from applyai.core.apply.page import UnsafeAction, _UPLOAD_GROUP_JS, _UPLOADED_FILE_GROUP_JS, form_frames
 
 # The same snapshot is rechecked in the click script, so a changed final button
 # cannot be clicked using a stale decision from Python.
@@ -22,6 +22,8 @@ _SNAPSHOT = r"""
   const body = text(document.body);
   const controls = all('button, input[type=submit], [role=button]');
   const has = s => all(s).length > 0;
+  const uploadGroupFor = (""" + _UPLOAD_GROUP_JS + r""");
+  const uploadedGroup = (""" + _UPLOADED_FILE_GROUP_JS + r""");
   const step = all('[data-automation-id=progressBarActiveStep], [data-automation-id=progressBar] [aria-current=step], [data-automation-id=progressBar] [aria-selected=true]').map(text).join(' ');
   const stepLabel = step.replace(/^current step\s+\d+\s+of\s+\d+\s*/i, '').replace(/^\d+\s*/, '').trim();
   const workday = !!step && has('[data-automation-id=bottom-navigation-next-button]');
@@ -56,6 +58,11 @@ _SNAPSHOT = r"""
   }
   const knownForm = workday || has('form#application, form#application_form, form#application-form, form.ashby-application-form');
   const boundary = knownForm && controls.some(e => /^(submit(?: application)?|send application|review(?: application)?)$/i.test(text(e)));
+  const accountLanding = !has('input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select') &&
+    all('h1, h2, [role=heading]').some(e =>
+      /^(?:candidate (?:account|home|sign in|login)|sign in|log in|create (?:an? )?account|sign up|register)$/i.test(text(e))) &&
+    all('a, button, [role=button]').some(e =>
+      /^(?:sign in|log in|create (?:an? )?account|sign up|register|(?:sign in|continue|log in) with google)$/i.test(text(e)));
   let blocker = null;
   if (/\b(?:this (?:job|position|posting) (?:is (?:no longer available|closed)|has (?:closed|been filled))|no longer accepting applications|(?:job|job posting|posting|position) (?:has expired|not found|no longer exists|is no longer available|has been removed))\b/i.test(body))
     blocker = 'closed: the page explicitly says this posting is unavailable';
@@ -65,7 +72,7 @@ _SNAPSHOT = r"""
   else if (has('iframe[src*="/bframe"], iframe[title*="challenge" i], [role=dialog] [class*=captcha]') ||
       /\b(?:verify (?:that )?you are (?:a )?human|complete the captcha|select all (?:images|squares))\b/i.test(body))
     blocker = 'captcha: a visible challenge needs your action';
-  else if (/^(?:create account(?:\s*\/\s*sign in)?|sign in|log in)$/i.test(stepLabel) ||
+  else if (accountLanding || /^(?:create account(?:\s*\/\s*sign in)?|sign in|log in)$/i.test(stepLabel) ||
       has('input[type=password]') || (!has('form input:not([type=hidden]), form textarea, form select') &&
       /\b(?:sign in to (?:apply|continue)|log in to (?:apply|continue)|create an account to (?:apply|continue))\b/i.test(body)))
     blocker = 'login: sign in or create the required account yourself';
@@ -78,12 +85,14 @@ _SNAPSHOT = r"""
     (visible(e) || ['radio', 'checkbox', 'file'].includes(e.type)) &&
     (e.required || e.getAttribute('aria-required') === 'true');
   const unsupported = all('[aria-required=true]').some(e =>
-    !representedRequired(e) && ![...e.querySelectorAll('input, textarea, select')].some(representedRequired));
-  if (!blocker && unsupported) blocker = 'unsupported: required custom controls need manual completion';
+    !representedRequired(e) && !uploadedGroup(e) &&
+    ![...e.querySelectorAll('input[type=file]')].some(input => uploadGroupFor(input) === e) &&
+    ![...e.querySelectorAll('input, textarea, select')].some(representedRequired));
   const hasFields = fields.length > 0 || [...document.querySelectorAll('input[type=file]')]
     .some(e => visible(e.parentElement));
   const signature = location.href + '|' + step + '|' + entry + '|' + fields.map(e => e.name + ':' + e.id + ':' + e.type).join('|');
   return {blocker, step, review, boundary, safeNext, signature, entry, hasFields,
+    unsupportedRequired: unsupported,
     errors: errors.length + fields.filter(e => e.willValidate && !e.validity.valid).length,
     workday, url: location.href};
 }
@@ -103,10 +112,15 @@ class Preflight:
     errors: int = 0
     entry: str = ''
     has_fields: bool = False
+    unsupported_required: bool = False
 
 
 def inspect_page(page: Tab) -> Preflight:
-    """Inspect top page and application frames; blockers always beat a ready boundary."""
+    """Separate page-level gates from controls needing manual completion.
+
+    Unsupported required controls prevent advancement/readiness, not filling
+    other known fields on an otherwise recognized application form.
+    """
     snapshots = []
     for frame in form_frames(page):
         data = frame.call(_SNAPSHOT)
@@ -114,13 +128,14 @@ def inspect_page(page: Tab) -> Preflight:
             frame=frame, url=data['url'], signature=data['signature'], blocker=data['blocker'],
             step=data['step'], review=data['review'], boundary=data['boundary'],
             safe_next=data['safeNext'], errors=data['errors'], entry=data['entry'],
-            has_fields=data['hasFields'],
+            has_fields=data['hasFields'], unsupported_required=data['unsupportedRequired'],
         )
         if snapshot.blocker:
             return snapshot
         snapshots.append(snapshot)
     selected = next((s for s in snapshots if s.safe_next or s.entry or s.review or s.boundary), snapshots[0])
-    return replace(selected, errors=sum(s.errors for s in snapshots))
+    return replace(selected, errors=sum(s.errors for s in snapshots),
+                   unsupported_required=any(s.unsupported_required for s in snapshots))
 
 
 def wait_for_page(page: Tab, *, previous: str | None = None, seconds: float = 12) -> Preflight:
@@ -137,12 +152,14 @@ def wait_for_page(page: Tab, *, previous: str | None = None, seconds: float = 12
 
 def advance(snapshot: Preflight, ats: str) -> None:
     """Click a recognized Workday entry/Next, repeating all guards against the current DOM."""
-    if ats != 'workday' or not (snapshot.safe_next or snapshot.entry) or snapshot.blocker or snapshot.errors:
+    if (ats != 'workday' or not (snapshot.safe_next or snapshot.entry) or
+            snapshot.blocker or snapshot.errors or snapshot.unsupported_required):
         raise UnsafeAction('unsupported or unsafe application step')
     clicked = snapshot.frame.call(
         r"""(signature) => {
           const state = (""" + _SNAPSHOT + r""")();
-          if (state.signature !== signature || !(state.safeNext || state.entry) || state.blocker || state.errors)
+          if (state.signature !== signature || !(state.safeNext || state.entry) ||
+              state.blocker || state.errors || state.unsupportedRequired)
             return false;
           const id = state.entry || 'bottom-navigation-next-button';
           const targets = [...document.querySelectorAll('[data-automation-id="' + id + '"]')]
