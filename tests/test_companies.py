@@ -1,7 +1,7 @@
 """Syncing config/watchlist.yaml into the companies table."""
 
-from applyai.config import WatchlistCompany, WatchlistFile
-from applyai.core import companies as companies_core
+from kitty.config import WatchlistCompany, WatchlistFile
+from kitty.core import companies as companies_core
 
 
 def test_a_company_with_no_board_is_kept_without_a_slug(workspace):

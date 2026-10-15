@@ -7,9 +7,9 @@ import re
 
 import pytest
 
-from applyai.config import ResumeTermsFile
-from applyai.core import jobs as jobs_core
-from applyai.core.resume_editor import propose
+from kitty.config import ResumeTermsFile
+from kitty.core import jobs as jobs_core
+from kitty.core.resume_editor import propose
 
 
 VOCABULARY = ResumeTermsFile.model_validate({"groups": [{"name": "skills", "terms": [

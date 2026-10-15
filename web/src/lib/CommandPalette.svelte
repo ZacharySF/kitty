@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Job } from "./api";
-  import { navigation, type View } from "./workspace";
+  import { navigation, navigationGroups, type View } from "./workspace";
   let {
     onclose,
     onview,
@@ -24,7 +24,7 @@
   let selected = $state(0);
   let error = $state("");
   const actions = [
-    { label: "Add an opportunity", run: () => onadd() },
+    { label: "Add a job posting", run: () => onadd() },
     { label: "Keyboard shortcuts", run: () => onhelp() },
     { label: "Reload configuration from disk", run: () => onreload() },
   ];
@@ -32,7 +32,7 @@
     [
       ...navigation.map((item) => ({
         label: item.label,
-        meta: item.key,
+        meta: item.key || navigationGroups.find((group) => group.views.includes(item.id))?.label || "Section",
         run: () => onview(item.id),
       })),
       ...actions.map((item) => ({ ...item, meta: "Action" })),
@@ -120,8 +120,8 @@
   </header>
   <input
     bind:this={searchField}
-    aria-label="Search commands and jobs"
-    placeholder="Search sections, actions, or opportunities…"
+    aria-label="Search workspace sections, commands and jobs"
+    placeholder="Calendar, study, notes, jobs, or an action…"
     bind:value={query}
   />{#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   <div class="command-list">
@@ -132,7 +132,7 @@
         onclick={() => run(index)}
         ><span>{item.label}</span><small>{item.meta}</small></button
       >{/each}{#if !choices.length}<p class="muted">
-        No matching commands or opportunities.
+        No matching sections, commands, or jobs.
       </p>{/if}
   </div>
   <footer><span>↑ ↓ to navigate · Enter to open · Esc to close</span></footer>

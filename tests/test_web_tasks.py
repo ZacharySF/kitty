@@ -5,8 +5,8 @@ import threading
 
 import pytest
 
-from applyai.web_server import APIError
-from applyai.web_tasks import TaskRunner
+from kitty.web_server import APIError
+from kitty.web_tasks import TaskRunner
 
 
 def test_close_waits_for_persistence_and_rejects_new_work(tmp_path, monkeypatch):
@@ -107,7 +107,7 @@ def test_start_and_close_are_atomic(monkeypatch):
     original_start = threading.Thread.start
 
     def held_start(thread):
-        if thread.name == "applyai-batch":
+        if thread.name == "kitty-batch":
             starting.set()
             assert allow_start.wait(5)
         return original_start(thread)

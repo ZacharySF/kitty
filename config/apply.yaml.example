@@ -1,4 +1,4 @@
-# Copy locally with `applyai init`; edit the ignored runtime YAML, not this template.
+# Copy locally with `kitty init`; edit the ignored runtime YAML, not this template.
 followup_days:
 - 7
 - 14

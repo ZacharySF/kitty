@@ -5,9 +5,9 @@ from html import escape
 
 import pytest
 
-from applyai.core.discovery.public_pages import PublicPage
-from applyai.core.discovery.research import parse_doe, parse_tamu, window_state
-from applyai.core.discovery.startups import parse_detail
+from kitty.core.discovery.public_pages import PublicPage
+from kitty.core.discovery.research import parse_doe, parse_tamu, window_state
+from kitty.core.discovery.startups import parse_detail
 
 NOW = datetime(2026, 10, 3, tzinfo=timezone.utc)
 
@@ -70,8 +70,8 @@ def yc_page(**overrides):
 
 
 def test_yc_minimum_standing_is_an_eligibility_requirement():
-    from applyai.config import EligibilityRules
-    from applyai.core.discovery.eligibility import evaluate
+    from kitty.config import EligibilityRules
+    from kitty.core.discovery.eligibility import evaluate
 
     job, _ = parse_detail(yc_page(minSchoolYear="Junior and above"), "1", now=NOW)
     verdict = evaluate(title=job.title, description=job.description, location=job.location,
@@ -81,9 +81,9 @@ def test_yc_minimum_standing_is_an_eligibility_requirement():
 
 
 def test_yc_missing_activity_date_is_uncertainty_not_evidence_of_closure():
-    from applyai.config import EligibilityRules
-    from applyai.core.discovery.eligibility import evaluate
-    from applyai.core.discovery.pipeline import _with_eligibility_note
+    from kitty.config import EligibilityRules
+    from kitty.core.discovery.eligibility import evaluate
+    from kitty.core.discovery.pipeline import _with_eligibility_note
 
     job, _ = parse_detail(yc_page(lastActive=None, description="Open to undergraduates."), "1", now=NOW)
     verdict = evaluate(title=job.title, description=job.description, location=job.location,

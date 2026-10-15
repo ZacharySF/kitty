@@ -42,7 +42,7 @@
     );
     const link = document.createElement("a");
     link.href = url;
-    link.download = "applyai-questions.json";
+    link.download = "kitty-questions.json";
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }

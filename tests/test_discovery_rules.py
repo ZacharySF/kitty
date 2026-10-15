@@ -2,10 +2,10 @@
 
 import pytest
 
-from applyai.config import EligibilityRules
-from applyai.core.discovery.eligibility import evaluate, merge_rules
-from applyai.core.discovery.routing import route, stem
-from applyai.core.discovery.text import html_to_text, is_internship_title, season_from, us_location
+from kitty.config import EligibilityRules
+from kitty.core.discovery.eligibility import evaluate, merge_rules
+from kitty.core.discovery.routing import route, stem
+from kitty.core.discovery.text import html_to_text, is_internship_title, season_from, us_location
 
 
 @pytest.fixture
@@ -196,8 +196,8 @@ def test_boost_and_ambiguous(rules):
 
 
 def test_listed_hourly_pay_below_the_floor_drops_and_at_or_above_ranks_eligible():
-    from applyai.config import EligibilityRules
-    from applyai.core.discovery.jobspy_source import with_pay_line
+    from kitty.config import EligibilityRules
+    from kitty.core.discovery.jobspy_source import with_pay_line
 
     floor = EligibilityRules(min_hourly_pay=12)
     assert _verdict(floor, "Cashier", "Pay: $10.50 per hour. Flexible shifts.").eligibility == "ineligible"

@@ -2,11 +2,11 @@
 
 from dataclasses import replace
 
-from applyai.config import AnswerEntry, AnswersFile
-from applyai.core import form_questions as fq
-from applyai.core import jobs as jobs_core
-from applyai.core import questions as questions_core
-from applyai.core.discovery.http import HttpError, RateLimited
+from kitty.config import AnswerEntry, AnswersFile
+from kitty.core import form_questions as fq
+from kitty.core import jobs as jobs_core
+from kitty.core import questions as questions_core
+from kitty.core.discovery.http import HttpError, RateLimited
 from fakes import FIXTURES, FakeHttp, fixture
 
 GH_URL = "https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{posting}?questions=true"

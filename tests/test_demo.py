@@ -2,11 +2,11 @@
 
 import pytest
 
-from applyai.core import demo as demo_core
-from applyai.core import jobs as jobs_core
-from applyai.core import pipeline as pipeline_core
-from applyai.db import connect
-from applyai.settings import Settings
+from kitty.core import demo as demo_core
+from kitty.core import jobs as jobs_core
+from kitty.core import pipeline as pipeline_core
+from kitty.db import connect
+from kitty.settings import Settings
 
 
 def test_reset_demo_refuses_any_other_database(workspace):

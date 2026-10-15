@@ -38,12 +38,12 @@ experience; for example, “technical communication” can be an alias of commun
 ### Commands and review
 
 ```sh
-uv run applyai resumes improve --track <TRACK> --source resumes/source.html
-uv run applyai resumes versions --track <TRACK>
-uv run applyai resumes review <VERSION> --open
-uv run applyai resumes promote <VERSION>
-uv run applyai resumes reject <VERSION>
-uv run applyai resumes rollback --track <TRACK>
+uv run kitty resumes improve --track <TRACK> --source resumes/source.html
+uv run kitty resumes versions --track <TRACK>
+uv run kitty resumes review <VERSION> --open
+uv run kitty resumes promote <VERSION>
+uv run kitty resumes reject <VERSION>
+uv run kitty resumes rollback --track <TRACK>
 ```
 
 `--source` may be omitted only when unambiguous. `--min-postings` sets the minimum
@@ -56,10 +56,10 @@ and `x` rejects. Promotion and rollback require confirmation.
 
 Features below are documented by the vendors/projects, not a hands-on benchmark or an endorsement of their hiring-outcome claims. Free limits and subscriptions can change.
 
-| Tool | Relevant documented capability | Fit / limitation for ApplyAI |
+| Tool | Relevant documented capability | Fit / limitation for kitty! |
 | --- | --- | --- |
 | [Jobscan AI Optimize](https://www.jobscan.co/resume-bullet-point-generator) | Upload a resume, compare a target JD, select a skill to generate bullets, then copy the phrase into the resume document. Bullet generator is a Premium feature. | Useful second opinion for JD matching. Its documented copy/paste workflow is not automatically editing our local HTML. A proprietary match score is not a universal ATS score. |
-| [Teal AI Bullets](https://help.tealhq.com/en/articles/9519206-using-ai-bullets) | Improve existing bullets, choose among alternatives, generate from a connected JD/keywords/custom prompts, then Use Bullet and Save inside its builder. | Good reference for an evidence + choice + save UI. Teal explicitly warns generated metrics may be inaccurate; this is exactly what ApplyAI must reject rather than copy automatically. |
+| [Teal AI Bullets](https://help.tealhq.com/en/articles/9519206-using-ai-bullets) | Improve existing bullets, choose among alternatives, generate from a connected JD/keywords/custom prompts, then Use Bullet and Save inside its builder. | Good reference for an evidence + choice + save UI. Teal explicitly warns generated metrics may be inaccurate; this is exactly what kitty! must reject rather than copy automatically. |
 | [Rezi AI Resume Agent](https://www.rezi.ai/rezi-docs/ai-resume-agent) and [Rezi MCP](https://www.rezi.ai/resume-mcp) | Agent analyzes/rewrites/tailors sections; MCP advertises targeted edits and saving changes to the Rezi account from compatible AI clients. | Closest documented off-the-shelf agent-controlled editor. Requires a Rezi account/authentication and moving resume data into that service. MCP integration was not installed or exercised. Its suggestions still require fact validation. |
 | [Resume Worded](https://www.resumeworded.com/score) | Checks impact, brevity, wording, formatting, and bullet quality; paid deeper feedback/rewriting and AutoFix are advertised. | Useful writing-quality comparison, not evidence of skills or guaranteed callbacks. Do not invent quantities just to satisfy a scoring heuristic. |
 | [Reactive Resume](https://github.com/reactive-resume/reactive-resume) | Open-source/self-hostable resume editor. The inspected main-branch README advertises structured exports, live preview, document versions, AI proposed edits, job keyword checks, REST API and MCP. | Best external architecture to investigate if a full visual editor is desired. **The README labels that branch upcoming v6**: verify released-version support before depending on those specific APIs/features. Self-hosting also adds an application to maintain; external AI still sends data to the configured provider unless local. |

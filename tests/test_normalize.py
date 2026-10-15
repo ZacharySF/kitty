@@ -1,6 +1,6 @@
 """Dedupe and normalization: the rules that decide what counts as one job."""
 
-from applyai.normalize import (
+from kitty.normalize import (
     canonical_url,
     company_from_url,
     dedupe_key,

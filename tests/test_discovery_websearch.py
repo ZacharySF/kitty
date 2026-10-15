@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from applyai.core.discovery import public_pages, websearch
-from applyai.core.discovery.context import DiscoverContext
-from applyai.core.discovery.http import HttpError, PoliteHttp, RateLimited
-from applyai.core.discovery.public_pages import PublicPage, PublicPages, parse_job_postings
-from applyai.core.discovery.websearch import WebSearchAdapter
+from kitty.core.discovery import public_pages, websearch
+from kitty.core.discovery.context import DiscoverContext
+from kitty.core.discovery.http import HttpError, PoliteHttp, RateLimited
+from kitty.core.discovery.public_pages import PublicPage, PublicPages, parse_job_postings
+from kitty.core.discovery.websearch import WebSearchAdapter
 
 
 def posting(**changes):
@@ -132,7 +132,7 @@ Disallow: /careers
         with pytest.raises(HttpError, match="robots.txt disallows"):
             pages.fetch("https://public.example/elsewhere")
         assert len(requests) == 3
-        specific = public_pages._Robots("User-agent: *\nDisallow: /\nUser-agent: applyai\nAllow: /jobs\nDisallow: /jobs/private")
+        specific = public_pages._Robots("User-agent: *\nDisallow: /\nUser-agent: kitty\nAllow: /jobs\nDisallow: /jobs/private")
         assert specific.allows("https://public.example/jobs/open")
         assert not specific.allows("https://public.example/jobs/private")
         assert specific.allows("https://public.example/elsewhere")

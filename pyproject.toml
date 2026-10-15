@@ -1,5 +1,5 @@
 [project]
-name = "applyai"
+name = "kitty"
 version = "0.1.0"
 description = "Personal job-search tracker: discovery, triage, apply queue, outcomes."
 requires-python = ">=3.12"
@@ -17,11 +17,17 @@ dependencies = [
     "mcp>=2.2.0",
     "websockets>=15",
     "pypdf>=6.19.0",
+    "python-dateutil>=2.9",
+    "icalendar>=6.3",
+    "fsrs>=6.3,<7",
+    "zstandard>=0.23",
+    "Pillow>=11",
+    "PyMuPDF>=1.25",
 ]
 
 [project.scripts]
-applyai = "applyai.cli:main"
-applyai-web = "applyai.web_server:main"
+kitty = "kitty.cli:main"
+kitty-web = "kitty.web_server:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
@@ -31,7 +37,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/applyai"]
+packages = ["src/kitty"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

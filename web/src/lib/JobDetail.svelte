@@ -398,7 +398,7 @@
           </ol>
         {:else}
           <p class="muted">
-            Apply on the employer’s website, then record it here. ApplyAI never
+            Apply on the employer’s website, then record it here. kitty! never
             submits for you.
           </p>
           <label class="confirm"

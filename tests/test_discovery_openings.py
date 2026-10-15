@@ -2,9 +2,9 @@
 
 from datetime import date
 
-from applyai.core import companies as companies_core
-from applyai.core import jobs as jobs_core
-from applyai.core.discovery.openings import opening_soon
+from kitty.core import companies as companies_core
+from kitty.core import jobs as jobs_core
+from kitty.core.discovery.openings import opening_soon
 
 
 def _job(workspace, company, first_seen, *, active):

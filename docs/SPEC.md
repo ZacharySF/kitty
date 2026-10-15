@@ -1,4 +1,4 @@
-# applyai spec
+# kitty spec
 
 Where the addendum at the bottom conflicts with Part 1 or Part 3, the addendum wins.
 
@@ -11,7 +11,7 @@ Where the addendum at the bottom conflicts with Part 1 or Part 3, the addendum w
 5. Simple readable code I can understand. Small functions, type hints, docstrings that say what and why. No clever metaprogramming.
 6. Core library is UI-free (no textual/typer imports in core). TUI, CLI and MCP are thin layers over shared behavior.
 7. SQLite is the local source of truth. Secrets, runtime YAML, watchlists, resumes, discovered jobs and application history are gitignored; commit only generic .example files and synthetic fixtures.
-8. Wait for my OK before each stage. At the end of each stage tell me exactly how to run it and what I should see.
+8. Complete a requested development task through implementation and isolated verification without per-stage approval pauses. Ask for material unresolved choices or genuinely risky actions lacking explicit authorization; report exercised results. See the development-autonomy addendum.
 
 ## Part 2 - Stage 1
 
@@ -50,7 +50,7 @@ Stage 1: done.
 - Build order inside Stage 2:
   * Checkpoint A: Simplify + NUFT + watchlist ATS adapters (Greenhouse, Lever, Ashby, SmartRecruiters, Workday), dedupe, track routing, eligibility filter, Inbox and Sources screens. Run a real discover and show: new jobs by source, by track, by eligibility, and the top 10 filtered-out reasons with one example posting each.
   * Checkpoint B: JobSpy, USAJOBS, HN, one at a time, each with a fixture test.
-  * Commit and push after each checkpoint. Report applications by source once there's data.
+  * Verify each checkpoint and report applications by source once there's data. Commit/push only when explicitly authorized, after the full pytest suite passes.
 - Inbox screen: keyboard triage with batch keys - space to multi-select, then set tier / track / skip on all selected. Skipped jobs set queue_state, never create application rows.
 
 ### ELIGIBILITY (Stage 2, rules only, runs before any LLM call)
@@ -68,8 +68,8 @@ Stage 1: done.
 - Unanswered-questions queue: I log a screening question once (q in session), write the answer once, saved to answers.yaml. Never invent answers.
 - Weekly targets Dashboard: applied vs target per track, funnel, streak.
 - Follow-up reminders: on "applied", create reminders at default +7 / +14 / +21 days (editable in config); suggest archiving after 21 days with no response. Deadline and opens-soon reminders from deadline_at / opens_at.
-- applyai today: reminders due today and overdue, deadlines in the next 7 days, count of new A/B jobs per track, weekly progress, source errors. Also a Today tab in the TUI as the default landing screen.
-- applyai schedule print: prints the exact cron line / systemd timer unit / Windows schtasks command for a daily discover + digest run. It prints; I install. No GitHub Actions for this (personal data).
+- kitty today: reminders due today and overdue, deadlines in the next 7 days, count of new A/B jobs per track, weekly progress, source errors. Also a Today tab in the TUI as the default landing screen.
+- kitty schedule print: prints the exact cron line / systemd timer unit / Windows schtasks command for a daily discover + digest run. It prints; I install. No GitHub Actions for this (personal data).
 - Optional push: ntfy or Telegram bot, token in .env, off by default; sends the digest summary only.
 
 ### NICHE COMPANY FINDER (Stage 5, general, not just quant)
@@ -85,7 +85,7 @@ Stage 1: done.
 ### STATUS + REPORTS (Stage 6)
 - Gmail read-only OAuth proposes status changes (OA, interview, rejection) as status_events state=proposed; they become real only when I press a key. Token stored locally, gitignored.
 - Response-rate report by resume, by track, by source, by tier.
-- applyai export: full CSV/JSON export of jobs, applications, status history; escape cells starting with = + - @.
+- kitty export: full CSV/JSON export of jobs, applications, status history; escape cells starting with = + - @.
 
 ### LATER (Stage 7, optional)
 - Own Playwright filler only for sites where Simplify fails - fills, never submits.
@@ -109,7 +109,7 @@ Stage 1: done.
 - Education, track-specific application cities, location preferences and minimum
   pay belong in local profile/track configuration. City bounds are commute proxies,
   not measured driving times; no repository-wide personal geography is assumed.
-- Own form filler is implemented: applyai opens
+- Own form filler is implemented: kitty opens
   the application form in its own browser window, fills it from profile.yaml and
   answers.yaml, uploads the track's resume, logs unanswered questions, and never submits.
   I review and click submit, then mark the job applied.
@@ -123,13 +123,13 @@ Stage 1: done.
   Candidate editing is a separate, explicitly invoked local operation: bounded
   fact-preserving wording and ordering, exact diff/evidence, validated PDF preview,
   explicit promotion, immutable versions and rollback. No hosted model calls.
-- Discovery runs on a schedule I install myself from `applyai schedule print`.
+- Discovery runs on a schedule I install myself from `kitty schedule print`.
 - Triage settings (model, effort, prices, cost cap) are in `config/triage.yaml`, not
   `.env`; only the key stays in `.env`. Default model claude-sonnet-5-5 at effort low.
 - Triage sends no contact details: name, email, phone and profile links are redacted
   from resume text. Edit notes are kept only if their JD phrase and resume line are
   verbatim quotes; filtered-out jobs get a free rules tier C.
-- `applyai schedule print --with-triage` (opt-in) also collects and sends triage batches
+- `kitty schedule print --with-triage` (opt-in) also collects and sends triage batches
   on the timer, within the per-run cap.
 - The Dashboard is the Today tab (F1, landing screen). The Apply tab walks A then B
   with the own filler (`f`) instead of Simplify; follow-up days, archive suggestion and
@@ -142,12 +142,12 @@ Stage 1: done.
 - Gmail proposals: rules only, no LLM; a message is looked at once (gmail_messages);
   messages with no single clear application are skipped and counted; offers are proposed
   only on explicit phrases (pleased to offer, offer letter).
-- Reports tab F10 and `applyai report` show response rates by resume, track, source and
+- Reports tab F10 and `kitty report` show response rates by resume, track, source and
   tier; the tier is the job's current tier.
-- MCP server: `applyai mcp` over stdio; read tools plus record-only writes (mark_applied,
+- MCP server: `kitty mcp` over stdio; read tools plus record-only writes (mark_applied,
   set_status, skip, not eligible, confirm/reject proposals, run_discover). Finder
   approval stays in the TUI.
-- 2026-10-03: after filling, applyai watches the filled tabs (read-only: URL and visible
+- 2026-10-03: after filling, kitty watches the filled tabs (read-only: URL and visible
   text) and records the application, with follow-ups, when a tab shows the board's
   confirmation page for that posting (Greenhouse, Lever, Ashby). I still click submit;
   other boards are marked by hand.
@@ -158,8 +158,8 @@ Stage 1: done.
   unfavorite or hand skip and at the end of every discover. Best-first order uses it in
   0.05 steps after eligibility, tier and watchlist priority and before place and age;
   with no favorites it has no effect.
-- 2026-10-03: `applyai autofill` / Apply `F` fills favorited jobs up to submit in
-  background tabs of the applyai Firefox, capped per run (apply.yaml autofill_cap 10,
+- 2026-10-03: `kitty autofill` / Apply `F` fills favorited jobs up to submit in
+  background tabs of the kitty Firefox, capped per run (apply.yaml autofill_cap 10,
   autofill_pause_seconds 15), and skips applied, skipped / not eligible, closed
   and verified ready-for-review favorites. Partial/blocked attempts remain retryable. It can run detached
   in its own systemd scope and pushes a summary if a notifier is set. It never submits
@@ -238,7 +238,7 @@ Stage 1: done.
   job choices, open attachments and historical application associations remain
   fixed. Rejection keeps audit artifacts; rollback restores the prior default.
   MCP may inspect versions but cannot generate, promote, reject or roll back them.
-- CLI: `applyai resumes improve --track <TRACK> [--source <HTML>] [--min-postings N]`,
+- CLI: `kitty resumes improve --track <TRACK> [--source <HTML>] [--min-postings N]`,
   `review <VERSION> [--open]`, `versions [--track <TRACK>]`, `promote <VERSION>`,
   `reject <VERSION>`, `rollback --track <TRACK>` (all under `resumes`).
   Resume (`F7`): `g` generate, `v` versions/exact review, `b` rollback.
@@ -251,16 +251,44 @@ Stage 1: done.
   timestamps, context, URL and blocker. Existing markers become attempted, not ready.
   Required answers, completed uploads and a recognized review boundary determine
   readiness. Resumption preserves manual values; lost tabs restart saved facts only.
-  Authentication, active CAPTCHA, unsupported controls and pending uploads stop.
+  Authentication (unless opted in), active CAPTCHA, unsupported controls and pending
+  uploads stop.
 - Workday navigation is ATS-specific: recognized same-posting entry and non-final
   Next/Continue controls only, bounded progression, no automatic consent or submit.
   Populated retained forms defer new resume uploads that could overwrite manual values.
+- 2026-10-09: opt-in sign-in automation (`apply.yaml` `authentication`, off by default).
+  Credentials come only from a chmod-600 `.private/application-credentials.env`; exact
+  approved HTTPS origins only; account creation is a separate opt-in. One recognized
+  sign-in/sign-up form per job, no retry, every write/click rechecked in the page.
+  CAPTCHA (including passive badges), MFA/verification, consent, extra fields, GET or
+  cross-origin forms and existing values stop. Credentials are redacted from reports,
+  stored preparation evidence and BiDi errors; wire debug logging is disabled.
 - Source facts retain field-level authority/provenance separately from personal
   decisions and reminder dates (migration 008). Changed descriptions invalidate stale
   model ranking; late batch results apply only if the request inputs still match.
-- Bounded `applyai refresh` prioritizes favorites and missing/stale descriptions.
+- Bounded `kitty refresh` prioritizes favorites and missing/stale descriptions.
   Verified evidence expires after seven days; sightings, cached old observations
   and failed checks do not renew it. Unknown/blocked is not closed.
 - Partial discovery failures are surfaced in Today/push, Doctor and Sources with
   targeted recovery. Robots restrictions and persistent DNS failures are not
   solved by repeatedly launching the full discovery pipeline.
+- Apply (`F3`) uses `c` for the same track chooser as Inbox and Jobs, including
+  every-track selection and cancel-without-change. The selected track scopes both
+  the displayed queue and favorite preparation; the old `t` cycling is removed.
+- Resume (`F7`) opens a library of all active registered resumes, including
+  non-default variants, with effective default tracks, file availability, full
+  paths and descriptions. `Enter` / `o` opens only a local PDF; browsing never
+  changes defaults or historical attachments. Posting evidence remains a separate
+  tab; `t` / `T` selects the coach/candidate track.
+- MCP `preparation_plan(track?, limit?)` exposes the existing bounded autofill plan
+  and exclusion reasons without browser execution. Job metadata exposes historical
+  preparation states, timestamps and blockers, not browser-control context IDs or
+  retained URLs. Planning is not live readiness verification, submission or a
+  reservation. Normal workspace initialization still migrates/syncs local state.
+- Development autonomy: requested local work proceeds through research, code,
+  affected tests/docs and synthetic verification without renewed OK per phase.
+  This replaces the historical per-stage and automatic checkpoint-publication
+  instructions. Material unresolved choices and unapproved destructive, paid,
+  sensitive or externally consequential actions still require a decision.
+  Existing sandbox/tool permissions and all application human boundaries remain.
+  Sources and limits are in `docs/APPLICATION_AUTONOMY_RESEARCH.md`.

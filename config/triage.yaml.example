@@ -1,4 +1,4 @@
-# Copy locally with `applyai init`; edit the ignored runtime YAML, not this template.
+# Copy locally with `kitty init`; edit the ignored runtime YAML, not this template.
 model: claude-sonnet-5-5
 effort: low
 max_cost_usd_per_run: 5.0

@@ -6,8 +6,8 @@ and before place and age; with no favorites it must change nothing.
 
 from __future__ import annotations
 
-from applyai.core import favorites, likeness
-from applyai.core import jobs as jobs_core
+from kitty.core import favorites, likeness
+from kitty.core import jobs as jobs_core
 
 
 def _job(workspace, company, title, *, jd="", posted="2026-09-01T00:00:00Z", location="Nowhere, ZZ",

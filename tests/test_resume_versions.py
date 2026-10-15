@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from applyai.config import ResumeTermsFile
-from applyai.core import applications, jobs, resumes, resume_versions as versions
-from applyai.core.resume_render import freeze_html, render_pdf
-from applyai.core.workspace import sync_config_to_db
+from kitty.config import ResumeTermsFile
+from kitty.core import applications, jobs, resumes, resume_versions as versions
+from kitty.core.resume_render import freeze_html, render_pdf
+from kitty.core.workspace import sync_config_to_db
 
 
 HTML = '''<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -24,7 +24,7 @@ CSS = '@page { size: Letter; margin: 0.5in; } body { font: 11pt Arial; color: #1
 
 
 def _browser():
-    if not (os.environ.get('APPLYAI_CHROMIUM') or any(shutil.which(n) for n in
+    if not (os.environ.get('KITTY_CHROMIUM') or any(shutil.which(n) for n in
             ('chromium', 'chromium-browser', 'google-chrome'))):
         pytest.skip('Offline Chromium is required for real candidate rendering')
 

@@ -7,18 +7,18 @@ from datetime import date
 
 import pytest
 
-from applyai.config import ConfigError, WatchlistCompany, WatchlistFile, load_config
-from applyai.core import companies as companies_core
-from applyai.core import finder as finder_core
-from applyai.core.discovery.hackernews import ITEM_URL, SEARCH_URL
-from applyai.core.discovery.http import HttpError, RateLimited
-from applyai.core.finder.ats_detect import detect_ats
-from applyai.core.finder.base import CandidateBatch, FinderContext, RawCandidate, SourceText
-from applyai.core.finder.conferences import sponsor_names
-from applyai.core.finder.github import GithubAdapter, OrgRepos, collect_orgs, org_candidate
-from applyai.core.finder.hn import HackerNewsCompaniesAdapter
-from applyai.core.finder.sbir import CSV_URL, RECENT_YEARS, SbirAdapter, parse_awards
-from applyai.core.finder.yc import parse_hiring
+from kitty.config import ConfigError, WatchlistCompany, WatchlistFile, load_config
+from kitty.core import companies as companies_core
+from kitty.core import finder as finder_core
+from kitty.core.discovery.hackernews import ITEM_URL, SEARCH_URL
+from kitty.core.discovery.http import HttpError, RateLimited
+from kitty.core.finder.ats_detect import detect_ats
+from kitty.core.finder.base import CandidateBatch, FinderContext, RawCandidate, SourceText
+from kitty.core.finder.conferences import sponsor_names
+from kitty.core.finder.github import GithubAdapter, OrgRepos, collect_orgs, org_candidate
+from kitty.core.finder.hn import HackerNewsCompaniesAdapter
+from kitty.core.finder.sbir import CSV_URL, RECENT_YEARS, SbirAdapter, parse_awards
+from kitty.core.finder.yc import parse_hiring
 from conftest import REPO_ROOT
 from fakes import FIXTURES, FakeHttp, fixture
 

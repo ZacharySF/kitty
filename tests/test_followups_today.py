@@ -5,18 +5,18 @@ from datetime import date, timedelta
 
 import pytest
 
-from applyai.config import AnswersFile, ApplyFile, ConfigError, load_config, parse_file
-from applyai.core import applications as applications_core
-from applyai.core import jobs as jobs_core
-from applyai.core import reminders as reminders_core
-from applyai.core import sources as sources_core
-from applyai.core.answers_file import add_answer
-from applyai.core.discovery.base import AdapterResult, NormalizedJob
-from applyai.core.discovery.pipeline import run_discover
-from applyai.core.followups import mark_applied
-from applyai.core.stats import streak_days
-from applyai.core.today import build_digest, digest_text
-from applyai.dates import to_iso
+from kitty.config import AnswersFile, ApplyFile, ConfigError, load_config, parse_file
+from kitty.core import applications as applications_core
+from kitty.core import jobs as jobs_core
+from kitty.core import reminders as reminders_core
+from kitty.core import sources as sources_core
+from kitty.core.answers_file import add_answer
+from kitty.core.discovery.base import AdapterResult, NormalizedJob
+from kitty.core.discovery.pipeline import run_discover
+from kitty.core.followups import mark_applied
+from kitty.core.stats import streak_days
+from kitty.core.today import build_digest, digest_text
+from kitty.dates import to_iso
 
 
 def _job(conn, slug: str, **extra):

@@ -63,7 +63,7 @@
       <span class="step-number" aria-hidden="true">01</span>
       <h3>Set up your details</h3>
       <p>
-        Add your contact details and a resume. ApplyAI reuses these to fill
+        Add your contact details and a resume. kitty! reuses these to fill
         forms—no made-up answers.
       </p>
       <div class="setup-status" aria-live="polite">
@@ -117,7 +117,7 @@
       <span class="step-number" aria-hidden="true">03</span>
       <h3>Prepare, review, apply</h3>
       <p>
-        Choose your jobs and review the plan. ApplyAI fills supported forms in
+        Choose your jobs and review the plan. kitty! fills supported forms in
         Firefox. Check every answer, then submit yourself.
       </p>
       <div class="step-tip">

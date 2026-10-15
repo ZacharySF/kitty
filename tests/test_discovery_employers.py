@@ -2,11 +2,11 @@
 import json
 from urllib.parse import parse_qs, urlsplit
 
-from applyai.config import EligibilityRules
-from applyai.core.discovery.eligibility import evaluate
-from applyai.core.discovery.employers import fetch_board, parse_jibe, parse_oracle, parse_siemens
-from applyai.core.discovery.http import HttpError, RateLimited
-from applyai.core.discovery.public_pages import PublicPage
+from kitty.config import EligibilityRules
+from kitty.core.discovery.eligibility import evaluate
+from kitty.core.discovery.employers import fetch_board, parse_jibe, parse_oracle, parse_siemens
+from kitty.core.discovery.http import HttpError, RateLimited
+from kitty.core.discovery.public_pages import PublicPage
 
 
 def page(url, value):
@@ -210,7 +210,7 @@ def test_local_search_cap_reports_partial_instead_of_successful_empty():
 
 
 def test_store_addresses_prevent_same_city_openings_from_merging(workspace):
-    from applyai.core.discovery.pipeline import CompanyResolver, SourceTally, store_posting
+    from kitty.core.discovery.pipeline import CompanyResolver, SourceTally, store_posting
 
     track = next(t for t in workspace.config.tracks.tracks if t.location_rules.allow_cities)
     city = track.location_rules.allow_cities[0]

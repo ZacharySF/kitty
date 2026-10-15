@@ -1,4 +1,4 @@
-# Copy to profile.yaml (gitignored), or run `applyai init`.
+# Copy to profile.yaml (gitignored), or run `kitty init`.
 # The form filler copies facts exactly as written. Fill in only your own facts;
 # blank fields are not filled into applications. Do not commit the local file.
 name: ""

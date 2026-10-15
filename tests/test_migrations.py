@@ -2,8 +2,8 @@
 
 import pytest
 
-from applyai.db import connect, current_version, latest_version, migrate, pending_migrations
-from applyai.db.migrations import available_migrations
+from kitty.db import connect, current_version, latest_version, migrate, pending_migrations
+from kitty.db.migrations import available_migrations
 
 
 def test_migrating_twice_is_a_no_op(tmp_path):
@@ -28,7 +28,7 @@ def test_workable_migration_keeps_companies_and_their_jobs(tmp_path):
     """006 rebuilds companies (a CHECK change); ids, rows and job links must survive."""
     import shutil
 
-    from applyai.db.migrations import MIGRATIONS_DIR
+    from kitty.db.migrations import MIGRATIONS_DIR
 
     early = tmp_path / "early"
     early.mkdir()

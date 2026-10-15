@@ -11,17 +11,17 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from applyai.config import AnswerEntry, AnswersFile, load_config
-from applyai.core import jobs as jobs_core
-from applyai.core import questions as questions_core
-from applyai.core import resumes as resumes_core
-from applyai.core.apply.bidi import Tab, open_tab
-from applyai.core.apply.browser import headless_firefox
-from applyai.core.apply.fields import FormField, graduation_answer_spellings, match_option, plan_for
-from applyai.core.apply.filler import _apply_plan, _watched_tab, choose_resume, fill_job, fill_jobs
-from applyai.core.apply.page import choose_select, pick_from_list, pick_from_search, read_fields
-from applyai.core.apply.urls import detect_ats, form_url
-from applyai.settings import Settings, find_firefox
+from kitty.config import AnswerEntry, AnswersFile, load_config
+from kitty.core import jobs as jobs_core
+from kitty.core import questions as questions_core
+from kitty.core import resumes as resumes_core
+from kitty.core.apply.bidi import Tab, open_tab
+from kitty.core.apply.browser import headless_firefox
+from kitty.core.apply.fields import FormField, graduation_answer_spellings, match_option, plan_for
+from kitty.core.apply.filler import _apply_plan, _watched_tab, choose_resume, fill_job, fill_jobs
+from kitty.core.apply.page import choose_select, pick_from_list, pick_from_search, read_fields
+from kitty.core.apply.urls import detect_ats, form_url
+from kitty.settings import Settings, find_firefox
 
 FORMS = Path(__file__).parent / "fixtures" / "forms"
 
@@ -165,7 +165,7 @@ def test_greenhouse_like_form(space, page):
 
 
 def test_default_change_after_upload_cannot_relabel_the_application(space, page):
-    from applyai.core.apply.watch import record_submission
+    from kitty.core.apply.watch import record_submission
 
     job = _job(space, "greenhouse")
     uploaded = choose_resume(space.conn, space.config, job)
@@ -378,7 +378,7 @@ def test_disabled_custom_discipline_is_not_an_available_choice(page):
 
 @pytest.mark.parametrize("replace_after_check", [False, True])
 def test_stale_or_replaced_discipline_option_clears_query(page, monkeypatch, replace_after_check):
-    from applyai.core.apply import page as page_core
+    from kitty.core.apply import page as page_core
 
     choice = "ECE - Electrical and Computer Engineering"
     frame, major = _major_picker(page, [choice])
@@ -744,8 +744,8 @@ def _with_url(job, url: str):
 
 
 def test_zero_filled_missing_answer_stays_retryable(space, page):
-    from applyai.core import favorites
-    from applyai.core.apply.autofill import plan_run
+    from kitty.core import favorites
+    from kitty.core.apply.autofill import plan_run
 
     job = _job(space, "unanswered")
     favorites.favorite(space.conn, [job.id])
@@ -768,9 +768,9 @@ def test_zero_filled_missing_answer_stays_retryable(space, page):
 
 
 def test_workday_steps_resume_manual_choices_and_upload_without_submitting(space, page, monkeypatch):
-    from applyai.core.apply import filler
-    from applyai.core.apply.autofill import plan_run
-    from applyai.core import favorites
+    from kitty.core.apply import filler
+    from kitty.core.apply.autofill import plan_run
+    from kitty.core import favorites
 
     monkeypatch.setattr(filler, "detect_ats", lambda url: "workday")
     job = _job(space, "workday_steps")
@@ -815,7 +815,7 @@ def test_preflight_reports_actual_gate_without_filling(space, page, markup, bloc
 
 
 def test_passive_captcha_is_not_a_challenge_and_unknown_next_is_not_clicked(space, page):
-    from applyai.core.apply.preflight import inspect_page
+    from kitty.core.apply.preflight import inspect_page
 
     job = _job(space, "unanswered")
     page.goto(job.url)
@@ -834,8 +834,8 @@ def test_passive_captcha_is_not_a_challenge_and_unknown_next_is_not_clicked(spac
 
 @pytest.mark.parametrize("label", ["Submit", "Finish", "Complete", "I agree", "Continue and submit"])
 def test_workday_never_advances_a_final_or_consent_action(space, page, label):
-    from applyai.core.apply.preflight import advance, inspect_page
-    from applyai.core.apply.page import UnsafeAction
+    from kitty.core.apply.preflight import advance, inspect_page
+    from kitty.core.apply.page import UnsafeAction
 
     page.goto((FORMS / "workday_steps.html").as_uri())
     _js(page, "(label) => { document.querySelector('button').textContent = label; }", label)
@@ -847,7 +847,7 @@ def test_workday_never_advances_a_final_or_consent_action(space, page, label):
 
 
 def test_workday_posting_entry_waits_for_real_gate_without_entering_identity(space, page, monkeypatch):
-    from applyai.core.apply import filler
+    from kitty.core.apply import filler
 
     monkeypatch.setattr(filler, "detect_ats", lambda url: "workday")
     job = _job(space, "workday_entry")
@@ -860,8 +860,8 @@ def test_workday_posting_entry_waits_for_real_gate_without_entering_identity(spa
 
 
 def test_workday_step_rechecks_final_label_and_ignores_hidden_duplicate(page):
-    from applyai.core.apply.preflight import advance, inspect_page
-    from applyai.core.apply.page import UnsafeAction
+    from kitty.core.apply.preflight import advance, inspect_page
+    from kitty.core.apply.page import UnsafeAction
 
     page.goto((FORMS / "workday_steps.html").as_uri())
     state = inspect_page(page)
@@ -883,8 +883,8 @@ def test_workday_step_rechecks_final_label_and_ignores_hidden_duplicate(page):
 
 
 def test_repeated_workday_step_stops_without_claiming_ready(space, page, monkeypatch):
-    from applyai.core.apply import filler
-    from applyai.core.apply.preflight import inspect_page
+    from kitty.core.apply import filler
+    from kitty.core.apply.preflight import inspect_page
 
     monkeypatch.setattr(filler, "detect_ats", lambda url: "workday")
     monkeypatch.setattr(filler, "wait_for_page", lambda page, **kwargs: inspect_page(page))
@@ -899,8 +899,8 @@ def test_repeated_workday_step_stops_without_claiming_ready(space, page, monkeyp
 
 
 def test_unavailable_tab_restart_never_claims_manual_values_were_restored(space, page):
-    from applyai.core.apply.filler import _retained_tab
-    from applyai.core.apply.state import record_attempt
+    from kitty.core.apply.filler import _retained_tab
+    from kitty.core.apply.state import record_attempt
 
     job = _job(space, "unanswered")
     page.goto(job.url)
@@ -918,7 +918,7 @@ def test_unavailable_tab_restart_never_claims_manual_values_were_restored(space,
 
 def test_retained_workday_tab_requires_exact_posting_identity(space):
     from types import SimpleNamespace
-    from applyai.core.apply.filler import _retained_tab
+    from kitty.core.apply.filler import _retained_tab
 
     url = "https://company.wd1.myworkdayjobs.com/External/job/City/Role_R-1"
     job = replace(_job(space, "unanswered"), url=url, apply_url=url + "/apply",
@@ -933,7 +933,7 @@ def test_retained_workday_tab_requires_exact_posting_identity(space):
 
 
 def _safety_form(space, page):
-    from applyai.core.apply.page import settle
+    from kitty.core.apply.page import settle
 
     job = _job(space, "application_safety")
     page.goto(job.url)
@@ -969,8 +969,8 @@ def test_required_wrapper_must_have_a_readable_validated_value(space, page, cont
 
 
 def test_required_native_upload_inherits_group_label_and_requiredness(space, page):
-    from applyai.core.apply.page import form_frames, read_fields
-    from applyai.core.apply.preflight import inspect_page
+    from kitty.core.apply.page import form_frames, read_fields
+    from kitty.core.apply.preflight import inspect_page
 
     job = _safety_form(space, page)
     _js(page, """() => {
@@ -1070,8 +1070,8 @@ def test_unknown_required_widget_does_not_prevent_known_fields_and_resume(space,
 
 
 def test_new_required_custom_widget_prevents_step_advance(page):
-    from applyai.core.apply.preflight import advance, inspect_page
-    from applyai.core.apply.page import UnsafeAction
+    from kitty.core.apply.preflight import advance, inspect_page
+    from kitty.core.apply.page import UnsafeAction
 
     page.goto((FORMS / 'workday_steps.html').as_uri())
     _js(page, "() => document.querySelectorAll('[required]').forEach(e => e.required = false)")
@@ -1092,8 +1092,8 @@ def test_new_required_custom_widget_prevents_step_advance(page):
 @pytest.mark.parametrize('disconnect', [False, True])
 def test_later_browser_failure_preserves_completed_job_reports(space, monkeypatch, disconnect):
     from types import SimpleNamespace
-    from applyai.core.apply import filler
-    from applyai.core.apply.bidi import ConnectionLost, TabClosed
+    from kitty.core.apply import filler
+    from kitty.core.apply.bidi import ConnectionLost, TabClosed
 
     postings = [_job(space, name) for name in ('greenhouse', 'lever', 'unanswered')]
     opened = []
@@ -1134,8 +1134,8 @@ def test_later_browser_failure_preserves_completed_job_reports(space, monkeypatc
 def test_pending_upload_never_becomes_ready_even_with_local_file_selected(
     space, page, monkeypatch, retained_upload,
 ):
-    from applyai.core.apply import filler
-    from applyai.core.apply.page import wait_for_uploads
+    from kitty.core.apply import filler
+    from kitty.core.apply.page import wait_for_uploads
 
     job = _safety_form(space, page)
     # Exercise the real pending detector and timeout path without a 30-second test delay.
@@ -1183,7 +1183,7 @@ def test_retained_manual_values_are_protected_before_resume_parser_can_run(space
 
 
 def test_embedded_validation_error_blocks_main_form_review_readiness(space, page):
-    from applyai.core.apply.preflight import inspect_page
+    from kitty.core.apply.preflight import inspect_page
 
     job = _safety_form(space, page)
     _attach_fixture_resume(space, page)
@@ -1200,7 +1200,7 @@ def test_embedded_validation_error_blocks_main_form_review_readiness(space, page
 
 
 def test_workday_active_login_step_is_a_gate_even_before_inputs_render(page):
-    from applyai.core.apply.preflight import wait_for_page
+    from kitty.core.apply.preflight import wait_for_page
 
     page.goto((FORMS / "workday_entry.html").as_uri())
     _js(page, """() => {
@@ -1215,7 +1215,7 @@ def test_workday_active_login_step_is_a_gate_even_before_inputs_render(page):
 
 
 def test_workday_waits_for_fields_after_non_auth_step_shell(page):
-    from applyai.core.apply.preflight import wait_for_page
+    from kitty.core.apply.preflight import wait_for_page
 
     page.goto((FORMS / "workday_steps.html").as_uri())
     _js(page, """() => {
@@ -1236,7 +1236,7 @@ def test_workday_waits_for_fields_after_non_auth_step_shell(page):
 
 
 def test_workday_prefixed_review_stops_without_waiting_for_missing_fields(page):
-    from applyai.core.apply.preflight import wait_for_page
+    from kitty.core.apply.preflight import wait_for_page
 
     page.goto((FORMS / "workday_steps.html").as_uri())
     _js(page, """() => {
@@ -1252,7 +1252,7 @@ def test_workday_prefixed_review_stops_without_waiting_for_missing_fields(page):
 
 
 def _approval(space, job):
-    from applyai.core.apply.filler import FillApproval
+    from kitty.core.apply.filler import FillApproval
     resume = choose_resume(space.conn, space.config, job)
     return FillApproval(job.id, job.url, job.apply_url, job.company_name, tuple(job.tracks),
                         resume.id, resume.file_hash, resume.file_path)
@@ -1260,7 +1260,7 @@ def _approval(space, job):
 
 @pytest.mark.parametrize("change", ["missing", "bytes", "record", "url"])
 def test_approved_fill_fails_before_browser_if_inputs_changed(space, monkeypatch, change):
-    from applyai.core.apply import filler
+    from kitty.core.apply import filler
     job = _job(space, "greenhouse")
     approval = _approval(space, job)
     approvals = {job.id: approval}
@@ -1283,7 +1283,7 @@ def test_approved_fill_fails_before_browser_if_inputs_changed(space, monkeypatch
 def test_approved_fill_uploads_only_reviewed_bytes_after_default_changes(space, monkeypatch):
     from contextlib import contextmanager
     from types import SimpleNamespace
-    from applyai.core.apply import filler
+    from kitty.core.apply import filler
     job = _job(space, "greenhouse")
     approval = _approval(space, job)
     expected = Path(approval.file_path).read_bytes()
@@ -1333,7 +1333,7 @@ def test_approved_fill_uploads_only_reviewed_bytes_after_default_changes(space, 
 
 @pytest.mark.parametrize("change", ["changed", "missing", "symlink", "corrupt_snapshot"])
 def test_approved_upload_checks_source_and_snapshot_at_upload(space, monkeypatch, change):
-    from applyai.core.apply import filler
+    from kitty.core.apply import filler
     job = _job(space, "greenhouse")
     approval = _approval(space, job)
     path = Path(approval.file_path)

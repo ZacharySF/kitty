@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from applyai.core import applications, jobs, reminders, resumes
-from applyai.web_server import LocalHTTPServer, WebApplication
+from kitty.core import applications, jobs, reminders, resumes
+from kitty.web_server import LocalHTTPServer, WebApplication
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def website(workspace, tmp_path):
         defaults = {"Origin": server.origin}
         payload = raw
         if method == "POST":
-            defaults.update({"Content-Type": "application/json", "X-ApplyAI-Request": "1"})
+            defaults.update({"Content-Type": "application/json", "X-Kitty-Request": "1"})
             if raw is None:
                 payload = json.dumps(body).encode()
         for key, value in (headers or {}).items():
@@ -156,7 +156,7 @@ def test_confirmation_and_status_append_history(website, workspace, posting):
     {"Host": "attacker.invalid"}, {"Host": "127.0.0.1:1"},
     {"Origin": "https://attacker.invalid"}, {"Origin": "null"},
     {"Sec-Fetch-Site": "cross-site"}, {"Sec-Fetch-Site": "same-site"},
-    {"X-ApplyAI-Request": None}, {"X-ApplyAI-Request": "0"},
+    {"X-Kitty-Request": None}, {"X-Kitty-Request": "0"},
 ])
 def test_rejects_cross_origin_or_unmarked_mutations(website, workspace, posting, headers):
     status, data, response_headers = website.request(
@@ -196,7 +196,7 @@ def test_only_json_posts_and_no_cors_preflight(website, posting):
 def test_local_non_browser_client_still_requires_custom_header(website, posting):
     endpoint = f"/api/jobs/{posting.id}"
     assert website.request(endpoint, {"action": "queue"}, headers={"Origin": None})[0] == 200
-    assert website.request(endpoint, {"action": "skip"}, headers={"Origin": None, "X-ApplyAI-Request": None})[0] == 403
+    assert website.request(endpoint, {"action": "skip"}, headers={"Origin": None, "X-Kitty-Request": None})[0] == 403
 
 
 def test_resume_pdf_selection_and_pinned_history(website, workspace, posting, tmp_path):
@@ -278,7 +278,7 @@ def test_discovery_only_runs_enabled_free_sources(website, monkeypatch):
         assert release.wait(5)
         return SimpleNamespace(sources={})
 
-    monkeypatch.setattr("applyai.web_insights.run_discover", discover)
+    monkeypatch.setattr("kitty.web_insights.run_discover", discover)
     try:
         assert website.request("/api/sources/run", {"confirm": True})[0] == 200
         assert started.wait(5)

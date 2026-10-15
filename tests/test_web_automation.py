@@ -9,12 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from applyai import web_automation as web
-from applyai.core import applications, favorites, form_questions, jobs, resumes
-from applyai.core.apply.filler import FillReport
-from applyai.core.apply.watch import PageView, WatchedTab, watch_tabs
-from applyai.db import connect
-from applyai.web_server import APIError
+from kitty import web_automation as web
+from kitty.core import applications, favorites, form_questions, jobs, resumes
+from kitty.core.apply.filler import FillReport
+from kitty.core.apply.watch import PageView, WatchedTab, watch_tabs
+from kitty.db import connect
+from kitty.web_server import APIError
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def posting(workspace):
 
 @pytest.fixture
 def saved_credentials(workspace):
-    from applyai.core.apply.credentials import CREDENTIALS_FILE
+    from kitty.core.apply.credentials import CREDENTIALS_FILE
     path = workspace.settings.root / CREDENTIALS_FILE
     path.parent.mkdir(exist_ok=True)
     path.write_text("APPLICATION_ACCOUNT_EMAIL=web.synthetic@example.invalid\n"
@@ -347,7 +347,7 @@ def test_review_binds_resume_urls_and_config(app, workspace, posting, pdf_pair, 
     elif change == "profile":
         app.config = replace(app.config, profile=app.config.profile.model_copy(update={"first_name": "Changed"}))
     elif change == "answers":
-        from applyai.config import AnswerEntry
+        from kitty.config import AnswerEntry
         app.config = replace(app.config, answers=app.config.answers.model_copy(update={
             "answers": [AnswerEntry(question="Synthetic question?", answer="Reviewed fact")],
         }))
@@ -428,7 +428,7 @@ def test_review_enables_only_chosen_run_account_action(
 def test_configured_authentication_approval_still_works(
     app, workspace, posting, saved_credentials, monkeypatch,
 ):
-    from applyai.config import AuthenticationSettings
+    from kitty.config import AuthenticationSettings
     original = AuthenticationSettings(
         enabled=True, allow_account_creation=True, approved_origins=["https://synthetic.example"],
     )
@@ -487,8 +487,8 @@ def test_account_review_requires_saved_credentials_and_refuses_public_password(
 def test_credentials_changed_after_start_are_rejected_before_browser_access(
     app, workspace, posting, saved_credentials, monkeypatch,
 ):
-    from applyai.core.apply.auth import authenticate
-    from applyai.core.apply.credentials import load_credentials
+    from kitty.core.apply.auth import authenticate
+    from kitty.core.apply.credentials import load_credentials
     captured = []
     monkeypatch.setattr(app.automation, "start", lambda config, *a, **k: captured.append(config))
     body = {"mode": "selected", "job_ids": [posting.id], "authentication_mode": "create"}

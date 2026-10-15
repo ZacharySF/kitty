@@ -436,7 +436,7 @@
       saved answers
     </p>
     <p>
-      Check the jobs and resumes below. ApplyAI fills your saved details and
+      Check the jobs and resumes below. kitty! fills your saved details and
       leaves unknown answers blank.
     </p>
     {#if demo}<p class="muted">
@@ -544,12 +544,12 @@
       </label>
       {#if authMode === "google"}
         <p>
-          ApplyAI can select the exact account shown above when Google lists it
+          kitty! can select the exact account shown above when Google lists it
           as signed in.
         </p>
         <ol>
           <li>
-            Use the Firefox window opened by ApplyAI, not your everyday Chrome.
+            Use the Firefox window opened by kitty!, not your everyday Chrome.
           </li>
           <li>
             If Google asks you to sign in, do that yourself with the reviewed
@@ -562,13 +562,13 @@
         </ol>
         <p class="muted">
           Google passwords and permission screens are always manual. Google
-          Drive upload buttons are separate; ApplyAI attaches your chosen local
+          Drive upload buttons are separate; kitty! attaches your chosen local
           resume.
         </p>
       {:else}
         <p>
           Choose Sign in for existing accounts or Create account for new ones.
-          Use separate runs when websites need different actions. ApplyAI sends
+          Use separate runs when websites need different actions. kitty! sends
           at most one credential request per job attempt; the site may still
           require verification or reject the request.
         </p>
@@ -607,7 +607,7 @@
       <p class="muted">
         Leave unchecked to handle accounts yourself. Other origins and
         unexpected redirects are blocked. Consent, CAPTCHA, MFA and email
-        verification remain yours to complete. ApplyAI never presses the final
+        verification remain yours to complete. kitty! never presses the final
         application Submit.
       </p>
     </div>

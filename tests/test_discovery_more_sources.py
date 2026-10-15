@@ -1,15 +1,17 @@
-"""vansh2027, speedyapply2027 and Workable against synthetic responses."""
+"""vansh2027, speedyapply2027, derec4 and Workable against synthetic responses."""
 
 from datetime import timedelta
 
-from applyai.config import WatchlistCompany, WatchlistFile
-from applyai.core.apply.urls import detect_ats, form_url
-from applyai.core.discovery.ats import WORKABLE_WIDGET, WorkableAdapter
-from applyai.core.discovery.context import DiscoverContext
-from applyai.core.discovery.pipeline import CompanyResolver
-from applyai.core.discovery.repos import SPEEDYAPPLY_READMES, SpeedyApplyAdapter, parse_vansh
-from applyai.dates import now
-from applyai.models import Job
+from kitty.config import WatchlistCompany, WatchlistFile
+from kitty.core.apply.urls import detect_ats, form_url
+from kitty.core.discovery.ats import WORKABLE_WIDGET, WorkableAdapter
+from kitty.core.discovery.context import DiscoverContext
+from kitty.core.discovery.pipeline import CompanyResolver
+from kitty.core.discovery.repos import (
+    DEREC4_FILES, SPEEDYAPPLY_READMES, DereC4Adapter, SpeedyApplyAdapter, parse_vansh,
+)
+from kitty.dates import now
+from kitty.models import Job
 from fakes import FIXTURES, FakeHttp, fixture
 
 
@@ -87,6 +89,70 @@ def test_speedyapply_reports_a_missing_readme_and_a_changed_layout(workspace):
     assert broken.status == "error" and "no internship tables" in broken.error
 
 
+# -------------------------------------------------------------------- derec4
+
+_DEREC4_README = """# Internships and Newgrad Job Listings
+| Badge | Count |
+| --- | --- |
+| not a | listing |
+
+| Company | Role | Location | Age |
+| --- | --- | --- | --- |
+| Example Grid | [Power Systems Intern 🛂](https://grid.example.invalid/jobs/1?utm_source=x) | Austin, TX | 0d |
+| Example Rail | [Signals Intern 🇺🇸](https://rail.example.invalid/jobs/2) | Fort Worth, TX | 2mo |
+| Example Vault | [Quant Intern 🔒](https://vault.example.invalid/jobs/3) | Chicago, IL | 1w |
+| Example Broken | Role without a link | Remote | 3d |
+""".encode()
+_DEREC4_NEWGRAD = """| Company | Role | Location | Age |
+| --- | --- | --- | --- |
+| Example Fab | [Process Technician, Nights (Wednesday, Thursday,...](https://fab.example.invalid/jobs/9) | Wilton, CT | 0d |
+| Example Grid | [Power Systems Intern](https://grid.example.invalid/jobs/1) | Austin, TX | 0d |
+""".encode()
+_DEREC4_UNFILTERED = """| Company | Role | Location | Age |
+| --- | --- | --- | --- |
+| Example Fab | [Process Technician, Nights (Wednesday, Thursday, Friday) 🎓](https://fab.example.invalid/jobs/9) | Wilton, CT | 1d |
+| Example Lab | [Research Intern \\| Summer 2027](https://lab.example.invalid/jobs/4) | Remote | 5d |
+""".encode()
+
+
+def test_derec4_reads_every_list_once_with_eligibility_markers(workspace):
+    ctx, _ = _context(workspace, [], {
+        DEREC4_FILES["internships"]: _DEREC4_README,
+        DEREC4_FILES["newgrad"]: _DEREC4_NEWGRAD,
+        DEREC4_FILES["unfiltered"]: _DEREC4_UNFILTERED,
+    })
+    result = DereC4Adapter(ctx).fetch(None)
+
+    assert result.status == "ok"
+    assert result.stats["files"]["internships"] == {"rows": 3, "tables": 1, "bad_rows": 1}  # badge table ignored
+    assert result.stats["duplicates"] == 2
+    by_company = {job.company: job for job in result.jobs}
+    assert set(by_company) == {"Example Grid", "Example Rail", "Example Vault", "Example Fab", "Example Lab"}
+
+    grid = by_company["Example Grid"]
+    assert grid.title == "Power Systems Intern" and grid.raw["list"] == "internships"  # first copy wins
+    assert grid.raw["flags"] == ["no_sponsorship"] and "sponsorship" in grid.raw["eligibility_note"]
+    rail = by_company["Example Rail"]
+    assert "citizenship" in rail.raw["eligibility_note"]
+    assert rail.posted_at.startswith((now().date() - timedelta(days=60)).isoformat())
+    assert by_company["Example Vault"].closed and by_company["Example Vault"].raw["eligibility_note"] is None
+    # The README's cut title is replaced by the unfiltered list's full spelling.
+    assert by_company["Example Fab"].title == "Process Technician, Nights (Wednesday, Thursday, Friday)"
+    assert by_company["Example Lab"].title == "Research Intern | Summer 2027"
+    assert by_company["Example Lab"].season == "Summer 2027"
+
+
+def test_derec4_reports_a_missing_file_and_a_changed_layout(workspace):
+    ctx, _ = _context(workspace, [], {DEREC4_FILES["internships"]: _DEREC4_README})
+    partial = DereC4Adapter(ctx).fetch(None)          # the other two answer 404
+    assert partial.status == "partial" and "newgrad:" in partial.error and "unfiltered:" in partial.error
+    assert len(partial.jobs) == 3
+
+    ctx, _ = _context(workspace, [], {url: b"# moved to a website\n" for url in DEREC4_FILES.values()})
+    broken = DereC4Adapter(ctx).fetch(None)
+    assert broken.status == "error" and "no listing tables" in broken.error
+
+
 # ------------------------------------------------------------------ workable
 
 
@@ -124,9 +190,9 @@ def test_workable_links_resolve_to_the_board_and_its_form():
 
 def test_gh_jid_postings_stay_apart_and_old_stripped_urls_still_match(workspace):
     """canonical_url used to drop gh_jid; jobs stored then must neither duplicate nor collapse."""
-    from applyai.core import jobs as jobs_core
-    from applyai.core.discovery.base import AdapterResult, NormalizedJob
-    from applyai.core.discovery.pipeline import run_discover
+    from kitty.core import jobs as jobs_core
+    from kitty.core.discovery.base import AdapterResult, NormalizedJob
+    from kitty.core.discovery.pipeline import run_discover
 
     track = next(t for t in workspace.config.tracks.tracks if "speedyapply2027" in t.sources)
     source, title = track.sources[0], track.search_terms[0].title() + " Intern"
@@ -168,9 +234,9 @@ def test_gh_jid_postings_stay_apart_and_old_stripped_urls_still_match(workspace)
 
 
 def test_postings_merged_only_because_gh_jid_was_dropped_are_split_apart(workspace):
-    from applyai.core import jobs as jobs_core
-    from applyai.core.discovery.base import AdapterResult, NormalizedJob
-    from applyai.core.discovery.pipeline import run_discover
+    from kitty.core import jobs as jobs_core
+    from kitty.core.discovery.base import AdapterResult, NormalizedJob
+    from kitty.core.discovery.pipeline import run_discover
 
     track = next(t for t in workspace.config.tracks.tracks if "greenhouse" in t.sources)
     term = track.search_terms[0].title()
@@ -210,9 +276,9 @@ def test_postings_merged_only_because_gh_jid_was_dropped_are_split_apart(workspa
 
 def test_other_spellings_of_a_stored_posting_url_merge_into_it(workspace):
     """Lists write the same posting's URL differently; each must join the stored job."""
-    from applyai.core import jobs as jobs_core
-    from applyai.core.discovery.base import AdapterResult, NormalizedJob
-    from applyai.core.discovery.pipeline import run_discover
+    from kitty.core import jobs as jobs_core
+    from kitty.core.discovery.base import AdapterResult, NormalizedJob
+    from kitty.core.discovery.pipeline import run_discover
 
     track = next(t for t in workspace.config.tracks.tracks if "speedyapply2027" in t.sources)
     title = track.search_terms[0].title() + " Intern"
@@ -247,9 +313,9 @@ def test_other_spellings_of_a_stored_posting_url_merge_into_it(workspace):
 
 
 def test_workable_repeated_shortcode_preserves_us_location():
-    from applyai.config import EligibilityRules
-    from applyai.core.discovery.ats import parse_workable
-    from applyai.core.discovery.eligibility import evaluate
+    from kitty.config import EligibilityRules
+    from kitty.core.discovery.ats import parse_workable
+    from kitty.core.discovery.eligibility import evaluate
 
     company = WatchlistCompany(name="Mixed Board", ats="workable", slug="mixed")
     common = {"shortcode": "one", "title": "Trading Intern", "description": "Open to undergraduates."}

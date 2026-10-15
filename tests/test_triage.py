@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from applyai.core import jobs as jobs_core
-from applyai.core import resumes as resumes_core
-from applyai.core.triage.run import collect_batches, plan_triage, run_now, submit_batch
-from applyai.core.triage.prompt import AnswerError, parse_answer
+from kitty.core import jobs as jobs_core
+from kitty.core import resumes as resumes_core
+from kitty.core.triage.run import collect_batches, plan_triage, run_now, submit_batch
+from kitty.core.triage.prompt import AnswerError, parse_answer
 
 JD = "You will write firmware. Experience with SPI and I2C buses is a plus. Python required."
 RESUME = "Pat Example | you@example.invalid | (555) 010-0000\nProgramming: C++, Python, CUDA\nBuilt a rover"

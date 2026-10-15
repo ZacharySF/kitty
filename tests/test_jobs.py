@@ -1,6 +1,6 @@
 """Adding jobs, dedupe across sources, and filters."""
 
-from applyai.core import jobs as jobs_core
+from kitty.core import jobs as jobs_core
 
 
 def _add(workspace, **kwargs):

@@ -8,11 +8,11 @@ from dataclasses import replace
 
 import pytest
 
-from applyai import web_insights as web
-from applyai.core import applications, jobs
-from applyai.core.finder import store
-from applyai.core.triage.run import RunResult, TriagePlan
-from applyai.web_server import APIError, WebApplication
+from kitty import web_insights as web
+from kitty.core import applications, jobs
+from kitty.core.finder import store
+from kitty.core.triage.run import RunResult, TriagePlan
+from kitty.web_server import APIError, WebApplication
 
 
 class DeferredTasks:
@@ -191,9 +191,9 @@ def test_invalid_parameters_rejected_before_task_start(app, workspace, path, bod
 
 
 def test_source_toggle_persists_and_selected_run_remains_bounded(app, workspace, monkeypatch):
-    from applyai.config import load_config
-    from applyai.core.discovery.pipeline import DiscoverResult, SourceTally
-    from applyai.web_server import FREE_SOURCES
+    from kitty.config import load_config
+    from kitty.core.discovery.pipeline import DiscoverResult, SourceTally
+    from kitty.web_server import FREE_SOURCES
 
     name = next(name for name in app.config.sources.sources if name in FREE_SOURCES and name in web.ADAPTERS)
     path = f"/api/sources/{name}/toggle"

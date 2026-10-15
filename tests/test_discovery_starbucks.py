@@ -2,11 +2,11 @@
 
 from dataclasses import replace
 
-from applyai.config import EligibilityRules
-from applyai.core.discovery.context import DiscoverContext
-from applyai.core.discovery.eligibility import evaluate
-from applyai.core.discovery.http import RateLimited
-from applyai.core.discovery.starbucks import StarbucksAdapter, details_url, search_url
+from kitty.config import EligibilityRules
+from kitty.core.discovery.context import DiscoverContext
+from kitty.core.discovery.eligibility import evaluate
+from kitty.core.discovery.http import RateLimited
+from kitty.core.discovery.starbucks import StarbucksAdapter, details_url, search_url
 from fakes import FakeHttp, fixture
 
 

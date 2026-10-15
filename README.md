@@ -1,4 +1,4 @@
-# applyai
+# kitty
 
 A personal job-search tool: find jobs across several tracks, filter out the ones
 I am not eligible for, pick the right resume, apply through a fast queue, and
@@ -21,13 +21,13 @@ and an MCP server for my agent.
 config/           yaml I edit; *.example files are committed, the real ones are gitignored
 data/             apply.db (real) and demo.db (throwaway) - gitignored
 resumes/          my resume files - gitignored
-src/applyai/
+src/kitty/
   core/           all behaviour, no UI imports - the CLI, TUI and MCP server call this
   db/             schema migrations and the connection
   tui/            Textual screens
   cli.py          the command line
-  mcp_server.py   the MCP server (`applyai mcp`), a thin layer like the CLI
-  web_server.py   loopback-only website adapter (`applyai-web`)
+  mcp_server.py   the MCP server (`kitty mcp`), a thin layer like the CLI
+  web_server.py   loopback-only website adapter (`kitty-web`)
 tests/            pytest, including headless TUI tests
 web/              Svelte 5 / TypeScript website; built assets in ignored web/dist/
 ```
@@ -39,8 +39,8 @@ TUI and the MCP server all call the same functions.
 
 ```bash
 uv sync                  # create .venv and install
-uv run applyai init      # copy config examples, ask ~5 questions, create the database
-uv run applyai doctor    # check config, schema, keys, resumes, source health
+uv run kitty init      # copy config examples, ask ~5 questions, create the database
+uv run kitty doctor    # check config, schema, keys, resumes, source health
 ```
 
 `init` never overwrites a config file that already exists, and `--yes` skips the
@@ -54,14 +54,14 @@ it is not application configuration. Never commit it, `.env`, resumes, databases
 exports, cached responses, discovered jobs or application history.
 
 ```bash
-source .venv/bin/activate    # then just `applyai ...`
+source .venv/bin/activate    # then just `kitty ...`
 ```
 
 ## Try it on fake data first
 
 ```bash
-uv run applyai --demo demo reset    # ~30 invented jobs, all labelled "(demo)"
-uv run applyai --demo tui           # learn the keys without touching real data
+uv run kitty --demo demo reset    # ~30 invented jobs, all labelled "(demo)"
+uv run kitty --demo tui           # learn the keys without touching real data
 ```
 
 `--demo` uses `data/demo.db`. `demo reset` refuses to write to any file that is
@@ -81,7 +81,7 @@ From the project root, with Node 22+ and npm available:
 ```bash
 npm --prefix web ci
 npm --prefix web run build
-uv run applyai-web                 # http://127.0.0.1:8765
+uv run kitty-web                 # http://127.0.0.1:8765
 ```
 
 On NixOS without Node on PATH, prefix either npm command with
@@ -94,7 +94,7 @@ configuration from disk; saves in My profile reload it automatically.
 For safe exploration without touching real jobs, runtime YAML or resumes:
 
 ```bash
-uv run applyai-web --demo --port 8766
+uv run kitty-web --demo --port 8766
 ```
 
 Unlike CLI `--demo`, the website demo creates a disposable temporary workspace
@@ -105,8 +105,9 @@ be registered inside the disposable workspace.
 
 ### Start here
 
-Home shows a three-step guide and checks whether your name/email and a usable
-resume PDF are saved. These checks describe saved data, not application readiness.
+**How it works** (top bar, or **How to apply** in the atlas Today panel) opens a
+three-step guide and checks whether your name/email and a usable resume PDF are
+saved. These checks describe saved data, not application readiness.
 
 1. **My profile → My resumes:** enter your verified details in the ordinary form,
    review the save, then upload a resume PDF. Blank fields stay blank. Basic-form
@@ -123,12 +124,18 @@ Alternative groups, job limits and browser progress remain under preparation
 options. **More filters** exposes ranking, source and other filters; selected-job
 actions and job details have their own expandable advanced controls.
 
-The sidebar keeps the daily flow and setup links visible. **More tools** contains
-new jobs, the application list, reminders, job sources, company discovery, reports,
-email updates, ranking and application questions. Configuration/YAML, imports,
-diagnostics, schedules and resume-generation/version tools remain available in
-labeled expandable sections. **How to apply** returns to the guide; hotkeys reveal
-collapsed controls before focusing them.
+Home is the **atlas**: a 3D network sphere (WebGL) whose hubs are the workspace
+groups and sections, with recent study subjects, flashcard decks, notebooks, schema
+maps, Kanban boards, upcoming events, saved/queued jobs and opportunities fanned
+out on the shell (`GET /api/atlas`, at most 40 per kind, read-only). Click a node
+to open it; switch Sphere / Clusters / Tree / Force layouts and tune repulsion,
+spring and damping in the side panel. The same panel has an atlas search (`/`), a
+grouped Sections list for keyboard and screen-reader use, and a Today summary with
+the daily brief. Without WebGL the Sections list replaces the 3D view. Every other
+page has a compact top bar with **◉ atlas**, a breadcrumb, search (Ctrl/⌘ K) and
+refresh; F1–F10 still jump directly. Configuration/YAML, imports, diagnostics,
+schedules and resume-generation/version tools remain available in labeled
+expandable sections; hotkeys reveal collapsed controls before focusing them.
 
 The website supports:
 
@@ -193,7 +200,7 @@ A later tab/browser failure preserves earlier job results.
 review plan, choose **Sign in** for existing accounts or **Create account** for
 new ones, review the exact HTTPS websites listed, and check the authorization
 box. This authorizes only that run, not a global policy change. Use separate runs
-when sites need different account actions; ApplyAI cannot determine whether you
+when sites need different account actions; kitty! cannot determine whether you
 already have an account. Credentials are never displayed in the website.
 Changed credentials, account choices or destinations require a fresh review.
 Verification, consent, CAPTCHA and unsupported signup forms still need you.
@@ -203,10 +210,10 @@ website's review plan. The displayed identity comes from **My profile → email*
 this mode does not load or send the private employer password. Check that email,
 review the employer origins and authorize the run.
 
-- Use the dedicated **Firefox window opened by ApplyAI**, not everyday Chrome.
+- Use the dedicated **Firefox window opened by kitty!**, not everyday Chrome.
   Its `data/firefox` profile persists job-site cookies between preparation runs.
 - If the account is not signed in, finish Google sign-in manually in that Firefox.
-  ApplyAI can select one exact, already signed-in account on a recognized Google
+  kitty! can select one exact, already signed-in account on a recognized Google
   chooser; it never adds an account, enters a Google password, or accepts permissions.
 - After a manual handoff, return to the same employer application tab and review a
   new plan. Retained fields are reused only when the application identity can be
@@ -249,17 +256,20 @@ Demo restrictions intentionally prevent testing live employer, Gmail or paid cal
 ## Finding jobs (Stage 2)
 
 ```bash
-uv run applyai discover                       # every enabled source
-uv run applyai discover -s greenhouse -s nuft2027   # just these
-uv run applyai discover -s employers -s workable    # direct engineering/employer boards
-uv run applyai discover -s research -s yc_internships -s websearch
-uv run applyai discover -s local_employers -s starbucks # configured nearby part-time employers
+uv run kitty discover                       # every enabled source
+uv run kitty discover -s greenhouse -s nuft2027   # just these
+uv run kitty discover -s employers -s workable    # direct engineering/employer boards
+uv run kitty discover -s research -s yc_internships -s websearch
+uv run kitty discover -s local_employers -s starbucks # configured nearby part-time employers
 ```
 
 `discover` pulls the Simplify, NUFT, vansh (`vanshb03/Summer2027-Internships`
-listings.json; postings older than 180 days skipped) and speedyapply (the USA
+listings.json; postings older than 180 days skipped), speedyapply (the USA
 internship tables in the READMEs of `speedyapply/2027-SWE-College-Jobs` and
-`2027-AI-College-Jobs`; fragile, a changed layout shows as partial/error) repos,
+`2027-AI-College-Jobs`; fragile, a changed layout shows as partial/error) and derec4
+(every listing in `DereC4/internships-and-newgrad`: README.md internships, NEWGRAD.md
+new grad and go/UNFILTERED.md, deduplicated by URL; 🛂/🇺🇸/🎓 markers become
+eligibility notes and 🔒 closes a posting; fragile like speedyapply) repos,
 every watchlist board on Greenhouse, Lever, Ashby, SmartRecruiters, Workday and
 Workable (public widget API, one request per board), Indeed (via JobSpy),
 the monthly Hacker News "Who is hiring" thread, and USAJOBS student/intern
@@ -343,9 +353,9 @@ if necessary. In Inbox, `w` shows older new jobs.
 To keep finding jobs without me, run discovery on a timer:
 
 ```bash
-uv run applyai schedule print                  # home-manager block (NixOS), 07:00 and 17:00
-uv run applyai schedule print --format systemd # or plain systemd user units / --format cron
-uv run applyai schedule print --with-triage    # also collect + send triage batches (spends up to the cap)
+uv run kitty schedule print                  # home-manager block (NixOS), 07:00 and 17:00
+uv run kitty schedule print --format systemd # or plain systemd user units / --format cron
+uv run kitty schedule print --with-triage    # also collect + send triage batches (spends up to the cap)
 ```
 
 It is slow on purpose: at least 2 s between requests to any host (5 s for the
@@ -372,9 +382,9 @@ source closure/expiry and published research-program deadlines still close recor
 ### Refresh the shortlist, not the source count
 
 ```bash
-uv run applyai refresh --limit 10 --dry-run  # inspect favorites-first selection
-uv run applyai refresh --limit 10           # bounded authoritative detail checks
-uv run applyai refresh --job <ID> --limit 1  # use a local stored job ID; repeat --job
+uv run kitty refresh --limit 10 --dry-run  # inspect favorites-first selection
+uv run kitty refresh --limit 10           # bounded authoritative detail checks
+uv run kitty refresh --job <ID> --limit 1  # use a local stored job ID; repeat --job
 ```
 
 Selection prefers favorites, then missing/stale descriptions within best-first
@@ -403,9 +413,9 @@ of history, so until then only the overrides produce anything.
 ## Every day (Stage 4)
 
 ```bash
-uv run applyai today           # due/overdue reminders, deadlines this week, new A/B per track,
+uv run kitty today           # due/overdue reminders, deadlines this week, new A/B per track,
                                # weekly progress + streak, failing sources, quiet applications
-uv run applyai today --notify  # also push it (ntfy or Telegram, set in .env; off by default)
+uv run kitty today --notify  # also push it (ntfy or Telegram, set in .env; off by default)
 ```
 
 The TUI opens on **Today** (`F1`), the same digest with every line a link.
@@ -417,7 +427,7 @@ time) and creates follow-up reminders at +7 / +14 / +21 days (`config/apply.yaml
 `s` skips, `l` puts it off, `x` marks it not eligible by hand (discover never
 undoes that), `q` logs a screening question I could not answer. On the Profile
 tab (`F8`) `w` answers a logged question once; the answer goes into `answers.yaml`
-exactly as I type it. `applyai status <id> applied` also creates the follow-ups.
+exactly as I type it. `kitty status <id> applied` also creates the follow-ups.
 
 **Inbox company search:** press **Ctrl+F**, type a company name or part of one,
 then **Enter**. Matching is case-insensitive and company-only, not title/location
@@ -429,8 +439,8 @@ silently affect a company outside the displayed results.
 ## Finding companies (Stage 5)
 
 ```bash
-uv run applyai finder          # propose up to 15 firms that match config/skills.yaml
-uv run applyai finder --list   # what is waiting for a decision
+uv run kitty finder          # propose up to 15 firms that match config/skills.yaml
+uv run kitty finder --list   # what is waiting for a decision
 ```
 
 Sources: the YC companies list (hiring), HN "Who is hiring" posters, sponsor lists
@@ -448,13 +458,13 @@ reach two keywords.
 ## Applying (the tool fills, I submit)
 
 ```bash
-uv run applyai apply 1 2                       # example local job IDs
-uv run applyai apply --top 10 --track embedded # the 10 best new jobs in a track
-uv run applyai apply --queued                  # everything already in the apply queue
+uv run kitty apply 1 2                       # example local job IDs
+uv run kitty apply --top 10 --track embedded # the 10 best new jobs in a track
+uv run kitty apply --queued                  # everything already in the apply queue
 ```
 
 In the TUI: mark rows in the Inbox with `space` and press `f` (or `f` on any job).
-applyai opens each application form in its own Firefox window (a separate profile in
+kitty opens each application form in its own Firefox window (a separate profile in
 `data/firefox/`, so logins stick and my everyday Firefox is never touched), uploads
 the track's resume, fills contact and education fields from `profile.yaml` and
 screening questions from `answers.yaml`, and stops. **It never submits.** The window stays open; I check
@@ -474,7 +484,7 @@ resume parsing can overwrite your entries. Login, verification, visible CAPTCHA,
 unsupported controls, validation errors and incomplete uploads remain blockers.
 
 The window is its own program (a separate systemd scope), so closing the terminal
-leaves it open; in the window list its app id is `applyai`. Before filling, applyai
+leaves it open; in the window list its app id is `kitty`. Before filling, kitty
 switches Firefox's remote control to its non-automation mode, so pages see
 `navigator.webdriver = false` (bot checks such as reCAPTCHA read it). That needs
 `--remote-allow-system-access`: while the window is open, any program on this
@@ -485,16 +495,16 @@ After filling it keeps watching the tabs (`watch_hours` in `config/apply.yaml`,
 default 4; `--no-watch` skips it). When a tab shows its board's confirmation page
 (Greenhouse `.../confirmation`, Lever `.../thanks` with "Application submitted!",
 Ashby's success message), it records the application with the resume and the
-follow-ups, exactly like `applyai status <id> applied` or `a` in the Apply tab.
+follow-ups, exactly like `kitty status <id> applied` or `a` in the Apply tab.
 It only reads the tab's address and text; it never clicks. Other boards (Workday,
 company sites) are not watched: mark those by hand. In the terminal Ctrl-C stops
 watching; in the TUI watching goes on across tabs, `w` on the Apply tab stops it,
 and pressing `f` again keeps watching the earlier tabs too.
 
 Firefox takes one remote-control session at a time and keeps it until the
-program holding it ends it (a killed program never does). So while one applyai
+program holding it ends it (a killed program never does). So while one kitty
 watches, another fill says which process holds the window; if none does (an
-applyai was killed), close the applyai Firefox window and fill again. Closing the
+kitty was killed), close the kitty Firefox window and fill again. Closing the
 terminal (SIGHUP) still ends the session cleanly.
 
 It never guesses: a question with no answer in `answers.yaml` is left blank and
@@ -564,13 +574,13 @@ support for every site.
 Browser-signal suppression is not anonymity; verification, CAPTCHAs, consent,
 unknown answers, and final submission still need an appropriate handoff.
 
-The window is system Firefox (`$APPLYAI_FIREFOX` or `firefox` on PATH) started with
-remote control (WebDriver BiDi) on `127.0.0.1:9333` (`APPLYAI_BROWSER_PORT`). While
+The window is system Firefox (`$KITTY_FIREFOX` or `firefox` on PATH) started with
+remote control (WebDriver BiDi) on `127.0.0.1:9333` (`KITTY_BROWSER_PORT`). While
 it runs, Firefox shows the striped "under remote control" address bar, and any program
 on this computer could drive that window, which is why it uses its own profile. Close
 the window when done; the next fill starts it again with the same logins.
 
-To answer questions before the filler meets them, `applyai questions collect`
+To answer questions before the filler meets them, `kitty questions collect`
 reads the forms of the queue's jobs without a browser (default: active, `new` and
 `queued`, tiers A and B; `--states`, `--tiers`, `--limit`). Greenhouse comes from
 its public board API, Lever from the job's `/apply` page; Ashby (its robots.txt
@@ -578,7 +588,7 @@ disallows the form API), Workday (sign-in) and other sites are skipped with the
 reason in the summary. One request per second per host, cached for a week, and
 each question counts a job once, so re-running changes no counts. The company's
 own name becomes `{company}`, so "Why Example Robotics?" and "Why Example Systems?" merge.
-`applyai questions list` prints what is still unanswered, most-shared first, by
+`kitty questions list` prints what is still unanswered, most-shared first, by
 kind (choice, factual), with job counts, example companies and the dropdown
 choices; `--include-essays`, `--include-demographic`, `--all`, `--min-jobs N`,
 `--json`. Questions profile.yaml fills and file uploads are left out, and
@@ -587,18 +597,18 @@ questions the filler logged are listed too.
 ### Favorites and autofill
 
 - Star jobs I like: `*` in the Inbox, Jobs, Apply and Job Detail screens (★ marks
-  them), or `applyai fav <ids...>` / `applyai unfav <ids...>`. `applyai favorites`
-  lists them best first; `applyai list --favorites --best` works too. `v` in Inbox /
+  them), or `kitty fav <ids...>` / `kitty unfav <ids...>`. `kitty favorites`
+  lists them best first; `kitty list --favorites --best` works too. `v` in Inbox /
   Jobs / Apply shows favorites only.
-- More like these: best-first ordering (Inbox, Jobs, Apply, `applyai list --best`,
+- More like these: best-first ordering (Inbox, Jobs, Apply, `kitty list --best`,
   MCP list_jobs) ranks jobs that look like my favorites (title, company, tracks,
   description words) above ones that look like jobs I skipped or marked not eligible
   by hand. It comes after eligibility, tier and watchlist priority and before place
   and age, so it never overrides a rule. With no favorites it changes nothing. Job
   Detail and Apply show "like your favorites (+0.45): fpga, track cpu, ...".
-- `applyai autofill [--limit N] [--track T] [--no-watch] [--detach] [--dry-run]` (or `F`
+- `kitty autofill [--limit N] [--track T] [--no-watch] [--detach] [--dry-run]` (or `F`
   on the Apply tab, `f` on a ★ job there, or `f` on Inbox / Jobs with nothing marked)
-  fills my favorites' forms in background tabs of the applyai Firefox, only those in the
+  fills my favorites' forms in background tabs of the kitty Firefox, only those in the
   track the screen is filtered on (`c` on Inbox / Jobs / Apply; `--track`),
   best first, at most `autofill_cap` per run (config/apply.yaml, default 10), waiting
   `autofill_pause_seconds` (default 15) between jobs. **It never submits.** It skips
@@ -607,15 +617,15 @@ questions the filler logged are listed too.
   skipped by hostname. `--detach` keeps it running after the terminal
   closes (own systemd scope; output in data/autofill.log). With ntfy or Telegram set
   up in .env it pushes the summary. Afterwards it watches the tabs like
-  `applyai apply` and records each confirmation page as applied.
+  `kitty apply` and records each confirmation page as applied.
 
 ## Triage (Stage 3, Anthropic API)
 
 ```bash
-uv run applyai triage                 # what a run would send and cost; changes nothing
-uv run applyai triage --now --limit 5 # small run now, one request at a time
-uv run applyai triage --batch         # everything, as one Message Batch (half price, < 24 h)
-uv run applyai triage --collect       # apply finished batches
+uv run kitty triage                 # what a run would send and cost; changes nothing
+uv run kitty triage --now --limit 5 # small run now, one request at a time
+uv run kitty triage --batch         # everything, as one Message Batch (half price, < 24 h)
+uv run kitty triage --collect       # apply finished batches
 ```
 
 Needs `ANTHROPIC_API_KEY` in `.env`. Model, effort, prices and the hard per-run
@@ -633,7 +643,7 @@ prompt), so rerunning costs nothing until a posting or resume changes.
 
 Free, no model call: every discover gives each kept job a rules tier straight
 away (A open to underclassmen, B eligible or no bar found, C filtered out with
-the reason), so the tier column is never empty; `applyai triage --rules` does the
+the reason), so the tier column is never empty; `kitty triage --rules` does the
 same on demand. Part-time jobs (triage_depth `rules`) keep that tier; on other
 tracks `triage` replaces it with the model's. A tier I set by hand is never
 overwritten. My name, email, phone and profile links are removed from resume
@@ -643,7 +653,7 @@ text before it is sent.
 
 Read-only: the only scope asked for is `gmail.readonly`. One-time setup:
 
-1. Open https://console.cloud.google.com/ and create a project (e.g. "applyai").
+1. Open https://console.cloud.google.com/ and create a project (e.g. "kitty").
 2. APIs & Services > Library: search "Gmail API" and click Enable.
 3. APIs & Services > OAuth consent screen: choose External, fill in the app name
    and your email, then under Audience > Test users add your own Gmail address.
@@ -651,15 +661,15 @@ Read-only: the only scope asked for is `gmail.readonly`. One-time setup:
 4. APIs & Services > Credentials > Create credentials > OAuth client ID, type
    "Desktop app". Download the JSON and save it as `config/gmail_client.json`
    (gitignored).
-5. `uv run applyai gmail auth`: a browser opens; allow read-only access. The token
+5. `uv run kitty gmail auth`: a browser opens; allow read-only access. The token
    goes to `data/gmail_token.json` (gitignored). While the app is in Testing,
    Google expires it after 7 days; run `gmail auth` again when a check says so.
 
 ```bash
-uv run applyai gmail status            # set up? last check, proposals waiting
-uv run applyai gmail check --days 30   # read recent recruiting mail, propose status changes
-uv run applyai proposals               # what is waiting for me
-uv run applyai proposals confirm 12    # or: proposals reject 12
+uv run kitty gmail status            # set up? last check, proposals waiting
+uv run kitty gmail check --days 30   # read recent recruiting mail, propose status changes
+uv run kitty proposals               # what is waiting for me
+uv run kitty proposals confirm 12    # or: proposals reject 12
 ```
 
 Rules only, no model: a message is classified as rejection, offer, interview or
@@ -674,9 +684,9 @@ Gmail in the background.
 ## Reports and export (Stage 6)
 
 ```bash
-uv run applyai report                  # response rate by resume, track, source and tier
-uv run applyai export                  # data/export/<date>/{jobs,applications,status_events}.csv
-uv run applyai export -f json          # data/export/applyai-<date>.json
+uv run kitty report                  # response rate by resume, track, source and tier
+uv run kitty export                  # data/export/<date>/{jobs,applications,status_events}.csv
+uv run kitty export -f json          # data/export/kitty-<date>.json
 ```
 
 "Heard back" = OA, interview, offer or rejection; "OA+" = OA or further. The
@@ -686,15 +696,15 @@ never runs them as formulas.
 
 ## MCP server for my agent (Stage 7)
 
-`uv run applyai mcp` serves the core over stdio (`--demo mcp` uses the demo DB).
+`uv run kitty mcp` serves the core over stdio (`--demo mcp` uses the demo DB).
 Register it in an MCP client:
 
 ```json
 {
   "mcpServers": {
-    "applyai": {
+    "kitty": {
       "command": "uv",
-      "args": ["run", "--project", "/path/to/apply-ai", "applyai", "mcp"]
+      "args": ["run", "--project", "/path/to/kitty!", "kitty", "mcp"]
     }
   }
 }
@@ -721,7 +731,7 @@ workspace initialization may still migrate SQLite and sync local configuration.
 
 Resumes live in `resumes/` (gitignored) and are registered by label; each track
 sends its `default_resume`. Add one from the Profile screen (`F8`, `n`) or with
-`applyai resumes add <file> --label <label>`.
+`kitty resumes add <file> --label <label>`.
 Choose labels and track mappings for your own files in local configuration.
 Resume sources, generated documents and any rendering scripts containing personal
 content must remain in the ignored `resumes/` directory.
@@ -733,7 +743,7 @@ effective default-track assignments and missing files. `r` refreshes the library
 browsing or opening a PDF never changes a default or an application attachment.
 
 
-The **Posting evidence** tab within Resume (`F7`, or `applyai coach [--track T]`)
+The **Posting evidence** tab within Resume (`F7`, or `kitty coach [--track T]`)
 counts, per track, how often postings mention each term in
 `config/resume_terms.yaml`, with resume-line and job-description evidence.
 Counts are vocabulary measurements, not an ATS score or proof of experience.
@@ -743,12 +753,12 @@ The coach remains read-only; candidate generation is separate.
 ### Local deterministic editing
 
 ```bash
-uv run applyai resumes improve --track <TRACK> --source resumes/source.html
-uv run applyai resumes versions --track <TRACK>
-uv run applyai resumes review <VERSION> --open
-uv run applyai resumes promote <VERSION>
-uv run applyai resumes reject <VERSION>
-uv run applyai resumes rollback --track <TRACK>
+uv run kitty resumes improve --track <TRACK> --source resumes/source.html
+uv run kitty resumes versions --track <TRACK>
+uv run kitty resumes review <VERSION> --open
+uv run kitty resumes promote <VERSION>
+uv run kitty resumes reject <VERSION>
+uv run kitty resumes rollback --track <TRACK>
 ```
 
 `improve` creates a candidate HTML/PDF and an audit manifest, not a new default.
@@ -783,13 +793,13 @@ outside the implemented bounded editor.
 ## Daily use in Stage 1
 
 ```bash
-uv run applyai add https://jobs.example.com/postings/123 --track quant
-uv run applyai add <url> --fetch                 # fetch the page title to prefill, still editable
-uv run applyai status 12 oa --when 2026-10-01    # or press s in the TUI
-uv run applyai list --track quant
-uv run applyai resumes add resumes/quant.pdf     # stores path + hash + your description
-uv run applyai import csv old-applications.csv   # preview, confirm, then write
-uv run applyai tui
+uv run kitty add https://jobs.example.com/postings/123 --track quant
+uv run kitty add <url> --fetch                 # fetch the page title to prefill, still editable
+uv run kitty status 12 oa --when 2026-10-01    # or press s in the TUI
+uv run kitty list --track quant
+uv run kitty resumes add resumes/quant.pdf     # stores path + hash + your description
+uv run kitty import csv old-applications.csv   # preview, confirm, then write
+uv run kitty tui
 ```
 
 ### Getting around
@@ -876,8 +886,8 @@ config/tracks.yaml:6  tracks.1.weekly_targt: Extra inputs are not permitted
 ## Database
 
 SQLite at `data/apply.db` is the single source of truth. Schema changes are
-numbered `.sql` files under `src/applyai/db/migrations/`, applied in order and
-recorded in `schema_version`; `applyai init` migrates in place.
+numbered `.sql` files under `src/kitty/db/migrations/`, applied in order and
+recorded in `schema_version`; `kitty init` migrates in place.
 
 Two design points worth knowing:
 
@@ -902,9 +912,9 @@ fails in CI rather than in front of me.
 1. **done** - tracker: config, schema, core, CLI, Dashboard / Jobs / Pipeline / Job Detail, CSV import, demo data
 2. **done** - discovery: repo feeds, watchlist ATS boards, Indeed, USAJOBS and HN; direct engineering employers, research programs, YC internships and bounded opt-in web search; dedupe, cross-track routing, rules-only eligibility, Inbox + Sources screens
 3. **done** - LLM triage: tiers, resume pick and checked edit notes; estimate + confirm + hard cost cap; `--now` and `--batch`; cached per job
-4. **done** - Today digest (TUI landing tab + `applyai today`, optional ntfy/Telegram push), Apply session, follow-up reminders, hand "not eligible", answering logged questions, weekly targets + streak, `applyai schedule print`
+4. **done** - Today digest (TUI landing tab + `kitty today`, optional ntfy/Telegram push), Apply session, follow-up reminders, hand "not eligible", answering logged questions, weekly targets + streak, `kitty schedule print`
 5. **done** - niche-company finder: YC, HN, conferences, GitHub, SBIR awards; skills.yaml scoring, per-area quotas, hard cap 15, approve/reject on the Finder tab
-6. **done** - Gmail read-only status proposals (confirm with a key), response rates by resume / track / source / tier (`applyai report`, Reports tab), `applyai export` (CSV/JSON, formula-safe)
-7. **done** - MCP server over `core/` (`applyai mcp`); own Firefox form filler (`applyai apply`; fills, never submits) and the resume coach
-- **2026-10-03** - favorites (`*`), "more like these" best-first ranking, `applyai autofill` for favorites (fills, never submits)
+6. **done** - Gmail read-only status proposals (confirm with a key), response rates by resume / track / source / tier (`kitty report`, Reports tab), `kitty export` (CSV/JSON, formula-safe)
+7. **done** - MCP server over `core/` (`kitty mcp`); own Firefox form filler (`kitty apply`; fills, never submits) and the resume coach
+- **2026-10-03** - favorites (`*`), "more like these" best-first ranking, `kitty autofill` for favorites (fills, never submits)
 - **Local resume editing** - deterministic candidate HTML/PDF, exact evidence-backed review, immutable versions, explicit promotion/rejection and rollback; no hosted AI or invented facts.

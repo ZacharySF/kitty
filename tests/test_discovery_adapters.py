@@ -4,14 +4,14 @@ import io
 import logging
 import tarfile
 
-from applyai.config import WatchlistCompany, WatchlistFile
-from applyai.core.discovery.ats import (
+from kitty.config import WatchlistCompany, WatchlistFile
+from kitty.core.discovery.ats import (
     AshbyAdapter, GreenhouseAdapter, LeverAdapter, SmartRecruitersAdapter,
 )
-from applyai.core.discovery.context import DiscoverContext
-from applyai.core.discovery.http import HttpError, RateLimited
-from applyai.core.discovery.repos import NUFT_TARBALL, NuftAdapter, parse_simplify
-from applyai.core.discovery.workday import WorkdayAdapter, fetch_board, posted_on_to_iso
+from kitty.core.discovery.context import DiscoverContext
+from kitty.core.discovery.http import HttpError, RateLimited
+from kitty.core.discovery.repos import NUFT_TARBALL, NuftAdapter, parse_simplify
+from kitty.core.discovery.workday import WorkdayAdapter, fetch_board, posted_on_to_iso
 from fakes import FIXTURES, FakeHttp, fixture
 
 

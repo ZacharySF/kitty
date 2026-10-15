@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from applyai.config import (
+from kitty.config import (
     CONFIG_FILES,
     ConfigError,
     DEFAULT_VIEWS,
@@ -15,7 +15,7 @@ from applyai.config import (
     load_config,
     parse_file,
 )
-from applyai.core import companies as companies_core
+from kitty.core import companies as companies_core
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -149,7 +149,7 @@ def test_missing_optional_files_fall_back_to_defaults(tmp_path):
 def test_unquoted_yes_is_still_a_text_answer(tmp_path):
     path = tmp_path / "answers.yaml"
     path.write_text("answers:\n  - question: Authorized to work?\n    answer: Yes\n", encoding="utf-8")
-    from applyai.config import AnswersFile
+    from kitty.config import AnswersFile
 
     answers = parse_file(path, AnswersFile)
     assert answers.answers[0].answer == "Yes"

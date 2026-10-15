@@ -10,11 +10,11 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from applyai.config import load_config
-from applyai.core import questions
-from applyai.core.workspace import sync_config_to_db
-from applyai.web_profile import get, post, set_source_enabled
-from applyai.web_server import APIError
+from kitty.config import load_config
+from kitty.core import questions
+from kitty.core.workspace import sync_config_to_db
+from kitty.web_profile import get, post, set_source_enabled
+from kitty.web_server import APIError
 
 
 @pytest.fixture
@@ -288,7 +288,7 @@ def test_relative_import_date_stays_bound_to_preview(
     profile_app, workspace, monkeypatch, relative, days,
 ):
     reference = datetime(2026, 1, 2, 23, 59, 59, tzinfo=timezone.utc)
-    monkeypatch.setattr('applyai.dates.now', lambda: reference)
+    monkeypatch.setattr('kitty.dates.now', lambda: reference)
     payload = {'csv': f'company,title,applied_at\nSynthetic Employer,Historical Role,{relative}\n'}
     preview = post(profile_app, workspace.conn, '/api/profile/import/preview', payload)
     expected = (reference + timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -301,10 +301,10 @@ def test_relative_import_date_stays_bound_to_preview(
 
 
 def test_relative_import_still_rejects_changed_workspace(profile_app, workspace, monkeypatch):
-    from applyai.core import jobs
+    from kitty.core import jobs
 
     reference = datetime(2026, 1, 2, tzinfo=timezone.utc)
-    monkeypatch.setattr('applyai.dates.now', lambda: reference)
+    monkeypatch.setattr('kitty.dates.now', lambda: reference)
     payload = {'csv': 'company,title,applied_at\nSynthetic Employer,Historical Role,today\n'}
     preview = post(profile_app, workspace.conn, '/api/profile/import/preview', payload)
     jobs.upsert_job(
@@ -358,7 +358,7 @@ def test_schedule_is_output_only_and_paid_requires_approval(profile_app, workspa
 
 
 def test_notifications_are_explicit_and_demo_blocked(profile_app, workspace, monkeypatch):
-    from applyai.core import notify
+    from kitty.core import notify
     sent = []
     monkeypatch.setattr(notify, 'notifier_configured', lambda: 'ntfy')
     monkeypatch.setattr(notify, 'send_digest', lambda text: sent.append(text) or 'sent to ntfy topic synthetic-private-topic')

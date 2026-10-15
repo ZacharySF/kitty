@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from applyai.config import ResumeTermsFile, parse_file
-from applyai.core import jobs as jobs_core
-from applyai.core import resumes as resumes_core
-from applyai.core.resume_coach import coach, compile_vocabulary
+from kitty.config import ResumeTermsFile, parse_file
+from kitty.core import jobs as jobs_core
+from kitty.core import resumes as resumes_core
+from kitty.core.resume_coach import coach, compile_vocabulary
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

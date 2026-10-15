@@ -8,10 +8,10 @@ fetch anything, so its fixture follows the documented response shape
 from dataclasses import replace
 from types import SimpleNamespace
 
-from applyai.core.discovery.context import DiscoverContext
-from applyai.core.discovery.hackernews import ITEM_URL, SEARCH_URL, HackerNewsAdapter
-from applyai.core.discovery.jobspy_source import JobSpyAdapter, plan_searches
-from applyai.core.discovery.usajobs import UsaJobsAdapter, search_url
+from kitty.core.discovery.context import DiscoverContext
+from kitty.core.discovery.hackernews import ITEM_URL, SEARCH_URL, HackerNewsAdapter
+from kitty.core.discovery.jobspy_source import JobSpyAdapter, plan_searches
+from kitty.core.discovery.usajobs import UsaJobsAdapter, search_url
 from fakes import FakeHttp, fixture
 
 
@@ -103,7 +103,7 @@ def test_usajobs_keeps_student_and_intern_announcements(workspace, monkeypatch):
 
 
 def test_usajobs_rate_limit_is_reported_and_stops_the_source(workspace, monkeypatch):
-    from applyai.core.discovery.http import RateLimited
+    from kitty.core.discovery.http import RateLimited
 
     monkeypatch.setenv("USAJOBS_API_KEY", "test-key")
     options = workspace.config.sources.sources["usajobs"].options
@@ -181,7 +181,7 @@ def test_jobspy_all_terms_and_nationwide_locations_do_not_expand_local_tracks(wo
     assert all(s.location not in {"United States", "Texas", "Remote"} for s in local_searches)
 
 def test_jobspy_plan_adds_each_extra_place_with_its_own_terms(workspace):
-    from applyai.config import NearRule
+    from kitty.config import NearRule
 
     config = _all_sites(workspace.config)
     track = next(t for t in config.tracks.tracks if t.location_rules.near)
@@ -195,7 +195,7 @@ def test_jobspy_plan_adds_each_extra_place_with_its_own_terms(workspace):
 
 
 def test_extra_local_search_centers_inherit_all_normal_terms_without_broadening_nationwide(workspace):
-    from applyai.config import NearRule
+    from kitty.config import NearRule
 
     track = next(t for t in workspace.config.tracks.tracks if t.location_rules.near)
     rules = track.location_rules.model_copy(update={

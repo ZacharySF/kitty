@@ -7,10 +7,10 @@ from the board's JavaScript bundle (Ashby); see core/apply/watch.py.
 from __future__ import annotations
 
 import pytest
-from applyai.core import applications as applications_core
-from applyai.core import jobs as jobs_core
-from applyai.core import reminders as reminders_core
-from applyai.core.apply.watch import RULES, PageView, Watch, WatchedTab, confirmed, posting_key, watch_tabs
+from kitty.core import applications as applications_core
+from kitty.core import jobs as jobs_core
+from kitty.core import reminders as reminders_core
+from kitty.core.apply.watch import RULES, PageView, Watch, WatchedTab, confirmed, posting_key, watch_tabs
 
 GH_FORM = "https://job-boards.greenhouse.io/example-space/jobs/900021"
 LEVER_FORM = "https://jobs.lever.co/example-data/00000000-0000-4000-8000-000000900022/apply"

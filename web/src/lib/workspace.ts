@@ -1,10 +1,23 @@
 export const navigation = [
   {
     id: "today",
-    label: "Home",
+    label: "Atlas",
     key: "F1",
-    icon: "today",
+    icon: "atlas",
   },
+  { id: "calendar", label: "Calendar", key: "", icon: "calendar" },
+  { id: "kanban", label: "Kanban", key: "", icon: "kanban" },
+  {
+    id: "opportunities",
+    label: "Opportunities & projects",
+    key: "",
+    icon: "opportunities",
+  },
+  { id: "study", label: "Study", key: "", icon: "study" },
+  { id: "flashcards", label: "Flashcards", key: "", icon: "flashcards" },
+  { id: "notes", label: "Notes & canvas", key: "", icon: "notes" },
+  { id: "schema", label: "Schema maps", key: "", icon: "schema" },
+  { id: "ai", label: "AI settings", key: "", icon: "ai" },
   { id: "inbox", label: "New jobs", key: "F2", icon: "inbox" },
   { id: "queue", label: "Prepare applications", key: "F3", icon: "queue" },
   { id: "jobs", label: "Find jobs", key: "F4", icon: "jobs" },
@@ -37,14 +50,101 @@ export const navigation = [
   },
 ] as const;
 export type View = (typeof navigation)[number]["id"];
+export const navigationGroups: { label: string; views: View[] }[] = [
+  {
+    label: "Plan",
+    views: ["today", "calendar", "kanban", "opportunities", "reminders"],
+  },
+  { label: "Study", views: ["study", "flashcards", "notes", "schema"] },
+  {
+    label: "Job search",
+    views: [
+      "jobs",
+      "inbox",
+      "favorites",
+      "queue",
+      "pipeline",
+      "applications",
+      "resumes",
+      "sources",
+      "finder",
+      "mail",
+      "triage",
+      "questions",
+      "reports",
+    ],
+  },
+  { label: "Settings", views: ["profile", "ai"] },
+];
+/**
+ * Related sections, drawn as edges between section hubs on the atlas home.
+ * Single source of truth for "what connects to what"; pairs are undirected.
+ */
+export const navigationRelations: [View, View][] = [
+  ["calendar", "kanban"],
+  ["calendar", "reminders"],
+  ["calendar", "study"],
+  ["opportunities", "calendar"],
+  ["opportunities", "kanban"],
+  ["kanban", "study"],
+  ["study", "flashcards"],
+  ["study", "notes"],
+  ["study", "schema"],
+  ["flashcards", "notes"],
+  ["notes", "schema"],
+  ["schema", "jobs"],
+  ["jobs", "inbox"],
+  ["jobs", "favorites"],
+  ["jobs", "pipeline"],
+  ["jobs", "sources"],
+  ["jobs", "triage"],
+  ["favorites", "queue"],
+  ["queue", "pipeline"],
+  ["queue", "resumes"],
+  ["queue", "questions"],
+  ["pipeline", "resumes"],
+  ["pipeline", "applications"],
+  ["pipeline", "reminders"],
+  ["pipeline", "mail"],
+  ["applications", "reports"],
+  ["sources", "finder"],
+  ["resumes", "profile"],
+  ["questions", "profile"],
+  ["ai", "triage"],
+  ["ai", "notes"],
+  ["ai", "flashcards"],
+];
 export const shortcutGroups = [
   {
     title: "Navigate",
     shortcuts: [
-      ["F1–F10", "Open the matching workspace section"],
+      ["F1", "Return to the atlas home"],
+      ["F2–F10", "Open the original job sections"],
       ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
+      [
+        "Calendar / Kanban / Study / Notes / Schema maps / AI",
+        "Pick a node on the atlas, use its Sections list, or Ctrl / ⌘ + K",
+      ],
       ["?", "Show keyboard help"],
       ["Escape", "Close dialog or details; leave a text field"],
+    ],
+  },
+  {
+    title: "Atlas home",
+    shortcuts: [
+      ["/", "Search the atlas and jump to a node"],
+      ["Enter in atlas search", "Focus the first match; Enter again opens it"],
+      ["Drag / scroll / right-drag", "Orbit / zoom / pan the 3D map"],
+      ["Click a node", "Open that section, item, or job"],
+    ],
+  },
+  {
+    title: "Study",
+    shortcuts: [
+      ["Space / p", "Start, pause, or resume the study timer"],
+      ["s / r", "Stop / reset the study timer"],
+      ["b", "Skip the current break"],
+      ["f / Escape", "Enter / leave study focus mode"],
     ],
   },
   {

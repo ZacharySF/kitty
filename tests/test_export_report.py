@@ -3,10 +3,10 @@
 import csv
 import json
 
-from applyai.core import applications as applications_core
-from applyai.core import export as export_core
-from applyai.core import jobs as jobs_core
-from applyai.core import stats as stats_core
+from kitty.core import applications as applications_core
+from kitty.core import export as export_core
+from kitty.core import jobs as jobs_core
+from kitty.core import stats as stats_core
 
 
 def _applied(workspace, company, *, title="Intern", tier=None, status="applied"):

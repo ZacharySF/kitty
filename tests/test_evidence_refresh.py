@@ -9,17 +9,17 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from applyai.config import EligibilityRules, Track, WatchlistCompany
-from applyai.core import jobs as jobs_core
-from applyai.core.discovery.ats import GreenhouseAdapter
-from applyai.core.discovery.http import PoliteHttp
-from applyai.core.discovery.base import NormalizedJob
-from applyai.core.discovery.pipeline import CompanyResolver, SourceTally, rejudge, store_posting
-from applyai.core.discovery.public_pages import PageHTTPError, PublicPage, parse_job_postings
-from applyai.core.evidence import chosen_facts
-from applyai.core.refresh import PostingCheck, check_posting, persist_check, refresh_jobs, select_jobs
-from applyai.dates import now_iso, parse
-from applyai.normalize import sha256_text
+from kitty.config import EligibilityRules, Track, WatchlistCompany
+from kitty.core import jobs as jobs_core
+from kitty.core.discovery.ats import GreenhouseAdapter
+from kitty.core.discovery.http import PoliteHttp
+from kitty.core.discovery.base import NormalizedJob
+from kitty.core.discovery.pipeline import CompanyResolver, SourceTally, rejudge, store_posting
+from kitty.core.discovery.public_pages import PageHTTPError, PublicPage, parse_job_postings
+from kitty.core.evidence import chosen_facts
+from kitty.core.refresh import PostingCheck, check_posting, persist_check, refresh_jobs, select_jobs
+from kitty.dates import now_iso, parse
+from kitty.normalize import sha256_text
 
 
 def add(workspace, **kwargs):

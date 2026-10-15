@@ -9,13 +9,13 @@ from pathlib import Path
 import pytest
 from textual.widgets import DataTable
 
-from applyai.core import applications as applications_core
-from applyai.core import jobs as jobs_core
-from applyai.core.gmail.check import check_gmail
-from applyai.core.gmail.classify import classify
-from applyai.core.gmail.fetch import GmailMessage, parse_message
-from applyai.core.gmail.match import match_application, open_applications
-from applyai.core.gmail.proposals import pending_proposals
+from kitty.core import applications as applications_core
+from kitty.core import jobs as jobs_core
+from kitty.core.gmail.check import check_gmail
+from kitty.core.gmail.classify import classify
+from kitty.core.gmail.fetch import GmailMessage, parse_message
+from kitty.core.gmail.match import match_application, open_applications
+from kitty.core.gmail.proposals import pending_proposals
 
 FIXTURES = Path(__file__).parent / "fixtures" / "gmail"
 
@@ -259,10 +259,10 @@ def test_check_reports_auth_and_rate_limit_errors(workspace, http_status, kind):
 
 
 async def test_pipeline_proposals_modal_confirms_one(workspace):
-    from applyai.tui.app import ApplyAIApp
-    from applyai.tui.navigation import PLACES
-    from applyai.tui.screens.pipeline import PipelineScreen
-    from applyai.tui.screens.proposals import ProposalsModal
+    from kitty.tui.app import KittyApp
+    from kitty.tui.navigation import PLACES
+    from kitty.tui.screens.pipeline import PipelineScreen
+    from kitty.tui.screens.proposals import ProposalsModal
 
     jane = _apply(workspace, "Example Trading", "Software Engineer Intern")
     applications_core.set_status(
@@ -271,7 +271,7 @@ async def test_pipeline_proposals_modal_confirms_one(workspace):
     )
     key = {place.screen: place.key for place in PLACES}["pipeline"]
 
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=(180, 50)) as pilot:
         await pilot.press(key)
         await pilot.pause()

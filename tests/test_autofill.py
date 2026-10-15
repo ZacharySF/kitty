@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from applyai.core import applications as applications_core
-from applyai.core import favorites
-from applyai.core import jobs as jobs_core
-from applyai.core.apply.autofill import plan_run
-from applyai.core.apply.state import record_attempt
+from kitty.core import applications as applications_core
+from kitty.core import favorites
+from kitty.core import jobs as jobs_core
+from kitty.core.apply.autofill import plan_run
+from kitty.core.apply.state import record_attempt
 
 
 def _favorite(workspace, name, *, url=None, tier="B"):

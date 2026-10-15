@@ -9,11 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from applyai import web_resumes
-from applyai.core import resume_editor, resumes, resume_versions
-from applyai.db import connect
-from applyai.db.connection import transaction
-from applyai.web_server import APIError
+from kitty import web_resumes
+from kitty.core import resume_editor, resumes, resume_versions
+from kitty.db import connect
+from kitty.db.connection import transaction
+from kitty.web_server import APIError
 from test_resume_versions import space  # noqa: F401 — isolated offline rendering fixture
 
 

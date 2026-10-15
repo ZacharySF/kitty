@@ -18,15 +18,15 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from applyai.config import AuthenticationSettings
-from applyai.core import jobs as jobs_core
-from applyai.core.apply import bidi as bidi_module
-from applyai.core.apply.auth import authenticate
-from applyai.core.apply.bidi import open_tab
-from applyai.core.apply.browser import headless_firefox
-from applyai.core.apply.credentials import CREDENTIALS_FILE, load_credentials
-from applyai.core.apply.filler import fill_job
-from applyai.settings import Settings, find_firefox
+from kitty.config import AuthenticationSettings
+from kitty.core import jobs as jobs_core
+from kitty.core.apply import bidi as bidi_module
+from kitty.core.apply.auth import authenticate
+from kitty.core.apply.bidi import open_tab
+from kitty.core.apply.browser import headless_firefox
+from kitty.core.apply.credentials import CREDENTIALS_FILE, load_credentials
+from kitty.core.apply.filler import fill_job
+from kitty.settings import Settings, find_firefox
 
 x509 = pytest.importorskip("cryptography.x509")
 
@@ -404,7 +404,7 @@ def test_legacy_recognized_mode_does_not_guess_a_new_account(workspace, site, pa
 
 def test_website_review_registers_from_account_landing_then_fills(workspace, site, page):
     from types import SimpleNamespace
-    from applyai import web_automation
+    from kitty import web_automation
 
     # Saved credentials alone do not enable authentication globally.
     space = _space(workspace, site, enabled=False, approved_origins=[])
@@ -435,7 +435,7 @@ def test_website_review_registers_from_account_landing_then_fills(workspace, sit
 
 def _google(space, site, monkeypatch, *, chooser=None, popup=False):
     """Only tests substitute Google's exact origin with a local HTTPS host."""
-    from applyai.core.apply import auth
+    from kitty.core.apply import auth
     google = site.origin.replace("127.0.0.1", "localhost")
     monkeypatch.setattr(auth, "_GOOGLE_ORIGIN", google)
     space.config = replace(space.config, profile=space.config.profile.model_copy(update={"email": EMAIL}))
@@ -491,7 +491,7 @@ def test_google_existing_exact_account_returns_to_application_without_password(
 def test_google_unsafe_chooser_hands_off_without_clicking(
     workspace, site, page, monkeypatch, chooser,
 ):
-    from applyai.core.apply.auth import google_session
+    from kitty.core.apply.auth import google_session
     policy = _google(workspace, site, monkeypatch, chooser=chooser)
     page.goto(site.origin + "/login")
     result = google_session(page, policy, EMAIL)
@@ -505,7 +505,7 @@ def test_google_unsafe_chooser_hands_off_without_clicking(
 def test_google_entry_requires_reviewed_unambiguous_signin(
     workspace, site, page, monkeypatch, case,
 ):
-    from applyai.core.apply.auth import google_session
+    from kitty.core.apply.auth import google_session
     policy = _google(workspace, site, monkeypatch)
     if case == "origin":
         policy.approved_origins = ["https://unapproved.example.invalid"]
@@ -527,7 +527,7 @@ def test_google_entry_requires_reviewed_unambiguous_signin(
 def test_google_manual_login_reuses_original_tab_and_preserves_fields(
     workspace, site, page, monkeypatch,
 ):
-    from applyai.core.apply.filler import _retained_tab
+    from kitty.core.apply.filler import _retained_tab
     _google(workspace, site, monkeypatch, chooser="<button>Use another account</button>")
     job = _job(workspace, site, "/login?gh_jid=4321")
     first = fill_job(page, workspace.conn, workspace.settings, workspace.config, job)
@@ -549,7 +549,7 @@ def test_google_manual_login_reuses_original_tab_and_preserves_fields(
 
 
 def test_google_unrelated_existing_tab_is_never_selected(workspace, site, page, monkeypatch):
-    from applyai.core.apply.auth import google_session
+    from kitty.core.apply.auth import google_session
     policy = _google(workspace, site, monkeypatch)
     unrelated = open_tab(page.bidi)
     try:
@@ -566,7 +566,7 @@ def test_google_unrelated_existing_tab_is_never_selected(workspace, site, page, 
 
 
 def test_google_chooser_never_runs_on_unapproved_origin(workspace, site, page, monkeypatch):
-    from applyai.core.apply.auth import _GOOGLE_CLICK
+    from kitty.core.apply.auth import _GOOGLE_CLICK
     _google(workspace, site, monkeypatch)
     page.goto(site.origin + "/chooser")
     result = page.main.call(_GOOGLE_CLICK, [site.origin], "https://accounts.google.com", EMAIL, True)
@@ -576,8 +576,8 @@ def test_google_chooser_never_runs_on_unapproved_origin(workspace, site, page, m
 
 @pytest.mark.parametrize("mode", ["google", "recognized"])
 def test_employer_password_never_sent_to_google_origin(workspace, site, page, monkeypatch, mode):
-    from applyai.core.apply import auth
-    from applyai.core.apply.credentials import ApplicationCredentials
+    from kitty.core.apply import auth
+    from kitty.core.apply.credentials import ApplicationCredentials
 
     monkeypatch.setattr(auth, "_GOOGLE_ORIGIN", site.origin)
     policy = AuthenticationSettings(

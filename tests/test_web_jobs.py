@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from applyai.config import View, ViewFilters
-from applyai.core import applications, jobs
-from applyai.web_server import APIError, WebApplication
+from kitty.config import View, ViewFilters
+from kitty.core import applications, jobs
+from kitty.web_server import APIError, WebApplication
 
 
 @pytest.fixture

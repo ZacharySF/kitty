@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from applyai.core.discovery.http import HttpError
+from kitty.core.discovery.http import HttpError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

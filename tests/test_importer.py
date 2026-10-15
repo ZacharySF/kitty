@@ -1,8 +1,8 @@
 """CSV import: preview first, write second, and safe to run twice."""
 
-from applyai.core import applications as applications_core
-from applyai.core import importer as importer_core
-from applyai.core import jobs as jobs_core
+from kitty.core import applications as applications_core
+from kitty.core import importer as importer_core
+from kitty.core import jobs as jobs_core
 
 CSV = """Company,Role,Link,Location,Status,Date Applied,Track,Notes
 Ridgeline Capital,Quant Intern,https://example.invalid/a,New York NY,Interview,2026-08-14,quant,referred

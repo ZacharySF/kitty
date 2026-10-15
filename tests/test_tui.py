@@ -6,15 +6,15 @@ renamed widget id fails here instead of in front of me.
 
 from textual.widgets import Button, DataTable, Input, RadioButton, Static
 
-from applyai.core import applications as applications_core
-from applyai.core import jobs as jobs_core
-from applyai.tui.app import ApplyAIApp
-from applyai.tui.navigation import PLACES
-from applyai.tui.screens.help_screen import HelpScreen
-from applyai.tui.screens.job_detail import JobDetailScreen
-from applyai.tui.screens.jobs import JobsScreen
-from applyai.tui.screens.modals import AddJobModal
-from applyai.tui.screens.pipeline import PipelineScreen
+from kitty.core import applications as applications_core
+from kitty.core import jobs as jobs_core
+from kitty.tui.app import KittyApp
+from kitty.tui.navigation import PLACES
+from kitty.tui.screens.help_screen import HelpScreen
+from kitty.tui.screens.job_detail import JobDetailScreen
+from kitty.tui.screens.jobs import JobsScreen
+from kitty.tui.screens.modals import AddJobModal
+from kitty.tui.screens.pipeline import PipelineScreen
 
 SIZE = (180, 50)
 #: Each main screen's key, so renumbering the tabs never breaks these tests.
@@ -40,14 +40,14 @@ def _seeded(workspace, count=3):
 
 async def test_dashboard_is_the_landing_screen(workspace):
     _seeded(workspace)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE):
         assert app.screen.__class__.__name__ == "DashboardScreen"
 
 
 async def test_jobs_screen_lists_jobs_and_switches_views(workspace):
     _seeded(workspace)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["jobs"])
         await pilot.pause()
@@ -64,7 +64,7 @@ async def test_jobs_screen_lists_jobs_and_switches_views(workspace):
 
 async def test_filter_bar_narrows_and_clears(workspace):
     _seeded(workspace)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["jobs"])
         await pilot.press("slash")
@@ -82,7 +82,7 @@ async def test_filter_bar_narrows_and_clears(workspace):
 
 async def test_enter_opens_job_detail_and_escape_returns(workspace):
     _seeded(workspace)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["jobs"])
         await pilot.press("enter")
@@ -95,7 +95,7 @@ async def test_enter_opens_job_detail_and_escape_returns(workspace):
 
 async def test_help_overlay_is_built_from_the_live_bindings(workspace):
     _seeded(workspace)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["jobs"])
         await pilot.press("question_mark")
@@ -112,7 +112,7 @@ async def test_pipeline_columns_and_arrow_navigation(workspace):
     application = applications_core.get_application_for_job(workspace.conn, ids[0])
     applications_core.set_status(workspace.conn, application.id, "oa")
 
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["pipeline"])
         await pilot.pause()
@@ -127,7 +127,7 @@ async def test_pipeline_columns_and_arrow_navigation(workspace):
 
 
 async def test_add_job_modal_requires_company_and_title_then_writes(workspace):
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["jobs"])
         await pilot.press("a")
@@ -158,7 +158,7 @@ async def test_add_job_modal_requires_company_and_title_then_writes(workspace):
 
 async def test_status_then_undo_through_the_ui(workspace):
     ids = _seeded(workspace, count=1)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         app.open_job(ids[0])
         await pilot.pause()
@@ -181,7 +181,7 @@ async def test_status_then_undo_through_the_ui(workspace):
 
 async def test_next_action_is_stored_from_the_prompt(workspace):
     ids = _seeded(workspace, count=1)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         app.open_job(ids[0])
         await pilot.pause()
@@ -211,8 +211,8 @@ def _inbox_jobs(workspace, count=3):
 
 
 async def test_apply_session_takes_a_tier_first_records_applied_and_drops_not_eligible(workspace):
-    from applyai.core import reminders as reminders_core
-    from applyai.core.jobs import HAND_NOT_ELIGIBLE
+    from kitty.core import reminders as reminders_core
+    from kitty.core.jobs import HAND_NOT_ELIGIBLE
 
     track = workspace.config.track_names[0]
     first_b, a_job = _inbox_jobs(workspace, count=2)
@@ -220,7 +220,7 @@ async def test_apply_session_takes_a_tier_first_records_applied_and_drops_not_el
     jobs_core.link_track(workspace.conn, a_job, track, "test")
     jobs_core.set_tier(workspace.conn, first_b, "B", reason="ok", tier_source="rules")
     jobs_core.set_tier(workspace.conn, a_job, "A", reason="great", tier_source="rules")
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["apply"])
         await pilot.pause()
@@ -242,10 +242,10 @@ async def test_apply_session_takes_a_tier_first_records_applied_and_drops_not_el
 
 
 async def test_inbox_marks_rows_and_skips_them_all(workspace):
-    from applyai.tui.screens.inbox import InboxScreen
+    from kitty.tui.screens.inbox import InboxScreen
 
     ids = _inbox_jobs(workspace)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["inbox"])
         await pilot.pause()
@@ -268,7 +268,7 @@ async def test_inbox_marks_rows_and_skips_them_all(workspace):
 
 async def test_inbox_sets_a_tier_on_the_cursor_row(workspace):
     ids = _inbox_jobs(workspace, count=1)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["inbox"], "t")
         await pilot.pause()
@@ -284,7 +284,7 @@ async def test_inbox_hides_filtered_out_jobs(workspace):
                          url="https://example.invalid/far", location="London, UK",
                          tracks=["software"], eligibility="ineligible",
                          eligibility_reason="outside the US — London, UK")
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["inbox"])
         await pilot.pause()
@@ -293,7 +293,7 @@ async def test_inbox_hides_filtered_out_jobs(workspace):
 
 async def test_star_key_favorites_the_cursor_row_and_v_shows_only_favorites(workspace):
     _inbox_jobs(workspace)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["inbox"])
         await pilot.pause()
@@ -332,7 +332,7 @@ async def test_c_shows_one_track_in_the_inbox_and_jobs_and_every_track_again(wor
     usual = set(jobs_core.get_job(workspace.conn, ids[1]).tracks)
     other = next(name for name in workspace.config.track_names if name not in usual)
     jobs_core.link_track(workspace.conn, ids[0], other, "test")
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["inbox"], "c")
         await pilot.pause()
@@ -356,8 +356,8 @@ async def test_c_shows_one_track_in_the_inbox_and_jobs_and_every_track_again(wor
 
 
 async def test_f_fills_every_waiting_favorite_but_marked_rows_still_win(workspace, monkeypatch):
-    from applyai.core import favorites
-    from applyai.core.apply import autofill, filler
+    from kitty.core import favorites
+    from kitty.core.apply import autofill, filler
 
     calls = []
 
@@ -369,7 +369,7 @@ async def test_f_fills_every_waiting_favorite_but_marked_rows_still_win(workspac
     monkeypatch.setattr(filler, "fill_jobs", fake_fill)
     ids = _inbox_jobs(workspace)
     favorites.favorite(workspace.conn, ids[:2])
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["inbox"])
         await pilot.pause()
@@ -385,8 +385,8 @@ async def test_f_fills_every_waiting_favorite_but_marked_rows_still_win(workspac
 
 
 async def test_apply_f_fills_only_this_tracks_favorites_and_a_plain_fill_moves_on(workspace, monkeypatch):
-    from applyai.core import favorites
-    from applyai.core.apply import autofill, filler
+    from kitty.core import favorites
+    from kitty.core.apply import autofill, filler
 
     calls = []
 
@@ -405,14 +405,13 @@ async def test_apply_f_fills_only_this_tracks_favorites_and_a_plain_fill_moves_o
         jobs_core.set_tier(workspace.conn, job.id, "A", reason="test", tier_source="manual")
         ids.append(job.id)
     favorites.favorite(workspace.conn, [ids[0], ids[2]])          # one favorite per track
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["apply"])
         await pilot.pause()
         screen = app.screen
-        while screen.track != here:
-            await pilot.press("t")
-            await pilot.pause()
+        await pilot.press("c", "down", "enter")                    # first configured track
+        await pilot.pause()
         screen.index = [job.id for job in screen.queue].index(ids[0])
         await pilot.press("f")                                     # on a starred job: this track's favorites
         await app.workers.wait_for_complete()
@@ -426,11 +425,11 @@ async def test_apply_f_fills_only_this_tracks_favorites_and_a_plain_fill_moves_o
 
 
 async def test_sources_screen_shows_health_and_refuses_unbuilt_sources(workspace):
-    from applyai.core import sources as sources_core
-    from applyai.tui.screens.sources import SourcesScreen
+    from kitty.core import sources as sources_core
+    from kitty.tui.screens.sources import SourcesScreen
 
     sources_core.record_run(workspace.conn, "workday", status="rate_limited", error="429 from nvidia")
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["sources"])
         await pilot.pause()
@@ -447,7 +446,7 @@ async def test_sources_screen_shows_health_and_refuses_unbuilt_sources(workspace
 
 
 async def test_sources_screen_runs_a_source_in_a_worker(workspace, monkeypatch):
-    from applyai.core.discovery import pipeline
+    from kitty.core.discovery import pipeline
 
     calls = []
 
@@ -456,7 +455,7 @@ async def test_sources_screen_runs_a_source_in_a_worker(workspace, monkeypatch):
         return pipeline.DiscoverResult(1, "now", {only[0]: pipeline.SourceTally(new=4)})
 
     monkeypatch.setattr(pipeline, "run_discover", fake_run)
-    app = ApplyAIApp(workspace=workspace)
+    app = KittyApp(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.press(KEY["sources"])
         await pilot.pause()

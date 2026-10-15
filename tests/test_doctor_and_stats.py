@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
-from applyai.core import applications as applications_core
-from applyai.core import doctor as doctor_core
-from applyai.core import jobs as jobs_core
-from applyai.core import resumes as resumes_core
-from applyai.core import stats as stats_core
-from applyai.settings import Settings
+from kitty.core import applications as applications_core
+from kitty.core import doctor as doctor_core
+from kitty.core import jobs as jobs_core
+from kitty.core import resumes as resumes_core
+from kitty.core import stats as stats_core
+from kitty.settings import Settings
 
 
 def test_doctor_passes_on_a_fresh_workspace(workspace):
@@ -21,7 +21,7 @@ def test_doctor_fails_when_the_database_is_missing(tmp_path, workspace):
     settings = Settings.load(root=workspace.settings.root, db_path=tmp_path / "nope.db")
     failures = doctor_core.failures(doctor_core.check_database(settings))
     assert len(failures) == 1
-    assert "applyai init" in failures[0].fix
+    assert "kitty init" in failures[0].fix
 
 
 def test_doctor_never_prints_a_key_value(workspace, monkeypatch):

@@ -2,9 +2,9 @@
 
 import pytest
 
-from applyai.core import sources
-from applyai.core.doctor import check_sources
-from applyai.core.today import TEXT_LIMIT, build_digest, digest_text
+from kitty.core import sources
+from kitty.core.doctor import check_sources
+from kitty.core.today import TEXT_LIMIT, build_digest, digest_text
 
 
 def _seed(conn):

@@ -10,11 +10,11 @@ import os
 import pytest
 from pydantic import ValidationError
 
-from applyai.config import AuthenticationSettings
-from applyai.core.apply.credentials import (
+from kitty.config import AuthenticationSettings
+from kitty.core.apply.credentials import (
     CREDENTIALS_FILE, REDACTED, CredentialError, load_credentials, redact,
 )
-from applyai.settings import Settings
+from kitty.settings import Settings
 
 EMAIL = "pat.synthetic@example.invalid"
 PASSWORD = "Synth#Pass word/1&2"

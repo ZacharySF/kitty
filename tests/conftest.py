@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from applyai.config import load_config
-from applyai.core import sources as sources_core
-from applyai.core.workspace import Workspace, sync_config_to_db
-from applyai.db import connect, migrate
-from applyai.settings import Settings
+from kitty.config import load_config
+from kitty.core import sources as sources_core
+from kitty.core.workspace import Workspace, sync_config_to_db
+from kitty.db import connect, migrate
+from kitty.settings import Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

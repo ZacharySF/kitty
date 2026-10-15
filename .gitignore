@@ -27,3 +27,11 @@ __pycache__/
 # Built local website and Node dependencies
 web/node_modules/
 web/dist/
+
+# Native desktop build output and local packaging environments
+desktop/target/
+desktop/binaries/
+desktop/.build/
+desktop/result
+desktop/gen/
+.ruff_cache/

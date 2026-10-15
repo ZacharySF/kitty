@@ -94,7 +94,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
     headers:
       body === undefined
         ? {}
-        : { "Content-Type": "application/json", "X-ApplyAI-Request": "1" },
+        : { "Content-Type": "application/json", "X-Kitty-Request": "1" },
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
   });

@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { api, type Bootstrap } from "./lib/api";
-  import { navigation, type View } from "./lib/workspace";
+  import { navigation, navigationGroups, type View } from "./lib/workspace";
+  import { Badge, Button } from "@nunera/bracket";
   import Icon from "./lib/Icon.svelte";
   import JobBrowser from "./lib/JobBrowser.svelte";
-  import Dashboard from "./lib/Dashboard.svelte";
   import GettingStarted from "./lib/GettingStarted.svelte";
   import Pipeline from "./lib/Pipeline.svelte";
   import Reminders from "./lib/Reminders.svelte";
@@ -16,12 +16,60 @@
   import AddJob from "./lib/AddJob.svelte";
   import CommandPalette from "./lib/CommandPalette.svelte";
   import KeyboardHelp from "./lib/KeyboardHelp.svelte";
+  import Calendar from "./lib/Calendar.svelte";
+  import CalendarReminders from "./lib/CalendarReminders.svelte";
+  import Opportunities from "./lib/Opportunities.svelte";
+  import Study from "./lib/Study.svelte";
+  import StudyFocusBar from "./lib/StudyFocusBar.svelte";
+  import Flashcards from "./lib/Flashcards.svelte";
+  import Notes from "./lib/Notes.svelte";
+  import AI from "./lib/AI.svelte";
+  import GraphNavigator from "./lib/GraphNavigator.svelte";
+  import SchemaMaps from "./lib/SchemaMaps.svelte";
+  import Kanban from "./lib/Kanban.svelte";
 
-  const headings: Record<View, { title: string; subtitle: string }> = {
-    today: {
-      title: "Your next role starts here.",
+  const headings: Record<
+    Exclude<View, "today">,
+    { title: string; subtitle: string }
+  > = {
+    calendar: {
+      title: "A little space for everything.",
       subtitle:
-        "Find jobs you want. Prepare the forms with your saved details. Review and submit when you’re ready.",
+        "Plan events and tasks locally. Connect Google only when you choose to.",
+    },
+    kanban: {
+      title: "See the next step.",
+      subtitle:
+        "Organize tasks into boards. Move cards, keep checklists, and choose what to work on next.",
+    },
+    opportunities: {
+      title: "Find your next possibility.",
+      subtitle:
+        "Monitor opportunities, scholarships, competitions, and projects. Keep the ones that matter.",
+    },
+    study: {
+      title: "One focused session at a time.",
+      subtitle:
+        "Turn subjects, goals, and deadlines into a study plan you can actually follow.",
+    },
+    flashcards: {
+      title: "Make knowledge stick.",
+      subtitle:
+        "Create cards, review what is due, and build a lasting learning habit.",
+    },
+    notes: {
+      title: "Room to think out loud.",
+      subtitle: "Write notes and connect your ideas on an infinite canvas.",
+    },
+    schema: {
+      title: "See how things connect.",
+      subtitle:
+        "Link classes, topics, ideas, jobs, and skills in study, general, or job-focused maps.",
+    },
+    ai: {
+      title: "AI, on your terms.",
+      subtitle:
+        "Configure OpenRouter, review what is shared, and approve costs before any external request.",
     },
     inbox: {
       title: "New jobs",
@@ -36,7 +84,7 @@
     queue: {
       title: "Prepare your applications.",
       subtitle:
-        "Choose jobs below. ApplyAI fills what it knows in Firefox; you check the answers and press Submit.",
+        "Choose jobs below. kitty! fills what it knows in Firefox; you check the answers and press Submit.",
     },
     pipeline: {
       title: "My applications",
@@ -69,7 +117,7 @@
         "Check your job boards and collect new postings. No applications are sent from this screen.",
     },
     profile: {
-      title: "Tell ApplyAI about yourself.",
+      title: "Your application profile.",
       subtitle:
         "Save your real details once, then reuse them on application forms. Leave anything you’re unsure about blank.",
     },
@@ -95,42 +143,29 @@
     questions: {
       title: "Application questions",
       subtitle:
-        "Save answers in your own words so ApplyAI can reuse them. Unanswered questions stay blank.",
+        "Save answers in your own words so kitty! can reuse them. Unanswered questions stay blank.",
     },
   };
-  const primaryViews: View[] = [
-    "today",
-    "jobs",
-    "favorites",
-    "queue",
-    "pipeline",
-  ];
-  const setupViews: View[] = ["profile", "resumes"];
-  const primaryNav = primaryViews.map((id) =>
-    navigation.find((item) => item.id === id)!,
-  );
-  const setupNav = setupViews.map((id) =>
-    navigation.find((item) => item.id === id)!,
-  );
-  const toolNav = navigation.filter(
-    (item) => !primaryViews.includes(item.id) && !setupViews.includes(item.id),
-  );
-  let toolsOpen = $state(false);
   let view = $state<View>("today");
   let workspace = $state<Bootstrap | null>(null);
   let error = $state("");
   let loading = $state(true);
-  let mobileNav = $state(false);
   let palette = $state(false);
   let help = $state(false);
+  let guide = $state(false);
   let addJob = $state(false);
   let revision = $state(0);
   let epoch = $state(0);
   let initialJobId = $state<number | null>(null);
+  let guideDialog = $state<HTMLDialogElement>();
+  let atlas: { focusSearch: () => void } | undefined = $state();
   let jobBrowser:
     { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined =
     $state();
   let pipeline:
+    { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined =
+    $state();
+  let study:
     { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined =
     $state();
   let profile: { hasUnsavedChanges: () => boolean } | undefined = $state();
@@ -146,23 +181,36 @@
   const title = $derived(
     navigation.find((item) => item.id === view)?.label || "Workspace",
   );
+  const heading = $derived(view === "today" ? null : headings[view]);
   const date = new Intl.DateTimeFormat(undefined, {
-    weekday: "long",
-    month: "long",
+    weekday: "short",
+    month: "short",
     day: "numeric",
   }).format(new Date());
-  $effect(() => {
-    if (toolNav.some((item) => item.id === view)) toolsOpen = true;
-  });
-
-  async function showGuide() {
-    if (!navigate("today")) return;
-    await tick();
-    document.getElementById("getting-started")?.focus();
-    document
-      .getElementById("getting-started")
-      ?.scrollIntoView({ block: "start" });
+  const sectionGroup = $derived(
+    navigationGroups.find((group) => group.views.includes(view))?.label ??
+      "Workspace",
+  );
+  function studyText(event: Event) {
+    const detail = (event as CustomEvent).detail;
+    const next: View =
+      detail?.purpose === "flashcards" ? "flashcards" : "study";
+    if (view === next || detail?.routed || !navigate(next)) return;
+    void tick().then(() =>
+      window.dispatchEvent(
+        new CustomEvent("kitty-study-text", {
+          detail: { ...detail, routed: true },
+        }),
+      ),
+    );
   }
+
+  function showGuide() {
+    guide = true;
+  }
+  $effect(() => {
+    if (guide && guideDialog && !guideDialog.open) guideDialog.showModal();
+  });
 
   let bootstrapRequest = 0;
   async function refresh() {
@@ -196,7 +244,6 @@
     if (!mayLeaveProfile()) return false;
     view = next;
     initialJobId = null;
-    mobileNav = false;
     epoch += 1;
     window.history.pushState(null, "", `#${next}`);
     void refresh();
@@ -218,12 +265,13 @@
     }
     view = next;
     initialJobId = null;
-    mobileNav = false;
     epoch += 1;
     void refresh();
   }
   onMount(() => {
     readRoute();
+    window.addEventListener("kitty-study-text", studyText);
+    return () => window.removeEventListener("kitty-study-text", studyText);
   });
 
   async function keyboard(event: KeyboardEvent) {
@@ -242,6 +290,11 @@
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      if (
+        typing &&
+        !["inbox", "jobs", "queue", "applications", "favorites"].includes(view)
+      )
+        return;
       event.preventDefault();
       if (
         !["inbox", "jobs", "queue", "applications", "favorites"].includes(view)
@@ -272,10 +325,6 @@
       help = true;
       return;
     }
-    if (event.key === "Escape" && mobileNav) {
-      mobileNav = false;
-      return;
-    }
     const control = target?.closest("button,a,summary");
     if (
       control &&
@@ -283,50 +332,61 @@
       ["Enter", " "].includes(event.key)
     )
       return;
+    if (view === "today") {
+      if (event.key === "/") {
+        event.preventDefault();
+        atlas?.focusSearch();
+      }
+      return;
+    }
     if (view === "pipeline") {
       await pipeline?.handleKey(event);
       return;
     }
-    if (
-      ["today", "inbox", "jobs", "queue", "applications", "favorites"].includes(
-        view,
-      )
-    ) {
-      if (view === "today" && event.key === "/") {
-        event.preventDefault();
-        navigate("jobs");
-        await tick();
-      }
-      await jobBrowser?.handleKey(event);
+    if (view === "study") {
+      await study?.handleKey(event);
+      return;
     }
+    if (["inbox", "jobs", "queue", "applications", "favorites"].includes(view))
+      await jobBrowser?.handleKey(event);
   }
 </script>
 
 <svelte:window onpopstate={readRoute} onkeydown={keyboard} />
-<svelte:head><title>{title} · ApplyAI</title></svelte:head>
+<svelte:head><title>{title} · kitty!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>
-<div class="workbench">
+<div class="workbench" class:atlas-home={view === "today"}>
   <header class="system-bar">
+    <span class="wordmark"
+      ><span class="brand-mark" aria-hidden="true"
+        ><Icon name="kitty" size={22} /></span
+      ><span>kitty<span class="brand-dot">!</span></span></span
+    >
     <a
       href="#today"
-      class="wordmark"
+      class="atlas-link"
+      aria-current={view === "today" ? "page" : undefined}
+      title="Atlas home (F1)"
       onclick={(event) => {
         event.preventDefault();
         navigate("today");
-      }}
-      aria-label="ApplyAI home"
-      ><span class="brand-mark">a<span>i</span></span><span
-        >apply<span class="brand-light">ai</span><span class="brand-dot">.</span
-        ></span
-      ></a
+      }}><span aria-hidden="true">◉</span> atlas</a
     >
-    <div class="system-location">
-      <span class="separator">/</span> your job search
-    </div>
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <span class="separator" aria-hidden="true">/</span>
+      {#if view === "today"}<span>overview</span>{:else}<span
+          >{sectionGroup}</span
+        ><span class="separator" aria-hidden="true">/</span><strong
+          aria-current="page">{title}</strong
+        >{/if}
+    </nav>
     <div class="system-state">
-      <span class="status-dot"></span>{workspace?.demo
-        ? "DEMO WORKSPACE"
-        : "LOCAL WORKSPACE"}
+      <Badge
+        label={workspace?.demo ? "DEMO WORKSPACE" : "LOCAL WORKSPACE"}
+        variant="dot"
+        intent="success"
+        size="sm"
+      />
     </div>
     <button
       class="system-command"
@@ -336,184 +396,82 @@
         >Ctrl K</kbd
       ></button
     >
+    <button class="text-button help-link" onclick={showGuide}
+      >How it works</button
+    >
+    <span class="system-date">{date}</span>
+    <Button
+      variant="ghost"
+      size="sm"
+      aria-label="Refresh workspace and configuration"
+      title="Reload configuration and refresh"
+      disabled={loading}
+      onclick={reload}><Icon name="refresh" size={17} /></Button
+    >
   </header>
-  <aside
-    class:mobile-open={mobileNav}
-    class="sidebar"
-    id="workspace-nav"
-    aria-label="Workspace navigation"
-  >
-    <div class="workspace-label">
-      <span class="workspace-monogram"><Icon name="moon" size={19} /></span>
-      <div>
-        <strong>Your next chapter</strong><small>One step at a time.</small>
-      </div>
-    </div>
-    <nav aria-label="Main navigation">
-      <p class="nav-heading">YOUR JOB SEARCH</p>
-      {#each primaryNav as item}
-        <a
-          href={`#${item.id}`}
-          class:active={view === item.id}
-          aria-current={view === item.id ? "page" : undefined}
-          onclick={(event) => {
-            event.preventDefault();
-            navigate(item.id);
-          }}
-        >
-          <Icon name={item.icon} size={18} /><span>{item.label}</span>
-          {#if item.id === "favorites" && workspace?.counts.favorites}<span
-              class="nav-count">{workspace.counts.favorites}</span
-            >{/if}
-        </a>
-      {/each}
-      <p class="nav-heading">SET UP ONCE</p>
-      {#each setupNav as item}
-        <a
-          href={`#${item.id}`}
-          class:active={view === item.id}
-          aria-current={view === item.id ? "page" : undefined}
-          onclick={(event) => {
-            event.preventDefault();
-            navigate(item.id);
-          }}
-        >
-          <Icon name={item.icon} size={18} /><span>{item.label}</span>
-        </a>
-      {/each}
-      <details class="more-tools" bind:open={toolsOpen}>
-        <summary>More tools <span>Reports, sources & settings</span></summary>
-        {#each toolNav as item}
-          <a
-            href={`#${item.id}`}
-            class:active={view === item.id}
-            aria-current={view === item.id ? "page" : undefined}
-            onclick={(event) => {
-              event.preventDefault();
-              navigate(item.id);
-            }}
-          >
-            <Icon name={item.icon} size={18} /><span>{item.label}</span>
-          </a>
-        {/each}
-      </details>
-    </nav>
-    <div class="sidebar-bottom">
-      <button class="shortcut-button guide-button" onclick={showGuide}>
-        <Icon name="questions" size={17} /> How to apply
-      </button>
-      <button class="shortcut-button" onclick={() => (help = true)}
-        ><kbd>?</kbd> Keyboard shortcuts</button
-      >
-      <div class="privacy-note">
-        <Icon name="shield" size={18} />
+  <StudyFocusBar {revision} demo={workspace?.demo ?? true} />
+  <CalendarReminders />
+  <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
+    {#if workspace?.demo}<div class="demo-notice">
+        <Badge label="DEMO" intent="warning" size="sm" />Synthetic workspace.
+        Local changes work; external actions are disabled.
+      </div>{/if}
+    {#if error}<div class="error-banner" role="alert">
+        {error}<button class="button" onclick={refresh}>Try again</button>
+      </div>{/if}
+    {#if view === "today"}
+      <GraphNavigator
+        bind:this={atlas}
+        {workspace}
+        {revision}
+        onview={navigate}
+        onopenjob={openJob}
+        onguide={showGuide}
+      />
+    {:else if heading}
+      <header class="page-heading">
         <div>
-          <strong>You’re in control.</strong>
-          <p>ApplyAI fills the forms.<br />Only you can submit them.</p>
+          <p class="eyebrow">{sectionGroup}</p>
+          <h1 id="page-title">{heading.title}</h1>
+          <p class="muted">{heading.subtitle}</p>
         </div>
-      </div>
-    </div>
-  </aside>
-  <div class="main-workspace">
-    <div class="topbar">
-      <div class="breadcrumb">
-        <button
-          class="button mobile-menu"
-          aria-label="Toggle navigation"
-          aria-expanded={mobileNav}
-          aria-controls="workspace-nav"
-          onclick={() => (mobileNav = !mobileNav)}
-          ><Icon name="menu" size={17} />Menu</button
-        ><span>Workspace</span><span class="separator">/</span><strong
-          >{title}</strong
-        >
-      </div>
-      <div class="topbar-right">
-        <button class="text-button help-link" onclick={showGuide}
-          >How it works</button
-        ><span>{date}</span><button
-          class="icon-button"
-          aria-label="Refresh workspace and configuration"
-          title="Reload configuration and refresh"
-          disabled={loading}
-          onclick={reload}><Icon name="refresh" size={17} /></button
-        >
-      </div>
-    </div>
-    <main id="main-content" tabindex="-1">
-      {#if workspace?.demo}<div class="demo-notice">
-          <span class="badge">DEMO</span>Synthetic opportunities. Changes stay
-          in this temporary workspace; external actions are disabled.
-        </div>{/if}
-      {#if view === "today"}<section
-          class="hero panel"
-          aria-labelledby="page-title"
-        >
-          <div class="hero-art" aria-hidden="true"></div>
-          <div class="hero-content">
-            <p class="eyebrow">
-              <span class="small-line"></span>YOUR JOB SEARCH, SIMPLIFIED
-            </p>
-            <h1 id="page-title">
-              Your next role<br />starts here<span>.</span>
-            </h1>
-            <p>{headings.today.subtitle}</p>
-            <button class="button primary" onclick={() => navigate("jobs")}
-              >Find jobs <Icon name="arrow" size={17} /></button
-            >
-            <button class="hero-help text-button" onclick={showGuide}
-              >First time? Start here</button
-            >
-          </div>
-        </section>{:else}<header class="page-heading">
-          <div>
-            <p class="eyebrow">
-              {setupViews.includes(view) ? "SET UP ONCE" : "YOUR JOB SEARCH"}
-            </p>
-            <h1 id="page-title">{headings[view].title}</h1>
-            <p class="muted">{headings[view].subtitle}</p>
-          </div>
-          {#if view === "applications"}<a
-              class="button"
-              href="/api/reports/export?format=csv&dataset=applications"
-              download><Icon name="download" size={16} />Export CSV</a
-            >{/if}
-        </header>{/if}
-      {#if view === "today"}<GettingStarted
-          {revision}
-          {workspace}
-          onview={navigate}
-        />{/if}
-      {#if workspace && view === "today"}<section
-          class="stats-grid"
-          aria-label="Workspace totals"
-        >
-          {#each [{ label: "Jobs to explore", value: workspace.counts.jobs, icon: "jobs", next: "jobs" as View, note: "Browse open roles" }, { label: "In your queue", value: workspace.counts.queued, icon: "queue", next: "queue" as View, note: "Review before applying" }, { label: "Applications", value: workspace.counts.applications, icon: "applications", next: "pipeline" as View, note: `${workspace.weekly_total} sent this week` }, { label: "Saved jobs", value: workspace.counts.favorites, icon: "favorites", next: "favorites" as View, note: "Return to your shortlist" }] as stat}<button
-              class="stat-card panel"
-              onclick={() => navigate(stat.next)}
-              ><span class="stat-label"
-                >{stat.label}<Icon name={stat.icon} size={18} /></span
-              ><strong>{stat.value.toLocaleString()}</strong><span
-                class="stat-note"
-                >{stat.note}<Icon name="arrow" size={14} /></span
-              ></button
-            >{/each}
-        </section>{/if}
-      {#if error}<div class="error-banner" role="alert">
-          {error}<button class="button" onclick={refresh}>Try again</button>
-        </div>{/if}
+        {#if view === "applications"}<a
+            class="button"
+            href="/api/reports/export?format=csv&dataset=applications"
+            download><Icon name="download" size={16} />Export CSV</a
+          >{/if}
+      </header>
       {#key `${view}:${epoch}:${initialJobId}`}
-        {#if view === "today"}<div class="today-layout">
-            <JobBrowser
-              bind:this={jobBrowser}
-              {view}
-              {workspace}
-              onchange={refresh}
-              onadd={() => (addJob = true)}
-              onview={navigate}
-              onopenjob={openJob}
-            /><Dashboard {revision} onopenjob={openJob} onview={navigate} />
-          </div>
+        {#if view === "calendar"}<Calendar
+            {revision}
+            demo={workspace?.demo ?? true}
+          />
+        {:else if view === "kanban"}<Kanban
+            {revision}
+            demo={workspace?.demo ?? true}
+          />
+        {:else if view === "schema"}<SchemaMaps
+            {revision}
+            demo={workspace?.demo ?? true}
+          />
+        {:else if view === "opportunities"}<Opportunities
+            {revision}
+            demo={workspace?.demo ?? true}
+          />
+        {:else if view === "study"}<Study
+            bind:this={study}
+            {revision}
+            demo={workspace?.demo ?? true}
+          />
+        {:else if view === "flashcards"}<Flashcards
+            {revision}
+            demo={workspace?.demo ?? true}
+          />
+        {:else if view === "notes"}<Notes
+            {revision}
+            demo={workspace?.demo ?? true}
+          />
+        {:else if view === "ai"}<AI {revision} demo={workspace?.demo ?? true} />
         {:else if view === "inbox" || view === "jobs" || view === "queue" || view === "applications" || view === "favorites"}<JobBrowser
             bind:this={jobBrowser}
             {view}
@@ -558,9 +516,32 @@
             : "Stored locally, on your terms"}</span
         ><span>Need a shortcut? Press <kbd>?</kbd> for keyboard help.</span>
       </footer>
-    </main>
-  </div>
+    {/if}
+  </main>
 </div>
+{#if guide}<dialog
+    bind:this={guideDialog}
+    class="workspace-dialog guide-dialog"
+    aria-labelledby="guide-title"
+    onclose={() => (guide = false)}
+  >
+    <header>
+      <span class="eyebrow">HOW IT WORKS</span>
+      <button
+        class="icon-button"
+        onclick={() => (guide = false)}
+        aria-label="Close the guide">×</button
+      >
+    </header>
+    <GettingStarted
+      {revision}
+      {workspace}
+      onview={(next) => {
+        guide = false;
+        navigate(next);
+      }}
+    />
+  </dialog>{/if}
 {#if palette}<CommandPalette
     onclose={() => (palette = false)}
     onview={navigate}

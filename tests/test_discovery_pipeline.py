@@ -1,11 +1,11 @@
 """The discover pipeline end to end, with fake adapters instead of the network."""
 
-from applyai.config import WatchlistCompany
-from applyai.core import jobs as jobs_core
-from applyai.core import sources as sources_core
-from applyai.core.discovery.base import AdapterResult, NormalizedJob
-from applyai.core.discovery.pipeline import CompanyResolver, run_discover
-from applyai.core.discovery.report import build_report
+from kitty.config import WatchlistCompany
+from kitty.core import jobs as jobs_core
+from kitty.core import sources as sources_core
+from kitty.core.discovery.base import AdapterResult, NormalizedJob
+from kitty.core.discovery.pipeline import CompanyResolver, run_discover
+from kitty.core.discovery.report import build_report
 
 
 def _job(source, sid, title="Software Engineer Intern", **extra):
@@ -158,7 +158,7 @@ def test_discover_rejudges_stored_jobs_with_the_current_rules(workspace):
 
 
 def test_a_job_closes_only_after_clean_runs_without_it(workspace):
-    from applyai.core.discovery.base import BoardOutcome
+    from kitty.core.discovery.base import BoardOutcome
     listed = AdapterResult([_job("greenhouse", "acme:1")], "ok", boards=[BoardOutcome("acme", "ok", 1)])
     empty = AdapterResult([], "ok", boards=[BoardOutcome("acme", "ok", 0)])
     failing = AdapterResult([], "error", "boom", boards=[BoardOutcome("acme", "error", error="boom")])
@@ -195,7 +195,7 @@ def test_a_job_stays_open_while_any_source_still_lists_it(workspace):
 
 
 def test_company_names_resolve_to_the_watchlist():
-    from applyai.config import WatchlistFile
+    from kitty.config import WatchlistFile
 
     resolver = CompanyResolver(WatchlistFile(companies=[
         WatchlistCompany(name="Akuna Capital", ats="greenhouse", slug="akunacapital"),
@@ -209,7 +209,7 @@ def test_company_names_resolve_to_the_watchlist():
 
 
 def test_report_groups_filtered_reasons_and_finds_freshman_companies(workspace):
-    from applyai.config import WatchlistFile
+    from kitty.config import WatchlistFile
 
     watchlist = WatchlistFile(companies=[
         WatchlistCompany(name="Acme", ats="greenhouse", slug="acme", notes="[F] Launch program"),
@@ -297,7 +297,7 @@ def test_unverified_program_requirements_remain_ambiguous_after_rejudge(workspac
 
 
 def test_research_page_rollover_keeps_cycles_distinct_and_expires_old_deadline(workspace, monkeypatch):
-    from applyai.core.discovery import pipeline
+    from kitty.core.discovery import pipeline
 
     monkeypatch.setattr(pipeline, "now_iso", lambda: "2026-10-04T00:00:00Z")
     track = workspace.config.tracks.tracks[0]
@@ -337,7 +337,7 @@ def test_search_absence_abstains_without_vetoing_snapshot_closure(workspace):
 
 
 def test_program_expiry_uses_updated_published_deadline_not_personal_deadline(workspace, monkeypatch):
-    from applyai.core.discovery import pipeline
+    from kitty.core.discovery import pipeline
 
     clock = ["2026-10-04T00:00:00Z"]
     monkeypatch.setattr(pipeline, "now_iso", lambda: clock[0])
@@ -359,7 +359,7 @@ def test_program_expiry_uses_updated_published_deadline_not_personal_deadline(wo
 
 def test_structured_listing_keeps_distinct_jobs_and_closure_is_per_posting(workspace):
     import json
-    from applyai.core.discovery.public_pages import PublicPage, parse_job_postings
+    from kitty.core.discovery.public_pages import PublicPage, parse_job_postings
 
     track = workspace.config.tracks.tracks[0]
     source = track.sources[0]

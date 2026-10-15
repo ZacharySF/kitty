@@ -1,4 +1,4 @@
-# Copy locally with `applyai init`; edit the ignored runtime YAML, not this template.
+# Copy locally with `kitty init`; edit the ignored runtime YAML, not this template.
 close_after_missed_runs: 3
 sources:
   simplify2027:
@@ -20,6 +20,12 @@ sources:
     min_interval_seconds: 5
     cache_ttl_minutes: 360
   speedyapply2027:
+    kind: repo
+    enabled: true
+    fragile: true
+    min_interval_seconds: 5
+    cache_ttl_minutes: 360
+  derec4:
     kind: repo
     enabled: true
     fragile: true

@@ -1,8 +1,8 @@
 """Applications, the append-only history, undo, and proposals."""
 
-from applyai.core import applications as applications_core
-from applyai.core import jobs as jobs_core
-from applyai.core import pipeline as pipeline_core
+from kitty.core import applications as applications_core
+from kitty.core import jobs as jobs_core
+from kitty.core import pipeline as pipeline_core
 
 
 def _job(workspace, **kwargs):

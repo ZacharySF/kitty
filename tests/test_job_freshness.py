@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from applyai import models
-from applyai.models import Job
+from kitty import models
+from kitty.models import Job
 
 
 @pytest.fixture
