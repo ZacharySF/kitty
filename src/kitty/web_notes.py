@@ -1,9 +1,18 @@
-"""Local-only notes API; only registered normalized PNGs are downloadable."""
+"""Local-only notes API; only registered normalized PNGs are downloadable.
+
+GET/POST /api/notes/pages/:id/blocks reads/replaces a bounded UUID outline.
+POST requires the shared page revision; optional title/document save canvas and
+outline atomically. Responses include revision, blocks, live references and
+citation_counts. GET /api/notes/blocks/:uuid/contexts returns direct citations;
+GET /api/notes/topics?kind=page|tag&topic=... aggregates local topic blocks.
+Both endpoints accept offset and return next_offset to page through all contexts.
+GET /api/notes/pages/:id/mentions returns unlinked local title mentions.
+"""
 from __future__ import annotations
 
 import re
 from contextlib import closing
-from kitty.core import notes
+from kitty.core import notes, note_blocks
 from kitty.db import connect
 
 def _error(exc: notes.NotesError):
@@ -21,10 +30,31 @@ def _local_import(app, kind, operation):
     return {"task": app.tasks.start(kind, work)}
 
 
+def _offset(query):
+    value = query.get("offset", "0")
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,8}", value):
+        raise notes.NotesError("Offset must be a nonnegative integer")
+    return int(value)
+
+
 def get(app, conn, path, query):
     if not path.startswith("/api/notes"):
         return None
     try:
+        blocks = re.fullmatch(r"/api/notes/pages/([1-9][0-9]{0,15})/(blocks|mentions)", path)
+        if blocks:
+            notes.keys(query, set())
+            return note_blocks.get_blocks(conn, int(blocks[1])) if blocks[2] == "blocks" else note_blocks.mentions(conn, int(blocks[1]))
+        reference = re.fullmatch(r"/api/notes/blocks/([0-9a-f-]{36})/contexts", path)
+        if reference:
+            notes.keys(query, {"offset"})
+            return note_blocks.contexts(conn, reference[1], _offset(query))
+        if path == "/api/notes/topics":
+            notes.keys(query, {"kind", "topic", "offset"}, {"kind", "topic"})
+            return note_blocks.topics(conn, query["kind"], query["topic"], _offset(query))
+        if path == "/api/notes/tags":
+            notes.keys(query, set())
+            return notes.tags_summary(conn)
         if path == "/api/notes":
             notes.keys(query, {"search"})
             return notes.listing(conn, query.get("search", ""))
@@ -43,13 +73,42 @@ def post(app, conn, path, body):
     if not path.startswith("/api/notes"):
         return None
     try:
+        blocks = re.fullmatch(r"/api/notes/pages/([1-9][0-9]{0,15})/blocks", path)
+        if blocks:
+            notes.keys(body, {"revision", "blocks", "title", "document"}, {"revision", "blocks"})
+            return note_blocks.save_blocks(conn, int(blocks[1]), body["revision"], body["blocks"], body.get("title"), body.get("document"))
+        if path == "/api/notes/daily":
+            notes.keys(body, {"date"})
+            return notes.daily_page(conn, body.get("date"))
+        if path == "/api/notes/resolve":
+            notes.keys(body, {"title", "notebook_id"}, {"title"})
+            return notes.resolve_page(conn, body["title"], body.get("notebook_id"))
+        if path == "/api/notes/reorder":
+            notes.keys(body, {"kind", "ids"}, {"kind", "ids"})
+            return notes.reorder(conn, body["kind"], body["ids"])
+        organize = re.fullmatch(r"/api/notes/pages/([1-9][0-9]{0,15})/organize", path)
+        if organize:
+            return notes.organize_page(conn, int(organize[1]), body)
+        if path == "/api/notes/folders":
+            notes.keys(body, {"title", "parent_id"}, {"title"})
+            return notes.create_folder(conn, body["title"], body.get("parent_id"))
+        match = re.fullmatch(r"/api/notes/folders/([1-9][0-9]{0,15})(/delete)?", path)
+        if match:
+            if match[2]:
+                notes.keys(body, {"revision", "confirm"}, {"revision", "confirm"})
+                if body["confirm"] is not True:
+                    raise notes.NotesError("Confirm folder deletion")
+                return notes.delete_folder(conn, int(match[1]), body["revision"])
+            notes.keys(body, {"revision", "title", "parent_id"}, {"revision", "title", "parent_id"})
+            return notes.save_folder(conn, int(match[1]), body["revision"], body["title"], body["parent_id"])
         if path == "/api/notes/notebooks":
-            notes.keys(body, {"title", "subject", "project"}, {"title"})
-            return notes.create_notebook(conn, body["title"], body.get("subject", ""), body.get("project", ""))
+            notes.keys(body, {"title", "subject", "project", "folder_id"}, {"title"})
+            return notes.create_notebook(conn, body["title"], body.get("subject", ""), body.get("project", ""), body.get("folder_id"))
         match = re.fullmatch(r"/api/notes/notebooks/([1-9][0-9]{0,15})", path)
         if match:
-            notes.keys(body, {"revision", "title", "subject", "project"}, {"revision", "title", "subject", "project"})
-            return notes.save_notebook(conn, int(match[1]), body["revision"], body["title"], body["subject"], body["project"])
+            notes.keys(body, {"revision", "title", "subject", "project", "folder_id"}, {"revision", "title", "subject", "project"})
+            folder = {"folder_id": body["folder_id"]} if "folder_id" in body else {}
+            return notes.save_notebook(conn, int(match[1]), body["revision"], body["title"], body["subject"], body["project"], **folder)
         if path == "/api/notes/pages":
             notes.keys(body, {"notebook_id", "title"}, {"notebook_id"})
             return notes.create_page(conn, body["notebook_id"], body.get("title", "Untitled page"))

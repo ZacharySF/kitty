@@ -110,7 +110,11 @@ def _resumes(conn: sqlite3.Connection, settings: Settings, config: Config) -> li
 
 def input_hash(config: Config, system: str, user: str) -> str:
     """Identifies one exact request: same hash, same answer, no need to ask again."""
-    payload = json.dumps([PROMPT_VERSION, config.triage.model, config.triage.effort, system, user])
+    # Preserve existing Anthropic cache identities; isolate requests to other providers.
+    identity = [PROMPT_VERSION, config.triage.model, config.triage.effort, system, user]
+    if config.triage.provider != "anthropic":
+        identity.insert(0, config.triage.provider)
+    payload = json.dumps(identity)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -216,10 +220,14 @@ def apply_verdict(conn: sqlite3.Connection, job: Job, verdict: Verdict, resume_i
 
 
 def _apply_rules(conn: sqlite3.Connection, plan: TriagePlan) -> int:
+    applied = 0
     with transaction(conn):
         for job, tier, reason in plan.rules:
-            jobs_core.set_tier(conn, job.id, tier, reason=reason, tier_source="rules")
-    return len(plan.rules)
+            current = jobs_core.get_job(conn, job.id)
+            if current is not None and current.tier_source != "manual":
+                jobs_core.set_tier(conn, job.id, tier, reason=reason, tier_source="rules")
+                applied += 1
+    return applied
 
 
 def _cache(conn: sqlite3.Connection, job_id: int, model: str, digest: str, answer: str,
@@ -245,6 +253,10 @@ def _answer_text(message) -> str:
 
 def _use_answer(conn, config: Config, plan: TriagePlan, job: Job, answer: str, result: RunResult) -> bool:
     """Check one answer and store it; a bad answer is recorded as an error, not raised."""
+    current = jobs_core.get_job(conn, job.id)
+    if current is None or current.tier_source == "manual":
+        return False
+    job = current
     try:
         verdict = parse_answer(answer, job.jd_text, plan.resume_lines, config.profile)
     except AnswerError as exc:

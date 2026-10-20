@@ -70,11 +70,12 @@ not named `demo.db`, so it cannot wipe real applications.
 ## Local website
 
 The Svelte website uses the same Python core and SQLite database as the CLI/TUI.
-Its workbench builds on the Inference website template with a dark-fantasy theme:
-charcoal and muted violet surfaces, antique-gold accents, serif headings and
-etched borders. The body font is self-hosted; headings use system serif fonts.
-The supplied artwork stays bundled at `web/public/art/application-background.png`.
-No Rust service is needed because the existing core already owns the behavior.
+The workbench uses `@nunera/bracket` with self-hosted Inter UI text, Inter Tight
+headings and JetBrains Mono for code. The Theme menu persists Plum, Lavender,
+Ocean, Desktop, Kitty pink or Graphite locally. Plum is a lighter dark purple;
+Lavender and Kitty pink are light themes. Graph nodes and their edges use the
+same purple, blue and white palette. No Rust service is needed: the Python core
+owns application behavior.
 
 From the project root, with Node 22+ and npm available:
 
@@ -105,37 +106,130 @@ be registered inside the disposable workspace.
 
 ### Start here
 
-**How it works** (top bar, or **How to apply** in the atlas Today panel) opens a
-three-step guide and checks whether your name/email and a usable resume PDF are
+**How to apply** in the atlas Today panel opens a three-step guide and checks
+whether your name/email and a usable resume PDF are
 saved. These checks describe saved data, not application readiness.
 
 1. **My profile → My resumes:** enter your verified details in the ordinary form,
    review the save, then upload a resume PDF. Blank fields stay blank. Basic-form
    saves preserve other profile settings and reject stale edits; leaving with an
    unsaved profile, configuration or answer draft prompts before discarding it.
-2. **Find jobs → Saved jobs:** search for a role or company. Open a job to read it,
-   or select checkboxes and click **Save selected**. Your shortlist is in Saved jobs.
-3. **Select jobs → Prepare selected:** review the included jobs, exact resumes and
-   missing information. Approved preparation opens Firefox and fills known fields.
-   Check each form and submit it yourself. **My applications** tracks the outcomes.
+2. **Find jobs:** the list scrolls in 100-row batches; selections persist across
+   batches and **Select all matching** covers the whole filter. Sort by best fit,
+   similarity score, newest, job type (track), company or deadline. Jobs opens its
+   own schema, showing only job-type categories at the root. Open a category to
+   see every matching job, without 120-item map pages; its searchable Browse list
+   progressively reveals rows. Uncategorized jobs remain available in List.
+3. **Select jobs → press F:** marked jobs (otherwise the opened or focused job) go
+   straight to the reviewed autofill plan. Approved preparation opens Firefox and
+   fills known fields. Check each form and submit it yourself; kitty! never submits.
+
+**Notes** opens today's dated note, reusing the same page on subsequent visits.
+**Map** opens the folder/notebook schema; the library also provides recent pages,
+tags and drag-to-reorder. Persistent tabs keep several pages available.
+Text notes use stable bullet blocks: Enter adds a sibling, Tab/Shift+Tab nests or
+unnests, `[[Title]]` and `#tags` collect topic mentions, and unlinked title mentions
+offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
+live embed from a block's tools; its citation count opens referencing contexts
+in the right sidebar. Referenced text follows edits to the original.
+The canvas retains paper templates, ink/fill palettes, layers and handwriting.
+**Canvas fullscreen** puts only the canvas and compact tools on the laptop screen,
+not the whole application. Its exit control and Escape restore the workspace.
+Plain F has no Notes fullscreen or fit action.
+
+**Connections** automatically compares note and flashcard text locally:
+explicit `[[Page title]]` links, unlinked title mentions and related concepts
+are separate groups. Open a reference or turn a title mention into a link.
+Notebook schemas derive wiki and shared-concept edges without changing your
+documents. Related matches are suggestions, not claims that two concepts are
+identical; no AI, external indexing or network calls are involved.
+
+**Flashcards** opens a deck → note schema. **Add card** is available immediately,
+including from All decks; Review reveals a flip animation before grading.
+FSRS scheduling, cloze/reversed cards, media and portable imports are supported.
+This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimizer,
+or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.
+Likewise, Notes implements the workflows above, not the Obsidian plugin ecosystem.
+
+**Study** opens mind maps first. Create Lecture, Chapter or Exam review maps,
+or create one from a subject. Click a node, then Tab adds a child, Enter adds a
+sibling, typing renames, arrows navigate and Space collapses a branch.
+Tree/radial layouts, an outline, linked note cards and links between maps help
+organize material. **Quiz me** hides labels for recall; a branch can produce a
+flashcard draft. **Auto-links** also suggests local sources for node labels;
+accepting references is revision-checked and idempotent. Save graph edits
+explicitly. Kanban is removed; existing stored rows are left untouched.
+
+**Start session** opens the fourteen-step preparation/connection/recall guide
+and a five-minute priming timer, then repeats 25-minute focus / five-minute break
+phases. Start unlocks the audible phase-change cue. Only completed focus and
+explicit manual entries count toward weekly/monthly totals; priming, breaks and
+pauses do not. The guide's checklist and reflections stay with the session.
+**Calendar** opens one week with half-hour slots and a day-plan sidebar.
+Previous/next changes weeks; Month/Day/Agenda remain optional. Click a slot to
+schedule a time, or drag an event/task to another date or time. Drops open the
+editor for review before saving; moving an event preserves its duration.
+All-day items can be moved across the all-day row. Reminder **When** offers
+no reminder, at start, minutes/hours/day/week before, and custom multiple offsets.
+A task's **＋ Map** action optionally adds it beneath a chosen map node.
+
+The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
+weeks, 30 days or a custom date picker; no date-syntax memorization is required.
+
+**Documents & PDF** authors portable Markdown or rich headings, emphasis, nested
+lists and quotes, with a live preview and real selectable-text PDF export.
+Choose the notes folder/notebook, then import PDF/Markdown/text as new notes or
+append extracted content to the saved document. Original files remain downloadable.
+Clipboard files/text and relative Markdown-folder structure are supported.
+Topic matching can stay inside the document or the selected folder, locally;
+scanned-PDF OCR and proprietary notebook formats are not supported.
+
+**Opportunities** has a separate category → source → opportunity schema and a
+List view. Source hubs remain visible when no opportunities have been ingested;
+Discover explicitly fetches enabled public sources, and is disabled in demo.
+
+These interactions draw on [MindNode's keyboard map-building](https://www.mindnode.com/support/guides/keyboard-shortcuts),
+[Heptabase's note cards and whiteboards](https://heptabase.com/),
+[Roam's linked references](https://roamresearch.com/) and
+[OneNote page templates](https://support.microsoft.com/en-us/onenote).
+Recall and flashcard actions complement mapping rather than treating drawing
+alone as studying: [retrieval-practice research](https://pubmed.ncbi.nlm.nih.gov/21252317/)
+supports actively recalling material.
 
 **Prepare applications** also lists recommended open, unsubmitted A/B jobs.
 Alternative groups, job limits and browser progress remain under preparation
 options. **More filters** exposes ranking, source and other filters; selected-job
 actions and job details have their own expandable advanced controls.
 
-Home is the **atlas**: a 3D network sphere (WebGL) whose hubs are the workspace
-groups and sections, with recent study subjects, flashcard decks, notebooks, schema
-maps, Kanban boards, upcoming events, saved/queued jobs and opportunities fanned
-out on the shell (`GET /api/atlas`, at most 40 per kind, read-only). Click a node
-to open it; switch Sphere / Clusters / Tree / Force layouts and tune repulsion,
-spring and damping in the side panel. The same panel has an atlas search (`/`), a
-grouped Sections list for keyboard and screen-reader use, and a Today summary with
-the daily brief. Without WebGL the Sections list replaces the 3D view. Every other
-page has a compact top bar with **◉ atlas**, a breadcrumb, search (Ctrl/⌘ K) and
-refresh; F1–F10 still jump directly. Configuration/YAML, imports, diagnostics,
-schedules and resume-generation/version tools remain available in labeled
-expandable sections; hotkeys reveal collapsed controls before focusing them.
+Home is the **atlas**, containing workspace sections rather than individual jobs
+or note pages. Every schema starts in Tree; an explicit layout preference can
+then be changed in **Settings → Workspace**. Home has one Study entry and only
+the Jobs section entry, not separate job-action nodes.
+The kitty logo returns home. Clickable schema tabs show section →
+notebook/type → page/job/node; the Back control returns through that hierarchy.
+Advanced layout/physics controls live in Settings, not over the graph.
+Dense graphs retain every node, batch leaves with Three.js InstancedMesh and
+edges with LineSegments, and limit labels rather than dropping source records.
+This keeps the existing [3d-force-graph](https://github.com/vasturiano/3d-force-graph)
+interaction model while using [instancing](https://threejs.org/docs/pages/InstancedMesh.html).
+Browse lists remain available when labels overlap or WebGL is unavailable.
+Left or middle-button drag rotates; the wheel zooms; right-button drag pans.
+Ctrl + Left/Right rotates the visible 3D schema in ten-degree steps, except while
+editing text, selecting text, or using a dialog.
+Theme presets include dark cherry-pink **Cherry cat**, with blossom ASCII,
+and a Scythe palette. Scythe illustration requires the actual supplied artwork;
+no unrelated image is substituted. Motion respects reduced-motion preferences.
+Top notices and the study timer bar can be dismissed.
+
+**AI settings** provides optional OpenRouter drafts for selected text: summaries,
+outlines, study plans, opportunity explanations, and source-grounded flashcards.
+Add a key locally (owner-only `.private/openrouter-key`, or `OPENROUTER_API_KEY`),
+refresh the model catalog, choose a model and price/latency/throughput routing,
+and set an output limit and daily budget. Review the exact text, prompt and maximum
+cost before explicitly approving each request. Reviews are single-use, expire
+after ten minutes, and become invalid when settings change. Notes are not shared
+automatically; output remains a draft. Provider requests disallow data collection,
+and failed requests are not automatically retried. Paid calls are disabled in demo.
 
 The website supports:
 
@@ -169,22 +263,23 @@ The website supports:
 - Outcome reports and formula-safe CSV/ZIP or JSON exports of jobs, applications
   and status history.
 
-**Fast favoriting:** press **Ctrl+F** (⌘F on macOS), type a search, then right-click
-a result to save it. In New jobs, Ctrl+F searches company names literally; `/`
-searches titles and companies. Mark checkboxes (Shift-click for a page range), or
-choose **Select all matching** to include every matching page, then right-click
-any marked result to save the whole selection. **Save selected** also works on
-touchscreens. Right-click always saves;
-it does not toggle saved jobs off. `*` toggles a selection off only if all are
-already favorites. Selection is limited to 10,000 results; narrow larger searches.
+**Job selection:** Ctrl+F (⌘F on macOS) searches; Space marks focused rows,
+Ctrl-click toggles and Shift-click selects a range. **Save selected** favorites
+the selection. Right-click now requests confirmed deletion, not favoriting.
+Submitted applications and actively prepared jobs are protected; discovery can
+re-import a deleted source posting. Selection is limited to 10,000 results.
+Notes pages/blocks, flashcard notes, map nodes and calendar items also have
+confirmed right-click deletion; removing a map node does not delete its source.
 
-**Keyboard:** F1–F10 mirror the primary TUI sections; Ctrl/⌘K opens command and job
-search; `?` shows the full contextual shortcut reference. Arrow keys navigate
+**Keyboard:** Ctrl+Alt opens Plan, Ctrl+X Study, Ctrl+C Job search and Ctrl+V
+Settings outside editors, selections and dialogs. Native cut/copy/paste remains
+unchanged while editing. F1–F10 navigation is removed. Ctrl/⌘K opens command and
+job search; `?` shows contextual shortcuts. Arrow keys navigate
 jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `k` queue state, `R` resume, `e` notes, `s` status, `u` undo, `d` deadline,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,
 `s` skips, `l` defers, `x` marks ineligible and `n`/`p` move between rows.
-`f` favorites first, then opens preparation; Shift+F plans favorite autofill.
+`f`/`F` opens the reviewed autofill plan for marked, opened or focused jobs.
 Letter shortcuts pause while typing or using dialogs. Native browser print,
 reload and close-tab shortcuts are not intercepted.
 
@@ -196,19 +291,31 @@ remaining blockers directly, rather than hiding them under advanced options.
 A later tab/browser failure preserves earlier job results.
 
 **Employer accounts:** save the account email and password in
-`.private/application-credentials.env` (owner-only mode `600`). In the website's
-review plan, choose **Sign in** for existing accounts or **Create account** for
-new ones, review the exact HTTPS websites listed, and check the authorization
-box. This authorizes only that run, not a global policy change. Use separate runs
-when sites need different account actions; kitty! cannot determine whether you
-already have an account. Credentials are never displayed in the website.
-Changed credentials, account choices or destinations require a fresh review.
-Verification, consent, CAPTCHA and unsupported signup forms still need you.
+`.private/application-credentials.env` (owner-only mode `600`). The reviewed
+website plan automatically detects recognized sign-in/account-creation forms;
+there is no existing/new-account selector. Saved credentials enable account
+access for the reviewed run and exact HTTPS destinations, with an opt-out.
+Credentials are never displayed. Changes to credentials or destinations require
+a new review. Unknown forms, verification, non-routine consent, CAPTCHA and MFA stay manual.
+Firefox launches without inherited desktop/PyInstaller library overlays;
+visible preparation requires a desktop session. Supported Phenom posting links
+open their exact matching Apply page. Unsupported Next/Submit boundaries stop
+with the retained tab rather than risking an application submission.
 
-**Google sign-in:** choose **Google — reuse my signed-in job account** in the
-website's review plan. The displayed identity comes from **My profile → email**;
-this mode does not load or send the private employer password. Check that email,
-review the employer origins and authorize the run.
+Account fields use the saved application alias, independently of the Profile contact
+email. Quoted credential values preserve literal spaces and `#`. Loading shells do
+not count as usable account forms; guarded account controls use Firefox WebDriver
+BiDi pointer input, not Jev. Approved account creation includes a required routine
+terms/privacy checkbox only when it is explicitly bound to that account request;
+marketing, biometric consent and factual certifications stay manual. Covered
+controls are not force-clicked. After a manual step, **Continue filling** reviews
+that report's job, independent of the current category filter. A new reviewed run
+can replace idle monitoring without overlapping active filling.
+
+**Google sign-in:** the dedicated Firefox profile preserves manually established
+Google sessions. Advanced integrations can explicitly review Google reuse with
+`authentication_mode: google`; the identity comes from **My profile → email**,
+and this mode never loads or sends the private employer password.
 
 - Use the dedicated **Firefox window opened by kitty!**, not everyday Chrome.
   Its `data/firefox` profile persists job-site cookies between preparation runs.
@@ -253,6 +360,39 @@ checklist, Ctrl+F, cross-page selection/right-click, preparation-plan review,
 disclosure hotkeys, append-only status undo and desktop/mobile layouts.
 Demo restrictions intentionally prevent testing live employer, Gmail or paid calls.
 
+## Desktop app (Linux)
+
+```bash
+# NixOS, reusing the installed cargo/rustc (the pinned GTK/WebKit libraries come from the flake)
+nix develop 'path:./desktop#host-toolchain' --offline --max-jobs 0 --command bash scripts/build-desktop.sh
+# any distro with the prerequisites, or the fully pinned toolchain: nix develop ./desktop --command ...
+KITTY_HOME="$PWD" desktop/target/release/kitty-workspace   # open this workspace in the app
+```
+
+The script builds the website, packages the backend as a relocatable `kitty-web`
+sidecar and bundles the Tauri app as a `.deb` (plus an AppImage outside NixOS: Tauri's
+AppImage step expects GTK in one library directory, which the Nix store does not
+provide). The app starts its own backend on a random loopback port. Without
+`KITTY_HOME` it uses `~/.local/share/kitty/workspace`; existing workspaces are reused
+in place and configuration is never overwritten.
+
+On NixOS, run the built binary inside the same dependency shell:
+
+```bash
+nix develop 'path:./desktop#host-toolchain' --offline --command env KITTY_HOME="$PWD" ./desktop/target/release/kitty-workspace
+```
+The shell exposes matching GStreamer base/good plugins for WebKit timer audio
+(`appsrc`, `appsink`, audio conversion and the system sink). The Debian bundle
+declares base/good and PulseAudio plugin dependencies. Sound still needs an
+available output device and a Start/Enable sound gesture while kitty! is open.
+
+On Linux sessions exposing both Wayland and X11, the app defaults to XWayland.
+This avoids a WebKitGTK native-Wayland scaling failure that can produce a
+negative device-pixel ratio and a blank, compressed page on fractional-scale
+desktops. An explicit `GDK_BACKEND` is respected; Wayland-only sessions are unchanged.
+Window commands live in the system tray rather than a duplicated window menubar.
+
+
 ## Finding jobs (Stage 2)
 
 ```bash
@@ -268,10 +408,13 @@ listings.json; postings older than 180 days skipped), speedyapply (the USA
 internship tables in the READMEs of `speedyapply/2027-SWE-College-Jobs` and
 `2027-AI-College-Jobs`; fragile, a changed layout shows as partial/error) and derec4
 (every listing in `DereC4/internships-and-newgrad`: README.md internships, NEWGRAD.md
-new grad and go/UNFILTERED.md, deduplicated by URL; 🛂/🇺🇸/🎓 markers become
-eligibility notes and 🔒 closes a posting; fragile like speedyapply) repos,
-every watchlist board on Greenhouse, Lever, Ashby, SmartRecruiters, Workday and
-Workable (public widget API, one request per board), Indeed (via JobSpy),
+new grad and go/UNFILTERED.md, deduplicated by URL, including URLs with parentheses;
+🛂/🇺🇸/🎓 markers become eligibility notes and 🔒 closes a posting. Missing files,
+changed tables or malformed rows report partial/error rather than a complete
+snapshot) repos,
+hiring.cafe (see below), every watchlist board on Greenhouse, Lever, Ashby,
+SmartRecruiters, Workday and Workable (public widget API, one request per board),
+Indeed (via JobSpy),
 the monthly Hacker News "Who is hiring" thread, and USAJOBS student/intern
 announcements (off until `USAJOBS_API_KEY` and `USAJOBS_EMAIL` are in `.env`).
 It keeps internship/co-op/student titles, routes each posting by title and additional
@@ -307,6 +450,20 @@ Additional channels:
   Only fetched JSON-LD `JobPosting` records enter discovery—not search
   snippets or program landing pages. Employer identity, qualifications, deadlines
   and query/page provenance are retained. Shared URLs and sources still deduplicate.
+- `hiringcafe`: page 1 only of hiring.cafe's public `/jobs/<topic>` landing pages,
+  one per track search term (`software engineer intern` → `/jobs/software-engineer-intern`),
+  at most `max_topics` (40) per run, 5+ seconds apart. robots.txt disallows the
+  `?page=`/`?searchState=` URLs and the terms forbid republishing, so nothing past
+  page 1 is read and postings stay in the local database. The site sits behind
+  Cloudflare's bot check, so pages load in headless Firefox through kitty's own driver
+  with a separate profile (`data/hiringcafe-firefox`, never the form filler's
+  `data/firefox` or your everyday profile). No user-agent or fingerprint changes and no
+  captcha solving: a check that does not clear within 30 seconds stops the run with an
+  error (429/1015: `rate_limited`), never a silent zero. Each posting links to the
+  employer's own page and is deduplicated by that URL and hiring.cafe's cluster id;
+  graduate-only degree requirements are dropped like Simplify's, and a stated security
+  clearance becomes an eligibility note. Malformed postings make a source partial
+  (or failed if none are usable), not a healthy empty result.
 
 Brave search is **off even if a key is present**. To opt in, put
 `BRAVE_SEARCH_API_KEY` in the gitignored `.env` and set
@@ -355,8 +512,14 @@ To keep finding jobs without me, run discovery on a timer:
 ```bash
 uv run kitty schedule print                  # home-manager block (NixOS), 07:00 and 17:00
 uv run kitty schedule print --format systemd # or plain systemd user units / --format cron
-uv run kitty schedule print --with-triage    # also collect + send triage batches (spends up to the cap)
+uv run kitty schedule print --with-triage    # opt into capped paid triage with the configured provider
 ```
+
+The generated schedule runs every enabled discovery source, including DereC4 and
+hiring.cafe when enabled in `config/sources.yaml`; it never installs itself.
+Without `--with-triage`, newly generated schedules omit paid Jev/OpenRouter and
+Anthropic requests. Discovery itself needs no paid inference; an existing schedule
+that explicitly opts into capped triage remains a separate authorized step.
 
 It is slow on purpose: at least 2 s between requests to any host (5 s for the
 repos), and raw responses are cached under `.cache/http/` for each source's TTL.
@@ -478,8 +641,12 @@ Old fill markers migrate to attempted, not ready. Missing answers can be saved
 on Profile and retried, including the first answer in an empty answers file.
 
 A valid retained application tab is resumed without navigating away or replacing
-manual choices/attachments. If it has gone, the tool explicitly restarts only saved
-facts. A new upload on a populated retained form is left manual because employer
+manual choices/attachments. Per-tab browser-storage markers bridge Firefox's
+session-scoped tab IDs; origin and posting checks still apply. A matching URL alone
+never adopts another tab, and ambiguous copied markers are rejected. Monitoring
+uses the same ownership checks and preserves the original attachment identity.
+If ownership cannot be verified, the tool explicitly restarts only saved facts.
+A new upload on a populated retained form stays manual because employer
 resume parsing can overwrite your entries. Login, verification, visible CAPTCHA,
 unsupported controls, validation errors and incomplete uploads remain blockers.
 
@@ -527,7 +694,13 @@ merely because its name starts the same way. Editable search text is not proof o
 a selection, and failed choices clear that query.
 Recognized Workday pages can follow guarded Apply/Apply Manually entry and
 non-final Next/Continue steps to Review. Account requirements vary by employer.
-Unknown structures, final actions and consent controls are never clicked.
+Unknown structures and final application actions are never clicked. Known Oracle
+email-first entry can use the saved account alias and approved routine terms;
+its standard application sections are checked together, not advanced by guessing
+from the numeric URL. Missing required profile records still prevent readiness.
+Loaded embedded application forms take precedence over lingering parent Apply
+buttons. Separate Oracle resume attachments can be added without invoking the
+profile-import widget; ambiguous retained uploads remain deferred to protect answers.
 Required native resume uploads inside labelled ARIA upload groups are supported.
 When Greenhouse removes the file input after upload, its visible filename/removal
 receipt can verify the retained attachment. Pending, failed or incomplete receipts
@@ -555,24 +728,37 @@ authentication:
 `recognized` only handles an already displayed account form. Explicit `login` or
 `create` can first follow one unambiguous approved account-entry link or
 non-submitting button. `create` also requires `allow_account_creation: true`.
-At most one credential request is sent per job attempt, with no retries or
-login/signup fallback. A sent request is not proof an account was created;
-the filler checks whether the site advances to the application.
+Auto mode sends an initial recognized credential action and switches flows only
+after an explicit account-not-found or already-registered error. An incorrect
+password or a conditional "Already have an account?" hint never triggers a retry.
+A sent action is not proof an account was created; the filler checks the next
+page and stops for email activation, verification or MFA.
 
-Employer-password mode handles only a plain form: one email/username box, the password (plus
-confirmation boxes for a new account) and a single Sign in / Create account
-button, posting to the same approved origin. CAPTCHA widgets (even a passive
-badge), MFA or email codes, consent checkboxes or "by signing in you agree"
-text, extra fields, other SSO-only pages, GET forms, cross-origin frames and boxes
-already holding other values all stop for manual handling. The credentials are
-redacted from reports, stored notes and browser-error text.
+Employer-password mode recognizes email/password account forms, confirmation
+fields and accessible component controls. Native credential submits require POST.
+A recognized component proxy with an omitted method gets a POST-only native
+fallback before any credential is populated; explicit GET and unsafe submit
+overrides are rejected. In password forms, CAPTCHA widgets, extra fields,
+cross-origin frames and boxes already holding other values prevent credential
+writes. Oracle email entry distinguishes empty CAPTCHA placeholders and passive
+badges from an actual challenge; it never solves a challenge. Routine required
+account terms can be selected under account-creation approval; unrelated consent
+cannot. Known cookie notices may be rejected, never accepted. Credentials are
+redacted from reports, stored notes and browser errors.
+
+Posting entry waits for Oracle's visible application-loading overlay to clear
+before clicking Apply. A visible interactive DataDome challenge, including one
+embedded in SmartRecruiters, stops preparation for manual completion; hidden
+widgets and passive collection frames do not authorize or require challenge
+interaction. Supported but unanswered required radio groups remain questions to
+complete, not evidence that the control type is unsupported.
 
 The [application autonomy and privacy research](docs/APPLICATION_AUTONOMY_RESEARCH.md)
 records provider account capabilities, implemented preparation/resumption
 boundaries and remaining tenant-specific gaps. There is no promise of unattended
 support for every site.
-Browser-signal suppression is not anonymity; verification, CAPTCHAs, consent,
-unknown answers, and final submission still need an appropriate handoff.
+Browser-signal suppression is not anonymity; verification, CAPTCHAs, non-routine
+consent, unknown answers and final submission still need an appropriate handoff.
 
 The window is system Firefox (`$KITTY_FIREFOX` or `firefox` on PATH) started with
 remote control (WebDriver BiDi) on `127.0.0.1:9333` (`KITTY_BROWSER_PORT`). While
@@ -608,7 +794,7 @@ questions the filler logged are listed too.
   Detail and Apply show "like your favorites (+0.45): fpga, track cpu, ...".
 - `kitty autofill [--limit N] [--track T] [--no-watch] [--detach] [--dry-run]` (or `F`
   on the Apply tab, `f` on a ★ job there, or `f` on Inbox / Jobs with nothing marked)
-  fills my favorites' forms in background tabs of the kitty Firefox, only those in the
+  fills my favorites' forms in the kitty Firefox, only those in the
   track the screen is filtered on (`c` on Inbox / Jobs / Apply; `--track`),
   best first, at most `autofill_cap` per run (config/apply.yaml, default 10), waiting
   `autofill_pause_seconds` (default 15) between jobs. **It never submits.** It skips
@@ -618,8 +804,11 @@ questions the filler logged are listed too.
   closes (own systemd scope; output in data/autofill.log). With ntfy or Telegram set
   up in .env it pushes the summary. Afterwards it watches the tabs like
   `kitty apply` and records each confirmation page as applied.
+  Filling temporarily selects each employer tab so Firefox delivers real dropdown
+  input. The previous tab is restored only when it remains in the same browser
+  window and the user has not selected another tab during preparation.
 
-## Triage (Stage 3, Anthropic API)
+## Triage (Stage 3, optional Anthropic or OpenRouter API)
 
 ```bash
 uv run kitty triage                 # what a run would send and cost; changes nothing
@@ -633,6 +822,40 @@ cost cap (`max_cost_usd_per_run`, default $5) are in `config/triage.yaml`. Every
 paid run prints the job count, estimated tokens and dollars first and asks to
 confirm (`--yes` skips it, for the schedule). A run stops before it could pass the
 cap, and a batch is trimmed to fit; the run's cost and cap hits are in `runs`.
+
+Anthropic remains the default (`provider: anthropic`). For OpenRouter Jev, set
+the following in `config/triage.yaml`:
+
+```yaml
+provider: openrouter
+model: typesafe/jev-router
+openrouter_max_input_price: 2.0   # USD per million input tokens
+openrouter_max_output_price: 10.0 # USD per million output tokens
+max_cost_usd_per_run: 1.0
+openrouter_daily_budget_usd: 1.0  # optional shared UTC-day reservation ceiling
+```
+
+Provide `OPENROUTER_API_KEY` or the local `.private/openrouter-key` file.
+Jev is a model router, not a job-fetching service: the deterministic DereC4
+importer still fetches and parses the repository, then Jev tiers eligible
+uncached jobs. No applications are submitted. OpenRouter supports `--now` only;
+`--batch` and `--collect` require Anthropic. A flagless preview sends nothing.
+Dynamic router prices are bounded by the configured input/output ceilings and
+token limits, with worst-case reservations against the per-run cap (including
+failed requests); a cheaper response does not authorize extra requests beyond
+that reserved budget. Requests require supported parameters and deny provider
+data collection; providers that cannot honor the restrictions are not a fallback.
+Redacted resume and posting text still leave the machine when paid triage runs.
+When a daily ceiling is set, reservations survive failures, process restarts and
+overlapping runs; they are not recycled after cheaper responses. The day boundary
+is UTC, independent of the scheduler's local-time trigger.
+
+Each paid run requires approval unless `--yes` is explicitly supplied.
+`schedule print --with-triage` is a separate unattended-spending opt-in: it emits
+`triage --now --yes` for OpenRouter, or collect/batch commands for Anthropic,
+and never installs anything. Without that flag scheduling stays free.
+The generators accept a single time (for example `times=("07:00",)`) for daily
+discovery, optional triage and the digest; the CLI default remains twice daily.
 
 For each job the model returns, as schema-checked JSON: a tier (A careful review,
 B fast queue, C kept with a reason), one registered resume with a one-sentence
@@ -832,7 +1055,7 @@ on Today hides itself on terminals shorter than 36 rows.
 | `w` | Profile: answer a logged screening question (saved to answers.yaml) |
 | `f` | fill & open the application form(s): marked Inbox rows, or the selected job. On Inbox / Jobs with nothing marked, and on Apply when the job shown is ★ (or `v` is on), every waiting favorite in the current track instead (like `F`). On Apply a plain fill moves to the next job; filled jobs wait at the end of the queue |
 | `*` `v` | Inbox / Jobs / Apply / Job Detail: star or unstar (marked rows or the selected job); show favorites only |
-| `F` | Apply: autofill the current track's favorites in background tabs (never submits) |
+| `F` | Apply: autofill the current track's favorites, temporarily selecting each employer tab (never submits) |
 | `c` | Inbox / Jobs / Apply: choose one track (quant, parttime, ...) or every track; Escape keeps the current selection. On Jobs it narrows the saved view; on Apply it also scopes favorite filling |
 | `esc` | back from Job Detail |
 | `space` | Inbox: mark a row; `t` tier, `g` add track, `x` skip act on every marked row |

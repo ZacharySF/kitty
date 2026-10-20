@@ -122,7 +122,7 @@ def get(app, conn, path, query):
             filt.include_closed = closed == '1'
         order = query.get('order', '')
         if order:
-            if order not in {'best', 'newest', 'company', 'deadline'}:
+            if order not in {'best', 'newest', 'company', 'deadline', 'score', 'track'}:
                 raise APIError(400, 'Unknown ordering')
             filt.order = order
         if view == 'apply':
@@ -135,7 +135,7 @@ def get(app, conn, path, query):
                 raise APIError(400, 'Narrow the search to at most 10,000 jobs before selecting all')
             filt.limit = 10000
             return {'ids': [job.id for job in jobs.list_jobs(conn, filt)], 'total': total}
-        if view == 'apply':
+        if view == 'apply' and (not order or order == 'best'):
             filt.limit = None
             ranked = jobs.list_jobs(conn, filt)
             ranked.sort(key=lambda job: (job.fill_state == 'ready', job.tier != 'A'))
@@ -286,6 +286,14 @@ def post(app, conn, path, body):
                 raise APIError(400, 'Favorite must be a boolean or toggle')
             if value == 'toggle':
                 value = not all(job.favorited_at for job in selected)
+        elif action == 'delete':
+            if value is not True:
+                raise APIError(400, 'Confirm job deletion first')
+            if any(job.application_id for job in selected):
+                raise APIError(409, 'Submitted applications and their history are protected from job deletion')
+            browser = app.automation.snapshot()
+            if browser['running'] and set(browser['job_ids']) & {job.id for job in selected}:
+                raise APIError(409, 'Stop preparation for these jobs before deleting them; retained Firefox tabs stay open')
         else:
             raise APIError(400, 'Unknown bulk action')
         target_ids = [job.id for job in selected]
@@ -296,6 +304,15 @@ def post(app, conn, path, body):
             favorites.mark_not_eligible(conn, target_ids)
         elif action == 'favorite':
             (favorites.favorite if value else favorites.unfavorite)(conn, target_ids)
+        elif action == 'delete':
+            with transaction(conn):
+                for job_id in target_ids:
+                    if applications.get_application_for_job(conn, job_id) is not None:
+                        raise APIError(409, 'Submitted applications and their history are protected from job deletion')
+                # Reusable answers survive deletion of the posting that first prompted them.
+                conn.executemany('UPDATE screening_questions SET first_seen_job_id=NULL WHERE first_seen_job_id=?',
+                                 [(job_id,) for job_id in target_ids])
+                conn.executemany('DELETE FROM jobs WHERE id=?', [(job_id,) for job_id in target_ids])
         else:
             with transaction(conn):
                 for job in selected:

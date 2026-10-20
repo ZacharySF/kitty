@@ -85,7 +85,7 @@ class FakeBrowser:
 def _tab(workspace, context: str, form: str, ats: str) -> WatchedTab:
     job, _ = jobs_core.upsert_job(workspace.conn, company=f"Co {context}", title="Intern", url=form)
     return WatchedTab(job_id=job.id, context=context, ats=ats, form_url=form,
-                      label=f"Co {context} - Intern", resume_id=None, track=None)
+                      label=f"Co {context} - Intern", resume_id=None, track=None, marker=context)
 
 
 def _run(workspace, browser: FakeBrowser, tabs: list[WatchedTab]) -> tuple[Watch, list[int], list[str]]:

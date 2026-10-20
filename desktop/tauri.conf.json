@@ -21,7 +21,7 @@
     "icon": ["icons/icon.png"],
     "externalBin": ["binaries/kitty-web"],
     "linux": {
-      "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "xdg-utils"] },
+      "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "xdg-utils", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio"] },
       "appimage": { "bundleMediaFramework": false }
     }
   }

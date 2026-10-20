@@ -4,9 +4,22 @@
   import { api, safeUrl } from "./api";
   import SchemaNetwork from "./SchemaNetwork.svelte";
   import type { GraphLayout, GraphLink, GraphNode } from "./graph3d";
-  let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import MindMapFeedback from "./MindMapFeedback.svelte";
+  let { revision = 0, demo = false, section = "schema", embedded = false }: { revision?: number; demo?: boolean; section?: "schema" | "study"; embedded?: boolean } =
     $props();
-  type Source = { kind: "subject" | "job" | "company"; id: number };
+  const pane = useWorkspaceContext();
+  let container = $state<HTMLElement>();
+  function confirm(message: string) {
+    return pane.active && window.confirm(message);
+  }
+  export function beforeLeave(): boolean {
+    return !dirty || confirm("Leave this map? Unsaved edits remain in its local draft; use Save map to persist them.");
+  }
+  export function hasUnsavedChanges(): boolean {
+    return dirty || busy || blocked;
+  }
+  type Source = { kind: "subject" | "job" | "company" | "calendar_task" | "note_page"; id: number | string };
   type Node = {
     id: string;
     kind: string;
@@ -16,6 +29,8 @@
     y: number;
     url: string;
     source: Source | null;
+    collapsed?: boolean;
+    map_id?: number | null;
   };
   type Edge = { id: string; from: string; to: string; label: string };
   type Graph = { nodes: Node[]; edges: Edge[] };
@@ -85,6 +100,31 @@
     unified: number;
   };
   type Point = { x: number; y: number };
+  type Reference = {
+    kind: string;
+    id: number | string;
+    title: string;
+    snippet: string;
+    view: string;
+    match: "wikilink" | "mention";
+    linked: boolean;
+  };
+  type AutoLinks = {
+    map_id: number;
+    revision: number;
+    suggestions: { node_id: string; label: string; references: Reference[] }[];
+    scanned: Record<string, number>;
+  };
+  const REF_KINDS: Record<string, string> = {
+    note_page: "Note page",
+    study_subject: "Study subject",
+    study_project: "Study project",
+    study_task: "Study task",
+    calendar_event: "Calendar event",
+    calendar_task: "Calendar task",
+    job: "Job",
+    flashcard_deck: "Flashcard deck",
+  };
   const NODE_W = 200,
     NODE_H = 64,
     LIMIT = 100000;
@@ -127,8 +167,8 @@
     moved: boolean;
   } | null = null;
   let view = $state<View3D>("edit"),
-    mapLayout = $state<GraphLayout>("force"),
-    netLayout = $state<GraphLayout>("clusters");
+    mapLayout = $state<GraphLayout>("tree"),
+    netLayout = $state<GraphLayout>("tree");
   let network = $state<Network | null>(null),
     netMode = $state(""),
     netMaps = $state<number[]>([]),
@@ -137,6 +177,217 @@
     netSelected = $state(""),
     netBusy = $state(false),
     netError = $state("");
+  let showLinks = $state(false),
+    autoLinks = $state<AutoLinks | null>(null),
+    autoPicked = $state<string[]>([]),
+    autoBusy = $state(false),
+    autoError = $state("");
+  let autoRequestedFor = 0;
+  let outline = $state(false), recall = $state(false), revealed = $state<string[]>([]);
+  let editing = $state(""), inlineLabel = $state("");
+  let noteSearch = $state(""), notePages = $state<{id: number; title: string}[]>([]);
+  let template = $state("Blank");
+  const draftKey = (id: number) => `kitty.schema.draft.${id}`;
+  function descendants(id: string) {
+    const ids = new Set([id]);
+    for (let i = 0; i < (current?.graph.nodes.length ?? 0); i++)
+      for (const edge of current?.graph.edges ?? []) if (ids.has(edge.from)) ids.add(edge.to);
+    return ids;
+  }
+  function reparent(parent: string) {
+    if (!current || !node || !editable) return;
+    if (parent && descendants(node.id).has(parent)) { error = "A topic cannot be moved inside its own branch."; return; }
+    remember();
+    current.graph.edges = current.graph.edges.filter(edge => edge.to !== node.id);
+    if (parent) {
+      current.graph.edges.push({id: crypto.randomUUID(), from: parent, to: node.id, label: ""});
+      const target = current.graph.nodes.find(item => item.id === parent);
+      if (target) target.collapsed = false;
+    }
+    arrange("tree");
+  }
+  const visibleNodes = $derived.by(() => {
+    if (!current) return [];
+    const hidden = new Set<string>();
+    const visit = (id: string, seen = new Set<string>()) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      for (const e of current!.graph.edges.filter(e => e.from === id)) {
+        if (!seen.has(e.to)) {hidden.add(e.to); visit(e.to, seen);}
+      }
+    };
+    for (const n of current.graph.nodes) if (n.collapsed) visit(n.id);
+    const result: Node[] = [], seen = new Set<string>();
+    const append = (n: Node) => {
+      if (seen.has(n.id) || hidden.has(n.id)) return;
+      seen.add(n.id); result.push(n);
+      for (const edge of current!.graph.edges.filter(e => e.from === n.id)) {
+        const child = current!.graph.nodes.find(n => n.id === edge.to);
+        if (child) append(child);
+      }
+    };
+    for (const n of current.graph.nodes.filter(n => !current!.graph.edges.some(e => e.to === n.id))) append(n);
+    for (const n of current.graph.nodes) append(n);
+    return result;
+  });
+  function depth(id: string) {
+    const seen = new Set<string>();
+    while (!seen.has(id)) {
+      seen.add(id);
+      const parent = current?.graph.edges.find(e => e.to === id);
+      if (!parent) break;
+      id = parent.from;
+    }
+    return seen.size - 1;
+  }
+  function branchColor(n: Node) {
+    let branch = n.id;
+    const seen = new Set<string>();
+    while (!seen.has(branch)) {
+      seen.add(branch);
+      const parent = current?.graph.edges.find(e => e.to === branch)?.from;
+      if (!parent || !current?.graph.edges.some(e => e.to === parent)) break;
+      branch = parent;
+    }
+    const index = current?.graph.nodes.findIndex(n => n.id === branch) ?? 0;
+    return `var(--c${Math.max(0, index) % 6 + 1}, var(--accent))`;
+  }
+  function hiddenLabel(n: Node) {
+    return recall && !!current?.graph.edges.some(e => e.to === n.id) && !revealed.includes(n.id);
+  }
+  function collapse(n: Node) { remember(); n.collapsed = !n.collapsed; }
+  async function editInline(n: Node, initial = name(n)) {
+    if (!pane.active) return;
+    choose(n); editing = n.id; inlineLabel = initial;
+    await tick();
+    if (pane.active) container?.querySelector<HTMLInputElement>(`#${CSS.escape(`${pane.id}-map-inline-label`)}`)?.focus();
+  }
+  function updateInline(value: string) {
+    inlineLabel = value;
+    const target = current?.graph.nodes.find(item => item.id === editing);
+    if (!target || !value.trim() || target.label === value.trim()) return;
+    remember(); target.label = value.trim();
+    if (selected === target.id) draftLabel = target.label;
+  }
+  function finishInline(focus = true) {
+    const target = current?.graph.nodes.find(item => item.id === editing);
+    if (target && inlineLabel.trim() && target.label !== inlineLabel.trim()) {
+      remember(); target.label = inlineLabel.trim();
+      if (selected === target.id) draftLabel = target.label;
+    }
+    editing = "";
+    if (focus) void tick().then(() => { if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${CSS.escape(selected)}"]`)?.focus(); });
+  }
+  function quickAdd(parent = selected) {
+    if (!current || !editable || current.graph.nodes.length >= 300) return;
+    remember();
+    const n: Node = {id: crypto.randomUUID(), kind: "topic", label: "Topic", notes: "", url: "", source: null, x: 0, y: 0};
+    current.graph.nodes.push(n);
+    if (parent) {
+      current.graph.edges.push({id: crypto.randomUUID(), from: parent, to: n.id, label: ""});
+      const p = current.graph.nodes.find(n => n.id === parent);
+      if (p) p.collapsed = false;
+    }
+    arrange("tree"); void editInline(n, "");
+  }
+  async function findNoteCards() {
+    try { const result = await api<{pages: {id: number; title: string}[]}>(`/notes?search=${encodeURIComponent(noteSearch)}`); notePages = result.pages; }
+    catch (e) { failure(e); }
+  }
+  async function addNoteCard(page: {id: number; title: string}) {
+    if (!current) return;
+    const parent = selected;
+    await save();
+    if (dirty || blocked) return;
+    try {
+      accepted(await api<MapItem>("/schema/add-node", {map_id: current.id, revision: current.revision, label: page.title, parent_id: parent || undefined, source: {kind: "note_page", id: page.id}}));
+      arrange("tree"); notePages = [];
+    } catch (e) { failure(e); }
+  }
+  function openCard(n: Node) {
+    if (n.source?.kind === "note_page") {
+      if (dirty && !confirm("Leave unsaved map edits?")) return;
+      sessionStorage.setItem("kitty.notes.open-page", String(n.source.id)); location.hash = "#notes";
+    } else if (n.map_id) void open(n.map_id);
+    else void editInline(n);
+  }
+  async function studyBranch(purpose: "flashcards" | "quiz" = "flashcards") {
+    if (!current || !node) return;
+    finishInline(false);
+    const ids = descendants(node.id);
+    const text = current.graph.nodes.filter(n => ids.has(n.id)).map(n => `${name(n)}\n${n.notes}`).join("\n\n");
+    if (dirty) await save();
+    if (!pane.active || dirty || blocked) return;
+    if (purpose === "flashcards") {
+      try { sessionStorage.setItem("kitty.flashcards.import-text", text); } catch { /* The live event still works. */ }
+      window.dispatchEvent(new CustomEvent("kitty-study-text", {detail: {text, purpose}}));
+      location.hash = "#flashcards";
+    } else {
+      recall = true; revealed = current.graph.nodes.filter(n => !ids.has(n.id)).map(n => n.id); outline = true;
+      notice = "Recall the hidden topics and their connections, then reveal each answer.";
+    }
+  }
+  async function startBranchSession() {
+    if (!current || !node) return;
+    finishInline(false);
+    const detail = {subject_id: current.graph.nodes.find(n => n.source?.kind === "subject")?.source?.id, concept: name(node)};
+    if (dirty) await save();
+    if (!pane.active || dirty || blocked) return;
+    window.dispatchEvent(new CustomEvent("kitty-study-focus", {detail}));
+  }
+  async function subjectMap(id: number) {
+    const subject = subjects.find(s => s.id === id);
+    if (!subject) return;
+    const title = `${subject.name} · ${template}`;
+    newTitle = title; mode = "study";
+    await create();
+    if (!current || current.title !== title) return;
+    kind = "class"; subjectId = String(id); addNode();
+    const root = selected;
+    for (const title of template === "Lecture" ? ["Key ideas", "Examples", "Questions"] : template === "Chapter" ? ["Overview", "Concepts", "Summary"] : ["Topics", "Practice", "Gaps"]) {
+      label = title; kind = "topic"; addNode();
+      current.graph.edges.push({id: crypto.randomUUID(), from: root, to: selected, label: ""});
+    }
+    arrange("tree"); await save();
+  }
+  async function createTemplate() {
+    const expected=newTitle.trim();
+    await create();
+    if(!current||current.title!==expected||current.graph.nodes.length)return;
+    kind="topic";label=current.title;addNode();
+    const root=selected;
+    for(const title of template === "Blank" ? [] : template==="Lecture"?["Key ideas","Examples","Questions"]:template==="Chapter"?["Overview","Concepts","Summary"]:["Topics","Practice","Gaps"]){
+      label=title;addNode();current.graph.edges.push({id:crypto.randomUUID(),from:root,to:selected,label:""});
+    }
+    arrange("tree");await save();
+    const rootNode = current?.graph.nodes.find(n => n.id === root);
+    if (rootNode) {
+      choose(rootNode);
+      await tick();
+      if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${CSS.escape(root)}"]`)?.focus();
+    }
+  }
+  $effect(() => {
+    pane.setTrail(section, current ? [
+      {label: current.title, onclick: () => {if (pane.active) selected = "";}},
+      ...(node ? [{label: name(node), onclick: () => {if (pane.active) focusNode(node.id);}}] : []),
+    ] : [], () => {if (!pane.active || (dirty && !confirm("Discard unsaved map edits?"))) return; current = null; selected = "";});
+    return ()=>pane.clearTrail(section);
+  });
+  const autoView = $derived(
+    autoLinks && current && autoLinks.map_id === current.id ? autoLinks : null,
+  );
+  const autoPending = $derived(
+    autoView?.suggestions
+      .filter((s) => s.references.some((r) => !r.linked))
+      .map((s) => s.node_id) ?? [],
+  );
+  const autoNew = $derived(
+    autoView?.suggestions.reduce(
+      (count, s) => count + s.references.filter((r) => !r.linked).length,
+      0,
+    ) ?? 0,
+  );
   const netNode = $derived(network?.nodes.find((n) => n.id === netSelected));
   const netChoices = $derived(
     netMode ? maps.filter((m) => m.mode === netMode) : maps,
@@ -168,14 +419,30 @@
     dirty = true;
     notice = "Unsaved local edits";
   }
-  function accepted(item: MapItem) {
+  function accepted(item: MapItem, restoreDraft = false) {
     current = item;
     dirty = false;
     blocked = false;
     history = [];
     selected = "";
     selectedEdge = "";
+    editing = "";
     notice = "Saved locally";
+    if (restoreDraft) {
+      try {
+        const raw = localStorage.getItem(draftKey(item.id));
+        if (raw) {
+          const draft = JSON.parse(raw);
+          if (draft.snapshot?.graph?.nodes && draft.snapshot?.graph?.edges) {
+            Object.assign(item, draft.snapshot);
+            dirty = true;
+            blocked = draft.revision !== item.revision;
+            notice = blocked ? "Recovered local edits; the saved map changed. Export or reload to resolve." : "Recovered unsaved map edits — Save map to keep them.";
+          }
+        }
+      } catch { error = "The local map draft could not be restored."; }
+    }
+    try { localStorage.setItem(`kitty.schema.last-map.${section}`, String(item.id)); } catch { /* Map selection is optional; SQLite remains authoritative. */ }
   }
   function failure(e: unknown) {
     error = e instanceof Error ? e.message : String(e);
@@ -198,15 +465,32 @@
         ))
     )
       return;
+    if (force && dirty && !confirm("Discard local edits and reload the saved map?")) return;
+    if (force) { try { localStorage.removeItem(draftKey(id)); } catch { /* Optional cache. */ } }
     busy = true;
     error = "";
     try {
-      accepted(await api<MapItem>(`/schema/map?id=${id}`));
+      accepted(await api<MapItem>(`/schema/map?id=${id}`), !force);
     } catch (e) {
       failure(e);
     } finally {
       busy = false;
     }
+  }
+  async function newMap() {
+    if (busy || (dirty && !confirm("Leave this map? Unsaved edits remain in its local draft; use Save map to persist them."))) return;
+    current = null;
+    selected = "";
+    selectedEdge = "";
+    editing = "";
+    dirty = false;
+    blocked = false;
+    error = "";
+    notice = "";
+    newTitle = "";
+    view = "edit";
+    await tick();
+    if (pane.active) container?.querySelector<HTMLInputElement>(`#${CSS.escape(`${pane.id}-new-map-title`)}`)?.focus();
   }
   async function create() {
     if (
@@ -219,6 +503,7 @@
     error = "";
     try {
       accepted(await api<MapItem>("/schema/create", { title: newTitle, mode }));
+      view = "edit";
       newTitle = "";
       await refresh();
     } catch (e) {
@@ -228,7 +513,9 @@
     }
   }
   async function save() {
+    finishInline(false);
     if (!current || !editable || !dirty) return;
+    const selectedId = selected;
     busy = true;
     error = "";
     try {
@@ -241,6 +528,9 @@
           viewport: current.viewport,
         }),
       );
+      try { localStorage.removeItem(draftKey(current.id)); } catch { /* Saved on server. */ }
+      const activeNode = current.graph.nodes.find(n => n.id === selectedId);
+      if (activeNode) choose(activeNode);
       await refresh();
     } catch (e) {
       failure(e);
@@ -266,6 +556,7 @@
         revision: current.revision,
         confirm: true,
       });
+      try { localStorage.removeItem(draftKey(current.id)); } catch { /* Optional draft cache. */ }
       current = null;
       history = [];
       dirty = false;
@@ -317,7 +608,7 @@
     if (!current || !editable || current.graph.nodes.length >= 300) return;
     const subject = subjects.find((s) => s.id === Number(subjectId));
     if (kind === "class" && !subject) {
-      error = "Choose an existing study class first. Create classes in Study.";
+      error = "Choose an existing subject first. Add subjects in Study → Subjects & concepts.";
       return;
     }
     if (kind !== "class" && !label.trim()) return;
@@ -372,6 +663,13 @@
     if (edgeTo === selected) edgeTo = "";
     selected = "";
   }
+  function deleteAtPointer(event: MouseEvent, target: Node) {
+    if ((event.target as Element).closest('input,textarea,[contenteditable="true"]') || window.getSelection()?.toString()) return;
+    event.preventDefault();
+    if (!editable || !confirm(`Remove “${name(target)}” from this map? Linked notes, cards and jobs stay unchanged.`)) return;
+    choose(target);
+    deleteNode();
+  }
   function unlink() {
     if (!node || !editable) return;
     remember();
@@ -396,6 +694,7 @@
       to: edgeTo,
       label: edgeLabel,
     });
+    arrange("tree");
   }
   function removeEdge(id: string) {
     if (!current || !editable) return;
@@ -411,36 +710,30 @@
     e[field] = value;
   }
   function nodeKey(e: KeyboardEvent, n: Node) {
-    if (!editable) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      choose(n);
+    if (!editable || e.ctrlKey || e.metaKey || e.altKey) return;
+    choose(n);
+    if (["Tab", "Enter", " ", "Delete", "Backspace", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      e.preventDefault(); e.stopPropagation();
     }
-    if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault();
-      choose(n);
-      deleteNode();
-    }
-    const delta: Record<string, [number, number]> = {
-      ArrowLeft: [-1, 0],
-      ArrowRight: [1, 0],
-      ArrowUp: [0, -1],
-      ArrowDown: [0, 1],
-    };
-    if (delta[e.key]) {
-      e.preventDefault();
-      remember();
-      const d = delta[e.key],
-        step = e.shiftKey ? 20 : 4;
-      n.x = Math.max(-100000, Math.min(100000, n.x + d[0] * step));
-      n.y = Math.max(-100000, Math.min(100000, n.y + d[1] * step));
-    }
+    if (e.key === "Tab") quickAdd(n.id);
+    else if (e.key === "Enter") quickAdd(current?.graph.edges.find(edge => edge.to === n.id)?.from ?? "");
+    else if (e.key === " ") { if (recall) revealed = [...revealed, n.id]; else collapse(n); }
+    else if (e.key === "Delete" || e.key === "Backspace") deleteNode();
+    else if (e.key.startsWith("Arrow")) {
+      const parent = current?.graph.edges.find(edge => edge.to === n.id)?.from;
+      const child = current?.graph.edges.find(edge => edge.from === n.id)?.to;
+      const index = visibleNodes.findIndex(item => item.id === n.id);
+      const id = e.key === "ArrowLeft" ? parent : e.key === "ArrowRight" ? child : visibleNodes[index + (e.key === "ArrowUp" ? -1 : 1)]?.id;
+      const target = visibleNodes.find(item => item.id === id);
+      if (target) {choose(target); void tick().then(() => { if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${target.id}"]`)?.focus(); });}
+    } else if (e.key.length === 1) { e.preventDefault(); e.stopPropagation(); void editInline(n, e.key); }
   }
   function start(e: PointerEvent, id = "") {
     if (!current || !editable || gesture || e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     if (id) {
+      (e.currentTarget as SVGGElement).focus();
       const n = current.graph.nodes.find((n) => n.id === id)!;
       choose(n);
     }
@@ -487,6 +780,19 @@
     if (cancel) Object.assign(current, clone(gesture.before));
     else if (gesture.moved) {
       history = [...history.slice(-29), gesture.before];
+      if (gesture.node) {
+        const dragged = current.graph.nodes.find(n => n.id === gesture!.node)!;
+        const target = current.graph.nodes.find(n => n.id !== dragged.id && dragged.x + NODE_W / 2 >= n.x && dragged.x + NODE_W / 2 <= n.x + NODE_W && dragged.y + NODE_H / 2 >= n.y && dragged.y + NODE_H / 2 <= n.y + NODE_H);
+        if (target) {
+          const descendants = new Set([dragged.id]);
+          for (let i = 0; i < current.graph.nodes.length; i++) for (const edge of current.graph.edges) if (descendants.has(edge.from)) descendants.add(edge.to);
+          if (!descendants.has(target.id)) {
+            current.graph.edges = current.graph.edges.filter(e => e.to !== dragged.id);
+            current.graph.edges.push({id: crypto.randomUUID(), from: target.id, to: dragged.id, label: ""});
+            target.collapsed = false;
+          }
+        }
+      }
       dirty = true;
       notice = "Unsaved local edits";
     }
@@ -740,18 +1046,30 @@
       ]),
     );
   }
-  function arrange(kind: "force" | "tree") {
+  function arrange(kind: "force" | "tree" | "radial") {
     if (!current || !editable || !current.graph.nodes.length) return;
     remember();
-    const positions =
-      kind === "tree" ? treeLayout(current.graph) : forceLayout(current.graph);
+    let positions: Map<string, Point>;
+    if (kind === "radial") {
+      const levels = new Map<number, Node[]>();
+      for (const n of current.graph.nodes) {
+        const level = depth(n.id);
+        levels.set(level, [...(levels.get(level) ?? []), n]);
+      }
+      positions = new Map();
+      for (const [level, nodes] of levels) nodes.forEach((n, i) => {
+        const angle = 2 * Math.PI * i / nodes.length;
+        const radius = level === 0 && nodes.length === 1 ? 0 : (level + 1) * Math.max(220, nodes.length * 42);
+        positions.set(n.id, {x: Math.cos(angle) * radius, y: Math.sin(angle) * radius});
+      });
+    } else positions = kind === "tree" ? treeLayout(current.graph) : forceLayout(current.graph);
     for (const n of current.graph.nodes) {
       const point = positions.get(n.id)!;
       n.x = clampPosition(point.x);
       n.y = clampPosition(point.y);
     }
     frame();
-    notice = `${kind === "tree" ? "Tree" : "Force"} auto-layout applied locally. Undo restores previous positions; Save keeps them.`;
+    notice = "Layout updated · save to keep";
   }
   function degreeOf(id: string) {
     return (
@@ -866,6 +1184,7 @@
     }
     choose(n);
     await tick();
+    if (!pane.active) return;
     const rect = stage?.getBoundingClientRect(),
       v = current!.viewport;
     if (rect) {
@@ -995,10 +1314,80 @@
       busy = false;
     }
   }
+  async function loadAutoLinks() {
+    if (!current) return;
+    const id = current.id;
+    autoRequestedFor = id;
+    autoBusy = true;
+    autoError = "";
+    try {
+      const result = await api<AutoLinks>(`/schema/backlinks?map_id=${id}`);
+      if (current?.id !== id) return;
+      autoLinks = result;
+      autoPicked = autoPicked.filter((n) =>
+        result.suggestions.some(
+          (s) => s.node_id === n && s.references.some((r) => !r.linked),
+        ),
+      );
+    } catch (e) {
+      autoError = e instanceof Error ? e.message : String(e);
+    } finally {
+      autoBusy = false;
+    }
+  }
+  async function applyAutoLinks(nodeIds: string[]) {
+    if (!current || !editable || dirty || !nodeIds.length) return;
+    busy = true;
+    error = "";
+    try {
+      accepted(
+        await api<MapItem>("/schema/backlinks/apply", {
+          map_id: current.id,
+          revision: current.revision,
+          node_ids: nodeIds,
+        }),
+      );
+      notice = "Linked mentions saved";
+      autoPicked = [];
+      await refresh();
+      await loadAutoLinks();
+    } catch (e) {
+      failure(e);
+      blocked = error.includes("changed in another window");
+    } finally {
+      busy = false;
+    }
+  }
+  function focusNode(id: string) {
+    const n = current?.graph.nodes.find((n) => n.id === id);
+    if (!n) return;
+    view = "edit";
+    choose(n);
+  }
+  function leaveFor(e: MouseEvent) {
+    if (dirty && !confirm("Leave with unsaved map edits? Save or export first."))
+      e.preventDefault();
+  }
+  $effect(() => {
+    const id = current?.id ?? 0;
+    if (showLinks && id && autoRequestedFor !== id) void loadAutoLinks();
+  });
+  $effect(() => {
+    if (!current || !dirty) return;
+    const value = {revision: current.revision, snapshot: snapshot()};
+    try {
+      localStorage.setItem(draftKey(current.id), JSON.stringify(value));
+      if (!blocked) notice = "Draft backed up on this device · Save map to persist";
+    }
+    catch { error = "Local draft backup is unavailable. Save map before leaving."; }
+  });
   onMount(() => {
     void refresh()
       .then(() => {
-        if (maps.length) return open(maps[0].id);
+        let lastMap = 0;
+        try { lastMap = Number(localStorage.getItem(`kitty.schema.last-map.${section}`)); } catch { /* Use the first map if storage is unavailable. */ }
+        const first = maps.find(m => m.id === lastMap) ?? maps.find(m => m.mode === "study") ?? maps[0];
+        if (first) return open(first.id);
       })
       .catch(failure);
     const guard = (e: BeforeUnloadEvent) => {
@@ -1008,7 +1397,7 @@
       }
     };
     window.addEventListener("beforeunload", guard);
-    return () => window.removeEventListener("beforeunload", guard);
+    return () => { window.removeEventListener("beforeunload", guard); pane.clearTrail(section); };
   });
   let seenRevision: number | undefined;
   $effect(() => {
@@ -1022,16 +1411,8 @@
   });
 </script>
 
-<section class="schema" aria-label="Mental schema maps">
-  <Panel
-    title="~/schema / mental connections"
-    readout={demo ? "LOCAL DEMO" : "LOCAL SQLITE"}
-  >
-    <p class="intro">
-      Connect classes and topics, explore free ideas, or map tracked jobs to
-      what you want to learn. Connections are yours — no inferred requirements
-      or AI edges.
-    </p>
+<section class="schema" aria-label="Mental schema maps" bind:this={container}>
+  {#snippet mapControls()}
     <div class="toolbar">
       <label
         >Map<select
@@ -1041,41 +1422,35 @@
             if (e.currentTarget.value) void open(Number(e.currentTarget.value));
           }}
           ><option value="">Select map</option>{#each maps as m}<option
-              value={m.id}>{m.title} / {m.mode}</option
+              value={m.id}>{m.title}</option
             >{/each}</select
         ></label
       >
-      <label
-        >New map<input
-          bind:value={newTitle}
-          maxlength="200"
-          placeholder="A web of things to learn"
-          disabled={busy}
-        /></label
-      >
-      <label
-        >Mode<select bind:value={mode} disabled={busy}
-          ><option value="study">Study / classes + topics</option><option
-            value="general">General / mental map</option
-          ><option value="jobs">Jobs / career learning</option></select
-        ></label
-      >
-      <Button onclick={create} disabled={busy || !newTitle.trim()}
-        >Create</Button
-      >
-      <label class="file"
-        >Import JSON<input
-          type="file"
-          accept="application/json,.json"
-          onchange={importFile}
-          disabled={busy}
-        /></label
-      >
+      {#if current}<Button intent="primary" size="sm" onclick={newMap} disabled={busy}>New map</Button>{/if}
+      {#if !current}
+      <form class="toolbar map-create" onsubmit={e => {e.preventDefault(); void createTemplate();}}>
+        <label>New map title<input id={`${pane.id}-new-map-title`} bind:value={newTitle} maxlength="200" placeholder="What are you learning?" required disabled={busy} /></label>
+        <Button type="submit" intent="primary" disabled={busy || !newTitle.trim()}>Create map</Button>
+        <details><summary>Advanced options</summary>
+          <label>Map category<select bind:value={mode} disabled={busy}><option value="study">Study</option><option value="general">General</option><option value="jobs">Jobs</option></select></label>
+          <label>Starting template<select bind:value={template}><option>Blank</option><option>Lecture</option><option>Chapter</option><option>Exam review</option></select></label>
+          <label class="file">Import map JSON<input type="file" accept="application/json,.json" onchange={importFile} disabled={busy} /></label>
+        </details>
+      </form>
+      {/if}
     </div>
-  </Panel>
+    {#if subjects.length}<details><summary>Start from a subject</summary><div class="toolbar">
+      {#each subjects as subject}<Button onclick={() => subjectMap(subject.id)} disabled={busy}>{subject.name} +</Button>{/each}
+    </div></details>{/if}
+  {/snippet}
+  {#if embedded}
+    {@render mapControls()}
+  {:else}
+    <Panel title="Mind maps" readout="">{@render mapControls()}</Panel>
+  {/if}
   {#if error}<div role="alert" class="error">{error}</div>{/if}
   <div class="toolbar views" role="group" aria-label="Schema view">
-    {#each [["edit", "Edit / 2D editor"], ["map3d", "3D map / this map"], ["network", "Network / all schemas"]] as [id, text]}<Button
+    {#each [["edit", "Mind map"], ["map3d", "3D"], ["network", "All maps"]] as [id, text]}<Button
         intent={view === id ? "primary" : "neutral"}
         aria-pressed={view === id}
         disabled={id === "map3d" && !current}
@@ -1083,10 +1458,6 @@
           view = id as View3D;
         }}>{text}</Button
       >{/each}
-    <span class="hint"
-      >2D editing is authoritative. 3D views are read-only; select a node and
-      jump back to edit it.</span
-    >
   </div>
   {#if view === "network"}
     <div class="workspace network-workspace">
@@ -1160,6 +1531,7 @@
       </aside>
       <main class="graph-pane">
         {#if netError}<div role="alert" class="error">{netError}</div>{/if}
+        {#if pane.active}
         <SchemaNetwork
           title="Merged schema network"
           nodes={netGraph.nodes}
@@ -1170,6 +1542,7 @@
             netSelected = id;
           }}
         />
+        {/if}
       </main>
       <aside>
         <Panel title="[03] Network inspector">
@@ -1245,20 +1618,19 @@
     </div>
   {:else if current}
     <div class="toolbar mapbar">
-      <Badge label={`${current.mode.toUpperCase()} / r${current.revision}`} />
       <label
         >Map title<input
           value={current.title}
           maxlength="200"
           disabled={!editable}
-          onchange={(e) => {
+          oninput={(e) => {
             remember();
             current!.title = e.currentTarget.value;
           }}
         /></label
       >
       <Button intent="primary" onclick={save} disabled={!editable || !dirty}
-        >Save graph + view</Button
+        >{dirty ? "Save map · unsaved changes" : "Map saved"}</Button
       >
       <Button
         onclick={undo}
@@ -1266,12 +1638,12 @@
           (!history.length && (!current.can_undo || dirty))}
         >Undo {history.length ? "local" : "last save"}</Button
       >
-      <Button onclick={download}>Export {dirty ? "local edits" : "JSON"}</Button
-      >
-      <Button onclick={() => current && open(current.id)} disabled={busy}
-        >Reload</Button
-      >
-      <Button onclick={removeMap} disabled={!editable}>Delete map…</Button>
+      <details><summary>Advanced map actions</summary><div class="toolbar">
+        <Button onclick={download}>Export {dirty ? "local edits" : "JSON"}</Button>
+        <Button onclick={() => current && open(current.id, true)} disabled={busy}>Reload saved map</Button>
+        <Button aria-pressed={showLinks} onclick={() => showLinks = !showLinks}>Linked mentions{autoNew ? ` / ${autoNew} new` : ""}</Button>
+        <Button onclick={removeMap} disabled={!editable}>Delete map…</Button>
+      </div></details>
       <span role="status"
         >{busy
           ? "Working…"
@@ -1280,9 +1652,109 @@
             : notice}</span
       >
     </div>
+    {#if showLinks}
+      <div id={`${pane.id}-schema-autolinks`} class="autolinks">
+        <Panel
+          title="[∞] Auto-links / linked mentions"
+          readout={autoBusy
+            ? "SCANNING"
+            : autoView
+              ? `${autoNew} NEW`
+              : "LOCAL"}
+        >
+          <p class="intro">
+            Kitty reads your notes, study items, calendar, flashcards and recent
+            jobs on this machine and finds where each node is mentioned.
+            <code>[[Node label]]</code> in a note is an explicit link. Linking adds
+            a reference node with a “mentioned in” branch — source records stay untouched.
+          </p>
+          <div class="toolbar">
+            <Button onclick={loadAutoLinks} disabled={autoBusy}
+              >{autoBusy ? "Scanning…" : "Rescan"}</Button
+            >
+            <Button
+              intent="primary"
+              onclick={() => applyAutoLinks(autoPicked)}
+              disabled={!editable || dirty || !autoPicked.length}
+              >Link selected ({autoPicked.length})</Button
+            >
+            <Button
+              onclick={() => applyAutoLinks(autoPending)}
+              disabled={!editable || dirty || !autoPending.length}
+              >Auto-link everything ({autoNew})</Button
+            >
+            {#if autoView}<span class="hint"
+                >Scanned {Object.entries(autoView.scanned)
+                  .map(([k, n]) => `${n} ${(REF_KINDS[k] ?? k).toLowerCase()}`)
+                  .join(" · ") || "nothing yet"}</span
+              >{/if}
+          </div>
+          {#if dirty}<p class="error">
+              Save your graph before linking mentions.
+            </p>{/if}
+          {#if autoError}<div role="alert" class="error">{autoError}</div>{/if}
+          {#if autoView && autoView.revision !== current.revision}<p
+              class="hint"
+            >
+              The map changed since this scan — rescan to refresh.
+            </p>{/if}
+          {#if autoView && !autoView.suggestions.length}<p class="hint">
+              No mentions found yet. Use node labels in notes, study tasks or
+              calendar items — or write <code>[[Node label]]</code> in a note.
+            </p>{/if}
+          <ul class="mindmap">
+            {#each autoView?.suggestions ?? [] as s (s.node_id)}
+              {@const fresh = s.references.filter((r) => !r.linked).length}
+              <li class="hub">
+                <div class="hub-head">
+                  <label class="check"
+                    ><input
+                      type="checkbox"
+                      checked={autoPicked.includes(s.node_id)}
+                      disabled={busy || !fresh}
+                      onchange={(e) => {
+                        autoPicked = e.currentTarget.checked
+                          ? [...autoPicked, s.node_id]
+                          : autoPicked.filter((id) => id !== s.node_id);
+                      }}
+                    /><span class="sr-only">Link mentions of {s.label}</span
+                    ></label
+                  >
+                  <button
+                    type="button"
+                    class="hub-node"
+                    onclick={() => focusNode(s.node_id)}>{s.label}</button
+                  >
+                  <Badge
+                    label={fresh
+                      ? `${fresh} new / ${s.references.length}`
+                      : `all ${s.references.length} linked`}
+                  />
+                </div>
+                <ul class="branches">
+                  {#each s.references as r (`${r.kind}:${r.id}`)}
+                    <li class:linked={r.linked} class:explicit={r.match === "wikilink"}>
+                      <a href={`#${r.view}`} onclick={leaveFor}
+                        ><span class="ref-kind"
+                          >{REF_KINDS[r.kind] ?? r.kind}{r.match === "wikilink"
+                            ? " · [[link]]"
+                            : ""}{r.linked ? " · linked" : ""}</span
+                        >{r.title}</a
+                      >
+                      {#if r.snippet}<small>{r.snippet}</small>{/if}
+                    </li>
+                  {/each}
+                </ul>
+              </li>
+            {/each}
+          </ul>
+        </Panel>
+      </div>
+    {/if}
     {#if view === "map3d"}
       <div class="workspace map3d-workspace">
         <main class="graph-pane">
+          {#if pane.active}
           <SchemaNetwork
             title={`3D map / ${current.title}`}
             nodes={mapGraph.nodes}
@@ -1294,6 +1766,7 @@
               if (n) choose(n);
             }}
           />
+          {/if}
           {#if dirty}<p class="hint">
               Showing unsaved local edits from the 2D editor.
             </p>{/if}
@@ -1352,7 +1825,8 @@
         </aside>
       </div>
     {:else}
-      <div class="workspace">
+      <div class="workspace editor-workspace">
+        <details><summary>Organize</summary>
         <aside>
           <Panel title="[01] Nodes + sources">
             <label
@@ -1415,7 +1889,8 @@
                   <button
                     class:active={selected === n.id}
                     onclick={() => choose(n)}
-                    ><span>{name(n)}</span><small
+                    oncontextmenu={(event) => deleteAtPointer(event, n)}
+                    ><span>{hiddenLabel(n) ? "?" : name(n)}</span><small
                       >{n.kind}{n.source ? " / linked" : ""}</small
                     ></button
                   >
@@ -1426,31 +1901,49 @@
                 .length}/600 connections
             </p>
           </Panel>
+          <details><summary>Add note card</summary>
+            <input aria-label="Find note pages" bind:value={noteSearch} oninput={findNoteCards} type="search" />
+            <Button onclick={findNoteCards}>Find</Button>
+            {#each notePages as page}<Button onclick={() => addNoteCard(page)} disabled={!editable}>{page.title} +</Button>{/each}
+          </details>
         </aside>
+        </details>
         <main class="graph-pane">
           <div class="toolbar">
+            <Button onclick={() => arrange("tree")} disabled={!editable}>Tree layout</Button>
+            <Button onclick={() => quickAdd()} disabled={!editable}>{node ? "+ Child" : "+ Topic"}</Button>
+            <Button onclick={() => quickAdd(current?.graph.edges.find(edge => edge.to === selected)?.from ?? "")} disabled={!editable || !node}>+ Sibling</Button>
+            <Button onclick={() => node && editInline(node)} disabled={!editable || !node}>Rename</Button>
+            <Button onclick={() => outline = !outline} aria-pressed={outline}>Outline</Button>
+            <Button onclick={() => {recall = !recall; revealed = [];}} aria-pressed={recall}>{recall ? "End recall" : "Quiz me"}</Button>
+            {#if recall}<Button disabled={!node} onclick={() => revealed = [...revealed, selected]}>Reveal selected answer</Button><Button onclick={() => revealed = current!.graph.nodes.map(n => n.id)}>Reveal all</Button>{/if}
             <Button onclick={() => zoom(1.2)} disabled={!editable}
               >Zoom +</Button
             ><Button onclick={() => zoom(1 / 1.2)} disabled={!editable}
               >Zoom −</Button
             ><Button onclick={fit} disabled={!editable}>Fit graph</Button
-            ><Button
-              onclick={() => arrange("force")}
-              disabled={!editable || !current.graph.nodes.length}
-              title="Spread nodes with a force-directed layout. Undo restores positions."
-              >Auto-layout: force</Button
-            ><Button
-              onclick={() => arrange("tree")}
-              disabled={!editable || !current.graph.nodes.length}
-              title="Arrange as a layered tree following connection direction. Undo restores positions."
-              >Auto-layout: tree</Button
-            ><span>{Math.round(current.viewport.zoom * 100)}%</span>
+            ><details><summary>More layouts</summary><div class="toolbar">
+              <Button onclick={() => arrange("radial")} disabled={!editable}>Radial</Button>
+              <Button onclick={() => arrange("force")} disabled={!editable}>Force</Button>
+            </div></details><span>{Math.round(current.viewport.zoom * 100)}%</span>
           </div>
+          <p class="hint">Click a topic and type to rename. Tab adds a child; Enter adds a sibling, including while typing. Save map keeps changes in your workspace; draft backup is device-only.</p>
+          {#if outline}
+            <div class="map-outline" role="tree" aria-label="Mind map outline">
+              {#each visibleNodes as n (n.id)}
+                <div style={`padding-left: ${depth(n.id) * 20}px`} role="treeitem" aria-level={depth(n.id) + 1} aria-selected={selected === n.id}>
+                  <Button onclick={() => collapse(n)} title="Collapse branch">{n.collapsed ? "▸" : "▾"}</Button>
+                  <button class:active={selected === n.id} oncontextmenu={event => deleteAtPointer(event, n)} onkeydown={e => nodeKey(e, n)} onclick={() => choose(n)} ondblclick={() => openCard(n)}>{hiddenLabel(n) ? "?" : name(n)}</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
           <svg
             bind:this={stage}
             class="stage"
             aria-label="Schema graph. Drag nodes to position; drag empty space to pan. Use node list and inspector for keyboard editing."
             role="group"
+            ondblclick={(e) => {if (!(e.target as Element).closest("[data-node]")) quickAdd("");}}
             onpointerdown={pick}
             onpointermove={move}
             onpointerup={(e) => end(e)}
@@ -1463,7 +1956,7 @@
           >
             <defs
               ><marker
-                id="schema-arrow"
+                id={`${pane.id}-schema-arrow`}
                 markerWidth="10"
                 markerHeight="8"
                 refX="9"
@@ -1472,7 +1965,7 @@
                 markerUnits="strokeWidth"
                 ><path d="M0,0 L10,4 L0,8 z" fill="var(--violet)" /></marker
               ><marker
-                id="schema-arrow-active"
+                id={`${pane.id}-schema-arrow-active`}
                 markerWidth="10"
                 markerHeight="8"
                 refX="9"
@@ -1485,39 +1978,53 @@
             <g
               transform={`translate(${current.viewport.x},${current.viewport.y}) scale(${current.viewport.zoom})`}
             >
-              {#each current.graph.edges as e (e.id)}
+              {#each current.graph.edges.filter(e => visibleNodes.some(n => n.id === e.from) && visibleNodes.some(n => n.id === e.to)) as e (e.id)}
                 {@const shape = geometry.get(e.id)}
                 {#if shape}<path
                     d={shape.d}
                     class="edge"
                     class:active={selectedEdge === e.id}
                     marker-end={selectedEdge === e.id
-                      ? "url(#schema-arrow-active)"
-                      : "url(#schema-arrow)"}
+                      ? `url(#${pane.id}-schema-arrow-active)`
+                      : `url(#${pane.id}-schema-arrow)`}
                   /><path d={shape.d} class="edge-hit" data-edge={e.id} />{/if}
               {/each}
-              {#each current.graph.nodes as n (n.id)}
+              {#each visibleNodes as n (n.id)}
                 <g
                   transform={`translate(${n.x},${n.y})`}
                   data-node={n.id}
                   role="button"
                   tabindex="0"
-                  aria-label={`${n.kind}: ${name(n)}. Arrow keys move; Shift moves faster; Enter opens inspector; Delete removes with undo.`}
+                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}. Tab child, Enter sibling, type to rename, Space collapse, arrows select.`}
                   class:selected={selected === n.id}
                   class="graph-node"
+                  style={`--branch-color: ${branchColor(n)}`}
+                  ondblclick={() => openCard(n)}
                   onpointerdown={(e) => start(e, n.id)}
                   onkeydown={(e) => nodeKey(e, n)}
                   onclick={() => choose(n)}
+                  oncontextmenu={(event) => deleteAtPointer(event, n)}
                 >
-                  <rect width="200" height="64" />
+                  <rect width="200" height="64" rx="10" style="stroke: var(--branch-color); fill: color-mix(in srgb, var(--branch-color) 15%, var(--surface));" />
                   <text x="10" y="20" class="node-kind"
-                    >{n.kind.toUpperCase()} {n.source ? "↗" : ""}</text
+                    >{n.source?.kind === "note_page" ? "▤ NOTE" : n.kind.toUpperCase()} {n.collapsed ? "▸" : ""}</text
                   >
                   <text x="10" y="43"
-                    >{name(n).length > 24
-                      ? name(n).slice(0, 23) + "…"
-                      : name(n)}</text
+                    >{hiddenLabel(n) ? "?" : name(n).length > 24 ? name(n).slice(0, 23) + "…" : name(n)}</text
                   >
+                  {#if editing === n.id}
+                    <foreignObject x="6" y="25" width="188" height="34">
+                      <input id={`${pane.id}-map-inline-label`} aria-label="Node label" style="width: 100%; box-sizing: border-box; color: var(--ink); background: var(--surface); border: 1px solid var(--accent);" bind:value={inlineLabel} maxlength="200"
+                        onpointerdown={e => e.stopPropagation()}
+                        oninput={e => updateInline(e.currentTarget.value)}
+                        onkeydown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === "Escape") {e.preventDefault(); editing = "";}
+                          else if (e.key === "Tab") {e.preventDefault(); finishInline(false); quickAdd(selected);}
+                          else if (e.key === "Enter") {e.preventDefault(); finishInline(false); quickAdd(current?.graph.edges.find(edge => edge.to === selected)?.from ?? "");}
+                        }} onblur={() => {if (editing === n.id) finishInline(false);}} />
+                    </foreignObject>
+                  {/if}
                 </g>
               {/each}
               {#each current.graph.edges as e (e.id)}
@@ -1537,12 +2044,9 @@
             </g>
           </svg>
           <p class="hint">
-            Mouse, touch and pen: drag nodes; drag blank space to pan; click a
-            connection or its label to edit it below. Wheel or buttons zoom. Tab
-            to a node, Enter to inspect, arrows to move, Delete to remove.
-            Auto-layout is applied only when you choose it and can be undone.
-            Save persists positions and viewport.
+            Tab child · Enter sibling · type to rename · Space collapse · arrows select
           </p>
+          <details><summary>Connections</summary>
           <Panel title="[02] Directional connections">
             <div class="toolbar">
               <label
@@ -1617,12 +2121,26 @@
                 </li>{/each}
             </ul>
           </Panel>
+          </details>
         </main>
+        {#if node && !hiddenLabel(node)}
         <aside>
-          <Panel title="[03] Readable inspector">
+          <Panel title="Node">
             {#if node}
               <h2>{name(node)}</h2>
               <Badge label={node.kind} />
+              <div class="toolbar">
+                <Button onclick={() => collapse(node)}>{node.collapsed ? "Expand" : "Collapse"}</Button>
+                <Button onclick={() => studyBranch("flashcards")}>Make flashcards</Button>
+                <Button onclick={() => studyBranch("quiz")}>Quiz this branch</Button>
+                <Button onclick={startBranchSession} disabled={!editable}>Start session</Button>
+                {#if node.source?.kind === "note_page" || node.map_id}<Button onclick={() => openCard(node)}>Open ↗</Button>{/if}
+              </div>
+              <label>Move under<select value={current.graph.edges.find(edge => edge.to === node.id)?.from ?? ""} disabled={!editable} onchange={e => reparent(e.currentTarget.value)}>
+                <option value="">No parent (root topic)</option>
+                {#each current.graph.nodes.filter(item => !descendants(node.id).has(item.id)) as parent}<option value={parent.id}>{name(parent)}</option>{/each}
+              </select></label>
+              <label>Linked map<select value={node.map_id ?? ""} onchange={e => {remember(); node.map_id = e.currentTarget.value ? Number(e.currentTarget.value) : null;}}><option value="">None</option>{#each maps.filter(m => m.id !== current!.id) as m}<option value={m.id}>{m.title}</option>{/each}</select></label>
               {#if node.source}<p>
                   Linked {node.source.kind} #{node.source.id}
                 </p>
@@ -1653,7 +2171,7 @@
                   bind:value={draftLabel}
                   maxlength="200"
                   disabled={!editable}
-                /></label
+                  oninput={e => {draftLabel = e.currentTarget.value; updateNode();}} /></label
               >
               <label
                 >Notes<textarea
@@ -1661,7 +2179,7 @@
                   maxlength="10000"
                   rows="7"
                   disabled={!editable}
-                ></textarea></label
+                  oninput={e => {draftNotes = e.currentTarget.value; updateNode();}}></textarea></label
               >
               <label
                 >Local reference URL<input
@@ -1670,7 +2188,7 @@
                   maxlength="4000"
                   disabled={!editable}
                   placeholder="https://…"
-                /></label
+                  oninput={e => {draftUrl = e.currentTarget.value; updateNode();}} /></label
               >
               {#if safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)}<a
                   href={safeUrl(
@@ -1680,11 +2198,6 @@
                   target="_blank"
                   rel="noopener noreferrer">Open safe source ↗</a
                 >{/if}
-              <Button
-                onclick={updateNode}
-                disabled={!editable || !draftLabel.trim()}
-                >Apply node edits</Button
-              >
               <div class="toolbar">
                 <Button
                   onclick={() => {
@@ -1705,14 +2218,9 @@
                 Select a node in the graph or searchable list. Full labels,
                 notes, safe source links and live job status appear here.
               </p>{/if}
-            <p class="hint">
-              Undo keeps up to 30 local actions and one previous saved snapshot.
-              Export is portable: linked local IDs are detached to avoid linking
-              unrelated records on another installation. Import tracked jobs or
-              add classes to link real sources again.
-            </p>
           </Panel>
         </aside>
+        {/if}
       </div>
     {/if}
     {#if showJobs && current.mode === "jobs"}<Panel
@@ -1773,12 +2281,29 @@
         </p></Panel
       >{/if}
   {:else}<p class="empty">
-      Create a study, general or job-focused map — or import a portable JSON
-      map.
+      Name your map and choose Create map. Select a topic, then add a child or sibling.
+      Type to rename; use Save map to keep your work.
     </p>{/if}
+  {#if current}
+    <MindMapFeedback
+      title={current.title}
+      graph={{
+        nodes: current.graph.nodes.map(n => ({id: n.id, label: name(n), notes: n.notes})),
+        edges: current.graph.edges.map(e => ({from: e.from, to: e.to, label: e.label})),
+      }}
+      {demo}
+    />
+  {/if}
 </section>
 
 <style>
+  .editor-workspace { display: flex; align-items: flex-start; flex-wrap: wrap; }
+  .editor-workspace > main { flex: 1 1 440px; min-width: 0; }
+  .editor-workspace > details { flex: 0 0 auto; max-width: 250px; }
+  .editor-workspace > aside { flex: 0 1 260px; }
+  .map-outline { max-height: 340px; overflow: auto; padding: 12px; border: 1px solid var(--border); }
+  .map-outline button { color: var(--ink); background: var(--surface); border: 0; padding: 6px; text-align: left; }
+  .map-outline button.active { color: var(--accent); }
   .schema {
     display: grid;
     gap: 14px;
@@ -1801,6 +2326,9 @@
     gap: 8px;
   }
   .mapbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     padding: 12px;
     border: 1px solid var(--border);
     background: var(--surface);
@@ -1926,9 +2454,6 @@
   }
   .views {
     align-items: center;
-  }
-  .views .hint {
-    margin: 0;
   }
   .map3d-workspace {
     grid-template-columns: minmax(320px, 1fr) minmax(220px, 280px);
@@ -2079,6 +2604,99 @@
     border: 1px solid var(--border);
     color: var(--muted);
     text-align: center;
+  }
+  .autolinks code {
+    color: var(--violet);
+  }
+  .mindmap {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+    max-height: 560px;
+    overflow: auto;
+  }
+  .hub {
+    min-width: 0;
+  }
+  .hub-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hub-head .check {
+    margin: 0;
+  }
+  .hub-head input {
+    width: auto;
+  }
+  .hub-node {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    border: 2px solid var(--accent);
+    border-radius: 0;
+    background: var(--surface);
+    color: var(--ink);
+    padding: 8px 10px;
+    font: inherit;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+  .branches {
+    list-style: none;
+    margin: 0 0 0 18px;
+    padding: 6px 0 0 14px;
+    border-left: 2px solid var(--violet);
+    display: grid;
+    gap: 6px;
+  }
+  .branches li {
+    position: relative;
+    border: 1px solid var(--border);
+    padding: 7px 9px;
+    background: var(--surface);
+    overflow-wrap: anywhere;
+  }
+  .branches li::before {
+    content: "";
+    position: absolute;
+    left: -15px;
+    top: 16px;
+    width: 14px;
+    border-top: 2px solid var(--violet);
+  }
+  .branches li.explicit {
+    border-color: var(--violet);
+  }
+  .branches li.linked {
+    opacity: 0.62;
+  }
+  .branches a {
+    display: block;
+    margin: 0;
+    color: var(--ink);
+    font-size: 12px;
+    text-decoration: none;
+  }
+  .branches a:hover,
+  .branches a:focus-visible {
+    color: var(--accent);
+  }
+  .ref-kind {
+    display: block;
+    color: var(--violet);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .branches small {
+    margin-top: 4px;
+    line-height: 1.5;
   }
   @media (max-width: 1200px) {
     .workspace {

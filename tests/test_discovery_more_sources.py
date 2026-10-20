@@ -8,7 +8,7 @@ from kitty.core.discovery.ats import WORKABLE_WIDGET, WorkableAdapter
 from kitty.core.discovery.context import DiscoverContext
 from kitty.core.discovery.pipeline import CompanyResolver
 from kitty.core.discovery.repos import (
-    DEREC4_FILES, SPEEDYAPPLY_READMES, DereC4Adapter, SpeedyApplyAdapter, parse_vansh,
+    DEREC4_FILES, SPEEDYAPPLY_READMES, DereC4Adapter, SpeedyApplyAdapter, parse_derec4, parse_vansh,
 )
 from kitty.dates import now
 from kitty.models import Job
@@ -123,7 +123,7 @@ def test_derec4_reads_every_list_once_with_eligibility_markers(workspace):
     })
     result = DereC4Adapter(ctx).fetch(None)
 
-    assert result.status == "ok"
+    assert result.status == "partial" and "internships: 1 malformed listing rows" in result.error
     assert result.stats["files"]["internships"] == {"rows": 3, "tables": 1, "bad_rows": 1}  # badge table ignored
     assert result.stats["duplicates"] == 2
     by_company = {job.company: job for job in result.jobs}
@@ -142,6 +142,20 @@ def test_derec4_reads_every_list_once_with_eligibility_markers(workspace):
     assert by_company["Example Lab"].season == "Summer 2027"
 
 
+def test_derec4_preserves_parentheses_and_html_entities_in_posting_urls():
+    # Public SuccessFactors listings use literal parentheses inside the URL path.
+    url = "https://jobs.example.invalid/job/Intern-(Summer-2027)/123/?ats=successfactors&ref=Simplify"
+    markdown = f"""| Company | Role | Location | Age |
+| --- | --- | --- | --- |
+| Example Travel | [Guest Travel Services Intern]({url.replace('&', '&amp;')}) | Miramar, FL | 0d |
+"""
+    jobs, stats = parse_derec4(markdown, "internships")
+
+    assert stats == {"rows": 1, "tables": 1, "bad_rows": 0}
+    assert jobs[0].url == url
+    assert jobs[0].source_job_id == "https://jobs.example.invalid/job/Intern-(Summer-2027)/123?ats=successfactors"
+
+
 def test_derec4_reports_a_missing_file_and_a_changed_layout(workspace):
     ctx, _ = _context(workspace, [], {DEREC4_FILES["internships"]: _DEREC4_README})
     partial = DereC4Adapter(ctx).fetch(None)          # the other two answer 404
@@ -151,6 +165,17 @@ def test_derec4_reports_a_missing_file_and_a_changed_layout(workspace):
     ctx, _ = _context(workspace, [], {url: b"# moved to a website\n" for url in DEREC4_FILES.values()})
     broken = DereC4Adapter(ctx).fetch(None)
     assert broken.status == "error" and "no listing tables" in broken.error
+
+
+def test_derec4_malformed_tables_are_not_a_complete_snapshot(workspace):
+    malformed = b"""| Company | Role | Location | Age |
+| --- | --- | --- | --- |
+| Example Broken | No posting link | Remote | 0d |
+"""
+    ctx, _ = _context(workspace, [], {url: malformed for url in DEREC4_FILES.values()})
+    result = DereC4Adapter(ctx).fetch(None)
+    assert result.status == "error" and result.jobs == []
+    assert all(f"{name}: 1 malformed listing rows" in result.error for name in DEREC4_FILES)
 
 
 # ------------------------------------------------------------------ workable

@@ -25,6 +25,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -175,18 +176,31 @@ def busy_message(port: int) -> str:
 
 
 def _start(command: list[str]) -> subprocess.Popen:
-    """Start Firefox in its own process group with no pipes, so it outlives kitty."""
-    return subprocess.Popen(
-        command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, start_new_session=True,
-    )
+    """Detach host Firefox without desktop/PyInstaller library overlays.
+
+    Even LD_LIBRARY_PATH_ORIG can contain an incompatible Nix GTK/glibc runtime.
+    Firefox's own launcher supplies its dependencies; only its child environment
+    is cleaned, since the application still needs its bundled libraries.
+    """
+    environment = os.environ.copy()
+    environment.pop("LD_LIBRARY_PATH", None)
+    environment.pop("LD_LIBRARY_PATH_ORIG", None)
+    try:
+        return subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True, env=environment,
+        )
+    except OSError as exc:
+        raise BrowserError(f"Firefox could not start ({exc.strerror}); check the Firefox installation and desktop session.") from None
 
 
-def _wait_for_port(port: int, wait_seconds: float) -> bool:
+def _wait_for_port(port: int, wait_seconds: float, process: subprocess.Popen | None = None) -> bool:
     deadline = time.monotonic() + wait_seconds
     while time.monotonic() < deadline:
         if is_listening(port):
             return True
+        if process is not None and process.poll() is not None:
+            return False
         time.sleep(0.3)
     return False
 
@@ -198,9 +212,13 @@ def ensure_firefox(settings: Settings, *, wait_seconds: float = 30.0) -> int:
         return port
     if not settings.firefox_path:
         raise BrowserError("Firefox not found. Install it or set KITTY_FIREFOX to the binary.")
+    if sys.platform == "linux" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        raise BrowserError("Firefox requires an active desktop display. Launch kitty from your desktop session.")
     write_prefs(settings.browser_profile_dir)
-    _start(own_scope(firefox_command(settings.firefox_path, settings.browser_profile_dir, port)))
-    if not _wait_for_port(port, wait_seconds):
+    process = _start(own_scope(firefox_command(settings.firefox_path, settings.browser_profile_dir, port)))
+    if not _wait_for_port(port, wait_seconds, process):
+        if process.poll() is not None:
+            raise BrowserError(f"Firefox could not start (exit code {process.returncode}); check Firefox and the desktop display.")
         raise BrowserError(
             f"Firefox did not open its remote-control port {port} within {wait_seconds:.0f}s "
             "(is another program using it? set KITTY_BROWSER_PORT)."
@@ -290,16 +308,17 @@ def _free_port() -> int:
 
 
 @contextmanager
-def headless_firefox(settings: Settings) -> Iterator[Bidi]:
-    """A throwaway invisible Firefox with an empty profile (tests and smoke runs)."""
+def headless_firefox(settings: Settings, *, profile_dir: Path | None = None) -> Iterator[Bidi]:
+    """An invisible Firefox: a throwaway empty profile (tests and smoke runs), or
+    `profile_dir`, a separate profile kept between runs (hiring.cafe discovery)."""
     if not settings.firefox_path:
         raise BrowserError("Firefox not found. Install it or set KITTY_FIREFOX to the binary.")
-    profile = Path(tempfile.mkdtemp(prefix="kitty-firefox-"))
+    profile = profile_dir or Path(tempfile.mkdtemp(prefix="kitty-firefox-"))
     port = _free_port()
     write_prefs(profile)
     process = _start(firefox_command(settings.firefox_path, profile, port, headless=True))
     try:
-        if not _wait_for_port(port, 30.0):
+        if not _wait_for_port(port, 30.0, process):
             raise BrowserError("headless Firefox did not start within 30s")
         bidi = open_session(port)
         try:
@@ -312,4 +331,5 @@ def headless_firefox(settings: Settings) -> Iterator[Bidi]:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
-        shutil.rmtree(profile, ignore_errors=True)
+        if profile_dir is None:
+            shutil.rmtree(profile, ignore_errors=True)

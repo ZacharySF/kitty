@@ -14,15 +14,20 @@ UTC = timezone.utc
 BASE = datetime(2026, 10, 14, 9, 0, tzinfo=UTC)
 
 
-def command(conn, action, *, now=BASE, request_id=None, **extra):
-    revision = study.timer_state(conn, now=now)['timer']['revision']
-    return study.timer_command(conn, {'action': action, 'revision': revision,
-                                     'request_id': request_id or f'{action}-{now.isoformat()}', **extra}, now=now)
+def command(conn, action, *, now=BASE, request_id=None, prepared=True, **extra):
+    # Existing focus/break invariants begin after a real, observed priming phase.
+    # Priming-specific tests opt out so the actual start boundary stays visible.
+    start_at = now - timedelta(seconds=study.PRIMING_SECONDS) if action == 'start' and prepared else now
+    revision = study.timer_state(conn, now=start_at)['timer']['revision']
+    result = study.timer_command(conn, {'action': action, 'revision': revision,
+                                       'request_id': request_id or f'{action}-{now.isoformat()}', **extra}, now=start_at)
+    return study.timer_state(conn, now=now) if action == 'start' and prepared else result
 
 
 def short_focus(conn):
-    study.save_settings(conn, {'revision': 1, 'focus_seconds': 60, 'short_break_seconds': 60,
-                               'long_break_seconds': 120, 'cycle_count': 2, 'timezone': 'America/New_York'})
+    revision = study.timer_state(conn, now=BASE)['settings']['revision']
+    study.save_settings(conn, {'revision': revision, 'focus_seconds': 60,
+                               'short_break_seconds': 60, 'timezone': 'America/New_York'})
 
 
 def manual(conn, start, duration=600, **extra):
@@ -31,7 +36,7 @@ def manual(conn, start, duration=600, **extra):
                               now=BASE + timedelta(days=2))['item']
 
 
-def test_timer_reload_sleep_logs_one_completed_focus_and_does_not_auto_chain(workspace):
+def test_timer_reload_sleep_logs_once_and_starts_only_next_observed_phase(workspace):
     conn = workspace.conn
     short_focus(conn)
     started = command(conn, 'start', timezone='America/New_York')['timer']
@@ -39,14 +44,22 @@ def test_timer_reload_sleep_logs_one_completed_focus_and_does_not_auto_chain(wor
     assert reloaded['phase_id'] == started['phase_id']
     assert reloaded['remaining_seconds'] == 35
     slept = study.workspace(conn, now=BASE + timedelta(hours=12))
-    assert slept['timer']['status'] == 'awaiting_next'
+    assert slept['timer']['status'] == 'running'
     assert slept['timer']['phase'] == 'short_break'
+    assert slept['timer']['started_at'] == (BASE + timedelta(hours=12)).isoformat()
+    assert slept['timer']['remaining_seconds'] == 60
+    assert slept['timer']['completed_phase_id'] == started['phase_id']
+    assert slept['timer']['completed_phase'] == 'focus'
     assert len(slept['sessions']) == 1
     assert slept['sessions'][0]['duration_seconds'] == 60
     assert slept['sessions'][0]['ended_at'] == (BASE + timedelta(seconds=60)).isoformat()
     again = study.workspace(conn, now=BASE + timedelta(days=1))
     assert len(again['sessions']) == 1
-    assert again['timer']['revision'] == slept['timer']['revision']
+    assert again['timer']['phase'] == 'focus'
+    assert again['timer']['started_at'] == (BASE + timedelta(days=1)).isoformat()
+    assert again['timer']['remaining_seconds'] == 60
+    unchanged = study.timer_state(conn, now=BASE + timedelta(days=1))['timer']
+    assert unchanged['revision'] == again['timer']['revision']
 
 
 def test_pause_resume_excludes_abandoned_pause_and_preserves_actual_day_totals(workspace):
@@ -71,34 +84,51 @@ def test_pause_resume_excludes_abandoned_pause_and_preserves_actual_day_totals(w
     assert study.statistics(conn, now=resumed_at + timedelta(minutes=2))['days'] == result['stats']['days']
 
 
-def test_break_choice_pause_skip_and_stop_never_count_as_study(workspace):
+def test_break_pause_skip_and_stop_never_count_as_study(workspace):
     conn = workspace.conn
     short_focus(conn)
     command(conn, 'start')
     study.timer_state(conn, now=BASE + timedelta(minutes=1))
-    command(conn, 'start', now=BASE + timedelta(minutes=2))
-    command(conn, 'pause', now=BASE + timedelta(minutes=2, seconds=15))
+    command(conn, 'pause', now=BASE + timedelta(minutes=1, seconds=15))
     assert study.workspace(conn, now=BASE + timedelta(hours=8))['stats']['total_seconds'] == 60
     command(conn, 'skip_break', now=BASE + timedelta(hours=8))
-    command(conn, 'start', now=BASE + timedelta(hours=8, seconds=1))
+    skipped = study.timer_state(conn, now=BASE + timedelta(hours=8))['timer']
+    assert skipped['phase'] == 'focus' and skipped['status'] == 'paused'
+    command(conn, 'resume', now=BASE + timedelta(hours=8, seconds=1))
     command(conn, 'stop', now=BASE + timedelta(hours=8, seconds=10))
     result = study.workspace(conn, now=BASE + timedelta(days=1))
     assert result['stats']['total_seconds'] == 60
     assert result['timer']['status'] == 'idle'
 
 
-def test_completed_break_waits_and_cycle_uses_long_break(workspace):
+def test_default_cycle_primes_then_repeats_focus_25_break_5_without_counting_preparation(workspace):
     conn = workspace.conn
-    short_focus(conn)
-    command(conn, 'start')
-    command(conn, 'start', now=BASE + timedelta(seconds=61))
-    after_break = study.timer_state(conn, now=BASE + timedelta(seconds=121))['timer']
-    assert after_break['status'] == 'awaiting_next' and after_break['phase'] == 'focus'
-    command(conn, 'start', now=BASE + timedelta(seconds=122))
-    result = study.workspace(conn, now=BASE + timedelta(seconds=182))
-    assert result['timer']['phase'] == 'long_break'
-    assert result['timer']['duration_seconds'] == 120
-    assert result['stats']['total_seconds'] == 120
+    initial = study.timer_state(conn, now=BASE)
+    assert initial['settings']['sound'] is True
+    assert initial['settings']['focus_seconds'] == 1500
+    assert initial['settings']['short_break_seconds'] == 300
+    started = command(conn, 'start', prepared=False)['timer']
+    assert started['phase'] == 'priming' and started['duration_seconds'] == 300
+    primed = study.workspace(conn, now=BASE + timedelta(minutes=5))
+    assert primed['timer']['phase'] == 'focus'
+    assert primed['timer']['completed_phase'] == 'priming'
+    assert primed['stats']['total_seconds'] == 0
+    assert primed['timer']['session_id'] == started['session_id']
+    for cycle in range(1, 6):
+        finished = BASE + timedelta(minutes=5 + 30 * (cycle - 1) + 25)
+        result = study.workspace(conn, now=finished)
+        assert result['timer']['phase'] == 'short_break'
+        assert result['timer']['status'] == 'running'
+        assert result['timer']['duration_seconds'] == 300
+        assert result['timer']['cycle'] == cycle
+        assert result['stats']['total_seconds'] == cycle * 1500
+        next_focus = study.workspace(conn, now=finished + timedelta(minutes=5))
+        assert next_focus['timer']['phase'] == 'focus'
+        assert next_focus['timer']['status'] == 'running'
+        assert next_focus['timer']['duration_seconds'] == 1500
+        assert next_focus['stats']['total_seconds'] == cycle * 1500
+    command(conn, 'stop', now=BASE + timedelta(minutes=155, seconds=10))
+    assert study.workspace(conn, now=BASE + timedelta(days=1))['stats']['total_seconds'] == 7500
 
 
 def test_timer_command_replay_and_stale_cross_tab_are_safe(workspace):
@@ -106,12 +136,13 @@ def test_timer_command_replay_and_stale_cross_tab_are_safe(workspace):
     short_focus(conn)
     revision = study.timer_state(conn, now=BASE)['timer']['revision']
     body = {'action': 'start', 'revision': revision, 'request_id': 'stable-start'}
-    first = study.timer_command(conn, body, now=BASE)
-    assert study.timer_command(conn, body, now=BASE + timedelta(seconds=10)) == first
+    first = study.timer_command(conn, body, now=BASE - timedelta(minutes=5))
+    assert study.timer_command(conn, body, now=BASE - timedelta(minutes=4, seconds=50)) == first
     with pytest.raises(study.StudyConflict):
         study.timer_command(conn, {'action': 'stop', 'revision': revision, 'request_id': 'other-window'}, now=BASE)
     with pytest.raises(study.StudyConflict):
         study.timer_command(conn, {**body, 'action': 'stop'}, now=BASE)
+    study.timer_state(conn, now=BASE)
     completed = study.workspace(conn, now=BASE + timedelta(minutes=1))
     assert completed['stats']['session_count'] == 1
     study.timer_command(conn, body, now=BASE + timedelta(minutes=2))
@@ -233,7 +264,9 @@ def test_independent_connections_reconcile_one_completion_and_reject_stale_edit(
     with ThreadPoolExecutor(max_workers=2) as pool:
         observed = list(pool.map(lambda _: observe(), range(2)))
     assert observed[0]['revision'] == observed[1]['revision']
-    assert all(item['status'] == 'awaiting_next' for item in observed)
+    assert all(item['status'] == 'running' and item['phase'] == 'short_break' for item in observed)
+    assert observed[0]['phase_id'] == observed[1]['phase_id']
+    assert observed[0]['completed_phase_id'] == started['phase_id']
     assert study.workspace(conn, now=BASE + timedelta(minutes=2))['stats']['session_count'] == 1
     with pytest.raises(study.StudyConflict):
         study.timer_command(conn, {'action': 'stop', 'revision': started['revision'], 'request_id': 'late-tab-stop'},
@@ -292,3 +325,134 @@ def test_settings_round_trip_keeps_active_phase_duration_and_uses_new_next_phase
     completed = study.timer_state(conn, now=BASE + timedelta(seconds=60))['timer']
     assert completed['phase'] == 'short_break'
     assert completed['duration_seconds'] == 90
+
+
+def test_pause_resume_break_and_skip_running_break_keep_cycle_continuous(workspace):
+    conn = workspace.conn
+    short_focus(conn)
+    command(conn, 'start')
+    focus_done = study.timer_state(conn, now=BASE + timedelta(minutes=1))['timer']
+    command(conn, 'pause', now=BASE + timedelta(minutes=1, seconds=20))
+    paused = study.timer_state(conn, now=BASE + timedelta(days=1))['timer']
+    assert paused['remaining_seconds'] == 40
+    assert paused['completed_phase_id'] == focus_done['completed_phase_id']
+    command(conn, 'resume', now=BASE + timedelta(days=1))
+    next_focus = study.timer_state(conn, now=BASE + timedelta(days=1, seconds=40))['timer']
+    assert next_focus['phase'] == 'focus' and next_focus['status'] == 'running'
+    assert next_focus['completed_phase'] == 'short_break'
+    study.timer_state(conn, now=BASE + timedelta(days=1, seconds=100))
+    skipped = command(conn, 'skip_break', now=BASE + timedelta(days=1, seconds=110))['timer']
+    assert skipped['phase'] == 'focus' and skipped['status'] == 'running'
+    assert skipped['remaining_seconds'] == 60
+    assert study.statistics(conn, now=BASE + timedelta(days=1, seconds=110))['total_seconds'] == 120
+
+
+def test_month_history_splits_focus_and_manual_entries_at_local_month_boundaries(workspace):
+    conn = workspace.conn
+    short_focus(conn)
+    subject = study.save_entity(conn, 'subjects', {'name': 'Synthetic concepts'})['item']
+    # 23:59:30 New York on September 30, crossing into October in one focus.
+    start = datetime(2026, 10, 1, 3, 59, 30, tzinfo=UTC)
+    command(conn, 'start', now=start, subject_id=subject['id'], timezone='America/New_York')
+    command(conn, 'pause', now=start + timedelta(seconds=20))
+    resumed = start + timedelta(seconds=40)
+    command(conn, 'resume', now=resumed)
+    study.timer_state(conn, now=resumed + timedelta(seconds=40))
+    # Explicit manual study straddles October/November: 10 minutes in each.
+    observed = datetime(2026, 11, 2, 12, tzinfo=UTC)
+    study.save_session(conn, {'request_id': 'month-crossing-manual',
+                             'started_at': '2026-11-01T03:50:00+00:00', 'duration_seconds': 1200,
+                             'timezone': 'America/New_York', 'subject_id': subject['id']}, now=observed)
+    expected = [('2026-09-15', 20, [20]), ('2026-10-15', 640, [600, 40]),
+                ('2026-11-15', 600, [600])]
+    for anchor, seconds, contributions in expected:
+        result = study.workspace(conn, now=observed, timezone_name='America/New_York',
+                                 history_period='month', history_date=anchor)
+        history = result['stats']['history']
+        assert history['seconds'] == seconds
+        assert sum(item['seconds'] for item in history['days']) == seconds
+        assert history['subjects'][0]['seconds'] == seconds
+        assert [item['period_seconds'] for item in result['sessions']] == contributions
+    october = study.statistics(conn, now=observed, timezone_name='America/New_York',
+                               history_period='month', history_date='2026-10-31')['history']
+    assert october['start'] == '2026-10-01' and october['end'] == '2026-11-01'
+    assert october['previous'] == '2026-09-01' and october['next'] == '2026-11-01'
+    week = study.workspace(conn, now=observed, timezone_name='America/New_York',
+                           history_period='week', history_date='2026-10-01')
+    assert week['stats']['history']['seconds'] == 60
+    assert [item['source'] for item in week['sessions']] == ['focus']
+    assert week['stats']['total_seconds'] == 1260
+    assert week['stats']['month_seconds'] == 600
+
+
+def test_month_history_handles_leap_year_and_year_navigation(workspace):
+    conn = workspace.conn
+    leap = study.statistics(conn, now=BASE, history_period='month', history_date='2024-02-29')['history']
+    assert len(leap['days']) == 29
+    january = study.statistics(conn, now=BASE, history_period='month', history_date='2026-01-15')['history']
+    assert january['previous'] == '2025-12-01'
+    assert january['next'] == '2026-02-01'
+    december = study.statistics(conn, now=BASE, history_period='month', history_date='2026-12-15')['history']
+    assert december['next'] == '2027-01-01'
+
+
+def test_history_period_api_rejects_unknown_period_and_invalid_date(workspace):
+    conn = workspace.conn
+    app = SimpleNamespace(_no_query=lambda query: None)
+    for query in ({'period': 'year'}, {'period': 'month', 'date': '2026-02-30'}):
+        with pytest.raises(APIError) as invalid:
+            web_study.get(app, conn, '/api/study', query)
+        assert invalid.value.status == 400
+    result = web_study.get(app, conn, '/api/study', {'period': 'month', 'date': '2026-02-20', 'timezone': 'UTC'})
+    assert result['stats']['history']['start'] == '2026-02-01'
+    assert result['stats']['history']['end'] == '2026-03-01'
+    assert len(result['stats']['history']['days']) == 28
+
+
+def test_priming_pause_reload_and_skip_guard_never_create_focus_time(workspace):
+    conn = workspace.conn
+    started = command(conn, 'start', prepared=False)['timer']
+    command(conn, 'pause', now=BASE + timedelta(seconds=120))
+    other = connect(workspace.settings.db_path)
+    try:
+        paused = study.timer_state(other, now=BASE + timedelta(hours=1))['timer']
+        assert paused['phase'] == 'priming' and paused['remaining_seconds'] == 180
+        assert paused['session_id'] == started['session_id']
+        with pytest.raises(study.StudyConflict):
+            command(other, 'skip_break', now=BASE + timedelta(hours=1))
+        command(other, 'resume', now=BASE + timedelta(hours=1))
+        focused = study.workspace(other, now=BASE + timedelta(hours=1, seconds=180))
+        assert focused['timer']['phase'] == 'focus'
+        assert focused['timer']['remaining_seconds'] == 1500
+        assert focused['stats']['total_seconds'] == 0 and focused['sessions'] == []
+        finished = study.workspace(other, now=BASE + timedelta(hours=1, seconds=1680))
+        assert finished['timer']['phase'] == 'short_break'
+        assert finished['timer']['remaining_seconds'] == 300
+        assert finished['stats']['total_seconds'] == 1500
+    finally:
+        other.close()
+
+
+def test_guided_checklist_reflection_and_return_survive_stop_and_new_session(workspace):
+    conn = workspace.conn
+    state = {'checked': [True] + [False] * 13, 'responses': ['Explain the relationship'] + [''] * 13,
+             'reflection': '', 'next_review': ''}
+    first = command(conn, 'start', prepared=False, guide=state)['timer']
+    guide = study.workspace(conn, now=BASE)['guide']
+    state.update(reflection='I connected two ideas; next time test the counterexample.', next_review='2026-10-16')
+    saved = study.save_guide(conn, {'session_id': first['session_id'], 'revision': guide['revision'], 'state': state})['guide']
+    with pytest.raises(study.StudyConflict):
+        study.save_guide(conn, {'session_id': first['session_id'], 'revision': guide['revision'], 'state': state})
+    command(conn, 'stop', now=BASE + timedelta(minutes=1))
+    stopped = study.workspace(conn, now=BASE + timedelta(minutes=2))
+    assert stopped['guide']['state'] == state
+    assert stopped['guide']['ended_at'] is not None
+    assert stopped['stats']['total_seconds'] == 0
+    second = command(conn, 'start', now=BASE + timedelta(minutes=2), prepared=False)['timer']
+    assert second['session_id'] != first['session_id']
+    history = study.workspace(conn, now=BASE + timedelta(minutes=2))['guides']
+    assert next(item for item in history if item['id'] == saved['id'])['state']['reflection'] == state['reflection']
+    assert next(item for item in history if item['id'] == second['session_id'])['state']['checked'] == [False] * 14
+    with pytest.raises(ValueError):
+        study.save_guide(conn, {'session_id': second['session_id'], 'revision': 1,
+                                'state': {**state, 'checked': [True]}})

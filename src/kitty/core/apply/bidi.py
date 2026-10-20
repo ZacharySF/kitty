@@ -194,6 +194,34 @@ class Frame:
 
     def click(self, shared_id: str) -> None:
         """A real mouse click at the centre of one element (scrolled into view first)."""
+        inspected = self.bidi.command("script.callFunction", {
+            "functionDeclaration": """element => {
+              if (!element.isConnected) throw new Error('The requested control is detached');
+              element.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});
+              const r = element.getClientRects()[0];
+              if (!r?.width || !r.height) throw new Error('The requested control has no visible bounds');
+              const x = Math.floor((Math.max(0, r.left) + Math.min(innerWidth, r.right)) / 2);
+              const y = Math.floor((Math.max(0, r.top) + Math.min(innerHeight, r.bottom)) / 2);
+              let hit = document.elementFromPoint(x, y);
+              while (hit?.shadowRoot) {
+                const inner = hit.shadowRoot.elementFromPoint(x, y);
+                if (!inner || inner === hit) break;
+                hit = inner;
+              }
+              for (let n = hit; n; n = n.assignedSlot || n.parentElement || n.getRootNode()?.host)
+                if (n === element) return true;
+              throw new Error('Another element covers the requested control');
+            }""",
+            "arguments": [{"sharedId": shared_id}],
+            "target": {"context": self.context, "sandbox": SANDBOX},
+            "awaitPromise": True,
+            "resultOwnership": "none",
+        })
+        if inspected.get("type") == "exception":
+            details = inspected.get("exceptionDetails", {})
+            raise BidiError(self.bidi.redact(
+                f"Cannot click control: {details.get('text', 'viewport inspection failed')}"
+            ))
         self.bidi.command("input.performActions", {"context": self.context, "actions": [{
             "type": "pointer", "id": _MOUSE, "parameters": {"pointerType": "mouse"},
             "actions": [

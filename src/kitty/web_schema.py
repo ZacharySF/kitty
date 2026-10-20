@@ -1,7 +1,7 @@
 """Revision-checked local schema graph API; no AI or network side effects."""
 from __future__ import annotations
 
-from kitty.core import schema_maps
+from kitty.core import backlinks, schema_maps
 
 
 def _call(function, *args):
@@ -48,12 +48,24 @@ def get(app, conn, path, query):
             except ValueError:
                 raise APIError(400, 'Map IDs must be comma-separated integers') from None
         return _call(schema_maps.network, conn, query.get('mode') or None, map_ids, flag in {'true', '1'})
+    if path == '/api/schema/backlinks':
+        if set(query) == {'map_id'}:
+            try:
+                map_id = int(query['map_id'])
+            except (ValueError, TypeError):
+                raise APIError(400, 'Map ID must be an integer') from None
+            return _call(backlinks.suggestions, conn, map_id)
+        if 'term' in query and not set(query) - {'term', 'exclude'}:
+            return _call(backlinks.mentions, conn, query['term'], query.get('exclude'))
+        raise APIError(400, 'Provide map_id, or term with an optional exclude=<kind>:<id>')
     return None
 
 
 def post(app, conn, path, body):
     routes = {'/api/schema/create': schema_maps.create, '/api/schema/import': schema_maps.create,
+              '/api/schema/add-node': schema_maps.add_node,
               '/api/schema/save': schema_maps.save, '/api/schema/delete': schema_maps.delete,
-              '/api/schema/undo': schema_maps.undo, '/api/schema/import-jobs': schema_maps.import_jobs}
+              '/api/schema/undo': schema_maps.undo, '/api/schema/import-jobs': schema_maps.import_jobs,
+              '/api/schema/backlinks/apply': backlinks.apply}
     handler = routes.get(path)
     return _call(handler, conn, body) if handler else None

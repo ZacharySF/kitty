@@ -11,29 +11,19 @@
     type View,
   } from "./workspace";
   import {
-    DEFAULT_PHYSICS,
-    PHYSICS_LIMITS,
     mountGraph,
     webglAvailable,
     type GraphHandle,
-    type GraphLayout,
     type GraphLink,
     type GraphNode,
-    type GraphPhysics,
   } from "./graph3d";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
 
-  type AtlasItem = {
-    id: string;
-    kind: string;
-    ref: number | string;
-    label: string;
-    detail: string;
-    view: View;
-  };
+  const pane = useWorkspaceContext();
+
   type Atlas = {
-    limit: number;
-    kinds: { kind: string; label: string; view: View }[];
-    items: AtlasItem[];
+    sections: {kind:string;label:string;view:View;count:number|null}[];
   };
 
   let {
@@ -50,25 +40,7 @@
     onguide: () => void;
   } = $props();
 
-  const LAYOUT_KEY = "kitty.atlas.layout";
-  const PHYSICS_KEY = "kitty.atlas.physics";
-  const layouts: { id: GraphLayout; label: string; note: string }[] = [
-    { id: "sphere", label: "Sphere", note: "hubs inside, items on the shell" },
-    { id: "clusters", label: "Clusters", note: "one hull per group" },
-    { id: "tree", label: "Tree", note: "radial levels from each group" },
-    { id: "force", label: "Force", note: "free physics" },
-  ];
-  const physicsLabels: Record<keyof GraphPhysics, string> = {
-    repulsion: "Repulsion",
-    spring: "Spring",
-    damping: "Damping",
-  };
-  const cat = " /\\_/\\\n( o.o )\n > ^ <";
-  const date = new Intl.DateTimeFormat(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  }).format(new Date());
+  const atlasId = `atlas-${pane.id}`;
   const reducedMotion =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -76,40 +48,14 @@
   const sections = navigationGroups.map((group) => ({
     label: group.label,
     items: group.views
-      .filter((id) => id !== "today")
+      .filter((id) => id !== "today" && (group.label !== "Job search" || id === "jobs"))
       .map((id) => navigation.find((item) => item.id === id)!),
   }));
-  const groupOf = new Map<View, string>(
-    sections.flatMap((group) =>
-      group.items.map((item) => [item.id, group.label] as [View, string]),
-    ),
-  );
-
-  function storedLayout(): GraphLayout {
-    const value = localStorage.getItem(LAYOUT_KEY);
-    return layouts.some((item) => item.id === value)
-      ? (value as GraphLayout)
-      : "sphere";
-  }
-  function storedPhysics(): GraphPhysics {
-    try {
-      const value = JSON.parse(localStorage.getItem(PHYSICS_KEY) || "{}");
-      const result = { ...DEFAULT_PHYSICS };
-      for (const key of Object.keys(PHYSICS_LIMITS) as (keyof GraphPhysics)[]) {
-        const limit = PHYSICS_LIMITS[key];
-        if (typeof value[key] === "number")
-          result[key] = Math.min(limit.max, Math.max(limit.min, value[key]));
-      }
-      return result;
-    } catch {
-      return { ...DEFAULT_PHYSICS };
-    }
-  }
 
   let atlas = $state<Atlas | null>(null);
   let atlasError = $state("");
-  let layout = $state<GraphLayout>(storedLayout());
-  let physics = $state<GraphPhysics>(storedPhysics());
+  const layout = graphLayout();
+  const physics = graphPhysics();
   let mode = $state<"loading" | "graph" | "list">("loading");
   let notice = $state("");
   let hovered = $state<GraphNode | null>(null);
@@ -124,32 +70,33 @@
   let dailyLoading = $state(false);
   let container: HTMLDivElement;
   let searchField = $state<HTMLInputElement>();
-  let handle: GraphHandle | null = null;
+  let handle = $state.raw<GraphHandle | null>(null);
+  let pendingGroup: string | null = null;
 
-  const itemsById = $derived(
-    new Map((atlas?.items ?? []).map((item) => [item.id, item])),
-  );
   const itemCounts = $derived.by(() => {
     const counts = new Map<View, number>();
-    for (const item of atlas?.items ?? [])
-      counts.set(item.view, (counts.get(item.view) ?? 0) + 1);
+    for (const item of atlas?.sections ?? [])
+      if(item.count!==null)counts.set(item.view,item.count+(counts.get(item.view)||0));
     return counts;
   });
   const graph = $derived.by(() => {
     const nodes: GraphNode[] = [];
     const links: GraphLink[] = [];
+    const rootViews: Partial<Record<string, View>> = { Study: "study", "Job search": "jobs", Settings: "settings" };
     for (const group of sections) {
       nodes.push({
-        id: `group:${group.label}`,
-        label: group.label.toUpperCase(),
+        id: rootViews[group.label] ? `view:${rootViews[group.label]}` : `group:${group.label}`,
+        label: group.label,
         group: group.label,
         kind: "hub",
         size: 7,
         detail: `${group.items.length} sections`,
+        href: rootViews[group.label] ? `#${rootViews[group.label]}` : undefined,
       });
     }
     for (const group of sections) {
       for (const item of group.items) {
+        if (item.id === rootViews[group.label]) continue;
         const count = itemCounts.get(item.id) ?? 0;
         nodes.push({
           id: `view:${item.id}`,
@@ -157,47 +104,26 @@
           group: group.label,
           kind: "hub",
           size: 3,
-          detail: [
-            item.key ? `${item.key}` : "",
-            count ? `${count} linked item${count === 1 ? "" : "s"}` : "",
-            "click to open",
-          ]
-            .filter(Boolean)
-            .join(" · "),
+          detail: count ? `${count} linked item${count === 1 ? "" : "s"}` : "",
           href: `#${item.id}`,
         });
         links.push({
-          source: `group:${group.label}`,
+          source: rootViews[group.label] ? `view:${rootViews[group.label]}` : `group:${group.label}`,
           target: `view:${item.id}`,
         });
       }
     }
+    const visible = new Set(nodes.map(node => node.id));
+    const existing = new Set(links.map(link => `${link.source}\0${link.target}`));
     for (const [a, b] of navigationRelations)
-      if (groupOf.has(a) && groupOf.has(b))
+      if (visible.has(`view:${a}`) && visible.has(`view:${b}`) &&
+          !existing.has(`view:${a}\0view:${b}`) && !existing.has(`view:${b}\0view:${a}`))
         links.push({
           source: `view:${a}`,
           target: `view:${b}`,
           weight: 0.8,
           label: "related sections",
         });
-    for (const item of atlas?.items ?? []) {
-      const group = groupOf.get(item.view);
-      if (!group) continue;
-      const kind = atlas?.kinds.find((entry) => entry.kind === item.kind);
-      nodes.push({
-        id: item.id,
-        label: item.label,
-        group,
-        kind: item.kind,
-        size: 1,
-        detail: [kind?.label, item.detail].filter(Boolean).join(" · "),
-      });
-      links.push({
-        source: `view:${item.view}`,
-        target: item.id,
-        weight: 0.6,
-      });
-    }
     return { nodes, links };
   });
   const matches = $derived.by(() => {
@@ -220,9 +146,7 @@
   function kindLabel(node: GraphNode) {
     if (node.id.startsWith("group:")) return "Group";
     if (node.id.startsWith("view:")) return "Section";
-    return (
-      atlas?.kinds.find((entry) => entry.kind === node.kind)?.label ?? "Item"
-    );
+    return "Section";
   }
   function openable(node: GraphNode) {
     return !node.id.startsWith("group:");
@@ -232,14 +156,6 @@
       onview(node.id.slice(5) as View);
       return;
     }
-    const item = itemsById.get(node.id);
-    if (!item) return;
-    if (
-      (item.kind === "job" || item.kind === "application") &&
-      typeof item.ref === "number"
-    )
-      onopenjob(item.ref);
-    else onview(item.view);
   }
   function locate(node: GraphNode) {
     selected = node;
@@ -259,23 +175,19 @@
       else locate(first);
     } else locate(first);
   }
-  function chooseLayout(next: GraphLayout) {
-    layout = next;
-    localStorage.setItem(LAYOUT_KEY, next);
-    handle?.setLayout(next);
-  }
-  function tune(key: keyof GraphPhysics, value: number) {
-    physics = { ...physics, [key]: value };
-    localStorage.setItem(PHYSICS_KEY, JSON.stringify(physics));
-    handle?.setPhysics({ [key]: value });
-  }
-  function resetPhysics() {
-    physics = { ...DEFAULT_PHYSICS };
-    localStorage.removeItem(PHYSICS_KEY);
-    handle?.setPhysics(physics);
+  export function focusGroup(label: string) {
+    if (!sections.some(group => group.label === label)) return;
+    if (!pane.active || (!handle && mode === "loading")) {
+      pendingGroup = label;
+      return;
+    }
+    const node = graph.nodes.find(node => node.label === label && node.group === label);
+    if (!node) return;
+    pendingGroup = null;
+    locate(node);
   }
   export function focusSearch() {
-    searchField?.focus();
+    if (pane.active) searchField?.focus();
   }
 
   let atlasRequest = 0;
@@ -342,9 +254,19 @@
     if (selected && !graph.nodes.some((node) => node.id === selected?.id))
       selected = null;
   });
+  $effect(() => {
+    const active = pane.active;
+    handle?.setActive(active);
+    if (active && (handle || mode === "list") && pendingGroup) focusGroup(pendingGroup);
+  });
 
   onMount(() => {
     let disposed = false;
+    const syncSettings = () => {
+      handle?.setLayout(graphLayout());
+      handle?.setPhysics(graphPhysics());
+    };
+    window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     void (async () => {
       await loadAtlas();
       if (disposed) return;
@@ -360,11 +282,13 @@
           layout,
           physics,
           reducedMotion,
+          active: pane.active,
           onSelect: (node) => {
+            if (!pane.active) return;
             if (openable(node)) open(node);
             else selected = node;
           },
-          onHover: (node) => (hovered = node),
+          onHover: (node) => { if (pane.active || !node) hovered = node; },
         });
         if (disposed) {
           mounted.destroy();
@@ -379,6 +303,7 @@
     })();
     return () => {
       disposed = true;
+      window.removeEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
       handle?.destroy();
       handle = null;
     };
@@ -424,8 +349,8 @@
 {#snippet sectionList(large: boolean)}
   <nav class="section-list" class:large aria-label="Workspace sections">
     {#each sections as group, index}
-      <section aria-labelledby={`atlas-group-${index}${large ? "-l" : ""}`}>
-        <h3 id={`atlas-group-${index}${large ? "-l" : ""}`}>
+      <section aria-labelledby={`${atlasId}-group-${index}${large ? "-l" : ""}`}>
+        <h3 id={`${atlasId}-group-${index}${large ? "-l" : ""}`}>
           <span class="swatch" style={`--swatch: var(--c${index + 1})`}
           ></span>{group.label}
         </h3>
@@ -442,8 +367,8 @@
                 >{#if itemCounts.get(item.id)}<small
                     aria-label={`${itemCounts.get(item.id)} linked items`}
                     >{itemCounts.get(item.id)}</small
-                  >{/if}{#if item.key}<kbd>{item.key}</kbd>{/if}</a
-              >{#if mode === "graph"}<button
+                  >{/if}</a
+              >{#if mode === "graph" && graph.nodes.some(node => node.id === `view:${item.id}`)}<button
                   class="locate"
                   aria-label={`Show ${item.label} on the map`}
                   title="Show on the map"
@@ -467,83 +392,51 @@
     class="stage"
     role="region"
     aria-label="3D atlas of your workspace"
-    aria-describedby="atlas-description"
+    aria-describedby={`${atlasId}-description`}
   >
-    <p id="atlas-description" class="sr-only">
-      A 3D network: {sections.length} group hubs, their sections, and {atlas
-        ?.items.length ?? 0} recent items. Pointer users can drag to orbit, scroll
-      to zoom, and click a node to open it. Keyboard and screen-reader users can use
-      the atlas search and the Sections list in the side panel, which reach the same
-      places.
+    <p id={`${atlasId}-description`} class="sr-only">
+      A map of workspace sections. Drag to rotate, scroll to zoom, select a section to open its map.
     </p>
     <div class="canvas" bind:this={container}></div>
     {#if mode === "list"}
       <div class="fallback">
         <p class="notice" role="status">
-          <span aria-hidden="true">[!]</span>
+          <span aria-hidden="true">!</span>
           {notice}
         </p>
         {@render sectionList(true)}
       </div>
     {:else}
-      <div class="hud top" aria-hidden="true">
-        <span class="prompt"
-          ><b>kitty@home</b> <i>~</i> $ atlas --layout {layout}</span
-        >
-        <span>drag to orbit · scroll to zoom · click a node to open</span>
+      <div class="stage-caption" aria-hidden="true">
+        <span>Drag to rotate · scroll to zoom · Ctrl + ← / → to turn</span>
       </div>
-      {#if mode === "loading"}<p class="hud loading" role="status">
+      {#if mode === "loading"}<p class="stage-loading" role="status">
           Drawing your atlas…
         </p>{/if}
-      <div class="hud legend" aria-hidden="true">
-        {#each sections as group, index}<span
-            ><span class="swatch" style={`--swatch: var(--c${index + 1})`}
-            ></span>{group.label}</span
-          >{/each}
-        <span class="hover-readout"
-          >{hovered ? `› ${hovered.label}` : "› hover a node"}</span
-        >
-      </div>
+      {#if hovered}<p class="stage-selection" aria-hidden="true">{hovered.label}</p>{/if}
     {/if}
   </div>
 
   <Panel
     as="aside"
     class="atlas-panel"
-    title="~/atlas / control"
-    icon="▣"
-    readout={`${graph.nodes.length} NODES`}
+    title="Workspace"
     aria-label="Atlas controls and navigation"
   >
-    <header class="greeting">
-      <div
-        class="art"
-        role="img"
-        aria-label="Anime artwork chosen for your workspace"
-      ></div>
-      <div class="hello">
-        <pre aria-hidden="true">{cat}</pre>
-        <div>
-          <p class="prompt"><b>kitty@home</b> <i>~</i> $ welcome</p>
-          <h1 id="page-title">HELLO, <span>KITTY!</span></h1>
-          <p class="date">{date}</p>
-        </div>
-      </div>
-    </header>
 
     <div class="search">
-      <label for="atlas-search">Jump to a node <kbd>/</kbd></label>
+      <label for={`${atlasId}-search`}>Find a section <kbd>/</kbd></label>
       <input
-        id="atlas-search"
+        id={`${atlasId}-search`}
         type="search"
         bind:this={searchField}
         bind:value={query}
         onkeydown={searchKey}
-        placeholder="calendar, a deck, a job…"
+        placeholder="Find a section…"
         autocomplete="off"
-        aria-describedby="atlas-search-status"
+        aria-describedby={`${atlasId}-search-status`}
       />
-      <p id="atlas-search-status" class="sr-only" aria-live="polite">
+      <p id={`${atlasId}-search-status`} class="sr-only" aria-live="polite">
         {query.trim() ? `${matches.length} matches` : ""}
       </p>
       {#if matches.length}
@@ -587,75 +480,20 @@
       </section>
     {/if}
 
-    {#if mode !== "list"}
-      <details class="block" open>
-        <summary>◇ Map</summary>
-        <fieldset class="layouts">
-          <legend>Layout</legend>
-          {#each layouts as option}
-            <label class:checked={layout === option.id} title={option.note}>
-              <input
-                type="radio"
-                name="atlas-layout"
-                value={option.id}
-                checked={layout === option.id}
-                onchange={() => chooseLayout(option.id)}
-              />{option.label}
-            </label>
-          {/each}
-        </fieldset>
-        <div class="physics">
-          {#each Object.keys(PHYSICS_LIMITS) as (keyof GraphPhysics)[] as key}
-            <label>
-              <span>{physicsLabels[key]}</span>
-              <input
-                type="range"
-                min={PHYSICS_LIMITS[key].min}
-                max={PHYSICS_LIMITS[key].max}
-                step={PHYSICS_LIMITS[key].step}
-                value={physics[key]}
-                oninput={(event) =>
-                  tune(key, Number(event.currentTarget.value))}
-              />
-              <output
-                >{physics[key].toFixed(key === "repulsion" ? 0 : 2)}</output
-              >
-            </label>
-          {/each}
-          <button class="text-button" onclick={resetPhysics}
-            >Reset physics</button
-          >
-        </div>
-        <dl class="counts">
-          <div>
-            <dt>nodes</dt>
-            <dd>{graph.nodes.length}</dd>
-          </div>
-          <div>
-            <dt>links</dt>
-            <dd>{graph.links.length}</dd>
-          </div>
-          <div>
-            <dt>items</dt>
-            <dd>{atlas?.items.length ?? "—"}</dd>
-          </div>
-        </dl>
-        {#if atlasError}<p class="error" role="alert">
-            Linked items unavailable: {atlasError}
-            <button class="text-button" onclick={loadAtlas}>Retry</button>
-          </p>{/if}
-      </details>
-    {/if}
+    {#if atlasError}<p class="error" role="alert">Linked counts unavailable.
+      <button class="text-button" onclick={loadAtlas}>Retry</button>
+      <button class="icon-button" aria-label="Dismiss linked count message" onclick={() => (atlasError = "")}>×</button>
+    </p>{/if}
 
     <details class="block" open={mode === "list" ? undefined : true}>
-      <summary>☰ Sections</summary>
+      <summary>Sections</summary>
       {#if mode === "list"}<p class="muted small">
           The full list is shown in the main area.
         </p>{:else}{@render sectionList(false)}{/if}
     </details>
 
     <details class="block">
-      <summary>◷ Today</summary>
+      <summary>Today</summary>
       <div class="readouts" aria-busy={dailyLoading}>
         {#each readouts as readout}
           <button onclick={() => onview(readout.view)}
@@ -685,11 +523,9 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-    border: 1px solid var(--border);
-    background:
-      radial-gradient(circle at 42% 50%, #1b16288c, transparent 62%),
-      var(--canvas);
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+    border: 1px solid var(--border-fine, var(--border));
+    background: var(--canvas);
   }
   .stage {
     position: relative;
@@ -704,81 +540,42 @@
   .list-mode .canvas {
     display: none;
   }
-  .stage::before,
-  .stage::after {
-    content: "";
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    border-color: var(--violet);
-    pointer-events: none;
-    z-index: 2;
-  }
-  .stage::before {
-    top: 8px;
-    left: 8px;
-    border-top: 1px solid;
-    border-left: 1px solid;
-  }
-  .stage::after {
-    bottom: 8px;
-    right: 8px;
-    border-bottom: 1px solid;
-    border-right: 1px solid;
-  }
-  .hud {
+  .stage-caption,
+  .stage-loading,
+  .stage-selection {
     position: absolute;
     z-index: 1;
     margin: 0;
-    font: 11px var(--br-font-ui);
-    color: var(--subtle);
+    font: 12px var(--br-font-ui);
+    color: var(--muted);
     pointer-events: none;
   }
-  .hud.top {
-    top: 14px;
-    left: 26px;
-    right: 26px;
-    display: flex;
-    justify-content: space-between;
-    gap: 14px;
-    flex-wrap: wrap;
+  .stage-caption {
+    bottom: 16px;
+    left: 20px;
+    right: 20px;
+    text-align: center;
   }
-  .prompt b {
-    color: var(--success);
-    font-weight: 500;
-  }
-  .prompt i {
-    color: var(--violet);
-    font-style: normal;
-  }
-  .hud.loading {
+  .stage-loading {
     inset: 50% auto auto 50%;
     transform: translate(-50%, -50%);
-    color: var(--muted);
   }
-  .hud.legend {
-    left: 26px;
-    bottom: 16px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 16px;
-    align-items: center;
-  }
-  .hover-readout {
-    color: var(--ink);
-    min-width: 0;
-    max-width: 46ch;
+  .stage-selection {
+    top: 16px;
+    left: 20px;
+    max-width: calc(100% - 40px);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: var(--ink);
   }
   .swatch {
     display: inline-block;
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     margin-right: 7px;
     background: var(--swatch);
-    box-shadow: 0 0 8px var(--swatch);
+    border-radius: 50%;
   }
   .fallback {
     position: relative;
@@ -817,59 +614,18 @@
     padding-bottom: 10px;
   }
   :global(.atlas-panel .br-panel__readout) {
-    font: 10px var(--br-font-display);
-    color: var(--violet);
-  }
-  .greeting {
-    margin: 12px 0 14px;
-    border: 1px solid var(--violet);
-    position: relative;
-  }
-  .art {
-    height: 64px;
-    background-image: url("/art/application-background.png");
-    background-size: cover;
-    background-position: 67% 38%;
-    filter: saturate(0.7) contrast(1.05);
-    border-bottom: 1px solid var(--border);
-  }
-  .hello {
-    display: flex;
-    gap: 14px;
-    align-items: center;
-    padding: 10px 12px;
-  }
-  .hello pre {
-    margin: 0;
-    color: var(--accent);
-    font: 12px/1.2 var(--br-font-ui);
-  }
-  .hello .prompt,
-  .date {
-    margin: 0;
-    font-size: 10px;
-    color: var(--subtle);
-  }
-  h1 {
-    margin: 4px 0;
-    font: 22px/1.1 var(--br-font-display);
-    letter-spacing: -1px;
-    color: var(--ink);
-    text-shadow: 2px 2px var(--border);
-  }
-  h1 span {
-    color: var(--violet);
+    color: var(--muted);
   }
   .search label {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--muted);
     margin-bottom: 6px;
   }
   .search input {
     width: 100%;
-    font-size: 12px;
+    font-size: 13px;
   }
   .matches,
   .section-list ul {
@@ -890,7 +646,7 @@
   }
   .matches button:hover,
   .matches button.current {
-    border-color: var(--violet);
+    border-color: var(--border);
     background: var(--surface-raised);
   }
   .matches small,
@@ -931,132 +687,10 @@
     padding-top: 10px;
   }
   .block > summary {
-    font: 12px var(--br-font-display);
-    letter-spacing: 1px;
+    font: 500 13px var(--br-font-ui);
     color: var(--ink);
     cursor: pointer;
     padding: 2px 0 8px;
-  }
-  .layouts {
-    border: 0;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 4px;
-  }
-  .layouts legend {
-    font-size: 10px;
-    color: var(--subtle);
-    margin-bottom: 6px;
-    letter-spacing: 1px;
-  }
-  .layouts label {
-    border: 1px solid var(--border);
-    text-align: center;
-    padding: 6px 2px;
-    font-size: 11px;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .layouts label.checked {
-    border-color: var(--accent);
-    color: var(--ink);
-    background: var(--surface-raised);
-  }
-  .layouts label:focus-within {
-    outline: 2px solid var(--violet);
-    outline-offset: 1px;
-  }
-  .layouts input {
-    position: absolute;
-    opacity: 0;
-    width: 1px;
-    height: 1px;
-  }
-  .physics {
-    display: grid;
-    gap: 6px;
-    margin-top: 12px;
-  }
-  .physics label {
-    display: grid;
-    grid-template-columns: 76px minmax(0, 1fr) 42px;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .physics input {
-    width: 100%;
-    height: 18px;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    appearance: none;
-    cursor: pointer;
-  }
-  .physics input::-webkit-slider-runnable-track {
-    height: 2px;
-    background: var(--border);
-  }
-  .physics input::-moz-range-track {
-    height: 2px;
-    background: var(--border);
-  }
-  .physics input::-moz-range-progress {
-    height: 2px;
-    background: var(--accent);
-  }
-  .physics input::-webkit-slider-thumb {
-    appearance: none;
-    width: 10px;
-    height: 14px;
-    margin-top: -6px;
-    background: var(--accent);
-    border: 1px solid var(--canvas);
-    border-radius: 0;
-  }
-  .physics input::-moz-range-thumb {
-    width: 10px;
-    height: 14px;
-    background: var(--accent);
-    border: 1px solid var(--canvas);
-    border-radius: 0;
-  }
-  .physics input:focus-visible {
-    outline: 2px solid var(--violet);
-    outline-offset: 2px;
-  }
-  .physics output {
-    text-align: right;
-    color: var(--ink);
-    font-size: 11px;
-  }
-  .physics .text-button {
-    justify-self: start;
-    font-size: 11px;
-  }
-  .counts {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 4px;
-    margin: 12px 0 0;
-  }
-  .counts div {
-    border: 1px solid var(--border);
-    padding: 6px 8px;
-  }
-  .counts dt {
-    font-size: 9px;
-    letter-spacing: 1px;
-    color: var(--subtle);
-    text-transform: uppercase;
-  }
-  .counts dd {
-    margin: 0;
-    font: 16px var(--br-font-display);
-    color: var(--ink);
   }
   .error {
     font-size: 11px;
@@ -1067,10 +701,9 @@
   }
   .section-list h3 {
     margin: 0;
-    font-size: 10px;
-    letter-spacing: 1.5px;
-    color: var(--subtle);
-    text-transform: uppercase;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
     display: flex;
     align-items: center;
   }
@@ -1107,13 +740,6 @@
     color: var(--accent);
     font-size: 10px;
   }
-  .section-list kbd {
-    font-size: 9px;
-    margin-left: auto;
-  }
-  .section-list small + kbd {
-    margin-left: 6px;
-  }
   .locate {
     width: 28px;
     background: transparent;
@@ -1148,10 +774,10 @@
     padding: 8px 10px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-left: 2px solid var(--violet);
+    border-radius: 4px;
   }
   .readouts button:hover {
-    border-color: var(--violet);
+    border-color: var(--accent);
   }
   .readouts span {
     font-size: 10px;
@@ -1186,7 +812,7 @@
       border-left: 0 !important;
       border-top: 1px solid var(--border) !important;
     }
-    .hud.top > span:last-child {
+    .stage-caption {
       display: none;
     }
     .fallback {

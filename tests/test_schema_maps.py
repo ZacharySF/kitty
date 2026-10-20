@@ -210,6 +210,67 @@ def test_web_routes_return_conflicts_and_ignore_other_modules(workspace):
     assert web_schema.post(app, conn, '/api/other', {}) is None
 
 
+def test_add_node_task_identity_revision_parent_and_live_title(workspace):
+    conn = workspace.conn
+    conn.execute("INSERT INTO calendar_tasks(id,data,updated_at) VALUES(?,?,?)",
+                 ('synthetic-task', '{"title":"Review synthetic chapter"}', '2026-01-01'))
+    item = connected(conn)
+    body = {'map_id': item['id'], 'revision': item['revision'],
+            'label': 'Review chapter', 'kind': 'task', 'parent_id': 'physics',
+            'source': {'kind': 'calendar_task', 'id': 'synthetic-task'}}
+    result = web_schema.post(None, conn, '/api/schema/add-node', body)
+    added = result['graph']['nodes'][-1]
+    assert added['kind'] == 'task'
+    assert result['live'][added['id']]['label'] == 'Review synthetic chapter'
+    assert result['graph']['edges'][-1]['to'] == added['id']
+    assert result['graph']['edges'][-1]['from'] == 'physics'
+    with pytest.raises(APIError) as caught:
+        web_schema.post(None, conn, '/api/schema/add-node', body)
+    assert caught.value.status == 409
+    body['revision'] = result['revision']
+    repeated = schema.add_node(conn, body)
+    assert repeated['revision'] == result['revision']
+    assert len(repeated['graph']['nodes']) == 3
+    assert schema.network(conn)['nodes']
+
+
+def test_add_node_rejects_missing_parent_atomically(workspace):
+    item = create(workspace.conn)
+    with pytest.raises(ValueError, match='Parent'):
+        schema.add_node(workspace.conn, {'map_id': item['id'], 'revision': item['revision'],
+                                        'label': 'Synthetic topic', 'parent_id': 'missing'})
+    assert schema.load(workspace.conn, item['id'])['revision'] == item['revision']
+
+
+def test_branch_collapse_reparent_and_map_link_persist(workspace):
+    conn = workspace.conn
+    item, linked = connected(conn), create(conn)
+    item['graph']['nodes'][0].update(collapsed=True, map_id=linked['id'])
+    item['graph']['edges'][0].update(**{'from': 'calculus', 'to': 'physics'})
+    saved = save(conn, item)
+    loaded = schema.load(conn, item['id'])
+    assert loaded['graph']['nodes'][0]['collapsed'] is True
+    assert loaded['graph']['nodes'][0]['map_id'] == linked['id']
+    assert loaded['graph']['edges'][0]['from'] == 'calculus'
+    assert 'map_id' not in schema.export(conn, item['id'])['graph']['nodes'][0]
+    restored = schema.undo(conn, {'id': item['id'], 'revision': saved['revision']})
+    assert not restored['graph']['nodes'][0].get('collapsed', False)
+
+
+def test_note_card_source_is_unique_and_live(workspace):
+    conn = workspace.conn
+    notebook = conn.execute("INSERT INTO note_notebooks(title,created_at,updated_at) VALUES('Synthetic notebook','2026-01-01','2026-01-01')").lastrowid
+    page = conn.execute("INSERT INTO note_pages(notebook_id,title,document,created_at,updated_at) VALUES(?,?,'{}','2026-01-01','2026-01-01')",
+                        (notebook, 'Synthetic note card')).lastrowid
+    item = create(conn)
+    body = {'map_id': item['id'], 'revision': item['revision'], 'label': 'Note card',
+            'source': {'kind': 'note_page', 'id': page}}
+    saved = schema.add_node(conn, body)
+    assert saved['live'][saved['graph']['nodes'][0]['id']]['label'] == 'Synthetic note card'
+    body['revision'] = saved['revision']
+    assert len(schema.add_node(conn, body)['graph']['nodes']) == 1
+
+
 def network_map(conn, mode, document, title='Connections'):
     item = schema.create(conn, {'title': title, 'mode': mode})
     return save(conn, item, document)

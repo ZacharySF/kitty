@@ -22,14 +22,16 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
+from urllib.parse import urlsplit
 
 from kitty.config import Config
 from kitty.core import jobs as jobs_core
 from kitty.core import questions as questions_core
 from kitty.core import resumes as resumes_core
 from kitty.core.resume_versions import default_resume
+from kitty.core.refresh import PostingCheck, persist_check
 from kitty.core.apply.auth import authenticate, google_session
-from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, Tab, open_session, open_tab
+from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, Tab, TabClosed, open_session, open_tab
 from kitty.core.apply.browser import (
     BrowserError, busy_message, ensure_firefox, headless_firefox, hide_automation,
 )
@@ -45,14 +47,26 @@ from kitty.core.apply.page import (
 from kitty.core.apply.urls import detect_ats, form_url
 from kitty.core.apply.preflight import advance, inspect_page, wait_for_page
 from kitty.core.apply.state import record_attempt
-from kitty.core.apply.watch import RULES, Watch, WatchedTab, look, reattach, watch_tabs
+from kitty.core.apply.watch import (
+    CONTEXT_MARKER, RULES, Watch, WatchedTab, look, owned_context, reattach, watch_tabs,
+)
 from kitty.db import connect
 from kitty.db.connection import transaction
 from kitty.models import Job, Resume
+from kitty.normalize import canonical_url
 from kitty.settings import Settings
 
 #: Seconds between opening one job's page and the next: polite over fast.
 PAUSE_BETWEEN_JOBS = 2.0
+_ACCOUNT_FIELD_LABELS = {
+    "email": "account email", "emailConfirm": "account email confirmation",
+    "password": "account password", "passwordConfirm": "account password confirmation",
+}
+_MANUAL_CONSENT = re.compile(
+    r"\b(?:agree|consent|certify|attest|signature|terms(?: and conditions| of use| of service)?|"
+    r"privacy (?:policy|notice)|accept.{0,80}(?:privacy|data processing)|"
+    r"einverstanden|einwilligung|datenschutzerklärung)\b", re.I,
+)
 
 
 @dataclass
@@ -190,8 +204,8 @@ def _upload_approved(
 def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan) -> bool:
     """Put a planned value into one field; return True when it was set."""
     frame = page_frames[form_field.frame]
-    if re.search(r"\b(agree|consent|certify|attest|signature|terms and conditions)\b",
-                 form_field.label, re.IGNORECASE):
+    if (_MANUAL_CONSENT.search(form_field.label) or
+            any(_MANUAL_CONSENT.search(option) for option in form_field.options)):
         return False
     if form_field.kind in TEXT_KINDS:
         fill_text(frame, form_field.key, plan.candidates[0])
@@ -199,16 +213,18 @@ def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan) -> 
     if form_field.kind == "combobox":
         # Prefer the actual choices before filtering them by a spelling. Async or
         # virtualized lists may need a query before they expose the desired option.
-        if pick_from_list(frame, form_field.key, plan.candidates, location=plan.location):
+        if pick_from_list(frame, form_field.key, plan.candidates, location=plan.location,
+                          graduation=plan.graduation):
             return True
         searches = [plan.search_text] if plan.search_text else list(dict.fromkeys(plan.candidates))[:4]
         return any(pick_from_search(frame, form_field.key, text, plan.candidates,
-                                    location=plan.location, prefix=not plan.exact_choices) for text in searches)
+                                    location=plan.location, prefix=not plan.exact_choices,
+                                    graduation=plan.graduation) for text in searches)
     if (form_field.kind == "checkbox" and len(form_field.options) == 1 and plan.from_answers
             and is_affirmative(plan.candidates[0])):
         return tick(frame, form_field.option_keys[0])          # "I agree to ..." with answer Yes
     index = match_option(plan.candidates, form_field.options, location=plan.location,
-                         prefix=not plan.exact_choices)
+                         prefix=not plan.exact_choices, graduation=plan.graduation)
     if index is None:
         return False
     if form_field.kind == "select":
@@ -241,7 +257,7 @@ def fill_form(
     target = next((f for f in fields if is_resume_input(f)), None)
     if resume_path is not None and target is not None and target.blank:
         populated = any(f.kind != "file" and not f.blank for f in fields)
-        if preserve_existing and populated:
+        if preserve_existing and populated and not target.attachment_only:
             result.blocker = ("Resume upload deferred to protect retained answers from resume parsing; "
                               "attach it manually and review your values before retrying.")
         else:
@@ -307,11 +323,21 @@ def _record(
             questions_core.log_question(conn, question, job_id=job.id)
 
 
+def _same_posting_page(expected_url: str, actual_url: str) -> bool:
+    expected, actual = urlsplit(expected_url), urlsplit(actual_url)
+    if (expected.scheme, expected.netloc.lower()) != (actual.scheme, actual.netloc.lower()):
+        return False
+    def detail_url(parts):
+        path = re.sub(r"/apply(?:/applyManually)?/?$", "", parts.path)
+        return canonical_url(parts._replace(path=path, fragment="").geturl())
+    return detail_url(expected) == detail_url(actual)
+
+
 def fill_job(
     page: Tab, conn: sqlite3.Connection, settings: Settings, config: Config, job: Job,
     *, resume_tab: bool = False, approval: FillApproval | None = None,
 ) -> FillReport:
-    """Prepare verified pages conservatively; retain a known tab instead of navigating it."""
+    """Prepare a retained/new page with real input, then restore its prior foreground tab."""
     ats = detect_ats(job.apply_url or job.url)
     url = form_url(job, ats)
     report = FillReport(job_id=job.id, company=job.company_name, title=job.title, url=url,
@@ -331,13 +357,36 @@ def fill_job(
     visited: set[str] = set()
     previous: str | None = None
     authentication_attempted = False
+    closed_url: str | None = None
     policy = config.apply.authentication
+    foreground: Tab | None = None
     try:
+        # Firefox can silently drop dropdown pointer/key actions in a background
+        # tab even though script-based contact writes work. Focus the target for
+        # the entire production flow, not just a standalone choice helper.
+        contexts = page.bidi.command("browsingContext.getTree", {"maxDepth": 0})["contexts"]
+        window = next((node.get("clientWindow") for node in contexts
+                       if node["context"] == page.context), None)
+        for node in contexts:
+            if window is None or node["context"] == page.context or node.get("clientWindow") != window:
+                continue
+            candidate = Tab(page.bidi, node["context"])
+            try:
+                if candidate.main.call("() => document.visibilityState === 'visible'"):
+                    foreground = candidate
+                    break
+            except BidiError:
+                continue
+        page.activate()
         if not resume_tab:
             page.goto(url)
         settle(page)
         for _ in range(12):
             before = wait_for_page(page, previous=previous)
+            if authentication_attempted and before.blocker and before.blocker.startswith("login:"):
+                # Account redirects can render their verification notice after
+                # the sign-in controls. Observe it without repeating credentials.
+                before = wait_for_page(page, previous=before.signature, seconds=2)
             if authentication_attempted and not policy.approves(page.main.url):
                 report.status, report.note = "blocked", "login: redirected to an unapproved origin; continue manually."
                 break
@@ -359,13 +408,17 @@ def fill_job(
                         break
                     page.bidi.protect_secrets(credentials.email, credentials.password)
                     authentication = authenticate(page, policy, credentials)
-                if not authentication.acted:
-                    report.status, report.note = "blocked", authentication.blocker or before.blocker
+                report.filled.extend(_ACCOUNT_FIELD_LABELS[role] for role in authentication.filled)
+                if authentication.blocker or not authentication.acted:
+                    report.status = "partial" if authentication.filled and not authentication.acted else "blocked"
+                    report.note = authentication.blocker or before.blocker
                     break
                 previous = before.signature
                 settle(page)
                 continue
             if before.blocker:
+                if before.blocker.startswith("closed:"):
+                    closed_url = before.url
                 report.status, report.note = "blocked", before.blocker
                 break
             if before.signature in visited:
@@ -373,7 +426,7 @@ def fill_job(
                 break
             visited.add(before.signature)
             previous = before.signature
-            if ats == "workday" and before.entry:
+            if before.entry:
                 advance(before, ats)
                 settle(page)
                 continue
@@ -407,6 +460,8 @@ def fill_job(
                 break
             after = inspect_page(page)
             if after.blocker:
+                if after.blocker.startswith("closed:"):
+                    closed_url = after.url
                 report.status, report.note = "blocked", after.blocker
                 break
             if after.unsupported_required:
@@ -427,7 +482,7 @@ def fill_job(
                 else:
                     report.status = "ready"
                 break
-            if ats == "workday" and after.safe_next:
+            if ats in ("workday", "smartrecruiters") and after.safe_next:
                 if not result.fields_found:
                     report.status, report.note = "blocked", "Unsupported application step: no verifiable fields; continue manually."
                     break
@@ -439,16 +494,43 @@ def fill_job(
             break
         else:
             report.status, report.note = "blocked", "Application step limit reached; continue manually."
+    except TabClosed:
+        report.status = "blocked"
+        report.error = report.note = (
+            "The application tab closed or was replaced. Continue filling to reopen this job; "
+            "unsaved answers may need re-entry."
+        )
     except (BidiError, UnsafeAction) as exc:
         report.status = "blocked"
         report.error = page.bidi.redact(str(exc)).strip().splitlines()[0][:300]
         report.note = report.error
+    finally:
+        if foreground is not None:
+            try:
+                contexts = page.bidi.command("browsingContext.getTree", {"maxDepth": 0})["contexts"]
+                same_window = {node["context"] for node in contexts
+                               if node.get("clientWindow") == window}
+                if ({page.context, foreground.context} <= same_window and
+                        page.main.call("() => document.visibilityState === 'visible'")):
+                    foreground.activate()
+            except BidiError:
+                pass                    # closed/moved tabs or a new user selection win
     try:
-        current_url = page.main.url
+        current_url = page.main.call("""(key, context) => {
+          try { sessionStorage.setItem(key, context); } catch {}
+          return location.href;
+        }""", CONTEXT_MARKER, page.context)
     except BidiError:
         current_url = url
     report.url = page.bidi.redact(report.url)
     report.note = page.bidi.redact(report.note) if report.note else None
+    if (closed_url and _same_posting_page(url, closed_url)
+            and _same_posting_page(url, current_url)):
+        with transaction(conn):
+            persist_check(conn, job.id, PostingCheck(
+                "closed", "Employer posting page explicitly reports this posting unavailable",
+                closed_url,
+            ))
     record_attempt(conn, job.id, report.status, blocker=report.note if report.status != "ready" else None,
                    context_id=page.context, url=page.bidi.redact(current_url))
     if job.fill_context_id and not resume_tab:
@@ -475,6 +557,7 @@ def _watched_tab(job: Job, tab: Tab, report: FillReport) -> WatchedTab:
         job_id=job.id, context=tab.context, ats=report.ats, form_url=report.url,
         label=f"{job.company_name} - {job.title}", resume_id=report.resume_id,
         track=job.tracks[0] if job.tracks else None,
+        marker=tab.context,
     )
 
 
@@ -487,40 +570,54 @@ def _pause(seconds: float, watch: Watch | None) -> None:
 
 
 def _retained_tab(bidi: Bidi, job: Job) -> Tab | None:
-    """Reuse only the saved context on the same site; never guess another application's tab."""
-    from urllib.parse import unquote, urlsplit
+    """Match the owned tab across BiDi sessions, then verify its application URL."""
+    from urllib.parse import parse_qs, unquote, urljoin, urlsplit
+    from kitty.config import _authentication_origin
+    from kitty.core.apply.watch import posting_key
 
     if not job.fill_context_id or not job.fill_url:
         return None
-    tree = bidi.command("browsingContext.getTree", {})
-    for context in tree.get("contexts", []):
-        if context["context"] != job.fill_context_id:
-            continue
-        old, current = urlsplit(job.fill_url), urlsplit(context.get("url", ""))
-        if (old.scheme, old.netloc, old.path, old.query) == (current.scheme, current.netloc, current.path, current.query):
-            return Tab(bidi, context["context"])
-        # SSO may change a path, but a retained tab can also have been used to
-        # browse another posting. Require the original posting's identity.
-        from kitty.config import _authentication_origin
-        from kitty.core.apply.watch import posting_key
-        key = posting_key(job.url) or posting_key(job.apply_url or "")
-        if (job.fill_blocker and job.fill_blocker.startswith("login: Google session:") and
-                key is not None and posting_key(context.get("url", "")) == key and
-                _authentication_origin(context.get("url", "")) ==
-                _authentication_origin(job.apply_url or job.url) and
-                _authentication_origin(context.get("url", "")) is not None):
-            return Tab(bidi, context["context"])
-        # Workday steps can change path without changing this retained application.
-        source = urlsplit(job.url)
-        source_path = unquote(source.path).split("/")
-        if "apply" in source_path:
-            source_path = source_path[:source_path.index("apply")]
-        posting = source_path[-1] if source_path else ""
-        if (detect_ats(job.url) == "workday" and "job" in source_path and posting and
-                (old.scheme, old.netloc) == (current.scheme, current.netloc) ==
-                (source.scheme, source.netloc) and
-                posting in unquote(current.path).split("/")):
-            return Tab(bidi, context["context"])
+    contexts = bidi.command("browsingContext.getTree", {}).get("contexts", [])
+    origins = {_authentication_origin(job.fill_url), _authentication_origin(job.apply_url or job.url)}
+    origins.discard(None)
+    context = owned_context(bidi, contexts, job.fill_context_id, origins)
+    if context is None:
+        return None
+    old, current = urlsplit(job.fill_url), urlsplit(context.get("url", ""))
+    if (old.scheme, old.netloc, old.path, old.query) == (current.scheme, current.netloc, current.path, current.query):
+        return Tab(bidi, context["context"])
+    # SSO may change a path, but a retained tab can also have been used to
+    # browse another posting. Require the original posting's identity.
+    key = posting_key(job.url) or posting_key(job.apply_url or "")
+    if (job.fill_blocker and job.fill_blocker.startswith(("login:", "consent:", "verification:", "captcha:")) and
+            key is not None and posting_key(context.get("url", "")) == key and
+            _authentication_origin(context.get("url", "")) ==
+            _authentication_origin(job.apply_url or job.url) and
+            _authentication_origin(context.get("url", "")) is not None):
+        return Tab(bidi, context["context"])
+    # Workday steps can change path without changing this retained application.
+    source = urlsplit(job.url)
+    source_path = unquote(source.path).split("/")
+    if "apply" in source_path:
+        source_path = source_path[:source_path.index("apply")]
+    posting = source_path[-1] if source_path else ""
+    if (detect_ats(job.url) == "workday" and "job" in source_path and posting and
+            (old.scheme, old.netloc) == (current.scheme, current.netloc) ==
+            (source.scheme, source.netloc) and
+            posting in unquote(current.path).split("/")):
+        return Tab(bidi, context["context"])
+    if (detect_ats(job.url) == "workday" and current.path.rstrip("/").endswith("/login") and
+            (current.scheme, current.netloc) == (source.scheme, source.netloc) and
+            job.fill_blocker and job.fill_blocker.startswith(("login:", "verification:", "consent:"))):
+        redirects = parse_qs(current.query, keep_blank_values=True).get("redirect", [])
+        if len(redirects) == 1:
+            destination = urlsplit(urljoin(context["url"], redirects[0]))
+            parts = unquote(destination.path).split("/")
+            if "apply" in parts:
+                parts = parts[:parts.index("apply")]
+            if ((destination.scheme, destination.netloc) == (source.scheme, source.netloc) and
+                    "job" in parts and parts[-1] == posting):
+                return Tab(bidi, context["context"])
     return None
 
 
@@ -547,6 +644,9 @@ def _fill_all(
         if job is None:
             reports.append(_error_report(job_id, None, f"no job with id {job_id}"))
             continue
+        if not job.is_active:
+            reports.append(_error_report(job_id, job, "Posting unavailable; refresh availability before preparing it."))
+            continue
         approval = approvals.get(job_id) if approvals is not None else None
         if approvals is not None:
             try:
@@ -564,9 +664,11 @@ def _fill_all(
             report = fill_job(tab, conn, settings, config, job, resume_tab=retained is not None,
                               approval=approval)
             reports.append(report)
+            if watch is not None:
+                watch.tabs[:] = [old for old in watch.tabs if old.context != tab.context and old.job_id != job.id]
             if not keep_open:
                 tab.close()
-            elif watch is not None and report.ats in RULES:
+            elif watch is not None and report.ats in RULES and not (report.note or "").startswith("closed:"):
                 watch.tabs.append(_watched_tab(job, tab, report))
         except BidiError as exc:
             message = bidi.redact(str(exc)).strip().splitlines()[0][:300]

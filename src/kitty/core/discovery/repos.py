@@ -445,7 +445,7 @@ DEREC4_FILES = {      # list name -> raw file; the order decides which copy of a
     "unfiltered": "https://raw.githubusercontent.com/DereC4/internships-and-newgrad/main/go/UNFILTERED.md",
 }
 _DC_COLUMNS = ("company", "role", "location", "age")
-_DC_ROLE = re.compile(r"^\[(?P<title>.+)\]\((?P<url>https?://[^\s)]+)\)$", re.S)
+_DC_ROLE = re.compile(r"^\[(?P<title>.+)\]\((?P<url>https?://[^\s]+)\)$", re.S)
 _DC_AGE = re.compile(r"^(\d+)\s*(d|w|mo|y)$")
 _DC_AGE_DAYS = {"d": 1, "w": 7, "mo": 30, "y": 365}
 #: Simplify markers in a title -> (raw flag, eligibility note or None).
@@ -491,7 +491,7 @@ def parse_derec4(markdown: str, list_name: str) -> tuple[list[NormalizedJob], di
                 flags.append(flag)
                 notes += [note] if note else []
         title = " ".join(title.split())
-        url = role.group("url")
+        url = html.unescape(role.group("url"))
         age_text = _sa_text(cells[at["age"]])
         age = _DC_AGE.match(age_text)
         jobs.append(NormalizedJob(
@@ -539,6 +539,8 @@ class DereC4Adapter:
             stats["files"][list_name] = file_stats
             if not file_stats["tables"]:
                 problems.append(f"{list_name}: no listing tables found (format changed?)")
+            if file_stats["bad_rows"]:
+                problems.append(f"{list_name}: {file_stats['bad_rows']} malformed listing rows")
             for job in found:
                 job.observed_at = getattr(http, "retrieved_at", None)
                 kept = by_id.get(job.source_job_id)

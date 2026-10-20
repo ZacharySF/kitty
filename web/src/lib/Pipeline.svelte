@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { api, dateLabel, type Bootstrap } from "./api";
   import JobDetail from "./JobDetail.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  const pane = useWorkspaceContext();
   let {
     workspace,
     onchange,
@@ -31,6 +33,7 @@
   let pending = $state("");
   let column = $state(0);
   let row = $state(0);
+  let container = $state<HTMLElement>();
   async function load() {
     loading = true;
     error = "";
@@ -53,7 +56,7 @@
     void load();
   });
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
-    if (event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (!pane.active || event.ctrlKey || event.metaKey || event.altKey) return false;
     if (selected !== null) {
       if (event.key === "Escape") {
         selected = null;
@@ -89,8 +92,8 @@
         ),
       );
       row = 0;
-      document
-        .querySelector<HTMLButtonElement>(`[data-pipeline="${column}-0"]`)
+      container
+        ?.querySelector<HTMLButtonElement>(`[data-pipeline="${column}-0"]`)
         ?.focus();
       return true;
     }
@@ -103,8 +106,8 @@
           row + (event.key === "ArrowDown" ? 1 : -1),
         ),
       );
-      document
-        .querySelector<HTMLButtonElement>(`[data-pipeline="${column}-${row}"]`)
+      container
+        ?.querySelector<HTMLButtonElement>(`[data-pipeline="${column}-${row}"]`)
         ?.focus();
       return true;
     }
@@ -121,12 +124,12 @@
   }
 </script>
 
-<section class="panel pipeline" aria-label="Application pipeline">
+<section class="panel pipeline" bind:this={container} aria-label="Application pipeline">
   <div class="panel-heading">
     <h2>Application pipeline</h2>
     <div class="controls">
-      <label class="sr-only" for="pipeline-track">Application track</label
-      ><select id="pipeline-track" bind:value={track} onchange={load}
+      <label class="sr-only" for={`${pane.id}-pipeline-track`}>Application track</label
+      ><select id={`${pane.id}-pipeline-track`} bind:value={track} onchange={load}
         ><option value="">All application tracks</option
         >{#each workspace?.tracks || [] as item}<option value={item.name}
             >{item.label}</option

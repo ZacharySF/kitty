@@ -2,8 +2,6 @@
   import { onMount } from "svelte";
   import { Panel, Button } from "@nunera/bracket";
   import {
-    DEFAULT_PHYSICS,
-    PHYSICS_LIMITS,
     mountGraph,
     webglAvailable,
     type GraphHandle,
@@ -12,6 +10,10 @@
     type GraphNode,
     type GraphPhysics,
   } from "./graph3d";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+
+  const pane = useWorkspaceContext();
   // Read-only 3D view of a schema graph plus an equivalent searchable
   // adjacency table: every 3D interaction has a keyboard/screen-reader path.
   let {
@@ -19,7 +21,7 @@
     nodes,
     links,
     selected = null,
-    layout = $bindable<GraphLayout>("force"),
+    layout = $bindable<GraphLayout>(graphLayout()),
     onSelect,
   }: {
     title: string;
@@ -30,10 +32,10 @@
     onSelect: (id: string) => void;
   } = $props();
   const LAYOUTS: [GraphLayout, string][] = [
-    ["force", "Force / free physics"],
-    ["tree", "Tree / outward arrows"],
-    ["clusters", "Clusters / grouped hulls"],
-    ["sphere", "Sphere / hubs + shell"],
+    ["force", "Force"],
+    ["tree", "Tree"],
+    ["clusters", "Clusters"],
+    ["sphere", "Sphere"],
   ];
   const PAGE = 60;
   let host = $state<HTMLDivElement>(),
@@ -43,7 +45,7 @@
     hovered = $state.raw<{ id: string; label: string; group: string } | null>(
       null,
     ),
-    physics = $state<GraphPhysics>({ ...DEFAULT_PHYSICS }),
+    physics = $state<GraphPhysics>(graphPhysics()),
     query = $state(""),
     limit = $state(PAGE);
   let shownNodes: GraphNode[] | null = null,
@@ -94,17 +96,15 @@
   function describe(l: GraphLink) {
     return l.label ? ` (${l.label})` : "";
   }
-  function tune(key: keyof GraphPhysics, value: number) {
-    physics[key] = value;
-    handle?.setPhysics({ [key]: value });
-  }
-  function resetPhysics() {
-    physics = { ...DEFAULT_PHYSICS };
-    handle?.setPhysics({ ...DEFAULT_PHYSICS });
-  }
   onMount(() => {
     let alive = true,
       mounted: GraphHandle | null = null;
+    const syncSettings = () => {
+      layout = graphLayout();
+      physics = graphPhysics();
+      handle?.setPhysics(physics);
+    };
+    window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     if (!webglAvailable()) {
       problem =
         "WebGL is unavailable in this browser, so the 3D view is off. The adjacency table below has the same nodes and connections.";
@@ -119,8 +119,10 @@
         ...data,
         layout,
         physics: { ...physics },
-        onSelect: (n) => onSelect(n.id),
+        active: pane.active,
+        onSelect: (n) => { if (pane.active) onSelect(n.id); },
         onHover: (n) => {
+          if (!pane.active && n) return;
           hovered = n ? { id: n.id, label: n.label, group: n.group } : null;
         },
         reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -144,6 +146,7 @@
     }
     return () => {
       alive = false;
+      window.removeEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
       mounted?.destroy();
       handle = null;
     };
@@ -164,6 +167,9 @@
     shownSelected = selected;
     handle.focus(selected);
   });
+  $effect(() => {
+    handle?.setActive(pane.active);
+  });
 </script>
 
 <div class="network">
@@ -172,7 +178,7 @@
       class="stage3d"
       bind:this={host}
       role="img"
-      aria-label={`${title}: ${nodes.length} nodes and ${links.length} connections in 3D. Drag to orbit, scroll to zoom, click a node to inspect it. The adjacency table below lists the same graph for keyboard and screen-reader use.`}
+      aria-label={`${title}: ${nodes.length} nodes and ${links.length} connections in 3D. Drag with the left or scroll-wheel button held to rotate, scroll to zoom, click a node to inspect it. The adjacency table below lists the same graph for keyboard and screen-reader use.`}
     ></div>
     {#if loading}<p class="overlay">Loading 3D renderer…</p>{/if}
     {#if problem}<p class="overlay problem" role="alert">{problem}</p>{/if}
@@ -186,8 +192,8 @@
     </p>
   </div>
   <Panel
-    title="[physics]"
-    readout={`${nodes.length} NODES / ${links.length} LINKS`}
+    title="Layout"
+    readout={`${nodes.length} nodes · ${links.length} connections`}
   >
     <div class="controls">
       <label
@@ -196,27 +202,12 @@
             >{/each}</select
         ></label
       >
-      {#each [["repulsion", "Repulsion"], ["spring", "Spring"], ["damping", "Damping"]] as [key, text]}
-        {@const k = key as keyof GraphPhysics}
-        <label
-          >{text} <output>{physics[k]}</output><input
-            type="range"
-            min={PHYSICS_LIMITS[k].min}
-            max={PHYSICS_LIMITS[k].max}
-            step={PHYSICS_LIMITS[k].step}
-            value={physics[k]}
-            disabled={!handle}
-            oninput={(e) => tune(k, Number(e.currentTarget.value))}
-          /></label
-        >
-      {/each}
-      <Button onclick={resetPhysics} disabled={!handle}>Reset physics</Button>
       <Button onclick={() => handle?.focus(null)} disabled={!handle}
         >Reset camera</Button
       >
     </div>
   </Panel>
-  <Panel title="[list] Accessible adjacency table">
+  <Panel title="Nodes">
     <label
       >Search nodes<input
         type="search"
@@ -363,16 +354,6 @@
     font-size: 11px;
     color: var(--muted);
     min-width: 140px;
-  }
-  output {
-    color: var(--ink);
-  }
-  input[type="range"] {
-    border: 0;
-    background: none;
-    padding: 0;
-    width: 100%;
-    accent-color: var(--accent);
   }
   select,
   input[type="search"] {

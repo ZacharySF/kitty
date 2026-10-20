@@ -3,6 +3,8 @@
   import { api, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
   import ResumeReview, { type ResumeAudit } from "./ResumeReview.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  const pane = useWorkspaceContext();
   let {
     demo = false,
     onopenjob,
@@ -128,7 +130,7 @@
     }
   }
   async function ask(action: Decision) {
-    if (busy) return;
+    if (!pane.active || busy) return;
     error = "";
     if (action === "generate" || action === "rollback") coachOpen = true;
     if (action === "promote" || action === "reject") versionsOpen = true;
@@ -136,6 +138,7 @@
     pendingTrack = track;
     pending = action;
     await tick();
+    if (!pane.active || pending !== action) return;
     dialog?.showModal();
     cancel?.focus({ preventScroll: true });
     if (dialog) dialog.scrollTop = 0;
@@ -153,6 +156,7 @@
     });
   }
   async function confirm() {
+    if (!pane.active) return;
     const action = pending,
       versionId = pendingVersionId,
       approvedTrack = pendingTrack;
@@ -224,6 +228,7 @@
   async function keydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement | null;
     if (
+      !pane.active ||
       event.defaultPrevented ||
       event.ctrlKey ||
       event.metaKey ||
@@ -249,7 +254,7 @@
       event.preventDefault();
       versionsOpen = true;
       await tick();
-      versionSelect?.focus();
+      if (pane.active) versionSelect?.focus();
     } else if (event.key === "g" && track) {
       event.preventDefault();
       void ask("generate");
@@ -281,6 +286,9 @@
       }
     }
   }
+  $effect(() => {
+    if (!pane.active) dismiss();
+  });
   onMount(() => {
     void load();
   });
@@ -289,13 +297,13 @@
 <svelte:window onkeydown={keydown} />
 <section
   class="panel library"
-  aria-labelledby="library-title"
+  aria-labelledby={`${pane.id}-library-title`}
   aria-busy={loading}
 >
   <header class="panel-heading">
     <div>
       <p class="eyebrow">Setup / Step 2</p>
-      <h2 id="library-title">My resumes</h2>
+      <h2 id={`${pane.id}-library-title`}>My resumes</h2>
       <p class="muted">
         Upload a PDF you have checked, then choose it for a job in Prepare
         applications. Your resume stays local; uploading never submits an
@@ -562,9 +570,9 @@
   onclose={() => {
     pending = null;
   }}
-  aria-labelledby="resume-confirm-title"
+  aria-labelledby={`${pane.id}-resume-confirm-title`}
 >
-  <h3 id="resume-confirm-title">
+  <h3 id={`${pane.id}-resume-confirm-title`}>
     {pending === "register"
       ? "Save this resume PDF?"
       : pending === "generate"

@@ -48,7 +48,7 @@ def _authentication_plan(app, selected: list[dict], mode: str) -> tuple[dict, st
             binding = credential_binding(credentials)
     return {
         "enabled": policy.enabled,
-        "allow_account_creation": policy.allow_account_creation,
+        "allow_account_creation": mode in ("auto", "create") or (mode == "configured" and policy.allow_account_creation),
         "approved_origins": sorted(origins),
         "configured_origins": [origin for origin in policy.approved_origins
                                if origin != "https://accounts.google.com"] if policy.enabled else [],
@@ -113,13 +113,24 @@ class AutomationController:
         with self._lock:
             if self._closed:
                 raise _error(409, "Browser controller is shutting down")
-            if self._state["running"]:
+            if self._state["running"] and self._state["phase"] != "watching":
                 raise _error(409, "A browser worker is active; stop it and wait before starting another")
             if not plan["job_ids"]:
                 raise _error(409, "No eligible jobs in this preparation plan")
             approvals = MappingProxyType(dict(plan.get("_approvals", {})))
             if set(approvals) != set(plan["job_ids"]):
                 raise _error(409, filler.APPROVAL_CHANGED)
+            previous = self._thread if self._state["running"] else None
+            if previous is not None:
+                self._watch.stop.set()
+                self._state["phase"] = "stopping"
+        if previous is not None:
+            previous.join(timeout=5)
+        with self._lock:
+            if self._closed:
+                raise _error(409, "Browser controller is shutting down")
+            if self._state["running"]:
+                raise _error(409, "The previous browser worker is stopping; wait for it before preparing again")
             captured = copy.deepcopy(config)
             self._state = {
                 "running": True, "phase": "filling", "job_ids": list(plan["job_ids"]),
@@ -157,6 +168,10 @@ class AutomationController:
                     row["error"] = "The Firefox connection was lost. Keep Firefox open and review a new preparation plan; earlier results are retained."
                 elif "timeout" in message or "timed out" in message:
                     row["error"] = "Firefox did not respond in time. Review the application tab before trying again."
+                elif row["error"].startswith(("Firefox not found.", "Firefox requires ", "Firefox did not open ", "Firefox could not start ")):
+                    pass  # Static startup diagnostics contain no form or credential values.
+                elif "remote-control session" in message or "remote-controlling the kitty Firefox" in message:
+                    row["error"] = "Another controller holds the kitty Firefox session. Stop its watcher before preparing this run; your tabs stay open."
                 else:
                     row["error"] = "Browser preparation failed; review the retained tab or browser setup"
                 row["note"] = row["error"]
@@ -252,9 +267,10 @@ def _selection(app, conn, body: dict) -> tuple[str, str | None, int, list[int]]:
 
 def preparation_plan(app, conn, body: dict) -> dict:
     mode, track, cap, ids = _selection(app, conn, body)
-    auth_mode = body.get("authentication_mode", "configured")
-    if auth_mode not in ("configured", "login", "create", "google"):
-        raise _error(400, "authentication_mode must be configured, login, create, or google")
+    auth_mode = body.get("authentication_mode", "google" if
+                         app.config.apply.authentication.account_mode == "google" else "auto")
+    if auth_mode not in ("auto", "configured", "login", "create", "google"):
+        raise _error(400, "authentication_mode must be auto, configured, login, create, or google")
     left: list[dict] = []
     if mode == "favorites":
         planned = autofill.plan_run(conn, app.config, limit=cap, track=track)
@@ -377,11 +393,10 @@ def post(app, conn, path: str, body: dict) -> dict | None:
                 origins = (auth["configured_origins"] if mode == "configured"
                            else auth["approved_origins"])
                 if not origins or (mode == "configured" and not captured.apply.authentication.enabled):
-                    raise _error(400, "Choose sign in or create account and review the exact HTTPS websites first")
+                    raise _error(400, "Review the exact HTTPS account destinations before preparing applications")
                 policy = AuthenticationSettings(
                     enabled=True, approved_origins=origins,
-                    allow_account_creation=(mode == "create" or (
-                        mode == "configured" and captured.apply.authentication.allow_account_creation)),
+                    allow_account_creation=auth["allow_account_creation"],
                     account_mode=(captured.apply.authentication.account_mode
                                   if mode == "configured" else mode),
                 )

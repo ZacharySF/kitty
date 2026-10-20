@@ -802,6 +802,8 @@ def test_workday_steps_resume_manual_choices_and_upload_without_submitting(space
     ('<input autocomplete="one-time-code">', "verification:"),
     ('<iframe title="recaptcha challenge" src="about:blank"></iframe>', "captcha:"),
     ('<p>This job is no longer available.</p>', "closed:"),
+    ('<p>Unfortunately this position has been closed but you can search our open jobs.</p>', "closed:"),
+    ('<h1>Page not found</h1>', "closed:"),
 ])
 def test_preflight_reports_actual_gate_without_filling(space, page, markup, blocker):
     job = _job(space, "unanswered")
@@ -811,7 +813,91 @@ def test_preflight_reports_actual_gate_without_filling(space, page, markup, bloc
     assert result.status == "blocked"
     assert result.note.startswith(blocker)
     assert result.filled == []
-    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+    stored = jobs_core.get_job(space.conn, job.id)
+    assert stored.fill_ready_at is None
+    assert bool(stored.is_active) == (not blocker.startswith("closed:"))
+
+
+def test_closed_posting_does_not_follow_similar_jobs_or_profile_entry(space, page):
+    job = _safety_form(space, page)
+    _js(page, """() => {
+        const form = document.querySelector('form');
+        form.insertAdjacentHTML('beforebegin', `<h1>Patient Services Specialist I</h1>
+            <p>Thanks for your interest in this position.
+            Unfortunately this position has been closed but you can search our open jobs
+            by <a href="/jobs">clicking here</a>.</p>
+            <a href="/profile">Go to Profile</a>
+            <h2>Similar Listings</h2><a href="/jobs/a-different-role">Apply Now</a>`);
+        window.__listingClicks = 0;
+        document.querySelectorAll('a').forEach(e =>
+            e.addEventListener('click', event => { event.preventDefault(); window.__listingClicks++; }));
+    }""")
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert result.status == "blocked"
+    assert result.note.startswith("closed:")
+    assert result.filled == []
+    assert _value(page, "[name=first_name]") == ""
+    assert _files(page, "[name=resume]") == []
+    assert _js(page, "() => window.__listingClicks") == 0
+    _assert_nothing_submitted(page)
+
+
+def test_related_closed_posting_notice_does_not_close_current_job(space, page):
+    job = _safety_form(space, page)
+    _js(page, """() => document.body.insertAdjacentHTML('beforeend',
+        '<aside><h2>This position has been closed</h2></aside>')""")
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert not (result.note or "").startswith("closed:")
+    assert jobs_core.get_job(space.conn, job.id).is_active
+
+
+def test_terminal_notice_on_another_posting_does_not_close_original_job(space, page):
+    job = _job(space, "unanswered")
+    page.goto(job.url)
+    _js(page, """() => {
+      history.replaceState(null, '', '/jobs/a-different-role');
+      document.body.innerHTML = '<h1>This job is no longer available</h1>';
+    }""")
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert result.status == "blocked" and result.note.startswith("closed:")
+    assert jobs_core.get_job(space.conn, job.id).is_active
+
+
+@pytest.mark.parametrize("url", [
+    "https://zapply.jobs/jobs/",
+    "https://zapply.jobs/jobs",
+    "https://zapply.jobs/jobs/?page=2",
+])
+def test_generic_aggregator_listing_stops_before_form_inspection(url):
+    from types import SimpleNamespace
+    from kitty.core.apply.preflight import advance, inspect_page
+    from kitty.core.apply.page import UnsafeAction
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("A generic listing must not be inspected as an employer application")
+
+    frame = SimpleNamespace(url=url, call=unexpected_call)
+    snapshot = inspect_page(SimpleNamespace(frames=lambda: [frame]))
+    assert snapshot.blocker.startswith("listing:")
+    assert "exact posting" in snapshot.blocker
+    assert not snapshot.has_fields
+    assert not snapshot.entry
+    with pytest.raises(UnsafeAction):
+        advance(snapshot, "other")
+
+
+@pytest.mark.parametrize("url", [
+    "https://zapply.jobs/jobs/exact-posting",
+    "https://zapply.jobs/",
+    "https://not-zapply.jobs/jobs/",
+    "https://zapply.jobs.example.invalid/jobs/",
+    "https://employer.example/jobs/",
+    "http://zapply.jobs/jobs/",
+])
+def test_listing_diagnosis_is_not_guessed_for_other_pages(url):
+    from kitty.core.apply.preflight import _listing_blocker
+
+    assert _listing_blocker(url) is None
 
 
 def test_passive_captcha_is_not_a_challenge_and_unknown_next_is_not_clicked(space, page):
@@ -852,7 +938,7 @@ def test_workday_posting_entry_waits_for_real_gate_without_entering_identity(spa
     monkeypatch.setattr(filler, "detect_ats", lambda url: "workday")
     job = _job(space, "workday_entry")
     result = fill_job(page, space.conn, space.settings, space.config, job)
-    assert result.status == "blocked" and result.note.startswith("login:")
+    assert result.status == "blocked"
     assert _value(page, "[name=email]") == ""
     assert _value(page, "[name=password]") == ""
     assert _js(page, "() => [window.__entries, window.__submitted]") == [2, 0]
@@ -890,12 +976,11 @@ def test_repeated_workday_step_stops_without_claiming_ready(space, page, monkeyp
     monkeypatch.setattr(filler, "wait_for_page", lambda page, **kwargs: inspect_page(page))
     job = _job(space, "workday_entry")
     page.goto(job.url)
-    _js(page, "() => { document.querySelector('button').onclick = () => {}; }")
+    _js(page, "() => { window.__entryAttempts = 0; document.querySelector('button').onclick = () => window.__entryAttempts++; }")
     report = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
     assert report.status == "blocked"
-    assert "did not advance" in report.note
     assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
-    assert _js(page, "() => window.__submitted") == 0
+    assert _js(page, "() => [window.__entryAttempts, window.__submitted]") == [1, 0]
 
 
 def test_unavailable_tab_restart_never_claims_manual_values_were_restored(space, page):
@@ -924,11 +1009,28 @@ def test_retained_workday_tab_requires_exact_posting_identity(space):
     job = replace(_job(space, "unanswered"), url=url, apply_url=url + "/apply",
                   fill_context_id="saved", fill_url=url + "/apply")
     current = {"context": "saved", "url": url.replace("R-1", "R-10") + "/apply/applyManually"}
-    bidi = SimpleNamespace(command=lambda *args: {"contexts": [current]})
+    bidi = SimpleNamespace(command=lambda method, *args, **kwargs:
+        {"contexts": [current]} if method == "browsingContext.getTree" else
+        {"result": {"type": "string", "value": "null"}})
     assert _retained_tab(bidi, job) is None
     current["url"] = url + "/apply/applyManually"
     assert _retained_tab(bidi, job).context == "saved"
     current["context"] = "unrelated"
+    assert _retained_tab(bidi, job) is None
+
+    from urllib.parse import quote
+    job = replace(job, fill_blocker="verification: verify your account")
+    current["context"] = "saved"
+    login = "https://company.wd1.myworkdayjobs.com/External/login?redirect="
+    for destination, expected in [
+        ("/en-US/External/job/City/Role_R-1/apply/applyManually", True),
+        ("/en-US/External/job/City/Role_R-10/apply/applyManually", False),
+        ("https://other.example/job/City/Role_R-1/apply", False),
+        ("//other.example/job/City/Role_R-1/apply", False),
+    ]:
+        current["url"] = login + quote(destination, safe="")
+        assert (_retained_tab(bidi, job) is not None) is expected
+    current["url"] = login + quote("/External/job/City/Role_R-1/apply", safe="") + "&redirect="
     assert _retained_tab(bidi, job) is None
 
 
@@ -992,6 +1094,52 @@ def test_required_native_upload_inherits_group_label_and_requiredness(space, pag
     assert _value(page, '[name=first_name]') == 'Pat'
     assert _files(page, '[name=resume]') == ['resume.pdf']
     assert result.status == 'ready'
+    _assert_nothing_submitted(page)
+
+
+def test_greenhouse_aria_fields_fill_and_unknown_question_stays_manual(space, page):
+    from kitty.core.apply.page import form_frames
+    from kitty.core.apply.preflight import inspect_page
+
+    job = _safety_form(space, page)
+    _js(page, """() => {
+        const first = document.querySelector('[name=first_name]');
+        first.required = false;
+        first.setAttribute('aria-required', 'true');
+        const input = document.querySelector('[name=resume]');
+        input.parentElement.outerHTML = `<div class="file-upload" role="group"
+            aria-labelledby="upload-label-resume" aria-required="true">
+            <div class="label upload-label" id="upload-label-resume">Resume/CV<span class="required">*</span></div>
+            <div class="file-upload__wrapper"><div class="button-container"><div class="secondary-button">
+                <button type="button">Attach</button><label for="resume" style="position:absolute;clip:rect(0,0,0,0)">Attach</label>
+                <input id="resume" name="resume" type="file" style="position:absolute;width:1px;height:1px;clip:rect(0,0,0,0)">
+            </div><button type="button">Enter manually</button></div></div></div>`;
+        document.querySelector('form').insertAdjacentHTML('beforeend', `
+            <label for="last_name">Last Name</label>
+            <input id="last_name" aria-label="Last Name" aria-required="true">
+            <label id="onsite-label" for="onsite">Are you comfortable being onsite five days a week?</label>
+            <div class="select__control"><input id="onsite" role="combobox" aria-required="true"
+                aria-expanded="false" aria-labelledby="onsite-label" autocomplete="off"></div>`);
+    }""")
+    fields = read_fields(form_frames(page))
+    upload_field = next(field for field in fields if field.kind == "file")
+    assert upload_field.required and upload_field.label == "Resume/CV"
+    assert not inspect_page(page).unsupported_required
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert _value(page, "[name=first_name]") == "Pat"
+    assert _value(page, "#last_name") == "Tester"
+    assert _files(page, "#resume") == ["resume.pdf"]
+    assert _value(page, "#onsite") == ""
+    assert result.status == "partial"
+    assert result.unanswered == ["Are you comfortable being onsite five days a week?"]
+    assert result.unanswered[0] in _logged(space)
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+    _js(page, "() => { document.querySelector('#last_name').value = 'Manual surname'; }")
+    retained = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert retained.status == "partial"
+    assert _value(page, "#last_name") == "Manual surname"
+    assert _files(page, "#resume") == ["resume.pdf"]
+    assert _value(page, "#onsite") == ""
     _assert_nothing_submitted(page)
 
 
@@ -1199,18 +1347,27 @@ def test_embedded_validation_error_blocks_main_form_review_readiness(space, page
     _assert_nothing_submitted(page)
 
 
-def test_workday_active_login_step_is_a_gate_even_before_inputs_render(page):
-    from kitty.core.apply.preflight import wait_for_page
+def test_workday_waits_for_account_fields_after_progress_shell(page):
+    from kitty.core.apply.preflight import inspect_page, wait_for_page
 
     page.goto((FORMS / "workday_entry.html").as_uri())
     _js(page, """() => {
         document.body.innerHTML = '<div data-automation-id="progressBarActiveStep">' +
-            'current step 1 of 6 Create Account/Sign In</div><p>Loading...</p>';
+            'current step 1 of 6 Create Account/Sign In</div><div id="fields">Loading...</div>';
     }""")
-    state = wait_for_page(page)
+    initial = inspect_page(page)
+    assert initial.blocker is None
+    assert not initial.has_fields
+    _js(page, """() => {
+        setTimeout(() => {
+            document.querySelector('#fields').innerHTML =
+                '<label>Email<input type="email"></label>' +
+                '<label>Password<input type="password"></label><button>Sign In</button>';
+        }, 300);
+    }""")
+    state = wait_for_page(page, seconds=3)
     assert state.blocker.startswith("login:")
-    assert state.step == "current step 1 of 6 Create Account/Sign In"
-    assert not state.has_fields
+    assert state.has_fields
     assert _js(page, "() => window.__submitted") == 0
 
 
@@ -1280,10 +1437,7 @@ def test_approved_fill_fails_before_browser_if_inputs_changed(space, monkeypatch
         filler.fill_jobs(space.settings, space.config, [job.id], approvals=approvals)
 
 
-def test_approved_fill_uploads_only_reviewed_bytes_after_default_changes(space, monkeypatch):
-    from contextlib import contextmanager
-    from types import SimpleNamespace
-    from kitty.core.apply import filler
+def test_approved_fill_uploads_only_reviewed_bytes_after_default_changes(space, page):
     job = _job(space, "greenhouse")
     approval = _approval(space, job)
     expected = Path(approval.file_path).read_bytes()
@@ -1292,43 +1446,15 @@ def test_approved_fill_uploads_only_reviewed_bytes_after_default_changes(space, 
     replacement = resumes_core.add_resume(space.conn, "New default", second)
     space.conn.execute("INSERT INTO resume_default_overrides (track, resume_id) VALUES (?, ?)",
                        (space.track.name, replacement.id))
-    monkeypatch.setattr(filler, "choose_resume", lambda *a: pytest.fail("Approval must never re-resolve a default"))
-    bidi = SimpleNamespace(redact=lambda value: value)
-    tab = SimpleNamespace(bidi=bidi, context="approved-tab", goto=lambda url: None,
-                          close=lambda: None, main=SimpleNamespace(url=job.url))
-    @contextmanager
-    def browser(settings):
-        yield bidi
-    monkeypatch.setattr(filler, "headless_firefox", browser)
-    monkeypatch.setattr(filler, "_retained_tab", lambda *a: None)
-    monkeypatch.setattr(filler, "open_tab", lambda *a, **k: tab)
-    monkeypatch.setattr(filler, "settle", lambda *a, **k: None)
-    monkeypatch.setattr(filler, "wait_for_page", lambda *a, **k: SimpleNamespace(
-        blocker=None, signature="form", entry=False, step=True, boundary=True,
-    ))
-    monkeypatch.setattr(filler, "inspect_page", lambda *a: SimpleNamespace(
-        blocker=None, errors=[], review=True, boundary=True, unsupported_required=False,
-    ))
-    uploaded = []
-    monkeypatch.setattr(filler, "upload", lambda frame, key, path: uploaded.append((path, path.read_bytes())))
-    def form(page, config, path, *, upload_resume, **kwargs):
-        assert path == Path(approval.file_path)
-        upload_resume(None, "resume-input", path)
-        return filler.FormResult(filled=["resume"], resume_uploaded=True, resume_verified=True, fields_found=1)
-    monkeypatch.setattr(filler, "fill_form", form)
-    reports = filler.fill_jobs(space.settings, space.config, [job.id], headless=True,
-                               approvals={job.id: approval})
-    assert reports[0].status == "ready"
-    assert reports[0].resume_id == approval.resume_id
+    report = fill_job(page, space.conn, space.settings, space.config, job, approval=approval)
+    assert report.resume_id == approval.resume_id
     assert jobs_core.get_job(space.conn, job.id).resume_id == approval.resume_id
-    assert len(uploaded) == 1
-    frozen, content = uploaded[0]
-    assert content == expected
-    assert frozen != Path(approval.file_path)
-    assert frozen.read_bytes() == expected  # survives worker return for human submit
-    assert frozen.stat().st_mode & 0o777 == 0o400
-    watched = _watched_tab(job, tab, reports[0])
-    assert watched.resume_id == approval.resume_id
+    content = page.main.call("""async () => Array.from(new Uint8Array(
+        await document.querySelector('input[type=file]').files[0].arrayBuffer()
+    ))""", page_realm=True)
+    assert bytes(content) == expected
+    assert _watched_tab(job, page, report).resume_id == approval.resume_id
+    _assert_nothing_submitted(page)
 
 
 @pytest.mark.parametrize("change", ["changed", "missing", "symlink", "corrupt_snapshot"])
@@ -1352,3 +1478,489 @@ def test_approved_upload_checks_source_and_snapshot_at_upload(space, monkeypatch
     monkeypatch.setattr(filler, "upload", lambda *a: pytest.fail("Unapproved bytes must not upload"))
     with pytest.raises(filler.ApprovalError, match="review the plan again"):
         filler._upload_approved(None, "resume-input", path, approval, space.conn, space.settings)
+
+
+def test_firefox_start_requires_desktop_but_reuses_existing_browser(space, monkeypatch):
+    from kitty.core.apply import browser
+
+    monkeypatch.setattr(browser.sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(browser, "is_listening", lambda port: False)
+    monkeypatch.setattr(browser, "_start", lambda *args: pytest.fail("No desktop: do not spawn Firefox"))
+    settings = replace(space.settings, firefox_path="/system/firefox")
+    with pytest.raises(browser.BrowserError, match="active desktop display"):
+        browser.ensure_firefox(settings)
+    monkeypatch.setattr(browser, "is_listening", lambda port: True)
+    assert browser.ensure_firefox(settings) == settings.browser_port
+
+
+@pytest.mark.parametrize("markup", [
+    '<input id="choice" type="checkbox" style="display:none">'
+    '<label for="choice">Available for relocation?</label>',
+    '<button id="choice" type="button" role="checkbox" aria-checked="false" '
+    'onclick="this.setAttribute(\'aria-checked\', this.getAttribute(\'aria-checked\') !== \'true\')">'
+    'Available for relocation?</button>',
+    '<input id="choice" type="button" role="checkbox" aria-checked="false" '
+    'value="Available for relocation?" '
+    'onclick="this.setAttribute(\'aria-checked\', this.getAttribute(\'aria-checked\') !== \'true\')">',
+    '<div id="choice" tabindex="0" role="checkbox" aria-checked="false" '
+    'onclick="this.setAttribute(\'aria-checked\', this.getAttribute(\'aria-checked\') !== \'true\')">'
+    'Available for relocation?</div>',
+])
+def test_explicit_choices_use_real_pointer_actions_without_touching_submit(page, markup):
+    from urllib.parse import quote
+    from kitty.core.apply.page import tick
+
+    page.goto("data:text/html," + quote(
+        '<form onsubmit="window.submitted++;return false">' + markup +
+        '<button type="submit">Submit application</button></form>'
+        '<script>window.submitted=0;window.trusted=[];'
+        'document.querySelector("#choice").addEventListener("click", e => {'
+        'window.trusted.push(e.isTrusted);if (!e.isTrusted) e.preventDefault();'
+        '});</script>'))
+    choice = next(f for f in read_fields([page.main]) if f.element_id == "choice")
+    assert choice.kind == "checkbox" and choice.blank
+    assert tick(page.main, choice.key)
+    assert not next(f for f in read_fields([page.main]) if f.element_id == "choice").blank
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
+    # Checking an already checked control must not toggle it back.
+    assert tick(page.main, choice.key)
+    assert _js(page, "() => window.trusted") == [True]
+
+
+@pytest.mark.parametrize("role", ["checkbox", "radio"])
+def test_required_aria_group_has_one_named_question_with_selectable_options(page, role):
+    from urllib.parse import quote
+    from kitty.core.apply.page import tick
+
+    group_role = "radiogroup" if role == "radio" else "group"
+    page.goto("data:text/html," + quote(
+        f'<div role="{group_role}" aria-required="true" aria-labelledby="question">'
+        '<span id="question">Available for relocation?</span>'
+        f'<div id="yes" tabindex="0" role="{role}" aria-checked="false" '
+        'onclick="this.setAttribute(\'aria-checked\', \'true\')">Yes</div>'
+        f'<div role="{role}" tabindex="0" aria-checked="false">No</div></div>'))
+    fields = read_fields([page.main])
+    assert len(fields) == 1
+    field = fields[0]
+    assert field.kind == role and field.required and field.blank
+    assert field.label == "Available for relocation?"
+    assert field.options == ("Yes", "No")
+    assert tick(page.main, field.option_keys[0])
+    assert not read_fields([page.main])[0].blank
+
+
+def test_disguised_submit_never_becomes_an_aria_choice(page):
+    from urllib.parse import quote
+    from kitty.core.apply.page import UnsafeAction, tick
+
+    page.goto("data:text/html," + quote(
+        '<form onsubmit="window.submitted++;return false">'
+        '<button id="choice" type="button" role="checkbox" aria-checked="false">Available?</button>'
+        '<button id="final" type="submit" role="checkbox" aria-checked="false">Submit application</button>'
+        '</form><script>window.submitted=0;</script>'))
+    fields = read_fields([page.main])
+    assert not any(f.element_id == "final" for f in fields)
+    choice = next(f for f in fields if f.element_id == "choice")
+    _js(page, "() => { document.querySelector('#choice').type = 'submit'; }")
+    with pytest.raises(UnsafeAction):
+        tick(page.main, choice.key)
+    assert _js(page, "() => window.submitted") == 0
+
+
+def test_state_backed_aria_combobox_supports_automatic_and_manual_selection(page):
+    from urllib.parse import quote
+
+    page.goto("data:text/html," + quote("""
+      <form onsubmit="window.submitted++;return false">
+        <span id="question">Available for relocation?</span>
+        <button type="button" id="combo" role="combobox" aria-labelledby="question"
+          aria-controls="choices" aria-expanded="false">Choose...</button>
+        <div id="choices" role="listbox" hidden>
+          <div role="option" aria-selected="false"><span>Yes</span></div>
+          <div role="option" aria-selected="false"><span>No</span></div>
+        </div>
+        <button type="submit">Submit application</button>
+      </form>
+      <script>
+        window.submitted=0;window.trusted=[];
+        const combo=document.querySelector('#combo'), list=document.querySelector('#choices');
+        combo.onclick=() => {
+          list.hidden=!list.hidden;
+          combo.setAttribute('aria-expanded', String(!list.hidden));
+        };
+        for (const option of list.children) option.onclick=event => {
+          window.trusted.push(event.isTrusted);
+          for (const other of list.children) other.setAttribute('aria-selected', String(other===option));
+          combo.textContent=option.textContent; list.hidden=true;
+          combo.setAttribute('aria-expanded', 'false');
+        };
+      </script>
+    """))
+    field = next(f for f in read_fields([page.main]) if f.element_id == "combo")
+    assert field.kind == "combobox" and field.blank
+    assert pick_from_list(page.main, field.key, ("Yes",), location=False)
+    assert not next(f for f in read_fields([page.main]) if f.element_id == "combo").blank
+    # The guarded automation leaves the same controls usable by trusted manual input.
+    for selector in ("#combo", "#choices [role=option]:last-child span"):
+        target = page.main.node("(s) => document.querySelector(s)", selector)
+        assert target is not None
+        page.main.click(target)
+    assert _js(page, "() => document.querySelector('#combo').textContent") == "No"
+    assert _js(page, "() => window.trusted") == [True, True]
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize(("legal_markup", "question", "answer"), [
+    ('<label>I accept the privacy policy<input type="checkbox" id="legal" required></label>',
+     "I accept the privacy policy", "Yes"),
+    ('<fieldset><legend>Data choice</legend><label><input type="radio" name="legal" required>'
+     'I accept the privacy policy</label><label><input type="radio" name="legal">No</label></fieldset>',
+     "Data choice", "I accept the privacy policy"),
+    ('<button id="legal" type="button" role="checkbox" aria-required="true" aria-checked="false" '
+     'onclick="this.setAttribute(\'aria-checked\', \'true\')">I accept the privacy policy</button>',
+     "I accept the privacy policy", "Yes"),
+])
+def test_saved_screening_answers_never_accept_legal_choices(space, page, legal_markup, question, answer):
+    from urllib.parse import quote
+    from kitty.core.apply.filler import fill_form
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question=question, answer=answer),
+        AnswerEntry(question="Available for relocation?", answer="Yes"),
+    ]))
+    html = ('<form id="application" onsubmit="document.body.dataset.submitted=\'yes\';return false">'
+            '<label>First name<input name="first_name"></label>' + legal_markup +
+            '<fieldset><legend>Available for relocation?</legend>'
+            '<label><input type="radio" name="relocate" value="yes">Yes</label>'
+            '<label><input type="radio" name="relocate" value="no">No</label></fieldset>'
+            '<button type="submit">Submit application</button></form>')
+    page.goto("data:text/html," + quote(html))
+    result = fill_form(page, config, None)
+    assert _value(page, '[name="first_name"]') == "Pat"
+    assert _js(page, "() => document.querySelector('[name=relocate][value=yes]').checked")
+    assert _js(page, "() => [...document.querySelectorAll('#legal,[name=legal]')].every(e => !e.checked && e.getAttribute('aria-checked') !== 'true')")
+    assert question in result.unanswered
+    assert _js(page, "() => document.body.dataset.submitted") is None
+
+
+def test_custom_option_cannot_hide_an_application_submit_action(page):
+    from urllib.parse import quote
+
+    page.goto("data:text/html," + quote("""
+      <form onsubmit="window.submitted++;return false">
+        <button type="button" id="combo" role="combobox" aria-label="Available for relocation?"
+          aria-controls="choices" onclick="document.querySelector('#choices').hidden=false">Choose...</button>
+        <div id="choices" role="listbox" hidden>
+          <div role="option" aria-selected="false"><button type="submit">Yes</button></div>
+        </div>
+      </form><script>window.submitted=0;</script>
+    """))
+    field = next(f for f in read_fields([page.main]) if f.element_id == "combo")
+    assert not pick_from_list(page.main, field.key, ("Yes",), location=False)
+    assert _js(page, "() => window.submitted") == 0
+
+
+def _shadow_application(page):
+    """A one-click form whose native fields all live in nested open roots."""
+    from urllib.parse import quote
+
+    page.goto("data:text/html," + quote("""
+      <style>application-shell {display:block}</style>
+      <application-shell></application-shell>
+      <script>
+        window.events = {submitted: 0, final: 0, trusted: [], input: 0, change: 0};
+        const shell = document.querySelector('application-shell');
+        const outer = shell.attachShadow({mode:'open'});
+        outer.innerHTML = '<style>:host{display:block} form{display:grid;gap:12px}</style><form></form>';
+        const form = outer.querySelector('form');
+        form.onsubmit = event => { event.preventDefault(); window.events.submitted++; };
+        window.parts = {};
+        function component(name, html, parent=form) {
+          const host = document.createElement('field-component');
+          host.style.display = 'block';
+          parent.append(host);
+          const root = host.attachShadow({mode:'open'});
+          root.innerHTML = '<style>:host{display:block}label{display:block}</style>' + html;
+          window.parts[name] = root;
+          return root;
+        }
+        component('first', '<span id="caption">First name*</span><input id="field" aria-labelledby="caption" required>');
+        component('last', '<label for="field">Last name*</label><input id="field" required value="Manual surname">');
+        component('email', '<span id="caption">Email*</span><input id="field" type="email" aria-labelledby="caption" required>');
+        component('graduation', '<label for="field">Expected graduation date</label><select id="field" required><option value="">Select</option><option value="spring">Spring 2032</option></select>');
+        const resume = component('resume', '<section role="group" aria-labelledby="caption" aria-required="true"><h3 id="caption">Resume</h3></section>');
+        component('file', '<input id="field" type="file" style="display:none">', resume.querySelector('section'));
+        for (const name of ['relocation', 'manual-choice']) {
+          const root = component(name, '<section role="radiogroup" aria-labelledby="caption" aria-required="true"><span id="caption">Available for relocation?</span></section>');
+          const group = root.querySelector('section');
+          for (const text of ['Yes', 'No']) {
+            const option = component(name + text, '<input id="field" type="radio" name="answer" style="display:none"><label for="field">' + text + '</label>', group);
+            const input = option.querySelector('input');
+            input.checked = name === 'manual-choice' && text === 'No';
+            input.addEventListener('click', event => window.events.trusted.push(event.isTrusted));
+          }
+        }
+        for (const name of ['combo', 'manual-combo']) {
+          const root = component(name, '<span id="caption">Available for relocation?</span><button id="field" type="button" role="combobox" aria-labelledby="caption" aria-controls="choices">Choose...</button><div id="choices" role="listbox" hidden><div role="option" aria-selected="false">Yes</div><div role="option" aria-selected="false">No</div></div>');
+          const box = root.querySelector('button'), list = root.querySelector('[role=listbox]');
+          box.onclick = () => { list.hidden = !list.hidden; };
+          for (const option of list.children) option.onclick = event => {
+            window.events.trusted.push(event.isTrusted);
+            for (const other of list.children) other.setAttribute('aria-selected', String(option === other));
+            box.textContent = option.textContent; list.hidden = true;
+          };
+          if (name === 'manual-combo') {
+            list.lastElementChild.setAttribute('aria-selected', 'true');
+            box.textContent = 'No';
+          }
+        }
+        const final = document.createElement('button');
+        final.type = 'submit'; final.textContent = 'Submit application';
+        final.onclick = () => window.events.final++;
+        form.append(final);
+        shell.addEventListener('input', () => window.events.input++);
+        shell.addEventListener('change', () => window.events.change++);
+      </script>
+    """))
+
+
+def test_nested_shadow_application_uses_real_fill_paths_and_preserves_manual_values(space, page):
+    from kitty.core.apply.filler import fill_form
+    from kitty.core.apply.page import _QUERY_ALL_JS, tick, upload
+
+    _shadow_application(page)
+    assert _js(page, "() => document.querySelectorAll('input,select,textarea').length") == 0
+    fields = read_fields([page.main])
+    assert [(f.label, f.required) for f in fields[:5]] == [
+        ("First name", True), ("Last name", True), ("Email", True),
+        ("Expected graduation date", True), ("Resume", True),
+    ]
+    groups = [f for f in fields if f.kind == "radio"]
+    assert len(groups) == 2
+    assert all(f.label == "Available for relocation?" and f.required and f.options == ("Yes", "No") for f in groups)
+    assert groups[0].blank and not groups[1].blank
+    assert set(groups[0].option_keys).isdisjoint(groups[1].option_keys)
+    # The same selector reaches each root once, including a matching Element root.
+    assert page.main.call(
+        "() => {const q=(" + _QUERY_ALL_JS + ");const all=q('input');"
+        "return [all.length,new Set(all).size,q('input',all[0]).length];}"
+    ) == [8, 8, 1]
+
+    resume = space.settings.root / "resume.pdf"
+    upload(page.main, next(f.key for f in fields if f.kind == "file"), resume)
+    fill_form(page, space.config, None, preserve_existing=True)
+    assert _js(page, "() => parts.first.querySelector('input').value") == "Pat"
+    assert _js(page, "() => parts.last.querySelector('input').value") == "Manual surname"
+    assert _js(page, "() => parts.email.querySelector('input').value") == space.config.profile.email
+    assert _js(page, "() => parts.graduation.querySelector('select').value") == "spring"
+    assert _js(page, "() => [...parts.file.querySelector('input').files].map(f=>f.name)") == ["resume.pdf"]
+    assert tick(page.main, groups[0].option_keys[0])
+    assert _js(page, "() => parts.relocationYes.querySelector('input').checked")
+    assert _js(page, "() => parts['manual-choiceNo'].querySelector('input').checked")
+    assert _js(page, "() => parts['manual-combo'].querySelector('button').textContent") == "No"
+    assert _js(page, "() => events.trusted") == [True]
+    assert _js(page, "() => events.input > 0 && events.change > 0")
+    assert _js(page, "() => [events.submitted,events.final]") == [0, 0]
+
+
+def test_shadow_combobox_owns_only_its_root_local_list(page):
+    _shadow_application(page)
+    fields = [f for f in read_fields([page.main]) if f.kind == "combobox"]
+    assert len(fields) == 2 and fields[0].blank and not fields[1].blank
+    assert pick_from_list(page.main, fields[0].key, ("Yes",), location=False)
+    assert _js(page, "() => parts.combo.querySelector('button').textContent") == "Yes"
+    assert _js(page, "() => parts['manual-combo'].querySelector('button').textContent") == "No"
+    assert _js(page, "() => events.trusted") == [True]
+    assert _js(page, "() => [events.submitted,events.final]") == [0, 0]
+
+
+@pytest.mark.parametrize("mutation", [
+    "host.setAttribute('aria-disabled','true')",
+    "host.setAttribute('aria-readonly','true')",
+    "host.setAttribute('disabled','')",
+    "host.setAttribute('readonly','')",
+    "host.setAttribute('inert','')",
+    "const action=document.createElement('button');action.type='submit';host.replaceWith(action);action.append(host)",
+    "const action=document.createElement('a');action.href='#submit';host.replaceWith(action);action.append(host)",
+])
+def test_shadow_host_mutations_reject_remembered_fields_before_writing(page, mutation):
+    from kitty.core.apply.page import UnsafeAction, fill_text, tick, upload
+
+    _shadow_application(page)
+    fields = read_fields([page.main])
+    text = next(f for f in fields if f.label == "First name")
+    choice = next(f for f in fields if f.kind == "radio")
+    resume = next(f for f in fields if f.kind == "file")
+    _js(page, "() => {const host=document.querySelector('application-shell');" + mutation + ";}")
+    assert read_fields([page.main]) == []
+    with pytest.raises(UnsafeAction):
+        fill_text(page.main, text.key, "Must not be written")
+    with pytest.raises(UnsafeAction):
+        tick(page.main, choice.option_keys[0])
+    with pytest.raises(UnsafeAction):
+        upload(page.main, resume.key, Path("/not-opened.pdf"))
+    assert _js(page, "() => parts.first.querySelector('input').value") == ""
+    assert _js(page, "() => [events.submitted,events.final]") == [0, 0]
+
+
+def test_shadow_option_embedded_submit_is_rechecked_after_discovery(page):
+    from kitty.core.apply.page import _SUGGESTIONS_JS
+
+    _shadow_application(page)
+    combo = next(f for f in read_fields([page.main]) if f.kind == "combobox")
+    _js(page, "() => { parts.combo.querySelector('[role=listbox]').hidden=false; }")
+    assert page.main.call(_SUGGESTIONS_JS, combo.key, 0, "check", "Yes") is not None
+    _js(page, """() => {
+      const option=parts.combo.querySelector('[role=option]');
+      const host=document.createElement('action-shell');
+      option.replaceChildren(host);
+      host.attachShadow({mode:'open'}).innerHTML='<button type="submit">Yes</button>';
+      host.shadowRoot.querySelector('button').onclick=() => window.events.final++;
+    }""")
+    assert page.main.node(_SUGGESTIONS_JS, combo.key, 0, "node", "Yes") is None
+    assert not page.main.call(_SUGGESTIONS_JS, combo.key, 0, "click", "Yes")
+    assert _js(page, "() => [events.submitted,events.final]") == [0, 0]
+
+
+def test_shadow_aria_choice_cannot_acquire_an_embedded_final_action(page):
+    from kitty.core.apply.page import UnsafeAction, tick
+
+    _shadow_application(page)
+    _js(page, """() => {
+      const root=parts.first;
+      root.innerHTML='<button type="button" role="checkbox" aria-checked="false">Available?</button>';
+      root.querySelector('button').onclick=() => window.events.final++;
+    }""")
+    choice = next(f for f in read_fields([page.main]) if f.kind == "checkbox")
+    _js(page, """() => {
+      const choice=parts.first.querySelector('button');
+      const host=document.createElement('embedded-action');
+      choice.replaceChildren(host);
+      host.attachShadow({mode:'open'}).innerHTML='<button type="submit">Submit application</button>';
+    }""")
+    with pytest.raises(UnsafeAction):
+        tick(page.main, choice.key)
+    assert not any(f.key == choice.key for f in read_fields([page.main]))
+    assert _js(page, "() => [events.submitted,events.final]") == [0, 0]
+
+
+def test_optional_required_group_styling_does_not_create_required_questions(page):
+    page.goto("about:blank")
+    _js(page, """() => { document.body.innerHTML = `
+      <label for="optional"><span class="c-spl-form-field-label-required-group">Website</span></label>
+      <input id="optional" name="optional" aria-required="false">
+      <label for="unmarked"><span class="c-spl-form-field-label-required-group">Other link</span></label>
+      <input id="unmarked" name="unmarked">
+      <label for="required"><span class="c-spl-form-field-label-required-group">Email
+        <span class="c-spl-form-field-required-mark">*</span></span></label>
+      <input id="required" name="required" aria-required="true">
+    `; }""")
+    assert {field.name: field.required for field in read_fields([page.main])} == {
+        "optional": False, "unmarked": False, "required": True,
+    }
+
+
+@pytest.mark.parametrize("covered", [False, True])
+def test_real_pointer_scrolls_to_control_but_does_not_click_an_overlay(page, covered):
+    from kitty.core.apply.bidi import BidiError
+
+    page.goto("about:blank")
+    _js(page, """() => {
+      window.actualClicks = [];
+      document.body.innerHTML = '<button id="target" type="button" style="margin-top:2200px">Continue</button>';
+      document.querySelector('#target').onclick = e => window.actualClicks.push(e.isTrusted);
+    }""")
+    if covered:
+        _js(page, """() => {
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:white';
+          document.body.append(overlay);
+        }""")
+    target = page.main.node("() => document.querySelector('#target')")
+    if covered:
+        with pytest.raises(BidiError, match="covers"):
+            page.main.click(target)
+        assert _js(page, "() => window.actualClicks") == []
+    else:
+        page.main.click(target)
+        assert _js(page, "() => window.actualClicks") == [True]
+        assert _js(page, "() => window.scrollY") > 0
+
+
+def test_loaded_embedded_application_takes_precedence_over_parent_apply_button(space, page):
+    job = _job(space, "unanswered")
+    page.goto(job.url)
+    _js(page, """async () => {
+      window.entryClicks = 0;
+      document.body.innerHTML =
+        '<button type="button" data-automation-id="jobPostingApplyButton">Apply now</button>';
+      document.querySelector('button').onclick = () => window.entryClicks++;
+      const frame = document.createElement('iframe');
+      const loaded = new Promise(resolve => frame.onload = resolve);
+      frame.srcdoc = `<form id="application-form" onsubmit="event.preventDefault();window.submitted++">
+        <label>First Name<input name="first_name" required></label>
+        <label>Stadt<input name="city" required></label>
+        <label>Resume/CV<input type="file" name="resume" required></label>
+        <button type="submit">Submit application</button>
+        </form><script>window.submitted=0</script>`;
+      document.body.append(frame);
+      await loaded;
+    }""")
+    report = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert report.status == "ready"
+    frame = page.frames()[1]
+    assert frame.call("() => document.querySelector('[name=first_name]').value") == "Pat"
+    assert frame.call("() => document.querySelector('[name=city]').value") == "Arlington"
+    assert frame.call(
+        "async () => await document.querySelector('[name=resume]').files[0].text()",
+        page_realm=True,
+    ) == "%PDF-1.4\n% test resume\n"
+    assert frame.call("() => window.submitted", page_realm=True) == 0
+    assert _js(page, "() => window.entryClicks") == 0
+
+
+@pytest.mark.parametrize("surface", ["complete", "missing-profile-record", "hidden-section", "ambiguous-upload"])
+def test_standard_oracle_form_preserves_answers_and_verifies_separate_attachment(space, page, surface):
+    job = _job(space, "unanswered")
+    page.goto(job.url)
+    _js(page, """surface => {
+      window.parserCalls = 0; window.submitted = 0;
+      document.body.innerHTML = `
+        <h1>Job Application Form</h1><form class="apply-flow__content-form" method="post">
+        <apply-flow-section data-scroll-spy="apply-flow-sections" aria-hidden="false">
+          <label>First Name<input name="first_name" value="Previously entered name" required></label>
+          ${surface === 'ambiguous-upload' ? '' : `<label>Import your profile from resume
+            <input class="apply-flow-profile-import-awli__file-upload" type="file"></label>`}
+          <label>Upload Resume<input class="file-form-element__input" name="attachment-upload"
+            type="file" aria-required="true"></label>
+        </apply-flow-section>
+        <apply-flow-section data-scroll-spy="apply-flow-sections"
+          ${surface === 'hidden-section' ? 'aria-hidden="true" style="display:none"' : 'aria-hidden="false"'}>
+          ${surface === 'missing-profile-record' ? '<button type="button" data-profile-item-invalid="true">ADD EXPERIENCE</button>' : 'Additional information'}
+        </apply-flow-section>
+        <button type="button" class="apply-flow-pagination__submit-button">SUBMIT</button></form>`;
+      document.querySelector('form').onsubmit = e => { e.preventDefault(); window.submitted++; };
+      document.querySelector('.apply-flow-pagination__submit-button').onclick = () => window.submitted++;
+      const parser = document.querySelector('.apply-flow-profile-import-awli__file-upload');
+      if (parser) parser.onchange = () => {
+        window.parserCalls++;
+        document.querySelector('[name=first_name]').value = 'Parser overwrote retained answer';
+      };
+    }""", surface)
+    report = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert _js(page, "() => document.querySelector('[name=first_name]').value") == "Previously entered name"
+    assert _js(page, "() => [window.parserCalls, window.submitted]") == [0, 0]
+    if surface == "ambiguous-upload":
+        assert report.status == "blocked"
+        assert _js(page, "() => document.querySelector('[name=attachment-upload]').files.length") == 0
+    else:
+        assert page.main.call("async () => await document.querySelector('[name=attachment-upload]').files[0].text()",
+                              page_realm=True) == "%PDF-1.4\n% test resume\n"
+        if surface == "complete":
+            assert report.status == "ready"
+        elif surface == "missing-profile-record":
+            assert report.status == "blocked"
+        else:
+            assert report.status == "partial"

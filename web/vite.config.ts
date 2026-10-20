@@ -32,6 +32,8 @@ export default defineConfig(({ mode }) => {
         },
       },
     ],
+    // Small font subsets must remain same-origin under the server's font-src policy.
+    build: { assetsInlineLimit: 0 },
     server: {
       host: "127.0.0.1",
       proxy: {

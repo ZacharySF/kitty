@@ -1,42 +1,216 @@
-"""Read actual gates and allow only recognized, non-final Workday step navigation.
+"""Read form gates and recognize non-final Workday and Phenom entry navigation.
 
-No account creation, authentication, CAPTCHA solving, consent or final action is
-performed. Unknown structures stop for manual review, rather than guessing.
+Account actions are handled separately. CAPTCHA, consent and final application
+actions stay manual. Unknown structures stop rather than guessing.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import time
+from urllib.parse import urlsplit
 
 from kitty.core.apply.bidi import Frame, Tab
-from kitty.core.apply.page import UnsafeAction, _UPLOAD_GROUP_JS, _UPLOADED_FILE_GROUP_JS, form_frames
+from kitty.core.apply.page import (
+    UnsafeAction, _COMPOSED_CLOSEST_JS, _CUSTOM_CONTROL_JS, _DOM_HELPERS_JS, _QUERY_ALL_JS,
+    _UPLOAD_GROUP_JS, _UPLOADED_FILE_GROUP_JS, form_frames,
+)
+
+
+# Phenom posting pages expose an application link, not an application form.
+# Keep navigation bound to the displayed posting, exact sequence and same origin.
+_PHENOM_ENTRY = r"""
+() => {
+  const shown = e => e.getClientRects().length &&
+    getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  const queryAll = (""" + _QUERY_ALL_JS + r""");
+  const candidates = queryAll('a[data-ph-at-id="apply-link"]').filter(shown);
+  const closest = (""" + _COMPOSED_CLOSEST_JS + r""");
+  if (!candidates.length || location.protocol !== 'https:' ||
+      candidates.some(e => e.href !== candidates[0].href ||
+        closest(e, ':disabled, [disabled], [aria-disabled=true], [inert]'))) return null;
+  const e = candidates[0], target = new URL(e.href, location.href);
+  const posting = location.pathname.match(/\/job\/([A-Za-z]+\d+)(?:\/|$)/i)?.[1];
+  const sequence = target.searchParams.get('jobSeqNo');
+  if (!posting || !sequence || !/^[A-Za-z0-9]+$/.test(sequence) ||
+      !new RegExp(posting + '(?![0-9])', 'i').test(sequence) ||
+      e.getAttribute('data-ph-at-job-seqno-text') !== sequence ||
+      !/^(apply|apply now)$/i.test(e.innerText.replace(/\s+/g, ' ').trim()) ||
+      target.protocol !== 'https:' || target.origin !== location.origin ||
+      !/\/(?:hvhapply|apply)\/?$/.test(target.pathname) ||
+      target.search !== '?jobSeqNo=' + sequence || target.hash ||
+      target.username || target.password || e.hasAttribute('download') ||
+      (e.target && e.target !== '_self') || e.getAttribute('aria-disabled') === 'true') return null;
+  return e;
+}
+"""
+
+# Entry is navigation from an unfilled posting, never a second interpretation
+# of a candidate form's final "Apply" button. Search/alert fields observed on
+# posting pages are not candidate answers.
+_ENTRY_CLEAR_JS = r"""
+() => {
+  const queryAll = (""" + _QUERY_ALL_JS + r""");
+  const shown = e => !!e.getClientRects().length &&
+    getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  const all = s => queryAll(s).filter(shown);
+  if (all('form#application, form#application_form, form#application-form, form.ashby-application-form, input[type=password], input[autocomplete=one-time-code], input[type=email], input[type=tel], input[type=file], textarea, input[autocomplete=given-name], input[autocomplete=family-name]').length)
+    return false;
+  if (all('h1, h2, [role=heading], [aria-current=step]').some(e =>
+      /^(?:review(?: your)? application|application review|submit application|application complete|application submitted)$/i.test(e.innerText.trim())))
+    return false;
+  if (all('button, input[type=submit], [role=button]').some(e =>
+      /^(?:submit(?: application)?|send application|finish application|complete application|review(?: your)? application)$/i.test(
+        (e.innerText || e.value || e.getAttribute('aria-label') || '').trim())))
+    return false;
+  return !all('input:not([type=hidden]):not([type=button]):not([type=submit]), textarea, select, [role=checkbox], [role=radio], [role=combobox]').some(e => {
+    if (['q', 'locationsearch', 'frequency'].includes(e.name) || e.type === 'search') return false;
+    if (e.type === 'checkbox' || e.type === 'radio') return e.checked;
+    if (e.matches('[role=checkbox], [role=radio]')) return e.getAttribute('aria-checked') === 'true';
+    return !!(e.value || e.getAttribute('aria-valuetext') || '').trim();
+  });
+}
+"""
+
+# These observed posting CTAs are outside candidate forms.
+_PROVIDER_ENTRY_JS = r"""
+() => {
+  if (location.protocol !== 'https:' || !(""" + _ENTRY_CLEAR_JS + r""")()) return null;
+  const queryAll = (""" + _QUERY_ALL_JS + r""");
+  const shown = e => !!e.getClientRects().length &&
+    getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  let selector = '';
+  if (/^[a-z0-9-]+\.fa\.[a-z0-9]+\.oraclecloud\.com$/i.test(location.hostname) &&
+      /^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/[^/]+\/job\/\d+\/?$/.test(location.pathname))
+    selector = '.job-details__section-apply-button button.apply-now-button';
+  else if (location.hostname === 'jobs.dayforcehcm.com' &&
+      /^\/[^/]+\/[^/]+\/CANDIDATEPORTAL\/jobs\/\d+\/?$/i.test(location.pathname))
+    selector = '[test-id="job-detail-not-applied"] button[test-id="apply-button"][type=button]';
+  else if (location.hostname === 'jobs.dayforcehcm.com' &&
+      /^\/[^/]+\/[^/]+\/CANDIDATEPORTAL\/jobs\/\d+\/apply\/?$/i.test(location.pathname) &&
+      new URL(location.href).searchParams.get('flowSelection') === 'true')
+    selector = 'button[test-id="apply-without-account"][type=button]';
+  else if (location.hostname === 'www.databricks.com' &&
+      /^\/company\/careers\//.test(location.pathname)) {
+    const id = new URL(location.href).searchParams.get('gh_jid');
+    if (id && /^\d+$/.test(id) && location.pathname.endsWith('-' + id))
+      selector = '[data-cy="Hero"] button[data-cy="Button"][type=button]';
+  }
+  if (!selector) return null;
+  const candidates = queryAll(selector).filter(shown);
+  if (candidates.length !== 1) return null;
+  const e = candidates[0];
+  if (e.form || e.closest('form, [role=form]') || e.disabled ||
+      e.closest('[aria-disabled=true], [aria-hidden=true], [inert]') ||
+      !/^(?:apply|apply now|apply without an account)$/i.test(e.innerText.trim())) return null;
+  return e;
+}
+"""
+
+_COOKIE_REJECT_JS = r"""
+() => {
+  const dayforce = location.hostname === 'jobs.dayforcehcm.com' &&
+    document.querySelector('button[test-id="cookie-preferences-banner-reject-button"][type=button]');
+  const e = dayforce || document.querySelector('#onetrust-reject-all-handler');
+  if (!e || !e.getClientRects().length || getComputedStyle(e).visibility === 'hidden' ||
+      getComputedStyle(e).display === 'none' || e.disabled || e.form ||
+      (!dayforce && !e.closest('#onetrust-banner-sdk, #onetrust-pc-sdk')) ||
+      !(dayforce ? /^reject$/i : /^reject all$/i).test(e.innerText.trim())) return null;
+  return e;
+}
+"""
+_EMBEDDED_APPLICATION_JS = r"""
+() => {
+  if (location.protocol !== 'https:' || location.hostname !== 'www.databricks.com' ||
+      !/^\/company\/careers\//.test(location.pathname)) return false;
+  const id = new URL(location.href).searchParams.get('gh_jid');
+  if (!id || !/^\d+$/.test(id) || !location.pathname.endsWith('-' + id)) return false;
+  const frames = document.querySelectorAll('iframe#grnhse_iframe');
+  if (frames.length !== 1) return false;
+  const frame = frames[0], source = new URL(frame.src, location.href);
+  if (source.protocol !== 'https:' || source.hostname !== 'job-boards.greenhouse.io' ||
+      source.pathname !== '/embed/job_app' || source.username || source.password || source.hash ||
+      source.searchParams.getAll('for').length !== 1 || source.searchParams.get('for') !== 'databricks' ||
+      source.searchParams.getAll('token').length !== 1 || source.searchParams.get('token') !== id ||
+      source.searchParams.getAll('validityToken').length !== 1 || !source.searchParams.get('validityToken') ||
+      frame.title !== 'Greenhouse Job Board' || !frame.getClientRects().length ||
+      getComputedStyle(frame).visibility === 'hidden') return false;
+  frame.scrollIntoView({behavior: 'instant', block: 'center', inline: 'nearest'});
+  return true;
+}
+"""
+
+_SMART_NEXT_JS = r"""
+() => {""" + _DOM_HELPERS_JS + r"""
+  if (location.protocol !== 'https:' || location.hostname !== 'jobs.smartrecruiters.com' ||
+      !/^\/oneclick-ui\/company\/[^/]+\/publication\/[a-f0-9-]+\/?$/i.test(location.pathname) ||
+      !queryAll('oc-oneclick-form').length) return null;
+  const candidates = queryAll('button').filter(e =>
+    closest(e, 'oc-button[data-test=footer-next]') &&
+    e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+  if (candidates.length !== 1) return null;
+  const e = candidates[0];
+  if (e.type !== 'button' ||
+      !/^(weiter|next|continue)$/i.test(composedText(e).replace(/\s+/g, ' ').trim()) ||
+      /submit|finish|complete|accept|agree|consent|certif|sign|legal|privacy|absenden|abschicken/i.test(
+        e.getAttribute('aria-label') || '') ||
+      closest(e, ':disabled, [disabled], [aria-disabled=true], [aria-hidden=true], [inert]')) return null;
+  return e;
+}
+"""
 
 # The same snapshot is rechecked in the click script, so a changed final button
 # cannot be clicked using a stale decision from Python.
 _SNAPSHOT = r"""
-() => {
+() => {""" + _DOM_HELPERS_JS + r"""
   const visible = e => !!e && !!e.getClientRects().length &&
     getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
-  const all = s => [...document.querySelectorAll(s)].filter(visible);
-  const text = e => (e?.innerText || e?.value || '').replace(/\s+/g, ' ').trim();
-  const body = text(document.body);
-  const controls = all('button, input[type=submit], [role=button]');
+  const all = s => queryAll(s).filter(visible);
+  const text = e => (e?.innerText || (e ? composedText(e) : '') || e?.value || '').replace(/\s+/g, ' ').trim();
+  const body = [text(document.body), ...all('h1, h2, p, label, [role=alert], [role=dialog]')
+    .filter(e => e.getRootNode() !== document).map(text)].join(' ');
+  const actionSafe = e => !closest(e, ':disabled, [disabled], [aria-disabled=true], [aria-hidden=true], [inert]');
+  const controls = all('button, input[type=submit], [role=button], spl-button');
   const has = s => all(s).length > 0;
+  // DataDome's /captcha document is the interactive puzzle/audio surface, not
+  // its passive collection widget. Recognize it from the embedding document so
+  // cross-origin challenge contents never need to be touched.
+  const dataDomeChallenge = all('iframe').some(e => {
+    try {
+      if (![...e.getClientRects()].some(r => r.width > 0 && r.height > 0) ||
+          closest(e, '[hidden], [aria-hidden=true], [inert]')) return false;
+      const source = new URL(e.src, location.href);
+      return source.protocol === 'https:' &&
+        /(^|\.)captcha-delivery\.com$/i.test(source.hostname) &&
+        /^\/captcha\/?$/.test(source.pathname);
+    } catch { return false; }
+  });
+  const oracleLoading = location.protocol === 'https:' &&
+    /^[a-z0-9-]+\.fa\.[a-z0-9]+\.oraclecloud\.com$/i.test(location.hostname) &&
+    /^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/[^/]+\/job\/\d+(?:\/|$)/.test(location.pathname) &&
+    document.body?.classList.contains('app-loading') && has('body > .app-loading-spinner');
   const uploadGroupFor = (""" + _UPLOAD_GROUP_JS + r""");
   const uploadedGroup = (""" + _UPLOADED_FILE_GROUP_JS + r""");
-  const step = all('[data-automation-id=progressBarActiveStep], [data-automation-id=progressBar] [aria-current=step], [data-automation-id=progressBar] [aria-selected=true]').map(text).join(' ');
+  let step = all('[data-automation-id=progressBarActiveStep], [data-automation-id=progressBar] [aria-current=step], [data-automation-id=progressBar] [aria-selected=true]').map(text).join(' ');
   const stepLabel = step.replace(/^current step\s+\d+\s+of\s+\d+\s*/i, '').replace(/^\d+\s*/, '').trim();
-  const workday = !!step && has('[data-automation-id=bottom-navigation-next-button]');
+  const footerNext = location.protocol === 'https:' &&
+    /^[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com$/i.test(location.hostname) &&
+    /\/job\/.+\/apply(?:\/|$)/.test(location.pathname);
+  const nextSelector = '[data-automation-id=bottom-navigation-next-button]' +
+    (footerNext ? ', [data-automation-id=pageFooterNextButton]' : '');
+  const workday = !!step && has(nextSelector);
   const review = workday && /^review(?: your application)?$/i.test(stepLabel);
   const forbidden = /submit|finish|complete|accept|agree|consent|certif|sign|legal|privacy/i;
-  const next = all('[data-automation-id=bottom-navigation-next-button]');
-  const safeNext = workday && !review && next.length === 1 &&
+  const next = all(nextSelector);
+  let safeNext = workday && !review && next.length === 1 &&
     /^(next|continue|save and continue)$/i.test(text(next[0])) &&
     !forbidden.test(text(next[0]) + ' ' + (next[0].getAttribute('aria-label') || '')) &&
-    !next[0].disabled && next[0].getAttribute('aria-disabled') !== 'true' &&
-    next[0].tagName === 'BUTTON' && next[0].type === 'button';
-  let entry = '';
-  if (!step && !has('input[type=password], input[autocomplete=one-time-code]')) {
+    actionSafe(next[0]) &&
+    next[0].tagName === 'BUTTON' && (next[0].type === 'button' ||
+      (footerNext && next[0].getAttribute('data-automation-id') === 'pageFooterNextButton' &&
+       !next[0].hasAttribute('type') && !next[0].form));
+  let entry = '', entryProof = '';
+  const entryClear = (""" + _ENTRY_CLEAR_JS + r""")();
+  if (!step && entryClear) {
     for (const [id, label] of [
       ['applyManually', /^(apply manually|apply without (?:an )?account|continue as guest)$/i],
       ['jobPostingApplyButton', /^(apply|apply now)$/i],
@@ -46,51 +220,117 @@ _SNAPSHOT = r"""
       if (matches.length !== 1) continue;
       const e = matches[0];
       if (!label.test(text(e)) || forbidden.test(e.getAttribute('aria-label') || '') ||
-          e.disabled || e.getAttribute('aria-disabled') === 'true') continue;
+          !actionSafe(e)) continue;
       const button = e.tagName === 'BUTTON' && e.type === 'button';
       const target = e.tagName === 'A' && e.href ? new URL(e.href) : null;
       const posting = path => decodeURIComponent(path).replace(/\/apply(?:\/.*)?\/?$/, '').split('/').filter(Boolean).pop();
       const link = target && target.protocol === 'https:' && target.origin === location.origin &&
         /\/apply(?:\/applyManually)?\/?$/.test(target.pathname) &&
         posting(target.pathname) === posting(location.pathname);
-      if (button || link) { entry = id; break; }
+      if (button || link) { entry = id; entryProof = e.outerHTML; break; }
     }
   }
-  const knownForm = workday || has('form#application, form#application_form, form#application-form, form.ashby-application-form');
-  const boundary = knownForm && controls.some(e => /^(submit(?: application)?|send application|review(?: application)?)$/i.test(text(e)));
+  const phenom = /\/(?:hvhapply|apply)\/?$/.test(location.pathname) &&
+    /^[A-Za-z0-9]+$/.test(new URL(location.href).searchParams.get('jobSeqNo') || '') &&
+    has('input.phw-form-control[form-field]');
+  if (!step && phenom) step = 'Application details';
+  if (!entry && !step && entryClear &&
+      (""" + _PHENOM_ENTRY + r""")()) {
+    entry = 'phenom-apply';
+    entryProof = (""" + _PHENOM_ENTRY + r""")().href;
+  }
+  if (!entry && !step && entryClear) {
+    const provider = (""" + _PROVIDER_ENTRY_JS + r""")();
+    if (provider) { entry = 'provider-apply'; entryProof = provider.outerHTML; }
+  }
+  const ashbyForm = /(^|\.)ashbyhq\.com$/i.test(location.hostname) &&
+    /^\/[^/]+\/[a-f0-9-]+\/application\/?$/i.test(location.pathname) &&
+    has('input[id="_systemfield_name"], input[id="_systemfield_email"]');
+  const smartScreening = /\/screening\/?$/.test(location.pathname) &&
+    has('oc-screening-questions-form');
+  const smartForm = location.protocol === 'https:' && location.hostname === 'jobs.smartrecruiters.com' &&
+    /^\/oneclick-ui\/company\/[^/]+\/publication\/[a-f0-9-]+(?:\/screening)?\/?$/i.test(location.pathname) &&
+    (smartScreening || has('oc-oneclick-form'));
+  if (smartForm && (""" + _SMART_NEXT_JS + r""")()) safeNext = true;
+  const oracleEmail = location.protocol === 'https:' &&
+    /^[a-z0-9-]+\.fa\.[a-z0-9]+\.oraclecloud\.com$/i.test(location.hostname) &&
+    /^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/[^/]+\/job\/\d+\/apply\/email\/?$/.test(location.pathname) &&
+    has('input[type=email][name=primary-email]');
+  const oracleSections = queryAll('form.apply-flow__content-form apply-flow-section[data-scroll-spy="apply-flow-sections"]');
+  const oracleForm = oracleSections.length > 0;
+  // Oracle's standard flow renders every section together; the numeric route
+  // follows scrolling, not a safe Next action. Hidden sections cannot be verified.
+  const oracleCompleteSurface = oracleForm && oracleSections.every(e =>
+    visible(e) && e.getAttribute('aria-hidden') !== 'true');
+  const knownForm = workday || ashbyForm || smartForm || oracleForm ||
+    has('form#application, form#application_form, form#application-form, form.ashby-application-form');
+  if (!step && (ashbyForm || smartForm || oracleForm))
+    step = smartScreening && smartForm ? 'Application screening' : 'Application details';
+  const boundary = knownForm && (!oracleForm || oracleCompleteSurface) && controls.some(e =>
+    /^(submit(?: application)?|send application|review(?: application)?|bewerbung (?:absenden|abschicken|senden))$/i.test(text(e)) ||
+    (smartScreening && smartForm && /^absenden$/i.test(text(e))));
   const accountLanding = !has('input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select') &&
     all('h1, h2, [role=heading]').some(e =>
       /^(?:candidate (?:account|home|sign in|login)|sign in|log in|create (?:an? )?account|sign up|register)$/i.test(text(e))) &&
     all('a, button, [role=button]').some(e =>
       /^(?:sign in|log in|create (?:an? )?account|sign up|register|(?:sign in|continue|log in) with google)$/i.test(text(e)));
+  const primaryNotices = all('h1, h2, [role=alert], main > p, [role=main] > p, body > p, .jobDisplay .job > p')
+    .filter(e => !closest(e, 'footer, nav, aside')).map(text);
+  if (!document.body?.childElementCount) primaryNotices.push(body);
+  const unavailable = primaryNotices.some(value =>
+    /\b(?:this (?:job|position|posting) (?:is (?:no longer (?:available|posted)|closed)|has (?:closed|been (?:closed|filled)))|no longer accepting applications|(?:job|job posting|posting|position) (?:has expired|not found|no longer exists|is no longer available|has been removed)|page (?:not found|(?:cannot|could not) be found))\b/i.test(value));
   let blocker = null;
-  if (/\b(?:this (?:job|position|posting) (?:is (?:no longer available|closed)|has (?:closed|been filled))|no longer accepting applications|(?:job|job posting|posting|position) (?:has expired|not found|no longer exists|is no longer available|has been removed))\b/i.test(body))
-    blocker = 'closed: the page explicitly says this posting is unavailable';
+  if (unavailable)
+    blocker = 'closed: the primary page notice says this posting is unavailable';
   else if (has('input[autocomplete=one-time-code], input[name=otp], input[name=verificationCode]') ||
-      /\b(?:enter (?:the |your )?(?:verification|security|authentication) code|verify your email|two-factor authentication|multi-factor authentication)\b/i.test(body))
+      /\b(?:enter (?:the |your )?(?:verification|security|authentication) code|verify your (?:email|account)|two-factor authentication|multi-factor authentication)\b/i.test(body))
     blocker = 'verification: complete the verification or MFA step yourself';
-  else if (has('iframe[src*="/bframe"], iframe[title*="challenge" i], [role=dialog] [class*=captcha]') ||
+  else if (dataDomeChallenge ||
+      has('iframe[src*="/bframe"], iframe[title*="challenge" i], [role=dialog] [class*=captcha]') ||
       /\b(?:verify (?:that )?you are (?:a )?human|complete the captcha|select all (?:images|squares))\b/i.test(body))
     blocker = 'captcha: a visible challenge needs your action';
-  else if (accountLanding || /^(?:create account(?:\s*\/\s*sign in)?|sign in|log in)$/i.test(stepLabel) ||
+  else if (oracleLoading)
+    blocker = 'loading: wait for the application loading overlay to clear, then resume';
+  else if (all('[aria-modal=true], [role=dialog], dialog[open], #onetrust-banner-sdk, #onetrust-pc-sdk')
+      .some(e => /\b(?:cookies?|consent|privacy preferences|terms and conditions)\b/i.test(text(e))))
+    blocker = 'consent: review the visible consent dialog yourself';
+  else if (accountLanding || oracleEmail ||
       has('input[type=password]') || (!has('form input:not([type=hidden]), form textarea, form select') &&
       /\b(?:sign in to (?:apply|continue)|log in to (?:apply|continue)|create an account to (?:apply|continue))\b/i.test(body)))
     blocker = 'login: sign in or create the required account yourself';
+  if (!blocker || blocker.startsWith('consent:')) {
+    const reject = (""" + _COOKIE_REJECT_JS + r""")();
+    if (reject) { blocker = null; entry = 'cookie-reject'; entryProof = reject.outerHTML; }
+  }
   const errors = all('[aria-invalid=true], [data-automation-id=errorMessage], .field-error, [role=alert]')
     .filter(e => e.getAttribute('aria-invalid') === 'true' || /required|invalid|error|please (?:select|enter|attach)/i.test(text(e)));
-  const fields = all('input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select');
-  const representedRequired = e => e.matches('input, textarea, select') &&
-    !['hidden', 'button', 'submit', 'reset', 'image', 'search', 'password'].includes(e.type) &&
-    !e.disabled && !e.readOnly &&
-    (visible(e) || ['radio', 'checkbox', 'file'].includes(e.type)) &&
-    (e.required || e.getAttribute('aria-required') === 'true');
+  const customKind = (""" + _CUSTOM_CONTROL_JS + r""");
+  const fieldSelector = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select, [role=checkbox], [role=radio], [role=combobox]';
+  const fields = all(fieldSelector).filter(e => e.matches('input, textarea, select') || customKind(e));
+  const supportedControl = e => {
+    const kind = customKind(e);
+    return (e.matches('input, textarea, select') || kind) &&
+      (kind || !['hidden', 'button', 'submit', 'reset', 'image', 'search', 'password'].includes(e.type)) &&
+      !e.disabled && !e.readOnly && actionSafe(e) &&
+      (visible(e) || ['radio', 'checkbox', 'file'].includes(e.type));
+  };
+  const representedRequired = e => supportedControl(e) &&
+    (e.required || e.getAttribute('aria-required') === 'true' ||
+     (['checkbox', 'radio'].includes(customKind(e) || e.type) &&
+      closest(e, '[role=group], [role=radiogroup]')?.getAttribute('aria-required') === 'true'));
+  // A radiogroup is represented by radio choices, not unrelated writable fields.
   const unsupported = all('[aria-required=true]').some(e =>
-    !representedRequired(e) && !uploadedGroup(e) &&
-    ![...e.querySelectorAll('input[type=file]')].some(input => uploadGroupFor(input) === e) &&
-    ![...e.querySelectorAll('input, textarea, select')].some(representedRequired));
-  const hasFields = fields.length > 0 || [...document.querySelectorAll('input[type=file]')]
-    .some(e => visible(e.parentElement));
-  const signature = location.href + '|' + step + '|' + entry + '|' + fields.map(e => e.name + ':' + e.id + ':' + e.type).join('|');
+    e.getAttribute('role') === 'radiogroup'
+      ? !queryAll(fieldSelector, e).some(input =>
+          (customKind(input) || input.type) === 'radio' && supportedControl(input))
+      : !representedRequired(e) && !uploadedGroup(e) &&
+        !queryAll('input[type=file]', e).some(input => uploadGroupFor(input) === e) &&
+        !queryAll(fieldSelector, e).some(supportedControl)) ||
+    (oracleForm && has('[data-profile-item-invalid="true"]'));
+  const hasFields = fields.length > 0 || queryAll('input[type=file]')
+    .some(e => visible(e.parentElement || e.getRootNode().host));
+  const signature = location.href + '|' + step + '|' + entry + '|' + entryProof + '|' +
+    fields.map(e => e.name + ':' + e.id + ':' + (e.type || customKind(e))).join('|');
   return {blocker, step, review, boundary, safeNext, signature, entry, hasFields,
     unsupportedRequired: unsupported,
     errors: errors.length + fields.filter(e => e.willValidate && !e.validity.valid).length,
@@ -115,6 +355,16 @@ class Preflight:
     unsupported_required: bool = False
 
 
+def _listing_blocker(url: str) -> str | None:
+    """A known aggregator index cannot identify the selected employer posting."""
+    parts = urlsplit(url)
+    if (parts.scheme == "https" and parts.hostname == "zapply.jobs" and
+            parts.path.rstrip("/") == "/jobs"):
+        return ("listing: this is a generic job listing, not the selected employer application. "
+                "Find the exact posting on the employer's careers site and update the job's apply URL.")
+    return None
+
+
 def inspect_page(page: Tab) -> Preflight:
     """Separate page-level gates from controls needing manual completion.
 
@@ -122,7 +372,18 @@ def inspect_page(page: Tab) -> Preflight:
     other known fields on an otherwise recognized application form.
     """
     snapshots = []
-    for frame in form_frames(page):
+    for index, frame in enumerate(form_frames(page)):
+        # The embedding snapshot owns DataDome visibility. Its cross-origin
+        # challenge is never an application form, including when its owner is
+        # hidden; inspecting the child alone would lose that visibility guard.
+        source = urlsplit(frame.url)
+        if (index and source.scheme == 'https' and
+                ((source.hostname or '') == 'captcha-delivery.com' or
+                 (source.hostname or '').endswith('.captcha-delivery.com')) and
+                source.path.rstrip('/') == '/captcha'):
+            continue
+        if blocker := _listing_blocker(frame.url):
+            return Preflight(frame=frame, url=frame.url, signature=frame.url + "|listing", blocker=blocker)
         data = frame.call(_SNAPSHOT)
         snapshot = Preflight(
             frame=frame, url=data['url'], signature=data['signature'], blocker=data['blocker'],
@@ -133,7 +394,14 @@ def inspect_page(page: Tab) -> Preflight:
         if snapshot.blocker:
             return snapshot
         snapshots.append(snapshot)
-    selected = next((s for s in snapshots if s.safe_next or s.entry or s.review or s.boundary), snapshots[0])
+    # Employer landing pages often retain an Apply button after their ATS
+    # iframe loads. Prefer the actual form, not another click on that entry.
+    selected = next((s for s in snapshots if s.entry == 'cookie-reject'), None)
+    if selected is None:
+        selected = next((s for s in snapshots if s.safe_next or s.review or s.boundary or
+                         (s.step and s.has_fields)), None)
+    if selected is None:
+        selected = next((s for s in snapshots if s.entry), snapshots[0])
     return replace(selected, errors=sum(s.errors for s in snapshots),
                    unsupported_required=any(s.unsupported_required for s in snapshots))
 
@@ -141,9 +409,13 @@ def inspect_page(page: Tab) -> Preflight:
 def wait_for_page(page: Tab, *, previous: str | None = None, seconds: float = 12) -> Preflight:
     """Wait through SPA loading, without touching fields until a page/gate is recognizable."""
     deadline = time.monotonic() + seconds
+    embedded = page.main.call(_EMBEDDED_APPLICATION_JS)
     while True:
         snapshot = inspect_page(page)
-        recognized = (snapshot.blocker or snapshot.entry or snapshot.review or
+        if embedded and snapshot.entry == 'provider-apply':
+            snapshot = replace(snapshot, entry='')
+        loading = snapshot.blocker and snapshot.blocker.startswith('loading:')
+        recognized = not loading and (snapshot.blocker or snapshot.entry or snapshot.review or
                       ((snapshot.step or snapshot.boundary) and snapshot.has_fields))
         if (recognized and snapshot.signature != previous) or time.monotonic() >= deadline:
             return snapshot
@@ -151,24 +423,34 @@ def wait_for_page(page: Tab, *, previous: str | None = None, seconds: float = 12
 
 
 def advance(snapshot: Preflight, ats: str) -> None:
-    """Click a recognized Workday entry/Next, repeating all guards against the current DOM."""
-    if (ats != 'workday' or not (snapshot.safe_next or snapshot.entry) or
-            snapshot.blocker or snapshot.errors or snapshot.unsupported_required):
+    """Recheck and enter a posting or advance a recognized non-final application step."""
+    navigation = snapshot.entry in ('phenom-apply', 'provider-apply', 'cookie-reject')
+    cookie_reject = snapshot.entry == 'cookie-reject'
+    if ((ats not in ('workday', 'smartrecruiters') and not navigation) or not (snapshot.safe_next or snapshot.entry) or
+            snapshot.blocker or (not cookie_reject and (snapshot.errors or snapshot.unsupported_required))):
         raise UnsafeAction('unsupported or unsafe application step')
-    clicked = snapshot.frame.call(
+    target = snapshot.frame.node(
         r"""(signature) => {
           const state = (""" + _SNAPSHOT + r""")();
           if (state.signature !== signature || !(state.safeNext || state.entry) ||
-              state.blocker || state.errors || state.unsupportedRequired)
-            return false;
-          const id = state.entry || 'bottom-navigation-next-button';
-          const targets = [...document.querySelectorAll('[data-automation-id="' + id + '"]')]
+              state.blocker || (state.entry !== 'cookie-reject' && (state.errors || state.unsupportedRequired)))
+            return null;
+          if (state.entry === 'phenom-apply')
+            return (""" + _PHENOM_ENTRY + r""")();
+          if (state.entry === 'provider-apply')
+            return (""" + _PROVIDER_ENTRY_JS + r""")();
+          if (state.entry === 'cookie-reject')
+            return (""" + _COOKIE_REJECT_JS + r""")();
+          // Posting entry has its own proof; it has no application step/Next yet.
+          if (!state.workday && !state.entry) return (""" + _SMART_NEXT_JS + r""")();
+          const selector = state.entry ? '[data-automation-id="' + state.entry + '"]' :
+            '[data-automation-id=bottom-navigation-next-button], [data-automation-id=pageFooterNextButton]';
+          const targets = (""" + _QUERY_ALL_JS + r""")(selector)
             .filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' &&
               getComputedStyle(e).display !== 'none');
-          if (targets.length !== 1) return false;
-          targets[0].click();
-          return true;
+          return targets.length === 1 ? targets[0] : null;
         }""", snapshot.signature,
     )
-    if not clicked:
+    if target is None:
         raise UnsafeAction('application step changed or has validation errors; stopped before navigation')
+    snapshot.frame.click(target)

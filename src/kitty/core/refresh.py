@@ -1,7 +1,8 @@
 """Bounded, favorites-first live checks of stored postings, never whole boards.
 
-Only exact authoritative posting details verify availability. HTTP failures,
-search absence, login pages and unexpected redirects remain uncertainty.
+Only exact authoritative posting details verify availability. Not-found/gone
+responses from those detail APIs verify removal; other HTTP failures, search
+absence, login pages and unexpected redirects remain uncertainty.
 """
 from __future__ import annotations
 
@@ -170,8 +171,13 @@ def check_posting(job: Job, pages: PublicPages) -> PostingCheck:
             return PostingCheck("unverified", "Posting has no qualification evidence", page.url)
         return PostingCheck("open", "Exact public JobPosting detail is active", page.url, page.retrieved_at, posting)
     except PageHTTPError as exc:
+        if kind and exc.status_code in {404, 410} and _same_posting_url(exc.url, endpoint):
+            return PostingCheck(
+                "closed", f"Authoritative {kind} posting detail returned HTTP {exc.status_code}",
+                exc.url, exc.observed_at,
+            )
         status = "blocked" if exc.status_code in {401, 403, 429} else "unverified" if exc.status_code in {404, 410} else "error"
-        return PostingCheck(status, f"{exc}; HTTP status alone is not exact closure evidence", endpoint)
+        return PostingCheck(status, f"{exc}; no exact posting removal evidence", exc.url, exc.observed_at)
     except RateLimited as exc:
         return PostingCheck("blocked", str(exc), endpoint)
     except HttpError as exc:

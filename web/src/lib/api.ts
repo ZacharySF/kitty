@@ -15,6 +15,12 @@ export interface Job {
   posted_at: string | null;
   deadline_at: string | null;
   fill_state: string | null;
+  is_active: boolean;
+  closed_at: string | null;
+  freshness: string;
+  verification_status: string;
+  verification_reason: string | null;
+  verification_checked_at: string | null;
 }
 export interface JobDetail extends Job {
   description: string | null;

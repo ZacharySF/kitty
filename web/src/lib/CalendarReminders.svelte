@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { Button } from "@nunera/bracket";
   import { api } from "./api";
   type Reminder = {
     event_id: string;
@@ -33,8 +34,7 @@
               });
               seen.add(key);
             } catch {
-              error =
-                "System notification delivery is unavailable in this runtime. In-app reminders remain active.";
+              error = "System notifications are unavailable here.";
             }
           }
         }
@@ -52,20 +52,16 @@
       return;
     }
     if (!supported) {
-      error =
-        "This browser/WebKit runtime does not expose notifications. In-app reminders remain active.";
+      error = "System notifications are unavailable here.";
       return;
     }
     try {
       enabled = (await Notification.requestPermission()) === "granted";
       localStorage.setItem("kitty-calendar-notifications", String(enabled));
-      if (!enabled)
-        error =
-          "System notification permission was not granted. Use browser/system permissions to change it; in-app reminders remain active.";
+      if (!enabled) error = "Notification permission was not granted.";
       await refresh();
     } catch {
-      error =
-        "Notification permission cannot be requested in this runtime. In-app reminders remain active.";
+      error = "Notification permission cannot be requested here.";
     }
   }
   async function dismiss(item: Reminder) {
@@ -91,22 +87,19 @@
 </script>
 
 {#if reminders.length || error}
-  <aside class="calendar-reminders" aria-label="Global calendar reminders">
+  <aside class="calendar-reminders" aria-label="Calendar reminders">
     <header>
-      <strong>Calendar reminders</strong><button onclick={toggle}
-        >{enabled ? "Disable notifications" : "Enable notifications"}</button
-      >
+      <strong>Reminders</strong>
+      <Button size="sm" variant="ghost" onclick={toggle}
+        title={native ? "Desktop delivery depends on system permissions; reminders show only while kitty runs." : undefined}
+        aria-pressed={enabled}>{enabled ? "Notifications on" : "Notifications off"}</Button>
     </header>
     {#if error}<p role="status">
         {error}<button
-          aria-label="Dismiss notification message"
+          class="close"
+          aria-label="Dismiss message"
           onclick={() => (error = "")}>×</button
         >
-      </p>{/if}
-    {#if native}<p class="hint">
-        Linux WebKit notification support depends on runtime/system permissions.
-        In-app reminders work while kitty runs, including other sections;
-        suspended or exited apps cannot guarantee alarm delivery.
       </p>{/if}
     {#each reminders as item}
       <div role="status">
@@ -114,7 +107,7 @@
           ><strong>{item.title}</strong><small
             >{new Date(item.due).toLocaleString()}</small
           ></span
-        ><button onclick={() => dismiss(item)}>Dismiss</button>
+        ><Button size="sm" onclick={() => dismiss(item)}>Dismiss</Button>
       </div>
     {/each}
   </aside>
@@ -139,23 +132,22 @@
     gap: 0.7rem;
     margin: 0.3rem 0;
   }
-  button {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
-    padding: 0.35rem 0.55rem;
-    color: var(--ink);
+  .close {
+    background: none;
+    border: 0;
+    color: inherit;
     font: inherit;
-    font-size: 0.8rem;
     cursor: pointer;
+    margin-left: 0.4rem;
   }
   small {
     display: block;
     color: var(--muted);
     font-size: 0.75rem;
   }
-  .hint,
   p {
+    display: flex;
+    justify-content: space-between;
     font-size: 0.8rem;
     margin: 0.4rem 0;
     color: var(--muted);

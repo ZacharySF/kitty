@@ -35,15 +35,39 @@ export type CanvasElement = {
   attachment?: string;
   from?: string;
   to?: string;
+  tags?: ("todo" | "important" | "question" | "definition")[];
+  checked?: boolean;
 };
 export type CanvasDocument = {
   version: 1;
   grid: boolean;
   snap: boolean;
+  background?: "blank" | "lined" | "grid" | "dotted" | "cornell";
   layers: Layer[];
   elements: CanvasElement[];
 };
 export type Bounds = { x: number; y: number; w: number; h: number };
+/** Navigation is deliberately stricter than panning: coherent, nearly level fingers, no scale change. */
+export function noteTabSwipe(
+  starts: readonly [Point, Point], ends: readonly [Point, Point],
+  viewportWidth: number, elapsed: number,
+): -1 | 0 | 1 {
+  if (elapsed > 900) return 0;
+  const dx1 = ends[0][0] - starts[0][0], dx2 = ends[1][0] - starts[1][0];
+  const dx = (dx1 + dx2) / 2;
+  const dy = Math.max(Math.abs(ends[0][1] - starts[0][1]), Math.abs(ends[1][1] - starts[1][1]));
+  const initialDistance = Math.hypot(starts[0][0] - starts[1][0], starts[0][1] - starts[1][1]);
+  const distance = Math.hypot(ends[0][0] - ends[1][0], ends[0][1] - ends[1][1]);
+  if (initialDistance < 20 || Math.abs(distance / initialDistance - 1) > 0.08 ||
+    Math.abs(dx) < Math.max(90, Math.min(160, viewportWidth * 0.18)) ||
+    dx1 * dx2 <= 0 || Math.abs(dx1 - dx2) > 40 || dy >= Math.min(45, Math.abs(dx) * 0.35)) return 0;
+  return dx < 0 ? 1 : -1;
+}
+/** Only the middle of a narrow edge is reserved; corners remain normal drawing/toolbar space. */
+export function noteTabEdge(point: Point, width: number, height: number): -1 | 0 | 1 {
+  if (point[1] < height * 0.3 || point[1] > height * 0.7) return 0;
+  return point[0] <= 24 ? -1 : point[0] >= width - 24 ? 1 : 0;
+}
 // Documents are bounded JSON. JSON cloning also unwraps Svelte's reactive proxies.
 export const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 export const uid = () => crypto.randomUUID().replaceAll("-", "");
@@ -511,18 +535,25 @@ export function renderCanvas(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, cssWidth, cssHeight);
-  if (doc.grid && v.zoom > 0.1) {
+  const pattern = doc.background || (doc.grid ? "dotted" : "blank");
+  if (pattern !== "blank" && v.zoom > 0.1) {
     const step = 25 * v.zoom,
       ox = ((v.x % step) + step) % step,
       oy = ((v.y % step) + step) % step;
     ctx.fillStyle = ink;
     ctx.globalAlpha = 0.18;
-    for (let x = ox; x < cssWidth; x += step)
-      for (let y = oy; y < cssHeight; y += step) {
-        ctx.beginPath();
-        ctx.arc(x, y, 0.8, 0, Math.PI * 2);
-        ctx.fill();
-      }
+    if(pattern==="dotted"){
+      for (let x = ox; x < cssWidth; x += step)
+        for (let y = oy; y < cssHeight; y += step) {
+          ctx.beginPath();ctx.arc(x,y,0.8,0,Math.PI*2);ctx.fill();
+        }
+    }else{
+      ctx.strokeStyle=ink;ctx.lineWidth=0.6;ctx.beginPath();
+      for(let y=oy;y<cssHeight;y+=step){ctx.moveTo(0,y);ctx.lineTo(cssWidth,y);}
+      if(pattern==="grid")for(let x=ox;x<cssWidth;x+=step){ctx.moveTo(x,0);ctx.lineTo(x,cssHeight);}
+      if(pattern==="cornell"){const margin=cssWidth*0.27;ctx.moveTo(margin,0);ctx.lineTo(margin,cssHeight);ctx.moveTo(0,cssHeight*0.8);ctx.lineTo(cssWidth,cssHeight*0.8);}
+      ctx.stroke();
+    }
     ctx.globalAlpha = 1;
   }
   ctx.translate(v.x, v.y);

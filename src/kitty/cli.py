@@ -744,6 +744,10 @@ def triage(
 
             console.print(f"Rules tiers set or updated on {apply_rules_tiers(workspace.conn, config)} job(s).")
             return
+        provider = config.triage.provider
+        if provider == "openrouter" and (batch or collect):
+            error_console.print("OpenRouter triage supports --now only; --batch and --collect require provider: anthropic.")
+            raise typer.Exit(code=1)
         if collect:
             if not triage_core.pending_batches(workspace.conn):
                 console.print("No batches waiting.")
@@ -756,26 +760,39 @@ def triage(
 
         plan = triage_core.plan_triage(workspace.conn, config, settings, track=track, limit=limit)
         cap = config.triage.max_cost_usd_per_run
-        console.print(f"[bold]{len(plan.to_send)}[/bold] job(s) to send to {config.triage.model}, "
+        console.print(f"[bold]{len(plan.to_send)}[/bold] job(s) to send via {provider} to {escape(config.triage.model)}, "
                       f"{len(plan.cached)} with a saved answer (free), {len(plan.rules)} tiered by rules (free).")
-        for label, is_batch in (("now", False), ("batch", True)):
-            estimate = triage_core.plan_estimate(plan, config, batch=is_batch)
+        if provider == "openrouter":
+            from kitty.core.triage import openrouter
+
+            estimates = [("now", openrouter.plan_estimate(plan, config))]
+        else:
+            estimates = [(label, triage_core.plan_estimate(plan, config, batch=is_batch))
+                         for label, is_batch in (("now", False), ("batch", True))]
+        for label, estimate in estimates:
             console.print(f"  {label:<6} about {estimate.input_tokens:,} input + {estimate.output_tokens:,} output "
                           f"tokens, at most [bold]${estimate.usd:.2f}[/bold]")
-        console.print(f"  [dim]Estimates run high on purpose (the batch one assumes no cache hits). "
-                      f"A run stops at the ${cap:.2f} cap in config/triage.yaml.[/dim]")
+        console.print(f"  [dim]Conservative token and price bounds; "
+                      f"a run stops at the ${cap:.2f} cap in config/triage.yaml.[/dim]")
         for label, pending in triage_core.pending_batches(workspace.conn):
-            console.print(f"  [yellow]batch {pending['batch_id']} is still waiting: kitty triage --collect[/yellow]")
+            action = ("switch provider to anthropic, then kitty triage --collect"
+                      if provider == "openrouter" else "kitty triage --collect")
+            console.print(f"  [yellow]batch {pending['batch_id']} is still waiting: {action}[/yellow]")
         if not (now or batch):
-            console.print("Run it with --now or --batch.")
+            console.print("Run it with --now." if provider == "openrouter" else "Run it with --now or --batch.")
             return
         if not plan.to_send and not plan.cached and not plan.rules:
             console.print("Nothing to triage.")
             return
-        client = triage_core.make_client(settings) if plan.to_send else None
+        client = triage_core.make_client(settings) if plan.to_send and provider == "anthropic" else None
         if plan.to_send and not yes and not typer.confirm(f"Spend up to ${cap:.2f}?"):
             raise typer.Exit()
-        if now:
+        if provider == "openrouter":
+            result = openrouter.run_now(
+                workspace.conn, config, plan, settings,
+                progress=lambda message: console.print(f"[dim]{escape(message)}[/dim]"),
+            )
+        elif now:
             result = triage_core.run_now(workspace.conn, config, plan, client,
                                          progress=lambda message: console.print(f"[dim]{escape(message)}[/dim]"))
         else:
@@ -1009,7 +1026,7 @@ def _print_candidates(title: str, candidates: list) -> None:
 def schedule_print(
     style: Annotated[str, typer.Option("--format", help="home-manager | systemd | cron")] = "home-manager",
     with_triage: Annotated[bool, typer.Option(
-        "--with-triage", help="Also collect and send triage batches each run (spends up to the cap).",
+        "--with-triage", help="Also run paid triage using the configured provider (spends up to the cap).",
     )] = False,
 ) -> None:
     """Print the config that runs `kitty discover` twice a day. Nothing is installed."""
@@ -1019,7 +1036,16 @@ def schedule_print(
     if style not in builders:
         error_console.print(f"Unknown format '{style}'. Use one of: {', '.join(builders)}")
         raise typer.Exit(code=1)
-    print(builders[style](_settings().root, with_triage=with_triage), end="")
+    if with_triage:
+        workspace = _open()
+        try:
+            text = builders[style](workspace.settings.root, with_triage=True,
+                                   provider=workspace.config.triage.provider)
+        finally:
+            workspace.close()
+    else:
+        text = builders[style](_settings().root)
+    print(text, end="")
 
 
 # ----------------------------------------------------------------- resumes

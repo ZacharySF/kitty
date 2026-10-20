@@ -1,6 +1,6 @@
 # Application autonomy and privacy research
 
-Research checkpoint: 2026-10-06 (sign-in automation added 2026-10-09). Scope: reduce manual preparation and agent orchestration without inventing answers or submitting applications. Preparation states, safe resumption, guarded Workday navigation and metadata-only MCP preparation planning are implemented. Coding tasks now proceed end-to-end within existing permissions. Sign-in and account creation are automated only when explicitly enabled for exact approved origins; challenge solving, consent and submission remain human boundaries.
+Research checkpoint: 2026-10-06, with subsequent cross-provider browser repair trials. Scope: reduce manual preparation and agent orchestration without inventing answers or submitting applications. Preparation states, safe resumption, guarded navigation and metadata-only MCP preparation planning are implemented. Sign-in and account creation require exact approved origins; approved creation includes narrowly recognized required routine account terms. Challenges, non-routine consent and final submission remain human boundaries.
 
 ## Provider capabilities and application gates
 
@@ -15,19 +15,79 @@ Workday is not universally account-required: its [Candidate Home setup documenta
 
 [MyGreenhouse's candidate FAQ](https://support.greenhouse.io/hc/en-us/articles/43418495049499-MyGreenhouse-FAQ-for-Candidates) describes a reusable, password-free portal account with email security codes. That optional convenience is distinct from employer guest application forms. The FAQ also states that employers control application data received from candidates; deleting a portal profile does not delete employer-held applications.
 
+### Findings from actual cross-provider trials
+
+- **Workday:** PwC account creation reached signed-in My Information. Some
+  tenants render a visible account-action proxy over an inaccessible native
+  submit; real pointer input must target the validated visible proxy, not force
+  a click through an overlay. NVIDIA's generic “Submit” proxy is treated as
+  Sign In only when its directly associated native account submit proves that
+  meaning. NVIDIA rejected one sign-in; account creation there was not confirmed.
+  Analog Devices explicitly requested email verification after account creation.
+  Neither response authorizes another password guess or another new account.
+  If an authorized creation action leads to a distinct recognized sign-in form,
+  automatic mode can perform that new sign-in step once. This is not a retry of
+  rejected credentials; verification notices and rejection alerts still stop it.
+- **Oracle:** Arconic and Vertiv email-first entry accepted the saved account
+  alias and reached their standard application forms. A zero-area empty
+  `captcha-email-verification` element was not an interactive CAPTCHA. Google's
+  [reCAPTCHA version guide](https://developers.google.com/recaptcha/docs/versions)
+  distinguishes score-based/invisible integrations from interactive challenges;
+  no challenge token is generated, replaced or bypassed by Kitty.
+  [Oracle's candidate email-verification documentation](https://docs.oracle.com/en/cloud/saas/readiness/hcm/24b/recr-24b/24B-recruiting-wn-f32343.htm)
+  describes ownership checks that may still appear later. Reaching `/section/1`
+  proves entry, not completion: the observed forms render all four sections and
+  final Submit together, and can require separate experience/education records.
+- **Embedded forms:** a parent employer Apply button can remain after the
+  application iframe loads; it must not take precedence over that form.
+  Preserve the employer-provided Greenhouse iframe URL and validity token.
+  [Greenhouse's Job Board API](https://docs.greenhouse.io/job-board.html) can
+  expose a public question schema, not authority to submit an application.
+  The sampled Databricks PhD role requires an advisor name that is not in the
+  saved profile; inventing an advisor is not a compatibility repair.
+- **Consent and missing facts:** the sampled Dayforce flow requests biometric
+  consent; routine account-terms approval does not authorize it. Serval requires
+  applicant-specific project and motivation answers. A sampled Leonardo DRS
+  posting is explicitly closed and stays in the sample as a failed case.
+
+The fixed random sample contains ten postings. None of these account-entry,
+field-filling or upload milestones is a ten-of-ten preparation result. A closed
+posting, unknown factual answer or pending verification is not counted as ready.
+
+
 ## Implemented reliability boundaries
 
 - `core/apply/fields.py` plans only profile.yaml and answers.yaml values. Unknown screening answers stay blank; demographics, consent and attestations are not inferred.
 - Dropdowns require a committed choice after blur, not a typed search query. Verified acronym decorations (such as `ECE - Electrical and Computer Engineering`) can match their full names; ambiguous, disabled and different-program choices remain unselected.
+- Full Databricks trials reproduced dropdown failures only in inactive Firefox tabs, despite successful contact-field writes. Production temporarily activates the target for real input, then restores its prior tab only within the same known browser window when the user has not changed selection. Country-code renderers require the selected owned option's exact flag/code receipt; a shared `+1` code alone never proves a country.
 - `core/apply/preflight.py` recognizes actual closed/login/verification/challenge states. Workday entry and Next/Continue actions require known structure, exact non-final labels and repeated guards immediately before clicking. Unknown layouts stop unsupported; loops and transitions are bounded.
+- Fresh Arconic and Vertiv trials reproduced a full-window Oracle loading spinner covering Apply. Entry now waits for that explicit loading state to clear before the guarded pointer action; pointer coverage checks remain unchanged.
+- A visible DataDome `/captcha` iframe is a manual challenge boundary in its embedding document. Bosch was inspected without touching its puzzle/audio controls; hidden, zero-size and passive frames are not treated as interactive challenges.
+- A required wrapper around supported native radios is not an unsupported control merely because the individual radios omit `required`. Unanswered questions still prevent readiness.
 - Required fields, custom-control support, validation errors across application frames and upload completion are checked before readiness. A local file selection or a passive CAPTCHA iframe alone proves neither upload completion nor a challenge.
 - Greenhouse's completed upload receipt is recognized when it replaces the native input. Its labelled upload group, visible filename and removal control must be present, without pending/error state.
 - Preparation is independent of submission: unattempted → attempted → partial/blocked/ready. Migration 007 preserves legacy fill timestamps as attempts, never as readiness. Only ready is excluded from automatic retries.
-- Retained tabs must match the recorded context and application identity. Existing values and attachments are preserved; lost contexts restart saved facts with an explicit warning. A new upload on a populated retained form is deferred to the user because employer-side resume parsing may overwrite manual values.
+- Retained tabs must match the recorded context and application identity. Existing values and attachments are preserved; lost contexts restart saved facts with an explicit warning. An ambiguous new upload on a populated retained form is deferred because resume parsing may overwrite manual values. The observed Oracle attachment component is separate from its profile-import widget and can receive the resume without invoking that parser.
 - Workday gate/review recognition retains actual `current step N of M` prefixes as evidence and normalizes them for matching. Detecting a gate does not authorize entering credentials or creating an account.
 - Website-reviewed Google session reuse binds the Profile email and employer origins to one run. Only an exact already-signed-in account on the official Google chooser can be selected, in the employer tab or its explicitly associated new popup. Employer passwords are never sent to Google. Account addition, consent, verification and security blocks require manual completion in the same dedicated Firefox; resumed tabs still require application identity.
 - `kitty refresh` checks bounded favorites/top-ranked stored postings against authoritative details. Timestamped source evidence, authority arbitration and identity checks are separate from discovery sightings. Stale or unverified is not the same as closed.
 - Today, notifications, Doctor and Sources expose partial failures with DNS, robots, cooldown and coverage guidance. No new source expansion or paid service is required for these repairs.
+
+## Application-filling tool comparison
+
+These are documented alternatives, not tools tested against the fixed ten employers:
+
+| Tool | Verified fit | Integration constraint |
+| --- | --- | --- |
+| [Simplify Copilot](https://addons.mozilla.org/en-US/firefox/addon/simplify-jobs/) | Dedicated application autofill; official Firefox extension lists Workday, Greenhouse, Lever and other ATS support. | Its Firefox release is explicitly beta/best-effort; proprietary, not reusable source. Its [privacy policy](https://simplify.jobs/privacy) covers profile/resume and application-form processing. Installing or sharing the user's data requires separate approval. |
+| [Browser Use](https://github.com/browser-use/browser-use) | MIT-licensed local agent library with configurable LLM and browser actions. | Its [existing-browser integration](https://docs.browser-use.com/open-source/customize/browser/real-browser.md) targets Chrome, not the current Firefox BiDi session. Model-provider processing and secret/action boundaries need explicit integration; a terminal agent result is not independent proof of application completion. |
+| [Skyvern](https://github.com/Skyvern-AI/skyvern) | Self-hostable, Playwright-compatible AI actions and workflow/login helpers. | AGPL-3.0 licensing, additional runtime and model-provider requirements must be assessed before integration. It is not a drop-in replacement for this Firefox session. |
+
+Decision: keep the existing local Firefox pipeline while repairing the reproduced
+loading, inactive-tab interaction and committed-value defects. Do not introduce a
+second uncontrolled filler or upload private application data merely to mask those
+defects. Reconsider an explicitly approved fallback for a demonstrated unsupported
+flow; no reviewed tool establishes universal or ten-of-ten success.
 
 ## Bounded agent planning
 
@@ -57,7 +117,7 @@ without adding broad browser authority:
   visible invocation/confirmation controls. Tool annotations are hints, not an
   authorization boundary, and are untrusted unless the server is trusted.
 - Actual filling stays in the existing explicitly invoked local workflow.
-  Verification, consent, unknown answers and final submission (and authentication,
+  Verification, non-routine consent, unknown answers and final submission (and authentication,
   unless explicitly enabled for approved origins)
   still require human handling. No hosted-model calls or new paid services were
   added. Employer text and stored blockers remain data, never agent instructions.
@@ -65,10 +125,10 @@ without adding broad browser authority:
 ## Remaining reliability research
 
 1. **Tenant-specific controls and step layouts.** Workday's [Career Sites documentation](https://doc.workday.com/workday-education/en-us/course-manuals/recruiting-for-administrators/career-sites.html) lists configurable contact, experience, questions, voluntary disclosures, terms and final-review sections. Candidate Home can prepopulate existing data. A successful fixture does not prove every tenant's custom fields; unsupported structures must remain explicit blockers.
-2. **Consent and challenges stay human boundaries.** Apply Manually is not Apply Without Account. A tenant may require Create Account/Sign In; the opt-in `authentication` setting can fill one plain sign-in or sign-up form on an exact approved origin, using the dedicated `.private` credentials. Do not copy everyday-browser cookies or automate verification, CAPTCHAs or legal acceptance.
+2. **Consent and challenges retain separate boundaries.** Apply Manually is not Apply Without Account. A tenant may require Create Account/Sign In; reviewed authentication can fill a recognized account form and select required routine terms only under account-creation approval. Do not copy everyday-browser cookies or automate verification, CAPTCHAs, biometric consent, marketing or factual certifications.
 3. **Upload evidence varies by ATS.** Selected files, server acknowledgement and resume parsing are different stages. Pending uploads cannot authorize ready. A review-only page may lack proof of prior required answers or attachment completion, so it remains conservative rather than claiming readiness.
 4. **Authoritative coverage is incomplete.** Some employer portals are JavaScript-only, blocked by robots, account-gated or lack a uniquely identifiable detail record. Refresh must abstain rather than attach another job's description or interpret transport errors as closure.
-5. **Account assistance is an explicit approval boundary.** Credentials live only in `.private/application-credentials.env`, employer scope is the exact `approved_origins` list, account creation needs its own `allow_account_creation`, and verification and terms consent are handed back to the user. Real tenant sign-in pages (Workday overlays, iCIMS, Taleo) were not exercised; unrecognized layouts stop rather than guess.
+5. **Account assistance is an explicit approval boundary.** Credentials live only in `.private/application-credentials.env`; employer scope is exact approved origins and account creation requires its own approval. Actual Workday and Oracle entry flows have been exercised with the outcomes above. This does not establish universal support for other tenants, iCIMS or Taleo; unrecognized layouts stop rather than guess.
 
 Success is verified forms ready for the user's review plus accurately recorded submissions, not fields touched or imported posting counts. No promise of filling every employer application unattended.
 

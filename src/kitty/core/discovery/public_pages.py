@@ -37,8 +37,10 @@ class PublicPage:
 
 
 class PageHTTPError(HttpError):
-    def __init__(self, status_code: int, url: str):
+    def __init__(self, status_code: int, url: str, *, observed_at: str | None = None):
         self.status_code = status_code
+        self.url = url
+        self.observed_at = observed_at
         super().__init__(f"HTTP {status_code} from {url}")
 
 
@@ -291,7 +293,7 @@ class PublicPages:
                 current = urljoin(current, location)
                 continue
             if not 200 <= page.status_code < 300:
-                raise PageHTTPError(page.status_code, current)
+                raise PageHTTPError(page.status_code, current, observed_at=page.retrieved_at)
             return page
         raise HttpError(f"Too many redirects: {url}")
 
@@ -301,7 +303,7 @@ class PublicPages:
             raise HttpError("Not a Brave web search endpoint")
         page, _ = self._once(url, token=token)
         if page.status_code != 200:
-            raise PageHTTPError(page.status_code, url)
+            raise PageHTTPError(page.status_code, url, observed_at=page.retrieved_at)
         try:
             result = json.loads(page.text)
         except ValueError as exc:

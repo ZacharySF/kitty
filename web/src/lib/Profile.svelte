@@ -2,6 +2,8 @@
   import { onMount, tick } from "svelte";
   import { api, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  const pane = useWorkspaceContext();
 
   let { demo = false, onresume }: { demo?: boolean; onresume?: () => void } =
     $props();
@@ -97,8 +99,8 @@
   let withTriage = $state(false);
   let scheduleOutput = $state("");
   let notifyTask = $state<TaskRecord | null>(null);
-  let confirmDialog: HTMLDialogElement;
-  let cancelButton: HTMLButtonElement;
+  let confirmDialog = $state<HTMLDialogElement>();
+  let cancelButton = $state<HTMLButtonElement>();
   let editorField = $state<HTMLTextAreaElement>();
   let answerField = $state<HTMLTextAreaElement>();
   let confirmation = $state("");
@@ -159,6 +161,7 @@
   }
 
   function openResumes() {
+    if (!pane.active) return;
     onresume?.();
   }
 
@@ -181,6 +184,7 @@
   }
 
   function ask(message: string, action: () => Promise<void>) {
+    if (!pane.active || !confirmDialog) return;
     confirmation = message;
     pending = action;
     confirmDialog.showModal();
@@ -190,9 +194,10 @@
 
   function cancel() {
     pending = null;
-    confirmDialog.close();
+    confirmDialog?.close();
   }
   function confirm() {
+    if (!pane.active) return;
     const action = pending;
     cancel();
     if (action) void run(action);
@@ -345,6 +350,7 @@
   async function handleKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement | null;
     if (
+      !pane.active ||
       event.defaultPrevented ||
       event.ctrlKey ||
       event.metaKey ||
@@ -366,19 +372,22 @@
       event.preventDefault();
       configOpen = true;
       await tick();
-      editorField?.focus();
+      if (pane.active) editorField?.focus();
     }
     if (event.key === "w") {
       event.preventDefault();
       answersOpen = true;
       await tick();
-      answerField?.focus();
+      if (pane.active) answerField?.focus();
     }
     if (event.key === "n" && onresume) {
       event.preventDefault();
       openResumes();
     }
   }
+  $effect(() => {
+    if (!pane.active) cancel();
+  });
 
   onMount(() => {
     void run(async () => {
@@ -393,13 +402,13 @@
 
 <section
   class="panel profile-page"
-  aria-labelledby="profile-title"
+  aria-labelledby={`${pane.id}-profile-title`}
   aria-busy={busy}
 >
   <header class="panel-heading">
     <div>
       <p class="eyebrow">Setup / Step 1</p>
-      <h2 id="profile-title">My profile</h2>
+      <h2 id={`${pane.id}-profile-title`}>My profile</h2>
       <p class="muted">
         Add the details you want copied into application forms. Leave anything
         you do not know blank. You always review and submit applications
@@ -420,8 +429,8 @@
 
   {#if data}
     <div class="profile-grid setup-layout">
-      <section class="subpanel" aria-labelledby="facts-title">
-        <h3 id="facts-title">Your basic details</h3>
+      <section class="subpanel" aria-labelledby={`${pane.id}-facts-title`}>
+        <h3 id={`${pane.id}-facts-title`}>Your basic details</h3>
         <p class="muted">
           Use your own verified information. Nothing here determines your
           eligibility for a job.
@@ -434,10 +443,10 @@
         >
           <div class="profile-grid">
             {#each basicFields as field}
-              <label for={`profile-${field.key}`}
+              <label for={`${pane.id}-profile-${field.key}`}
                 >{field.label}
                 <input
-                  id={`profile-${field.key}`}
+                  id={`${pane.id}-profile-${field.key}`}
                   type={field.type}
                   bind:value={basicsDraft[field.key]}
                   maxlength="5000"
@@ -467,8 +476,8 @@
           </div>
         </form>
       </section>
-      <section class="subpanel" aria-labelledby="preferences-title">
-        <h3 id="preferences-title">Next: upload your resume</h3>
+      <section class="subpanel" aria-labelledby={`${pane.id}-preferences-title`}>
+        <h3 id={`${pane.id}-preferences-title`}>Next: upload your resume</h3>
         <p class="muted">
           Add a PDF in My resumes, then choose it when preparing an application.
           Uploading does not change a resume already selected for a job.
@@ -502,7 +511,7 @@
     <details class="subpanel" bind:open={configOpen}>
       <summary>Advanced: configuration editor <kbd>e</kbd></summary>
       <div class="section-heading">
-        <h3 id="config-title">Edit configuration (YAML)</h3>
+        <h3 id={`${pane.id}-config-title`}>Edit configuration (YAML)</h3>
         <label
           >Section <select
             value={section}
@@ -527,9 +536,9 @@
           saveConfig();
         }}
       >
-        <label for="profile-yaml">{section}.yaml</label>
+        <label for={`${pane.id}-profile-yaml`}>{section}.yaml</label>
         <textarea
-          id="profile-yaml"
+          id={`${pane.id}-profile-yaml`}
           class="code-editor"
           bind:this={editorField}
           bind:value={editor}
@@ -564,7 +573,7 @@
       <summary
         >Your application answers <kbd>w</kbd> · {data.answers_count} saved</summary
       >
-      <h3 id="answers-title">Save answers in your own words</h3>
+      <h3 id={`${pane.id}-answers-title`}>Save answers in your own words</h3>
       <p class="muted">
         Save answers to questions applications ask repeatedly. Unknown questions
         stay unanswered. For matching rules and company-specific answers, open
@@ -618,7 +627,7 @@
     <details class="subpanel">
       <summary>Advanced: check setup & diagnose problems</summary>
       <div class="section-heading">
-        <h3 id="doctor-title">Local setup checks</h3>
+        <h3 id={`${pane.id}-doctor-title`}>Local setup checks</h3>
         <button
           class="button"
           disabled={busy}
@@ -649,7 +658,7 @@
 
     <details class="subpanel">
       <summary>Advanced: import past applications from CSV</summary>
-      <h3 id="import-title">Import historical applications</h3>
+      <h3 id={`${pane.id}-import-title`}>Import historical applications</h3>
       <p class="muted">
         Preview a UTF-8 CSV before recording anything. Standard columns:
         company, title, url, location, status, applied_at, track, resume, notes.
@@ -750,7 +759,7 @@
 
     <details class="subpanel">
       <summary>Advanced: schedule job searches</summary>
-      <h3 id="schedule-title">Discovery schedule</h3>
+      <h3 id={`${pane.id}-schedule-title`}>Discovery schedule</h3>
       <p class="muted">
         Generate the same timer output as the CLI. Nothing is installed or
         executed here. Every scheduled run also sends today's digest if your
@@ -796,7 +805,7 @@
 
     <details class="subpanel">
       <summary>Advanced: send a daily notification</summary>
-      <h3 id="notify-title">Daily digest notification</h3>
+      <h3 id={`${pane.id}-notify-title`}>Daily digest notification</h3>
       <p class="muted">
         Provider: {data.notifier || "not configured"}. Secrets stay in your
         local environment and are never shown here.
@@ -824,9 +833,9 @@
   oncancel={() => {
     pending = null;
   }}
-  aria-labelledby="profile-confirm-title"
+  aria-labelledby={`${pane.id}-profile-confirm-title`}
 >
-  <h2 id="profile-confirm-title">Review this change</h2>
+  <h2 id={`${pane.id}-profile-confirm-title`}>Review this change</h2>
   <p>{confirmation}</p>
   <div class="actions">
     <button class="button" bind:this={cancelButton} onclick={cancel}

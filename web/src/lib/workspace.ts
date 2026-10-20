@@ -1,61 +1,37 @@
 export const navigation = [
-  {
-    id: "today",
-    label: "Atlas",
-    key: "F1",
-    icon: "atlas",
-  },
-  { id: "calendar", label: "Calendar", key: "", icon: "calendar" },
-  { id: "kanban", label: "Kanban", key: "", icon: "kanban" },
-  {
-    id: "opportunities",
-    label: "Opportunities & projects",
-    key: "",
-    icon: "opportunities",
-  },
-  { id: "study", label: "Study", key: "", icon: "study" },
-  { id: "flashcards", label: "Flashcards", key: "", icon: "flashcards" },
-  { id: "notes", label: "Notes & canvas", key: "", icon: "notes" },
-  { id: "schema", label: "Schema maps", key: "", icon: "schema" },
-  { id: "ai", label: "AI settings", key: "", icon: "ai" },
-  { id: "inbox", label: "New jobs", key: "F2", icon: "inbox" },
-  { id: "queue", label: "Prepare applications", key: "F3", icon: "queue" },
-  { id: "jobs", label: "Find jobs", key: "F4", icon: "jobs" },
-  { id: "pipeline", label: "My applications", key: "F5", icon: "applications" },
-  {
-    id: "applications",
-    label: "Application list",
-    key: "",
-    icon: "applications",
-  },
-  { id: "favorites", label: "Saved jobs", key: "", icon: "favorites" },
-  { id: "reminders", label: "Reminders", key: "", icon: "today" },
-  {
-    id: "sources",
-    label: "Job sources",
-    key: "F6",
-    icon: "sources",
-  },
-  { id: "resumes", label: "My resumes", key: "F7", icon: "resumes" },
-  { id: "profile", label: "My profile", key: "F8", icon: "settings" },
-  { id: "finder", label: "Find companies", key: "F9", icon: "jobs" },
-  { id: "reports", label: "Reports & exports", key: "F10", icon: "reports" },
-  { id: "mail", label: "Email updates", key: "", icon: "mail" },
-  { id: "triage", label: "Rank jobs", key: "", icon: "sources" },
-  {
-    id: "questions",
-    label: "Application questions",
-    key: "",
-    icon: "questions",
-  },
+  { id: "today", label: "Atlas", icon: "atlas" },
+  { id: "calendar", label: "Calendar", icon: "calendar" },
+  { id: "opportunities", label: "Opportunities & projects", icon: "opportunities" },
+  { id: "study", label: "Study", icon: "study" },
+  { id: "flashcards", label: "Flashcards", icon: "flashcards" },
+  { id: "notes", label: "Notes & canvas", icon: "notes" },
+  { id: "documents", label: "Documents & PDF", icon: "notes" },
+  { id: "schema", label: "Mind maps", icon: "schema" },
+  { id: "ai", label: "AI settings", icon: "ai" },
+  { id: "inbox", label: "New jobs", icon: "inbox" },
+  { id: "queue", label: "Prepare applications", icon: "queue" },
+  { id: "jobs", label: "Find jobs", icon: "jobs" },
+  { id: "pipeline", label: "My applications", icon: "applications" },
+  { id: "applications", label: "Application list", icon: "applications" },
+  { id: "favorites", label: "Saved jobs", icon: "favorites" },
+  { id: "reminders", label: "Reminders", icon: "today" },
+  { id: "sources", label: "Job sources", icon: "sources" },
+  { id: "resumes", label: "My resumes", icon: "resumes" },
+  { id: "settings", label: "Settings", icon: "settings" },
+  { id: "profile", label: "My profile", icon: "settings" },
+  { id: "finder", label: "Find companies", icon: "jobs" },
+  { id: "reports", label: "Reports & exports", icon: "reports" },
+  { id: "mail", label: "Email updates", icon: "mail" },
+  { id: "triage", label: "Rank jobs", icon: "sources" },
+  { id: "questions", label: "Application questions", icon: "questions" },
 ] as const;
 export type View = (typeof navigation)[number]["id"];
 export const navigationGroups: { label: string; views: View[] }[] = [
   {
     label: "Plan",
-    views: ["today", "calendar", "kanban", "opportunities", "reminders"],
+    views: ["today", "calendar", "opportunities", "reminders"],
   },
-  { label: "Study", views: ["study", "flashcards", "notes", "schema"] },
+  { label: "Study", views: ["study", "flashcards", "notes", "schema", "documents"] },
   {
     label: "Job search",
     views: [
@@ -74,24 +50,23 @@ export const navigationGroups: { label: string; views: View[] }[] = [
       "reports",
     ],
   },
-  { label: "Settings", views: ["profile", "ai"] },
+  { label: "Settings", views: ["settings", "profile", "ai"] },
 ];
 /**
  * Related sections, drawn as edges between section hubs on the atlas home.
  * Single source of truth for "what connects to what"; pairs are undirected.
  */
 export const navigationRelations: [View, View][] = [
-  ["calendar", "kanban"],
   ["calendar", "reminders"],
   ["calendar", "study"],
   ["opportunities", "calendar"],
-  ["opportunities", "kanban"],
-  ["kanban", "study"],
+  ["opportunities", "study"],
   ["study", "flashcards"],
   ["study", "notes"],
   ["study", "schema"],
   ["flashcards", "notes"],
   ["notes", "schema"],
+  ["notes", "documents"],
   ["schema", "jobs"],
   ["jobs", "inbox"],
   ["jobs", "favorites"],
@@ -118,11 +93,11 @@ export const shortcutGroups = [
   {
     title: "Navigate",
     shortcuts: [
-      ["F1", "Return to the atlas home"],
-      ["F2–F10", "Open the original job sections"],
+      ["kitty!", "Return to the main schema"],
+      ["Ctrl + Alt / Ctrl + X / Ctrl + C / Ctrl + V", "Plan / Study / Job search / Settings (outside text editing)"],
       ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
       [
-        "Calendar / Kanban / Study / Notes / Schema maps / AI",
+        "Calendar / Study / Notes / Mind maps / AI",
         "Pick a node on the atlas, use its Sections list, or Ctrl / ⌘ + K",
       ],
       ["?", "Show keyboard help"],
@@ -135,6 +110,7 @@ export const shortcutGroups = [
       ["/", "Search the atlas and jump to a node"],
       ["Enter in atlas search", "Focus the first match; Enter again opens it"],
       ["Drag / scroll / right-drag", "Orbit / zoom / pan the 3D map"],
+      ["Ctrl + ← / →", "Rotate the visible 3D schema left / right (outside editors and dialogs)"],
       ["Click a node", "Open that section, item, or job"],
     ],
   },
@@ -144,7 +120,7 @@ export const shortcutGroups = [
       ["Space / p", "Start, pause, or resume the study timer"],
       ["s / r", "Stop / reset the study timer"],
       ["b", "Skip the current break"],
-      ["f / Escape", "Enter / leave study focus mode"],
+      ["Escape", "Leave study focus mode"],
     ],
   },
   {
@@ -166,7 +142,7 @@ export const shortcutGroups = [
   {
     title: "Job decisions",
     shortcuts: [
-      ["Right-click", "Favorite the row, or its selected group"],
+      ["Right-click", "Confirm deletion of a job or its selected group; submitted applications stay protected"],
       ["*", "Star selection; unstar if all are already starred"],
       ["g", "Add a track to marked or focused jobs"],
       ["t", "Choose a tier"],
@@ -188,8 +164,7 @@ export const shortcutGroups = [
   {
     title: "Application preparation",
     shortcuts: [
-      ["f", "Favorite a job first; press again to plan autofill"],
-      ["Shift + F", "Plan capped favorite autofill"],
+      ["F / Shift + F", "Review autofill for marked, opened or focused jobs"],
       ["w", "Stop browser worker; New jobs uses its time-window key"],
     ],
   },

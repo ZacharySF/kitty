@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from kitty.db.connection import transaction
 
 MODES = {'study', 'general', 'jobs'}
-KINDS = {'class', 'topic', 'idea', 'job', 'company', 'skill'}
+KINDS = {'class', 'topic', 'idea', 'task', 'job', 'company', 'skill'}
 MAX_MAPS = 100
 MAX_NODES = 300
 MAX_EDGES = 600
@@ -91,6 +91,16 @@ def _source(conn, value, kind):
     if value is None:
         return None
     _fields(value, {'kind', 'id'})
+    if value.get('kind') == 'calendar_task':
+        source_id = _text(value.get('id'), 'Task ID', 200, True)
+        if kind != 'task' or not conn.execute('SELECT id FROM calendar_tasks WHERE id=? AND deleted=0', (source_id,)).fetchone():
+            raise ValueError('Calendar task source is missing or has the wrong node kind')
+        return {'kind': 'calendar_task', 'id': source_id}
+    if value.get('kind') == 'note_page':
+        source_id = _integer(value.get('id'))
+        if not conn.execute('SELECT id FROM note_pages WHERE id=?', (source_id,)).fetchone():
+            raise ValueError('Note page no longer exists')
+        return {'kind': 'note_page', 'id': source_id}
     expected = {'class': ('subject', 'study_subjects'), 'job': ('job', 'jobs'), 'company': ('company', 'companies')}.get(kind)
     if not expected or value.get('kind') != expected[0]:
         raise ValueError('Source reference does not match the node kind')
@@ -108,7 +118,7 @@ def graph(conn, value, *, portable=False):
     result = {'nodes': [], 'edges': []}
     ids, sources = set(), set()
     for node in nodes:
-        _fields(node, {'id', 'kind', 'label', 'notes', 'x', 'y', 'url', 'source'})
+        _fields(node, {'id', 'kind', 'label', 'notes', 'x', 'y', 'url', 'source', 'collapsed', 'map_id'})
         key = _key(node.get('id'))
         kind = node.get('kind')
         if not isinstance(kind, str) or kind not in KINDS or key in ids:
@@ -122,11 +132,20 @@ def graph(conn, value, *, portable=False):
             if identity in sources:
                 raise ValueError('A source may only appear once in a map')
             sources.add(identity)
+        if not isinstance(node.get('collapsed', False), bool):
+            raise ValueError('Collapsed must be true or false')
+        linked_map = node.get('map_id')
+        if linked_map is not None:
+            if portable:
+                raise ValueError('Portable imports cannot contain local map IDs')
+            _row(conn, linked_map)
         result['nodes'].append({'id': key, 'kind': kind, 'label': _text(node.get('label'), 'Label', 200, True),
                                 'notes': _text(node.get('notes', ''), 'Notes', 10000),
                                 'x': _number(node.get('x'), 'Node x', -100000, 100000),
                                 'y': _number(node.get('y'), 'Node y', -100000, 100000),
-                                'url': _url(node.get('url', '')), 'source': source})
+                                'url': _url(node.get('url', '')), 'source': source,
+                                **({'collapsed': node['collapsed']} if 'collapsed' in node else {}),
+                                **({'map_id': linked_map} if linked_map is not None else {})})
     edge_ids = set()
     for edge in edges:
         _fields(edge, {'id', 'from', 'to', 'label'})
@@ -157,7 +176,12 @@ def _revision(row, value):
 
 def _lookup(conn, kind, source_id):
     """Read-only live view of one source record; deleted sources report missing."""
-    if kind == 'subject':
+    if kind == 'calendar_task':
+        row = conn.execute('SELECT data FROM calendar_tasks WHERE id=? AND deleted=0', (source_id,)).fetchone()
+        return {'label': json.loads(row['data']).get('title', '')} if row else {'missing': True}
+    if kind == 'note_page':
+        row = conn.execute('SELECT title AS label FROM note_pages WHERE id=?', (source_id,)).fetchone()
+    elif kind == 'subject':
         row = conn.execute('SELECT name AS label FROM study_subjects WHERE id=?', (source_id,)).fetchone()
     elif kind == 'company':
         row = conn.execute('SELECT display_name AS label,website AS url FROM companies WHERE id=?', (source_id,)).fetchone()
@@ -351,6 +375,28 @@ def save(conn, body):
                       graph(conn, body.get('graph')), viewport(body.get('viewport')))
 
 
+def add_node(conn, body):
+    """Insert a linked or free node without overwriting another editor's work."""
+    _fields(body, {'map_id', 'revision', 'label', 'kind', 'parent_id', 'source'})
+    with transaction(conn, immediate=True):
+        row = _row(conn, body.get('map_id'))
+        _revision(row, body.get('revision'))
+        document = json.loads(row['graph_json'])
+        source = _source(conn, body.get('source'), body.get('kind', 'topic'))
+        if source and any(node['source'] == source for node in document['nodes']):
+            return load(conn, row['id'])
+        parent = body.get('parent_id')
+        if parent is not None and not any(node['id'] == parent for node in document['nodes']):
+            raise ValueError('Parent node not found')
+        node_id = uuid.uuid4().hex
+        document['nodes'].append({'id': node_id, 'kind': body.get('kind', 'topic'),
+            'label': body.get('label'), 'notes': '', 'url': '', 'source': source,
+            'x': 280 * len(document['nodes']), 'y': 0})
+        if parent is not None:
+            document['edges'].append({'id': uuid.uuid4().hex, 'from': parent, 'to': node_id, 'label': ''})
+        return _write(conn, row, row['title'], graph(conn, document), json.loads(row['viewport_json']))
+
+
 def delete(conn, body):
     _fields(body, {'id', 'revision', 'confirm'})
     if body.get('confirm') is not True:
@@ -384,6 +430,7 @@ def export(conn, item_id):
         node['label'] = (live.get('label') or node['label'])[:200]
         node['url'] = live.get('url', node['url'])
         node['source'] = None
+        node.pop('map_id', None)
     return {'format': 'kitty-schema', 'version': 1, 'title': item['title'], 'mode': item['mode'],
             'graph': item['graph'], 'viewport': item['viewport']}
 

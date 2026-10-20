@@ -1,4 +1,5 @@
 # Copy locally with `kitty init`; edit the ignored runtime YAML, not this template.
+provider: anthropic
 model: claude-sonnet-5-5
 effort: low
 max_cost_usd_per_run: 5.0
@@ -11,3 +12,20 @@ prices:
   cache_write_1h: 4.0
   cache_read: 0.2
   batch_discount: 0.5
+
+# Optional synchronous OpenRouter triage (never application submission):
+# set provider: openrouter and model: typesafe/jev-router.
+# Set OPENROUTER_API_KEY or .private/openrouter-key (owner-only permissions).
+# The dynamic router must honor these USD-per-million ceilings; estimates use
+# UTF-8 byte bounds and max_output_tokens, not est_output_tokens or catalog prices.
+# Every attempted request keeps its full reservation against the run cap, even
+# when it fails, has no reported cost, or reports a cheaper actual cost. No retries.
+# Only redacted resume/job triage prompts are sent; provider data collection is denied.
+# Batch/collect are Anthropic-only. No credentials or screening answers are sent.
+# OpenRouter contract: https://openrouter.ai/docs/guides/routing/provider-selection
+openrouter_max_input_price: 2.0
+openrouter_max_output_price: 10.0
+# Optional workspace-wide UTC-day cap. Reservations survive restarts and failed
+# calls; concurrent runs reserve atomically. Null preserves per-run-only behavior.
+# For $1/day unattended triage set this and max_cost_usd_per_run to 1.0.
+openrouter_daily_budget_usd: null

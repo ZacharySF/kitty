@@ -4,9 +4,16 @@
   import { BarChart } from "@nunera/bracket/charts";
   import { api } from "./api";
   import AIReview from "./AIReview.svelte";
+  import SchemaMaps from "./SchemaMaps.svelte";
+  import StudyGuide from "./StudyGuide.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
 
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
+  const pane = useWorkspaceContext();
+  function confirm(message: string) {
+    return pane.active && window.confirm(message);
+  }
   type Item = {
     id: number;
     revision: number;
@@ -41,12 +48,14 @@
     duration_seconds: number;
     notes: string;
     distractions: string;
+    period_seconds: number;
   };
   type Timer = {
     revision: number;
-    status: "idle" | "running" | "paused" | "awaiting_next";
-    phase: "focus" | "short_break" | "long_break";
+    status: "idle" | "running" | "paused";
+    phase: "priming" | "focus" | "short_break";
     phase_id: string | null;
+    session_id: string | null;
     remaining_seconds: number;
     deadline_at: string | null;
     subject_id: number | null;
@@ -62,8 +71,6 @@
     timezone: string;
     focus_seconds: number;
     short_break_seconds: number;
-    long_break_seconds: number;
-    cycle_count: number;
     sound: boolean;
     notifications: boolean;
   };
@@ -73,6 +80,7 @@
     today_seconds: number;
     week_seconds: number;
     total_seconds: number;
+    month_seconds: number;
     daily_streak: number;
     weekly_streak: number;
     session_count: number;
@@ -85,7 +93,20 @@
       seconds: number;
     }[];
     goals: { id: number; seconds: number; goal_seconds: number }[];
+    history: {
+      period: "week" | "month";
+      start: string;
+      end: string;
+      previous: string;
+      next: string;
+      seconds: number;
+      session_count: number;
+      days: { date: string; seconds: number }[];
+      subjects: { id: number | null; name: string; color: string; seconds: number }[];
+    };
   };
+  type GuideState = { checked: boolean[]; responses: string[]; reflection: string; next_review: string };
+  type Guide = { id: string; revision: number; created_at: string; ended_at: string | null; state: GuideState };
   type Workspace = {
     timer: Timer;
     settings: Settings;
@@ -98,6 +119,8 @@
     exams: Item[];
     plans: Item[];
     sessions: Session[];
+    guide: Guide | null;
+    guides: Guide[];
   };
   type Collection = "subjects" | "projects" | "targets" | "tasks" | "exams";
   let data = $state<Workspace | null>(null);
@@ -109,7 +132,10 @@
   let serverOffset = $state(0);
   let loaded = $state(false);
   let focusMode = $state(false);
-  let tab = $state("overview");
+  let tab = $state("map");
+  let historyPeriod = $state<"week" | "month">("week");
+  let historyDate = $state("");
+  let detailsOpen = $state(false);
   let subjectId = $state("");
   let projectId = $state("");
   let targetId = $state("");
@@ -139,6 +165,25 @@
   let planTime = $state("17:00");
   let replacePlan = $state(false);
   let aiText = $state("");
+  const blankGuide = (): GuideState => ({checked: Array(14).fill(false), responses: Array(14).fill(""), reflection: "", next_review: ""});
+  let guideState = $state<GuideState>(blankGuide());
+  let guideId = $state("");
+  let guideRevision = $state(0);
+  let guideDirty = $state(false);
+  let newPreparation = $state(false);
+  function resetGuide() {
+    if (guideDirty && !confirm("Discard the unsaved guide draft?")) return;
+    guideState = blankGuide(); guideId = ""; guideRevision = 0; guideDirty = true; newPreparation = true;
+  }
+  async function saveGuide() {
+    if (!guideId) { notice = "Preparation draft kept on this device. Start the session to save it with your timer."; return; }
+    if (await change("/study/guide", {session_id: guideId, revision: guideRevision, state: guideState})) {
+      guideDirty = false; newPreparation = false;
+      const saved = data?.guides.find(guide => guide.id === guideId);
+      if (saved) { guideRevision = saved.revision; guideState = structuredClone($state.snapshot(saved.state)); }
+      notice = "Guide, reflection and next review saved.";
+    }
+  }
   let mounted = false;
   let inFlight = false;
   let notePhase: string | null = null;
@@ -147,12 +192,13 @@
   const selectedId = (value: string) => (value ? Number(value) : null);
   const subjectName = (id: number | null | undefined) =>
     data?.subjects.find((item) => item.id === id)?.name || "Unassigned";
-  const phaseLabel = (phase: string) =>
-    phase === "focus"
-      ? "Focus"
-      : phase === "long_break"
-        ? "Long break"
-        : "Short break";
+  const phaseLabel = (phase: string) => phase === "priming" ? "Priming" : phase === "focus" ? "Focus" : "Break";
+  const historyLabel = $derived(data
+    ? data.stats.history.period === "month"
+      ? new Date(`${data.stats.history.start}T12:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" })
+      : `Week of ${new Date(`${data.stats.history.start}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
+    : "");
+  const availableProjects = $derived((data?.projects || []).filter(item => !subjectId || item.subject_id === Number(subjectId) || item.subject_id == null));
   const remaining = $derived(
     data?.timer.status === "running" && data.timer.deadline_at
       ? Math.max(
@@ -172,7 +218,7 @@
   const daySeries = $derived([
     {
       name: "Study minutes",
-      points: (data?.stats.heatmap.slice(-14) || []).map((day, index) => ({
+      points: (data?.stats.history.days || []).map((day, index) => ({
         x: index,
         y: day.seconds / 60,
         label: day.date,
@@ -182,7 +228,7 @@
   const subjectSeries = $derived([
     {
       name: "Study minutes by subject",
-      points: (data?.stats.subjects || []).map((subject, index) => ({
+      points: (data?.stats.history.subjects || []).map((subject, index) => ({
         x: index,
         y: subject.seconds / 60,
         label: subject.name,
@@ -195,9 +241,13 @@
     serverOffset = Date.parse(result.server_now) - Date.now();
     online = true;
     if (!settingsDirty) settings = { ...result.settings };
-    if (notePhase !== result.timer.phase_id) {
+    if (result.guide && !guideDirty && !newPreparation) {
+      guideId = result.guide.id;
+      guideRevision = result.guide.revision;
+      guideState = structuredClone(result.guide.state);
+    }
+    if (notePhase !== result.timer.phase_id && !notesDirty) {
       notePhase = result.timer.phase_id;
-      notesDirty = false;
       notes = result.timer.notes;
       distractions = result.timer.distractions;
       noteRevision = result.timer.revision;
@@ -206,7 +256,7 @@
       distractions = result.timer.distractions;
       noteRevision = result.timer.revision;
     }
-    if (!loaded) {
+    if (!loaded || result.timer.status !== "idle") {
       subjectId = result.timer.subject_id?.toString() || "";
       projectId = result.timer.project_id?.toString() || "";
       targetId = result.timer.target_id?.toString() || "";
@@ -223,8 +273,9 @@
   async function load(silent = false) {
     if (inFlight) return;
     inFlight = true;
+    const query = new URLSearchParams({ period: historyPeriod, ...(historyDate ? { date: historyDate } : {}) }).toString();
     try {
-      const result = await api<Workspace>("/study");
+      const result = await api<Workspace>(`/study?${query}`);
       accept(result);
       if (!silent) error = "";
     } catch (cause) {
@@ -232,7 +283,14 @@
       error = (cause as Error).message;
     } finally {
       inFlight = false;
+      const current = new URLSearchParams({ period: historyPeriod, ...(historyDate ? { date: historyDate } : {}) }).toString();
+      if (query !== current) void load(true);
     }
+  }
+  function navigateHistory(anchor: string, period = historyPeriod) {
+    historyPeriod = period;
+    historyDate = anchor;
+    void load();
   }
   async function change(path: string, body: unknown): Promise<boolean> {
     if (busy) return false;
@@ -253,15 +311,25 @@
     }
   }
   async function timerAction(action: string) {
-    if (!data || busy || !online) return;
+    if (!pane.active || !data || busy || !online) return;
+    if (action === "start" || action === "resume")
+      window.dispatchEvent(new CustomEvent("kitty-study-unlock-sound"));
     if (
       (action === "stop" || action === "reset") &&
       data.timer.status !== "idle" &&
       !confirm(
-        "Discard unfinished focus time? Completed sessions stay in your history; breaks never count.",
+        "Stop this study session? Unfinished focus time is not counted. Completed focus, your guide and reflection stay saved.",
       )
     )
       return;
+    if (action === "start") tab = "session";
+    if (action === "start" && guideId && !newPreparation && !guideDirty) {
+      guideState = blankGuide(); guideId = ""; guideRevision = 0;
+    }
+    if (action === "stop" && guideDirty && guideId) {
+      await saveGuide();
+      if (guideDirty) return;
+    }
     const includeNotes =
       action === "annotate" ||
       ((action === "pause" || action === "resume") && notesDirty);
@@ -277,10 +345,16 @@
             timezone: data.settings.timezone,
             notes,
             distractions,
+            guide: guideState,
           }
         : {}),
       ...(includeNotes ? { notes, distractions } : {}),
     });
+    if (saved && action === "start") {
+      guideDirty = false; newPreparation = false;
+      if (data?.guide) { guideId = data.guide.id; guideRevision = data.guide.revision; }
+      notesDirty = false; noteRevision = data.timer.revision; notePhase = data.timer.phase_id;
+    }
     if (saved && includeNotes) {
       notesDirty = false;
       noteRevision = data.timer.revision;
@@ -295,10 +369,10 @@
     notes = value;
   }
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
-    if (event.ctrlKey || event.metaKey || event.altKey || event.repeat)
+    if (!pane.active || event.ctrlKey || event.metaKey || event.altKey || event.repeat)
       return false;
     const target = event.target as HTMLElement | null;
-    if (target?.closest("input,textarea,select,[contenteditable=true],button"))
+    if (event.defaultPrevented || target?.closest("input,textarea,select,[contenteditable=true],button,.schema"))
       return false;
     const key = event.key.toLowerCase();
     if (key === " " || key === "p") {
@@ -317,12 +391,12 @@
       await timerAction(key === "s" ? "stop" : "reset");
       return true;
     }
-    if (key === "b" && data?.timer.phase !== "focus") {
+    if (key === "b" && data?.timer.phase === "short_break") {
       event.preventDefault();
       await timerAction("skip_break");
       return true;
     }
-    if (key === "f" || (key === "escape" && focusMode)) {
+    if (key === "escape" && focusMode) {
       event.preventDefault();
       focusMode = !focusMode;
       return true;
@@ -334,14 +408,23 @@
     try {
       const cached = localStorage.getItem(snapshotKey);
       if (cached) {
-        data = JSON.parse(cached) as Workspace;
-        settings = { ...data.settings };
-        online = false;
+        const snapshot = JSON.parse(cached) as Workspace;
+        if (snapshot.stats?.history) {
+          snapshot.guides ??= [];
+          snapshot.guide ??= null;
+          data = snapshot;
+          settings = { ...snapshot.settings };
+          online = false;
+        }
       }
       const draft = localStorage.getItem("kitty-study-draft");
       if (draft) {
         const value = JSON.parse(draft);
         aiText = typeof value.text === "string" ? value.text : "";
+        if (value.guide?.checked?.length === 14 && value.guide?.responses?.length === 14) {
+          guideState = value.guide; guideId = value.guideId || ""; guideRevision = value.guideRevision || 0;
+          guideDirty = value.guideDirty === true; newPreparation = value.newPreparation === true;
+        }
         if (
           value.notePhase === (data?.timer.phase_id || null) &&
           typeof value.notes === "string"
@@ -359,7 +442,7 @@
     } catch {
       /* A malformed or unavailable cache does not replace real server state. */
     }
-    void load();
+    const ready = load();
     const tick = window.setInterval(() => {
       now = Date.now();
       if (data?.timer.status === "running" && remaining === 0) void load(true);
@@ -372,6 +455,7 @@
     };
     const changed = () => void load(true);
     const textEvent = (event: Event) => {
+      if (!pane.active) return;
       const detail = (event as CustomEvent<{ text?: string; purpose?: string }>)
         .detail;
       if (
@@ -382,6 +466,23 @@
         tab = "helpers";
       }
     };
+    const focusNode = async (event: Event) => {
+      if (!pane.active) return;
+      const detail = (event as CustomEvent<{subject_id?: number; concept?: string}>).detail;
+      await ready;
+      if (!pane.active || !mounted) return;
+      if (!data) {error = "The study workspace must reconnect before starting this branch."; return;}
+      if (!data || data.timer.status !== "idle") {notice = "Stop the current cycle before changing focus."; return;}
+      subjectId = detail.subject_id ? String(detail.subject_id) : "";
+      projectId = ""; targetId = "";
+      setNoteDraft(detail.concept ?? "");
+      tab = "session";
+      if (guideId && !guideDirty) resetGuide();
+      guideState.responses[4] = detail.concept ?? "";
+      guideDirty = true;
+      await timerAction("start");
+    };
+    window.addEventListener("kitty-study-focus", focusNode);
     window.addEventListener("focus", changed);
     window.addEventListener("online", changed);
     window.addEventListener("kitty-study-changed", changed);
@@ -395,7 +496,9 @@
       window.removeEventListener("online", changed);
       window.removeEventListener("kitty-study-changed", changed);
       window.removeEventListener("kitty-study-text", textEvent);
+      window.removeEventListener("kitty-study-focus", focusNode);
       document.removeEventListener("visibilitychange", wake);
+      pane.clearTrail("study");
     };
   });
   $effect(() => {
@@ -414,12 +517,16 @@
             notesDirty,
             noteRevision,
             notePhase,
+            guide: guideState, guideId, guideRevision, guideDirty, newPreparation,
           }),
         );
       } catch {
         /* Optional local draft cache. */
       }
     }
+  });
+  $effect(() => {
+    if (tab !== "map") pane.setTrail("study", [{label: tab === "session" ? "Study session" : tab.charAt(0).toUpperCase() + tab.slice(1), onclick: () => {}}], () => {if (pane.active) tab = "map";});
   });
 
   function openEditor(kind: Collection, item?: Item) {
@@ -580,8 +687,7 @@
     ) {
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
-        error =
-          "Notifications were not authorized; timer and sound still work.";
+        error = "Desktop notifications were not authorized; visual phase alerts remain available.";
         settings.notifications = false;
       }
     }
@@ -642,17 +748,18 @@
   <header class="section-header">
     <div>
       <h2>Study</h2>
-      <p>Small focused sessions. Honest time. A plan with actual dates.</p>
     </div>
-    <Button onclick={() => (focusMode = !focusMode)}
-      >{focusMode ? "Exit focus mode" : "Focus mode"} <kbd>f</kbd></Button
-    >
+    <div class="row">
+      {#if data?.timer.status === "idle"}<Button intent="primary" disabled={busy || !online} onclick={() => timerAction("start")}>Start session · 5 min priming</Button>{/if}
+      <Button onclick={() => (focusMode = !focusMode)}
+        >{focusMode ? "Exit focus mode" : "Focus mode"}</Button>
+    </div>
   </header>
   {#if demo}<p class="muted">
       Demo study records stay local; external AI and Google calls are disabled.
     </p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+  {#if notice}<p class="notice" role="status">{notice}<button class="dismiss-message" aria-label="Dismiss message" onclick={() => notice = ""}>×</button></p>{/if}
   {#if !online}<p class="offline" role="status">
       Showing your last saved snapshot. Timer display is an estimate until the
       local server reconnects. Changes are not queued silently. <Button
@@ -660,26 +767,53 @@
       >
     </p>{/if}
   {#if data}
-    <div class="timer-card">
+      <nav class="tabs" aria-label="Study tools">
+        <Button aria-pressed={tab === "session"} onclick={() => (tab = "session")}>Study session</Button>
+        <Button aria-pressed={tab === "overview"} onclick={() => (tab = "overview")}>Progress</Button>
+        <Button aria-pressed={tab === "sessions"} onclick={() => (tab = "sessions")}>History</Button>
+        <Button aria-pressed={tab === "map"} onclick={() => (tab = "map")}>Mind map</Button>
+        <details class="tools-menu">
+          <summary>Planning &amp; tools</summary>
+          <div class="row">
+            {#each [{ id: "subjects", label: "Subjects & concepts" }, { id: "tasks", label: "Tasks" }, { id: "exams", label: "Exams & plans" }, { id: "helpers", label: "Study helpers" }, { id: "settings", label: "Timer settings" }] as item}
+              <Button aria-pressed={tab === item.id} onclick={() => (tab = item.id)}>{item.label}</Button>
+            {/each}
+          </div>
+        </details>
+      </nav>
+    {#if tab === "map"}<SchemaMaps {revision} {demo} section="study" />{/if}
+    <details open={tab === "session" || data.timer.status !== "idle"} class="focus-controls"><summary>Study session · {phaseLabel(data.timer.phase)} {data.timer.status !== "idle" ? clockLabel : "5 min preparation first"}</summary>
+    <div class="timer-card" class:break-phase={data.timer.phase !== "focus"}>
       <div class="timer-heading">
-        <span
-          >{phaseLabel(data.timer.phase)} · {data.timer.status.replaceAll(
-            "_",
-            " ",
-          )} · {data.timer.cycle} completed focus sessions</span
-        ><span>{data.settings.timezone}</span>
+        <span class="eyebrow">Your study rhythm</span>
+        <span>{data.timer.cycle} focus {data.timer.cycle === 1 ? "session" : "sessions"} completed</span>
       </div>
-      <div
-        class="clock"
-        aria-label={`${phaseLabel(data.timer.phase)} remaining ${clockLabel}`}
-      >
-        {clockLabel}
+      <div class="focus-selection">
+        <label>Subject
+          <select bind:value={subjectId}
+            onchange={() => { projectId = ""; }}
+            disabled={data.timer.status !== "idle"}>
+            <option value="">Open study</option>
+            {#each data.subjects as item}<option value={item.id.toString()}>{item.name}</option>{/each}
+          </select>
+        </label>
+        <label>Concept / project
+          <select bind:value={projectId} disabled={data.timer.status !== "idle"}>
+            <option value="">Choose your own focus</option>
+            {#each availableProjects as item}<option value={item.id.toString()}>{item.name}</option>{/each}
+          </select>
+        </label>
+        {#if data.timer.status === "idle"}
+          <Button size="sm" onclick={() => openEditor("subjects")}>Add subject</Button>
+          <Button size="sm" onclick={() => { openEditor("projects"); editor.subject_id = selectedId(subjectId); }}>Add concept</Button>
+        {/if}
       </div>
-      {#if data.timer.status === "awaiting_next"}<p role="status">
-          {data.timer.phase === "focus"
-            ? "Break finished. Start your next focus session when ready."
-            : "Focus completed and saved. Choose to take this break or skip it."}
-        </p>{/if}
+      <div class="phase-label">
+        <span class="phase-dot"></span>{phaseLabel(data.timer.phase)}
+        <span class="muted">· {data.timer.status === "idle" ? "Ready when you are" : data.timer.status === "paused" ? "Paused" : data.timer.phase === "priming" ? "Preview the gist and prepare your plan" : data.timer.phase === "focus" ? "One thing at a time" : "Step away and recharge"}</span>
+      </div>
+      <div class="clock" aria-label={`${phaseLabel(data.timer.phase)} remaining ${clockLabel}`}>{clockLabel}</div>
+      <p class="rhythm">5 min priming <span>→</span> {minutesLabel(data.settings.focus_seconds)} focus <span>→</span> {minutesLabel(data.settings.short_break_seconds)} break <span>→</span> repeat focus / break</p>
       <div class="row actions">
         {#if data.timer.status === "running"}<Button
             disabled={busy || !online}
@@ -690,51 +824,28 @@
             onclick={() => timerAction("resume")}
             >Resume <kbd>Space</kbd></Button
           >
-        {:else}<Button
+        {:else}<Button variant="solid" intent="primary"
             disabled={busy || !online}
             onclick={() => timerAction("start")}
-            >Start {phaseLabel(data.timer.phase).toLowerCase()}
-            <kbd>Space</kbd></Button
+            >Start session · 5 min priming <kbd>Space</kbd></Button
           >{/if}
         <Button
           disabled={busy || !online || data.timer.status === "idle"}
           onclick={() => timerAction("stop")}>Stop <kbd>s</kbd></Button
         >
-        <Button disabled={busy || !online} onclick={() => timerAction("reset")}
-          >Reset <kbd>r</kbd></Button
-        >
-        {#if data.timer.phase !== "focus"}<Button
+        {#if data.timer.phase === "short_break"}<Button
             disabled={busy || !online}
             onclick={() => timerAction("skip_break")}
             >Skip break <kbd>b</kbd></Button
           >{/if}
+        {#if data.timer.status !== "idle"}<Button onclick={() => window.dispatchEvent(new CustomEvent("kitty-study-restore-bar"))}>Show timer bar</Button>{/if}
       </div>
-      <p class="muted">
-        Completed focus only. Stop discards unfinished time; paused time and all
-        breaks never count. Phases never auto-chain while you're away.
+      <p class="muted timer-help">
+        Start with five minutes of priming, then focus and break alternate until you pause or stop. Only completed focus counts; priming, pauses and breaks do not.
       </p>
-      <div class="form-grid">
-        <label
-          >Subject<select
-            bind:value={subjectId}
-            disabled={data.timer.status === "running" ||
-              data.timer.status === "paused"}
-            ><option value="">Unassigned</option
-            >{#each data.subjects as item}<option value={item.id.toString()}
-                >{item.name}</option
-              >{/each}</select
-          ></label
-        >
-        <label
-          >Project<select
-            bind:value={projectId}
-            disabled={data.timer.status === "running" ||
-              data.timer.status === "paused"}
-            ><option value="">None</option>{#each data.projects as item}<option
-                value={item.id.toString()}>{item.name}</option
-              >{/each}</select
-          ></label
-        >
+      <details class="session-details" bind:open={detailsOpen}>
+        <summary>Session notes &amp; goal {notesDirty ? "· unsaved draft" : ""}</summary>
+        <div class="form-grid">
         <label
           >Goal<select
             bind:value={targetId}
@@ -766,7 +877,7 @@
       {#if notesDirty}
         <p class="muted">
           Unsaved local note draft. Save during the session or copy it into a
-          completed session from the Sessions tab.
+          completed session from History.
         </p>
         <details>
           <summary>Compare with latest saved notes</summary>
@@ -806,7 +917,23 @@
           disabled={busy || !online}
           onclick={() => timerAction("annotate")}>Save session notes</Button
         >{/if}
+      </details>
     </div>
+    </details>
+    {#if tab === "session"}
+      <StudyGuide bind:value={guideState} phase={data.timer.phase} active={data.timer.status !== "idle"} dirty={guideDirty} busy={busy || !online} onchange={() => guideDirty = true} onsave={saveGuide} onnew={resetGuide} />
+      {#if data.guides.some(guide => guide.state.next_review || guide.state.reflection)}
+        <details class="panel"><summary>Saved reflections & spaced returns</summary>
+          {#each data.guides.filter(guide => guide.state.next_review || guide.state.reflection) as guide (guide.id)}
+            <article><h4>{new Date(guide.created_at).toLocaleString()}</h4>
+              {#if guide.state.next_review}<p>Next review: {guide.state.next_review}{guide.state.next_review <= data.stats.today ? " · due" : ""}</p>{/if}
+              <p class="preserve">{guide.state.reflection || "No reflection yet."}</p>
+              <Button size="sm" onclick={() => {if (guideDirty && !confirm("Replace the unsaved guide draft?")) return; guideId = guide.id; guideRevision = guide.revision; guideState = structuredClone($state.snapshot(guide.state)); guideDirty = false; newPreparation = true;}}>Open guide & reflection</Button>
+            </article>
+          {/each}
+        </details>
+      {/if}
+    {/if}
     <div class="tasks-focus" class:hidden={!focusMode}>
       <h3>Next tasks</h3>
       {#each data.tasks.filter((item) => !item.done).slice(0, 5) as task}<label
@@ -822,12 +949,25 @@
         </p>{/each}
     </div>
     <div class:hidden={focusMode}>
-      <nav class="tabs" aria-label="Study tools">
-        {#each ["overview", "tasks", "subjects", "sessions", "exams", "helpers", "settings"] as name}<Button
-            aria-pressed={tab === name}
-            onclick={() => (tab = name)}>{name}</Button
-          >{/each}
-      </nav>
+      {#if tab === "overview" || tab === "sessions"}
+        <div class="history-navigation panel">
+          <div>
+            <span class="eyebrow">Study history</span>
+            <h3>{historyLabel}</h3>
+            <p class="muted">{minutesLabel(data.stats.history.seconds)} studied · {data.stats.history.session_count} records · {data.stats.timezone}</p>
+          </div>
+          <div class="row">
+            <div class="period-switch" aria-label="History period">
+              <Button size="sm" aria-pressed={historyPeriod === "week"} onclick={() => navigateHistory(data!.stats.history.start, "week")}>Week</Button>
+              <Button size="sm" aria-pressed={historyPeriod === "month"} onclick={() => navigateHistory(data!.stats.history.start, "month")}>Month</Button>
+            </div>
+            <Button size="sm" aria-label={`Previous ${historyPeriod}`} onclick={() => navigateHistory(data!.stats.history.previous)}>←</Button>
+            <Button size="sm" onclick={() => navigateHistory("")}>Today</Button>
+            <Button size="sm" aria-label={`Next ${historyPeriod}`} onclick={() => navigateHistory(data!.stats.history.next)}>→</Button>
+            <label class="history-date">Jump to date<input type="date" value={historyDate || data.stats.today} onchange={(event) => navigateHistory(event.currentTarget.value)} /></label>
+          </div>
+        </div>
+      {/if}
       {#if tab === "overview"}
         <div class="summary">
           <article>
@@ -841,14 +981,10 @@
             >
           </article>
           <article>
-            <strong>{data.stats.daily_streak} days</strong><span
-              >Daily completion streak</span
-            >
+            <strong>{minutesLabel(data.stats.month_seconds)}</strong><span>This month</span>
           </article>
           <article>
-            <strong>{data.stats.weekly_streak} weeks</strong><span
-              >Weekly completion streak</span
-            >
+            <strong>{data.stats.daily_streak} days</strong><span>Study streak</span>
           </article>
         </div>
         <p class="muted">
@@ -876,23 +1012,23 @@
         </div>
         <div class="chart-grid">
           <article class="panel">
-            <h3>Last 14 days · minutes</h3>
+            <h3>{historyPeriod === "week" ? "Selected week" : "Selected month"} · minutes</h3>
             <BarChart
               series={daySeries}
               minY={0}
-              label="Study minutes for the last fourteen dates"
+              label={`Study minutes: ${historyLabel}`}
               width={520}
               height={220}
             />
             <details>
               <summary>View time data</summary
-              >{#each data.stats.heatmap.slice(-14) as day}<p>
+              >{#each data.stats.history.days as day}<p>
                   {day.date}: {minutesLabel(day.seconds)}
                 </p>{/each}
             </details>
           </article>
           <article class="panel">
-            <h3>Time by subject · minutes</h3>
+            <h3>Subjects this {historyPeriod} · minutes</h3>
             <BarChart
               series={subjectSeries}
               minY={0}
@@ -901,7 +1037,7 @@
               height={220}
             />
             <ul>
-              {#each data.stats.subjects as subject}<li>
+              {#each data.stats.history.subjects as subject}<li>
                   <span style:color={subject.color}>{subject.name}</span>: {minutesLabel(
                     subject.seconds,
                   )}
@@ -976,7 +1112,7 @@
       {:else if tab === "subjects"}
         {#each ["subjects", "projects"] as kind}<div class="panel">
             <div class="row">
-              <h3>{kind}</h3>
+              <h3>{kind === "subjects" ? "Subjects" : "Concepts & projects"}</h3>
               <Button onclick={() => openEditor(kind as Collection)}
                 >Add {kind === "subjects" ? "subject" : "project"}</Button
               >
@@ -998,13 +1134,11 @@
           </div>{/each}
       {:else if tab === "sessions"}
         <div class="row">
-          <h3>Completed sessions</h3>
-          <Button onclick={() => openSession()}>Log manual session</Button>
+          <h3>Study records · {historyLabel}</h3>
+          <Button onclick={() => openSession()}>Add manual study</Button>
         </div>
         <p class="muted">
-          Edit or delete real records. Manual logs require an explicit offset,
-          IANA timezone, and duration. Showing the latest 500 sessions; graphs
-          include all records.
+          Completed focus and explicit manual study only. Records use actual study time in the selected {historyPeriod}, including sessions crossing midnight. Edit or delete a record to correct your history.
         </p>
         {#each data.sessions as session}<article class="panel">
             <div class="row">
@@ -1019,6 +1153,7 @@
               ><Button onclick={() => openSession(session)}>Edit</Button><Button
                 onclick={() => deleteSession(session)}>Delete</Button
               >
+              {#if session.period_seconds !== session.duration_seconds}<span>{minutesLabel(session.period_seconds)} in this {historyPeriod}</span>{/if}
             </div>
             {#if session.notes}<p class="preserve">
                 {session.notes}
@@ -1026,8 +1161,7 @@
                 Distractions: {session.distractions}
               </p>{/if}
           </article>{:else}<p>
-            No completed sessions yet. A running or paused timer is not a
-            completed session.
+            No study records in this {historyPeriod}. Browse an earlier period or complete your first focus session.
           </p>{/each}
       {:else if tab === "exams"}
         <div class="row">
@@ -1156,6 +1290,7 @@
                   "Recall question:\nMy answer without looking:\nSource comparison / gap:\nNext practice step:",
                 );
                 focusMode = true;
+                detailsOpen = true;
               }}>Use recall note template</Button
             >
           </article>
@@ -1171,6 +1306,7 @@
                   "What I retrieved:\nWhat I could not explain yet:\nDistractions / friction:\nOne next action:",
                 );
                 focusMode = true;
+                detailsOpen = true;
               }}>Use reflection template</Button
             >
           </article>
@@ -1194,6 +1330,7 @@
             purpose="study-plan"
             text={aiText}
             {demo}
+            active={pane.active}
             onresult={(text) => {
               setNoteDraft(text);
               notice =
@@ -1210,7 +1347,7 @@
           <h3>Pomodoro preferences</h3>
           <div class="form-grid">
             <label
-              >Focus duration (seconds)<input
+              >Focus duration (seconds; default 1500 = 25 min)<input
                 type="number"
                 min="60"
                 max="14400"
@@ -1218,28 +1355,12 @@
                 bind:value={settings.focus_seconds}
               /></label
             ><label
-              >Short break (seconds)<input
+              >Break duration (seconds; default 300 = 5 min)<input
                 type="number"
                 min="60"
                 max="7200"
                 required
                 bind:value={settings.short_break_seconds}
-              /></label
-            ><label
-              >Long break (seconds)<input
-                type="number"
-                min="60"
-                max="7200"
-                required
-                bind:value={settings.long_break_seconds}
-              /></label
-            ><label
-              >Focus sessions before long break<input
-                type="number"
-                min="1"
-                max="12"
-                required
-                bind:value={settings.cycle_count}
               /></label
             ><label
               >IANA timezone<input
@@ -1259,8 +1380,9 @@
             />Desktop notification (browser permission required)</label
           >
           <p class="muted">
-            Preferences affect the next phase, not a currently running or paused
-            phase. Sound may require interacting with the browser first.
+            Each new session begins with five minutes of priming, which never counts as focus. Focus and break then repeat continuously. Preference changes affect the next phase, not the current one.
+            Start or Resume unlocks sound in this browser. Keep kitty! open for phase alerts; no sound is promised when the browser is closed.
+            After sleep or disconnection, the next phase starts when observed, never by inventing missed cycles.
           </p>
           <Button type="submit" disabled={busy || !online}
             >Save preferences</Button
@@ -1459,20 +1581,125 @@
   .panel {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 0.7rem;
-    padding: 1.2rem;
-    margin-bottom: 0.85rem;
+    border-radius: var(--br-radius-lg, 0.8rem);
+    padding: clamp(1rem, 2.3vw, 1.6rem);
+    margin-bottom: 0.6rem;
   }
   .timer-card {
-    background: var(--surface-raised);
+    background: linear-gradient(145deg, var(--surface-raised), var(--surface));
     text-align: center;
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+    padding: clamp(1.1rem, 3vw, 2rem);
   }
   .clock {
-    color: var(--accent);
-    font-size: clamp(3.5rem, 9vw, 7rem);
+    color: var(--ink);
+    font-size: clamp(4.5rem, 11vw, 8rem);
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
-    line-height: 1.2;
+    font-weight: 500;
+    letter-spacing: -0.065em;
+    line-height: 1.15;
+  }
+  .eyebrow {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .focus-selection {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin: 1.4rem auto 1.7rem;
+    max-width: 850px;
+  }
+  .focus-selection label {
+    flex: 1 1 200px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .phase-label,
+  .rhythm,
+  .period-switch {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .phase-label {
+    font-size: 0.85rem;
+  }
+  .phase-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    background: var(--accent);
+    border-radius: 50%;
+  }
+  .break-phase .phase-dot {
+    background: var(--success);
+  }
+  .rhythm,
+  .timer-help {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin-top: 0.5rem;
+  }
+  .rhythm span {
+    opacity: 0.55;
+  }
+  .session-details {
+    text-align: left;
+    border-top: 1px solid var(--border);
+    padding-top: 0.9rem;
+    margin-top: 1.2rem;
+  }
+  summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .tools-menu {
+    align-self: center;
+    margin-left: auto;
+  }
+  .tools-menu .row {
+    padding-top: 0.8rem;
+  }
+  .history-navigation {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .history-navigation h3 {
+    margin: 0.3rem 0;
+    font-size: 1.12rem;
+  }
+  .history-navigation p {
+    margin: 0;
+    font-size: 0.8rem;
+  }
+  .history-date {
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+  .history-date input {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.8rem;
+  }
+  @media (max-width: 640px) {
+    .timer-heading {
+      font-size: 0.75rem;
+    }
+    .tools-menu {
+      margin-left: 0;
+    }
+    .phase-label {
+      flex-wrap: wrap;
+    }
   }
   .actions {
     justify-content: center;

@@ -507,16 +507,22 @@ class Prices(_Base):
 class TriageFile(_Base):
     """config/triage.yaml - the Stage 3 LLM triage settings."""
 
+    provider: Literal["anthropic", "openrouter"] = "anthropic"
     model: str = "claude-sonnet-5-5"
     effort: Literal["low", "medium", "high"] = "low"
     #: A run stops (or a batch is trimmed) before its cost could pass this.
-    max_cost_usd_per_run: float = Field(default=5.0, ge=0)
+    max_cost_usd_per_run: float = Field(default=5.0, ge=0, allow_inf_nan=False)
     #: Job descriptions are cut to this many characters before they are sent.
     max_description_chars: int = Field(default=8000, ge=500)
     #: Hard limit per answer; the estimate assumes `est_output_tokens`.
     max_output_tokens: int = Field(default=2000, ge=256)
     est_output_tokens: int = Field(default=600, ge=1)
     prices: Prices = Field(default_factory=Prices)
+    #: OpenRouter routing ceilings, USD per million tokens (not catalog estimates).
+    openrouter_max_input_price: float = Field(default=2.0, ge=0, allow_inf_nan=False)
+    openrouter_max_output_price: float = Field(default=10.0, ge=0, allow_inf_nan=False)
+    #: Optional UTC-day ceiling shared by all OpenRouter runs in this workspace.
+    openrouter_daily_budget_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 # --------------------------------------------------------------------- apply
@@ -569,8 +575,8 @@ class AuthenticationSettings(_Base):
     enabled: StrictBool = False
     allow_account_creation: StrictBool = False
     approved_origins: list[str] = Field(default_factory=list)
-    #: Reviewed per-run choice; legacy policies use only the already recognized form.
-    account_mode: Literal["recognized", "login", "create", "google"] = "recognized"
+    #: Auto selects the site's recognized form; explicit policies may restrict the flow.
+    account_mode: Literal["auto", "recognized", "login", "create", "google"] = "auto"
     _credential_binding: str | None = PrivateAttr(default=None)
     # Google session reuse is authorized only by a reviewed website run.
     _google_email: str | None = PrivateAttr(default=None)

@@ -377,6 +377,8 @@ def _rows(conn, deck_id=None, search=""):
     for term in terms:
         if term.startswith("tag:"):
             rows = [r for r in rows if term[4:] in [t.lower() for t in json.loads(r["tags"])]]
+        elif term.startswith("nid:"):
+            rows = [r for r in rows if str(r["note_id"]) == term[4:]]
         elif term.startswith("is:"):
             value = term[3:]
             rows = [r for r in rows if (r["state"] == value or value == "suspended" and r["suspended"] or value == "leech" and r["leech"] or value == "archived" and (r["note_archived"] or r["deck_archived"]) or value == "due" and r["state"] != "new" and r["due"] <= now().isoformat())]
@@ -508,7 +510,7 @@ def start_review(conn, deck_id=None, search="", mode="regular", study_id=None):
     templates = json.loads(note_type["templates"])
     template = templates[0] if note_type["kind"] == "cloze" else templates[card["ordinal"]]
     typed = bool(re.search(r"\{\{type:", template["front"]))
-    return {"card": {"id": card["id"], "token": token, "front": render(conn, card), "state": card["state"], "mode": mode, "typed": typed}, "remaining": len(rows), "study_id": study_id}
+    return {"card": {"id": card["id"], "note_id": card["note_id"], "token": token, "front": render(conn, card), "state": card["state"], "mode": mode, "typed": typed}, "remaining": len(rows), "study_id": study_id}
 
 
 def _session(conn, token):

@@ -67,7 +67,7 @@ class JobFilter:
     favorites_only: bool | None = None
     text: str | None = None
     limit: int | None = None
-    order: str = "newest"                     # newest | company | deadline | best
+    order: str = "newest"                     # newest | company | deadline | best | score | track
     #: Used by order="best": jobs in these cities (or remote, with prefer_remote) rank above the rest.
     prefer_cities: Sequence[str] = ()
     prefer_remote: bool = False
@@ -164,9 +164,16 @@ def _where(filt: JobFilter) -> tuple[str, list[object]]:
 
 _ORDER_SQL = {
     "newest": " ORDER BY COALESCE(j.posted_at, j.first_seen_at) DESC, j.id DESC",
-    "company": " ORDER BY c.display_name COLLATE NOCASE, j.title COLLATE NOCASE",
+    "company": " ORDER BY c.display_name COLLATE NOCASE, j.title COLLATE NOCASE, j.id DESC",
     "deadline": " ORDER BY COALESCE(j.deadline_at, j.source_deadline_at) IS NULL, "
                 "COALESCE(j.deadline_at, j.source_deadline_at), j.id DESC",
+    # Unknown scores sort last; zero and negative scores remain meaningful.
+    "score": " ORDER BY j.like_score IS NULL, j.like_score DESC, "
+             "COALESCE(j.posted_at, j.first_seen_at) DESC, j.id DESC",
+    # Multi-track jobs group by their alphabetically first track; unassigned last.
+    "track": " ORDER BY NOT EXISTS (SELECT 1 FROM job_tracks jt WHERE jt.job_id=j.id), "
+             "(SELECT MIN(jt.track) FROM job_tracks jt WHERE jt.job_id=j.id) COLLATE NOCASE, "
+             "c.display_name COLLATE NOCASE, j.title COLLATE NOCASE, j.id DESC",
 }
 
 

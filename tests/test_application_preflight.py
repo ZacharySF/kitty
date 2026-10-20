@@ -1,0 +1,446 @@
+"""Observed application navigation stays non-final and identity-bound."""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from kitty.core.apply import preflight
+from kitty.core.apply.page import UnsafeAction, read_fields, form_frames
+from test_application_auth import firefox, https_site, page, site  # noqa: F401
+from test_apply import space  # noqa: F401
+
+
+DATABRICKS = (
+    'https://www.databricks.com/company/careers/research/'
+    'phd-genai-research-scientist-intern-7011263002?gh_jid=7011263002'
+)
+WORKDAY = 'https://pwc.wd3.myworkdayjobs.com/en-US/Campus/job/Singapore/Intern_741688WD/apply/applyManually'
+SMART = 'https://jobs.smartrecruiters.com/oneclick-ui/company/BoschGroup/publication/73d22a91-52e6-4e51-b734-e818e86fd2e1'
+
+
+def _location(script, url):
+    return script.replace('() => {', '() => { const location = new URL(' + json.dumps(url) + ');', 1)
+
+
+def _document(site, page, markup):
+    site.pages['/preflight'] = '<!doctype html><body>' + markup
+    page.goto(site.origin + '/preflight')
+
+
+@pytest.mark.parametrize('change', ['', 'employer', 'job', 'token', 'host', 'title', 'duplicate'])
+def test_embedded_greenhouse_scroll_requires_exact_posting_identity(site, page, change):
+    _document(site, page, '<iframe id="grnhse_iframe" title="Greenhouse Job Board" loading="lazy"></iframe>')
+    source = 'https://job-boards.greenhouse.io/embed/job_app?for=databricks&validityToken=original&token=7011263002'
+    if change == 'employer':
+        source = source.replace('for=databricks', 'for=another')
+    elif change == 'job':
+        source = source.replace('token=7011263002', 'token=7011263003')
+    elif change == 'token':
+        source = source.replace('validityToken=original', 'validityToken=')
+    elif change == 'host':
+        source = source.replace('job-boards.greenhouse.io', 'unrelated.example')
+    page.main.call("""(source, change) => {
+      const frame = document.querySelector('iframe');
+      Object.defineProperty(frame, 'src', {get: () => source});
+      window.scrolls = [];
+      frame.scrollIntoView = options => window.scrolls.push(options);
+      if (change === 'title') frame.title = 'Unrelated iframe';
+      if (change === 'duplicate') document.body.append(frame.cloneNode());
+    }""", source, change, page_realm=True)
+    result = page.main.call(_location(preflight._EMBEDDED_APPLICATION_JS, DATABRICKS), page_realm=True)
+    assert result is (not change)
+    scrolls = page.main.call('() => window.scrolls', page_realm=True)
+    assert scrolls == ([] if change else [{'behavior': 'instant', 'block': 'center', 'inline': 'nearest'}])
+    assert page.main.call('() => document.querySelector("iframe").src', page_realm=True) == source
+    assert page.main.call('() => document.querySelector("iframe").loading') == 'lazy'
+
+
+@pytest.mark.parametrize('label, step, in_form, safe', [
+    ('Save and Continue', 'My Information', False, True),
+    ('Submit application', 'My Information', False, False),
+    ('Save and Continue', 'Review', False, False),
+    ('Save and Continue', 'My Information', True, False),
+    ('Accept and Continue', 'My Information', False, False),
+])
+def test_workday_footer_next_is_exact_nonfinal_control(site, page, monkeypatch, label, step, in_form, safe):
+    button = f'<button data-automation-id="pageFooterNextButton" onclick="window.clicks++">{label}</button>'
+    if in_form:
+        button = '<form>' + button + '</form>'
+    _document(site, page, f'<div data-automation-id="progressBarActiveStep">current step 1 of 6 {step}</div>' + button)
+    page.main.call('() => { window.clicks = 0; }', page_realm=True)
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, WORKDAY))
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.safe_next is safe
+    if safe:
+        preflight.advance(snapshot, 'workday')
+        assert page.main.call('() => window.clicks', page_realm=True) == 1
+    else:
+        with pytest.raises(UnsafeAction):
+            preflight.advance(snapshot, 'workday')
+        assert page.main.call('() => window.clicks', page_realm=True) == 0
+
+
+def test_workday_footer_next_rechecks_changed_final_label(site, page, monkeypatch):
+    _document(site, page, '<div data-automation-id="progressBarActiveStep">My Information</div>'
+              '<button data-automation-id="pageFooterNextButton">Save and Continue</button>')
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, WORKDAY))
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.safe_next
+    page.main.call('() => { document.querySelector("button").textContent = "Submit application"; }')
+    with pytest.raises(UnsafeAction):
+        preflight.advance(snapshot, 'workday')
+
+
+def test_smart_shadow_next_and_required_consent_handoff(site, page, monkeypatch):
+    snapshot_js = preflight._SNAPSHOT
+    _document(site, page, '<oc-oneclick-form><label>Name<input value="Known"></label></oc-oneclick-form>'
+              '<oc-button data-test="footer-next"><spl-button><span>Weiter</span></spl-button></oc-button>')
+    page.main.call("""() => {
+      const host = document.querySelector('spl-button');
+      host.attachShadow({mode: 'open'}).innerHTML = '<button type="button"><slot></slot></button>';
+      window.clicks = 0;
+      host.addEventListener('click', () => window.clicks++);
+    }""", page_realm=True)
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(snapshot_js, SMART))
+    monkeypatch.setattr(preflight, '_SMART_NEXT_JS', _location(preflight._SMART_NEXT_JS, SMART))
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.safe_next and not snapshot.boundary
+    preflight.advance(snapshot, 'smartrecruiters')
+    assert page.main.call('() => window.clicks', page_realm=True) == 1
+
+    page.main.call("""() => {
+      document.body.innerHTML = '<oc-screening-questions-form><label>Required question'
+        + '<input required></label><label>Bosch Datenschutzerklärung'
+        + '<input type="checkbox" required></label></oc-screening-questions-form>'
+        + '<spl-button><span>Absenden</span></spl-button>';
+      document.querySelector('spl-button').attachShadow({mode:'open'}).innerHTML =
+        '<button type="button"><slot></slot></button>';
+    }""", page_realm=True)
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(snapshot_js, SMART + '/screening'))
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.boundary and snapshot.step == 'Application screening'
+    assert not snapshot.safe_next
+    assert snapshot.errors >= 2
+    assert any(f.kind == 'checkbox' and f.required and f.blank for f in read_fields(form_frames(page)))
+    with pytest.raises(UnsafeAction):
+        preflight.advance(snapshot, 'smartrecruiters')
+
+
+def test_workday_unknown_required_history_prevents_next(site, page, monkeypatch):
+    _document(site, page, '<div data-automation-id="progressBarActiveStep">My Information</div>'
+              '<fieldset><legend>Have you ever worked for PwC?</legend>'
+              '<label>Yes<input type="radio" name="history" required></label>'
+              '<label>No<input type="radio" name="history" required></label></fieldset>'
+              '<button data-automation-id="pageFooterNextButton">Save and Continue</button>')
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, WORKDAY))
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.safe_next and snapshot.errors
+    with pytest.raises(UnsafeAction):
+        preflight.advance(snapshot, 'workday')
+    assert all(f.blank for f in read_fields(form_frames(page)) if f.kind == 'radio')
+
+
+@pytest.mark.parametrize('label', [
+    'Ich bin damit einverstanden, dass meine Bewerbung für andere Stellen geprüft wird.',
+    'Diese Einwilligung muss bei jeder Bewerbung gegeben werden.',
+    'Sie erklären, dass Sie die Datenschutzerklärung gelesen haben und verstehen.',
+])
+def test_german_application_consent_is_never_filled_from_answers(label):
+    from kitty.core.apply.filler import _MANUAL_CONSENT
+    assert _MANUAL_CONSENT.search(label)
+
+
+@pytest.mark.parametrize('inert', [False, True])
+def test_workday_posting_entry_reaches_gate_or_stops_after_one_inert_click(site, page, space, monkeypatch, inert):
+    from kitty.core import jobs as jobs_core
+    from kitty.core.apply import filler
+
+    _document(site, page, '''
+      <h1>Fixture role</h1>
+      <button type="button" data-automation-id="jobPostingApplyButton">Apply</button>
+      <script>
+        window.entries = 0; window.submissions = 0;
+        document.addEventListener('submit', e => { window.submissions++; e.preventDefault(); });
+        document.querySelector('button').onclick = () => {
+          window.entries++;
+          if (window.inertEntry) return;
+          document.body.innerHTML = '<button type="button" data-automation-id="applyManually">Apply Manually</button>';
+          document.querySelector('button').onclick = () => {
+            window.entries++;
+            document.body.innerHTML = '<p>Loading application...</p>';
+            setTimeout(() => {
+              document.body.innerHTML = '<h1>Create Account</h1><form>'
+                + '<label>Email<input type="email" name="email"></label>'
+                + '<label>Password<input type="password" name="password"></label>'
+                + '<button type="submit">Create Account</button></form>';
+            }, 30);
+          };
+        };
+      </script>''')
+    page.main.call('(inert) => { window.inertEntry = inert; }', inert, page_realm=True)
+    job, _ = jobs_core.upsert_job(
+        space.conn, company='Fixture Co', title='Posting entry intern',
+        url=page.main.url, tracks=[space.track.name],
+    )
+    monkeypatch.setattr(filler, 'detect_ats', lambda url: 'workday')
+    monkeypatch.setattr(filler, 'wait_for_page',
+                        lambda tab, **kwargs: preflight.wait_for_page(tab, seconds=0.4, **kwargs))
+    initial = preflight.inspect_page(page)
+    assert initial.entry == 'jobPostingApplyButton'
+    assert not initial.step and not initial.safe_next
+    report = filler.fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert report.status == 'blocked'
+    assert report.filled == []
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+    assert page.main.call('() => [window.entries, window.submissions]', page_realm=True) == [
+        1 if inert else 2, 0,
+    ]
+    if not inert:
+        assert preflight.inspect_page(page).blocker.startswith('login:')
+        assert page.main.call('() => [...document.querySelectorAll("input")].map(e => e.value)') == ['', '']
+
+
+@pytest.mark.parametrize('change', ['label', 'target', 'provider', 'identity', 'final', 'ats'])
+def test_workday_posting_entry_rechecks_target_identity_and_action(site, page, change):
+    url = site.origin + '/job/Fixture_123'
+    site.pages['/job/Fixture_123'] = '''<!doctype html><body>
+      <a data-automation-id="jobPostingApplyButton" href="/job/Fixture_123/apply">Apply</a>
+      <script>window.clicks = 0;
+        document.querySelector('a').onclick = e => { window.clicks++; e.preventDefault(); };
+      </script>'''
+    page.goto(url)
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.entry == 'jobPostingApplyButton'
+    page.main.call('''(change) => {
+      const link = document.querySelector('a');
+      if (change === 'label') link.textContent = 'Submit application';
+      if (change === 'target') link.href = '/job/Other_456/apply';
+      if (change === 'provider') link.href = 'https://unapproved.example/job/Fixture_123/apply';
+      if (change === 'identity') document.body.insertAdjacentHTML('beforeend', '<input type=email name=email>');
+      if (change === 'final') document.body.insertAdjacentHTML('beforeend', '<button>Submit application</button>');
+    }''', change)
+    with pytest.raises(UnsafeAction):
+        preflight.advance(snapshot, 'unknown' if change == 'ats' else 'workday')
+    assert page.main.call('() => window.clicks', page_realm=True) == 0
+    assert page.main.url == url
+
+
+@pytest.mark.parametrize('role', ['checkbox', 'radio', 'combobox'])
+def test_required_committed_aria_button_is_represented_before_next(site, page, role):
+    state = 'aria-checked="true"' if role != 'combobox' else 'aria-controls="choices" aria-expanded="false"'
+    _document(site, page, f'''
+      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <button type="button" role="{role}" aria-required="true" {state}
+        aria-label="Known answer">Known answer</button>
+      <div role="listbox" id="choices"><div role="option" aria-selected="true">Known answer</div></div>
+      <button type="button" data-automation-id="bottom-navigation-next-button"
+        onclick="window.nextClicks++">Next</button>
+      <script>window.nextClicks = 0; window.submissions = 0;
+        document.addEventListener('submit', e => {{ window.submissions++; e.preventDefault(); }});
+      </script>''')
+    snapshot = preflight.inspect_page(page)
+    fields = read_fields(form_frames(page))
+    assert any(f.kind == role and f.required and not f.blank for f in fields)
+    assert not snapshot.unsupported_required and not snapshot.errors
+    preflight.advance(snapshot, 'workday')
+    assert page.main.call('() => [window.nextClicks, window.submissions]', page_realm=True) == [1, 0]
+
+
+def test_submit_button_disguised_as_required_aria_control_stays_unsupported(site, page):
+    _document(site, page, '''
+      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <form><button type="submit" role="checkbox" aria-required="true" aria-checked="true">Known answer</button></form>
+      <button type="button" data-automation-id="bottom-navigation-next-button">Next</button>
+      <script>window.submissions = 0;
+        document.addEventListener('submit', e => { window.submissions++; e.preventDefault(); });
+      </script>''')
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.unsupported_required
+    with pytest.raises(UnsafeAction):
+        preflight.advance(snapshot, 'workday')
+    assert page.main.call('() => window.submissions', page_realm=True) == 0
+
+
+@pytest.mark.parametrize('stuck', [False, True])
+def test_oracle_loading_overlay_waits_before_guarded_posting_entry(site, page, space, monkeypatch, stuck):
+    from kitty.core import jobs as jobs_core
+    from kitty.core.apply import filler
+
+    oracle = 'https://hdnn.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/114233'
+    _document(site, page, '''
+      <style>.app-loading-spinner {position:fixed;inset:0;z-index:1000;background:white}</style>
+      <div class="app-loading-spinner"></div>
+      <div class="job-details__section-apply-button">
+        <button type="button" class="apply-now-button" style="margin-top:1500px">Apply Now</button>
+      </div>
+      <script>
+        document.body.classList.add('app-loading');
+        window.entries = []; window.submissions = 0;
+        document.addEventListener('submit', e => { window.submissions++; e.preventDefault(); });
+        document.querySelector('button').onclick = e => {
+          window.entries.push(e.isTrusted);
+          document.body.innerHTML = '<h1>Sign in</h1><form><input type="email" name="email">'
+            + '<input type="password" name="password"><button type="submit">Sign in</button></form>';
+        };
+      </script>''')
+    snapshot_js = _location(preflight._SNAPSHOT, oracle)
+    monkeypatch.setattr(preflight, '_SNAPSHOT', snapshot_js)
+    monkeypatch.setattr(preflight, '_PROVIDER_ENTRY_JS', _location(preflight._PROVIDER_ENTRY_JS, oracle))
+    initial = preflight.inspect_page(page)
+    assert initial.entry == 'provider-apply' and initial.blocker.startswith('loading:')
+    with pytest.raises(UnsafeAction):
+        preflight.advance(initial, 'oracle')
+    if not stuck:
+        page.main.call("""() => setTimeout(() => {
+          document.body.classList.remove('app-loading');
+          document.querySelector('.app-loading-spinner').remove();
+        }, 100)""")
+    job, _ = jobs_core.upsert_job(
+        space.conn, company='Fixture Co', title='Oracle entry intern',
+        url=page.main.url, tracks=[space.track.name],
+    )
+    monkeypatch.setattr(filler, 'detect_ats', lambda url: 'oracle')
+    monkeypatch.setattr(filler, 'wait_for_page',
+                        lambda tab, **kwargs: preflight.wait_for_page(tab, seconds=0.6, **kwargs))
+    report = filler.fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert report.status == 'blocked'
+    assert report.note.startswith('loading:' if stuck else 'login:')
+    assert report.filled == []
+    assert page.main.call('() => [window.entries, window.submissions]', page_realm=True) == [
+        [] if stuck else [True], 0,
+    ]
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+
+
+@pytest.mark.parametrize('mode', ['visible', 'hidden', 'zero-size', 'aria-hidden', 'passive'])
+def test_datadome_challenge_blocks_before_fields_upload_and_next(site, page, space, monkeypatch, mode):
+    from kitty.core import jobs as jobs_core
+    from kitty.core.apply import filler
+
+    _document(site, page, '''
+      <oc-oneclick-form><form id="application-form">
+        <label>First Name<input name="first_name" required></label>
+        <label>Resume<input name="resume" type="file" required></label>
+        <button type="submit">Submit application</button>
+      </form></oc-oneclick-form>
+      <oc-button data-test="footer-next"><button type="button">Weiter</button></oc-button>
+      <iframe title="Verification system"></iframe>
+      <script>
+        window.controlActions = 0;
+        document.addEventListener('click', () => window.controlActions++);
+        document.addEventListener('input', () => window.controlActions++);
+        document.addEventListener('change', () => window.controlActions++);
+        document.addEventListener('submit', e => { window.controlActions++; e.preventDefault(); });
+      </script>''')
+    source = 'https://geo.captcha-delivery.com/' + ('js/' if mode == 'passive' else 'captcha/')
+    page.main.call("""(source, mode) => {
+      const frame = document.querySelector('iframe');
+      Object.defineProperty(frame, 'src', {get: () => source});
+      if (mode === 'hidden') frame.style.display = 'none';
+      if (mode === 'zero-size') frame.style.cssText = 'width:0;height:0;border:0';
+      if (mode === 'aria-hidden') frame.setAttribute('aria-hidden', 'true');
+    }""", source, mode, page_realm=True)
+    # Read the mocked iframe source in its owning realm without a network request.
+    original_call = page.main.__class__.call
+
+    def in_page_realm(frame, function, *args, **kwargs):
+        return original_call(frame, function, *args, **{**kwargs, 'page_realm': True})
+
+    monkeypatch.setattr(page.main.__class__, 'call', in_page_realm)
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, SMART))
+    state = preflight.inspect_page(page)
+    if mode != 'visible':
+        assert state.blocker is None
+        return
+    assert state.blocker.startswith('captcha:')
+    job, _ = jobs_core.upsert_job(
+        space.conn, company='Fixture Co', title='DataDome boundary intern',
+        url=page.main.url, tracks=[space.track.name],
+    )
+    report = filler.fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert report.status == 'blocked' and report.note.startswith('captcha:')
+    assert report.filled == []
+    assert page.main.call("""() => [
+      document.querySelector('[name=first_name]').value,
+      document.querySelector('[name=resume]').files.length, window.controlActions,
+    ]""") == ['', 0, 0]
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+
+
+def test_datadome_appearing_after_safe_next_snapshot_stops_before_pointer_action(site, page, monkeypatch):
+    _document(site, page, '''
+      <oc-oneclick-form></oc-oneclick-form>
+      <oc-button data-test="footer-next"><button type="button" onclick="window.clicks++">Weiter</button></oc-button>
+      <script>window.clicks = 0;</script>''')
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, SMART))
+    state = preflight.inspect_page(page)
+    assert state.safe_next and state.blocker is None
+    # Install the owner in the sandbox used by advance's final recheck.
+    page.main.call("""() => {
+      const frame = document.createElement('iframe');
+      Object.defineProperty(frame, 'src', {get: () => 'https://geo.captcha-delivery.com/captcha/'});
+      document.body.append(frame);
+    }""")
+    with pytest.raises(UnsafeAction):
+        preflight.advance(state, 'smartrecruiters')
+    assert page.main.call('() => window.clicks', page_realm=True) == 0
+
+
+def test_required_container_with_supported_unanswered_radios_is_not_unsupported(site, page, space, monkeypatch):
+    from kitty.core import jobs as jobs_core
+    from kitty.core.apply import filler
+
+    _document(site, page, '''
+      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <div class="question">
+        <label id="radio-label1">Have you ever worked for PwC? *</label>
+        <div id="previousWorker--candidateIsPreviousWorker" aria-required="true" aria-labelledby="radio-label1">
+          <label>Yes<input name="candidateIsPreviousWorker" type="radio" value="true"></label>
+          <label>No<input name="candidateIsPreviousWorker" type="radio" value="false"></label>
+        </div>
+      </div>
+      <button data-automation-id="pageFooterNextButton" onclick="window.nextClicks++">Save and Continue</button>
+      <script>window.nextClicks = 0;</script>''')
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, WORKDAY))
+    snapshot = preflight.inspect_page(page)
+    assert not snapshot.unsupported_required
+    radios = [f for f in read_fields(form_frames(page)) if f.kind == 'radio']
+    assert radios and all(f.blank and f.required for f in radios)
+    job, _ = jobs_core.upsert_job(
+        space.conn, company='Fixture Co', title='Unanswered history intern',
+        url=page.main.url, tracks=[space.track.name],
+    )
+    monkeypatch.setattr(filler, 'detect_ats', lambda url: 'workday')
+    report = filler.fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert report.status != 'ready'
+    assert page.main.call('() => window.nextClicks', page_realm=True) == 0
+    assert page.main.call('() => [...document.querySelectorAll("input")].some(e => e.checked)') is False
+
+
+@pytest.mark.parametrize('role, control, unsupported', [
+    ('', '<input name="answer" aria-label="Required custom answer" value="Known">', False),
+    ('group', '<input name="answer" aria-label="Required custom answer" value="Known">', False),
+    ('radiogroup', '<input name="answer" aria-label="Required custom answer" value="Known">', True),
+    ('radiogroup', '<input name="answer" role="radio" value="Known">', True),
+    ('radiogroup', '<input type="checkbox" name="answer" checked>', True),
+    ('radiogroup', '<input type="radio" name="answer" checked>', False),
+    ('radiogroup', '<input type="radio" name="answer" checked disabled>', True),
+    ('radiogroup', '<button type="button" role="radio" aria-checked="true">Known</button>', False),
+])
+def test_required_owner_descendants_match_choice_semantics(site, page, role, control, unsupported):
+    _document(site, page, f'''
+      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <div role="{role}" aria-required="true" aria-label="Required answer">{control}</div>
+      <button type="button" data-automation-id="bottom-navigation-next-button"
+        onclick="window.nextClicks++">Next</button>
+      <script>window.nextClicks = 0;</script>''')
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.safe_next
+    assert snapshot.unsupported_required is unsupported
+    if unsupported:
+        with pytest.raises(UnsafeAction):
+            preflight.advance(snapshot, 'workday')
+    else:
+        preflight.advance(snapshot, 'workday')
+    assert page.main.call('() => window.nextClicks', page_realm=True) == (0 if unsupported else 1)

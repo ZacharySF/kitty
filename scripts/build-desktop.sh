@@ -19,4 +19,10 @@ uv run --locked --with pyinstaller==6.16.0 python desktop/package_backend.py
 # APPIMAGE_EXTRACT_AND_RUN avoids requiring FUSE while assembling the AppImage.
 export APPIMAGE_EXTRACT_AND_RUN=1
 cd desktop
-"$ROOT/web/node_modules/.bin/tauri" build --bundles appimage,deb "$@" -- --locked
+bundles=appimage,deb
+if [ -e /etc/NIXOS ]; then
+  # Tauri's AppImage step copies GTK from the single directory pkg-config reports;
+  # Nix spreads it across many store paths, so NixOS builds the .deb only.
+  bundles=deb
+fi
+"$ROOT/web/node_modules/.bin/tauri" build --bundles "$bundles" "$@" -- --locked

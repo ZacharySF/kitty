@@ -25,10 +25,10 @@ sources:
     fragile: true
     min_interval_seconds: 5
     cache_ttl_minutes: 360
-  derec4:
+  derec4:  # DereC4/internships-and-newgrad: README.md, NEWGRAD.md, go/UNFILTERED.md; no API key
     kind: repo
     enabled: true
-    fragile: true
+    fragile: true  # missing files, tables or malformed rows report partial/error, never a full snapshot
     min_interval_seconds: 5
     cache_ttl_minutes: 360
   greenhouse:
@@ -91,6 +91,13 @@ sources:
       locations:
       - United States
       - Remote
+  hiringcafe:  # public /jobs/<track-term> first pages only; isolated Firefox, no API key
+    kind: aggregator
+    enabled: true
+    fragile: true  # a bot-check/access block stays an error; no challenge bypass or paid fallback
+    min_interval_seconds: 5
+    options:
+      max_topics: 40
   usajobs:
     kind: gov
     enabled: false

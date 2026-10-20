@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { api, dateLabel, safeUrl, type Bootstrap } from "./api";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
   let {
     id,
     revision = 0,
@@ -12,6 +13,8 @@
     initialCommand?: string;
     onchange: () => Promise<void>;
   } = $props();
+  const pane = useWorkspaceContext();
+  const fieldId = (name: string) => `${pane.id}-job-${id}-${name}`;
   type Reminder = {
     id: number;
     due_at: string;
@@ -93,7 +96,7 @@
           else if (fields[initialCommand]) {
             if (toolsDisclosure) toolsDisclosure.open = true;
             await tick();
-            document.getElementById(fields[initialCommand])?.focus();
+            if (pane.active) document.getElementById(fieldId(fields[initialCommand]))?.focus();
           }
         }
       })
@@ -138,9 +141,9 @@
         void save("tier", tier || null);
       }}
     >
-      <label for="job-tier">Priority rank <kbd>t</kbd></label>
+      <label for={fieldId("job-tier")}>Priority rank <kbd>t</kbd></label>
       <div class="inline">
-        <select id="job-tier" bind:value={tier}
+        <select id={fieldId("job-tier")} bind:value={tier}
           ><option value="">Not ranked</option><option value="A"
             >A — Highest priority</option
           ><option value="B">B — Worth considering</option><option value="C"
@@ -159,9 +162,9 @@
           void save("state", queueState);
         }}
       >
-        <label for="job-state">Preparation progress <kbd>k</kbd></label>
+        <label for={fieldId("job-state")}>Preparation progress <kbd>k</kbd></label>
         <div class="inline">
-          <select id="job-state" bind:value={queueState}
+          <select id={fieldId("job-state")} bind:value={queueState}
             >{#each ["new", "queued", "later", "skipped", "not_eligible"] as item}<option
                 value={item}>{progressLabels[item]}</option
               >{/each}</select
@@ -179,10 +182,10 @@
         void save("deadline", deadline);
       }}
     >
-      <label for="job-deadline">Your deadline <kbd>d</kbd></label>
+      <label for={fieldId("job-deadline")}>Your deadline <kbd>d</kbd></label>
       <div class="inline">
         <input
-          id="job-deadline"
+          id={fieldId("job-deadline")}
           bind:value={deadline}
           placeholder="YYYY-MM-DD, +7, or blank"
         /><button class="button" disabled={busy}>Save</button>
@@ -221,12 +224,12 @@
           void save("next_action", nextDate, nextNote);
         }}
       >
-        <label for="next-action-date">When <kbd>n</kbd></label><input
-          id="next-action-date"
+        <label for={fieldId("next-action-date")}>When <kbd>n</kbd></label><input
+          id={fieldId("next-action-date")}
           bind:value={nextDate}
           placeholder="YYYY-MM-DD, +7, or blank"
-        /><label for="next-action-note">What needs doing</label><input
-          id="next-action-note"
+        /><label for={fieldId("next-action-note")}>What needs doing</label><input
+          id={fieldId("next-action-note")}
           bind:value={nextNote}
           placeholder="Follow up with recruiter"
         /><button class="button" disabled={busy}>Save next action</button>

@@ -35,6 +35,7 @@ from kitty.core.discovery.context import DiscoverContext
 from kitty.core.discovery.eligibility import Verdict, evaluate, merge_rules
 from kitty.core.discovery.employers import EmployersAdapter, LocalEmployersAdapter
 from kitty.core.discovery.hackernews import HackerNewsAdapter
+from kitty.core.discovery.hiringcafe import HiringCafeAdapter
 from kitty.core.discovery.http import PoliteHttp
 from kitty.core.discovery.jobspy_source import JobSpyAdapter
 from kitty.core.discovery.repos import (
@@ -58,7 +59,7 @@ log = logging.getLogger(__name__)
 
 #: Every adapter, in the order discover runs them. The repos go first so their
 #: postings name the job before a board's copy is merged in; the aggregators
-#: (Checkpoint B) go last, JobSpy (slow, scraped) at the very end.
+#: (Checkpoint B, hiring.cafe) go last, JobSpy (slow, scraped) at the very end.
 ADAPTERS = {
     "simplify2027": SimplifyAdapter,
     "nuft2027": NuftAdapter,
@@ -79,6 +80,7 @@ ADAPTERS = {
     "websearch": WebSearchAdapter,
     "hackernews": HackerNewsAdapter,
     "starbucks": StarbucksAdapter,
+    "hiringcafe": HiringCafeAdapter,
     "jobspy": JobSpyAdapter,
 }
 
@@ -673,7 +675,7 @@ def run_discover(
         return clients[name]
 
     try:
-        ctx = DiscoverContext(config, http_for, _previous_board_counts(conn))
+        ctx = DiscoverContext(config, http_for, _previous_board_counts(conn), settings)
         resolver = CompanyResolver(config.watchlist)
         selective = {c.name for c in config.watchlist.companies if c.school_selective}
         run_id = sources_core.start_run(conn, "discover")

@@ -17,9 +17,10 @@ def _call(function, *args, **kwargs):
 def get(app, conn, path, query):
     from kitty.web_server import APIError
     if path == '/api/study':
-        if set(query) - {'timezone'}:
+        if set(query) - {'timezone', 'period', 'date'}:
             raise APIError(400, 'Unknown study query parameter')
-        return _call(study.workspace, conn, timezone_name=query.get('timezone'))
+        return _call(study.workspace, conn, timezone_name=query.get('timezone'),
+                     history_period=query.get('period', 'week'), history_date=query.get('date'))
     if path == '/api/study/timer':
         app._no_query(query)
         return _call(study.timer_state, conn)
@@ -32,6 +33,8 @@ def post(app, conn, path, body):
     route = path.removeprefix('/api/study/')
     if route == 'timer':
         return _call(study.timer_command, conn, body)
+    if route == 'guide':
+        return _call(study.save_guide, conn, body)
     if route == 'settings':
         return _call(study.save_settings, conn, body)
     if route == 'sessions':

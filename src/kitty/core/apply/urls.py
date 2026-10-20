@@ -6,26 +6,40 @@ importing the browser code.
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from kitty.models import Job
 
 
 def detect_ats(url: str) -> str:
-    """Which applicant tracking system a URL belongs to, from its host (port ignored)."""
-    host = urlsplit(url).hostname or ""
-    if "greenhouse.io" in host or "gh_jid=" in url:
+    """Recognize provider-owned hosts, or an explicit Greenhouse posting ID.
+
+    Custom employer hosts remain ``other`` unless they carry ``gh_jid``;
+    preflight separately verifies their actual application entry controls.
+    """
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    owned = lambda domain: host == domain or host.endswith("." + domain)
+    if owned("greenhouse.io") or any(
+            name == "gh_jid" and value.isdigit()
+            for name, value in parse_qsl(parts.query)):
         return "greenhouse"
-    if host.endswith("lever.co"):
+    if owned("lever.co"):
         return "lever"
-    if host.endswith("ashbyhq.com"):
+    if owned("ashbyhq.com"):
         return "ashby"
-    if host.endswith("smartrecruiters.com"):
+    if owned("smartrecruiters.com"):
         return "smartrecruiters"
-    if host.endswith("workable.com"):
+    if owned("workable.com"):
         return "workable"
-    if "myworkdayjobs.com" in host or "myworkdaysite.com" in host:
+    if owned("myworkdayjobs.com") or owned("myworkdaysite.com"):
         return "workday"
+    if owned("oraclecloud.com") and parts.path.startswith("/hcmUI/CandidateExperience/"):
+        return "oracle"
+    if owned("dayforcehcm.com"):
+        return "dayforce"
+    if owned("successfactors.com") or owned("successfactors.eu"):
+        return "successfactors"
     return "other"
 
 

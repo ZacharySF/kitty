@@ -1,8 +1,15 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, untrack, tick } from "svelte";
+  import { Button, Panel } from "@nunera/bracket";
   import { api, safeUrl, type TaskRecord } from "./api";
-  let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
-    $props();
+  import TaskMapAction from "./TaskMapAction.svelte";
+  import CalendarDateTime from "./CalendarDateTime.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  let { revision = 0, demo = false, active = true }: {
+    revision?: number; demo?: boolean; active?: boolean;
+  } = $props();
+  const pane = useWorkspaceContext();
+  const isActive = $derived(active && pane.active);
   type Cal = {
     id: string;
     name: string;
@@ -126,14 +133,18 @@
     conflicts: [],
     free: [],
   });
-  let view = $state("month");
+  let view = $state("week");
   let section = $state("calendar");
-  let anchor = $state(new Date().toISOString().slice(0, 10));
+  const initialDate = new Date();
+  const initialDay = `${initialDate.getFullYear()}-${String(initialDate.getMonth() + 1).padStart(2, "0")}-${String(initialDate.getDate()).padStart(2, "0")}`;
+  let anchor = $state(initialDay);
+  let selectedDate = $state(initialDay);
   let tz = $state(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   let search = $state("");
   let error = $state("");
   let notice = $state("");
   let loading = $state(false);
+  let pending = $state(0);
   let undoId = $state<number | null>(null);
   let editor = $state<Event | null>(null);
   let originalEditor: Event | null = null;
@@ -148,6 +159,13 @@
   let attendeesText = $state("");
   let attachmentsText = $state("");
   let remindersText = $state("10");
+  let reminderPreset = $state("10");
+  const reminderPresets = [
+    ["", "No reminder"], ["0", "At start"], ["5", "5 minutes before"],
+    ["10", "10 minutes before"], ["15", "15 minutes before"],
+    ["30", "30 minutes before"], ["60", "1 hour before"],
+    ["1440", "1 day before"], ["10080", "1 week before"],
+  ];
   let exdatesText = $state("");
   let calendarEditor = $state<Partial<Cal> | null>(null);
   let rangeStart = $state<string | null>(null);
@@ -155,6 +173,15 @@
   let rangeAllDay = $state(false);
   let dragEvent: Event | null = null;
   let dragMode = "move";
+  let dragTarget = $state("");
+  let invalidDropTarget = $state("");
+  let dragMessage = $state("");
+  let suppressClickUntil = 0;
+  let taskTrayOpen = $state(true);
+  const trayTasks = $derived(data.tasks.filter((task) =>
+    task.status !== "done" && task.status !== "cancelled" &&
+    (!task.due || task.due.length === 10 || parts(task.due).date === selectedDate),
+  ));
   let importRows = $state<Preview[]>([]);
   let importNotice = $state("");
   let googleStatus = $state<GoogleStatus | null>(null);
@@ -251,13 +278,21 @@
   let taskDueTimed = $state(false);
   function modal(node: HTMLDialogElement) {
     const previous = document.activeElement as HTMLElement | null;
-    node.showModal();
-    node.querySelector<HTMLInputElement>("input:not([type=checkbox])")?.focus();
-    return { destroy: () => previous?.focus() };
+    if (isActive) {
+      node.showModal();
+      node.querySelector<HTMLInputElement>("input:not([type=checkbox])")?.focus();
+    }
+    return { destroy: () => { if (isActive) previous?.focus(); } };
   }
   let notifications = $state(false);
   const statuses = ["todo", "doing", "done", "cancelled"];
   const hours = Array.from({ length: 48 }, (_, i) => i);
+  let focusedSlot = $state(18);
+  let clock = $state(new Date().toISOString());
+  function scrollToMorning(node: HTMLDivElement) {
+    const frame = requestAnimationFrame(() => (node.scrollTop = 8 * 72));
+    return { destroy: () => cancelAnimationFrame(frame) };
+  }
   let loadCounter = 0;
   const dateAt = (value: string) => new Date(`${value}T12:00:00Z`);
   function addDays(value: string, count: number) {
@@ -291,6 +326,22 @@
       (_, i) => addDays(firstDay, i),
     ),
   );
+  const dateTitle = (day: string, options: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat(undefined, { ...options, timeZone: "UTC" }).format(dateAt(day));
+  const rangeHeading = $derived(
+    view === "month"
+      ? dateTitle(anchor, { month: "long", year: "numeric" })
+      : view === "day"
+        ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+        : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
+  );
+  function chooseDate(day: string) {
+    if (!day) return;
+    anchor = day;
+    selectedDate = day;
+  }
+  const today = $derived(parts(clock).date);
+  const currentMinute = $derived(parts(clock).hour * 60 + parts(clock).minute);
   function parts(value: string, zoneName = tz) {
     const values = new Intl.DateTimeFormat("en-CA", {
       timeZone: zoneName,
@@ -352,17 +403,67 @@
         (t.due.length === 10 ? t.due : parts(t.due).date) === day,
     );
   }
-  function timedOn(day: string, hour: number) {
-    return eventsOn(day).filter(
-      (e) =>
-        !e.all_day &&
-        ((parts(e.start).date === day &&
-          Math.floor(
-            (parts(e.start).hour * 60 + parts(e.start).minute) / 30,
-          ) === hour) ||
-          (parts(e.start).date < day && hour === 0)),
-    );
+  type TimedPlacement = {
+    event: Event;
+    start: number;
+    end: number;
+    column: number;
+    columns: number;
+  };
+  function timedEvents(day: string): TimedPlacement[] {
+    const events = eventsOn(day)
+      .filter((event) => !event.all_day)
+      .map((event) => {
+        const start = parts(event.start);
+        const end = parts(event.end);
+        return {
+          event,
+          start: start.date < day ? 0 : start.hour * 60 + start.minute,
+          end: end.date > day ? 1440 : end.hour * 60 + end.minute,
+          column: 0,
+          columns: 1,
+        };
+      })
+      .sort((a, b) => a.start - b.start || b.end - a.end);
+    let group: TimedPlacement[] = [];
+    let laneEnds: number[] = [];
+    let groupEnd = 0;
+    function finishGroup() {
+      for (const placement of group) placement.columns = laneEnds.length;
+      group = [];
+      laneEnds = [];
+    }
+    for (const placement of events) {
+      if (placement.start >= groupEnd) finishGroup();
+      let column = laneEnds.findIndex((end) => end <= placement.start);
+      if (column === -1) column = laneEnds.length;
+      placement.column = column;
+      const visibleEnd = Math.min(1440, Math.max(placement.end, placement.start + 30));
+      laneEnds[column] = visibleEnd;
+      groupEnd = group.length ? Math.max(groupEnd, visibleEnd) : visibleEnd;
+      group.push(placement);
+    }
+    finishGroup();
+    return events;
   }
+  const weekEvents = $derived.by(() =>
+    Object.fromEntries(
+      view === "week" || view === "day"
+        ? days.map((day) => [day, timedEvents(day)])
+        : [],
+    ) as Record<string, TimedPlacement[]>,
+  );
+  const weekTasks = $derived.by(() => {
+    const slots: Record<string, Task[][]> = {};
+    if (view !== "week" && view !== "day") return slots;
+    for (const day of days) slots[day] = Array.from({ length: 48 }, () => []);
+    for (const task of data.tasks) {
+      if (task.due.length <= 10 || task.status === "cancelled") continue;
+      const time = parts(task.due);
+      slots[time.date]?.[Math.floor((time.hour * 60 + time.minute) / 30)].push(task);
+    }
+    return slots;
+  });
   function color(id: string) {
     return data.calendars.find((c) => c.id === id)?.color || "var(--accent)";
   }
@@ -387,10 +488,13 @@
   async function run(work: () => Promise<unknown>) {
     error = "";
     notice = "";
+    pending += 1;
     try {
       return await work();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      pending -= 1;
     }
   }
   async function changed(
@@ -415,8 +519,12 @@
         anchor,
         step * (view === "week" ? 7 : view === "agenda" ? 31 : 1),
       );
+    selectedDate = anchor;
   }
   function newEvent(start: string, end?: string, allDay = false) {
+    if (!isActive) return;
+    error = "";
+    selectedDate = start.slice(0, 10);
     const cal = data.calendars.find((c) => c.visible) || data.calendars[0];
     editor = {
       id: "",
@@ -454,6 +562,7 @@
     attachmentsText = "";
     exdatesText = "";
     remindersText = "10";
+    reminderPreset = "10";
     fold = 0;
     foldChanged = false;
     googleOptionsText = "{}";
@@ -469,10 +578,13 @@
       .join("\n");
     exdatesText = e.exdates.join("\n");
     remindersText = e.reminders.join(",");
+    reminderPreset = reminderPresets.some(([value]) => value === remindersText)
+      ? remindersText : "custom";
     foldChanged = false;
     googleOptionsText = JSON.stringify(e.google_options, null, 2);
   }
   function openEvent(e: Event) {
+    if (!isActive || Date.now() < suppressClickUntil) return;
     originalEditor = $state.snapshot(e);
     editBase = structuredClone(originalEditor);
     editor = structuredClone(originalEditor);
@@ -598,11 +710,27 @@
           })
         : await api<Event>("/calendar/events", changes);
       editor = null;
+      notice = remove ? "Event deleted locally." : "Event saved locally. Google changes require a separately reviewed sync.";
       return result;
     });
   }
+  async function deleteEventAtPointer(event: MouseEvent, item: Event) {
+    event.preventDefault();
+    if (pending || !confirm(`Delete ${item.rrule ? "this occurrence of " : ""}“${item.title}”?`)) return;
+    openEvent(item);
+    await saveEvent(true);
+  }
+  async function deleteTaskAtPointer(event: MouseEvent, item: Task) {
+    event.preventDefault();
+    if (pending || !confirm(`Delete task “${item.title}”?`)) return;
+    taskEditor = {...item};
+    await tick();
+    await saveTask(true);
+  }
   function beginRange(value: string, allDay: boolean, event: PointerEvent) {
+    if (!isActive || dragEvent || Date.now() < suppressClickUntil) return;
     if (event.button !== 0) return;
+    selectedDate = value.slice(0, 10);
     rangeStart = value;
     rangeEnd = value;
     rangeAllDay = allDay;
@@ -611,9 +739,13 @@
     if (rangeStart) rangeEnd = value;
   }
   function finishRange() {
+    if (!isActive) { rangeStart = null; rangeEnd = null; return; }
     if (!rangeStart || !rangeEnd) return;
     const [a, b] = [rangeStart, rangeEnd].sort();
-    if (rangeAllDay) newEvent(a, addDays(b, 1), true);
+    if (rangeAllDay) {
+      selectedDate = a;
+      if (a !== b) newEvent(a, addDays(b, 1), true);
+    }
     else {
       const d = new Date(b + "Z");
       d.setUTCMinutes(d.getUTCMinutes() + 30);
@@ -622,8 +754,36 @@
     rangeStart = null;
     rangeEnd = null;
   }
-  function slot(day: string, hour: number) {
-    return `${day}T${String(Math.floor(hour / 2)).padStart(2, "0")}:${hour % 2 ? "30" : "00"}`;
+  function slot(day: string, halfHour: number) {
+    const offset = halfHour % 48;
+    return `${addDays(day, Math.floor(halfHour / 48))}T${String(Math.floor(offset / 2)).padStart(2, "0")}:${offset % 2 ? "30" : "00"}`;
+  }
+  function slotKey(day: string, halfHour: number, event: KeyboardEvent) {
+    const shifts: Record<string, number> = {
+      ArrowUp: -1,
+      ArrowDown: 1,
+      ArrowLeft: -48,
+      ArrowRight: 48,
+      Home: -halfHour,
+      End: 47 - halfHour,
+    };
+    if (event.key in shifts) {
+      event.preventDefault();
+      const index = days.indexOf(day) * 48 + halfHour + shifts[event.key];
+      if (index < 0 || index >= days.length * 48) return;
+      const nextDay = days[Math.floor(index / 48)];
+      focusedSlot = index % 48;
+      selectedDate = nextDay;
+      const grid = (event.currentTarget as HTMLElement).closest(".time-grid");
+      const target = grid?.querySelector<HTMLButtonElement>(
+        `[data-day="${nextDay}"][data-slot="${focusedSlot}"]`,
+      );
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (event.shiftKey && rangeStart) extendRange(slot(nextDay, focusedSlot));
+      return;
+    }
+    keyboardRange(slot(day, halfHour), false, event);
   }
   function keyboardRange(value: string, allDay: boolean, event: KeyboardEvent) {
     if (event.key === "Enter" || event.key === " ") {
@@ -645,54 +805,126 @@
   }
   async function dropOn(value: string, allDay: boolean, event: DragEvent) {
     event.preventDefault();
-    if (!dragEvent) return;
+    event.stopPropagation();
     const selected = dragEvent;
-    dragEvent = null;
-    openEvent(selected);
-    if (!editor) return;
-    if (dragMode === "resize") {
-      endInput = allDay ? addDays(value, 1) : value;
+    const mode = dragMode;
+    const taskId = event.dataTransfer?.getData("application/kitty-task");
+    const task = taskId && data.tasks.find((item) => item.id === taskId);
+    const valid = isActive && !pending && (!!task || (!!selected && allDay === selected.all_day));
+    finishDrag();
+    if (!valid) return;
+    selectedDate = value.slice(0, 10);
+    if (task) {
+      await changed(async () => {
+        const due = allDay ? value : await resolveTime(value, tz);
+        const result = await api<Task>("/calendar/tasks", {
+          id: task.id, revision: task.revision, due,
+        });
+        notice = `Task scheduled for ${label(due, allDay)}.`;
+        return result;
+      });
       return;
     }
-    if (allDay && selected.all_day) {
-      const span = Math.round(
-        (dateAt(selected.end).getTime() - dateAt(selected.start).getTime()) /
-          86400000,
-      );
-      startInput = value;
-      endInput = addDays(value, span);
-    } else if (!allDay && !selected.all_day) {
-      await run(async () => {
-        const start = await resolveTime(value, selected.timezone);
-        const duration =
-          new Date(selected.end).getTime() - new Date(selected.start).getTime();
-        const end = new Date(
-          new Date(start).getTime() + duration,
-        ).toISOString();
-        startInput = value;
-        endInput = localInput(end, false, selected.timezone);
+    if (!selected) return;
+    await changed(async () => {
+      let start = selected.start;
+      let end: string;
+      if (allDay) {
+        const duration = Math.round((dateAt(selected.end).getTime() - dateAt(selected.start).getTime()) / 86400000);
+        if (mode === "resize") end = addDays(value, 1);
+        else { start = value; end = addDays(value, duration); }
+      } else {
+        // Slots are wall-clock times in the displayed timezone, not the event's timezone.
+        const target = await resolveTime(value, tz);
+        if (mode === "resize") end = target;
+        else {
+          start = target;
+          end = new Date(new Date(start).getTime() +
+            new Date(selected.end).getTime() - new Date(selected.start).getTime()).toISOString();
+        }
+      }
+      if (end <= start) throw new Error("Drop the end after the event's start.");
+      const result = await api<Event>(`/calendar/events/${selected.id}`, {
+        revision: selected.revision,
+        scope: selected.rrule ? "this" : "all",
+        occurrence: selected.occurrence,
+        changes: { start, end },
       });
-    } else
-      notice =
-        "Use the event editor to change all-day/timed type. Drag opened the event without changing its type.";
+      notice = `${selected.rrule ? "This occurrence" : "Event"} ${mode === "resize" ? "resized" : "moved"} locally. Google changes require a separately reviewed sync.`;
+      return result;
+    });
   }
   function drag(e: Event, event: DragEvent, mode = "move") {
+    if (!isActive || pending) { event.preventDefault(); return; }
+    rangeStart = null;
+    rangeEnd = null;
+    suppressClickUntil = Number.POSITIVE_INFINITY;
     dragEvent = e;
     dragMode = mode;
-    event.dataTransfer?.setData("text/plain", e.id);
+    event.dataTransfer?.setData("application/kitty-event", e.id);
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
   }
+  function allowDrop(value: string, allDay: boolean, event: DragEvent) {
+    event.stopPropagation();
+    const task = event.dataTransfer?.types.includes("application/kitty-task");
+    if (!dragEvent && !task) return;
+    const valid = isActive && !pending && (task || dragEvent?.all_day === allDay);
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = valid ? "move" : "none";
+    const target = `${allDay ? "day" : "time"}:${value}`;
+    dragTarget = valid ? target : "";
+    invalidDropTarget = valid ? "" : target;
+    dragMessage = valid
+      ? `Drop to ${dragMode === "resize" && !task ? "resize" : "schedule"} at ${value.replace("T", " ")} (${tz})`
+      : pending ? "Wait for the current save to finish." : "Keep timed events in timed slots and all-day events in the all-day row.";
+  }
+  function leaveDrop(event: DragEvent) {
+    if (event.relatedTarget instanceof Node && (event.currentTarget as HTMLElement).contains(event.relatedTarget)) return;
+    dragTarget = "";
+    invalidDropTarget = "";
+    dragMessage = "";
+  }
+  function finishDrag() {
+    dragTarget = "";
+    invalidDropTarget = "";
+    dragMessage = "";
+    dragEvent = null;
+    suppressClickUntil = Date.now() + 350;
+  }
+  function dragTask(task: Task, event: DragEvent) {
+    if (!isActive || pending || !task.id) { event.preventDefault(); return; }
+    rangeStart = null;
+    rangeEnd = null;
+    suppressClickUntil = Number.POSITIVE_INFINITY;
+    dragEvent = null;
+    dragMode = "move";
+    event.dataTransfer?.setData("application/kitty-task", task.id);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  }
+  function dayDropSlot(day: string, event: DragEvent) {
+    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    return slot(day, Math.max(0, Math.min(47, Math.floor((event.clientY - bounds.top) / bounds.height * 48))));
+  }
+  function blockDragClick(event: MouseEvent) {
+    if (isActive && Date.now() < suppressClickUntil && event.target instanceof Element &&
+        event.target.closest('[draggable="true"]')) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }
   function newTask() {
+    if (!isActive) return;
+    error = "";
     taskEditor = {
       title: "",
       description: "",
-      due: anchor,
+      due: selectedDate,
       timezone: tz,
       priority: "normal",
       status: "todo",
       tags: [],
       project: "",
-      calendar_id: "personal",
+      calendar_id: (data.calendars.find((c) => c.visible) || data.calendars[0])?.id || "personal",
       repeat_frequency: "",
       repeat_interval: 1,
       repeat_until: "",
@@ -742,6 +974,7 @@
         delete: remove,
       });
       taskEditor = null;
+      notice = remove ? "Task deleted." : "Task saved.";
       return result;
     });
   }
@@ -764,13 +997,15 @@
     return task.repeat_until ? `${every} until ${task.repeat_until}` : every;
   }
   async function taskStatus(task: Task, status: string) {
-    await changed(() =>
-      api<Task>("/calendar/tasks", {
+    await changed(async () => {
+      const result = await api<Task>("/calendar/tasks", {
         id: task.id,
         revision: task.revision,
         status,
-      }),
-    );
+      });
+      notice = status === "done" ? "Task completed." : "Task status updated.";
+      return result;
+    });
   }
   async function toggleCalendar(c: Cal) {
     await run(async () => {
@@ -1164,6 +1399,30 @@
         : "";
     });
   });
+  /** Mind maps holding each calendar task, keyed by task ID. */
+  let taskMaps = $state<Record<string, { id: number; title: string }[]>>({});
+  async function loadTaskMaps() {
+    try {
+      const net = await api<{
+        maps: { id: number; title: string }[];
+        nodes: { id: string; maps: number[] }[];
+      }>("/schema/network");
+      const titles = new Map(net.maps.map((m) => [m.id, m]));
+      const index: Record<string, { id: number; title: string }[]> = {};
+      for (const node of net.nodes)
+        if (node.id.startsWith("calendar_task:"))
+          index[node.id.slice("calendar_task:".length)] = node.maps
+            .map((id) => titles.get(id))
+            .filter((m): m is { id: number; title: string } => !!m);
+      taskMaps = index;
+    } catch (e) {
+      error = `Mind-map links unavailable: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  function mappedTask(taskId: string, map: { id: number; title: string }) {
+    taskMaps[taskId] = [...(taskMaps[taskId] || []), map];
+    notice = `Added to ${map.title}.`;
+  }
   $effect(() => {
     syncDirection;
     sendUpdates;
@@ -1173,20 +1432,54 @@
       syncPreview = null;
     });
   });
+  $effect(() => {
+    if (!isActive) return;
+    const labels: Record<string, string> = {
+      tasks: "Task list",
+      activity: "Activity",
+      availability: "Availability",
+      integrations: "Imports & Google",
+    };
+    pane.setTrail("calendar", [
+      ...(section === "calendar" ? [] : [{ label: labels[section], onclick: () => (section = "calendar") }]),
+      { label: dateTitle(selectedDate, { month: "short", day: "numeric", year: "numeric" }) },
+    ], () => {
+      section = "calendar";
+      view = "week";
+      chooseDate(parts(new Date().toISOString()).date);
+    });
+  });
+  $effect(() => {
+    if (!isActive) {
+      rangeStart = null;
+      rangeEnd = null;
+      finishDrag();
+    }
+  });
   onMount(() => {
+    window.addEventListener("click", blockDragClick, true);
     void loadGoogle();
+    void loadTaskMaps();
     notifications =
       localStorage.getItem("kitty-calendar-notifications") === "true" &&
       "Notification" in window &&
       Notification.permission === "granted";
     const timer = setInterval(() => void pollTask(), 1200);
-    return () => clearInterval(timer);
+    const clockTimer = setInterval(() => (clock = new Date().toISOString()), 60000);
+    return () => {
+      window.removeEventListener("click", blockDragClick, true);
+      clearInterval(timer);
+      clearInterval(clockTimer);
+      pane.clearTrail("calendar");
+    };
   });
 </script>
 
 <svelte:window
   onpointerup={finishRange}
+  onpointercancel={() => { rangeStart = null; rangeEnd = null; }}
   onkeydown={(e) => {
+    if (!isActive) return;
     if (e.key === "Escape") {
       editor = null;
       taskEditor = null;
@@ -1217,24 +1510,26 @@
   <header class="toolbar">
     <div>
       <h1>Calendar</h1>
-      <p>Local time, intentional plans. <span>{tz}</span></p>
+      <p><span>{tz}</span></p>
     </div>
-    <button onclick={() => newEvent(anchor + "T09:00", anchor + "T10:00")}
-      >＋ Event</button
-    ><button onclick={newTask}>＋ Task</button>{#if undoId}<button
+    <div class="header-actions">
+      <Button intent="primary" onclick={newTask}>Add task</Button>
+      <Button onclick={() => newEvent(selectedDate + "T09:00", selectedDate + "T10:00")}>Add event</Button>
+      {#if undoId}<Button size="sm" disabled={pending > 0}
         onclick={() =>
           run(async () => {
             await api("/calendar/undo", { id: undoId });
             undoId = null;
             await load();
-          })}>Undo last change</button
-      >{/if}
+          })}>Undo last change</Button>{/if}
+    </div>
   </header>
   <nav class="tabs" aria-label="Calendar sections">
-    {#each [["calendar", "Calendar"], ["tasks", "Task list"], ["board", "Task board"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}<button
-        class:active={section === key}
-        onclick={() => (section = key)}>{title}</button
-      >{/each}
+    {#each [["calendar", "Calendar"], ["tasks", "Task list"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
+      <Button size="sm" intent={section === key ? "primary" : "neutral"}
+        aria-pressed={section === key}
+        onclick={() => (section = key)}>{title}</Button>
+    {/each}
   </nav>
   {#if error}<div role="alert" class="error">
       {error}<button aria-label="Dismiss error" onclick={() => (error = "")}
@@ -1242,30 +1537,42 @@
       >
     </div>{/if}
   {#if notice}<p role="status" class="notice">{notice}</p>{/if}
-  <div class="controls">
-    <label
-      >Search <input
-        type="search"
-        bind:value={search}
-        placeholder="Events, tasks, notes, tags"
-      /></label
-    ><label
-      >Display timezone <input
-        bind:value={tz}
-        list="calendar-zones"
-        placeholder="America/Chicago"
-      /></label
-    ><datalist id="calendar-zones"
-      ><option value="UTC"></option><option value="America/Chicago"
-      ></option><option value="America/New_York"></option><option
-        value="America/Los_Angeles"
-      ></option><option value="Europe/London"></option><option
-        value="Asia/Tokyo"
-      ></option></datalist
-    ><button onclick={load} disabled={loading}
-      >{loading ? "Loading…" : "Refresh"}</button
-    >
+  <div class="range-toolbar">
+    <div class="period-navigation" role="group" aria-label="Date navigation">
+      <Button size="sm" aria-label={`Previous ${view === "week" ? "week" : view === "month" ? "month" : view === "day" ? "day" : "period"}`} onclick={() => navigate(-1)}>←</Button>
+      <Button size="sm" onclick={() => chooseDate(parts(new Date().toISOString()).date)}>Today</Button>
+      <Button size="sm" aria-label={`Next ${view === "week" ? "week" : view === "month" ? "month" : view === "day" ? "day" : "period"}`} onclick={() => navigate(1)}>→</Button>
+    </div>
+    <h2 class="range-heading" aria-live="polite">{rangeHeading}</h2>
+    <label class="date-jump">Go to date<input type="date" aria-label="Go to date"
+      value={anchor} onchange={(e) => chooseDate(e.currentTarget.value)} /></label>
+    <label class="view-switch">View
+      <select aria-label="Calendar view" bind:value={view}
+        onchange={() => { section = "calendar"; anchor = selectedDate; }}>
+        <option value="week">Week</option>
+        <option value="month">Month</option>
+        <option value="day">Day</option>
+        <option value="agenda">Agenda</option>
+      </select>
+    </label>
   </div>
+  <div class="search-toolbar">
+    <label class="calendar-search"><span>Search</span><input type="search" bind:value={search}
+      placeholder="Search events, tasks or tags" /></label>
+    <Button size="sm" onclick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</Button>
+    <span class="load-status" role="status">{pending > 0 ? "Saving / updating…" : loading ? "Loading calendar…" : `${data.events.length} events · ${data.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length} pending tasks`}</span>
+  </div>
+  {#if dragMessage}<p class="drop-status" role="status">{dragMessage}</p>{/if}
+  <details class="display-options">
+    <summary>Calendars & display settings</summary>
+    <div class="controls">
+      <label>Display timezone<input bind:value={tz} list={`${pane.id}-calendar-zones`} placeholder="America/Chicago" /></label>
+      <datalist id={`${pane.id}-calendar-zones`}>
+        <option value="UTC"></option><option value="America/Chicago"></option>
+        <option value="America/New_York"></option><option value="America/Los_Angeles"></option>
+        <option value="Europe/London"></option><option value="Asia/Tokyo"></option>
+      </datalist>
+    </div>
   <div class="calendars">
     {#each data.calendars as c}<label style={`--calendar-color:${c.color}`}
         ><input
@@ -1286,6 +1593,7 @@
         })}>＋ Calendar</button
     >
   </div>
+  </details>
   {#if data.reminders.length}<aside
       class="reminders"
       aria-label="Due reminders"
@@ -1298,31 +1606,23 @@
         </div>{/each}
     </aside>{/if}
   {#if section === "calendar"}
-    <div class="controls">
-      <button aria-label="Previous period" onclick={() => navigate(-1)}
-        >←</button
-      ><button onclick={() => (anchor = parts(new Date().toISOString()).date)}
-        >Today</button
-      ><button aria-label="Next period" onclick={() => navigate(1)}>→</button
-      ><input
-        type="date"
-        aria-label="Calendar anchor date"
-        bind:value={anchor}
-      />{#each ["day", "week", "month", "agenda"] as v}<button
-          class:active={view === v}
-          onclick={() => (view = v)}>{v}</button
-        >{/each}
-    </div>
-    <p class="hint">
-      Drag across empty dates or time cells to create a range. Drag an event to
-      move; drag ↔ to set its end. Keyboard: Shift+Enter starts a range,
-      Shift+Enter on its end finishes it. Touch: tap a cell or edit exact
-      start/end below. No drag change is saved until reviewed.
-    </p>
+    <details class="interaction-help">
+      <summary>Shortcuts</summary>
+      <p class="hint">Select a date for its day plan. Click or press Enter on a time slot for a short event. Arrow keys move between slots; Home/End jump within a day. Drag or Shift+Enter selects a range. Drag an event to move it, ↔ to resize; changes open for review.</p>
+    </details>
+    <div class="calendar-layout">
+    <div class="calendar-main">
     {#if view === "month"}
       <div class="month-grid" role="grid" aria-label="Month calendar">
+        {#each days.slice(0, 7) as day}
+          <div class="weekday-label" role="columnheader">{dateTitle(day, { weekday: "short" })}</div>
+        {/each}
         {#each days as day}<div
             class="day-cell"
+            class:selected={day === selectedDate}
+            class:today={day === today}
+            aria-label={dateTitle(day, { weekday: "long", month: "long", day: "numeric" })}
+            aria-selected={day === selectedDate}
             class:outside={day.slice(0, 7) !== anchor.slice(0, 7)}
             class:selecting={!!rangeStart &&
               rangeAllDay &&
@@ -1333,28 +1633,33 @@
             onkeydown={(e) => {
               if (e.target === e.currentTarget) keyboardRange(day, true, e);
             }}
-            ondragover={(e) => e.preventDefault()}
+            onpointerdown={(e) => { if (e.target === e.currentTarget) beginRange(day, true, e); }}
+            onpointerenter={() => extendRange(day)}
+            class:drop-target={dragTarget === `day:${day}`}
+            class:invalid-drop={invalidDropTarget === `day:${day}`}
+            ondragleave={leaveDrop}
+            ondragover={(e) => allowDrop(day, true, e)}
             ondrop={(e) => dropOn(day, true, e)}
           >
-            <button
-              class="day-head"
-              onpointerdown={(e) => beginRange(day, true, e)}
-              onpointerenter={() => extendRange(day)}
-              onkeydown={(e) => keyboardRange(day, true, e)}
-              >{new Intl.DateTimeFormat(undefined, {
-                weekday: "short",
-                day: "numeric",
-                timeZone: "UTC",
-              }).format(dateAt(day))}</button
-            >{#each eventsOn(day) as e}<div
+            <div class="day-cell-heading">
+              <button class="day-head" onclick={() => (selectedDate = day)}
+                aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>
+                <strong>{dateTitle(day, { day: "numeric" })}</strong>
+              </button>
+              <button class="day-add" aria-label={`Add event on ${day}`}
+                onclick={() => newEvent(day + "T09:00", day + "T10:00")}>＋</button>
+            </div>
+            {#each eventsOn(day) as e}<div
                 class="event-chip"
                 style={`--calendar-color:${color(e.calendar_id)}`}
                 draggable="true"
                 ondragstart={(event) => drag(e, event)}
+                ondragend={finishDrag}
                 role="group"
                 aria-label={e.title}
               >
                 <button onclick={() => openEvent(e)}
+                  oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
                   >{!e.all_day
                     ? parts(e.start).time + " "
                     : ""}{e.title}{e.rrule ? " ↻" : ""}</button
@@ -1369,79 +1674,135 @@
                 >
               </div>{/each}{#each tasksOn(day) as t}<button
                 class="task-chip"
-                onclick={() => (taskEditor = { ...t })}>☐ {t.title}</button
+                draggable="true"
+                ondragstart={(event) => dragTask(t, event)}
+                ondragend={finishDrag}
+                oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
+                class:completed={t.status === "done"}
+                onclick={() => (taskEditor = { ...t })}>{t.status === "done" ? "✓" : "☐"} {t.title}</button
               >{/each}
           </div>{/each}
       </div>
     {:else if view === "week" || view === "day"}
-      <div class="time-scroll">
+      <div class="time-scroll" use:scrollToMorning role="region" aria-label={view === "week" ? "Week calendar" : "Day calendar"}>
         <div class="time-grid" style={`--days:${days.length}`}>
-          <div class="time-label">{tz}</div>
-          {#each days as day}<div class="time-heading">
-              <strong>{day}</strong><button
-                onpointerdown={(e) => beginRange(day, true, e)}
-                onpointerenter={() => extendRange(day)}
-                onkeydown={(e) => keyboardRange(day, true, e)}
-                aria-label={`Create all-day event on ${day}`}>All-day ＋</button
-              >{#each eventsOn(day).filter((e) => e.all_day) as e}<button
-                  class="event-chip"
-                  style={`--calendar-color:${color(e.calendar_id)}`}
-                  onclick={() => openEvent(e)}>{e.title}</button
-                >{/each}{#each tasksOn(day) as t}<button
-                  class="task-chip"
-                  onclick={() => (taskEditor = { ...t })}>☐ {t.title}</button
-                >{/each}
-            </div>{/each}{#each hours as hour}<div class="time-label">
-              {hour % 2 === 0 ? `${String(hour / 2).padStart(2, "0")}:00` : ""}
+          <div class="time-header">
+            <div class="time-zone" title={tz}>{tz}</div>
+            {#each days as day}
+              <div class="time-heading" class:today={day === today} class:selected={day === selectedDate}>
+                <button class="time-date" aria-pressed={day === selectedDate}
+                  aria-current={day === today ? "date" : undefined}
+                  aria-label={`Select ${dateTitle(day, { weekday: "long", month: "long", day: "numeric" })}`}
+                  onclick={() => (selectedDate = day)}>
+                  <span>{dateTitle(day, { weekday: "short" })}</span>
+                  <strong>{dateTitle(day, { day: "numeric" })}</strong>
+                  {#if day === today}<small>Today</small>{/if}
+                </button>
+              </div>
+            {/each}
+            <div class="all-day-label">All day<br /><span>& tasks</span></div>
+            {#each days as day}
+              <div class="all-day-cell" class:selected={day === selectedDate}
+                class:drop-target={dragTarget === `day:${day}`}
+                class:invalid-drop={invalidDropTarget === `day:${day}`}
+                ondragleave={leaveDrop}
+                role="group" aria-label={`All-day events and tasks on ${day}`}
+                ondragover={(event) => allowDrop(day, true, event)}
+                ondrop={(event) => dropOn(day, true, event)}>
+                <button class="all-day-add" onclick={() => newEvent(day, addDays(day, 1), true)}
+                  aria-label={`Create all-day event on ${day}`}>＋</button>
+                <div class="all-day-items">
+                  {#each eventsOn(day).filter((e) => e.all_day) as e}
+                    <button class="event-chip all-day-event" style={`--calendar-color:${color(e.calendar_id)}`}
+                      draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
+                      oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
+                      onclick={() => { selectedDate = day; openEvent(e); }} title={e.title}>{e.title}</button>
+                  {/each}
+                  {#each tasksOn(day).filter((task) => task.due.length === 10) as t}
+                    <button class="task-chip" class:completed={t.status === "done"}
+                      draggable="true" ondragstart={(event) => dragTask(t, event)} ondragend={finishDrag}
+                      oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
+                      onclick={() => { selectedDate = day; taskEditor = { ...t }; }}
+                      title={t.title}>{t.status === "done" ? "✓" : "☐"} {t.title}</button>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+          </div>
+          <div class="time-axis" aria-hidden="true">
+            {#each hours as halfHour}
+              <div class="time-label">{halfHour % 2 === 0 ? `${String(halfHour / 2).padStart(2, "0")}:00` : ""}</div>
+            {/each}
+          </div>
+          {#each days as day}
+            <div class="time-day" class:today={day === today} class:selected={day === selectedDate}
+              aria-label={dateTitle(day, { weekday: "long", month: "long", day: "numeric" })} role="group"
+              ondragover={(event) => allowDrop(dayDropSlot(day, event), false, event)}
+              ondragleave={leaveDrop}
+              ondrop={(event) => dropOn(dayDropSlot(day, event), false, event)}>
+              {#each hours as halfHour}
+                <div class="time-cell" class:hour-start={halfHour % 2 === 0}
+                  role="group" aria-label={`${day} ${slot(day, halfHour).slice(-5)}`}
+                  class:drop-target={dragTarget === `time:${slot(day, halfHour)}`}
+                  class:invalid-drop={invalidDropTarget === `time:${slot(day, halfHour)}`}
+                  ondragleave={leaveDrop}
+                  ondragover={(e) => allowDrop(slot(day, halfHour), false, e)}
+                  ondrop={(e) => dropOn(slot(day, halfHour), false, e)}>
+                  <button class="slot-button" data-day={day} data-slot={halfHour}
+                    tabindex={day === selectedDate && halfHour === focusedSlot ? 0 : -1}
+                    class:selecting={!!rangeStart && !rangeAllDay &&
+                      slot(day, halfHour) >= [rangeStart, rangeEnd || rangeStart].sort()[0] &&
+                      slot(day, halfHour) <= [rangeStart, rangeEnd || rangeStart].sort()[1]}
+                    aria-label={`Create event ${day} ${slot(day, halfHour).slice(-5)}`}
+                    onfocus={() => { selectedDate = day; focusedSlot = halfHour; }}
+                    onpointerdown={(e) => beginRange(slot(day, halfHour), false, e)}
+                    onpointerenter={() => extendRange(slot(day, halfHour))}
+                    onkeydown={(e) => slotKey(day, halfHour, e)}
+                    onclick={(e) => {
+                      if (e.detail === 0 && !editor)
+                        newEvent(slot(day, halfHour), slot(day, halfHour + 1));
+                    }}></button>
+                  {#each weekTasks[day][halfHour] as task}
+                    <button class="task-chip timed-task" class:completed={task.status === "done"}
+                      style={`top:${parts(task.due).minute % 30 / 30 * 100}%`}
+                      draggable="true" ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
+                      onclick={() => (taskEditor = { ...task })}
+                      oncontextmenu={(event) => void deleteTaskAtPointer(event, task)}
+                      title={`${task.title} · ${parts(task.due).time}`}>
+                      {parts(task.due).time} · ☐ {task.title}
+                    </button>
+                  {/each}
+                </div>
+              {/each}
+              {#if day === today}
+                <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} aria-hidden="true"></div>
+              {/if}
+              {#each weekEvents[day] as placement}
+                {@const e = placement.event}
+                <div class="event-chip timed" draggable="true" role="group" aria-label={e.title}
+                  style={`--calendar-color:${color(e.calendar_id)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
+                  ondragstart={(event) => drag(e, event)} ondragend={finishDrag}>
+                  <button class="timed-content" title={`${e.title} · ${label(e.start)} – ${label(e.end)}`}
+                    oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
+                    aria-label={`Edit ${e.title}, ${label(e.start)} – ${label(e.end)}`}
+                    onclick={() => { selectedDate = day; openEvent(e); }}>
+                    <strong>{e.title}</strong>
+                    <span>{parts(e.start).time}–{parts(e.end).time}</span>
+                  </button>
+                  <button class="resize" draggable="true"
+                    ondragstart={(event) => { event.stopPropagation(); drag(e, event, "resize"); }}
+                    aria-label={`Resize ${e.title}`}>↔</button>
+                </div>
+              {/each}
             </div>
-            {#each days as day}<div
-                class="time-cell"
-                role="group"
-                aria-label={`${day} ${slot(day, hour).slice(-5)}`}
-                ondragover={(e) => e.preventDefault()}
-                ondrop={(e) => dropOn(slot(day, hour), false, e)}
-              >
-                <button
-                  class="slot-button"
-                  class:selecting={!!rangeStart &&
-                    !rangeAllDay &&
-                    slot(day, hour) >=
-                      [rangeStart, rangeEnd || rangeStart].sort()[0] &&
-                    slot(day, hour) <=
-                      [rangeStart, rangeEnd || rangeStart].sort()[1]}
-                  aria-label={`Create event ${day} ${slot(day, hour).slice(-5)}`}
-                  onpointerdown={(e) => beginRange(slot(day, hour), false, e)}
-                  onpointerenter={() => extendRange(slot(day, hour))}
-                  onkeydown={(e) => keyboardRange(slot(day, hour), false, e)}
-                ></button>{#each timedOn(day, hour) as e}<div
-                    class="event-chip timed"
-                    style={`--calendar-color:${color(e.calendar_id)}`}
-                    draggable="true"
-                    ondragstart={(event) => drag(e, event)}
-                    role="group"
-                    aria-label={e.title}
-                  >
-                    <button onclick={() => openEvent(e)}
-                      >{parts(e.start).time}–{parts(e.end).time}
-                      {e.title}</button
-                    ><button
-                      class="resize"
-                      draggable="true"
-                      ondragstart={(event) => {
-                        event.stopPropagation();
-                        drag(e, event, "resize");
-                      }}
-                      aria-label={`Resize ${e.title}`}>↔</button
-                    >
-                  </div>{/each}
-              </div>{/each}{/each}
+          {/each}
         </div>
       </div>
     {:else}
       <div class="agenda">
         {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}<section
             >
-              <h2>{day}</h2>
+              <h2><button class="agenda-date" onclick={() => (selectedDate = day)}>{dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}</button></h2>
               {#each eventsOn(day) as e}<button
                   class="agenda-event"
                   style={`--calendar-color:${color(e.calendar_id)}`}
@@ -1460,14 +1821,67 @@
                 >{/each}
             </section>{/if}{/each}{#if !data.events.length && !data.tasks.some((t) => t.due)}<p
           >
-            No events or due tasks in this range. Create a plan or import linked
-            application dates.
+            Nothing scheduled.
           </p>{/if}
       </div>
     {/if}
-  {:else if section === "tasks" || section === "board"}
-    <div class:board={section === "board"} class="task-columns">
-      {#each section === "board" ? statuses : ["all"] as status}<section
+    </div>
+    <aside class="selected-plan" aria-label="Selected date plan">
+      <Button size="sm" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
+        onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide task tray" : "Open task tray"} · {trayTasks.length}</Button>
+      {#if taskTrayOpen}
+        <section id={`${pane.id}-calendar-task-tray`} class="task-tray" aria-label="Tasks to schedule">
+          <h3>Tasks to schedule</h3>
+          <p class="hint">Drag a task onto a week/day time slot to save its due date and time. Click to edit.</p>
+          <Button size="sm" onclick={newTask}>Add task</Button>
+          <div class="tray-list">
+            {#each trayTasks as task}
+              <button class="tray-task" draggable="true"
+                ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
+                onclick={() => (taskEditor = { ...task })}>
+                <strong>{task.title}</strong>
+                <span>{task.due ? label(task.due, task.due.length === 10) : "Unscheduled"} · {task.priority}</span>
+              </button>
+            {:else}<p class="hint">No unscheduled or selected-day tasks.</p>{/each}
+          </div>
+        </section>
+      {/if}
+      <Panel title={dateTitle(selectedDate, { weekday: "long", month: "short", day: "numeric" })}
+        readout="DAY PLAN">
+        <p class="hint">{eventsOn(selectedDate).length} events · {tasksOn(selectedDate).filter((t) => t.status !== "done" && t.status !== "cancelled").length} pending tasks</p>
+        <div class="selected-actions">
+          <Button size="sm" intent="primary" onclick={newTask}>Add task</Button>
+          <Button size="sm" onclick={() => newEvent(selectedDate + "T09:00", selectedDate + "T10:00")}>Add event</Button>
+        </div>
+        {#each eventsOn(selectedDate) as e}
+          <button class="plan-event" style={`--calendar-color:${color(e.calendar_id)}`} onclick={() => openEvent(e)}
+            oncontextmenu={(event) => void deleteEventAtPointer(event, e)}>
+            <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
+            <strong>{e.title}</strong>
+            {#if e.location}<span>{e.location}</span>{/if}
+          </button>
+        {/each}
+        {#each tasksOn(selectedDate) as t}
+          <div class="plan-task" class:completed={t.status === "done"}>
+            <input type="checkbox" checked={t.status === "done"} disabled={pending > 0}
+              aria-label={`${t.status === "done" ? "Reopen" : "Complete"} ${t.title}`}
+              onchange={() => taskStatus(t, t.status === "done" ? "todo" : "done")} />
+            <button oncontextmenu={(event) => void deleteTaskAtPointer(event, t)} onclick={() => (taskEditor = { ...t })}>
+              <strong>{t.title}</strong><span>{t.due.length > 10 ? `${parts(t.due).time} · ` : ""}{t.status === "done" ? "Completed" : t.status === "doing" ? "In progress" : t.status === "cancelled" ? "Cancelled" : "To do"}{t.repeat_frequency ? " · Repeating" : ""}</span>
+            </button>
+            {#if t.id}{@const id = t.id}<div class="plan-task-map"><TaskMapAction task={{ id, title: t.title }} inMaps={taskMaps[id]}
+              placement="left" onadded={(m) => mappedTask(id, m)} /></div>{/if}
+          </div>
+        {/each}
+        {#if !eventsOn(selectedDate).length && !tasksOn(selectedDate).length}
+          <div class="day-empty"><p class="hint">Nothing planned.</p></div>
+        {/if}
+      </Panel>
+    </aside>
+    </div>
+  {:else if section === "tasks"}
+    <div class="task-columns">
+      {#each ["all"] as status}<section
           class="task-column"
           aria-label={status === "all" ? "All tasks" : `${status} tasks`}
           ondragover={(e) => e.preventDefault()}
@@ -1486,11 +1900,16 @@
                 e.dataTransfer?.setData("application/kitty-task", t.id || "")}
             >
               <div>
+                <input type="checkbox" checked={t.status === "done"} disabled={pending > 0}
+                  aria-label={`${t.status === "done" ? "Reopen" : "Complete"} ${t.title}`}
+                  onchange={() => taskStatus(t, t.status === "done" ? "todo" : "done")} />
                 <button
                   class="task-title"
+                  oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
                   onclick={() => (taskEditor = { ...t })}>{t.title}</button
                 ><select
                   aria-label={`Status for ${t.title}`}
+                  disabled={pending > 0}
                   value={t.status}
                   onchange={(e) => taskStatus(t, e.currentTarget.value)}
                   >{#each statuses as s}<option value={s}>{s}</option
@@ -1502,6 +1921,8 @@
                 {t.project ? "· " + t.project : ""}
                 {t.repeat_frequency ? "· " + repeatLabel(t) : ""}
               </p>
+              {#if t.id}{@const id = t.id}<TaskMapAction task={{ id, title: t.title }} inMaps={taskMaps[id]}
+                onadded={(m) => mappedTask(id, m)} />{/if}
               <div class="tags">
                 {#each t.tags as tag}<span>{tag}</span>{/each}
               </div>
@@ -1514,11 +1935,8 @@
         </section>{/each}
     </div>
   {:else if section === "activity"}
-    <h2>Actual activity in the displayed range</h2>
-    <p class="hint">
-      Counts come from saved calendar edits, confirmed application/status
-      records, and completed task records—not simulated productivity.
-    </p>
+    <h2>Activity</h2>
+    <p class="hint">From saved records only.</p>
     <div class="activity-graph">
       {#each data.activity as a}<div class="activity-row">
           <span>{a.date}</span>
@@ -1535,11 +1953,8 @@
         </p>{/if}
     </div>
   {:else if section === "availability"}
-    <h2>Free / busy in displayed range</h2>
-    <p>
-      All visible calendars; free events are excluded. Hide calendars to change
-      the view, or query Google free/busy in Integrations.
-    </p>
+    <h2>Free / busy</h2>
+    <p class="hint">Visible calendars; free events excluded.</p>
     <h3>Overlaps</h3>
     {#each data.conflicts as c}<p class="conflict">
         {data.events.find((e) => e.id === c.event_id)?.title} overlaps {c.with
@@ -1559,11 +1974,9 @@
   {:else if section === "integrations"}
     <section class="panel">
       <h2>Import / export</h2>
-      <p>
-        ICS imports preserve recurring masters, exclusions and exceptions. CSV
-        headers: <code>title,date</code>; optional
-        <code>job_id,kind,timezone,url,description</code>. Application imports
-        create local copies only.
+      <p class="hint">
+        CSV headers: <code>title,date</code>; optional
+        <code>job_id,kind,timezone,url,description</code>. Imports are local copies.
       </p>
       <div class="controls">
         <label class="file"
@@ -1612,10 +2025,8 @@
     </section>
     <section class="panel">
       <h2>Reminder notifications</h2>
-      <p>
-        In-app reminders are always shown while kitty is open. System
-        notifications are opt-in and require this workspace to remain open; this
-        is not a background alarm service.
+      <p class="hint">
+        Shown only while kitty is open; not a background alarm.
       </p>
       <label
         ><input
@@ -2015,9 +2426,9 @@
           </p>{/if}{#if operationReview && operationRequest}<div
             class="review"
             role="group"
-            aria-labelledby="operation-review-title"
+            aria-labelledby={`${pane.id}-operation-review-title`}
           >
-            <h4 id="operation-review-title">
+            <h4 id={`${pane.id}-operation-review-title`}>
               Frozen request prepared from live Google state
             </h4>
             <dl>
@@ -2109,23 +2520,25 @@
   {/if}
 </section>
 
-{#if editor}<div class="modal-backdrop" role="presentation">
+{#if editor && isActive}<div class="modal-backdrop" role="presentation">
     <dialog
       use:modal
       oncancel={() => (editor = null)}
       class="dialog"
       aria-modal="true"
-      aria-labelledby="event-editor-title"
+      aria-labelledby={`${pane.id}-event-editor-title`}
       tabindex="-1"
     >
       <header>
-        <h2 id="event-editor-title">
+        <h2 id={`${pane.id}-event-editor-title`}>
           {editor.id ? "Event details" : "New event"}
         </h2>
-        <button onclick={() => (editor = null)} aria-label="Close event editor"
+        <button type="button" onclick={() => (editor = null)} aria-label="Close event editor"
           >×</button
         >
       </header>
+      <p class="hint">Saved locally. Google updates are always reviewed separately.</p>
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
       <form
         onsubmit={(e) => {
           e.preventDefault();
@@ -2139,112 +2552,74 @@
             maxlength="500"
           /></label
         >
+        {#if editor.id && editor.rrule}
+          <label>Edit recurrence scope<select bind:value={editScope} onchange={changeScope}>
+            <option value="this">This occurrence only</option>
+            <option value="future">This and future occurrences</option>
+            <option value="all">Entire series (original date/time anchors)</option>
+          </select></label>
+          <p class="hint">Choose the scope before editing; changing it reloads saved values.</p>
+        {/if}
         <div class="form-grid">
-          <label
-            >Calendar<select
-              bind:value={editor.calendar_id}
-              disabled={!!editor.id && !!editor.rrule && editScope === "this"}
-              >{#each data.calendars as c}<option value={c.id}>{c.name}</option
-                >{/each}</select
-            ></label
-          ><label>Timezone<input bind:value={editor.timezone} required /></label
-          ><label
-            ><input
-              type="checkbox"
-              bind:checked={editor.all_day}
-              onchange={() => {
-                if (editor) {
-                  startInput = editor.all_day
-                    ? startInput.slice(0, 10)
-                    : startInput + "T09:00";
-                  const endDay = endInput.slice(0, 10);
-                  endInput = editor.all_day
-                    ? endInput.slice(11, 16) === "00:00"
-                      ? endDay
-                      : addDays(endDay, 1)
-                    : addDays(endDay, -1) + "T10:00";
-                }
-              }}
-            />All-day / multi-day</label
-          ><label
-            >DST ambiguous-time occurrence<select
-              bind:value={fold}
-              onchange={() => (foldChanged = true)}
-              ><option value={0}>First occurrence</option><option value={1}
-                >Second occurrence</option
-              ></select
-            ></label
-          ><label
-            >Start<input
-              type={editor.all_day ? "date" : "datetime-local"}
-              bind:value={startInput}
-              required
-            /></label
-          ><label
-            >Exclusive end<input
-              type={editor.all_day ? "date" : "datetime-local"}
-              bind:value={endInput}
-              required
-            /></label
-          >
+          <label>Calendar<select bind:value={editor.calendar_id}
+            disabled={!!editor.id && !!editor.rrule && editScope === "this"}>
+            {#each data.calendars as c}<option value={c.id}>{c.name}</option>{/each}
+          </select></label>
+          <label><input type="checkbox" bind:checked={editor.all_day}
+            onchange={() => {
+              if (editor) {
+                startInput = editor.all_day ? startInput.slice(0, 10) : startInput + "T09:00";
+                const endDay = endInput.slice(0, 10);
+                endInput = editor.all_day
+                  ? endInput.slice(11, 16) === "00:00" ? endDay : addDays(endDay, 1)
+                  : addDays(endDay, -1) + "T10:00";
+              }
+            }} />All-day / multi-day</label>
+          <CalendarDateTime label="Start" timed={!editor.all_day} bind:value={startInput} required />
+          <CalendarDateTime label={editor.all_day ? "End (following)" : "End"} timed={!editor.all_day} bind:value={endInput} required />
         </div>
-        <p class="hint">
-          Timezone is explicit. DST gaps are rejected; choose the first/second
-          occurrence for repeated fall-back times. All-day end is the next date
-          after the last included day.
-        </p>
-        {#if editor.id && editor.rrule}<label
-            >Edit recurrence scope<select
-              bind:value={editScope}
-              onchange={changeScope}
-              ><option value="this">This occurrence only</option><option
-                value="future">This and future occurrences</option
-              ><option value="all"
-                >Entire series (date/time anchors remain original)</option
-              ></select
-            ></label
-          >{/if}<label
-          >RRULE (daily / weekly / monthly / yearly)<input
-            bind:value={editor.rrule}
-            disabled={!!editor.id && editScope === "this"}
-            placeholder="FREQ=WEEKLY;BYDAY=MO,WE;COUNT=12"
-          /></label
-        >
-        <p class="hint">
-          Empty RRULE means one event. Use UTC UNTIL, e.g.
-          UNTIL=20271231T235959Z. This/future selection uses the original
-          occurrence, even after moving it.
-        </p>
+        <p class="hint">{editor.timezone}{editor.all_day ? " · All-day end is the date after the last included day." : ""}</p>
+        <details class="editor-options">
+          <summary>Repeat & time settings{editor.rrule ? " · Repeating event" : ""}</summary>
+          <div class="form-grid">
+            <label>Timezone<input bind:value={editor.timezone} required /></label>
+            <label>DST ambiguous-time occurrence<select bind:value={fold} onchange={() => (foldChanged = true)}>
+              <option value={0}>First occurrence</option><option value={1}>Second occurrence</option>
+            </select></label>
+          </div>
+          <p class="hint">DST gaps are rejected. Choose the first or second occurrence for repeated fall-back times.</p>
+          <label>Repeat rule (RRULE)<input bind:value={editor.rrule}
+            disabled={!!editor.id && editScope === "this"} placeholder="FREQ=WEEKLY;BYDAY=MO,WE;COUNT=12" /></label>
+          <p class="hint">Leave empty for one event. Use UTC UNTIL, e.g. UNTIL=20271231T235959Z. This/future selection uses the original occurrence, even after moving it.</p>
+          <label>Excluded starts, one per line (date or aware ISO timestamp)<textarea rows="2" bind:value={exdatesText}
+            disabled={!!editor.id && editScope === "this"}></textarea></label>
+        </details>
+        <details class="editor-options">
+          <summary>Location, notes & reminders</summary>
+          <label>Notes<textarea rows="3" bind:value={editor.description}></textarea></label>
+          <div class="form-grid">
+            <label>Location<input bind:value={editor.location} /></label>
+            <label>URL<input type="url" bind:value={editor.url} /></label>
+            <label>Privacy<select bind:value={editor.privacy}>
+              {#each ["default", "public", "private", "confidential"] as p}<option>{p}</option>{/each}
+            </select></label>
+            <label><input type="checkbox" bind:checked={editor.busy} />Blocks availability (busy)</label>
+          </div>
+          <label>When<select value={reminderPreset} onchange={(event) => {
+            reminderPreset = event.currentTarget.value;
+            if (reminderPreset !== "custom") remindersText = reminderPreset;
+          }}>
+            {#each reminderPresets as [value, title]}<option {value}>{title}</option>{/each}
+            <option value="custom">Custom timings…</option>
+          </select></label>
+          {#if reminderPreset === "custom"}
+            <label>Minutes before start<input bind:value={remindersText} placeholder="10,60,1440" /></label>
+            <p class="hint">Separate multiple reminders with commas.</p>
+          {/if}
+        </details>
+        <details class="editor-options">
+          <summary>Attendees, attachments & Google properties</summary>
         <label
-          >Excluded starts, one per line (date or aware ISO timestamp)<textarea
-            rows="2"
-            bind:value={exdatesText}
-            disabled={!!editor.id && editScope === "this"}
-          ></textarea></label
-        ><label
-          >Notes<textarea rows="4" bind:value={editor.description}
-          ></textarea></label
-        >
-        <div class="form-grid">
-          <label>Location<input bind:value={editor.location} /></label><label
-            >URL<input type="url" bind:value={editor.url} /></label
-          ><label
-            >Privacy<select bind:value={editor.privacy}
-              >{#each ["default", "public", "private", "confidential"] as p}<option
-                  >{p}</option
-                >{/each}</select
-            ></label
-          ><label
-            ><input type="checkbox" bind:checked={editor.busy} />Blocks
-            availability (busy)</label
-          >
-        </div>
-        <label
-          >Reminders before start, minutes (comma-separated; empty disables)<input
-            bind:value={remindersText}
-            placeholder="10,60,1440"
-          /></label
-        ><label
           >Attendees: email,name,RSVP,optional (true/false) per line<textarea
             rows="3"
             bind:value={attendeesText}
@@ -2305,6 +2680,7 @@
             spellcheck="false"
           ></textarea></label
         >
+        </details>
         {#if editor.source_key}<p>
             Linked source: <code>{editor.source_key}</code>. Manual changes
             protect this copy from source refresh; they never rewrite original
@@ -2315,94 +2691,68 @@
                 rel="noreferrer">Open source</a
               >{/if}
           </p>{/if}
-        <p class="hint">
-          Changing recurrence scope reloads saved values: choose scope before
-          editing.
-        </p>
         <footer>
-          <button type="submit">Save locally</button>{#if editor.id}<button
-              type="button"
-              class="danger"
-              onclick={() => {
-                if (
-                  window.confirm(
-                    "Delete the selected occurrence/scope? You can undo if it has not changed.",
-                  )
-                )
-                  void saveEvent(true);
-              }}>Delete selected scope</button
-            >{/if}<button type="button" onclick={() => (editor = null)}
-            >Cancel</button
-          >
+          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : editor.id ? "Save changes" : "Add event"}</Button>
+          <Button type="button" disabled={pending > 0} onclick={() => (editor = null)}>Cancel</Button>
+          {#if editor.id}<Button type="button" disabled={pending > 0} onclick={() => {
+            if (window.confirm("Delete the selected occurrence/scope? You can undo if it has not changed.")) void saveEvent(true);
+          }}>Delete selected scope</Button>{/if}
         </footer>
       </form>
     </dialog>
   </div>{/if}
-{#if taskEditor}<div class="modal-backdrop" role="presentation">
+{#if taskEditor && isActive}<div class="modal-backdrop" role="presentation">
     <dialog
       use:modal
       oncancel={() => (taskEditor = null)}
       class="dialog"
       aria-modal="true"
-      aria-labelledby="task-editor-title"
+      aria-labelledby={`${pane.id}-task-editor-title`}
       tabindex="-1"
     >
       <header>
-        <h2 id="task-editor-title">
+        <h2 id={`${pane.id}-task-editor-title`}>
           {taskEditor.id ? "Edit task" : "New task"}
         </h2>
         <button
           onclick={() => (taskEditor = null)}
-          aria-label="Close task editor">×</button
+          aria-label="Close task editor" type="button">×</button
         >
       </header>
+      {#if taskEditor.id}{@const id = taskEditor.id}<div class="task-map-row">
+          <TaskMapAction task={{ id, title: taskEditor.title }} inMaps={taskMaps[id]}
+            onadded={(m) => mappedTask(id, m)} />
+        </div>{/if}
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
       <form
         onsubmit={(e) => {
           e.preventDefault();
           void saveTask();
         }}
       >
-        <label>Task title<input required bind:value={taskEditor.title} /></label
-        ><label
-          >Notes<textarea rows="4" bind:value={taskEditor.description}
-          ></textarea></label
-        >
+        <label>Task title<input required bind:value={taskEditor.title} placeholder="What needs to get done?" /></label>
+            <label><input type="checkbox" bind:checked={taskDueTimed} onchange={() => {
+              taskDueInput = taskDueInput ? taskDueTimed ? taskDueInput + "T09:00" : taskDueInput.slice(0, 10) : "";
+            }} />Include due time</label>
         <div class="form-grid">
-          <label
-            >Due date<input
-              type={taskDueTimed ? "datetime-local" : "date"}
-              bind:value={taskDueInput}
-            /></label
-          ><label
-            ><input
-              type="checkbox"
-              bind:checked={taskDueTimed}
-              onchange={() => {
-                taskDueInput = taskDueInput
-                  ? taskDueTimed
-                    ? taskDueInput + "T09:00"
-                    : taskDueInput.slice(0, 10)
-                  : "";
-              }}
-            />Include due time</label
-          ><label>Timezone<input bind:value={taskEditor.timezone} /></label
-          ><label
-            >Priority<select bind:value={taskEditor.priority}
-              >{#each ["low", "normal", "high", "urgent"] as p}<option
-                  >{p}</option
-                >{/each}</select
-            ></label
-          ><label
-            >Status<select bind:value={taskEditor.status}
-              >{#each statuses as s}<option>{s}</option>{/each}</select
-            ></label
-          ><label>Project<input bind:value={taskEditor.project} /></label><label
-            >Calendar<select bind:value={taskEditor.calendar_id}
-              >{#each data.calendars as c}<option value={c.id}>{c.name}</option
-                >{/each}</select
-            ></label
-          >
+          <CalendarDateTime label="Due" timed={taskDueTimed} bind:value={taskDueInput} />
+          <label>Calendar<select bind:value={taskEditor.calendar_id}>
+            {#each data.calendars as c}<option value={c.id}>{c.name}</option>{/each}
+          </select></label>
         </div>
+        <details class="editor-options">
+          <summary>More options · notes, priority & repeat</summary>
+          <label>Notes<textarea rows="3" bind:value={taskEditor.description}></textarea></label>
+          <div class="form-grid">
+            <label>Timezone<input bind:value={taskEditor.timezone} /></label>
+            <label>Priority<select bind:value={taskEditor.priority}>
+              {#each ["low", "normal", "high", "urgent"] as p}<option>{p}</option>{/each}
+            </select></label>
+            <label>Status<select bind:value={taskEditor.status}>
+              {#each statuses as s}<option>{s}</option>{/each}
+            </select></label>
+            <label>Project<input bind:value={taskEditor.project} /></label>
+          </div>
         <div class="form-grid">
           <label
             >Repeat<select
@@ -2436,14 +2786,10 @@
               /></label
             >{/if}
         </div>
-        <p class="hint">
-          Repeating tasks need a due date. Completing one keeps its actual
-          completion and creates just the next future due instance; missed dates
-          are not marked completed. Undo right after completing removes that
-          untouched next instance. This recurrence stays local: Google's Tasks
-          REST API cannot encode repeat rules, so kitty never sends them to
-          Google.
-        </p>
+        {#if taskEditor.repeat_frequency}<p class="hint">
+          Needs a due date. Completing creates the next instance; missed dates
+          stay open. Repetition stays local (never sent to Google).
+        </p>{/if}
         {#if editingCompletedTask && taskEditor.repeat_frequency}<p
             class="hint"
           >
@@ -2462,29 +2808,31 @@
             }}
           /></label
         >
+        </details>
         <footer>
-          <button type="submit">Save task</button>{#if taskEditor.id}<button
-              type="button"
-              class="danger"
-              onclick={() => saveTask(true)}>Delete task</button
-            >{/if}<button type="button" onclick={() => (taskEditor = null)}
-            >Cancel</button
-          >
+          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : taskEditor.id ? "Save changes" : "Add task"}</Button>
+          <Button type="button" disabled={pending > 0} onclick={() => (taskEditor = null)}>Cancel</Button>
+          {#if taskEditor.id}
+            <Button type="button" disabled={pending > 0} onclick={() => {
+              if (taskEditor) { taskEditor.status = taskEditor.status === "done" ? "todo" : "done"; void saveTask(); }
+            }}>{taskEditor.status === "done" ? "Reopen task" : "Complete task"}</Button>
+            <Button type="button" disabled={pending > 0} onclick={() => saveTask(true)}>Delete task</Button>
+          {/if}
         </footer>
       </form>
     </dialog>
   </div>{/if}
-{#if calendarEditor}<div class="modal-backdrop" role="presentation">
+{#if calendarEditor && isActive}<div class="modal-backdrop" role="presentation">
     <dialog
       use:modal
       oncancel={() => (calendarEditor = null)}
       class="dialog small"
       aria-modal="true"
-      aria-labelledby="calendar-editor-title"
+      aria-labelledby={`${pane.id}-calendar-editor-title`}
       tabindex="-1"
     >
       <header>
-        <h2 id="calendar-editor-title">Calendar settings</h2>
+        <h2 id={`${pane.id}-calendar-editor-title`}>Calendar settings</h2>
         <button
           aria-label="Close calendar settings"
           onclick={() => (calendarEditor = null)}>×</button
@@ -2589,10 +2937,6 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  .active {
-    background: var(--accent);
-    color: var(--surface);
-  }
   input,
   textarea,
   select {
@@ -2631,7 +2975,7 @@
     gap: 0.55rem;
     flex-wrap: wrap;
   }
-  .toolbar > div {
+  .toolbar > div:first-child {
     margin-right: auto;
   }
   .toolbar p,
@@ -2643,6 +2987,149 @@
   .tabs {
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.6rem;
+  }
+  .header-actions,
+  .period-navigation,
+  .view-switch,
+  .range-toolbar,
+  .search-toolbar,
+  .selected-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+  }
+  .header-actions {
+    margin-left: auto;
+  }
+  .range-toolbar {
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 0.8rem;
+    background: var(--surface);
+    gap: 0.8rem;
+  }
+  .range-heading {
+    font-size: 1.25rem;
+    letter-spacing: -0.025em;
+    margin: 0 auto 0 0;
+  }
+  .date-jump {
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .view-switch {
+    gap: 0.25rem;
+  }
+  .calendar-search {
+    flex: 1;
+    min-width: 220px;
+    max-width: 430px;
+    font-size: 0.85rem;
+  }
+  .calendar-search input {
+    width: 100%;
+    min-width: 0;
+  }
+  .load-status {
+    color: var(--muted);
+    font-size: 0.78rem;
+    margin-left: auto;
+  }
+  .display-options {
+    margin: 0;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.75rem;
+    font-size: 0.85rem;
+  }
+  .display-options > .controls,
+  .display-options > .calendars {
+    margin-top: 0.8rem;
+  }
+  .interaction-help {
+    margin: 0;
+    max-width: 36rem;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .interaction-help p {
+    margin-top: 0.5rem;
+  }
+  .calendar-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 260px;
+    align-items: start;
+    gap: 1rem;
+  }
+  .calendar-main,
+  .selected-plan {
+    min-width: 0;
+  }
+  .calendar-main {
+    overflow: auto;
+    border-radius: 0.7rem;
+    border: 1px solid var(--border);
+  }
+  .selected-actions {
+    margin-bottom: 0.85rem;
+  }
+  .plan-event {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    text-align: left;
+    width: 100%;
+    margin: 0.5rem 0;
+    padding: 0.75rem;
+    border-left: 3px solid var(--calendar-color);
+  }
+  .plan-event span,
+  .plan-task span {
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .plan-task {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  .plan-task-map { grid-column: 2; justify-self: start; }
+  .plan-task input {
+    margin-top: 0.4rem;
+  }
+  .plan-task > button {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    align-items: start;
+    gap: 0.3rem;
+    min-width: 0;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .completed strong,
+  .task-chip.completed {
+    text-decoration: line-through;
+    color: var(--muted);
+  }
+  .day-empty {
+    padding: 1.2rem 0 0.4rem;
+    font-size: 0.85rem;
+  }
+  .day-empty p {
+    margin-top: 0.4rem;
+    line-height: 1.6;
+  }
+  .time-date,
+  .agenda-date {
+    display: block;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    padding: 0.25rem 0;
+    font-weight: 600;
   }
   .dot {
     width: 0.65rem;
@@ -2686,27 +3173,62 @@
   .month-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    border-left: 1px solid var(--border);
-    border-top: 1px solid var(--border);
+    min-width: 560px;
   }
   .day-cell {
-    min-height: 120px;
+    min-height: 132px;
     padding: 0.35rem;
     border-right: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     min-width: 0;
   }
+  .day-cell.selected {
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .day-cell.today .day-head strong {
+    color: var(--accent);
+  }
+  .day-cell-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    margin-bottom: 0.45rem;
+  }
+  .day-add {
+    padding: 0.1rem 0.3rem;
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+  }
   .outside {
     opacity: 0.55;
   }
   .day-head {
-    width: 100%;
+    display: flex;
+    flex: 1;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.2rem;
+    min-width: 0;
+    padding: 0.3rem;
     border: 0;
     background: transparent;
     text-align: left;
     font-size: 0.8rem;
-    touch-action: none;
+  }
+  .weekday-label {
+    padding: 0.65rem 0.4rem;
+    text-align: center;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border);
+  }
+  .day-head strong {
+    font-size: 0.9rem;
   }
   .selecting {
     background: color-mix(
@@ -2753,38 +3275,162 @@
   .time-scroll {
     overflow: auto;
     max-height: 70vh;
+    min-height: 380px;
+    overscroll-behavior: contain;
   }
   .time-grid {
+    --slot-height: 36px;
+    --time-columns: 64px repeat(var(--days), minmax(110px, 1fr));
     display: grid;
-    grid-template-columns: 55px repeat(var(--days), minmax(110px, 1fr));
-    border-top: 1px solid var(--border);
-    min-width: calc(var(--days) * 110px + 55px);
+    grid-template-columns: var(--time-columns);
+    min-width: calc(var(--days) * 110px + 64px);
+    background: var(--surface);
   }
-  .time-heading {
+  .time-header {
+    display: grid;
+    grid-template-columns: var(--time-columns);
+    grid-column: 1 / -1;
     position: sticky;
     top: 0;
-    z-index: 3;
+    z-index: 4;
     background: var(--surface);
-    padding: 0.5rem;
-    border: 1px solid var(--border);
-    font-size: 0.8rem;
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 2px 4px color-mix(in srgb, var(--ink) 8%, transparent);
   }
-  .time-heading > button {
-    font-size: 0.75rem;
-  }
-  .time-label {
-    text-align: right;
-    padding: 0.2rem 0.4rem;
+  .time-zone,
+  .all-day-label {
+    padding: 0.5rem 0.4rem;
     color: var(--muted);
-    font-size: 0.72rem;
+    font-size: 0.65rem;
+    text-align: right;
+    overflow-wrap: anywhere;
     background: var(--canvas);
   }
-  .time-cell {
-    min-height: 34px;
+  .time-zone {
+    align-content: center;
+  }
+  .all-day-label span {
+    font-size: 0.6rem;
+  }
+  .time-heading {
+    border-left: 1px solid var(--border);
+    padding: 0.35rem;
+    min-width: 0;
+  }
+  .time-heading .time-date {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    width: 100%;
+    padding: 0.25rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    line-height: 1.2;
+  }
+  .time-date span,
+  .time-date small {
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .time-date strong {
+    display: grid;
+    place-items: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    font-size: 1.15rem;
+    border-radius: 50%;
+  }
+  .time-heading.today .time-date strong {
+    background: var(--accent);
+    color: var(--surface);
+  }
+  .time-heading.selected .time-date {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  }
+  .all-day-cell {
+    display: flex;
+    align-items: flex-start;
+    min-width: 0;
+    border-left: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    padding: 0.2rem;
+    gap: 0.2rem;
+  }
+  .all-day-cell.selected {
+    background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  }
+  .all-day-add {
+    padding: 0.15rem;
+    font-size: 0.75rem;
+    line-height: 1.3;
+    border-color: transparent;
+  }
+  .all-day-items {
+    flex: 1;
+    min-width: 0;
+    max-height: 100px;
+    overflow: auto;
+  }
+  .all-day-event,
+  .all-day-items .task-chip {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.25rem;
+    margin: 0 0 0.2rem;
+    font-size: 0.72rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .time-axis {
+    background: var(--canvas);
+  }
+  .time-label {
+    height: var(--slot-height);
+    box-sizing: border-box;
+    text-align: right;
+    padding: 0.15rem 0.45rem;
+    color: var(--muted);
+    font-size: 0.68rem;
+  }
+  .time-day {
     position: relative;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    height: calc(48 * var(--slot-height));
+    min-width: 0;
+    border-left: 1px solid var(--border);
+  }
+  .time-cell {
+    box-sizing: border-box;
+    height: var(--slot-height);
+    position: relative;
+    border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .drop-target {
+    background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  .invalid-drop {
+    background: color-mix(in srgb, var(--danger, #d14b5a) 16%, var(--surface));
+    box-shadow: inset 0 0 0 2px var(--danger, #d14b5a);
+  }
+  .drop-status { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 40; max-width: calc(100vw - 2rem); margin: 0; padding: 0.6rem 0.9rem; pointer-events: none; color: var(--ink); background: var(--surface-raised); border: 1px solid var(--accent); border-radius: 6px; box-shadow: var(--overlay-shadow); }
+  .task-tray { margin: 0.7rem 0 1rem; padding: 0.8rem; border: 1px solid var(--border); border-radius: 8px; }
+  .task-tray h3 { margin: 0; }
+  .tray-list { display: grid; gap: 0.4rem; max-height: 320px; overflow-y: auto; margin-top: 0.6rem; }
+  .tray-task { display: grid; gap: 0.25rem; text-align: left; width: 100%; padding: 0.6rem; }
+  .tray-task span { font-size: 0.75rem; color: var(--muted); }
+  .timed-task { position: absolute; z-index: 4; left: 2px; right: 2px; max-width: calc(100% - 4px); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; }
+  [draggable="true"] { cursor: grab; }
+  [draggable="true"]:active { cursor: grabbing; }
+  .time-cell.hour-start {
+    border-top: 1px solid var(--border);
+  }
+  .time-day.today {
+    background: color-mix(in srgb, var(--accent) 3%, var(--surface));
   }
   .slot-button {
     position: absolute;
@@ -2795,10 +3441,71 @@
     background: transparent;
     touch-action: none;
   }
+  .slot-button:hover,
+  .slot-button:focus-visible {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  .slot-button:focus-visible {
+    outline-offset: -2px;
+    z-index: 2;
+  }
   .timed {
-    position: relative;
+    position: absolute;
     z-index: 1;
-    margin: 0.15rem;
+    margin: 0;
+    box-sizing: border-box;
+    border: 1px solid color-mix(in srgb, var(--calendar-color) 50%, var(--border));
+    border-left: 3px solid var(--calendar-color);
+    background: color-mix(in srgb, var(--calendar-color) 22%, var(--surface));
+    overflow: hidden;
+    align-items: stretch;
+  }
+  .timed > .timed-content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    white-space: normal;
+    min-width: 0;
+    padding: 0.15rem 0.25rem;
+    line-height: 1.15;
+    overflow: hidden;
+    color: var(--ink);
+  }
+  .timed-content strong,
+  .timed-content span {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.72rem;
+  }
+  .timed-content span {
+    font-size: 0.65rem;
+    margin-top: 0.1rem;
+  }
+  .timed .resize {
+    align-self: flex-end;
+    font-size: 0.6rem;
+    padding: 0.1rem;
+  }
+  .now-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 2px solid var(--accent);
+    z-index: 3;
+    pointer-events: none;
+  }
+  .now-line::before {
+    content: "";
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    left: -3px;
+    top: -4px;
   }
   .agenda section {
     padding: 0.8rem 0;
@@ -2821,10 +3528,6 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
-  }
-  .board {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .task-column {
     background: var(--canvas);
@@ -2978,7 +3681,7 @@
     padding: 1rem;
   }
   .dialog {
-    width: min(760px, 100%);
+    width: min(660px, 100%);
     max-height: 92vh;
     overflow: auto;
     background: var(--surface);
@@ -3016,8 +3719,38 @@
     flex-direction: row;
     align-items: center;
   }
+  .editor-options {
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    padding: 0.85rem;
+    margin: 0.7rem 0;
+  }
+  .editor-options summary {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .editor-options[open] summary {
+    margin-bottom: 0.8rem;
+    color: var(--ink);
+  }
+  .editor-options > label {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    margin: 0.8rem 0;
+  }
+  .editor-options .hint {
+    line-height: 1.55;
+    margin-top: 0.65rem;
+  }
   .dialog footer {
     margin-top: 1rem;
+    position: sticky;
+    bottom: -1.2rem;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 1rem 0 0.25rem;
+    z-index: 2;
   }
   .danger {
     color: var(--warning);
@@ -3025,13 +3758,14 @@
   a {
     color: var(--accent);
   }
-  @media (max-width: 760px) {
-    .board {
-      grid-template-columns: 1fr 1fr;
+  @media (max-width: 1200px) {
+    .calendar-layout {
+      grid-template-columns: minmax(0, 1fr);
     }
+  }
+  @media (max-width: 760px) {
     .month-grid {
-      overflow: auto;
-      grid-template-columns: repeat(7, minmax(100px, 1fr));
+      grid-template-columns: repeat(7, minmax(80px, 1fr));
     }
     .form-grid,
     .comparison {
@@ -3047,6 +3781,26 @@
     }
     .toolbar {
       align-items: start;
+    }
+    .range-heading {
+      order: -1;
+      flex-basis: 100%;
+    }
+    .view-switch {
+      width: 100%;
+    }
+    .load-status {
+      flex-basis: 100%;
+      margin-left: 0;
+    }
+    .date-jump {
+      margin-left: auto;
+    }
+    .header-actions {
+      margin-left: 0;
+    }
+    .day-cell {
+      min-height: 110px;
     }
     .modal-backdrop {
       padding: 0.3rem;

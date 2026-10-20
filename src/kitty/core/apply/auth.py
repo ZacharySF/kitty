@@ -2,27 +2,28 @@
 
 Only an enabled policy with exact HTTPS origins can send credentials. It may come
 from local configuration or a fingerprint-bound website review for one run.
-Account creation additionally needs `allow_account_creation`; an explicit
-`account_mode` chooses existing-account login or new-account registration.
+Account creation additionally needs `allow_account_creation`. Auto mode follows
+the site's recognized sign-in or registration form; explicit modes restrict it.
 
-What is recognized is deliberately narrow: one visible form with an email or
-username box, a password box (plus confirmation boxes when creating an account)
-and exactly one button reading Sign in / Log in, or Create account / Sign up /
-Register. Anything else stops for manual handling: CAPTCHA widgets (even a passive
-badge), verification or MFA codes, consent checkboxes or "by continuing you agree"
-text, extra fields, application actions in the same form, single sign-on only
-pages, a GET form, a form posting elsewhere, cross-origin frames, and boxes that
-already hold different values. Explicit login/create mode may first follow one
-clearly labeled link or non-submitting button to that form. Every write and the
-credential click re-run the whole check inside the page. No retries or account-
-existence inference: `acted` means submission was attempted, not a confirmed account.
+Recognition requires one visible email/password account form and a single
+credential action, distinguished from links and buttons that only switch flows.
+Accessibility overlays derive account semantics only from their directly
+associated hidden native submit; clicks use a real, unobstructed pointer target.
+Only an explicit account-not-found/already-exists alert permits one automatic
+switch, never a bad-password retry. CAPTCHA, verification, unsafe destinations,
+extra fields and different saved values stop all credential writes. Authorized
+account creation includes routine required terms/privacy choices, not factual
+certifications, marketing, waivers or final application actions. Other consent
+remains manual. Every write, agreement click and credential click repeats guards.
 
 Google mode instead uses the reviewed Profile email, never employer credentials.
 It can enter one explicit Google sign-in control and select one matching existing
 account on the exact official HTTPS chooser. Only newly opened, opener-associated
 popups are eligible. Extra permissions, input or security steps are handed back
 to the user in the same dedicated Firefox; autofill resumes only on the original
-approved employer application. No Google password or consent action is automated.
+approved employer application's loaded document, not a pending navigation URL.
+Navigation can discard a click's reply: wait for that approved return without
+repeating the click. No Google password or consent action is automated.
 """
 
 from __future__ import annotations
@@ -33,13 +34,20 @@ from dataclasses import dataclass
 from hmac import compare_digest
 
 from kitty.config import AuthenticationSettings, _authentication_origin
-from kitty.core.apply.bidi import BidiError, Tab
+from kitty.core.apply.bidi import BidiError, Frame, Tab
 from kitty.core.apply.credentials import ApplicationCredentials, credential_binding
-from kitty.core.apply.page import UnsafeAction, form_frames, settle
+from kitty.core.apply.oracle_email import oracle_email_gate
+from kitty.core.apply.page import (
+    UnsafeAction, _CHOICE_TARGET_JS, _DOM_HELPERS_JS, form_frames, settle,
+)
 
 #: Frames that are themselves a challenge widget (form_frames skips them, so look here).
 _CHALLENGE_FRAMES = re.compile(
     r"recaptcha|hcaptcha|turnstile|challenges\.cloudflare\.com|arkoselabs|funcaptcha", re.I)
+_SIGN_IN_REJECTED = (
+    "login: employer rejected sign-in or the account may be locked; "
+    "resolve it in the retained tab before retrying"
+)
 
 #: Shared page-side analysis. Returns {state, els}: `state` is plain data for
 #: Python, `els` the elements that later writes and the click act on.
@@ -48,28 +56,26 @@ _ANALYZE = r"""
   const visible = e => !!e && e.getClientRects().length > 0 &&
     getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-  const text = e => clean(e?.innerText || e?.value || '');
+  const text = e => clean(e?.innerText || e?.value || e?.getAttribute('aria-label') || '');
   const originOk = u => {
     try { const x = new URL(u, location.href); return x.protocol === 'https:' && approved.includes(x.origin); }
     catch { return false; }
   };
-  const state = {blocker: null, hasPassword: false, mode: null, roles: [], signature: '',
-                 url: location.href, action: null, top: window.top === window};
+  const state = {blocker: null, submitBlocker: null, hasPassword: false, mode: null, roles: [], signature: '',
+                 url: location.href, action: null, preparePost: false, top: window.top === window};
   const els = {};
   const stop = blocker => { state.blocker = blocker; return {state, els}; };
   const body = clean(document.body ? document.body.innerText : '');
 
   const visibleAny = s => [...document.querySelectorAll(s)].some(visible);
   if (visibleAny('input[autocomplete=one-time-code], input[name=otp], input[name=verificationCode]') ||
-      /\b(?:enter (?:the |your )?(?:verification|security|authentication) code|verify your email|two-factor authentication|multi-factor authentication)\b/i.test(body))
+      /\b(?:enter (?:the |your )?(?:verification|security|authentication) code|verify your (?:email|account)|two-factor authentication|multi-factor authentication)\b/i.test(body))
     return stop('verification: complete the verification or MFA step yourself');
   if ([...document.querySelectorAll('iframe')].some(f => visible(f) &&
         /recaptcha|hcaptcha|turnstile|challenges\.cloudflare\.com|arkoselabs|funcaptcha/i.test(f.src || '')) ||
       visibleAny('.g-recaptcha, .grecaptcha-badge, .h-captcha, .cf-turnstile, [class*=captcha i], [id*=captcha i]') ||
       /\b(?:verify (?:that )?you are (?:a )?human|complete the captcha|i'?m not a robot)\b/i.test(body))
     return stop('captcha: a CAPTCHA is on the sign-in page; sign in yourself');
-  if (/\bby (?:clicking|continuing|creating|signing (?:up|in)|registering|proceeding|selecting|logging in)\b[^.]{0,160}\b(?:agree|accept|consent|terms|privacy)/i.test(body))
-    return stop('consent: signing in here also accepts terms; sign in yourself');
 
   const passwords = [...document.querySelectorAll('input[type=password]')].filter(visible);
   if (!passwords.length) return stop('login: no visible password box to fill; sign in yourself');
@@ -80,23 +86,34 @@ _ANALYZE = r"""
     try { topOk = originOk(window.top.location.href); } catch { topOk = false; }
     if (!topOk) return stop('login: the sign-in form is in a cross-origin frame; sign in yourself');
   }
-  if (passwords.length > 2) return stop('login: unrecognized sign-in form; sign in yourself');
+  const credentialAlerts = [...document.querySelectorAll(
+    '[role=alert], [aria-live=assertive], .error, .error-message, [data-automation-id=errorMessage]'
+  )].filter(visible).map(text).join(' ');
+  if (/\b(?:(?:wrong|incorrect|invalid) (?:e-?mail(?: address)?|password|credentials)|account (?:is|has been|might be) (?:temporarily )?locked)\b/i.test(credentialAlerts))
+    return stop('""" + _SIGN_IN_REJECTED + r"""');
+  if (passwords.length > 2 || passwords.some(e => e.disabled || e.readOnly))
+    return stop('login: unrecognized or unavailable password boxes; sign in yourself');
 
   const forms = new Set(passwords.map(p => p.form));
   if (forms.size !== 1) return stop('login: unrecognized sign-in form; sign in yourself');
   const LOGIN = /^(?:sign in|sign-in|signin|log in|log-in|login|log on)$/i;
-  const CREATE = /^(?:create account|create an account|create my account|sign up|sign-up|register)$/i;
-  const controlsIn = box => [...box.querySelectorAll('button, input[type=submit], input[type=button], [role=button]')]
-    .filter(visible);
+  const CREATE = /^(?:create account|create an account|create my account|sign up|sign-up|signup|register)$/i;
+  const controlsIn = box => [...new Set([
+    ...box.querySelectorAll('button, input[type=submit], input[type=button], [role=button]'),
+    ...(box.tagName === 'FORM' ? [...box.elements].filter(e =>
+      e.matches('button, input[type=submit], input[type=button]')) : [])
+  ])].filter(e => visible(e) && !e.closest('[aria-hidden=true]'));
   let box = passwords[0].form;
   if (!box) {
     box = passwords[0].parentElement;
     while (box && !(passwords.every(p => box.contains(p)) &&
+                    box.querySelector('input[type=email], input[autocomplete=username], input[autocomplete=email], input[type=text], input:not([type])') &&
                     controlsIn(box).some(e => LOGIN.test(text(e)) || CREATE.test(text(e)))))
       box = box.parentElement;
     if (!box) return stop('login: no sign-in button next to the password box; sign in yourself');
   }
 
+  els.box = box;
   const labelOf = e => {
     const ids = (e.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
     const byIds = ids.map(id => document.getElementById(id)?.innerText || '').join(' ');
@@ -105,7 +122,8 @@ _ANALYZE = r"""
   const describe = e => clean([e.name, e.id, e.getAttribute('autocomplete'), e.getAttribute('aria-label'),
                                e.getAttribute('placeholder'), e.getAttribute('data-automation-id'), labelOf(e)].join(' '));
   const confirmLike = e => /confirm|verify|re-?enter|repeat|retype|again/i.test(describe(e));
-  const inputs = [...box.querySelectorAll('input, textarea, select')].filter(e => {
+  const fields = box.tagName === 'FORM' ? [...box.elements] : [...box.querySelectorAll('input, textarea, select')];
+  const inputs = fields.filter(e => e.matches('input, textarea, select')).filter(e => {
     const t = (e.type || '').toLowerCase();
     if (['hidden', 'submit', 'button', 'reset', 'image'].includes(t)) return false;
     if (t === 'checkbox' || t === 'radio') return visible(e) || visible(e.parentElement);
@@ -114,23 +132,83 @@ _ANALYZE = r"""
   const identifiers = inputs.filter(e => e.tagName === 'INPUT' && e.type !== 'password' && (
     e.type === 'email' || /^(?:username|email)$/i.test(e.getAttribute('autocomplete') || '') ||
     (e.type === 'text' && /e-?mail|user ?name|user ?id|\blogin\b/i.test(describe(e)))));
-  const remember = inputs.filter(e => e.type === 'checkbox' && !e.required && !e.checked &&
-    /remember|keep me (?:signed|logged) in|stay (?:signed|logged) in/i.test(describe(e) + ' ' + text(e.parentElement)));
-  const others = inputs.filter(e => e.type !== 'password' && !identifiers.includes(e) && !remember.includes(e));
-  if (others.some(e => e.type === 'checkbox' || e.type === 'radio'))
-    return stop('consent: the sign-in form has a checkbox (terms or consent) for you to decide');
+  const remember = inputs.filter(e => e.type === 'checkbox' && !e.required &&
+    e.getAttribute('aria-required') !== 'true' && !e.checked &&
+    !/agree|accept|consent|terms|privacy/i.test(describe(e)) &&
+    /remember|keep me (?:signed|logged) in|stay (?:signed|logged) in/i.test(describe(e)));
+  const choiceSelector = 'input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch]';
+  const choices = [...new Set([...inputs.filter(e => e.type === 'checkbox' || e.type === 'radio'),
+    ...box.querySelectorAll(choiceSelector)])].filter(e => visible(e) || visible(e.parentElement));
+  const others = inputs.filter(e => e.type !== 'password' && !identifiers.includes(e) &&
+    !remember.includes(e) && !choices.includes(e));
   if (others.length) return stop('login: the sign-in form also asks for other details; continue yourself');
+  if (identifiers.some(e => e.readOnly))
+    return stop('login: the email or username box is read-only; continue yourself');
 
-  const controls = controlsIn(box).filter(e => !e.disabled && e.getAttribute('aria-disabled') !== 'true');
-  if (controls.some(e => /submit|apply|send application|finish/i.test(text(e))))
+  const controls = controlsIn(box);
+  // A component may put an accessible pointer target over its aria-hidden
+  // native submit. Its generic "Submit" label is not application semantics:
+  // only the directly associated, uniquely named native account action is.
+  const nativeFor = e => {
+    if (box.tagName !== 'FORM' || e.getAttribute('role') !== 'button' ||
+        e.matches('button, input')) return null;
+    const adjacent = [e.previousElementSibling, e.nextElementSibling,
+      ...e.querySelectorAll('button, input[type=submit]')];
+    const natives = [...new Set(adjacent)].filter(n => n && n.form === box &&
+      n.type === 'submit' && n.getAttribute('aria-hidden') === 'true' &&
+      (LOGIN.test(text(n)) || CREATE.test(text(n))));
+    return natives.length === 1 ? natives[0] : null;
+  };
+  const semanticAction = e => {
+    const native = nativeFor(e);
+    const label = text(e);
+    return native && (LOGIN.test(label) || CREATE.test(label) || /^submit$/i.test(label))
+      ? native : e;
+  };
+  if (controls.some(e => {
+    const native = nativeFor(e), label = text(e);
+    return native && (LOGIN.test(label) || CREATE.test(label)) &&
+      LOGIN.test(label) !== LOGIN.test(text(native));
+  })) return stop('login: the account proxy and native action disagree; continue yourself');
+  if (controls.some(e => /submit|apply|send application|finish/i.test(text(semanticAction(e)))))
     return stop('login: the sign-in form also holds application actions; continue yourself');
-  const logins = controls.filter(e => LOGIN.test(text(e)));
-  const creates = controls.filter(e => CREATE.test(text(e)));
-  if (logins.length + creates.length !== 1) return stop('login: no single Sign in or Create account button; sign in yourself');
-  const button = logins[0] || creates[0];
-  state.mode = logins.length ? 'login' : 'create';
-  if (/agree|accept|consent|terms|privacy|submit|apply/i.test(button.getAttribute('aria-label') || ''))
-    return stop('consent: the sign-in button also accepts terms; sign in yourself');
+  const accountControls = controls.filter(e => LOGIN.test(text(semanticAction(e))) ||
+    CREATE.test(text(semanticAction(e))));
+  // Native submits establish the credential action; type=button controls and
+  // links alongside them can switch flows without becoming a second submit.
+  const submits = accountControls.filter(e => e.form === box && e.type === 'submit');
+  const candidates = submits.length ? submits : accountControls;
+  if (candidates.length !== 1) return stop('login: no single Sign in or Create account action; sign in yourself');
+  const button = candidates[0];
+  const nativeAction = nativeFor(button);
+  const action = semanticAction(button);
+  state.mode = LOGIN.test(text(action)) ? 'login' : 'create';
+  if (/submit|apply/i.test(button.getAttribute('aria-label') || '') &&
+      !(nativeAction && /^submit$/i.test(text(button))))
+    return stop('login: the account button also holds application actions; continue yourself');
+  if (choices.some(e => !remember.includes(e)))
+    state.submitBlocker = 'consent: credential fields are prepared; review the account checkbox or choices and submit yourself';
+  const agreement = /\bby (?:clicking|continuing|creating|signing (?:up|in)|registering|proceeding|selecting|logging in)\b[^.\n]{0,200}\b(?:agree|accept|consent|terms|privacy)/i;
+  const described = [box, button, ...inputs].flatMap(e =>
+    (e.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+      .map(id => document.getElementById(id)).filter(visible)).map(text).join(' ');
+  const region = box.closest('[role=dialog], dialog, section') || box;
+  const regionChoices = [...region.querySelectorAll(choiceSelector)]
+    .filter(e => visible(e) || visible(e.parentElement));
+  if (regionChoices.some(e => !remember.includes(e)))
+    state.submitBlocker = 'consent: credential fields are prepared; review the account checkbox or choices and submit yourself';
+  // Elsewhere only a clause naming this action, or an unresolved "continuing"
+  // agreement, applies. "By clicking Accept All Cookies" is not account consent.
+  const actionWords = (state.mode === 'create' ? CREATE : LOGIN).source.slice(1, -1);
+  const actionVerb = state.mode === 'create'
+    ? 'creating (?:an? |your )?(?:external )?account|signing up|registering'
+    : 'signing in|logging in';
+  const externalAgreement = new RegExp(
+    String.raw`\bby (?:(?:clicking|selecting) [“"' ]*${actionWords}|${actionVerb})\b[^.]{0,200}\b(?:agree|accept|consent|terms|privacy)`, 'i');
+  if (agreement.test(text(region) + ' ' + described) || externalAgreement.test(body) ||
+      /\bby (?:continuing|proceeding)\b[^.]{0,200}\b(?:agree|accept|consent|terms|privacy)/i.test(body) ||
+      /agree|accept|consent|terms|privacy/i.test(button.getAttribute('aria-label') || ''))
+    state.submitBlocker = 'consent: credential fields are prepared; signing in or creating this account accepts terms, so review them and submit yourself';
 
   let password2 = null;
   if (passwords.length === 2) {
@@ -144,15 +222,40 @@ _ANALYZE = r"""
     [id1, id2] = identifiers;
   else return stop('login: no single email or username box; sign in yourself');
 
-  const form = button.form || (box.tagName === 'FORM' ? box : null);
+  const form = button.form || button.closest('form') || (box.tagName === 'FORM' ? box : null);
   if (form) {
-    const method = (button.getAttribute('formmethod') || form.getAttribute('method') || '').toLowerCase();
-    const hasTarget = button.hasAttribute('formaction') || form.hasAttribute('action');
-    if (method === 'get' || (!method && hasTarget))
-      return stop('login: this form would send the password in the address; sign in yourself');
-    if (method && method !== 'post') return stop('login: unrecognized sign-in form; sign in yourself');
-    state.action = button.hasAttribute('formaction') ? button.formAction : form.action;
+    const methodControl = nativeAction || button;
+    const method = methodControl.hasAttribute('formmethod')
+      ? clean(methodControl.getAttribute('formmethod')).toLowerCase() : form.method.toLowerCase();
+    if (method !== 'post') {
+      // Component forms can omit method while a non-native accessibility proxy
+      // delegates to a hidden submit. Make the native fallback POST before any
+      // credentials are populated; never permit an explicit GET or override.
+      const componentProxy = !!nativeAction;
+      if (form.hasAttribute('method') || button.hasAttribute('formmethod') ||
+          methodControl.hasAttribute('formmethod') || !componentProxy)
+        return stop('login: the account form must explicitly use POST; sign in yourself');
+      state.preparePost = true;
+    }
+    state.action = methodControl.hasAttribute('formaction') ? methodControl.formAction : form.action;
+    if (button.hasAttribute('formaction') && !originOk(button.formAction))
+      return stop('login: the form sends credentials to an unapproved origin');
+    if (button.hasAttribute('formmethod') &&
+        clean(button.getAttribute('formmethod')).toLowerCase() !== 'post')
+      return stop('login: an account submit override is unsafe; sign in yourself');
     if (!originOk(state.action)) return stop('login: the form sends credentials to an unapproved origin');
+    // Accessible component actions can represent aria-hidden native submits.
+    // Validate every override before choosing the native click target.
+    for (const submit of [...form.elements].filter(e => e.type === 'submit')) {
+      if (/submit|apply|send application|finish/i.test(text(submit)) ||
+          /submit|apply/i.test(submit.getAttribute('aria-label') || ''))
+        return stop('login: the sign-in form also holds application actions; continue yourself');
+      const override = clean(submit.getAttribute('formmethod')).toLowerCase();
+      if ((submit.hasAttribute('formmethod') && override !== 'post') ||
+          (submit.hasAttribute('formaction') && !originOk(submit.formAction)))
+        return stop('login: an account submit override is unsafe; sign in yourself');
+    }
+    els.form = form;
   }
 
   els.email = id1; els.password = passwords[0];
@@ -160,13 +263,19 @@ _ANALYZE = r"""
   if (id2) { els.emailConfirm = id2; state.roles.splice(1, 0, 'emailConfirm'); }
   if (password2) { els.passwordConfirm = password2; state.roles.push('passwordConfirm'); }
   els.button = button;
+  if (nativeAction) {
+    const nativeActions = [...form.elements].filter(e => e.type === 'submit');
+    if (nativeActions.length !== 1)
+      return stop('login: multiple native actions behind the account control; continue yourself');
+    els.nativeAction = nativeAction;
+  }
   // Values are compared only once Python has approved this frame and passes them in.
   for (const role of email === null ? [] : state.roles) {
     const value = role.startsWith('email') ? email : password;
     if (els[role].value && els[role].value !== value)
       return stop('login: the sign-in form already holds other values; continue yourself');
   }
-  state.signature = [location.href, state.mode, text(button),
+  state.signature = [location.href, state.action, state.mode, text(button), text(action),
     ...state.roles.map(r => [r, els[r].name, els[r].id, els[r].type].join(':'))].join('|');
   return {state, els};
 }
@@ -180,6 +289,7 @@ _WRITE_JS = r"""
   const {state, els} = (""" + _ANALYZE + r""")(approved, email, password);
   if (state.blocker) return state.blocker;
   if (state.signature !== signature || !els[role]) return false;
+  if (state.preparePost) els.form.method = 'post';
   const el = els[role];
   const value = role.startsWith('email') ? email : password;
   if (el.value === value) return true;
@@ -196,40 +306,167 @@ _WRITE_JS = r"""
 }
 """
 
-#: Click the one recognized button, only if the form and its values are still exactly as filled.
-_CLICK_JS = r"""
+# Only required, routine account terms are covered by account-creation approval.
+# Factual attestations, marketing, waivers and application certifications are not.
+_ACCOUNT_TERMS_JS = r"""
+(state, els) => {""" + _DOM_HELPERS_JS + r"""
+  const denied = {allowed: false, terms: []};
+  if (state.blocker || state.mode !== 'create' || !els.box) return denied;
+  const region = closest(els.box, '[role=dialog], dialog, section') || els.box;
+  const legal = /\b(?:terms(?: and conditions| of use| of service)?|privacy (?:policy|notice|statement)|data protection notice)\b/i;
+  const excluded = /\b(?:certif(?:y|ication)|attest|truthful|accurate|background check|credit check|criminal|drug test|marketing|newsletter|promotional|future opportunities|talent community|arbitration|waiv(?:e|er)|non.?compete|biometric|sell|third.party)\b/i;
+  if (excluded.test(composedText(region))) return denied;
+  const shown = e => e.getClientRects().length &&
+    getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  const choices = queryAll('input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch]', region)
+    .filter(e => shown(e) || shown(parentOf(e)));
+  // Some account forms label the one required checkbox only "I agree" and
+  // explicitly explain "By selecting the checkbox ... Terms ..." nearby.
+  // That clause binds only a single choice, never unrelated or extra consent.
+  const checkboxClause = composedText(region).replace(/\s+/g, ' ').match(
+    /\bby (?:selecting|checking) (?:the |this )?checkbox\b[^.]{0,600}/i)?.[0] || '';
+  const terms = [];
+  for (const e of choices) {
+    const label = (e.getAttribute('aria-label') ||
+      (e.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => reference(e, id)?.textContent || '').join(' ') ||
+      labelsOf(e).map(composedText).join(' ') || composedText(e)).replace(/\s+/g, ' ').trim();
+    const checked = e.matches('input') ? e.checked : e.getAttribute('aria-checked') === 'true';
+    const required = e.required || e.getAttribute('aria-required') === 'true' ||
+      closest(e, '[role=group], [role=radiogroup]')?.getAttribute('aria-required') === 'true' ||
+      (/^https:\/\/[^/]+\.myworkdayjobs\.com\//i.test(location.href) &&
+       e.getAttribute('data-automation-id') === 'createAccountCheckbox') ||
+      /[*✱]\s*$/.test(label);
+    if (!required && !checked && /remember|keep me signed in/i.test(label)) continue;
+    const explainedAgreement = choices.length === 1 && required && /^i agree$/i.test(label) &&
+      legal.test(checkboxClause) && !excluded.test(checkboxClause);
+    if (!e.matches('input[type=checkbox], [role=checkbox]') || !fieldSafe(e) ||
+        (!legal.test(label) && !explainedAgreement) || excluded.test(label) ||
+        (!checked && !required)) return denied;
+    terms.push(e);
+  }
+  const clauses = (document.body?.innerText || '').match(
+    /\bby (?:creating (?:an? |your |this )?(?:external )?account|clicking [“"' ]*create (?:an? )?account|signing up|registering|continuing|proceeding)[^.]{0,600}(?:\.|$)/gi
+  ) || [];
+  if (clauses.some(text => !legal.test(text) || excluded.test(text))) return denied;
+  if (state.submitBlocker && !terms.length && !clauses.length) return denied;
+  return {allowed: true, terms};
+}
+"""
+
+_TERMS_ANALYZE_JS = r"""
 (approved, email, password, signature) => {
   const {state, els} = (""" + _ANALYZE + r""")(approved, email, password);
+  if (state.blocker || state.signature !== signature ||
+      state.roles.some(r => els[r].value !== (r.startsWith('email') ? email : password)))
+    return {allowed: false, terms: []};
+  return (""" + _ACCOUNT_TERMS_JS + r""")(state, els);
+}
+"""
+
+_TERMS_STATUS_JS = r"""
+(...args) => {
+  const {allowed, terms} = (""" + _TERMS_ANALYZE_JS + r""")(...args);
+  return {allowed, pending: terms.filter(e =>
+    e.matches('input') ? !e.checked : e.getAttribute('aria-checked') !== 'true').length};
+}
+"""
+
+_TERMS_TARGET_JS = r"""
+(...args) => {
+  const {allowed, terms} = (""" + _TERMS_ANALYZE_JS + r""")(...args);
+  if (!allowed) return null;
+  const e = terms.find(e => e.matches('input') ? !e.checked : e.getAttribute('aria-checked') !== 'true');
+  if (!e) return null;
+  const keys = globalThis.kittyKeys ??= new WeakMap();
+  const byKey = globalThis.kittyByKey ??= new Map();
+  if (!keys.has(e)) {
+    globalThis.kittyCounter = (globalThis.kittyCounter ?? 0) + 1;
+    keys.set(e, 'e' + globalThis.kittyCounter);
+  }
+  const key = keys.get(e);
+  byKey.set(key, e);
+  return (""" + _CHOICE_TARGET_JS + r""")(key);
+}
+"""
+
+#: Resolve the account action only while its form and values still match.
+_ACCOUNT_TARGET_JS = r"""
+(approved, email, password, signature, authorizeTerms = false) => {
+  const {state, els} = (""" + _ANALYZE + r""")(approved, email, password);
   if (state.blocker) return state.blocker;
+  if (state.submitBlocker) {
+    const proof = authorizeTerms && (""" + _TERMS_STATUS_JS + r""")(approved, email, password, signature);
+    if (!proof || !proof.allowed || proof.pending) return state.submitBlocker;
+  }
   if (state.signature !== signature) return false;
   if (state.roles.some(r => els[r].value !== (r.startsWith('email') ? email : password))) return false;
-  els.button.click();
-  return true;
+  if ([els.button, els.nativeAction].filter(Boolean).some(e =>
+      e.disabled || e.getAttribute('aria-disabled') === 'true'))
+    return 'login: credential fields are prepared; the account action is disabled, so continue yourself';
+  if (state.preparePost) els.form.method = 'post';
+  if (els.nativeAction) {
+    // A native submit may be visible in layout but covered by its accessibility
+    // proxy. Never point through that overlay: use the associated real target.
+    els.nativeAction.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});
+    const r = els.nativeAction.getClientRects()[0];
+    if (r?.width && r.height) {
+      const x = (Math.max(0, r.left) + Math.min(innerWidth, r.right)) / 2;
+      const y = (Math.max(0, r.top) + Math.min(innerHeight, r.bottom)) / 2;
+      const hit = document.elementFromPoint(x, y);
+      if (hit && (hit === els.nativeAction || els.nativeAction.contains(hit))) return els.nativeAction;
+    }
+  }
+  return els.button;
 }
 """
 
 #: Enter only the explicitly chosen flow, without submitting any form or credentials.
-#: Re-analyze in the same DOM turn as the click; redirects are checked before filling.
-_ENTRY_JS = r"""
+#: Re-analyze before resolving any native navigation target, including email entry.
+_ENTRY_TARGET_JS = r"""
 (approved, mode) => {
-  const {state} = (""" + _ANALYZE + r""")(approved, null, null);
+  const {state, els} = (""" + _ANALYZE + r""")(approved, null, null);
   if (!state.top || !approved.includes(location.origin) || location.protocol !== 'https:') return false;
   if (state.blocker && /^(?:captcha|verification|consent):/.test(state.blocker)) return state.blocker;
+  const body = document.body?.innerText || '';
+  if (!state.hasPassword && /\bby (?:creating (?:an? |your )?(?:external )?account|signing (?:up|in)|logging in|registering|continuing)\b[^.]{0,200}\b(?:agree|accept|consent|terms|privacy)/i.test(body))
+    return 'consent: review the account-entry terms and open the account form yourself';
   const visible = e => e.getClientRects().length > 0 &&
     getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
   const text = e => (e.innerText || e.value || '').replace(/\s+/g, ' ').trim();
-  if ([...document.querySelectorAll('input[type=checkbox], input[type=radio]')]
+  if (!state.hasPassword && [...document.querySelectorAll('input[type=checkbox], input[type=radio]')]
       .some(e => (visible(e) || (e.parentElement && visible(e.parentElement))) &&
         !/remember|keep me (?:signed|logged) in/i.test(e.parentElement?.innerText || '')))
     return 'consent: decide the account-page consent yourself';
   const controls = [...document.querySelectorAll('a, button, input[type=submit], input[type=button], [role=button]')]
     .filter(visible);
   if (controls.some(e => /submit|apply|send application|finish/i.test(text(e)))) return false;
-  const pattern = mode === 'create'
-    ? /^(?:create account|create an account|create my account|sign up|sign-up|register)$/i
-    : /^(?:sign in|sign-in|signin|log in|log-in|login|log on)$/i;
-  const candidates = controls.filter(e => pattern.test(text(e)) && !e.disabled &&
-    e.getAttribute('aria-disabled') !== 'true');
+  const login = /^(?:sign in|sign-in|signin|log in|log-in|login|log on)$/i;
+  const create = /^(?:create account|create an account|create my account|sign up|sign-up|signup|register)$/i;
+  const eligible = controls.filter(e => !e.disabled && e.getAttribute('aria-disabled') !== 'true');
+  const navigations = eligible.filter(e => e.tagName === 'A' ? e.hasAttribute('href')
+    : (e.form || e.closest('form')) ? e.type === 'button' : (
+      e.tagName === 'BUTTON' || e.type === 'button' || e.getAttribute('role') === 'button'));
+  const local = els.box?.parentElement;
+  const localEntries = local ? navigations.filter(e => local.contains(e) &&
+    (mode === 'create' ? create.test(text(e)) : login.test(text(e)))) : [];
+  const entries = localEntries.length ? localEntries : navigations;
+  const emailEntries = entries.filter(e => /^(?:sign in|log in|continue) with (?:e-?mail)$/i.test(text(e)));
+  const modalEmails = emailEntries.filter(e => e.closest('[role=dialog], [aria-modal=true]'));
+  const reachableEmails = emailEntries.filter(e => {
+    const r = e.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return hit && (hit === e || e.contains(hit));
+  });
+  const emailEntry = modalEmails.length === 1 ? modalEmails[0] :
+    reachableEmails.length === 1 ? reachableEmails[0] :
+    emailEntries.length === 1 ? emailEntries[0] : null;
+  const useEmailEntry = !state.hasPassword && mode !== 'create' && emailEntry &&
+    ![...document.querySelectorAll('input[type=email], input[type=text], input:not([type]), textarea')]
+      .some(visible);
+  const logins = entries.filter(e => login.test(text(e)));
+  const creates = entries.filter(e => create.test(text(e)));
+  const candidates = useEmailEntry ? [emailEntry] :
+    mode === 'auto' ? (logins.length ? logins : creates) : mode === 'create' ? creates : logins;
   if (candidates.length !== 1) return false;
   const el = candidates[0];
   if (/agree|accept|consent|terms|privacy|submit|apply/i.test(el.getAttribute('aria-label') || '')) return false;
@@ -238,10 +475,9 @@ _ENTRY_JS = r"""
         (el.target && el.target !== '_self')) return false;
     const url = new URL(el.href, location.href);
     if (url.protocol !== 'https:' || !approved.includes(url.origin) || url.username || url.password) return false;
-  } else if (el.form ? el.type !== 'button' : !(
+  } else if ((el.form || el.closest('form')) ? el.type !== 'button' : !(
       el.tagName === 'BUTTON' || el.type === 'button' || el.getAttribute('role') === 'button')) return false;
-  el.click();
-  return true;
+  return el;
 }
 """
 
@@ -251,10 +487,31 @@ _FAILED = "login: the browser refused a sign-in step; sign in yourself"
 
 @dataclass(frozen=True)
 class AuthResult:
-    """Credential request attempted, or Google returned to the employer application; else why not."""
+    """Credential request attempted, or Google returned; filled contains credential roles only."""
 
     acted: bool = False
     blocker: str | None = None
+    filled: tuple[str, ...] = ()
+
+
+def _guarded_click(
+    frame: Frame, target_js: str, *args: object, fallback: str = _CHANGED,
+) -> str | None:
+    """Resolve a guarded element, then use the driver's real pointer interaction."""
+    target = frame.node("""(...args) => {
+      const target = (""" + target_js + r""")(...args);
+      if (!target || target.nodeType !== 1) return null;
+      target.scrollIntoView({block: 'center', inline: 'nearest'});
+      return target;
+    }""", *args)
+    if target is None:
+        reason = frame.call("""(...args) => {
+          const target = (""" + target_js + r""")(...args);
+          return typeof target === 'string' ? target : false;
+        }""", *args)
+        return reason if isinstance(reason, str) else fallback
+    frame.click(target)
+    return None
 
 
 # Not configurable: tests may monkeypatch this constant to their isolated HTTPS fixture.
@@ -333,7 +590,9 @@ def google_session(page: Tab, policy: AuthenticationSettings, email: str) -> Aut
     """Reuse one reviewed signed-in Google identity; never type or submit credentials.
 
     Only this employer tab and a newly opened context explicitly naming it as
-    originalOpener are eligible. Unknown popup association fails closed.
+    originalOpener are eligible. Unknown popup association fails closed. A lost
+    navigation reply is not success or permission to repeat a click; only a
+    recognized, loaded employer document can complete the bounded wait.
     """
     def handoff(reason: str) -> AuthResult:
         return AuthResult(blocker="login: Google session: " + reason + "." + _GOOGLE_HANDOFF)
@@ -348,9 +607,15 @@ def google_session(page: Tab, policy: AuthenticationSettings, email: str) -> Aut
     try:
         contexts = page.bidi.command("browsingContext.getTree", {})["contexts"]
         existing = {c["context"] for c in contexts}
-        clicked = page.main.call(_GOOGLE_CLICK, [employer], _GOOGLE_ORIGIN, email, False)
-        if clicked is not True:
-            return handoff(str(clicked))
+        try:
+            clicked = page.main.call(_GOOGLE_CLICK, [employer], _GOOGLE_ORIGIN, email, False)
+        except BidiError:
+            # A same-tab navigation can discard the realm before its click
+            # reply arrives. Do not repeat it; observe where this flow returns.
+            pass
+        else:
+            if clicked is not True:
+                return handoff(str(clicked))
         selected = False
         active = page
         popup_id = None
@@ -368,23 +633,47 @@ def google_session(page: Tab, policy: AuthenticationSettings, email: str) -> Aut
                 active = Tab(page.bidi, popup_id)
             elif popup_id:
                 active = page
-            # Resume only the original, approved employer application. Never
-            # autofill the Google page, popup or an unrelated retained tab.
-            if _authentication_origin(page.main.url) == employer:
-                from kitty.core.apply.preflight import inspect_page
-                snapshot = inspect_page(page)
-                if not snapshot.blocker and snapshot.has_fields and (snapshot.boundary or snapshot.step):
-                    return AuthResult(acted=True)
-            origin = _authentication_origin(active.main.url)
+            # getTree can report a navigation's destination while scripts still
+            # see the previous document. Check the live document before and
+            # after inspection; neither a provisional URL nor a detached realm
+            # proves that the employer application is available for autofill.
+            try:
+                original = page.main
+                original_url = original.call("() => location.href")
+                if _authentication_origin(original_url) == employer:
+                    from kitty.core.apply.preflight import inspect_page
+                    snapshot = inspect_page(page)
+                    if (not snapshot.blocker and snapshot.has_fields and
+                            (snapshot.boundary or snapshot.step) and
+                            policy.approves(snapshot.url) and
+                            _authentication_origin(snapshot.url) != _GOOGLE_ORIGIN and
+                            original.call(
+                                "(url) => location.href === url && document.readyState === 'complete'",
+                                original_url,
+                            )):
+                        return AuthResult(acted=True)
+                active_url = active.main.call("() => location.href")
+            except BidiError:
+                # Read-only observations may race either leg of the redirect.
+                # Keep the deadline and do not turn an unreadable page into success.
+                time.sleep(0.2)
+                continue
+            origin = _authentication_origin(active_url)
             if origin == _GOOGLE_ORIGIN:
                 if not selected:
                     settle(active, timeout_ms=3000)
-                    clicked = active.main.call(_GOOGLE_CLICK, [employer], _GOOGLE_ORIGIN, email, True)
-                    if clicked is not True:
-                        return handoff(str(clicked))
                     selected = True
+                    try:
+                        clicked = active.main.call(_GOOGLE_CLICK, [employer], _GOOGLE_ORIGIN, email, True)
+                    except BidiError:
+                        # The choice may already have navigated. Never select
+                        # again, even if its acknowledgement was lost.
+                        pass
+                    else:
+                        if clicked is not True:
+                            return handoff(str(clicked))
             elif origin not in (employer, None) or (
-                origin is None and active.main.url != "about:blank"
+                origin is None and active_url != "about:blank"
             ):
                 return handoff("sign-in redirected to an unapproved origin")
             time.sleep(0.2)
@@ -397,7 +686,7 @@ def google_session(page: Tab, policy: AuthenticationSettings, email: str) -> Aut
 def authenticate(
     page: Tab, policy: AuthenticationSettings, credentials: ApplicationCredentials,
 ) -> AuthResult:
-    """Fill and submit one recognized sign-in or account-creation form, or say why not."""
+    """Prepare one recognized account form; submit only when no human decision is needed."""
     if policy.account_mode == "google":
         return AuthResult(blocker="login: Google session reuse never accepts employer credentials")
     if not policy.enabled:
@@ -409,7 +698,12 @@ def authenticate(
     page.bidi.protect_secrets(credentials.email, credentials.password)
     approved = [origin for origin in policy.approved_origins if origin != _GOOGLE_ORIGIN]
     secrets = (credentials.email, credentials.password)
+    filled: list[str] = []
+    acted = False
     try:
+        oracle = oracle_email_gate(page, policy, credentials)
+        if oracle is not None:
+            return AuthResult(acted=oracle.acted, blocker=oracle.blocker, filled=oracle.filled)
         for entry in (False, True):
             frames = page.frames()
             if not frames or _authentication_origin(frames[0].url) not in approved:
@@ -428,19 +722,34 @@ def authenticate(
                 return AuthResult(blocker="login: multiple account forms; choose one yourself")
             if found:
                 frame, state = found[0]
-                if policy.account_mode == "recognized" or state["mode"] == policy.account_mode:
-                    if state["blocker"]:
-                        return AuthResult(blocker=state["blocker"])
+                if state["blocker"]:
+                    return AuthResult(blocker=state["blocker"])
+                if policy.account_mode in ("auto", "recognized") or state["mode"] == policy.account_mode:
                     break
             if entry or policy.account_mode == "recognized":
                 return AuthResult(blocker="login: no single recognizable form for the chosen account action; continue yourself")
             if policy.account_mode == "create" and not policy.allow_account_creation:
                 return AuthResult(blocker="login: account creation is off")
-            done = page.main.call(_ENTRY_JS, approved, policy.account_mode)
-            if done is not True:
-                return AuthResult(blocker=done if isinstance(done, str) else
-                                  "login: no safe entry to the chosen account form; open it yourself")
+            blocker = _guarded_click(
+                page.main, _ENTRY_TARGET_JS, approved, policy.account_mode,
+                fallback="login: no safe entry to the chosen account form; open it yourself",
+            )
+            if blocker:
+                return AuthResult(blocker=blocker)
             settle(page)
+            deadline = time.monotonic() + 6
+            while time.monotonic() < deadline:
+                ready = False
+                for candidate in form_frames(page):
+                    observed = candidate.call(_SNAPSHOT_JS, approved, None, None)
+                    if observed["hasPassword"] or (
+                        observed["blocker"] and observed["blocker"].startswith(("verification:", "captcha:"))
+                    ):
+                        ready = True
+                        break
+                if ready:
+                    break
+                time.sleep(0.15)
         if not (policy.approves(frame.url) and policy.approves(state["url"])
                 and (state["action"] is None or policy.approves(state["action"]))):
             return AuthResult(blocker="login: this page is not an approved origin for credentials")
@@ -450,10 +759,67 @@ def authenticate(
         for role in state["roles"]:
             done = frame.call(_WRITE_JS, approved, *secrets, state["signature"], role)
             if done is not True:
-                return AuthResult(blocker=done if isinstance(done, str) else _CHANGED)
-        done = frame.call(_CLICK_JS, approved, *secrets, state["signature"])
-        if done is not True:
-            return AuthResult(blocker=done if isinstance(done, str) else _CHANGED)
+                return AuthResult(blocker=done if isinstance(done, str) else _CHANGED, filled=tuple(filled))
+            filled.append(role)
+        settle(page)
+        authorize_terms = policy.allow_account_creation and state["mode"] == "create"
+        if authorize_terms:
+            for _ in range(8):
+                proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
+                if not proof["allowed"] or not proof["pending"]:
+                    break
+                blocker = _guarded_click(
+                    frame, _TERMS_TARGET_JS, approved, *secrets, state["signature"],
+                    fallback="consent: the required account terms changed or cannot be selected safely",
+                )
+                if blocker:
+                    return AuthResult(blocker=blocker, filled=tuple(filled))
+                next_proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
+                if not next_proof["allowed"] or next_proof["pending"] >= proof["pending"]:
+                    return AuthResult(blocker="consent: account agreement selection was not confirmed",
+                                      filled=tuple(filled))
+            else:
+                return AuthResult(blocker="consent: too many account agreements; review them yourself",
+                                  filled=tuple(filled))
+        blocker = _guarded_click(frame, _ACCOUNT_TARGET_JS, approved, *secrets,
+                                 state["signature"], authorize_terms)
+        if blocker:
+            return AuthResult(blocker=blocker, filled=tuple(filled))
+        acted = True
+        settle(page)
+        login_after_creation = False
+        for current in form_frames(page):
+            observed = current.call(_SNAPSHOT_JS, approved, None, None)
+            if observed["blocker"] and (observed["blocker"] == _SIGN_IN_REJECTED or
+                                        observed["blocker"].startswith(("verification:", "captcha:"))):
+                return AuthResult(acted=True, blocker=observed["blocker"], filled=tuple(filled))
+            if (policy.account_mode == "auto" and state["mode"] == "create" and
+                    observed["mode"] == "login" and observed["hasPassword"] and
+                    not observed["blocker"]):
+                login_after_creation = True
+        if policy.account_mode == "auto":
+            # A distinct post-creation login is a new step, never a password retry.
+            # Otherwise switch only on an explicit account-exists/not-found error.
+            opposite = "login" if login_after_creation else frame.call(r"""(approved, previous) => {
+              const {state} = (""" + _ANALYZE + r""")(approved, null, null);
+              if (state.blocker || !state.hasPassword) return null;
+              const messages = [...document.querySelectorAll(
+                '[role=alert], [aria-live=assertive], .error, .error-message, [data-automation-id=errorMessage]'
+              )].filter(e => e.getClientRects().length &&
+                getComputedStyle(e).visibility !== 'hidden').map(e => e.innerText).join(' ');
+              if (previous === 'login' && /(?:no account (?:exists|found)|account (?:does not|doesn't) exist|could(?: not|n't) find (?:an? |your )?account|email (?:is not registered|not found)|user(?:name)? not found)/i.test(messages))
+                return 'create';
+              if (previous === 'create' && /(?:account(?: with (?:this|your) email(?: address)?)? already exists|email (?:is )?already (?:registered|in use))/i.test(messages))
+                return 'login';
+              return null;
+            }""", approved, state["mode"])
+            if opposite:
+                if opposite == "create" and not policy.allow_account_creation:
+                    return AuthResult(acted=True, blocker="login: this site requires an account; account creation is off",
+                                      filled=tuple(filled))
+                switched = authenticate(page, policy.model_copy(update={"account_mode": opposite}), credentials)
+                return AuthResult(acted=True, blocker=switched.blocker,
+                                  filled=tuple(dict.fromkeys((*filled, *switched.filled))))
     except (BidiError, UnsafeAction):
-        return AuthResult(blocker=_FAILED)
-    return AuthResult(acted=True)
+        return AuthResult(acted=acted, blocker=_FAILED, filled=tuple(filled))
+    return AuthResult(acted=True, filled=tuple(filled))

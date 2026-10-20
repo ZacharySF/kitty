@@ -1,8 +1,9 @@
-"""Local study records and a wall-clock timer with explicit phase boundaries.
+"""Local study records and an observed, continuously alternating Pomodoro timer.
 
-A running focus can finish while the browser sleeps, but no following phase starts
-without the user. Pauses and breaks never become study time. All mutations use
-revisions; request IDs protect a retried timer command or manual log from replay.
+Only completed focus and explicit manual study count. Each observed completion
+starts the next phase at observation time, never backfilling unattended cycles.
+Priming, pauses and breaks never become study time. Revisions and request IDs protect
+cross-window mutations and retried commands.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 UTC = timezone.utc
 TABLES = {"subjects": "study_subjects", "projects": "study_projects", "targets": "study_targets",
           "tasks": "study_tasks", "exams": "study_exams", "plan": "study_plan_blocks"}
+PRIMING_SECONDS = 300
 
 
 class StudyConflict(ValueError):
@@ -146,6 +148,52 @@ def _public_timer(timer, now):
     return result
 
 
+def _guide_state(value):
+    if value is None:
+        return {"checked": [False] * 14, "responses": [""] * 14, "reflection": "", "next_review": ""}
+    _fields(value, {"checked", "responses", "reflection", "next_review"})
+    checked, responses = value.get("checked"), value.get("responses")
+    if not isinstance(checked, list) or len(checked) != 14:
+        raise ValueError("The study guide needs all 14 checklist items")
+    if not isinstance(responses, list) or len(responses) != 14:
+        raise ValueError("The study guide needs all 14 responses")
+    next_review = value.get("next_review", "")
+    return {"checked": [bool(boolean(item, "Checklist item")) for item in checked],
+            "responses": [text(item, "Guide response", 4000) for item in responses],
+            "reflection": text(value.get("reflection", ""), "Reflection", 10000),
+            "next_review": day(next_review, "Next review") if next_review else ""}
+
+
+def _guide(conn, session_id):
+    row = conn.execute("SELECT * FROM study_guides WHERE id=?", (session_id,)).fetchone()
+    if row is None:
+        return None
+    result = dict(row)
+    result["state"] = json.loads(result.pop("state_json"))
+    return result
+
+
+def save_guide(conn, body):
+    _fields(body, {"session_id", "revision", "state"})
+    session_id = text(body.get("session_id"), "Study session", 100, required=True)
+    state = _guide_state(body.get("state"))
+    with transaction(conn, immediate=True):
+        current = _guide(conn, session_id)
+        if current is None:
+            raise ValueError("Study guide not found")
+        _revision(current, body.get("revision"))
+        conn.execute("UPDATE study_guides SET state_json=?,revision=revision+1 WHERE id=?",
+                     (json.dumps(state), session_id))
+        return {"guide": _guide(conn, session_id)}
+
+
+def _begin_phase(timer, now, *, running=True):
+    timer.update(status="running" if running else "paused", phase_id=str(uuid.uuid4()),
+                 started_at=iso(now), running_since=iso(now) if running else None,
+                 deadline_at=iso(now + timedelta(seconds=timer["duration_seconds"])) if running else None,
+                 elapsed_seconds=0, segments_json="[]", notes="", distractions="")
+
+
 def _reconcile(conn, now):
     timer = _timer(conn)
     if timer["status"] != "running" or now < timestamp(timer["deadline_at"]):
@@ -153,6 +201,7 @@ def _reconcile(conn, now):
     ended = timestamp(timer["deadline_at"])
     segments = json.loads(timer["segments_json"])
     segments.append([timer["running_since"], iso(ended)])
+    completed_phase = timer["phase"]
     if timer["phase"] == "focus":
         conn.execute("""INSERT OR IGNORE INTO study_sessions
             (source,source_key,subject_id,project_id,target_id,started_at,ended_at,timezone,
@@ -162,14 +211,16 @@ def _reconcile(conn, now):
              timer["started_at"], iso(ended), timer["timezone"], timer["duration_seconds"],
              json.dumps(segments), timer["notes"], timer["distractions"], iso(now)))
         timer["cycle"] += 1
-        settings = _settings(conn)
-        timer["phase"] = "long_break" if timer["cycle"] % settings["cycle_count"] == 0 else "short_break"
-        timer["duration_seconds"] = settings[timer["phase"] + "_seconds"]
+        timer["phase"] = "short_break"
+        timer["duration_seconds"] = _settings(conn)["short_break_seconds"]
     else:
         timer["phase"] = "focus"
         timer["duration_seconds"] = _settings(conn)["focus_seconds"]
-    timer.update(status="awaiting_next", elapsed_seconds=0, running_since=None, deadline_at=None,
-                 started_at=None, segments_json="[]", completed_at=iso(ended), notes="", distractions="")
+    timer.update(completed_at=iso(ended), completed_phase_id=timer["phase_id"],
+                 completed_phase=completed_phase)
+    # Deliberately reconcile only one phase. A sleeping/offline browser must not
+    # invent hours of study; the next phase's clock begins when it is observed.
+    _begin_phase(timer, now)
     _save_timer(conn, timer)
     return timer
 
@@ -178,7 +229,8 @@ def timer_state(conn, *, now=None):
     now = clock(now)
     with transaction(conn, immediate=True):
         timer = _reconcile(conn, now)
-    return {"timer": _public_timer(timer, now), "server_now": iso(now), "settings": _settings(conn)}
+    return {"timer": _public_timer(timer, now), "server_now": iso(now), "settings": _settings(conn),
+            "guide": _guide(conn, timer["session_id"])}
 
 
 def _request(conn, body, endpoint):
@@ -198,7 +250,7 @@ def _remember(conn, request_id, fingerprint, endpoint, response, now):
 
 
 def timer_command(conn, body, *, now=None):
-    _fields(body, {"action", "revision", "request_id", "subject_id", "project_id", "target_id", "timezone", "notes", "distractions"})
+    _fields(body, {"action", "revision", "request_id", "subject_id", "project_id", "target_id", "timezone", "notes", "distractions", "guide"})
     now = clock(now)
     with transaction(conn, immediate=True):
         request_id, fingerprint, replay = _request(conn, body, "timer")
@@ -211,18 +263,21 @@ def timer_command(conn, body, *, now=None):
             timer["notes"] = text(body.get("notes", timer["notes"]), "Notes")
             timer["distractions"] = text(body.get("distractions", timer["distractions"]), "Distractions")
         if action == "start":
-            if timer["status"] not in {"idle", "awaiting_next"}:
+            if timer["status"] != "idle":
                 raise StudyConflict("Pause or stop the active timer before starting another")
             settings = _settings(conn)
-            if timer["phase"] == "focus":
-                for key, table in (("subject_id", "study_subjects"), ("project_id", "study_projects"), ("target_id", "study_targets")):
-                    if key in body:
-                        timer[key] = _reference(conn, body[key], table)
-                timer["timezone"] = zone(body.get("timezone", settings["timezone"]))
-            timer.update(status="running", phase_id=str(uuid.uuid4()), started_at=iso(now), running_since=iso(now),
-                         deadline_at=iso(now + timedelta(seconds=timer["duration_seconds"])), elapsed_seconds=0,
-                         segments_json="[]", completed_at=None,
-                         notes=text(body.get("notes", ""), "Notes"), distractions=text(body.get("distractions", ""), "Distractions"))
+            for key, table in (("subject_id", "study_subjects"), ("project_id", "study_projects"), ("target_id", "study_targets")):
+                if key in body:
+                    timer[key] = _reference(conn, body[key], table)
+            timer.update(phase="priming", duration_seconds=PRIMING_SECONDS, cycle=0,
+                         session_id=str(uuid.uuid4()), completed_at=None,
+                         completed_phase_id=None, completed_phase=None,
+                         timezone=zone(body.get("timezone", settings["timezone"])))
+            conn.execute("INSERT INTO study_guides(id,created_at,state_json) VALUES(?,?,?)",
+                         (timer["session_id"], iso(now), json.dumps(_guide_state(body.get("guide")))))
+            _begin_phase(timer, now)
+            timer.update(notes=text(body.get("notes", ""), "Notes"),
+                         distractions=text(body.get("distractions", ""), "Distractions"))
         elif action == "pause":
             if timer["status"] != "running":
                 raise StudyConflict("Only a running timer can be paused")
@@ -236,14 +291,17 @@ def timer_command(conn, body, *, now=None):
             timer.update(status="running", running_since=iso(now),
                          deadline_at=iso(now + timedelta(seconds=_remaining(timer, now))))
         elif action in {"stop", "reset"}:
-            timer.update(status="idle", phase="focus", phase_id=None, cycle=0, started_at=None, running_since=None,
-                         deadline_at=None, completed_at=None, elapsed_seconds=0, segments_json="[]", notes="", distractions="",
-                         duration_seconds=_settings(conn)["focus_seconds"])
+            conn.execute("UPDATE study_guides SET ended_at=COALESCE(ended_at,?) WHERE id=?",
+                         (iso(now), timer["session_id"]))
+            timer.update(status="idle", phase="priming", phase_id=None, cycle=0, started_at=None, running_since=None,
+                         deadline_at=None, elapsed_seconds=0, segments_json="[]", notes="", distractions="",
+                         duration_seconds=PRIMING_SECONDS)
         elif action == "skip_break":
-            if timer["phase"] == "focus" or timer["status"] == "idle":
+            if timer["phase"] != "short_break" or timer["status"] == "idle":
                 raise StudyConflict("There is no break to skip")
-            timer.update(status="awaiting_next", phase="focus", phase_id=None, started_at=None, running_since=None,
-                         deadline_at=None, elapsed_seconds=0, segments_json="[]", duration_seconds=_settings(conn)["focus_seconds"])
+            running = timer["status"] == "running"
+            timer.update(phase="focus", duration_seconds=_settings(conn)["focus_seconds"])
+            _begin_phase(timer, now, running=running)
         elif action == "annotate":
             if timer["status"] not in {"running", "paused"}:
                 raise StudyConflict("Add notes to the completed session instead")
@@ -258,20 +316,20 @@ def timer_command(conn, body, *, now=None):
 
 
 def save_settings(conn, body):
-    allowed = {"revision", "timezone", "focus_seconds", "short_break_seconds", "long_break_seconds", "cycle_count", "sound", "notifications"}
+    allowed = {"revision", "timezone", "focus_seconds", "short_break_seconds", "sound", "notifications"}
     _fields(body, allowed)
     with transaction(conn, immediate=True):
         current = _settings(conn)
         _revision(current, body.get("revision"))
         values = {"timezone": zone(body.get("timezone", current["timezone"]))}
-        for key, low, high in (("focus_seconds", 60, 14400), ("short_break_seconds", 60, 7200), ("long_break_seconds", 60, 7200), ("cycle_count", 1, 12)):
+        for key, low, high in (("focus_seconds", 60, 14400), ("short_break_seconds", 60, 7200)):
             values[key] = integer(body.get(key, current[key]), key, low, high)
         for key in ("sound", "notifications"):
             values[key] = boolean(body.get(key, current[key]), key)
         conn.execute("UPDATE study_settings SET " + ",".join(f"{key}=?" for key in values) + ",revision=revision+1 WHERE id=1", list(values.values()))
         timer = _timer(conn)
-        if timer["status"] in {"idle", "awaiting_next"}:
-            timer["duration_seconds"] = values[timer["phase"] + "_seconds"]
+        if timer["status"] == "idle":
+            timer["duration_seconds"] = PRIMING_SECONDS if timer["phase"] == "priming" else values[timer["phase"] + "_seconds"]
             _save_timer(conn, timer)
         return {"settings": _settings(conn)}
 
@@ -433,17 +491,38 @@ def _streak(values, current, step):
     return count
 
 
-def statistics(conn, *, timezone_name=None, now=None):
+def _history_range(today, period, anchor):
+    if period not in {"week", "month"}:
+        raise ValueError("History period must be week or month")
+    anchor = date.fromisoformat(day(anchor, "History date")) if anchor else today
+    if not 2 <= anchor.year <= 9998:
+        raise ValueError("History date must allow previous and next periods")
+    if period == "week":
+        start = anchor - timedelta(days=anchor.weekday())
+        end = start + timedelta(days=7)
+        previous, following = start - timedelta(days=7), end
+    else:
+        start = anchor.replace(day=1)
+        end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        previous, following = (start - timedelta(days=1)).replace(day=1), end
+    return start, end, previous, following
+
+
+def statistics(conn, *, timezone_name=None, now=None, history_period="week", history_date=None):
     now = clock(now)
     timezone_name = zone(timezone_name or _settings(conn)["timezone"])
     tz = ZoneInfo(timezone_name)
     today = now.astimezone(tz).date()
     monday = today - timedelta(days=today.weekday())
+    start, end, previous, following = _history_range(today, history_period, history_date)
+    start_key, end_key = start.isoformat(), end.isoformat()
+    history_subjects, history_sessions = {}, []
     daily, subjects, scopes = {}, {}, {}
     completed_days, completed_weeks = set(), set()
     total = 0
     sessions = conn.execute("SELECT * FROM study_sessions ORDER BY ended_at,id").fetchall()
     for row in sessions:
+        period_seconds = 0
         completed = timestamp(row["ended_at"]).astimezone(tz).date()
         completed_days.add(completed)
         completed_weeks.add(completed - timedelta(days=completed.weekday()))
@@ -454,8 +533,14 @@ def statistics(conn, *, timezone_name=None, now=None):
                 daily[local_day] = daily.get(local_day, 0) + seconds
                 scope = (row["subject_id"], row["project_id"], local_day)
                 scopes[scope] = scopes.get(scope, 0) + seconds
+                if start_key <= local_day < end_key:
+                    period_seconds += seconds
+        if period_seconds:
+            history_sessions.append({**_public_session(row), "period_seconds": period_seconds})
+            history_subjects[row["subject_id"]] = history_subjects.get(row["subject_id"], 0) + period_seconds
     today_seconds = daily.get(today.isoformat(), 0)
     week_seconds = sum(seconds for d, seconds in daily.items() if monday.isoformat() <= d <= today.isoformat())
+    month_seconds = sum(seconds for d, seconds in daily.items() if today.replace(day=1).isoformat() <= d <= today.isoformat())
     goals = []
     for target in conn.execute("SELECT * FROM study_targets ORDER BY id"):
         start_day = today if target["period"] == "daily" else monday
@@ -468,25 +553,39 @@ def statistics(conn, *, timezone_name=None, now=None):
     colors = {row["id"]: row["color"] for row in conn.execute("SELECT id,color FROM study_subjects")}
     heatmap = [{"date": (today - timedelta(days=83 - i)).isoformat(),
                 "seconds": daily.get((today - timedelta(days=83 - i)).isoformat(), 0)} for i in range(84)]
+    history_days = [{"date": (start + timedelta(days=i)).isoformat(),
+                     "seconds": daily.get((start + timedelta(days=i)).isoformat(), 0)}
+                    for i in range((end - start).days)]
+    history = {"period": history_period, "start": start_key, "end": end_key,
+               "previous": previous.isoformat(), "next": following.isoformat(),
+               "seconds": sum(item["seconds"] for item in history_days), "days": history_days,
+               "session_count": len(history_sessions), "sessions": list(reversed(history_sessions)),
+               "subjects": [{"id": key, "name": subject_names.get(key, "Unassigned"),
+                             "color": colors.get(key, "#7c6fdb"), "seconds": value}
+                            for key, value in history_subjects.items()]}
     return {"timezone": timezone_name, "today": today.isoformat(), "week_start": monday.isoformat(),
-            "today_seconds": today_seconds, "week_seconds": week_seconds, "total_seconds": total,
+            "today_seconds": today_seconds, "week_seconds": week_seconds, "month_seconds": month_seconds, "total_seconds": total,
             "daily_streak": _streak(completed_days, today, timedelta(days=1)),
             "weekly_streak": _streak(completed_weeks, monday, timedelta(days=7)),
-            "session_count": len(sessions), "heatmap": heatmap,
+            "session_count": len(sessions), "heatmap": heatmap, "history": history,
             "days": [{"date": key, "seconds": value} for key, value in sorted(daily.items())],
             "subjects": [{"id": key, "name": subject_names.get(key, "Unassigned"), "color": colors.get(key, "#7c6fdb"), "seconds": value} for key, value in subjects.items()],
             "goals": goals}
 
 
-def workspace(conn, *, now=None, timezone_name=None):
+def workspace(conn, *, now=None, timezone_name=None, history_period="week", history_date=None):
     now = clock(now)
     with transaction(conn, immediate=True):
         timer = _reconcile(conn, now)
-        result = {"timer": _public_timer(timer, now), "settings": _settings(conn), "server_now": iso(now)}
+        result = {"timer": _public_timer(timer, now), "settings": _settings(conn), "server_now": iso(now),
+                  "guide": _guide(conn, timer["session_id"]),
+                  "guides": [_guide(conn, row["id"]) for row in conn.execute(
+                      "SELECT id FROM study_guides ORDER BY created_at DESC LIMIT 50")]}
         for kind, table in TABLES.items():
             result[kind if kind != "plan" else "plans"] = [_public_entity(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY id")]
-        result["sessions"] = [_public_session(row) for row in conn.execute("SELECT * FROM study_sessions ORDER BY ended_at DESC,id DESC LIMIT 500")]
-        result["stats"] = statistics(conn, timezone_name=timezone_name, now=now)
+        result["stats"] = statistics(conn, timezone_name=timezone_name, now=now,
+                                     history_period=history_period, history_date=history_date)
+        result["sessions"] = result["stats"]["history"].pop("sessions")
         return result
 
 

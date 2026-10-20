@@ -22,6 +22,14 @@
   let busy = $state(false);
   let error = $state("");
   let date = $state("");
+  let when = $state("");
+  function chooseWhen(value: string) {
+    when = value;
+    if (value === "today") {
+      const now = new Date();
+      date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    } else date = value === "custom" ? "" : value;
+  }
   let note = $state("");
   async function load() {
     loading = true;
@@ -43,6 +51,7 @@
     try {
       await api("/reminders", { date, note });
       date = "";
+      when = "";
       note = "";
       await load();
       await onchange();
@@ -78,13 +87,18 @@
   <div class="reminders-body">
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     <form onsubmit={create}>
+      <label>When<select required value={when} disabled={busy}
+        onchange={(event) => chooseWhen(event.currentTarget.value)}>
+        <option value="" disabled>Choose when…</option>
+        <option value="today">Today</option>
+        <option value="tomorrow">Tomorrow</option>
+        <option value="+7">In one week</option>
+        <option value="+14">In two weeks</option>
+        <option value="+30">In 30 days</option>
+        <option value="custom">Choose a date…</option>
+      </select></label>
+      {#if when === "custom"}<label>Date<input type="date" required bind:value={date} disabled={busy} /></label>{/if}
       <label
-        >When<input
-          required
-          bind:value={date}
-          placeholder="YYYY-MM-DD, tomorrow, +7"
-        /></label
-      ><label
         >Reminder<input
           required
           bind:value={note}

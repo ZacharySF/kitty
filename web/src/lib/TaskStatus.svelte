@@ -3,7 +3,8 @@
   let {
     task,
     oncomplete,
-  }: { task: TaskRecord | null; oncomplete?: (task: TaskRecord) => void } =
+    compact = false,
+  }: { task: TaskRecord | null; oncomplete?: (task: TaskRecord) => void; compact?: boolean } =
     $props();
   let current = $state<TaskRecord | null>(null);
   let error = $state("");
@@ -38,17 +39,17 @@
 {#if current}
   <section
     class="task-status"
+    class:compact
     aria-label="Background operation"
     aria-live="polite"
   >
-    <div class="task-heading">
+    {#if !compact}<div class="task-heading">
       <strong>{current.kind.replaceAll("-", " ")}</strong><span class="badge"
         >{current.status}</span
       >
-    </div>
+    </div>{/if}
     {#if current.status === "running"}<p class="muted">
-        Working locally. You can keep using this page; it will show the result
-        when finished.
+        {compact ? "Checking public postings…" : "Working locally. You can keep using this page; it will show the result when finished."}
       </p>{/if}
     {#if current.error}<p class="error-banner" role="alert">
         {current.error}
@@ -57,7 +58,7 @@
       <button class="button" onclick={() => (retry += 1)}
         >Refresh operation</button
       >{/if}
-    {#if current.result !== null}<details open>
+    {#if !compact && current.result !== null}<details open>
         <summary>Operation result</summary>
         <pre>{typeof current.result === "string"
             ? current.result
@@ -75,6 +76,8 @@
     background: var(--surface-raised);
     font-size: 13px;
   }
+  .task-status.compact { border: 0; padding: 0; margin: 0; background: transparent; }
+  .compact p { margin: 0; }
   .task-heading {
     display: flex;
     gap: 12px;

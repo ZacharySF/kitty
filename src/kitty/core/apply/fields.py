@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Callable, Sequence
 
 from kitty.config import AnswerEntry, Config, Profile
-from kitty.normalize import norm_location, norm_question
+from kitty.normalize import norm_location, norm_question, norm_screening
 
 #: Kinds of field the page reader reports.
 TEXT_KINDS = ("text", "textarea")
@@ -51,7 +51,7 @@ class FormField:
     """
 
     key: str                          # data-kitty-id of the element (first option for groups)
-    kind: str                         # text | textarea | select | combobox | radio | checkbox | file
+    kind: str                         # text | textarea | select | combobox | radio | checkbox | file | unsupported
     label: str                        # the question as the form shows it
     frame: int = 0                    # index of the frame the field lives in
     input_type: str = ""              # the HTML type attribute (email, tel, month, ...)
@@ -64,6 +64,7 @@ class FormField:
     blank: bool = True                # nothing entered or chosen yet
     in_autofill: bool = False         # inside a "fill from resume" widget
     invalid: bool = False             # browser / ATS validation did not accept the value
+    attachment_only: bool = False    # observed separate attachment, not the profile-import widget
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class Plan:
     location: bool = False            # compare options as places ("Austin, Texas" == "Austin, TX")
     from_answers: bool = False
     exact_choices: bool = False       # majors must not match a different program by prefix
+    graduation: str | None = None     # saved exact YYYY-MM; enables offered date-range buckets only
 
 
 # ------------------------------------------------------------------ labels
@@ -115,11 +117,36 @@ def lookup_answer(
     """The answers.yaml entry for this question, or None.
 
     Config.answer_for already ignores case and punctuation; this also drops
-    '(required)' style markers. No fuzzy matching: a near miss is a miss.
+    '(required)' markers. A named employer's exact "ever worked for" question
+    may use the saved generic company-history wording, with normal scope/tie
+    rules. Other near misses are not answers.
     """
     for text in dict.fromkeys((label, clean_label(label))):
         if text and (entry := config.answer_for(text, company, tracks)) is not None:
             return entry
+    if company:
+        original = f" {norm_screening(clean_label(label))} "
+        if any(
+            norm_screening(entry.question) == original.strip() or any(
+                f" {norm_screening(phrase)} " in original for phrase in entry.match
+                if norm_screening(phrase)
+            ) for entry in config.answers.answers
+        ):
+            return None                # do not bypass an explicit match's scope or tie
+        # Only the actual employer (or its explicitly parenthesized alias), not
+        # another company, future employment, or an arbitrary history question.
+        employers = {
+            norm_question(company),
+            norm_question(re.sub(r"\([^)]*\)", "", company)),
+            *(norm_question(alias) for alias in re.findall(r"\(([^)]+)\)", company)),
+        }
+        words = norm_question(clean_label(label))
+        for employer in employers - {""}:
+            if re.fullmatch(
+                r"have you ever worked for " + re.escape(employer) +
+                r"(?: one of our current brands or any of our predecessor firms)?", words,
+            ):
+                return config.answer_for("Have you worked for this company?", company, tracks)
     return None
 
 
@@ -138,12 +165,63 @@ def _undecorated_option(text: str) -> str:
     return norm_question(name) if initials == acronym.lower() else norm_question(text)
 
 
+def _graduation_period(text: str) -> tuple[int, int] | None:
+    """Closed month interval under the same term convention as graduation dates."""
+    iso = re.fullmatch(r"(\d{4})-(0[1-9]|1[0-2])", text.strip())
+    if iso:
+        year, month = map(int, iso.groups())
+        value = year * 12 + month - 1
+        return value, value
+    words = norm_question(text).split()
+    if len(words) == 1 and re.fullmatch(r"\d{4}", words[0]):
+        year = int(words[0])
+        return year * 12, year * 12 + 11
+    if len(words) != 2:
+        return None
+    if re.fullmatch(r"\d{4}", words[0]):
+        words.reverse()
+    name, year = words
+    if not re.fullmatch(r"\d{4}", year):
+        return None
+    base = int(year) * 12
+    months = [month.lower() for month in _MONTHS]
+    if name in months:
+        value = base + months.index(name)
+        return value, value
+    # Winter spans calendar years and has no unambiguous year ownership.
+    term_months = [i for i, season in enumerate(_SEASON_OF_MONTH) if season.lower() == name]
+    return (base + min(term_months), base + max(term_months)) if term_months else None
+
+
+def _graduation_bucket_index(date: str, options: Sequence[str]) -> int | None:
+    """Only a unique offered interval may contain the saved month; never nearest."""
+    saved = _graduation_period(date)
+    if saved is None or saved[0] != saved[1]:
+        return None
+    wanted = saved[0]
+    matches = []
+    for index, option in enumerate(options):
+        words = norm_question(option)
+        bound = re.fullmatch(r"(earlier|later) than (.+)", words)
+        period = _graduation_period(bound[2] if bound else option)
+        if period is None:
+            continue
+        if bound:
+            contained = wanted < period[0] if bound[1] == "earlier" else wanted > period[1]
+        else:
+            contained = period[0] <= wanted <= period[1]
+        if contained:
+            matches.append(index)
+    return matches[0] if len(matches) == 1 else None
+
+
 def match_option(
     candidates: tuple[str, ...] | list[str],
     options: tuple[str, ...] | list[str],
     *,
     location: bool = False,
     prefix: bool = True,
+    graduation: str | None = None,
 ) -> int | None:
     """Index of the option that matches a candidate value, or None.
 
@@ -154,7 +232,12 @@ def match_option(
     matches are ambiguous, not a reason to choose the first row. `prefix=False`
     excludes extensions such as a different engineering technology program.
     With `location=True`, places compare by city and state.
+    `graduation` is an exact saved month, authorized by the question's plan:
+    offered range buckets must contain it uniquely, without nearest-year guesses.
     """
+    if graduation and any(re.fullmatch(r"(earlier|later) than .+", norm_question(option))
+                          for option in options):
+        return _graduation_bucket_index(graduation, options)
     normalize: Callable[[str], str] = norm_location if location else norm_question
     normalized = [normalize(option) for option in options]
     wanted_values = [wanted for candidate in candidates if (wanted := normalize(candidate))]
@@ -171,6 +254,14 @@ def match_option(
             equivalent = [i for i, text in enumerate(undecorated) if wanted and text == wanted]
             if equivalent:
                 return equivalent[0] if len(equivalent) == 1 else None
+        if not location and re.fullmatch(r"\+\d{1,3}", candidate):
+            calling_code = [
+                i for i, text in enumerate(options)
+                if re.search(r"(?:^|\s|\()\+" + re.escape(candidate[1:]) + r"\)?\s*$", text)
+                or re.fullmatch(re.escape(candidate) + r"\s+\([^()]+\)", text.strip())
+            ]
+            if calling_code:
+                return calling_code[0] if len(calling_code) == 1 else None
     if prefix:
         for wanted in wanted_values:
             prefixed = [i for i, text in enumerate(normalized) if text.startswith(wanted + " ")]
@@ -276,6 +367,49 @@ def _country_names(country: str | None) -> tuple[str, ...]:
     return (country,)
 
 
+# ITU E.164 assigned country calling codes (not area codes or nationality).
+# Parsing uses the explicit '+' prefix; only a saved US default region permits
+# the conventional ten-digit NANP national spelling below.
+_CALLING_CODES = frozenset("""
+1 7 20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49
+51 52 53 54 55 56 57 58 60 61 62 63 64 65 66 81 82 84 86
+90 91 92 93 94 95 98 211 212 213 216 218 220 221 222 223 224
+225 226 227 228 229 230 231 232 233 234 235 236 237 238 239
+240 241 242 243 244 245 246 247 248 249 250 251 252 253 254
+255 256 257 258 260 261 262 263 264 265 266 267 268 269 290
+291 297 298 299 350 351 352 353 354 355 356 357 358 359 370
+371 372 373 374 375 376 377 378 379 380 381 382 383 385 386
+387 389 420 421 423 500 501 502 503 504 505 506 507 508 509
+590 591 592 593 594 595 596 597 598 599 670 672 673 674 675
+676 677 678 679 680 681 682 683 685 686 687 688 689 690 691
+692 850 852 853 855 856 880 886 960 961 962 963 964 965 966
+967 968 970 971 972 973 974 975 976 977 992 993 994 995 996 998
+""".split())
+
+
+def _phone_country_code(phone: str | None, default_region: str | None) -> tuple[str, ...]:
+    """Normalize a saved international or validated US national number, if present."""
+    if not phone or not re.fullmatch(r"\s*\+?[\d\s().-]+\s*", phone):
+        return ()
+    digits = re.sub(r"\D", "", phone)
+    if phone.lstrip().startswith("+"):
+        if not 7 <= len(digits) <= 15:
+            return ()
+        code = next((digits[:size] for size in (1, 2, 3)
+                     if digits[:size] in _CALLING_CODES), "")
+        if not code or len(digits) - len(code) < 4:
+            return ()
+        if code == "1" and not re.fullmatch(r"1[2-9]\d{2}[2-9]\d{6}", digits):
+            return ()
+    elif norm_question(default_region or "") in {
+        "united states", "united states of america", "us", "usa",
+    } and re.fullmatch(r"[2-9]\d{2}[2-9]\d{6}", digits):
+        code = "1"
+    else:
+        return ()
+    return (f"+{code}", code)
+
+
 #: Lists that only offer the combined program file both of its halves under it.
 _ECE_HALVES = {"electrical engineering", "computer engineering"}
 _ECE_NAMES = ("Electrical and Computer Engineering", "Electrical & Computer Engineering")
@@ -310,6 +444,7 @@ def profile_plan(field: FormField, profile: Profile, *, tracks: Sequence[str] = 
     words = norm_question(field.label)
     if not words:                       # no label: fall back to name / id (Lever: name="email")
         words = norm_question(f"{field.name} {field.element_id}")
+    words = re.sub(r"^(?:what is your|please (?:enter|provide) your) ", "", words)
     auto = field.autocomplete.lower()
     short = len(words.split()) <= 6
     choice = field.kind not in TEXT_KINDS
@@ -328,8 +463,12 @@ def profile_plan(field: FormField, profile: Profile, *, tracks: Sequence[str] = 
         r"(your |confirm |confirm your )?e ?mail( address)?", words
     ):
         return plan("email", profile.email)
+    if auto == "tel-country-code" or _full(
+        r"(phone )?country( territory)?( phone)? code|country calling code", words
+    ):
+        return plan("phone country code", *_phone_country_code(profile.phone, profile.country))
     if auto in ("tel", "tel-national") or _full(
-        r"(your )?(mobile |cell |primary )?(phone|telephone|mobile)( number)?", words
+        r"(your )?(mobile |cell |primary )?(phone|telephone|mobile)( number)?|telefonnummer", words
     ):
         return plan("phone", profile.phone)
     if short and re.search(r"\blinkedin\b", words):
@@ -357,16 +496,24 @@ def profile_plan(field: FormField, profile: Profile, *, tracks: Sequence[str] = 
         words,
     ):
         return Plan("major", _major_names(profile.discipline_for(tracks)), exact_choices=True)
-    if _full(r"(your )?(current )?country( of residence)?", words):
+    if _full(r"(your )?(current )?country( territory| of residence)?", words):
         return plan("country", *_country_names(profile.country))
     if (short or choice) and is_graduation_question(words):
-        return plan("graduation", *_graduation(profile, field, words))
-    if _full(
+        return Plan("graduation", _graduation(profile, field, words), graduation=profile.graduation)
+    if (_full(r"(your |current |your current |home |contact |residential )?state( of residence)?|state province|state or province", words) or
+            auto == "address-level1" and not re.search(
+                r"\b(birth|born|nationality|citizenship|employment|employer|work|job|school|education|street|zip|postal|phone|device)\b", words)):
+        if profile.home_state:
+            return Plan("state", (profile.home_state,), location=True, exact_choices=True)
+    if auto == "address-level2" or _full(
         r"(current |your current |home )?(location|city|location city|city state|"
-        r"city and state|city of residence)",
+        r"city and state|city of residence)|stadt",
         words,
     ):
         city = profile.city_for(tracks)
+        if field.kind in TEXT_KINDS and (
+                auto == "address-level2" or _full(r"(current |your current |home )?city( of residence)?|stadt", words)):
+            return plan("city", city)
         return Plan("location", (f"{city}, {profile.home_state}",), search_text=city, location=True)
     return None
 
@@ -380,11 +527,16 @@ def _answer_plan(field: FormField, entry: AnswerEntry) -> Plan:
     A graduation answer ('May 2032') also offers its term ('2032 - Spring').
     """
     candidates = [entry.answer, *entry.choices]
+    graduation = None
     if is_graduation_question(norm_question(field.label)):
         candidates += graduation_answer_spellings(entry.answer)
+        period = _graduation_period(entry.answer)
+        if period and period[0] == period[1]:
+            year, month = divmod(period[0], 12)
+            graduation = f"{year:04d}-{month + 1:02d}"
     name = clean_label(field.label) or clean_label(field.options[0] if field.options else "")
     return Plan(name[:60], tuple(dict.fromkeys(candidates)), search_text=entry.answer,
-                from_answers=True)
+                from_answers=True, graduation=graduation)
 
 
 def plan_for(
@@ -396,7 +548,7 @@ def plan_for(
     `tracks` are the job's tracks; they pick the discipline (profile.discipline_by_track).
     File inputs are not planned here; the filler handles the resume.
     """
-    if field.kind == "file" or not field.label and not field.name:
+    if field.kind in ("file", "unsupported") or not field.label and not field.name:
         return None
     entry = lookup_answer(config, field.label, company=company, tracks=tracks)
     if entry is None and field.kind == "checkbox" and len(field.options) == 1:

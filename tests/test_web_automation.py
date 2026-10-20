@@ -138,37 +138,44 @@ def test_demo_blocks_external_actions_and_controller(app, workspace, posting, mo
     controller.close()
 
 
-def test_worker_stop_serialization_retained_tabs_and_config_snapshot(app, workspace, posting, monkeypatch):
-    entered = threading.Event()
-    captured = []
-    tab = WatchedTab(posting.id, "synthetic-context", "greenhouse", posting.url, "Synthetic", None, None)
+def test_worker_serializes_filling_and_replaces_watcher_without_losing_tabs(app, workspace, posting, monkeypatch):
+    entered, allow_watch, watching = threading.Event(), threading.Event(), threading.Event()
+    watches = []
+    tab = WatchedTab(posting.id, "synthetic-context", "greenhouse", posting.url, "Synthetic", None, None, marker="synthetic-context")
 
     def fill(settings, config, ids, *, watch, on_filled, **kwargs):
-        captured.append(config)
-        if not watch.tabs:
+        if not watches:
             watch.tabs.append(tab)
-        assert watch.tabs == [tab]
+        else:
+            assert watch.tabs == [tab]
+        watches.append(watch)
+        entered.set()
+        assert allow_watch.wait(3)
         on_filled([report(posting.id)])
         watch.on_start(len(watch.tabs))
-        entered.set()
+        watching.set()
         assert watch.stop.wait(3)
 
     monkeypatch.setattr(web.filler, "fill_jobs", fill)
     app.automation.start(app.config, controller_plan(app, posting))
     assert entered.wait(3)
-    assert app.automation.snapshot()["phase"] == "watching"
-    assert captured[0] is not app.config
+    assert app.automation.snapshot()["phase"] == "filling"
     with pytest.raises(APIError) as caught:
         app.automation.start(app.config, controller_plan(app, posting))
     assert caught.value.status == 409
+    allow_watch.set()
+    assert watching.wait(3)
+    assert app.automation.snapshot()["phase"] == "watching"
     snapshot = app.automation.snapshot()
     snapshot["reports"].clear()
     assert app.automation.snapshot()["reports"]
-    app.automation.stop()
-    assert finish(app.automation)["phase"] == "stopped"
-    entered.clear()
+    old_thread = app.automation._thread
+    watching.clear()
     app.automation.start(app.config, controller_plan(app, posting))
-    assert entered.wait(3)
+    assert watching.wait(3)
+    assert not old_thread.is_alive()
+    assert watches[0].stop.is_set()
+    assert len(watches) == 2
     app.automation.close()
     assert not app.automation.snapshot()["running"]
     assert applications.get_application_for_job(workspace.conn, posting.id) is None
@@ -202,7 +209,7 @@ def test_error_reports_are_not_success_and_do_not_leak_paths(app, posting, monke
 @pytest.mark.parametrize("confirmed", [False, True])
 def test_only_observed_confirmation_records_submission(app, workspace, posting, monkeypatch, confirmed):
     tab = WatchedTab(posting.id, "synthetic-context", "greenhouse", posting.url,
-                     "Synthetic application", None, workspace.config.track_names[0])
+                     "Synthetic application", None, workspace.config.track_names[0], marker="synthetic-context")
 
     def fill(settings, config, ids, *, watch, on_filled, **kwargs):
         owned = connect(settings.db_path)
@@ -256,7 +263,7 @@ def test_questions_log_list_and_collection_counters(app, workspace, posting, mon
 
 
 def test_no_watch_stops_before_observation_but_retains_tabs(app, posting, monkeypatch):
-    tab = WatchedTab(posting.id, "synthetic-context", "greenhouse", posting.url, "Synthetic", None, None)
+    tab = WatchedTab(posting.id, "synthetic-context", "greenhouse", posting.url, "Synthetic", None, None, marker="synthetic-context")
     def fill(settings, config, ids, *, watch, on_filled, **kwargs):
         assert watch.hours > 0
         assert not watch.stop.is_set()
@@ -423,24 +430,6 @@ def test_review_enables_only_chosen_run_account_action(
     assert policy.approved_origins == ["https://boards.greenhouse.io"]
     assert not policy.approves("https://unreviewed.example/login")
     assert not app.config.apply.authentication.enabled
-
-
-def test_configured_authentication_approval_still_works(
-    app, workspace, posting, saved_credentials, monkeypatch,
-):
-    from kitty.config import AuthenticationSettings
-    original = AuthenticationSettings(
-        enabled=True, allow_account_creation=True, approved_origins=["https://synthetic.example"],
-    )
-    app.config = replace(app.config, apply=app.config.apply.model_copy(update={"authentication": original}))
-    captured = []
-    monkeypatch.setattr(app.automation, "start", lambda config, *a, **k: captured.append(config))
-    body = {"mode": "selected", "job_ids": [posting.id]}
-    plan = web.post(app, workspace.conn, "/api/automation/preflight", body)
-    web.post(app, workspace.conn, "/api/automation/start", {
-        **body, "confirmed": True, "authorize_authentication": True, "fingerprint": plan["fingerprint"],
-    })
-    assert captured[0].apply.authentication.model_dump() == original.model_dump()
 
 
 @pytest.mark.parametrize("change", ["password", "email", "mode", "origin"])

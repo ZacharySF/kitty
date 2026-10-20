@@ -421,10 +421,10 @@ def post(app, conn, path: str, body: dict) -> dict | None:
         # Reject shell/Nix interpolation instead of returning unsafe instructions.
         import shutil
         for value in (str(app.settings.root), shutil.which('uv') or 'uv'):
-            if not re.fullmatch(r'[A-Za-z0-9_./-]+', value):
+            if not re.fullmatch(r'[A-Za-z0-9_./!-]+', value):
                 raise _error(400, 'Schedule output requires a workspace and uv path without shell metacharacters or spaces')
         return {'format': format_name, 'text': renderers[format_name](
-            app.settings.root, tuple(times), with_triage=paid), 'installed': False,
+            app.settings.root, tuple(times), with_triage=paid, provider=app.config.triage.provider), 'installed': False,
             'triage_cap': app.config.triage.max_cost_usd_per_run}
     if path == '/api/profile/notify':
         _keys(body, {'confirm'})

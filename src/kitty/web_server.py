@@ -41,7 +41,7 @@ FREE_SOURCES = frozenset({
     "simplify2027", "nuft2027", "vansh2027", "speedyapply2027", "derec4", "greenhouse",
     "lever", "ashby", "smartrecruiters", "workable", "workday", "employers",
     "local_employers", "usajobs", "research", "yc_internships", "hackernews",
-    "starbucks", "jobspy",
+    "starbucks", "hiringcafe", "jobspy",
 })
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -74,6 +74,10 @@ def _job_json(job: Job) -> dict[str, Any]:
         "eligibility_reason": job.eligibility_reason, "queue_state": job.queue_state,
         "status": job.status, "favorite": job.is_favorite, "posted_at": job.posted_at,
         "deadline_at": job.deadline_at, "fill_state": job.fill_state,
+        "is_active": job.is_active, "closed_at": job.closed_at, "freshness": job.freshness,
+        "verification_status": job.verification_status,
+        "verification_reason": job.verification_reason,
+        "verification_checked_at": job.verification_checked_at,
     }
 
 
@@ -113,13 +117,13 @@ class WebApplication:
         from kitty import web_automation, web_insights, web_jobs, web_profile, web_resumes
 
         from kitty import web_ai, web_calendar, web_flashcards, web_notes
-        from kitty import web_opportunities, web_study
-        from kitty import web_atlas, web_kanban, web_schema
+        from kitty import web_documents, web_opportunities, web_study
+        from kitty import web_atlas, web_backlinks, web_schema
 
         self.extensions = (
             web_jobs, web_automation, web_resumes, web_profile, web_insights,
-            web_calendar, web_opportunities, web_study, web_flashcards, web_notes, web_ai,
-            web_schema, web_kanban, web_atlas,
+            web_calendar, web_opportunities, web_study, web_flashcards, web_notes, web_documents, web_ai,
+            web_schema, web_atlas, web_backlinks,
         )
         self.tasks = TaskRunner()
         self.automation = web_automation.AutomationController(settings)

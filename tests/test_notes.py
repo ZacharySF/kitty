@@ -240,3 +240,120 @@ def test_api_errors_and_background_import_are_real(workspace, page):
         assert notes.attachment_bytes(workspace.conn, workspace.settings.data_dir, task["result"]["attachments"][0]["id"])
     finally:
         runner.close()
+
+
+def test_folder_api_hierarchy_moves_survive_reload_without_changing_pages(workspace, page):
+    from kitty.db import connect
+    from contextlib import closing
+
+    conn = workspace.conn
+    app = SimpleNamespace(settings=workspace.settings)
+    post = lambda path, body: web_notes.post(app, conn, path, body)
+    root = post("/api/notes/folders", {"title": "Studies"})
+    child = post("/api/notes/folders", {"title": "Biology", "parent_id": root["id"]})
+    notebook = notes.listing(conn)["notebooks"][0]
+    assert notebook["folder_id"] is None
+    before = notes.page(conn, page["id"])
+    body = {"revision": notebook["revision"], "title": notebook["title"], "subject": notebook["subject"], "project": notebook["project"]}
+    moved = post(f"/api/notes/notebooks/{notebook['id']}", {**body, "folder_id": child["id"]})
+    assert moved["folder_id"] == child["id"]
+    # Legacy metadata-only callers must not silently move a notebook to root.
+    saved = post(f"/api/notes/notebooks/{notebook['id']}", {**body, "revision": moved["revision"]})
+    assert saved["folder_id"] == child["id"]
+    renamed = post(f"/api/notes/folders/{child['id']}", {"revision": child["revision"], "title": "Life sciences", "parent_id": None})
+    assert renamed["revision"] == child["revision"] + 1
+    with closing(connect(workspace.settings.db_path)) as reloaded:
+        listing = web_notes.get(app, reloaded, "/api/notes", {})
+        folders = {folder["id"]: folder for folder in listing["folders"]}
+        assert folders[child["id"]]["parent_id"] is None
+        assert folders[child["id"]]["title"] == "Life sciences"
+        assert listing["notebooks"][0]["folder_id"] == child["id"]
+        assert notes.page(reloaded, page["id"]) == before
+    returned = post(f"/api/notes/notebooks/{notebook['id']}", {**body, "revision": saved["revision"], "folder_id": None})
+    assert returned["folder_id"] is None
+    assert notes.page(conn, page["id"]) == before
+    assert post(f"/api/notes/folders/{child['id']}/delete", {"revision": renamed["revision"], "confirm": True}) == {"ok": True}
+
+
+def test_folder_api_rejects_cycles_missing_parents_nonempty_and_stale_edits(workspace):
+    app = SimpleNamespace(settings=workspace.settings)
+    conn = workspace.conn
+    post = lambda path, body: web_notes.post(app, conn, path, body)
+    root = post("/api/notes/folders", {"title": "Root"})
+    child = post("/api/notes/folders", {"title": "Child", "parent_id": root["id"]})
+    for parent in (root["id"], child["id"]):
+        with pytest.raises(APIError) as cycle:
+            post(f"/api/notes/folders/{root['id']}", {"revision": 1, "title": "Invalid", "parent_id": parent})
+        assert cycle.value.status == 400
+    for path, body in [
+        ("/api/notes/folders", {"title": "Missing", "parent_id": 999999}),
+        (f"/api/notes/folders/{child['id']}", {"revision": 1, "title": "Missing", "parent_id": 999999}),
+        ("/api/notes/notebooks", {"title": "Missing", "folder_id": 999999}),
+    ]:
+        with pytest.raises(APIError) as missing:
+            post(path, body)
+        assert missing.value.status == 404
+    with pytest.raises(APIError) as nonempty:
+        post(f"/api/notes/folders/{root['id']}/delete", {"revision": 1, "confirm": True})
+    assert nonempty.value.status == 409
+    notebook = post("/api/notes/notebooks", {"title": "Preserved", "folder_id": child["id"]})
+    with pytest.raises(APIError) as occupied:
+        post(f"/api/notes/folders/{child['id']}/delete", {"revision": 1, "confirm": True})
+    assert occupied.value.status == 409
+    renamed = post(f"/api/notes/folders/{child['id']}", {"revision": 1, "title": "Renamed", "parent_id": root["id"]})
+    for path, body in [
+        (f"/api/notes/folders/{child['id']}", {"revision": 1, "title": "Stale", "parent_id": None}),
+        (f"/api/notes/folders/{child['id']}/delete", {"revision": 1, "confirm": True}),
+    ]:
+        with pytest.raises(APIError) as stale:
+            post(path, body)
+        assert stale.value.status == 409
+    metadata = {"title": notebook["title"], "subject": "", "project": ""}
+    moved = post(f"/api/notes/notebooks/{notebook['id']}", {**metadata, "revision": 1, "folder_id": None})
+    with pytest.raises(APIError) as stale_notebook:
+        post(f"/api/notes/notebooks/{notebook['id']}", {**metadata, "revision": 1, "folder_id": root["id"]})
+    assert stale_notebook.value.status == 409
+    with pytest.raises(APIError) as missing_move:
+        post(f"/api/notes/notebooks/{notebook['id']}", {**metadata, "revision": moved["revision"], "folder_id": 999999})
+    assert missing_move.value.status == 404
+    with pytest.raises(APIError) as unconfirmed:
+        post(f"/api/notes/folders/{child['id']}/delete", {"revision": renamed["revision"], "confirm": False})
+    assert unconfirmed.value.status == 400
+    listing = notes.listing(conn)
+    assert next(f for f in listing["folders"] if f["id"] == child["id"]) == renamed
+    assert listing["notebooks"][0]["folder_id"] is None
+    assert post(f"/api/notes/folders/{child['id']}/delete", {"revision": renamed["revision"], "confirm": True}) == {"ok": True}
+    replacement = post("/api/notes/folders", {"title": "Replacement"})
+    assert replacement["id"] != child["id"]
+
+
+def test_additive_folder_migration_preserves_existing_notebook_and_ink():
+    import sqlite3
+    from kitty.db.migrations import available_migrations
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    migrations = {migration.version: migration for migration in available_migrations()}
+    try:
+        conn.executescript(migrations[14].sql)
+        conn.execute("INSERT INTO note_notebooks(id,title,created_at,updated_at) VALUES (1,'Existing','before','before')")
+        original = document(element())
+        import json
+        conn.execute("INSERT INTO note_pages(id,notebook_id,title,document,created_at,updated_at) VALUES (1,1,'Ink',?,'before','before')", (json.dumps(original),))
+        conn.commit()
+        before = notes.page(conn, 1)
+        conn.executescript(migrations[19].sql)
+        conn.executescript(migrations[22].sql)
+        listing = notes.listing(conn)
+        assert listing["folders"] == []
+        assert listing["notebooks"][0]["folder_id"] is None
+        assert listing["notebooks"][0]["title"] == "Existing"
+        assert notes.page(conn, 1)["document"] == before["document"]
+        assert notes.page(conn, 1)["revision"] == before["revision"]
+        folder = notes.create_folder(conn, "Archive")
+        moved = notes.save_notebook(conn, 1, 1, "Existing", "", "", folder["id"])
+        assert moved["folder_id"] == folder["id"]
+        assert notes.page(conn, 1)["document"] == before["document"]
+    finally:
+        conn.close()

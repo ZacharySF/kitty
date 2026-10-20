@@ -1,4 +1,4 @@
-"""What an adapter is given: config, a polite HTTP client, and last run's numbers."""
+"""What an adapter is given: config, a polite HTTP client, last run's numbers and paths."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Callable
 
 from kitty.config import Config, WatchlistCompany
 from kitty.core.discovery.http import PoliteHttp
+from kitty.settings import Settings
 
 
 @dataclass
@@ -16,11 +17,14 @@ class DiscoverContext:
     `http_for(source)` returns that source's client (its own pacing and TTL).
     `previous_board_counts[source][board]` is how many postings the board had
     on the last run, so a board that suddenly returns 0 can be flagged.
+    `settings` gives workspace paths (a browser-driven source keeps its profile
+    under data/); tests that never start a browser may leave it unset.
     """
 
     config: Config
     http_for: Callable[[str], PoliteHttp]
     previous_board_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    settings: Settings | None = None
 
     def boards(self, ats: str) -> list[WatchlistCompany]:
         """Watchlist companies whose board lives on `ats`."""

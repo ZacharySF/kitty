@@ -2,6 +2,8 @@
   import { onMount, tick } from "svelte";
   import { api, safeUrl } from "./api";
   import Questions from "./Questions.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  const pane = useWorkspaceContext();
 
   let {
     jobIds = [],
@@ -70,7 +72,7 @@
       credential_problem: string | null;
       google_email: string | null;
       google_available: boolean;
-      mode: "configured" | "login" | "create" | "google";
+      mode: "auto" | "configured" | "login" | "create" | "google";
     };
   };
   let status = $state<Status | null>(null);
@@ -80,7 +82,6 @@
   let limit = $state(10);
   let watching = $state(true);
   let allowAuth = $state(false);
-  let authMode = $state<"configured" | "login" | "create" | "google">("login");
   let showQuestions = $state(false);
   let showOptions = $state(false);
   const labels: Record<string, string> = {
@@ -109,24 +110,30 @@
   let questionPanel = $state<{ focusQuestion: () => void }>();
   let planInput = $state<Record<string, unknown>>({});
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let mounted = false;
+  let mounted = $state(false);
   let observedCount = 0;
   let previousRunning = false;
+  let previousReports = "";
 
   async function refresh() {
+    if (!pane.active) return;
     try {
       const next = await api<Status>("/automation/status");
       if (!mounted) return;
       status = next;
+      const reportStamp = next.reports.map(report =>
+        `${report.job_id}:${report.status}:${(report.note || "").startsWith("closed:")}`,
+      ).join("|");
       if (
         next.observed.length !== observedCount ||
-        (previousRunning && !next.running)
+        (previousRunning && !next.running) || reportStamp !== previousReports
       )
         onchanged?.();
       observedCount = next.observed.length;
       previousRunning = next.running;
+      previousReports = reportStamp;
       clearTimeout(timer);
-      if (next.running)
+      if (next.running && pane.active)
         timer = setTimeout(() => {
           void refresh();
         }, 1800);
@@ -138,50 +145,41 @@
             : "Unable to load browser status";
     }
   }
+  $effect(() => {
+    if (!pane.active) {
+      clearTimeout(timer);
+      allowAuth = false;
+      plan = null;
+      if (dialog?.open) dialog.close();
+    } else if (mounted) void refresh();
+  });
   async function inspect(
     mode: "selected" | "queue" | "queued" | "top" | "favorites",
+    ids?: number[],
   ) {
-    if (busy || dialog?.open) return;
+    if (!pane.active || busy || dialog?.open) return;
     busy = true;
     error = "";
     allowAuth = false;
-    authMode = "login";
     try {
       planInput = {
         mode,
-        authentication_mode: authMode,
-        ...(track ? { track } : {}),
+        ...(track && !ids ? { track } : {}),
         limit,
-        ...(mode === "selected" ? { job_ids: jobIds } : {}),
+        ...(mode === "selected" ? { job_ids: ids ?? jobIds } : {}),
       };
       plan = await api<Plan>("/automation/preflight", planInput);
+      allowAuth = plan.authentication.approved_origins.length > 0 &&
+        (plan.authentication.mode === "google"
+          ? plan.authentication.google_available : plan.authentication.credentials_available);
       await tick();
+      if (!pane.active) { plan = null; allowAuth = false; return; }
       dialog.showModal();
       cancel?.focus({ preventScroll: true });
       dialog.scrollTop = 0;
     } catch (cause) {
       error =
         cause instanceof Error ? cause.message : "Unable to prepare a plan";
-    } finally {
-      busy = false;
-    }
-  }
-  async function reviewAccountChoice() {
-    if (!plan || busy) return;
-    busy = true;
-    allowAuth = false;
-    error = "";
-    try {
-      const input = { ...planInput, authentication_mode: authMode };
-      const reviewed = await api<Plan>("/automation/preflight", input);
-      planInput = input;
-      plan = reviewed;
-    } catch (cause) {
-      authMode = plan.authentication.mode;
-      error =
-        cause instanceof Error
-          ? cause.message
-          : "Unable to review account choice";
     } finally {
       busy = false;
     }
@@ -231,12 +229,13 @@
   export function handleKey(event: KeyboardEvent): boolean {
     const target = event.target as HTMLElement | null;
     if (
+      !pane.active ||
       event.defaultPrevented ||
       event.ctrlKey ||
       event.metaKey ||
       event.altKey ||
       target?.closest(
-        "input, textarea, select, [contenteditable='true'], dialog",
+        "input:not([type='checkbox']):not([type='radio']), textarea, select, [contenteditable]:not([contenteditable='false']), dialog",
       ) ||
       dialog?.open
     )
@@ -248,7 +247,7 @@
     }
     if (event.key === "F") {
       event.preventDefault();
-      void inspect("favorites");
+      void inspect(jobIds.length ? "selected" : "favorites");
       return true;
     }
     if (event.key === "w") {
@@ -260,14 +259,13 @@
       event.preventDefault();
       showOptions = true;
       showQuestions = true;
-      void tick().then(() => questionPanel?.focusQuestion());
+      void tick().then(() => { if (pane.active) questionPanel?.focusQuestion(); });
       return true;
     }
     return false;
   }
   onMount(() => {
     mounted = true;
-    void refresh();
     return () => {
       mounted = false;
       clearTimeout(timer);
@@ -297,8 +295,8 @@
           onclick={() => inspect("selected")}
           disabled={busy}
           >{compact
-            ? "Review autofill plan"
-            : `Prepare selected (${jobIds.length})`}</button
+            ? "Fill this job for review"
+            : `Fill ${jobIds.length} selected for review`}</button
         >{:else}<p class="muted">
           Select jobs with the checkboxes, or choose a group below.
         </p>{/if}
@@ -405,6 +403,16 @@
               {#if report.note || report.error}<p class="muted">
                   {report.error || report.note}
                 </p>{/if}
+              {#if ["partial", "blocked", "error"].includes(report.status) &&
+                !/^(closed|listing):/.test(report.note || "")}
+                {#if /^(login|consent|captcha|verification):/.test(report.note || "")}
+                  <p>Complete that step in Firefox, then continue here. Existing answers are kept.</p>
+                {/if}
+                <button class="button" onclick={() => inspect("selected", [report.job_id])}
+                  disabled={busy || (status.running && status.phase !== "watching")}>
+                  Continue filling
+                </button>
+              {/if}
             </li>{/each}
         </ul>
       </details>{/if}
@@ -414,7 +422,7 @@
       </p>{/each}
   {/if}
   <p class="muted safety">
-    You handle consent, security checks and final submission. Leaving this
+    You review consent, security checks and final submission. Leaving this
     screen does not stop preparation.
   </p>
   {#if demo}<p class="muted">
@@ -503,112 +511,28 @@
       Watch for up to {plan.watch_hours} hours.</label
     >
     <div class="auth">
-      <h4>Optional employer account access</h4>
-      {#if authMode === "google"}
-        <p>
-          Reviewed Google account: <strong
-            >{plan.authentication.google_email ||
-              "Set your email in Profile"}</strong
-          >. This uses your Profile email, not the private employer-password
-          file.
-        </p>
+      <h4>Account access</h4>
+      {#if plan.authentication.mode === "google"}
+        <p>Reuse the signed-in Google account <strong>{plan.authentication.google_email}</strong>. Google passwords and permission screens stay manual.</p>
       {:else}
-        <p>
-          Saved credentials: {plan.authentication.credentials_available
-            ? "available in the private credential file (password never displayed)"
-            : "unavailable"}.
-        </p>
-        {#if plan.authentication.credential_problem}<p class="warning">
-            {plan.authentication.credential_problem}
-          </p>{/if}
+        <p>kitty! detects sign-in or account creation and uses your saved email and password. No account-type selection is needed.</p>
+        {#if plan.authentication.credential_problem}<p class="warning">{plan.authentication.credential_problem}</p>{/if}
       {/if}
-      <label>
-        Account action for this run
-        <select
-          bind:value={authMode}
-          onchange={reviewAccountChoice}
-          disabled={busy}
-        >
-          <option value="login"
-            >Sign in — I already have these employer accounts</option
-          >
-          <option value="create"
-            >Create account — I need new employer accounts</option
-          >
-          <option value="google">Google — reuse my signed-in job account</option
-          >
-          {#if plan.authentication.enabled}
-            <option value="configured">Use my configured account policy</option>
-          {/if}
-        </select>
-      </label>
-      {#if authMode === "google"}
-        <p>
-          kitty! can select the exact account shown above when Google lists it
-          as signed in.
-        </p>
-        <ol>
-          <li>
-            Use the Firefox window opened by kitty!, not your everyday Chrome.
-          </li>
-          <li>
-            If Google asks you to sign in, do that yourself with the reviewed
-            job email.
-          </li>
-          <li>
-            Return to the employer's application tab, keep it open, and review a
-            new preparation plan to resume.
-          </li>
-        </ol>
-        <p class="muted">
-          Google passwords and permission screens are always manual. Google
-          Drive upload buttons are separate; kitty! attaches your chosen local
-          resume.
-        </p>
-      {:else}
-        <p>
-          Choose Sign in for existing accounts or Create account for new ones.
-          Use separate runs when websites need different actions. kitty! sends
-          at most one credential request per job attempt; the site may still
-          require verification or reject the request.
-        </p>
-      {/if}
-      <p>
-        {authMode === "google"
-          ? "Only these exact HTTPS employer websites may start this reviewed Google session flow (no employer password is sent to Google):"
-          : "Only these exact HTTPS websites may receive your credentials:"}
-      </p>
-      <ul>
-        {#each authMode === "configured" ? plan.authentication.configured_origins : plan.authentication.approved_origins as origin}
-          <li><code>{origin}</code></li>
-        {:else}
-          <li>No eligible HTTPS website; account access is unavailable.</li>
-        {/each}
-      </ul>
+      <details>
+        <summary>Approved account destinations</summary>
+        <ul>{#each plan.authentication.approved_origins as origin}<li><code>{origin}</code></li>{:else}<li>No eligible HTTPS destination.</li>{/each}</ul>
+      </details>
       <label class="check">
-        <input
-          type="checkbox"
-          bind:checked={allowAuth}
-          disabled={busy ||
-            !(authMode === "google"
-              ? plan.authentication.google_available
-              : plan.authentication.credentials_available) ||
-            !(
-              authMode === "configured"
-                ? plan.authentication.configured_origins
-                : plan.authentication.approved_origins
-            ).length}
-        />
-        I approve this account action {authMode === "google"
-          ? "using only the reviewed signed-in Google account"
-          : "using my saved credentials"}
-        on the listed websites for this reviewed run only.
+        <input type="checkbox" bind:checked={allowAuth} disabled={busy ||
+          !(plan.authentication.mode === "google" ? plan.authentication.google_available : plan.authentication.credentials_available) ||
+          !plan.authentication.approved_origins.length} />
+        {plan.authentication.mode === "google" ? "Use the reviewed signed-in Google account" : "Sign in or create required employer accounts with my saved credentials"}
       </label>
-      <p class="muted">
-        Leave unchecked to handle accounts yourself. Other origins and
-        unexpected redirects are blocked. Consent, CAPTCHA, MFA and email
-        verification remain yours to complete. kitty! never presses the final
-        application Submit.
+      <p class="muted">Only reviewed HTTPS destinations receive credentials.
+        {#if plan.authentication.allow_account_creation && plan.authentication.mode !== "google"}
+          Required routine account terms are included.
+        {/if}
+        Other consent, CAPTCHA, MFA, email verification and final submission stay manual.
       </p>
     </div>
     <p>
@@ -624,7 +548,7 @@
         onclick={start}
         disabled={demo ||
           busy ||
-          status?.running ||
+          (status?.running && status.phase !== "watching") ||
           !plan.job_ids.length ||
           !plan.firefox_configured}>Prepare in Firefox — I submit myself</button
       >
@@ -707,16 +631,6 @@
     border: 1px solid var(--warning);
     padding: 0.7rem;
     border-radius: 0.5rem;
-  }
-  .auth select {
-    display: block;
-    width: 100%;
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    background: var(--surface);
-    color: var(--ink);
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
   }
   .auth code {
     overflow-wrap: anywhere;

@@ -35,7 +35,7 @@ from dataclasses import dataclass, field, replace
 from typing import Callable
 from urllib.parse import urlsplit
 
-from kitty.config import Config
+from kitty.config import Config, _authentication_origin
 from kitty.core import applications as applications_core
 from kitty.core import followups
 from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, Tab, TabClosed
@@ -152,12 +152,13 @@ class WatchedTab:
     """One filled tab waiting for my submit."""
 
     job_id: int
-    context: str                      # BiDi browsing-context id, only valid in its session
+    context: str                      # live BiDi id, valid only in the current session
     ats: str                          # a key of RULES
     form_url: str                     # the page the filler opened
     label: str                        # "Company - Title", for messages
     resume_id: int | None             # recorded with the application
     track: str | None
+    marker: str                       # stable browser-storage token across sessions
 
 
 def _ignore(_: object) -> None:
@@ -215,30 +216,47 @@ def look(bidi: Bidi, tab: WatchedTab) -> PageView | None:
         return PageView(urls=[])
 
 
-def _urls(node: dict) -> list[str]:
-    """A browsing-context tree node's URL and those of all its iframes."""
-    return [node.get("url", ""), *(url for child in node.get("children") or [] for url in _urls(child))]
+CONTEXT_MARKER = "kitty.application.context"
+
+
+def owned_context(
+    bidi: Bidi, contexts: list[dict], saved_context: str, origins: set[str],
+) -> dict | None:
+    """Resolve an owned tab; cache marker reads within this context-tree snapshot."""
+    current = next((context for context in contexts if context["context"] == saved_context), None)
+    if current is not None:
+        return current
+    matches = []
+    for context in contexts:
+        if _authentication_origin(context.get("url", "")) not in origins:
+            continue
+        if "_kitty_marker" not in context:
+            try:
+                context["_kitty_marker"] = Tab(bidi, context["context"]).main.call("""key => {
+                  try { return sessionStorage.getItem(key); } catch { return null; }
+                }""", CONTEXT_MARKER)
+            except ConnectionLost:
+                raise
+            except BidiError:
+                context["_kitty_marker"] = None
+        if context["_kitty_marker"] == saved_context:
+            matches.append(context)
+    return matches[0] if len(matches) == 1 else None
 
 
 def reattach(bidi: Bidi, tabs: list[WatchedTab]) -> list[WatchedTab]:
-    """`tabs` from an earlier session with this session's context ids; closed ones are left out.
-
-    Firefox gives every tab a new id in each remote-control session, so a tab
-    carried over from an earlier session is found again by its posting's id in
-    the tab's (or an iframe's) URL. The form, its confirmation page and a
-    company-site embed all carry that id.
-    """
-    open_tabs = [(node["context"], _urls(node))
-                 for node in bidi.command("browsingContext.getTree", {}).get("contexts", [])]
+    """Rebind owned tabs without adopting another tab for the same posting."""
+    contexts = bidi.command("browsingContext.getTree", {}).get("contexts", [])
     found: list[WatchedTab] = []
     taken: set[str] = set()
     for tab in tabs:
-        key = posting_key(tab.form_url)
-        for context, urls in open_tabs:
-            if key and context not in taken and any(key in url.lower() for url in urls):
-                taken.add(context)
-                found.append(replace(tab, context=context))
-                break
+        origin = _authentication_origin(tab.form_url)
+        if origin is None:
+            continue
+        context = owned_context(bidi, contexts, tab.marker, {origin})
+        if context is not None and context["context"] not in taken:
+            taken.add(context["context"])
+            found.append(replace(tab, context=context["context"]))
     return found
 
 

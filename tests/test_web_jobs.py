@@ -93,6 +93,30 @@ def test_applied_job_bulk_state_failure_preserves_every_selected_job(app, worksp
     assert jobs.get_job(workspace.conn, first.id).queue_state == "new"
     assert applications.get_application_for_job(workspace.conn, second.id).status == "applied"
 
+def test_job_delete_keeps_reusable_questions_and_unrelated_postings(app, workspace):
+    from kitty.core import questions, reminders
+    first, other = posting(workspace, 1), posting(workspace, 2)
+    question = questions.log_question(workspace.conn, 'Synthetic availability question?', job_id=first.id)
+    reminder = reminders.create_reminder(workspace.conn, kind='custom', due_at='2099-01-01', note='Synthetic job reminder', job_id=first.id)
+    app.mutate(workspace.conn, '/api/jobs/bulk', {'ids': [first.id], 'action': 'delete', 'value': True})
+    assert jobs.get_job(workspace.conn, first.id) is None
+    assert jobs.get_job(workspace.conn, other.id).title == other.title
+    assert workspace.conn.execute('SELECT text,first_seen_job_id FROM screening_questions WHERE id=?', (question.id,)).fetchone()[:] == (question.text, None)
+    assert workspace.conn.execute('SELECT id FROM reminders WHERE id=?', (reminder.id,)).fetchone() is None
+
+
+def test_job_delete_requires_confirmation_and_protects_submissions_atomically(app, workspace):
+    first, submitted = posting(workspace, 1), posting(workspace, 2)
+    with pytest.raises(APIError):
+        app.mutate(workspace.conn, '/api/jobs/bulk', {'ids': [first.id], 'action': 'delete', 'value': False})
+    assert jobs.get_job(workspace.conn, first.id).title == first.title
+    app.mutate(workspace.conn, f'/api/jobs/{submitted.id}', {'action': 'applied', 'value': True})
+    with pytest.raises(APIError):
+        app.mutate(workspace.conn, '/api/jobs/bulk', {'ids': [first.id, submitted.id], 'action': 'delete', 'value': True})
+    assert jobs.get_job(workspace.conn, first.id).title == first.title
+    assert applications.get_application_for_job(workspace.conn, submitted.id).status == 'applied'
+
+
 
 def test_apply_list_excludes_low_tier_and_closed_jobs(app, workspace):
     first, low, closed = (posting(workspace, i) for i in range(3))
@@ -100,3 +124,46 @@ def test_apply_list_excludes_low_tier_and_closed_jobs(app, workspace):
     workspace.conn.execute("UPDATE jobs SET is_active=0 WHERE id=?", (closed.id,))
     result = app.get_json(workspace.conn, "/api/jobs/selection", {"view": "apply", "closed": "1"})
     assert result["ids"] == [first.id]
+
+
+def test_score_sort_is_numeric_null_last_and_paginates_without_changing_selection(app, workspace):
+    high, zero, negative, unknown = [posting(workspace, i) for i in range(4)]
+    for job, score in ((high, 0.8), (zero, 0), (negative, -0.4)):
+        workspace.conn.execute("UPDATE jobs SET like_score=? WHERE id=?", (score, job.id))
+    expected = [high.id, zero.id, negative.id, unknown.id]
+    query = {"view": "jobs", "order": "score", "limit": "2"}
+    first = app.get_json(workspace.conn, "/api/jobs", query)
+    second = app.get_json(workspace.conn, "/api/jobs", {**query, "offset": "2"})
+    assert first["total"] == second["total"] == 4
+    assert [job["id"] for job in first["jobs"] + second["jobs"]] == expected
+    selected = app.get_json(workspace.conn, "/api/jobs/selection", {**query, "offset": "2"})
+    assert selected == {"ids": expected, "total": 4}
+    assert workspace.conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 0
+
+
+def test_track_sort_groups_multi_track_jobs_and_keeps_filter_and_count(app, workspace):
+    track_a, track_b = sorted(workspace.config.track_names[:2])
+    first, second, unassigned = [posting(workspace, i) for i in range(3)]
+    jobs.link_track(workspace.conn, first.id, track_b)
+    jobs.link_track(workspace.conn, first.id, track_a)
+    jobs.link_track(workspace.conn, second.id, track_b)
+    query = {"view": "jobs", "order": "track"}
+    result = app.get_json(workspace.conn, "/api/jobs", query)
+    assert [job["id"] for job in result["jobs"]] == [first.id, second.id, unassigned.id]
+    assert result["total"] == 3
+    filtered = app.get_json(workspace.conn, "/api/jobs", {**query, "track": track_a})
+    assert [job["id"] for job in filtered["jobs"]] == [first.id]
+    assert filtered["total"] == 1
+
+
+@pytest.mark.parametrize("order", ["score", "company"])
+def test_explicit_queue_sort_is_not_replaced_by_preparation_priority(app, workspace, order):
+    high = posting(workspace, 1, company="Alpha Synthetic")
+    low = posting(workspace, 2, company="Zulu Synthetic")
+    jobs.set_tier(workspace.conn, high.id, "B", reason="Synthetic fixture")
+    workspace.conn.execute("UPDATE jobs SET fill_state='ready', like_score=0.9 WHERE id=?", (high.id,))
+    workspace.conn.execute("UPDATE jobs SET like_score=0.1 WHERE id=?", (low.id,))
+    explicit = app.get_json(workspace.conn, "/api/jobs", {"view": "apply", "order": order})
+    assert [job["id"] for job in explicit["jobs"]] == [high.id, low.id]
+    best = app.get_json(workspace.conn, "/api/jobs", {"view": "apply", "order": "best"})
+    assert [job["id"] for job in best["jobs"]] == [low.id, high.id]

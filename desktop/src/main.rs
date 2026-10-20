@@ -138,6 +138,16 @@ fn request_quit(app: &tauri::AppHandle) {
 }
 
 fn main() {
+    // WebKitGTK's native Wayland path can produce a negative device scale on
+    // fractional-scale desktops. Prefer XWayland when available; explicit
+    // backend selection and Wayland-only sessions remain untouched.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GDK_BACKEND").is_none()
+        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_some()
+    {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
     // Applies to new private files only; never changes selected existing files.
     unsafe { libc::umask(0o077); }
     let app = tauri::Builder::default()
@@ -169,7 +179,7 @@ fn main() {
             let navigation_origin = origin.clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin))
                 .title("kitty!").inner_size(1280.0, 850.0).min_inner_size(760.0, 500.0)
-                .menu(menu).devtools(cfg!(debug_assertions))
+                .devtools(cfg!(debug_assertions))
                 .data_directory(root.join(".private/webview"))
                 .on_navigation(move |url| {
                     if local_url(url, &navigation_origin) { true }

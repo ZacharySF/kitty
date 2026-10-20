@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
   import AIReview from "./AIReview.svelte";
+  import SectionGraph, { type SectionNode } from "./SectionGraph.svelte";
+  import type { Crumb } from "./breadcrumb.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  const pane = useWorkspaceContext();
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
   type Settings = {
@@ -18,6 +23,7 @@
   type Deck = {
     id: number;
     name: string;
+    parent_id: number | null;
     settings: Settings;
     archived: number;
     revision: number;
@@ -57,6 +63,7 @@
   };
   type Review = {
     id: number;
+    note_id?: number;
     token: string;
     front: string;
     state: string;
@@ -84,7 +91,7 @@
     total = $state(0);
   let deckId = $state(0),
     typeId = $state(0),
-    view = $state("decks"),
+    view = $state("schema"),
     search = $state(""),
     offset = $state(0);
   let error = $state(""),
@@ -112,6 +119,7 @@
     mode = $state("regular"),
     started = $state(0);
   let revealed = $state(false);
+  let answerFace = $state(false);
   let studyId = $state<string | null>(null),
     practiceResume = $state<{
       study_id: string;
@@ -143,7 +151,127 @@
   };
   let drafts = $state<Draft[]>([]),
     rawAI = $state("");
+  type Reference = { kind: string; id: number | string; title: string; snippet: string; shared_terms: string[]; score: number; view: string };
+  let references = $state<Record<string, Reference[]>>({linked: [], unlinked: [], related: []});
+  let referenceError = $state("");
+  let graphFocus = $state<string | null>(null);
+  let graphRevision = $state(0);
+  let noteRequest = 0;
+  function rootSchema() {
+    noteRequest += 1;
+    graphFocus = null;
+    editing = null;
+    deckId = 0;
+    search = "";
+    offset = 0;
+    error = "";
+    view = "schema";
+    graphRevision += 1;
+  }
+  function deckSchema(id: number) {
+    noteRequest += 1;
+    deckId = id;
+    graphFocus = `deck:${id}`;
+    editing = null;
+    error = "";
+    view = "schema";
+  }
+  async function selectGraphNode(node: SectionNode) {
+    if (!pane.active || typeof node.ref !== "number") return;
+    if (node.entity === "deck") {
+      deckSchema(node.ref);
+    } else if (node.entity === "flashcard_note") {
+      const request = ++noteRequest;
+      error = "";
+      try {
+        const result = await api<{note: Note}>(`/flashcards/note?id=${node.ref}`);
+        if (!pane.active || request !== noteRequest) return;
+        newNote(result.note);
+      } catch (e) {
+        if (request !== noteRequest) return;
+        failure(e);
+        graphRevision += 1;
+      }
+    }
+  }
+  async function deleteGraphNote(node: SectionNode) {
+    if (!pane.active || node.entity !== "flashcard_note" || typeof node.ref !== "number" || busy) return;
+    try {
+      const result = await api<{note: Note}>(`/flashcards/note?id=${node.ref}`);
+      await noteAction(result.note, "delete");
+    } catch (cause) { failure(cause); }
+  }
+  $effect(() => {
+    const id = view === "schema"
+      ? (graphFocus ? Number(graphFocus.slice(5)) : 0)
+      : view === "deck-editor" ? deckEditing?.id || 0 : deckId;
+    const byId = new Map((overview?.decks ?? []).map(deck => [deck.id, deck]));
+    const chain: Deck[] = [];
+    const seen = new Set<number>();
+    let deck = byId.get(id);
+    while (deck && !seen.has(deck.id)) {
+      seen.add(deck.id);
+      chain.unshift(deck);
+      deck = deck.parent_id ? byId.get(deck.parent_id) : undefined;
+    }
+    const crumbs: Crumb[] = chain.map(deck => ({
+      label: deck.name.split("::").at(-1) || deck.name,
+      onclick: () => deckSchema(deck.id),
+    }));
+    if (view === "editor") crumbs.push({label: editing ? `Card ${editing.id}` : "New card"});
+    if (view === "review" && review?.note_id) crumbs.push({label: `Note ${review.note_id}`});
+    pane.setTrail("flashcards", crumbs, rootSchema);
+    return () => pane.clearTrail("flashcards");
+  });
+  $effect(() => {
+    const active = pane.active && (view === "editor" || (view === "review" && revealed));
+    const content = view === "editor" ? Object.values(editorFields).join("\n") : `${review?.front || ""}\n${back}`;
+    const noteId = view === "editor" ? editing?.id : review?.note_id;
+    let current = true;
+    references = {linked: [], unlinked: [], related: []};
+    referenceError = "";
+    const timer = setTimeout(async () => {
+      if (!active || !content.trim()) return;
+      try {
+        const result = await api<Record<string, Reference[]>>("/backlinks/related", {
+          text: content.replace(/<[^>]*>/g, " ").slice(0, 20000),
+          ...(noteId ? {exclude: `flashcard_note:${noteId}`} : {}),
+        });
+        if (current) references = result;
+      } catch (e) {
+        if (current) referenceError = e instanceof Error ? e.message : String(e);
+      }
+    }, 350);
+    return () => { current = false; clearTimeout(timer); };
+  });
+  function openReference(ref: Reference) {
+    if (!pane.active) return;
+    if (ref.kind === "note_page") sessionStorage.setItem("kitty.notes.open-page", String(ref.id));
+    location.hash = `#${ref.view}`;
+    if (ref.kind === "note_page") window.dispatchEvent(new CustomEvent("kitty-open-note", {detail: {page_id: Number(ref.id)}}));
+    if (ref.kind === "flashcard_note") {
+      deckId = 0;
+      offset = 0;
+      search = `nid:${ref.id}`;
+      view = "browser";
+      void browse();
+    }
+  }
+  function linkReference(ref: Reference) {
+    const escaped = ref.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const mention = new RegExp(escaped, "i");
+    const field = Object.keys(editorFields).find((name) => mention.test(editorFields[name]));
+    if (field) editorFields[field] = editorFields[field].replace(mention, (match) => `[[${match}]]`);
+  }
   let selectedType = $derived(overview?.types.find((t) => t.id === typeId));
+  let selectedDeck = $derived(overview?.decks.find((deck) => deck.id === deckId));
+  let scopeLabel = $derived(selectedDeck?.name || "All decks");
+  let editorView = $derived(["editor", "deck-editor", "type-editor"].includes(view));
+  function reviewDue() {
+    mode = "regular";
+    search = "";
+    void startReview();
+  }
   const labels = ["Again", "Hard", "Good", "Easy"];
   const defaultSettings: Settings = {
     new_limit: 20,
@@ -162,8 +290,10 @@
   async function load() {
     try {
       overview = await api<Overview>("/flashcards");
-      if (!deckId) deckId = overview.decks[0]?.id || 0;
+      if (!deckId && view !== "schema") deckId = overview.decks[0]?.id || 0;
+      graphRevision += 1;
       if (!typeId) typeId = overview.types[0]?.id || 0;
+      if (pane.active) await consumePendingNavigation();
     } catch (e) {
       failure(e);
     }
@@ -172,10 +302,33 @@
     revision;
     void load();
   });
+  $effect(() => {
+    if (pane.active) void consumePendingNavigation();
+    else noteRequest += 1;
+  });
+  async function consumePendingNavigation() {
+    if (!pane.active) return;
+    try {
+      const pending = sessionStorage.getItem("kitty.flashcards.open-note");
+      if (pending && /^\d+$/.test(pending)) {
+        sessionStorage.removeItem("kitty.flashcards.open-note");
+        deckId = 0; offset = 0; search = `nid:${pending}`; view = "browser";
+        await browse();
+      }
+      if (!pane.active) return;
+      const text = sessionStorage.getItem("kitty.flashcards.import-text");
+      if (text) {
+        sessionStorage.removeItem("kitty.flashcards.import-text");
+        selectedText(new CustomEvent("kitty-study-text", {detail: {text, purpose: "flashcards"}}));
+      }
+    } catch { /* Live navigation remains available if storage is disabled. */ }
+  }
   async function browse() {
     try {
+      const query=new URLSearchParams({search,offset:String(offset),limit:"50"});
+      if(deckId)query.set("deck_id",String(deckId));
       const r = await api<{ notes: Note[]; total: number }>(
-        `/flashcards/browser?deck_id=${deckId}&search=${encodeURIComponent(search)}&offset=${offset}&limit=50`,
+        `/flashcards/browser?${query}`,
       );
       notes = r.notes;
       total = r.total;
@@ -184,23 +337,25 @@
     }
   }
   async function show(next: string) {
+    noteRequest += 1;
+    if (next === "schema") { rootSchema(); return; }
     view = next;
     error = "";
     if (next === "browser") await browse();
     if (next === "history") await loadHistory();
   }
-  async function operate(
+  async function operate<T = unknown>(
     path: string,
     body: unknown,
-    after?: () => Promise<void>,
+    after?: (result: T) => Promise<void>,
   ) {
     busy = true;
     error = "";
     message = "";
     try {
-      await api(path, body);
+      const result = await api<T>(path, body);
       await load();
-      if (after) await after();
+      if (after) await after(result);
     } catch (e) {
       failure(e);
     } finally {
@@ -208,6 +363,10 @@
     }
   }
   function newNote(note: Note | null = null) {
+    if (!pane.active) return;
+    noteRequest += 1;
+    if (!note && !deckId) deckId = overview?.decks.find(deck => !deck.archived && deck.name === "Default")?.id
+      || overview?.decks.find(deck => !deck.archived)?.id || overview?.decks[0]?.id || 0;
     editing = note;
     if (note) {
       deckId = note.deck_id;
@@ -215,6 +374,7 @@
       editorFields = { ...note.fields };
       editorTags = note.tags.join(" ");
     } else {
+      typeId = overview?.types.find((type) => type.kind === "basic" && type.fields.includes("Front") && type.fields.includes("Back"))?.id || typeId;
       editorFields = Object.fromEntries(
         (selectedType?.fields || []).map((f) => [f, ""]),
       );
@@ -223,11 +383,14 @@
     view = "editor";
   }
   function switchType() {
-    editorFields = Object.fromEntries(
-      (selectedType?.fields || []).map((f) => [f, editorFields[f] || ""]),
-    );
+    // Keep the other format's draft fields in memory; only selected fields are saved.
+    editorFields = {
+      ...editorFields,
+      ...Object.fromEntries((selectedType?.fields || []).map((field) => [field, editorFields[field] || ""])),
+    };
   }
   async function saveNote() {
+    if (!pane.active || busy || !deckId || !selectedType) return;
     await operate(
       "/flashcards/note",
       {
@@ -235,17 +398,21 @@
         revision: editing?.revision,
         deck_id: deckId,
         type_id: typeId,
-        fields: editorFields,
+        fields: Object.fromEntries(selectedType.fields.map((field) => [field, editorFields[field] || ""])),
         tags: editorTags.split(/\s+/).filter(Boolean),
         archived: editing?.archived || false,
       },
       async () => {
+        search = "";
+        offset = 0;
         view = "browser";
         await browse();
       },
     );
   }
   function editDeck(deck: Deck | null = null) {
+    if (!pane.active) return;
+    noteRequest += 1;
     deckEditing = deck;
     deckName = deck?.name || "";
     cfg = structuredClone(deck?.settings || defaultSettings);
@@ -254,7 +421,7 @@
     view = "deck-editor";
   }
   async function saveDeck() {
-    if (!cfg) return;
+    if (!pane.active || busy || !cfg) return;
     const value = {
       ...cfg,
       learning_steps: learningText
@@ -266,7 +433,8 @@
         .filter((x) => x.trim())
         .map(Number),
     };
-    await operate(
+    const creating = !deckEditing;
+    await operate<{ deck: Pick<Deck, "id" | "name"> }>(
       "/flashcards/deck",
       {
         id: deckEditing?.id,
@@ -275,12 +443,17 @@
         settings: value,
         archived: deckEditing?.archived || false,
       },
-      async () => {
-        view = "decks";
+      async ({ deck }) => {
+        deckId = deck.id;
+        if (creating && pane.active) {
+          newNote();
+          message = `Created “${deck.name}”. Add its first question and answer below.`;
+        } else deckSchema(deck.id);
       },
     );
   }
   function editType(typ: NoteType | null = null) {
+    noteRequest += 1;
     typeEditing = typ;
     typeName = typ?.name || "";
     typeKind = typ?.kind || "template";
@@ -318,11 +491,15 @@
     review = null;
     back = "";
     revealed = false;
+    answerFace = false;
     intervals = [];
     remaining = 0;
     studyId = null;
   }
   async function startReview(resume: boolean | Event = false) {
+    // A submitted rating may finish after this pane is hidden; advance its local queue without focusing it.
+    if (!pane.active && resume !== true) return;
+    noteRequest += 1;
     busy = true;
     error = "";
     message = "";
@@ -344,6 +521,7 @@
       studyId = r.study_id;
       back = "";
       revealed = false;
+      answerFace = false;
       intervals = [];
       typedAnswer = "";
       started = Date.now();
@@ -379,7 +557,7 @@
     void startReview(true);
   }
   async function reveal() {
-    if (!review || revealed || busy) return;
+    if (!pane.active || !review || revealed || busy) return;
     busy = true;
     try {
       const r = await api<{ back: string; intervals: typeof intervals }>(
@@ -389,6 +567,7 @@
       back = r.back;
       intervals = r.intervals;
       revealed = true;
+      answerFace = true;
     } catch (e) {
       failure(e);
     } finally {
@@ -396,7 +575,7 @@
     }
   }
   async function grade(rating: number) {
-    if (!review || !revealed || busy) return;
+    if (!pane.active || !review || !revealed || busy) return;
     busy = true;
     try {
       await api("/flashcards/grade", {
@@ -433,6 +612,7 @@
     }
   }
   async function noteAction(note: Note, action: string, value = true) {
+    if (!pane.active) return;
     if (
       action === "delete" &&
       !window.confirm("Permanently delete this note and its cards?")
@@ -541,6 +721,7 @@
     input.value = "";
   }
   function selectedText(event: Event) {
+    if (!pane.active) return;
     const detail = (
       event as CustomEvent<{ purpose: string; text: string; page_id?: string }>
     ).detail;
@@ -600,6 +781,7 @@
     }
   }
   async function acceptDraft(index: number) {
+    if (!pane.active || busy) return;
     const draft = drafts[index];
     if (draft.accepted) return;
     if (!quoteIsGrounded(draft.source_quote)) {
@@ -656,6 +838,7 @@
   }
   onMount(() => {
     window.addEventListener("kitty-study-text", selectedText);
+    void consumePendingNavigation();
     try {
       const saved = JSON.parse(
         sessionStorage.getItem("kitty-flashcards-practice") || "null",
@@ -675,16 +858,19 @@
   });
   function keydown(event: KeyboardEvent) {
     if (
+      !pane.active ||
       view !== "review" ||
       busy ||
       event.ctrlKey ||
       event.altKey ||
-      event.metaKey
+      event.metaKey ||
+      event.repeat ||
+      event.defaultPrevented
     )
       return;
     const target = event.target as HTMLElement;
     if (
-      ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
+      target.closest("input,textarea,select,button,a,[role=button]") ||
       target.isContentEditable
     )
       return;
@@ -699,62 +885,109 @@
   }
 </script>
 
+{#snippet referencePanel()}
+  {#if referenceError || Object.values(references).some(items=>items.length)}
+  <Panel>
+    <aside aria-label="References">
+      {#each [["linked", "Linked"], ["unlinked", "Unlinked"], ["related", "Related"]] as [key, label]}
+        {#if references[key]?.length}
+          <h3>{label}</h3>
+          {#each references[key] as ref}
+            <div class="reference-item">
+              <Button size="sm" variant="ghost" onclick={() => openReference(ref)}>{ref.title}</Button>
+              <p>{ref.snippet}</p>
+              {#if key === "unlinked" && view === "editor" && Object.values(editorFields).some((value) => value.toLocaleLowerCase().includes(ref.title.toLocaleLowerCase()))}<Button size="xs" variant="ghost" onclick={() => linkReference(ref)}>Link</Button>{/if}
+              {#if ref.shared_terms.length}<small>{ref.shared_terms.join(" · ")}</small>{/if}
+            </div>
+          {/each}
+        {/if}
+      {/each}
+      {#if referenceError}<p role="alert">{referenceError}</p>{/if}
+    </aside>
+  </Panel>
+  {/if}
+{/snippet}
+
 <svelte:window onkeydown={keydown} />
 <section class="flashcards" aria-label="Flashcards workspace">
   <header>
     <div>
       <h1>Flashcards</h1>
-      <p>
-        Local notes, safe media, and FSRS spaced repetition.{demo
-          ? " Demo actions remain local."
-          : ""}
-      </p>
+      {#if demo}<p>Demo</p>{/if}
     </div>
-    <button onclick={() => newNote()} disabled={!overview || busy}
-      >Add note</button
-    >
+    {#if !editorView}<div class="toolbar primary-actions">
+      <Button size="sm" onclick={() => editDeck()} disabled={!overview || busy}>New deck</Button>
+      <Button size="sm" onclick={() => newNote()} disabled={!overview || busy || !overview.decks.some(deck => !deck.archived)}>New card</Button>
+      <Button intent="primary" onclick={reviewDue} disabled={!overview || busy || !overview.stats.total}>Review due</Button>
+    </div>{/if}
   </header>
-  <nav aria-label="Flashcard views">
-    {#each [["decks", "Decks"], ["browser", "Browser"], ["review", "Study"], ["history", "History"], ["transfer", "Import / export"], ["generate", "AI drafts"]] as item}<button
-        class:active={view === item[0]}
-        onclick={() => (item[0] === "review" ? startReview() : show(item[0]))}
-        >{item[1]}</button
-      >{/each}
-  </nav>
-  {#if error}<p class="error" role="alert">{error}</p>{/if}{#if message}<p
-      role="status"
-    >
-      {message}
-    </p>{/if}
+  {#if !editorView}
+    <nav aria-label="Flashcard views">
+      {#each [["schema", "Map"], ["decks", "Decks"], ["browser", "Cards"]] as item}
+        <Button size="sm" variant="ghost" aria-current={view === item[0] ? "page" : undefined} onclick={() => void show(item[0])}>{item[1]}</Button>
+      {/each}
+      <details class="tools-menu">
+        <summary>Study tools &amp; more</summary>
+        <div class="toolbar">
+          <Button size="sm" variant="ghost" onclick={() => void show("review")}>Practice &amp; review options</Button>
+          <Button size="sm" variant="ghost" onclick={() => void show("history")}>Review history</Button>
+          <Button size="sm" variant="ghost" onclick={() => void show("transfer")}>Import / export</Button>
+          <Button size="sm" variant="ghost" onclick={() => void show("generate")}>AI drafts</Button>
+        </div>
+      </details>
+    </nav>
+  {/if}
+  {#if error}<p class="error" role="alert">{error}<button class="icon-button" aria-label="Dismiss flashcard error" onclick={() => (error = "")}>×</button></p>{/if}
+  {#if message}<p role="status">{message}<button class="icon-button" aria-label="Dismiss flashcard message" onclick={() => (message = "")}>×</button></p>{/if}
   {#if overview}
-    <div class="scope">
+    {#if !editorView}<div class="scope-heading">
+      <div><small>Selected study scope</small><h2>{scopeLabel}</h2></div>
+      <p>{selectedDeck ? `${selectedDeck.due} due · ${selectedDeck.new} new` : `${overview.stats.due} due · ${overview.stats.new} new`}
+        <span>{selectedDeck ? "This deck and its subdecks" : "Your entire collection"}</span>
+      </p>
+    </div>{/if}
+    {#if !["deck-editor", "type-editor"].includes(view)}<div class="scope">
       <label
-        >Deck / subdecks <select
+        >{view === "editor" ? "Save card in deck" : "Change deck scope"} <select
           bind:value={deckId}
           onchange={(event) => {
             deckId = Number(event.currentTarget.value);
             offset = 0;
             if (view === "review") resetReview();
+            if (view === "schema") {
+              if (deckId) deckSchema(deckId);
+              else rootSchema();
+            }
             if (view === "browser") void browse();
           }}
-          >{#each overview.decks as deck}<option value={deck.id}
+          >{#if view !== "editor"}<option value={0}>All decks</option>{/if}{#each overview.decks as deck}<option value={deck.id}
               >{deck.name}{deck.archived ? " (archived)" : ""}</option
             >{/each}</select
         ></label
-      ><label
-        >Note type <select
-          bind:value={typeId}
-          onchange={(event) => {
-            typeId = Number(event.currentTarget.value);
-            if (view === "editor") switchType();
-          }}
-          >{#each overview.types as typ}<option value={typ.id}
-              >{typ.name}</option
-            >{/each}</select
-        ></label
       >
-    </div>
-    {#if view === "decks"}
+    </div>{/if}
+    {#if view === "schema"}
+      {#if !overview.stats.total}
+        <Panel>
+          <div class="empty-state">
+            <small>Start with one question</small>
+            <h2>Your first card is a question and an answer.</h2>
+            <p>Keep cards in a deck, write a prompt on the front, then reveal the back when you study. Nothing is saved until you choose Save card.</p>
+            <div class="toolbar">
+              {#if overview.decks.some(deck => !deck.archived)}
+                <Button intent="primary" onclick={() => newNote()}>Create your first card</Button>
+                <Button variant="ghost" onclick={() => editDeck()}>Create a different deck</Button>
+              {:else}
+                <Button intent="primary" onclick={() => editDeck()}>Create your first deck</Button>
+              {/if}
+            </div>
+          </div>
+        </Panel>
+      {/if}
+      {#if graphFocus}<Button size="sm" variant="ghost" onclick={rootSchema}>All decks and notes</Button>{/if}
+      <SectionGraph section="flashcards" revision={graphRevision} focus={graphFocus} onselect={selectGraphNode} ondelete={deleteGraphNote} />
+      <p class="hint">Select a deck to focus its tree, or open a card node to edit it. Use Cards for a searchable list.</p>
+    {:else if view === "decks"}
       <div class="metrics">
         <span><strong>{overview.stats.total}</strong> cards</span><span
           ><strong>{overview.stats.due}</strong> due</span
@@ -764,16 +997,10 @@
           >{overview.stats.suspended} suspended · {overview.stats.leeches} leeches</span
         >
       </div>
-      <div class="toolbar">
-        <button onclick={() => editDeck()}>New deck / subdeck</button><button
-          onclick={() => editType()}>New note type</button
-        >{#if practiceResume}<button onclick={resumePractice} disabled={busy}
-            >Resume last practice queue</button
-          >{/if}
-      </div>
-      {#each overview.decks as deck}<article class="deck">
+      {#if practiceResume}<Button size="sm" variant="ghost" onclick={resumePractice} disabled={busy}>Resume last practice queue</Button>{/if}
+      {#each overview.decks as deck}<article class="deck" class:selected-deck={deck.id === deckId}>
           <div>
-            <h2>{deck.name}</h2>
+            <h2><Button variant="ghost" onclick={() => { deckId = deck.id; }}>{deck.name}</Button>{#if deck.id === deckId}<small class="selected-label">Selected</small>{/if}</h2>
             <p>
               {deck.due} due · {deck.new} new · {Math.round(
                 deck.settings.retention * 100,
@@ -786,23 +1013,27 @@
             <button
               onclick={() => {
                 deckId = deck.id;
-                mode = "regular";
-                void startReview();
+                reviewDue();
               }}
-              disabled={!!deck.archived}>Study</button
-            ><button onclick={() => editDeck(deck)}>Settings</button><button
+              disabled={busy || !!deck.archived}>Review due</button>
+            <Button size="sm" onclick={() => { deckId = deck.id; newNote(); }} disabled={busy || !!deck.archived}>New card</Button>
+            <details><summary>Deck options</summary>
+              <div class="toolbar"><button onclick={() => deckSchema(deck.id)}>Open map</button>
+                <button onclick={() => editDeck(deck)}>Settings</button><button
               onclick={() => archiveDeck(deck)}
-              disabled={busy}>{deck.archived ? "Restore" : "Archive"}</button
-            >
+              disabled={busy}>{deck.archived ? "Restore" : "Archive"}</button></div>
+            </details>
           </div>
         </article>{/each}
-      <h2>Note types & templates</h2>
+      <details><summary>Note types &amp; templates</summary>
       <div class="toolbar">
+        <Button size="sm" onclick={() => editType()}>New note type</Button>
         {#each overview.types as typ}<button onclick={() => editType(typ)}
             >{typ.name}</button
           >{/each}
       </div>
-      <h2>Review activity · last 90 active days</h2>
+      </details>
+      <details><summary>Review activity · last 90 active days</summary>
       <div class="graph">
         {#each [...overview.stats.days].reverse() as day}<div
             title={`${day.day}: ${day.reviews} reviews, ${day.again} Again, ${Math.round(day.seconds)} seconds`}
@@ -813,6 +1044,7 @@
           </div>{/each}
       </div>
       {#if !overview.stats.days.length}<p>No completed reviews yet.</p>{/if}
+      </details>
     {:else if view === "browser"}
       <form
         class="toolbar"
@@ -825,14 +1057,21 @@
         <input
           aria-label="Search notes"
           bind:value={search}
-          placeholder="Search text, tag:name, is:due/new/review/learning/suspended/leech/archived, deck:name"
-        /><button>Search</button>
+          placeholder="Search cards or tag:name"
+        /><Button type="submit" size="sm">Search</Button>
       </form>
-      <p>
-        {total} notes found. Editing retains schedules of unchanged card ordinals;
-        deleted templates/clozes remove their cards.
-      </p>
-      {#each notes as note}<article class="note">
+      <p>{total} notes in {scopeLabel}{search ? ` matching “${search}”` : ""}.</p>
+      <details><summary>Advanced search &amp; scheduling</summary><p>Search with is:due/new/review/learning/suspended/leech/archived or deck:name. Editing retains schedules of unchanged card ordinals; deleted templates/clozes remove their cards.</p></details>
+      {#if !total}<Panel><div class="empty-state">
+        <h2>{search ? "No matching cards" : "No cards in this scope yet"}</h2>
+        <p>{search ? "Try a broader search, or create a card in the selected deck." : "Write a question on the front and its answer on the back to start studying."}</p>
+        <Button intent="primary" onclick={() => newNote()} disabled={!overview.decks.some(deck => !deck.archived)}>New card</Button>
+        {#if search}<Button variant="ghost" onclick={() => { search = ""; offset = 0; void browse(); }}>Clear search</Button>{/if}
+      </div></Panel>{/if}
+      {#each notes as note}<article class="note" oncontextmenu={(event) => {
+        if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]') || window.getSelection()?.toString()) return;
+        event.preventDefault(); if (!busy) void noteAction(note, "delete");
+      }}>
           <div class="note-fields">
             {#each Object.entries(note.fields) as [name, text]}<p>
                 <strong>{name}</strong>
@@ -850,6 +1089,7 @@
               disabled={busy}>Delete</button
             >
           </div>
+          <details><summary>Card schedules &amp; actions ({note.cards.length})</summary>
           {#each note.cards as card}<div class="card-row">
               <span
                 >Card {card.ordinal + 1}: {card.state} · {new Date(
@@ -878,6 +1118,7 @@
                   : "Bury today"}</button
               >
             </div>{/each}
+          </details>
         </article>{/each}
       <div class="toolbar">
         <button
@@ -886,7 +1127,7 @@
             offset = Math.max(0, offset - 50);
             void browse();
           }}>Previous</button
-        ><span>{offset + 1}–{Math.min(offset + 50, total)} / {total}</span
+        ><span>{total ? offset + 1 : 0}–{Math.min(offset + 50, total)} / {total}</span
         ><button
           disabled={offset + 50 >= total}
           onclick={() => {
@@ -896,39 +1137,44 @@
         >
       </div>
     {:else if view === "editor"}
-      <h2>{editing ? "Edit note" : "New note"}</h2>
-      <p>
-        Cloze syntax: {"{{c1::answer::hint}}"}. Multiple indices create separate
-        cards. Formatting supports safe HTML, **bold**, `code`, local images and
-        [sound:filename]. Remote images/scripts are never loaded.
-      </p>
+      <h2>{editing ? "Edit card" : "New card"}</h2>
+      <p>{editing ? "Changes stay local until you save them." : "Write one question and one answer. You can add cloze, images or other card formats under the optional controls."}</p>
       <form
         onsubmit={(e) => {
           e.preventDefault();
           void saveNote();
         }}
       >
+        <details>
+          <summary>Card format · {selectedType?.name || "Choose a format"}</summary>
+          <label>Card format<select bind:value={typeId} onchange={(event) => { typeId = Number(event.currentTarget.value); switchType(); }} disabled={busy}>
+            {#each overview.types as typ}<option value={typ.id}>{typ.name}</option>{/each}
+          </select></label>
+          <p>Basic creates a front/back card. Cloze hides marked text; reversed and custom templates may create several cards from one note. Changing format can add or remove cards when saved; switching back before saving retains your draft fields.</p>
+        </details>
         {#each selectedType?.fields || [] as field}<label
-            >{field}<textarea
+            >{field === "Front" ? "Front · question" : field === "Back" ? "Back · answer" : field}<textarea
               bind:value={editorFields[field]}
               rows="5"
+              placeholder={field === "Front" ? "Ask one clear question or give a retrieval cue…" : field === "Back" ? "Write the answer you will reveal after trying…" : `Enter ${field}…`}
               required={field === selectedType?.fields[0]}
             ></textarea></label
-          >{/each}<label
-          >Tags (space separated)<input bind:value={editorTags} /></label
-        >
-        <div class="toolbar">
-          <button disabled={busy}>Save note</button><button
-            type="button"
-            onclick={() => show("browser")}>Cancel</button
-          ><label class="upload"
-            >Attach image / audio<input
-              type="file"
-              accept=".png,.jpg,.jpeg,.gif,.webp,.mp3,.ogg,.wav"
-              onchange={upload}
-              disabled={busy}
-            /></label
-          >
+          >{/each}
+        <details>
+          <summary>Tags, images &amp; formatting</summary>
+          <label>Tags (space separated)<input bind:value={editorTags} /></label>
+          <p>Cloze syntax: {"{{c1::answer::hint}}"}. Multiple indices create separate cards. Safe HTML, **bold**, `code`, local images and [sound:filename] are supported. Remote images/scripts are never loaded.</p>
+          <label class="upload">Attach image / audio<input
+            type="file"
+            accept=".png,.jpg,.jpeg,.gif,.webp,.mp3,.ogg,.wav"
+            onchange={upload}
+            disabled={busy}
+          /></label>
+          <p>Reference an uploaded image with &lt;img src="filename.png"&gt; or audio with [sound:filename]. Uploading media does not save this card.</p>
+        </details>
+        <div class="toolbar editor-actions">
+          <Button type="submit" intent="primary" disabled={busy || !deckId || !selectedType}>{busy ? "Saving…" : editing ? "Save changes" : "Save card"}</Button>
+          <Button type="button" variant="ghost" onclick={() => void show("browser")} disabled={busy}>Cancel — do not save</Button>
         </div>
       </form>
       {#if overview.media.length}<details>
@@ -937,8 +1183,10 @@
               {media.name} · {media.mime} · {Math.round(media.size / 1024)} KiB
             </p>{/each}
         </details>{/if}
+      {@render referencePanel()}
     {:else if view === "deck-editor" && cfg}
-      <h2>Deck settings</h2>
+      <h2>{deckEditing ? "Deck settings" : "New deck"}</h2>
+      <p>{deckEditing ? "Adjust future study sessions for this deck." : "Name your deck, then add its first question and answer. Sensible study defaults are ready to use."}</p>
       <form
         onsubmit={(e) => {
           e.preventDefault();
@@ -946,11 +1194,13 @@
         }}
       >
         <label
-          >Name (Parent::Child creates a subdeck)<input
+          >Deck name<input
             bind:value={deckName}
             required
           /></label
         >
+        <p class="hint">Use Parent::Child to create a subdeck.</p>
+        <details open={!!deckEditing}><summary>Study limits &amp; advanced scheduling</summary>
         <div class="settings-grid">
           <label
             >New cards per day<input
@@ -1006,7 +1256,11 @@
           Learning/relearning always bypass daily limits. Retention changes
           affect future reviews, not existing due dates.
         </p>
-        <button disabled={busy}>Save settings</button>
+        </details>
+        <div class="toolbar editor-actions">
+          <Button type="submit" intent="primary" disabled={busy || !deckName.trim()}>{deckEditing ? "Save settings" : "Create deck & add first card"}</Button>
+          <Button type="button" variant="ghost" onclick={() => void show("decks")} disabled={busy}>Cancel</Button>
+        </div>
       </form>
     {:else if view === "type-editor"}
       <h2>Note type / template editor</h2>
@@ -1038,9 +1292,11 @@
           Field names of in-use types are fixed. Template edits can remove
           cards; their review history remains but is detached.
         </p>
-        <button disabled={busy}>Save note type</button>
+        <div class="toolbar"><Button type="submit" intent="primary" disabled={busy}>Save note type</Button><Button type="button" variant="ghost" onclick={() => void show("decks")} disabled={busy}>Cancel</Button></div>
       </form>
     {:else if view === "review"}
+      <h2>{mode === "regular" ? "Review due cards" : "Practice cards"}</h2>
+      <details class="review-options"><summary>Study options · {mode === "regular" ? "Scheduled review" : "Practice — no rescheduling"}{search ? " · filtered" : ""}</summary>
       <div class="toolbar">
         <label
           >Study mode<select bind:value={mode} onchange={resetReview}
@@ -1054,29 +1310,38 @@
             oninput={resetReview}
             placeholder="tag:name or search text"
           /></label
-        ><button onclick={startReview} disabled={busy}>Start / refresh</button
-        ><button onclick={undo} disabled={busy}>Undo last review</button>
+        ><Button onclick={() => void startReview()} disabled={busy}>Start / refresh</Button>
       </div>
+      <label class="check"><input type="checkbox" bind:checked={typedEnabled} />Type your answer before revealing (self-graded)</label>
+      {#if practiceResume}<Button size="sm" variant="ghost" onclick={resumePractice} disabled={busy}>Resume last practice queue</Button>{/if}
+      </details>
       <p>
         {remaining} eligible cards · {mode === "regular"
-          ? "FSRS schedule"
+          ? "Scheduled study · ratings update future due dates"
           : "Practice only: regular due dates unchanged"}
       </p>
-      <label class="check"
-        ><input type="checkbox" bind:checked={typedEnabled} />Type your answer
-        before revealing (self-graded)</label
-      >
+      <div class="toolbar"><p class="hint">Try to recall the answer, flip the card, then rate how well you remembered.</p>
+        <Button size="sm" variant="ghost" onclick={undo} disabled={busy}>Undo last review</Button></div>
       {#if review}<article class="review-card" aria-live="polite">
           <small>{review.state} · {review.mode}</small>
-          <div class="card-content">{@html review.front}</div>
+          <div class="flip-stage"><div class="flip-card" class:flipped={answerFace}>
+            <div class="card-face question-face" aria-hidden={answerFace} inert={answerFace}>
+              <small>Question</small><div class="card-content">{@html review.front}</div>
+            </div>
+            <div class="card-face answer-face" aria-hidden={!answerFace} inert={!answerFace}>
+              <small>Answer</small>{#if revealed}<div class="card-content">{@html back}</div>{/if}
+            </div>
+          </div></div>
           {#if typedEnabled}<label
               >Your answer<input
                 bind:value={typedAnswer}
                 readonly={revealed}
                 autocomplete="off"
               /></label
-            >{/if}{#if revealed}<hr />
-            <div class="card-content">{@html back}</div>
+            >{/if}{#if revealed}
+            <Button size="sm" variant="ghost" onclick={() => (answerFace = !answerFace)}>{answerFace ? "Show question" : "Show answer"}</Button>
+            {@render referencePanel()}
+            <p class="rating-guide">How well did you remember? Again = missed · Hard = struggled · Good = recalled · Easy = effortless.</p>
             <div class="grades">
               {#each labels as label, index}<button
                   onclick={() => grade(index + 1)}
@@ -1085,13 +1350,13 @@
                       >{interval(intervals[index].seconds)}</small
                     >{/if}</button
                 >{/each}
-            </div>{:else}<button class="reveal" onclick={reveal} disabled={busy}
-              >Reveal answer · Space</button
-            >{/if}
-        </article>{:else}<p>
-          No card available. Refresh when a learning card becomes due, or use a
-          practice filter.
-        </p>{/if}
+            </div>{:else}<Button intent="primary" onclick={reveal} disabled={busy}>Flip to answer · Space</Button>{/if}
+        </article>{:else}<Panel><div class="empty-state">
+          <h3>{busy ? "Preparing your review…" : "No eligible card right now"}</h3>
+          <p>Learning cards appear at their scheduled time. Daily limits reset at local midnight. Add a card, refresh later, or choose a practice mode under Study options.</p>
+          <div class="toolbar"><Button onclick={() => void startReview()} disabled={busy}>Refresh review</Button>
+            <Button variant="ghost" onclick={() => newNote()} disabled={busy || !overview.decks.some(deck => !deck.archived)}>New card</Button></div>
+        </div></Panel>{/if}
       <p class="hint">
         Outside inputs: Space reveals / grades Good; 1–4 grades only after
         reveal.
@@ -1142,6 +1407,12 @@
           ><option value="tsv">TSV</option></select
         ></label
       >
+      {#if format !== "apkg"}
+        <label>CSV / TSV card format<select bind:value={typeId}>
+          {#each overview.types as typ}<option value={typ.id}>{typ.name}</option>{/each}
+        </select></label>
+        <p class="hint">Import field order: {selectedType?.fields.join(" → ")}. Choose a destination deck above.</p>
+      {/if}
       <div class="toolbar">
         <label class="upload"
           >Import into selected deck / type<input
@@ -1152,7 +1423,7 @@
                 ? ".csv"
                 : ".tsv,.txt"}
             onchange={importFile}
-            disabled={busy}
+            disabled={busy || (format !== "apkg" && (!deckId || !typeId))}
           /></label
         ><button onclick={exportFile} disabled={busy}
           >Export selected deck + subdecks</button
@@ -1173,6 +1444,7 @@
         purpose="flashcards"
         text={sourceText}
         {demo}
+        active={pane.active}
         onresult={receiveAI}
       />
       {#each drafts as draft, index}<article class="draft">
@@ -1223,6 +1495,41 @@
     gap: 0.75rem;
     flex-wrap: wrap;
   }
+  .primary-actions,
+  .editor-actions,
+  .empty-state .toolbar,
+  .tools-menu .toolbar {
+    justify-content: flex-start;
+  }
+  .scope-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1.1rem 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: 0.7rem;
+    background: var(--surface-raised);
+  }
+  .scope-heading h2 { margin: 0.3rem 0 0; font-size: 1.25rem; overflow-wrap: anywhere; }
+  .scope-heading p { margin: 0; }
+  .scope-heading span { display: block; margin-top: 0.3rem; font-size: 0.85rem; }
+  .empty-state { padding: 1rem; }
+  .empty-state h2,
+  .empty-state h3 { margin: 0.6rem 0; }
+  .empty-state p { max-width: 65ch; line-height: 1.6; }
+  details { margin: 0.85rem 0; }
+  summary { cursor: pointer; color: var(--ink); font-weight: 600; line-height: 1.5; }
+  details[open] > summary { margin-bottom: 0.7rem; }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .tools-menu { margin: 0; padding: 0.4rem 0.6rem; }
+  .tools-menu .toolbar { margin-bottom: 0.2rem; }
+  .selected-deck { border-color: var(--accent); }
+  .selected-label { display: inline-block; margin-left: 0.5rem; font-size: 0.75rem; color: var(--accent); }
+  .rating-guide { font-size: 0.9rem; line-height: 1.6; }
+  .review-options { padding: 0.8rem 1rem; border: 1px solid var(--border); border-radius: 0.6rem; }
+  .editor-actions { padding-top: 0.8rem; border-top: 1px solid var(--border); }
   header h1 {
     margin: 0;
   }
@@ -1255,8 +1562,7 @@
     padding: 0.55rem 0.8rem;
     cursor: pointer;
   }
-  button.active,
-  .reveal {
+  nav :global(button[aria-current="page"]) {
     background: var(--accent);
     color: var(--surface);
   }
@@ -1358,6 +1664,12 @@
     margin: 1.5rem auto;
     text-align: center;
   }
+  .flip-stage { perspective: 1400px; margin: 1rem 0; }
+  .flip-card { display: grid; min-height: 240px; transform-style: preserve-3d; transition: transform .48s cubic-bezier(.2,.65,.25,1); }
+  .flip-card.flipped { transform: rotateY(180deg); }
+  .card-face { grid-area: 1 / 1; padding: 1.5rem; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: 12px; background: var(--surface); backface-visibility: hidden; -webkit-backface-visibility: hidden; align-content: center; }
+  .card-face > small { color: var(--muted); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; }
+  .answer-face { transform: rotateY(180deg); }
   .card-content {
     font-size: 1.3rem;
     overflow-wrap: anywhere;
@@ -1377,9 +1689,6 @@
   }
   .grades small {
     display: block;
-  }
-  .reveal {
-    margin: 1rem;
   }
   .graph {
     display: flex;
@@ -1430,5 +1739,16 @@
   select:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
+  }
+  @media (max-width: 600px) {
+    .flashcards { padding: 1rem; }
+    .grades { grid-template-columns: repeat(2, 1fr); }
+    .card-face { padding: 1rem; }
+    .card-content { font-size: 1.1rem; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .flip-card { transition: none; transform: none; }
+    .flip-card.flipped, .answer-face { transform: none; }
+    .card-face[aria-hidden="true"] { visibility: hidden; }
   }
 </style>

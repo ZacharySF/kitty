@@ -10,6 +10,7 @@ import os
 import re
 import sqlite3
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -84,7 +85,7 @@ def empty_document() -> dict:
 
 
 def normalize(value: Any, conn: sqlite3.Connection | None = None) -> dict:
-    keys(value, {"version", "grid", "snap", "layers", "elements"}, {"version", "layers", "elements"})
+    keys(value, {"version", "grid", "snap", "background", "layers", "elements"}, {"version", "layers", "elements"})
     if value["version"] != 1 or type(value["version"]) is not int:
         raise NotesError("Unsupported notebook document version")
     layers, elements = value["layers"], value["elements"]
@@ -100,7 +101,7 @@ def normalize(value: Any, conn: sqlite3.Connection | None = None) -> dict:
     if len(layer_ids) != len(layers):
         raise NotesError("Duplicate layer identifier")
     output, ids, points_total = [], set(), 0
-    allowed = {"id", "kind", "layer", "x", "y", "w", "h", "color", "fill", "width", "points", "text", "fontSize", "group", "attachment", "from", "to"}
+    allowed = {"id", "kind", "layer", "x", "y", "w", "h", "color", "fill", "width", "points", "text", "fontSize", "group", "attachment", "from", "to", "tags", "checked"}
     for element in elements:
         keys(element, allowed, {"id", "kind", "layer", "x", "y", "w", "h", "color", "width"})
         eid = identifier(element["id"])
@@ -132,6 +133,15 @@ def normalize(value: Any, conn: sqlite3.Connection | None = None) -> dict:
         if kind in {"text", "sticky"}:
             item["text"] = text(element.get("text", ""), 20_000)
             item["fontSize"] = number(element.get("fontSize", 20), 8, 120)
+            tags = element.get("tags", [])
+            if not isinstance(tags, list) or len(tags) > 4 or any(not isinstance(tag, str) or tag not in {"todo", "important", "question", "definition"} for tag in tags):
+                raise NotesError("Unknown note tag")
+            if tags:
+                item["tags"] = list(dict.fromkeys(tags))
+            if "checked" in element:
+                if type(element["checked"]) is not bool:
+                    raise NotesError("Checkbox state must be boolean")
+                item["checked"] = element["checked"]
         if kind == "image":
             attachment = identifier(element.get("attachment"))
             if conn is not None and not conn.execute("SELECT 1 FROM note_attachments WHERE id=?", (attachment,)).fetchone():
@@ -153,6 +163,10 @@ def normalize(value: Any, conn: sqlite3.Connection | None = None) -> dict:
         if type(value.get(flag, False)) is not bool:
             raise NotesError("Grid and snap flags must be boolean")
     result = {"version": 1, "grid": value.get("grid", False), "snap": value.get("snap", False), "layers": normalized_layers, "elements": output}
+    if "background" in value:
+        if not isinstance(value["background"], str) or value["background"] not in {"blank", "lined", "grid", "dotted", "cornell"}:
+            raise NotesError("Unknown page background")
+        result["background"] = value["background"]
     if len(json.dumps(result, ensure_ascii=False).encode()) > MAX_DOCUMENT_BYTES:
         raise NotesError("Canvas document exceeds 2 MiB")
     return result
@@ -175,30 +189,93 @@ def page(conn: sqlite3.Connection, page_id: int) -> dict:
 def listing(conn: sqlite3.Connection, search: str = "") -> dict:
     search = text(search, 300)
     pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-    rows = conn.execute("SELECT p.id,p.notebook_id,p.title,p.revision,p.updated_at FROM note_pages p JOIN note_notebooks n ON p.notebook_id=n.id WHERE p.title LIKE ? ESCAPE '\\' OR p.search_text LIKE ? ESCAPE '\\' OR n.title LIKE ? ESCAPE '\\' OR n.subject LIKE ? ESCAPE '\\' OR n.project LIKE ? ESCAPE '\\' ORDER BY p.updated_at DESC LIMIT 500", (pattern,) * 5)
+    rows = conn.execute("SELECT p.id,p.notebook_id,p.title,p.revision,p.updated_at,p.favorite,p.last_opened,p.position FROM note_pages p JOIN note_notebooks n ON p.notebook_id=n.id WHERE p.title LIKE ? ESCAPE '\\' OR p.search_text LIKE ? ESCAPE '\\' OR n.title LIKE ? ESCAPE '\\' OR n.subject LIKE ? ESCAPE '\\' OR n.project LIKE ? ESCAPE '\\' ORDER BY p.position,p.updated_at DESC,p.id LIMIT 500", (pattern,) * 5)
     prefs = dict(conn.execute("SELECT allow_ai,retention_days,revision FROM note_preferences WHERE id=1").fetchone())
     prefs["allow_ai"] = bool(prefs["allow_ai"])
-    return {"notebooks": [dict(row) for row in conn.execute("SELECT * FROM note_notebooks ORDER BY updated_at DESC LIMIT 200")], "pages": [dict(row) for row in rows], "preferences": prefs}
+    return {"folders": [dict(row) for row in conn.execute("SELECT * FROM note_folders ORDER BY position,title,id")], "notebooks": [dict(row) for row in conn.execute("SELECT * FROM note_notebooks ORDER BY position,updated_at DESC LIMIT 200")], "pages": [dict(row) for row in rows], "preferences": prefs}
 
 
-def create_notebook(conn: sqlite3.Connection, title: Any, subject: Any = "", project: Any = "") -> dict:
+def _folder_id(conn: sqlite3.Connection, value: Any) -> int | None:
+    if value is None:
+        return None
+    fid = integer(value)
+    if not conn.execute("SELECT 1 FROM note_folders WHERE id=?", (fid,)).fetchone():
+        raise NotesError("Folder not found", 404)
+    return fid
+
+
+def create_folder(conn: sqlite3.Connection, title: Any, parent_id: Any = None) -> dict:
+    title = text(title, 200)
+    if not title.strip():
+        raise NotesError("Folder title is required")
+    with transaction(conn):
+        parent = _folder_id(conn, parent_id)
+        stamp = now()
+        fid = conn.execute("INSERT INTO note_folders(title,parent_id,created_at,updated_at) VALUES (?,?,?,?)", (title, parent, stamp, stamp)).lastrowid
+    return dict(conn.execute("SELECT * FROM note_folders WHERE id=?", (fid,)).fetchone())
+
+
+def save_folder(conn: sqlite3.Connection, folder_id: int, revision: Any, title: Any, parent_id: Any) -> dict:
+    fid, rev, title = integer(folder_id), integer(revision), text(title, 200)
+    if not title.strip():
+        raise NotesError("Folder title is required")
+    with transaction(conn):
+        current = conn.execute("SELECT revision FROM note_folders WHERE id=?", (fid,)).fetchone()
+        if current is None:
+            raise NotesError("Folder not found", 404)
+        if current["revision"] != rev:
+            raise NotesError("Folder changed in another tab; reload before editing", 409)
+        parent = _folder_id(conn, parent_id)
+        ancestor = parent
+        while ancestor is not None:
+            if ancestor == fid:
+                raise NotesError("A folder cannot contain itself or move into its descendants")
+            ancestor = conn.execute("SELECT parent_id FROM note_folders WHERE id=?", (ancestor,)).fetchone()["parent_id"]
+        conn.execute("UPDATE note_folders SET title=?,parent_id=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?", (title, parent, now(), fid, rev))
+    return dict(conn.execute("SELECT * FROM note_folders WHERE id=?", (fid,)).fetchone())
+
+
+def delete_folder(conn: sqlite3.Connection, folder_id: int, revision: Any) -> dict:
+    fid, rev = integer(folder_id), integer(revision)
+    with transaction(conn):
+        current = conn.execute("SELECT revision FROM note_folders WHERE id=?", (fid,)).fetchone()
+        if current is None:
+            raise NotesError("Folder not found", 404)
+        if current["revision"] != rev:
+            raise NotesError("Folder changed; reload before deleting", 409)
+        if conn.execute("SELECT 1 FROM note_folders WHERE parent_id=? UNION ALL SELECT 1 FROM note_notebooks WHERE folder_id=? LIMIT 1", (fid, fid)).fetchone():
+            raise NotesError("Only empty folders can be deleted", 409)
+        conn.execute("DELETE FROM note_folders WHERE id=? AND revision=?", (fid, rev))
+    return {"ok": True}
+
+
+def create_notebook(conn: sqlite3.Connection, title: Any, subject: Any = "", project: Any = "", folder_id: Any = None) -> dict:
     title, subject, project = text(title, 200), text(subject, 200), text(project, 200)
     if not title.strip():
         raise NotesError("Notebook title is required")
-    with transaction(conn):
+    with (nullcontext() if conn.in_transaction else transaction(conn)):
+        folder = _folder_id(conn, folder_id)
         if conn.execute("SELECT COUNT(*) FROM note_notebooks").fetchone()[0] >= 200:
             raise NotesError("Notebook limit reached")
         stamp = now()
-        nid = conn.execute("INSERT INTO note_notebooks(title,subject,project,created_at,updated_at) VALUES (?,?,?,?,?)", (title, subject, project, stamp, stamp)).lastrowid
+        nid = conn.execute("INSERT INTO note_notebooks(title,subject,project,folder_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (title, subject, project, folder, stamp, stamp)).lastrowid
     return dict(conn.execute("SELECT * FROM note_notebooks WHERE id=?", (nid,)).fetchone())
 
 
-def save_notebook(conn: sqlite3.Connection, notebook_id: int, revision: Any, title: Any, subject: Any, project: Any) -> dict:
+_UNSET_FOLDER = object()
+
+
+def save_notebook(conn: sqlite3.Connection, notebook_id: int, revision: Any, title: Any, subject: Any, project: Any, folder_id: Any = _UNSET_FOLDER) -> dict:
     values = (text(title, 200), text(subject, 200), text(project, 200), now(), integer(notebook_id), integer(revision))
     if not values[0].strip():
         raise NotesError("Notebook title is required")
     with transaction(conn):
-        if conn.execute("UPDATE note_notebooks SET title=?,subject=?,project=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?", values).rowcount != 1:
+        if folder_id is _UNSET_FOLDER:
+            cursor = conn.execute("UPDATE note_notebooks SET title=?,subject=?,project=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?", values)
+        else:
+            folder = _folder_id(conn, folder_id)
+            cursor = conn.execute("UPDATE note_notebooks SET folder_id=?,title=?,subject=?,project=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?", (folder, *values))
+        if cursor.rowcount != 1:
             raise NotesError("Notebook changed in another tab; reload before editing", 409)
     return dict(conn.execute("SELECT * FROM note_notebooks WHERE id=?", (notebook_id,)).fetchone())
 
@@ -207,7 +284,7 @@ def create_page(conn: sqlite3.Connection, notebook_id: Any, title: Any = "Untitl
     nid, title = integer(notebook_id), text(title, 200)
     if not title.strip():
         raise NotesError("Page title is required")
-    with transaction(conn):
+    with (nullcontext() if conn.in_transaction else transaction(conn)):
         if not conn.execute("SELECT 1 FROM note_notebooks WHERE id=?", (nid,)).fetchone():
             raise NotesError("Notebook not found", 404)
         if conn.execute("SELECT COUNT(*) FROM note_pages").fetchone()[0] >= MAX_PAGES:
@@ -223,7 +300,8 @@ def save_page(conn: sqlite3.Connection, page_id: int, revision: Any, document: A
         raise NotesError("Page title is required")
     with transaction(conn):
         doc = normalize(document, conn)
-        search = "\n".join(item.get("text", "") for item in doc["elements"])
+        from kitty.core.note_blocks import search_text
+        search = search_text(conn, page_id, doc)
         cursor = conn.execute("UPDATE note_pages SET title=?,document=?,search_text=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?", (title, json.dumps(doc, ensure_ascii=False), search, now(), integer(page_id), rev))
         if cursor.rowcount != 1:
             raise NotesError("Page changed in another tab. Export your local copy, then reload; stale edits were not saved.", 409)
@@ -253,6 +331,80 @@ def delete_page(conn: sqlite3.Connection, page_id: int, revision: Any) -> dict:
         if conn.execute("DELETE FROM note_pages WHERE id=? AND revision=?", (integer(page_id), integer(revision))).rowcount != 1:
             raise NotesError("Page changed; reload before deleting", 409)
     return {"ok": True}
+
+
+def resolve_page(conn, title, notebook_id=None):
+    title = text(title, 200).strip()
+    if not title:
+        raise NotesError("Page title is required")
+    with transaction(conn, immediate=True):
+        row = conn.execute("SELECT id FROM note_pages WHERE title=? COLLATE NOCASE ORDER BY id LIMIT 1", (title,)).fetchone()
+        if row:
+            return page(conn, row["id"])
+        if notebook_id is None:
+            book = conn.execute("SELECT id FROM note_notebooks ORDER BY id LIMIT 1").fetchone()
+            notebook_id = book["id"] if book else create_notebook(conn, "Notes")["id"]
+        return create_page(conn, notebook_id, title)
+
+
+def daily_page(conn, date=None):
+    date = date if date is not None else datetime.now().date().isoformat()
+    if not isinstance(date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        raise NotesError("Date must be YYYY-MM-DD")
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise NotesError("Invalid daily note date") from None
+    with transaction(conn, immediate=True):
+        row = conn.execute("SELECT page_id FROM note_daily WHERE date=?", (date,)).fetchone()
+        if row:
+            return page(conn, row["page_id"])
+        book = conn.execute("SELECT id FROM note_notebooks WHERE title='Daily notes' ORDER BY id LIMIT 1").fetchone()
+        nid = book["id"] if book else create_notebook(conn, "Daily notes")["id"]
+        result = create_page(conn, nid, date)
+        conn.execute("INSERT INTO note_daily(date,page_id) VALUES (?,?)", (date, result["id"]))
+        return result
+
+
+def organize_page(conn, page_id, body):
+    keys(body, {"favorite", "visited"})
+    for value in body.values():
+        if type(value) is not bool:
+            raise NotesError("Page flags must be boolean")
+    with transaction(conn):
+        page(conn, page_id)
+        if "favorite" in body:
+            conn.execute("UPDATE note_pages SET favorite=? WHERE id=?", (body["favorite"], page_id))
+        if body.get("visited"):
+            conn.execute("UPDATE note_pages SET last_opened=? WHERE id=?", (now(), page_id))
+    return page(conn, page_id)
+
+
+def reorder(conn, kind, ids):
+    tables = {"pages": "note_pages", "notebooks": "note_notebooks", "folders": "note_folders"}
+    if not isinstance(kind, str) or kind not in tables or not isinstance(ids, list) or len(ids) > 500:
+        raise NotesError("Invalid note order")
+    ids = [integer(value) for value in ids]
+    if len(set(ids)) != len(ids):
+        raise NotesError("Duplicate ordered item")
+    table = tables[kind]
+    with transaction(conn, immediate=True):
+        for position, item_id in enumerate(ids):
+            if conn.execute(f"UPDATE {table} SET position=? WHERE id=?", (position, item_id)).rowcount != 1:
+                raise NotesError("Ordered item not found", 404)
+    return {"ok": True}
+
+
+def tags_summary(conn):
+    result = []
+    for row in conn.execute("SELECT id,title,document FROM note_pages ORDER BY updated_at DESC LIMIT 500"):
+        for item in json.loads(row["document"]).get("elements", []):
+            if item.get("kind") in {"text", "sticky"} and item.get("tags"):
+                result.append({"page_id": row["id"], "title": row["title"], "element_id": item["id"], "text": item.get("text", ""), "tags": item["tags"], "checked": item.get("checked", False)})
+    for row in conn.execute("SELECT b.id,b.page_id,b.text,p.title FROM note_blocks b JOIN note_pages p ON p.id=b.page_id WHERE EXISTS(SELECT 1 FROM note_block_topics t WHERE t.block_id=b.id AND t.kind='tag') ORDER BY p.updated_at DESC,b.ordering LIMIT 2000"):
+        tags = [item["topic"] for item in conn.execute("SELECT topic FROM note_block_topics WHERE block_id=? AND kind='tag' ORDER BY topic", (row["id"],))]
+        result.append({"page_id": row["page_id"], "title": row["title"], "block_id": row["id"], "text": row["text"], "tags": tags, "checked": False})
+    return {"tags": result}
 
 
 def attachment_root(data_dir: Path) -> Path:
@@ -389,15 +541,23 @@ def export_page(conn: sqlite3.Connection, data_dir: Path, page_id: int) -> dict:
             raise NotesError("Portable page exceeds 12 MiB of references; export drawings or split references across pages")
         attachments.append({"id": aid, "data": base64.b64encode(data).decode(), "name": "Reference.png"})
     notebook = dict(conn.execute("SELECT title,subject,project FROM note_notebooks WHERE id=?", (result["notebook_id"],)).fetchone())
-    return {"format": "kitty-notes", "version": 1, "title": result["title"], "notebook": notebook, "document": result["document"], "viewport": result["viewport"], "attachments": attachments}
+    from kitty.core.note_blocks import get_blocks
+    return {"format": "kitty-notes", "version": 1, "title": result["title"], "notebook": notebook, "document": result["document"], "viewport": result["viewport"], "attachments": attachments, "blocks": get_blocks(conn, page_id)["blocks"]}
 
 
 def restore(conn: sqlite3.Connection, data_dir: Path, notebook_id: Any, value: Any) -> dict:
-    keys(value, {"format", "version", "title", "notebook", "document", "viewport", "attachments"}, {"format", "version", "title", "document", "viewport", "attachments"})
+    keys(value, {"format", "version", "title", "notebook", "document", "viewport", "attachments", "blocks"}, {"format", "version", "title", "document", "viewport", "attachments"})
     if value["format"] != "kitty-notes" or type(value["version"]) is not int or value["version"] != 1:
         raise NotesError("Not a kitty notebook export")
     title, view = text(value["title"], 200), viewport(value["viewport"])
     doc = normalize(value["document"])
+    from kitty.core import note_blocks
+    blocks = note_blocks.normalize(value.get("blocks", []))
+    block_mapping = {block["id"]: str(uuid.uuid4()) for block in blocks}
+    for block in blocks:
+        block["id"] = block_mapping[block["id"]]
+        block["parent_id"] = block_mapping.get(block["parent_id"])
+        block["text"] = note_blocks.REF.sub(lambda match: match[0].replace(match[1] or match[2], block_mapping.get((match[1] or match[2]).lower(), match[1] or match[2])), block["text"])
     if not title.strip() or not isinstance(value["attachments"], list) or len(value["attachments"]) > 100:
         raise NotesError("Invalid portable page references or title")
     nid = integer(notebook_id, 0)
@@ -457,6 +617,8 @@ def restore(conn: sqlite3.Connection, data_dir: Path, notebook_id: Any, value: A
             stamp = now()
             search = "\n".join(item.get("text", "") for item in doc["elements"])
             pid = conn.execute("INSERT INTO note_pages(notebook_id,title,document,search_text,viewport,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (nid, title, json.dumps(doc), search, json.dumps(view), stamp, stamp)).lastrowid
+            if blocks:
+                note_blocks.save_blocks(conn, pid, 1, blocks)
         return page(conn, pid)
     except Exception:
         for path in created:

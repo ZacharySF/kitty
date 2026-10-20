@@ -141,6 +141,36 @@ def test_exact_detail_refresh_updates_eligibility_and_free_tier_without_discover
     assert pages.requests == ["https://boards-api.greenhouse.io/v1/boards/evidence/jobs/42?content=true"]
 
 
+@pytest.mark.parametrize(("url", "endpoint"), [
+    ("https://job-boards.greenhouse.io/evidence/jobs/42",
+     "https://boards-api.greenhouse.io/v1/boards/evidence/jobs/42?content=true"),
+    ("https://jobs.lever.co/evidence/11111111-1111-1111-1111-111111111111",
+     "https://api.lever.co/v0/postings/evidence/11111111-1111-1111-1111-111111111111?mode=json"),
+    ("https://jobs.smartrecruiters.com/Evidence/123-systems-intern",
+     "https://api.smartrecruiters.com/v1/companies/Evidence/postings/123"),
+])
+@pytest.mark.parametrize("status", [404, 410])
+def test_removed_exact_ats_detail_leaves_active_results(workspace, url, endpoint, status):
+    job = add(workspace, url=url)
+    check = check_posting(job, Pages(error=PageHTTPError(status, endpoint)))
+    persist_check(workspace.conn, job.id, check)
+    current = jobs_core.get_job(workspace.conn, job.id)
+    assert check.status == "closed" and not current.is_active and current.closed_at
+    assert job.id not in {item.id for item in jobs_core.list_jobs(workspace.conn, jobs_core.JobFilter())}
+    assert job.id in {item.id for item in jobs_core.list_jobs(workspace.conn, jobs_core.JobFilter(include_closed=True))}
+
+
+def test_older_not_found_response_cannot_close_newer_verified_posting(workspace):
+    job = add(workspace)
+    persist_check(workspace.conn, job.id, PostingCheck("open", "Newer live detail", job.url, "2026-01-01T00:00:00Z"))
+    check = check_posting(job, Pages(error=PageHTTPError(
+        404, "https://boards-api.greenhouse.io/v1/boards/evidence/jobs/42?content=true",
+        observed_at="2000-01-01T00:00:00Z",
+    )))
+    persist_check(workspace.conn, job.id, check)
+    assert jobs_core.get_job(workspace.conn, job.id).is_active
+
+
 @pytest.mark.parametrize("status", [401, 403, 404, 410, 429, 503])
 def test_http_failures_never_close_or_upgrade_freshness(workspace, status):
     job = add(workspace)

@@ -7,7 +7,7 @@
  * caller must offer a keyboard / screen-reader path (lists + `focus(id)`).
  *
  * Node semantics:
- * - `kind === "hub"` marks hub nodes (glowing spheres with framed labels). When no
+ * - `kind === "hub"` marks hub nodes (matte spheres with quiet labels). When no
  *   node is a hub, hubs are picked automatically by weighted degree.
  * - `size` is a visual weight (clamped 0.5–10, radius ∝ √size).
  * - `group` picks the colour (first-seen order over the CSS palette, stable
@@ -22,6 +22,7 @@
  */
 import type { ForceGraph3DInstance } from "3d-force-graph";
 import type * as Three from "three";
+import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 export type GraphNode = {
   id: string;
@@ -50,6 +51,7 @@ export interface GraphHandle {
   setLayout(layout: GraphLayout): void;
   setPhysics(p: Partial<GraphPhysics>): void;
   focus(id: string | null): void;
+  setActive(active: boolean): void;
   resize(): void;
   destroy(): void;
 }
@@ -107,9 +109,11 @@ type SimLink = {
   data: GraphLink;
 };
 type Visual = {
-  core: Three.Mesh;
+  core?: Three.Mesh<Three.SphereGeometry, Three.MeshLambertMaterial | Three.MeshBasicMaterial>;
   radius: number;
-  fades: { material: Three.Material; base: number }[];
+  opacity: number;
+  group: Three.Group;
+  label?: Three.Sprite;
 };
 type Force = ((alpha: number) => void) & {
   initialize?: (nodes: SimNode[]) => void;
@@ -123,10 +127,6 @@ const PALETTE_VARS = [
   "--c4",
   "--c5",
   "--c6",
-  "--violet",
-  "--accent",
-  "--success",
-  "--warning",
 ];
 const FALLBACK_COLOR = "#b2a6c0";
 
@@ -494,8 +494,10 @@ export async function mountGraph(
     layout: GraphLayout;
     physics?: Partial<GraphPhysics>;
     onSelect?: (n: GraphNode) => void;
+    onContextMenu?: (n: GraphNode, event: MouseEvent) => void;
     onHover?: (n: GraphNode | null) => void;
     reducedMotion?: boolean;
+    active?: boolean;
   },
 ): Promise<GraphHandle> {
   if (!webglAvailable())
@@ -508,7 +510,8 @@ export async function mountGraph(
     import("three/examples/jsm/geometries/ConvexGeometry.js"),
     document.fonts?.ready,
   ]);
-  const reduced = !!opts.reducedMotion;
+  const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let reduced = motionQuery.matches || !!opts.reducedMotion;
   let layout: GraphLayout = opts.layout;
   const physics: GraphPhysics = { ...DEFAULT_PHYSICS, ...opts.physics };
 
@@ -521,11 +524,11 @@ export async function mountGraph(
     .filter(Boolean)
     .map((value) => resolveColor(value, probe));
   if (!palette.length) palette.push(FALLBACK_COLOR);
-  const ink = resolveColor(cssVar("--ink") || "#e7dfef", probe);
-  const mutedRgb = hexRgb(
+  let ink = resolveColor(cssVar("--ink") || "#e7dfef", probe);
+  let mutedRgb = hexRgb(
     resolveColor(cssVar("--muted") || FALLBACK_COLOR, probe),
   );
-  const chrome = hexRgb(resolveColor(cssVar("--chrome") || "#0e0c14", probe));
+  let chrome = hexRgb(resolveColor(cssVar("--chrome") || "#0e0c14", probe));
   const orphan: SimNode = {
     id: "",
     data: { id: "", label: "", group: "" },
@@ -543,42 +546,175 @@ export async function mountGraph(
 
   // Shared GPU resources; per-node materials are disposed by the library.
   const hubGeometry = new T.SphereGeometry(1, 24, 18);
-  const leafGeometry = new T.SphereGeometry(1, 10, 8);
+  const leafGeometry = new T.SphereGeometry(1, 8, 6);
   const hitMaterial = new T.MeshBasicMaterial({
     transparent: true,
     opacity: 0,
     depthWrite: false,
     colorWrite: false,
   });
-  const glowCanvas = document.createElement("canvas");
-  glowCanvas.width = glowCanvas.height = 64;
-  const glowContext = glowCanvas.getContext("2d")!;
-  const gradient = glowContext.createRadialGradient(32, 32, 0, 32, 32, 32);
-  gradient.addColorStop(0, "rgba(255,255,255,0.9)");
-  gradient.addColorStop(0.25, "rgba(255,255,255,0.35)");
-  gradient.addColorStop(1, "rgba(255,255,255,0)");
-  glowContext.fillStyle = gradient;
-  glowContext.fillRect(0, 0, 64, 64);
-  const glowTexture = new T.CanvasTexture(glowCanvas);
-  glowTexture.colorSpace = T.SRGBColorSpace;
 
   const visuals = new Map<string, Visual>();
   let nodes: SimNode[] = [];
   let links: SimLink[] = [];
   let byId = new Map<string, SimNode>();
   let topology = new Topology([], []);
+  // Posting labels remain selective; every other node keeps its name, including during focus.
+  let labelledIds = new Set<string>();
   let sphere = new Map<string, Vec>();
   let tree = topology.levels();
   let centres = new Map<string, Vec>();
   let hoverId: string | null = null;
   let selectedId: string | null = null;
   let destroyed = false;
+  let paneActive = opts.active ?? true;
+  let intersecting = true;
+  let rendering = false;
+  let pendingFocus: string | null | undefined;
   let fitAfterSettle = false;
   let resumeTimer: ReturnType<typeof setTimeout> | undefined;
   let hullTick = 0;
   // cameraPosition() is ignored until the library's first render; fit on first tick.
   let initialFit = true;
 
+
+  // Keep all data and individual picking identities, but batch dense geometry.
+  // InstancedMesh reduces leaf draw calls to one; LineSegments does the same
+  // for edges. The force engine and existing OrbitControls remain unchanged.
+  const batches = new T.Group();
+  let leafBatch: Three.InstancedMesh<Three.SphereGeometry, Three.MeshBasicMaterial> | null = null;
+  let edgeBatch: Three.LineSegments<Three.BufferGeometry, Three.LineBasicMaterial> | null = null;
+  const leafIndices = new Map<string, number>();
+  const transform = new T.Object3D();
+  const batchColor = new T.Color();
+  const hitCentre = new T.Vector3();
+  const hitPoint = new T.Vector3();
+  let dense = false;
+
+  let labelFrame = 0;
+  const projectedLabel = new T.Vector3();
+
+  function scheduleLabels() {
+    if (labelFrame || destroyed || !rendering) return;
+    labelFrame = requestAnimationFrame(() => {
+      labelFrame = 0;
+      if (destroyed || !rendering) return;
+      const camera = graph.camera() as Three.PerspectiveCamera;
+      const width = el.clientWidth || 1;
+      const height = el.clientHeight || 1;
+      const occupied: { left: number; top: number; right: number; bottom: number }[] = [];
+      const ordered = [...visuals.entries()].filter(([, visual]) => visual.label);
+      ordered.sort(([a], [b]) => Number(b === active()) - Number(a === active()) || topology.degree(b) - topology.degree(a));
+      for (const [id, visual] of ordered) {
+        const sprite = visual.label!;
+        sprite.getWorldPosition(projectedLabel);
+        const distance = camera.position.distanceTo(projectedLabel);
+        const worldPerPixel = 2 * distance * Math.tan(camera.fov * Math.PI / 360) / height;
+        const image = sprite.material.map!.image as HTMLCanvasElement;
+        const pixelsHigh = id === active() ? 20 : 17;
+        const pixelsWide = pixelsHigh * image.width / image.height;
+        sprite.scale.set(pixelsWide * worldPerPixel, pixelsHigh * worldPerPixel, 1);
+        projectedLabel.project(camera);
+        const x = (projectedLabel.x + 1) * width / 2;
+        const y = (1 - projectedLabel.y) * height / 2;
+        const box = { left: x - pixelsWide / 2 - 4, right: x + pixelsWide / 2 + 4, top: y - pixelsHigh / 2 - 3, bottom: y + pixelsHigh / 2 + 3 };
+        const persistent = byId.get(id)?.data.kind !== "job";
+        const visible = projectedLabel.z >= -1 && projectedLabel.z <= 1 &&
+          box.right > 0 && box.left < width && box.bottom > 0 && box.top < height &&
+          (persistent || !occupied.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top));
+        sprite.visible = visible;
+        if (visible) occupied.push(box);
+      }
+    });
+  }
+  function clearBatches() {
+    if (leafBatch) {
+      batches.remove(leafBatch);
+      leafBatch.dispose();
+      leafBatch.material.dispose();
+      leafBatch = null;
+    }
+    if (edgeBatch) {
+      batches.remove(edgeBatch);
+      edgeBatch.geometry.dispose();
+      edgeBatch.material.dispose();
+      edgeBatch = null;
+    }
+    leafIndices.clear();
+  }
+  function syncBatches() {
+    if (!dense) return;
+    if (leafBatch) {
+      const focus = active();
+      for (const [id, index] of leafIndices) {
+        const node = byId.get(id)!;
+        transform.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
+        transform.scale.setScalar(node.radius * (focus === id ? 1.2 : 1));
+        transform.updateMatrix();
+        leafBatch.setMatrixAt(index, transform.matrix);
+      }
+      leafBatch.instanceMatrix.needsUpdate = true;
+    }
+    if (edgeBatch) {
+      const positions = edgeBatch.geometry.getAttribute("position") as Three.BufferAttribute;
+      links.forEach((link, index) => {
+        const source = nodeOf(link.source);
+        const target = nodeOf(link.target);
+        positions.setXYZ(index * 2, source.x ?? 0, source.y ?? 0, source.z ?? 0);
+        positions.setXYZ(index * 2 + 1, target.x ?? 0, target.y ?? 0, target.z ?? 0);
+      });
+      positions.needsUpdate = true;
+    }
+  }
+  function colorBatches() {
+    const focus = active();
+    if (leafBatch) {
+      for (const [id, index] of leafIndices) {
+        const node = byId.get(id)!;
+        const nearby = !focus || focus === id || topology.adjacency.get(focus)?.has(id);
+        leafBatch.setColorAt(index, batchColor.set(node.css).multiplyScalar(nearby ? 1 : 0.25));
+      }
+      if (leafBatch.instanceColor) leafBatch.instanceColor.needsUpdate = true;
+    }
+    if (edgeBatch) {
+      const colors = edgeBatch.geometry.getAttribute("color") as Three.BufferAttribute;
+      links.forEach((link, index) => {
+        const nearby = !focus || touchesActive(link);
+        batchColor.set(nodeOf(link.source).css).multiplyScalar(nearby ? 0.6 : 0.12);
+        colors.setXYZ(index * 2, batchColor.r, batchColor.g, batchColor.b);
+        colors.setXYZ(index * 2 + 1, batchColor.r, batchColor.g, batchColor.b);
+      });
+      colors.needsUpdate = true;
+    }
+  }
+  function buildBatches() {
+    clearBatches();
+    if (!dense) return;
+    const leaves = nodes.filter(node => !node.hub);
+    if (leaves.length) {
+      leafBatch = new T.InstancedMesh(leafGeometry, new T.MeshBasicMaterial(), leaves.length);
+      leafBatch.instanceMatrix.setUsage(T.DynamicDrawUsage);
+      leafBatch.frustumCulled = false;
+      // Picking is handled by each node's proxy, never by this shared mesh.
+      leafBatch.raycast = () => undefined;
+      leaves.forEach((node, index) => leafIndices.set(node.id, index));
+      batches.add(leafBatch);
+    }
+    if (links.length) {
+      const geometry = new T.BufferGeometry();
+      geometry.setAttribute("position", new T.BufferAttribute(new Float32Array(links.length * 6), 3).setUsage(T.DynamicDrawUsage));
+      geometry.setAttribute("color", new T.BufferAttribute(new Float32Array(links.length * 6), 3));
+      edgeBatch = new T.LineSegments(geometry, new T.LineBasicMaterial({
+        vertexColors: true, transparent: true,
+        opacity: Math.min(0.22, 2 / Math.sqrt(Math.max(1, links.length))), depthWrite: false,
+      }));
+      edgeBatch.frustumCulled = false;
+      edgeBatch.raycast = () => undefined;
+      batches.add(edgeBatch);
+    }
+    syncBatches();
+    colorBatches();
+  }
   function labelSprite(node: SimNode) {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const fontSize = 24 * dpr;
@@ -595,21 +731,28 @@ export async function mountGraph(
     const height = Math.ceil(fontSize + 18 * dpr);
     canvas.width = width;
     canvas.height = height;
-    context.fillStyle = rgba(chrome, 0.88);
-    context.fillRect(0, 0, width, height);
-    context.strokeStyle = node.css;
+    context.fillStyle = rgba(chrome, node.hub ? 0.94 : 0.88);
+    context.strokeStyle = node.hub ? rgba(node.rgb, 0.28) : node.css;
     context.lineWidth = Math.max(1, dpr);
-    context.strokeRect(0.5 * dpr, 0.5 * dpr, width - dpr, height - dpr);
-    const tick = 7 * dpr;
-    context.lineWidth = 2 * dpr;
-    context.beginPath();
-    context.moveTo(dpr, tick);
-    context.lineTo(dpr, dpr);
-    context.lineTo(tick, dpr);
-    context.moveTo(width - tick, height - dpr);
-    context.lineTo(width - dpr, height - dpr);
-    context.lineTo(width - dpr, height - tick);
-    context.stroke();
+    if (node.hub) {
+      context.beginPath();
+      context.roundRect(0.5 * dpr, 0.5 * dpr, width - dpr, height - dpr, 5 * dpr);
+      context.fill();
+      context.stroke();
+    } else {
+      context.fillRect(0, 0, width, height);
+      context.strokeRect(0.5 * dpr, 0.5 * dpr, width - dpr, height - dpr);
+      const tick = 7 * dpr;
+      context.lineWidth = 2 * dpr;
+      context.beginPath();
+      context.moveTo(dpr, tick);
+      context.lineTo(dpr, dpr);
+      context.lineTo(tick, dpr);
+      context.moveTo(width - tick, height - dpr);
+      context.lineTo(width - dpr, height - dpr);
+      context.lineTo(width - dpr, height - tick);
+      context.stroke();
+    }
     context.font = font;
     context.fillStyle = ink;
     context.textBaseline = "middle";
@@ -628,55 +771,52 @@ export async function mountGraph(
     sprite.scale.set((worldHeight * width) / height, worldHeight, 1);
     sprite.position.set(0, node.radius + worldHeight * 0.8, 0);
     sprite.renderOrder = 10;
+    sprite.raycast = () => undefined;
     return { sprite, material };
   }
 
   function buildNode(node: SimNode): Three.Object3D {
     const group = new T.Group();
-    const color = new T.Color(node.css);
-    const fades: Visual["fades"] = [];
-    let core: Three.Mesh;
-    if (node.hub) {
-      const material = new T.MeshLambertMaterial({
-        color,
-        emissive: color,
-        emissiveIntensity: 0.45,
-        transparent: true,
-        opacity: 0.96,
-      });
-      core = new T.Mesh(hubGeometry, material);
-      fades.push({ material, base: 0.96 });
-      const glowMaterial = new T.SpriteMaterial({
-        map: glowTexture,
-        color,
-        blending: T.AdditiveBlending,
-        transparent: true,
-        depthWrite: false,
-        opacity: 0.55,
-      });
-      const glow = new T.Sprite(glowMaterial);
-      glow.scale.setScalar(node.radius * 5.5);
-      glow.raycast = () => undefined;
-      fades.push({ material: glowMaterial, base: 0.55 });
-      group.add(glow);
-      const label = labelSprite(node);
-      fades.push({ material: label.material, base: 1 });
-      group.add(label.sprite);
+    const opacity = node.hub ? 1 : 0.92;
+    let core: Visual["core"];
+    if (dense && !node.hub) {
+      // Analytic sphere picking avoids an invisible extra draw call per leaf.
+      // Returning this proxy preserves 3d-force-graph's node ID/hover callbacks.
+      group.raycast = (raycaster, intersections) => {
+        group.getWorldPosition(hitCentre);
+        const radius = Math.max(node.radius * 1.6, 2.6);
+        if (raycaster.ray.distanceSqToPoint(hitCentre) > radius * radius) return;
+        raycaster.ray.closestPointToPoint(hitCentre, hitPoint);
+        const distance = raycaster.ray.origin.distanceTo(hitPoint);
+        if (distance < raycaster.near || distance > raycaster.far) return;
+        intersections.push({ distance, point: hitPoint.clone(), object: group });
+      };
     } else {
-      const material = new T.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.92,
-      });
-      core = new T.Mesh(leafGeometry, material);
-      fades.push({ material, base: 0.92 });
+      const material = node.hub
+        ? new T.MeshLambertMaterial({
+            color: node.css,
+            transparent: true, opacity,
+          })
+        : new T.MeshBasicMaterial({ color: node.css, transparent: true, opacity });
+      core = new T.Mesh(node.hub ? hubGeometry : leafGeometry, material);
       const hit = new T.Mesh(leafGeometry, hitMaterial);
-      hit.scale.setScalar(Math.max(node.radius * 2.4, 2.6));
+      hit.scale.setScalar(Math.max(node.radius * 1.6, 2.6));
       group.add(hit);
     }
-    core.scale.setScalar(node.radius);
-    group.add(core);
-    visuals.set(node.id, { core, radius: node.radius, fades });
+    const focus = active();
+    const nearby = !focus || focus === node.id || topology.adjacency.get(focus)?.has(node.id);
+    if (core) {
+      core.material.opacity = opacity * (nearby ? 1 : 0.24);
+      core.scale.setScalar(node.radius * (focus === node.id ? (node.hub ? 1.08 : 1.2) : 1));
+      group.add(core);
+    }
+    const visual: Visual = { core, radius: node.radius, opacity, group };
+    if (node.data.kind !== "job" || focus === node.id || (!focus && labelledIds.has(node.id))) {
+      visual.label = labelSprite(node).sprite;
+      group.add(visual.label);
+    }
+    visuals.set(node.id, visual);
+    scheduleLabels();
     return group;
   }
 
@@ -729,35 +869,52 @@ export async function mountGraph(
     const focus = active();
     if (focus) {
       if (touchesActive(link))
-        return rgba(byId.get(focus)?.rgb ?? mutedRgb, 0.85);
+        return rgba(byId.get(focus)?.rgb ?? mutedRgb, source.hub || target.hub ? 0.68 : 0.85);
       return rgba(mutedRgb, 0.025);
     }
     if (layout === "clusters" && source.data.group !== target.data.group)
       return rgba(source.rgb, 0.4);
     if (source.hub && target.hub) return rgba(source.rgb, 0.34);
-    return rgba(mutedRgb, 0.09 + 0.06 * weight);
+    return rgba(source.rgb, 0.16 + 0.05 * weight);
   }
 
   function paint() {
     if (destroyed) return;
     const focus = active();
-    const lit = focus
-      ? new Set([focus, ...(topology.adjacency.get(focus)?.keys() ?? [])])
-      : null;
+    const neighbors = focus ? topology.adjacency.get(focus) : undefined;
     for (const [id, visual] of visuals) {
-      const factor = !lit || lit.has(id) ? 1 : 0.1;
-      for (const fade of visual.fades)
-        fade.material.opacity = fade.base * factor;
-      const grow = id !== focus ? 1 : byId.get(id)?.hub ? 1.35 : 2.4;
-      visual.core.scale.setScalar(visual.radius * grow);
+      const factor = !focus || id === focus || neighbors?.has(id) ? 1 : 0.24;
+      if (visual.core) {
+        visual.core.material.opacity = visual.opacity * factor;
+        visual.core.scale.setScalar(visual.radius * (id === focus ? (byId.get(id)?.hub ? 1.08 : 1.2) : 1));
+      }
+      const showLabel = byId.get(id)?.data.kind !== "job" || id === focus || (!focus && labelledIds.has(id));
+      if (showLabel && !visual.label) {
+        const node = byId.get(id);
+        if (node) {
+          visual.label = labelSprite(node).sprite;
+          visual.group.add(visual.label);
+        }
+      } else if (!showLabel && visual.label) {
+        visual.group.remove(visual.label);
+        visual.label.material.map?.dispose();
+        visual.label.material.dispose();
+        visual.label = undefined;
+      }
     }
+    colorBatches();
+    syncBatches();
+    scheduleLabels();
+    // Dense edge colors live in one GPU buffer, not library materials. Avoid a
+    // graph digest (and simulation restart) on every pointer hover.
+    if (dense) return;
     graph
       .linkColor((link) => linkColor(link))
-      .linkDirectionalArrowLength((link) => (showsArrow(link) ? 3.5 : 0))
+      .linkDirectionalArrowLength((link) => (!dense && showsArrow(link) ? 3.5 : 0))
       .linkDirectionalParticles((link) => {
-        if (reduced) return 0;
-        if (touchesActive(link) && showsArrow(link)) return 3;
-        return layout === "force" && link.data.directed ? 2 : 0;
+        if (dense || reduced || nodeOf(link.source).hub || nodeOf(link.target).hub ||
+            !touchesActive(link) || !showsArrow(link)) return 0;
+        return 1;
       })
       .linkCurvature((link) => {
         if (endpoint(link.source) === endpoint(link.target)) return 0.8;
@@ -803,7 +960,7 @@ export async function mountGraph(
     force.initialize = (list) => (current = list);
     return force;
   }
-  const levelGap = 55;
+  let levelGap = 55;
   const treeRadius = (node: SimNode) => {
     const depth = tree.depth.get(node.id) ?? 0;
     return depth === 0
@@ -822,7 +979,7 @@ export async function mountGraph(
       (node: SimNode) =>
         -physics.repulsion * chargeScale * (node.hub ? 1.8 : 1),
     );
-    charge?.distanceMax?.(layout === "sphere" ? 70 : Infinity);
+    charge?.distanceMax?.(layout === "sphere" ? 70 : dense ? levelGap * 2 : Infinity);
     const link = graph.d3Force("link");
     link
       ?.distance?.((item: SimLink) => {
@@ -877,18 +1034,14 @@ export async function mountGraph(
       const angle = (index / 128) * Math.PI * 2;
       return new T.Vector3(Math.cos(angle) * reach, 0, Math.sin(angle) * reach);
     });
-    const color = new T.Color(`rgb(${mutedRgb.join(",")})`);
-    for (const [x, z] of [
-      [0, 0],
-      [Math.PI / 2, 0],
-      [Math.PI / 2, Math.PI / 2],
-    ]) {
+    for (const [index, [x, z]] of [[0.28, 0.16]].entries()) {
+      const color = new T.Color(palette[index % palette.length]);
       const line = new T.Line(
         new T.BufferGeometry().setFromPoints(ring),
         new T.LineBasicMaterial({
           color,
           transparent: true,
-          opacity: 0.16,
+          opacity: 0.07,
           depthWrite: false,
         }),
       );
@@ -941,7 +1094,7 @@ export async function mountGraph(
         new T.MeshBasicMaterial({
           color,
           transparent: true,
-          opacity: faded ? 0.015 : 0.07,
+          opacity: faded ? 0.01 : 0.035,
           depthWrite: false,
           side: T.DoubleSide,
         }),
@@ -952,7 +1105,7 @@ export async function mountGraph(
         new T.LineBasicMaterial({
           color,
           transparent: true,
-          opacity: faded ? 0.04 : 0.22,
+          opacity: faded ? 0.025 : 0.12,
         }),
       );
       edges.raycast = () => undefined;
@@ -964,6 +1117,8 @@ export async function mountGraph(
   function ingest(data: { nodes: GraphNode[]; links: GraphLink[] }) {
     const previous = byId;
     const seen = new Set<string>();
+    visuals.clear();
+    dense = data.nodes.length >= 400;
     nodes = [];
     for (const item of data.nodes) {
       if (seen.has(item.id)) continue;
@@ -989,26 +1144,37 @@ export async function mountGraph(
         data: link,
       }));
     topology = new Topology(nodes, links);
+    labelledIds = new Set(
+      [...topology.hubs]
+        .sort((a, b) => topology.degree(b.id) - topology.degree(a.id) || a.id.localeCompare(b.id))
+        .slice(0, Math.min(24, Math.max(4, Math.ceil(Math.sqrt(nodes.length)))))
+        .map(node => node.id),
+    );
     for (const node of nodes) {
       const size = Math.min(
         10,
         Math.max(0.5, node.data.size ?? (node.hub ? 4 : 1)),
       );
-      node.radius = node.hub
+      node.radius = 0.9 * (node.hub
         ? 2 + 1.6 * Math.sqrt(size)
-        : 1.15 * Math.sqrt(size);
+        : 1.15 * Math.sqrt(size));
     }
-    sphere = sphereTargets(topology, groupOrder);
+    // Sphere cap relaxation is unnecessary work for Tree and Force layouts.
+    sphere = layout === "sphere" ? sphereTargets(topology, groupOrder) : new Map();
     tree = topology.levels();
+    const breadth = new Map<number, number>();
+    for (const depth of tree.depth.values()) breadth.set(depth, (breadth.get(depth) ?? 0) + 1);
+    levelGap = Math.max(55, Math.sqrt(Math.max(1, ...breadth.values())) * 7);
+    const seeds = fibonacciSphere(nodes.length);
     centres = clusterCentres(
       groupOrder.filter((group) =>
         nodes.some((node) => node.data.group === group),
       ),
       nodes.length,
     );
-    for (const node of nodes) {
+    for (const [index, node] of nodes.entries()) {
       if (node.x !== undefined) continue;
-      const seed = sphere.get(node.id) ?? { x: 0, y: 0, z: 0 };
+      const seed = sphere.get(node.id) ?? scale(seeds[index], layout === "tree" ? treeRadius(node) : levelGap * 1.5);
       node.x = seed.x;
       node.y = seed.y;
       node.z = seed.z;
@@ -1016,11 +1182,15 @@ export async function mountGraph(
     if (hoverId && !byId.has(hoverId)) hoverId = null;
     if (selectedId && !byId.has(selectedId)) selectedId = null;
     for (const id of [...visuals.keys()]) if (!byId.has(id)) visuals.delete(id);
+    buildBatches();
   }
 
   function load(warmup: number) {
     applyForces();
-    graph.warmupTicks(warmup).graphData({ nodes, links });
+    graph
+      .linkVisibility(!dense)
+      .warmupTicks(dense ? Math.min(warmup, reduced ? 30 : 4) : warmup)
+      .graphData({ nodes, links });
     applyForces();
     paint();
   }
@@ -1091,21 +1261,37 @@ export async function mountGraph(
       powerPreference: "high-performance",
     },
   });
+  function finishInitialFit() {
+    if (!initialFit) return;
+    initialFit = false;
+    overview(0);
+    // Public focus can arrive before the renderer's first frame. Apply it
+    // after initialization instead of letting the initial fit override it.
+    queueMicrotask(() => {
+      if (destroyed || !rendering || pendingFocus === undefined) return;
+      const next = pendingFocus;
+      pendingFocus = undefined;
+      handle.focus(next);
+    });
+  }
   graph
     .width(el.clientWidth || 1)
     .height(el.clientHeight || 1)
     .backgroundColor("rgba(0,0,0,0)")
     .showNavInfo(false)
     .nodeRelSize(1)
+    .nodeVisibility(true)
+    .enablePointerInteraction(true)
     .nodeVal((node) => node.radius ** 3)
     .nodeThreeObject((node) => buildNode(node))
     .nodeLabel((node) => tooltip(node))
     .linkWidth((link) => {
       const weight = link.data.weight ?? 1;
-      if (weight > 1.5) return Math.min(1.6, 0.35 * weight);
       const a = nodeOf(link.source);
       const b = nodeOf(link.target);
-      return a.hub && b.hub ? 0.45 : 0;
+      if (weight > 1.5)
+        return a.hub || b.hub ? Math.min(0.8, 0.2 * weight) : Math.min(1.6, 0.35 * weight);
+      return a.hub && b.hub ? 0.18 : 0;
     })
     .linkOpacity(1)
     .linkResolution(4)
@@ -1123,14 +1309,16 @@ export async function mountGraph(
     })
     .d3AlphaDecay(0.03)
     .cooldownTime(8000)
+    .cooldownTicks(reduced ? 0 : Infinity)
     .onEngineTick(() => {
-      if (initialFit) {
-        initialFit = false;
-        overview(0);
-      }
-      if (layout === "clusters" && ++hullTick % 12 === 0) drawHulls();
+      syncBatches();
+      scheduleLabels();
+      finishInitialFit();
+      if (!dense && layout === "clusters" && ++hullTick % 12 === 0) drawHulls();
     })
     .onEngineStop(() => {
+      syncBatches();
+      finishInitialFit();
       drawHulls();
       if (fitAfterSettle) {
         fitAfterSettle = false;
@@ -1138,6 +1326,7 @@ export async function mountGraph(
       }
     })
     .onNodeHover((node) => {
+      if (!rendering) return;
       hoverId = node?.id ?? null;
       el.style.cursor = node ? "pointer" : "";
       setRotation(!node, node ? 0 : 2500);
@@ -1146,36 +1335,43 @@ export async function mountGraph(
       opts.onHover?.(node?.data ?? null);
     })
     .onNodeClick((node) => {
+      if (!rendering) return;
       selectedId = node.id;
       fly(node);
       paint();
       opts.onSelect?.(node.data);
     })
+    .onNodeRightClick((node, event) => {
+      if (!rendering) return;
+      opts.onContextMenu?.(node.data, event);
+    })
     .onBackgroundClick(() => {
+      if (!rendering) return;
       if (!selectedId) return;
       selectedId = null;
       paint();
     });
   graph.scene().add(hulls);
+  graph.scene().add(batches);
+  graph.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   graph.renderer().domElement.setAttribute("aria-hidden", "true");
 
-  const controls = graph.controls() as {
-    autoRotate?: boolean;
-    autoRotateSpeed?: number;
-    addEventListener?: (type: string, listener: () => void) => void;
-    removeEventListener?: (type: string, listener: () => void) => void;
-  };
+  const controls = graph.controls() as OrbitControls;
+  controls.mouseButtons.MIDDLE = T.MOUSE.ROTATE;
   controls.autoRotateSpeed = 0.45;
   function setRotation(on: boolean, delay = 0) {
     clearTimeout(resumeTimer);
-    if (reduced || destroyed) return;
-    if (!on) controls.autoRotate = false;
+    if (destroyed) return;
+    if (reduced || !on || !rendering) controls.autoRotate = false;
     else if (delay)
-      resumeTimer = setTimeout(() => (controls.autoRotate = true), delay);
+      resumeTimer = setTimeout(() => {
+        if (!destroyed && rendering && !reduced) controls.autoRotate = true;
+      }, delay);
     else controls.autoRotate = true;
   }
   const onControlStart = () => setRotation(false);
   const onControlEnd = () => setRotation(true, 7000);
+  controls.addEventListener?.("change", scheduleLabels);
   controls.addEventListener?.("start", onControlStart);
   controls.addEventListener?.("end", onControlEnd);
   setRotation(true);
@@ -1191,6 +1387,7 @@ export async function mountGraph(
   const substitutes = new WeakSet<Event>();
   const releaseRealPointer = (event: PointerEvent) => {
     if (
+      !rendering ||
       event.isTrusted ||
       substitutes.has(event) ||
       event.pointerId !== 0 ||
@@ -1210,6 +1407,36 @@ export async function mountGraph(
   canvas.addEventListener("pointerdown", rememberPointer, true);
   page.addEventListener("pointerup", releaseRealPointer, true);
 
+  const keyboardOrbit = new T.Vector3();
+  const rotateFromKeyboard = (event: KeyboardEvent) => {
+    if (destroyed || !rendering || event.defaultPrevented || event.isComposing ||
+        !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey ||
+        (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest(
+      "input,textarea,select,[contenteditable]:not([contenteditable=false]),[role=textbox]"
+    )) return;
+    if (page.getSelection()?.toString()) return;
+    for (const dialog of page.querySelectorAll("dialog[open],[aria-modal=true]:not(dialog)")) {
+      if (dialog.getClientRects().length) return;
+    }
+    if (page.fullscreenElement && !page.fullscreenElement.contains(el)) return;
+    const bounds = el.getBoundingClientRect();
+    if (!bounds.width || !bounds.height || bounds.bottom <= 0 || bounds.right <= 0 ||
+        bounds.top >= window.innerHeight || bounds.left >= window.innerWidth) return;
+    event.preventDefault();
+    setRotation(false);
+    const camera = graph.camera() as Three.PerspectiveCamera;
+    keyboardOrbit.copy(camera.position).sub(controls.target)
+      .applyAxisAngle(camera.up, (event.key === "ArrowLeft" ? -1 : 1) * Math.PI / 18)
+      .add(controls.target);
+    graph.cameraPosition(keyboardOrbit, controls.target, 0);
+    controls.update();
+    scheduleLabels();
+    setRotation(true, 7000);
+  };
+  page.addEventListener("keydown", rotateFromKeyboard);
+
   function fly(node: SimNode) {
     const x = node.x ?? 0;
     const y = node.y ?? 0;
@@ -1224,12 +1451,69 @@ export async function mountGraph(
   }
 
   ingest(opts);
-  load(layout === "sphere" ? 40 : 160);
+  load(reduced ? 300 : layout === "sphere" ? 40 : 160);
   drawHulls();
   fitAfterSettle = layout !== "sphere";
 
   const resizeObserver = new ResizeObserver(() => handle.resize());
+  const syncVisibility = () => {
+    if (destroyed) return;
+    const visible = paneActive && intersecting && !document.hidden &&
+      el.getClientRects().length > 0 && el.clientWidth > 0 && el.clientHeight > 0;
+    controls.enabled = visible;
+    if (visible === rendering) return;
+    rendering = visible;
+    if (!visible) {
+      setRotation(false);
+      cancelAnimationFrame(labelFrame);
+      labelFrame = 0;
+      hoverId = null;
+      el.style.cursor = "";
+      opts.onHover?.(null);
+      graph.pauseAnimation();
+    } else {
+      graph.resumeAnimation();
+      handle.resize();
+      paint();
+      if (pendingFocus !== undefined) {
+        const next = pendingFocus;
+        pendingFocus = undefined;
+        handle.focus(next);
+      }
+      setRotation(true, 2500);
+    }
+  };
+  const visibilityObserver = new IntersectionObserver((entries) => {
+    intersecting = entries.some(entry => entry.isIntersecting);
+    syncVisibility();
+  });
+  visibilityObserver.observe(el);
+  document.addEventListener("visibilitychange", syncVisibility);
   resizeObserver.observe(el);
+  const recolor = () => {
+    const colors = PALETTE_VARS.map(cssVar).filter(Boolean).map(value => resolveColor(value, probe));
+    if (colors.length) palette.splice(0, palette.length, ...colors);
+    ink = resolveColor(cssVar("--ink"), probe);
+    mutedRgb = hexRgb(resolveColor(cssVar("--muted"), probe));
+    chrome = hexRgb(resolveColor(cssVar("--chrome"), probe));
+    handle.update({nodes: nodes.map(node => node.data), links: links.map(link => link.data)});
+  };
+  window.addEventListener("kitty:theme", recolor);
+  const onMotionChange = () => {
+    reduced = motionQuery.matches || !!opts.reducedMotion;
+    controls.enableDamping = !reduced;
+    setRotation(!hoverId);
+    graph.cooldownTicks(reduced ? 0 : Infinity);
+    if (reduced) {
+      load(300);
+      overview(0);
+    } else {
+      paint();
+      graph.d3ReheatSimulation();
+    }
+  };
+  controls.enableDamping = !reduced;
+  motionQuery.addEventListener("change", onMotionChange);
 
   const handle: GraphHandle = {
     update(data) {
@@ -1241,6 +1525,7 @@ export async function mountGraph(
     setLayout(next) {
       if (destroyed || next === layout) return;
       layout = next;
+      if (layout === "sphere") sphere = sphereTargets(topology, groupOrder);
       drawHulls();
       fitAfterSettle = true;
       if (reduced) {
@@ -1272,38 +1557,58 @@ export async function mountGraph(
         graph.d3ReheatSimulation();
       }
     },
+    setActive(active) {
+      paneActive = active;
+      syncVisibility();
+    },
     focus(id) {
       if (destroyed) return;
+      if (!rendering || initialFit) {
+        pendingFocus = id;
+        return;
+      }
+      fitAfterSettle = false;
+      initialFit = false;
+      setRotation(false);
       const node = id ? byId.get(id) : undefined;
       selectedId = node?.id ?? null;
       paint();
       if (layout === "clusters") drawHulls();
       if (node) fly(node);
       else overview(reduced ? 0 : 800);
+      setRotation(true, 7000);
     },
     resize() {
       if (destroyed) return;
       const width = el.clientWidth;
       const height = el.clientHeight;
       if (width > 0 && height > 0) graph.width(width).height(height);
+      syncVisibility();
     },
     destroy() {
       if (destroyed) return;
       destroyed = true;
       clearTimeout(resumeTimer);
       resizeObserver.disconnect();
+      visibilityObserver.disconnect();
+      document.removeEventListener("visibilitychange", syncVisibility);
+      window.removeEventListener("kitty:theme", recolor);
+      motionQuery.removeEventListener("change", onMotionChange);
       controls.removeEventListener?.("start", onControlStart);
       controls.removeEventListener?.("end", onControlEnd);
       canvas.removeEventListener("pointerdown", rememberPointer, true);
       page.removeEventListener("pointerup", releaseRealPointer, true);
+      page.removeEventListener("keydown", rotateFromKeyboard);
       clearHulls();
+      clearBatches();
+      cancelAnimationFrame(labelFrame);
+      controls.removeEventListener?.("change", scheduleLabels);
       const renderer = graph.renderer();
       graph._destructor();
       for (const resource of [
         hubGeometry,
         leafGeometry,
         hitMaterial,
-        glowTexture,
       ])
         resource.dispose();
       visuals.clear();
@@ -1311,5 +1616,7 @@ export async function mountGraph(
       el.replaceChildren();
     },
   };
+  graph.pauseAnimation();
+  syncVisibility();
   return handle;
 }

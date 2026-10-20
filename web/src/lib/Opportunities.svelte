@@ -2,6 +2,26 @@
   import { api, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
   import AIReview from "./AIReview.svelte";
+  import SectionGraph, {type SectionNode} from "./SectionGraph.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  const pane = useWorkspaceContext();
+  let presentation = $state<"map" | "list">("map");
+  let schemaFocus = $state<string | null>(null);
+  let schemaRevision = $state(0);
+  function rootSchema() { if (!pane.active) return; schemaFocus = null; presentation = "map"; detail = null; }
+  function chooseNode(node: SectionNode) {
+    if (!pane.active) return;
+    if (node.entity === "category") schemaFocus = `category:${node.ref}`;
+    else if (node.entity === "opportunity" && typeof node.ref === "number") void open(node.ref);
+    else if (node.entity === "source") configOpen = true;
+  }
+  $effect(() => {
+    const crumbs = [];
+    if (schemaFocus) crumbs.push({label: schemaFocus.slice(9), onclick: () => { if (pane.active) detail = null; }});
+    if (detail) crumbs.push({label: detail.title});
+    pane.setTrail("opportunities", crumbs, rootSchema);
+    return () => pane.clearTrail("opportunities");
+  });
   type ProjectItem = {
     id: number;
     kind: string;
@@ -206,10 +226,11 @@
     void refresh();
   });
   async function open(id: number) {
+    if (!pane.active && detail?.id !== id) return;
     const generation = ++detailGeneration;
     try {
       const result = await api<Opportunity>(`/opportunities/${id}`);
-      if (generation !== detailGeneration) return;
+      if (generation !== detailGeneration || (!pane.active && detail?.id !== id)) return;
       adopt(result);
       pendingDelete = false;
       editingItem = null;
@@ -228,9 +249,10 @@
     try {
       const result = await api<Opportunity & { task?: TaskRecord }>(path, body);
       if (result.task) task = result.task;
-      else if (result.id && result.source) adopt(result);
+      else if (result.id && result.source && (pane.active || detail?.id === result.id)) adopt(result);
       notice = message;
       await refresh();
+      schemaRevision += 1;
       return result;
     } catch (cause) {
       failure(cause);
@@ -274,14 +296,18 @@
     }
     void open(item.id);
   }
-  function contextSave(item: Opportunity, event: MouseEvent) {
-    event.preventDefault();
-    if (!selected.includes(item.id)) selected = [item.id];
-    focused = item.id;
-    void saveSelected();
+  async function deleteOpportunity(id: number) {
+    if (!pane.active || busy) return;
+    try {
+      const item = await api<Opportunity>(`/opportunities/${id}`);
+      if (!pane.active || !window.confirm(`Delete “${item.title}” and its project items?`)) return;
+      const result = await send(`/opportunities/${id}/delete`, {revision: item.revision}, "Opportunity deleted.");
+      if (result && detail?.id === id) { detail = null; detailGeneration += 1; }
+    } catch (cause) { failure(cause); }
   }
   function keydown(event: KeyboardEvent) {
     if (
+      !pane.active ||
       event.defaultPrevented ||
       event.isComposing ||
       (event.target as HTMLElement).closest(
@@ -439,11 +465,7 @@
 <section class="opportunities">
   <header>
     <div>
-      <h1>Opportunities & projects</h1>
-      <p>
-        Competitions, hackathons, campus events and your own projects. Separate
-        from jobs.
-      </p>
+      <h2>Opportunities</h2>
     </div>
     <div class="actions">
       <button
@@ -452,7 +474,7 @@
         }}>Interests & monitor</button
       ><button onclick={() => (addOpen = !addOpen)}>Add / import</button><button
         disabled={demo || running}
-        onclick={discover}>Discover free public sources</button
+        onclick={discover}>Discover</button
       >
     </div>
   </header>
@@ -592,6 +614,15 @@
         onclick={importItems}>Import locally</button
       >
     </section>{/if}
+  <nav class="actions" aria-label="Opportunities view">
+    <button aria-pressed={presentation === "map"} onclick={() => presentation = "map"}>Map</button>
+    <button aria-pressed={presentation === "list"} onclick={() => presentation = "list"}>List</button>
+    {#if schemaFocus}<button onclick={rootSchema}>All categories</button>{/if}
+  </nav>
+  {#if presentation === "map"}
+    <SectionGraph section="opportunities" revision={revision + schemaRevision} focus={schemaFocus} onselect={chooseNode}
+      ondelete={(node) => { if (node.entity === "opportunity" && typeof node.ref === "number") return deleteOpportunity(node.ref); }} listToggle={false} />
+  {:else}
   <form
     class="filters"
     onsubmit={(e) => {
@@ -604,8 +635,9 @@
         bind:value={search}
         placeholder="Title, description, notes, tags"
       /></label
-    ><label
-      >Source<select bind:value={source}
+    >
+    <details class="opportunity-filters"><summary>Filters</summary>
+    <label>Source<select bind:value={source}
         ><option value="">All sources</option><option value="manual"
           >Manual</option
         >{#each sources as s}<option value={s.id}>{s.name}</option
@@ -614,9 +646,9 @@
     ><label
       >Category<input
         bind:value={category}
-        list="opportunity-categories"
+        list={`${pane.id}-opportunity-categories`}
         placeholder="All categories"
-      /><datalist id="opportunity-categories"
+      /><datalist id={`${pane.id}-opportunity-categories`}
         >{#each categories as c}<option value={c}></option>{/each}</datalist
       ></label
     ><label
@@ -643,6 +675,7 @@
     ><label
       ><input type="checkbox" bind:checked={favoritesOnly} /> Favorites</label
     ><button type="submit">Apply filters</button>
+    </details>
   </form>
   <div class="actions">
     <span>{items.length} opportunities · {selected.length} selected</span
@@ -656,12 +689,9 @@
       onclick={() => void saveSelected(false)}>Unfavorite selected</button
     >
   </div>
-  <p class="hint">
-    Ctrl-click toggles selection, Shift-click selects a range. Right-click saves
-    selected rows. j/k or arrows review; f favorites; r reloads. Dates reflect
-    cited evidence; registration eligibility must be checked with the organizer.
-  </p>
+  {/if}
   <div class="workspace">
+    {#if presentation === "list"}
     <div class="list">
       {#each items as item (item.id)}<article
           class:selected={selected.includes(item.id)}
@@ -678,7 +708,7 @@
             /><button
               class="row-title"
               onclick={(event) => choose(item, event)}
-              oncontextmenu={(event) => contextSave(item, event)}
+              oncontextmenu={(event) => { if (window.getSelection()?.toString()) return; event.preventDefault(); void deleteOpportunity(item.id); }}
               ><strong>{item.favorite ? "★ " : ""}{item.title}</strong><span
                 >{item.source} · {item.category} · {item.status} · {item.availability}</span
               ></button
@@ -701,6 +731,7 @@
           public sources.
         </p>{/each}
     </div>
+    {/if}
     {#if detail}<aside class="panel detail">
         <div class="actions">
           <h2>{detail.title}</h2>
@@ -890,6 +921,7 @@
         purpose="opportunity-summary"
         text={summaryText}
         {demo}
+        active={pane.active}
         onresult={(text) => {
           aiResult = text;
           summaryText = "";
@@ -921,7 +953,6 @@
   header {
     justify-content: space-between;
   }
-  h1,
   h2,
   h3,
   h4 {
@@ -931,8 +962,6 @@
     line-height: 1.55;
     overflow-wrap: anywhere;
   }
-  header p,
-  .hint,
   .row-title span {
     color: var(--muted);
   }
@@ -1082,4 +1111,7 @@
       order: -1;
     }
   }
+  .filters {display:flex;gap:12px;align-items:start}
+  .opportunity-filters{min-width:200px}
+  .opportunity-filters[open]{display:grid;gap:10px;padding:12px}
 </style>

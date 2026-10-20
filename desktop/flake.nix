@@ -12,6 +12,7 @@
           libraries = with pkgs; [
             gtk3 webkitgtk_4_1 libsoup_3 librsvg libayatana-appindicator
             openssl glib zlib stdenv.cc.cc.lib libxcrypt libGL
+            gst_all_1.gstreamer gst_all_1.gst-plugins-base gst_all_1.gst-plugins-good
           ];
         in rec {
           default = pkgs.mkShell {
@@ -22,9 +23,13 @@
             buildInputs = libraries;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libraries;
             NIX_LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libraries;
+            GST_PLUGIN_SYSTEM_PATH_1_0 = pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
+              pkgs.gst_all_1.gst-plugins-base pkgs.gst_all_1.gst-plugins-good
+            ];
             NIX_LD = pkgs.lib.fileContents "${pkgs.stdenv.cc}/nix-support/dynamic-linker";
             APPIMAGE_EXTRACT_AND_RUN = "1";
             shellHook = ''
+              export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
               printf 'kitty! desktop dependencies ready; run bash scripts/build-desktop.sh from the project root.\n'
               printf 'NixOS AppImage tooling uses the host nix-ld loader with this shell’s NIX_LD environment.\n'
             '';

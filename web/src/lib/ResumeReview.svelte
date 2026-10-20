@@ -45,6 +45,7 @@
     busy?: boolean;
     ondecision: (action: "promote" | "reject") => void;
   } = $props();
+  const instanceId = $props.id();
   const label = (key: string) => key.replaceAll("_", " ");
 </script>
 
@@ -63,10 +64,10 @@
   {:else}<span>{value === null ? "None" : String(value)}</span>{/if}
 {/snippet}
 
-<section class="review" aria-labelledby="audit-title">
+<section class="review" aria-labelledby={`${instanceId}-audit-title`}>
   <header>
     <div>
-      <h3 id="audit-title">Audited review · {version.track}</h3>
+      <h3 id={`${instanceId}-audit-title`}>Audited review · {version.track}</h3>
       <code>{version.id}</code>
     </div>
     <span class="badge"

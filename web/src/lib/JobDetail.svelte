@@ -4,6 +4,8 @@
   import Icon from "./Icon.svelte";
   import Automation from "./Automation.svelte";
   import JobTools from "./JobTools.svelte";
+  import PostingAvailability from "./PostingAvailability.svelte";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
 
   let {
     id,
@@ -18,6 +20,8 @@
     initialCommand?: string;
     demo?: boolean;
   } = $props();
+  const pane = useWorkspaceContext();
+  const fieldId = (name: string) => `${pane.id}-job-${id}-${name}`;
   let job = $state<JobDetail | null>(null);
   let resumes = $state<Resume[]>([]);
   let error = $state("");
@@ -71,7 +75,12 @@
   }
 
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
-    if (event.ctrlKey || event.metaKey || event.altKey || busy) return false;
+    if (!pane.active || event.ctrlKey || event.metaKey || event.altKey || busy) return false;
+    if (["f", "F", "w", "q"].includes(event.key) && job && !job.is_active) {
+      event.preventDefault();
+      message = "Posting unavailable. Recheck availability before preparing it.";
+      return true;
+    }
     if (event.key === "f" && job && !job.favorite) {
       event.preventDefault();
       await mutate("favorite", true);
@@ -113,7 +122,7 @@
     };
     if (control[event.key]) {
       event.preventDefault();
-      const target = document.getElementById(control[event.key]);
+      const target = document.getElementById(fieldId(control[event.key]));
       let disclosure = target?.closest("details");
       while (disclosure) {
         disclosure.open = true;
@@ -138,9 +147,9 @@
         resumes = library.resumes;
         resumeId = detail.resume?.id?.toString() || "";
         await tick();
-        heading?.focus();
+        if (pane.active) heading?.focus();
         if (
-          initialCommand &&
+          pane.active && initialCommand &&
           !["t", "k", "d", "n", "u"].includes(initialCommand)
         )
           await handleKey(
@@ -211,13 +220,13 @@
         >
       </div>
       <div class="detail-actions">
-        {#if safeUrl(job.url)}<a
+        {#if safeUrl(job.url) && job.is_active}<a
             class="button"
             href={safeUrl(job.url)}
             target="_blank"
             rel="noopener noreferrer"
             >Read original posting <Icon name="external" size={16} /></a
-          >{/if}
+          >{:else if !job.is_active}<span class="badge">Posting unavailable</span>{/if}
         <button
           class="button"
           disabled={busy}
@@ -227,7 +236,11 @@
             ? "Saved"
             : "Save"}</button
         >
+        <PostingAvailability jobIds={[id]} {demo} oncomplete={() => changed()} />
       </div>
+      <p class="muted" title={job.verification_reason || undefined}>
+        {job.verification_checked_at ? `Last checked ${dateLabel(job.verification_checked_at)}` : "Availability not yet checked"}
+      </p>
       {#if !job.application}<details class="job-organizing">
           <summary>Organize this job</summary>
           <div class="detail-actions">
@@ -295,8 +308,8 @@
               );
             }}
           >
-            <label class="sr-only" for="resume-choice">Choose a resume</label>
-            <select id="resume-choice" bind:value={resumeId}
+            <label class="sr-only" for={fieldId("resume-choice")}>Choose a resume</label>
+            <select id={fieldId("resume-choice")} bind:value={resumeId}
               ><option value="" disabled>Choose a resume</option><option
                 value="default">Use category default</option
               >{#each resumes as resume}<option
@@ -350,10 +363,10 @@
               void mutate("status", status);
             }}
           >
-            <label class="sr-only" for="application-status"
+            <label class="sr-only" for={fieldId("application-status")}
               >New application status</label
             >
-            <select id="application-status" bind:value={status}
+            <select id={fieldId("application-status")} bind:value={status}
               ><option value="oa">Online assessment</option><option
                 value="interview">Interview</option
               ><option value="offer">Offer</option><option value="rejected"
@@ -365,12 +378,12 @@
             <button class="button" disabled={busy}>Update</button>
           </form>
           <div class="event-fields">
-            <label for="event-date">Event date</label><input
-              id="event-date"
+            <label for={fieldId("event-date")}>Event date</label><input
+              id={fieldId("event-date")}
               bind:value={eventDate}
               placeholder="Today, YYYY-MM-DD, or +7"
-            /><label for="event-evidence">Evidence / note</label><input
-              id="event-evidence"
+            /><label for={fieldId("event-evidence")}>Evidence / note</label><input
+              id={fieldId("event-evidence")}
               bind:value={eventNote}
               maxlength="20000"
               placeholder="What changed?"
@@ -403,18 +416,18 @@
           </p>
           <label class="confirm"
             ><input
-              id="submission-confirmation"
+              id={fieldId("submission-confirmation")}
               type="checkbox"
               bind:checked={confirmation}
             />I have submitted this application myself.</label
           >
           <div class="event-fields">
-            <label for="submitted-date">Submission date</label><input
-              id="submitted-date"
+            <label for={fieldId("submitted-date")}>Submission date</label><input
+              id={fieldId("submitted-date")}
               bind:value={eventDate}
               placeholder="Today or YYYY-MM-DD"
-            /><label for="submission-evidence">Evidence / note</label><input
-              id="submission-evidence"
+            /><label for={fieldId("submission-evidence")}>Evidence / note</label><input
+              id={fieldId("submission-evidence")}
               bind:value={eventNote}
               maxlength="20000"
               placeholder="Optional confirmation reference"
@@ -437,9 +450,9 @@
             void mutate("notes", notes);
           }}
         >
-          <label for="job-notes">Contacts, questions, or your next step</label>
+          <label for={fieldId("job-notes")}>Contacts, questions, or your next step</label>
           <textarea
-            id="job-notes"
+            id={fieldId("job-notes")}
             rows="4"
             bind:value={notes}
             placeholder="Contacts, questions, or a next step…"

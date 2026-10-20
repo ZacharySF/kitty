@@ -13,7 +13,7 @@ import pytest
 
 from kitty.core import flashcards as f
 from kitty.db import connect, migrate
-from kitty import web_flashcards
+from kitty import web_atlas, web_flashcards
 from kitty.web_server import APIError
 
 
@@ -529,3 +529,60 @@ def test_changing_note_type_updates_same_note_and_invalidates_old_review(cards):
     assert browser["notes"][0]["fields"]["Back"] == "answer-only-secret"
     with pytest.raises(ValueError, match="Card changed"):
         f.reveal(conn, pending["token"])
+
+
+def test_flashcard_schema_contains_all_logical_notes_real_subdecks_and_archives(cards):
+    conn, _, state = cards
+    child = f.save_deck(conn, {"name": "Graph parent::Child", "settings": {}})
+    parent = conn.execute("SELECT id FROM flash_decks WHERE name='Graph parent'").fetchone()[0]
+    empty = f.save_deck(conn, {"name": "Empty graph deck", "settings": {}})
+    note = add(cards, kind="reversed", deck=child["id"])
+    f.action(conn, {"action": "archive", "id": note["id"], "revision": note["revision"], "value": True})
+    conn.execute("UPDATE flash_decks SET archived=1 WHERE id=?", (child["id"],))
+    expected = {note["id"]}
+    for _ in range(web_atlas.SECTION_LIMIT + 3):
+        expected.add(add(cards)["id"])
+    graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    assert graph["total"] == graph["shown"] == len(nodes)
+    assert {node["ref"] for node in nodes.values() if node["entity"] == "flashcard_note"} == expected
+    assert {node["ref"] for node in nodes.values() if node["entity"] == "deck"} == {
+        row[0] for row in conn.execute("SELECT id FROM flash_decks")}
+    edges = {(link["source"], link["target"]) for link in graph["links"]}
+    assert (f"deck:{parent}", f"deck:{child['id']}") in edges
+    assert (f"deck:{child['id']}", f"flashcard_note:{note['id']}") in edges
+    assert nodes[f"flashcard_note:{note['id']}"]["detail"] == "2 generated cards · archived"
+    assert nodes[f"deck:{empty['id']}"]["detail"] == "0 notes · 0 cards"
+    assert "answer-only-secret" not in json.dumps(graph)
+    assert "synthetic-question" not in json.dumps(graph)
+    focused = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {"focus": f"deck:{parent}"})
+    assert {node["id"] for node in focused["nodes"]} == {
+        f"deck:{parent}", f"deck:{child['id']}", f"flashcard_note:{note['id']}"}
+    exact = web_flashcards.get(None, conn, "/api/flashcards/note", {"id": str(note["id"])})["note"]
+    assert exact["id"] == note["id"] and exact["deck_id"] == child["id"]
+    assert exact["archived"] == 1 and len(exact["cards"]) == 2
+    # Existing exact nid reference links retain their browser behavior.
+    browser = web_flashcards.get(None, conn, "/api/flashcards/browser", {"search": f"nid:{note['id']}"})
+    assert [row["id"] for row in browser["notes"]] == [note["id"]]
+
+
+def test_flashcard_schema_and_exact_editor_handle_zero_cards_and_deleted_items(cards):
+    conn, _, _ = cards
+    note = add(cards)
+    conn.execute("DELETE FROM flash_cards WHERE note_id=?", (note["id"],))
+    graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
+    assert any(node["id"] == f"flashcard_note:{note['id']}" and node["detail"] == "0 generated cards"
+               for node in graph["nodes"])
+    exact = web_flashcards.get(None, conn, "/api/flashcards/note", {"id": str(note["id"])})["note"]
+    assert exact["id"] == note["id"] and exact["cards"] == []
+    f.action(conn, {"action": "delete", "id": note["id"], "revision": note["revision"]})
+    with pytest.raises(APIError, match="no longer exists") as error:
+        web_flashcards.get(None, conn, "/api/flashcards/note", {"id": str(note["id"])})
+    assert error.value.status == 404
+    graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
+    assert not any(node["entity"] == "flashcard_note" for node in graph["nodes"])
+    deck = conn.execute("INSERT INTO flash_decks(name,settings,created_at) VALUES('Deleted deck','{}','')").lastrowid
+    conn.execute("DELETE FROM flash_decks WHERE id=?", (deck,))
+    with pytest.raises(APIError, match="no longer exists") as error:
+        web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {"focus": f"deck:{deck}"})
+    assert error.value.status == 404

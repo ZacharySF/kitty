@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import re
 import sqlite3
 import zipfile
@@ -40,6 +41,17 @@ def get(app, conn, path, query):
             limit, offset = int(query.get("limit", "100")), int(query.get("offset", "0"))
             if not 1 <= limit <= 500 or not 0 <= offset <= 100000: raise ValueError("Invalid browser page")
             return flash.browser(conn, _id(query.get("deck_id"), True), query.get("search", ""), limit, offset)
+        if path == "/api/flashcards/note":
+            if set(query) != {"id"}: raise ValueError("An exact note ID is required")
+            ident = _id(query["id"])
+            row = conn.execute("SELECT * FROM flash_notes WHERE id=?", (ident,)).fetchone()
+            if row is None: raise _error("That note no longer exists", 404)
+            note = dict(row)
+            note["fields"], note["tags"] = json.loads(note["fields"]), json.loads(note["tags"])
+            note["cards"] = [dict(card) for card in conn.execute(
+                """SELECT id,ordinal,state,due,suspended,buried_until,leech,lapses,reviews,revision
+                FROM flash_cards WHERE note_id=? ORDER BY ordinal,id""", (ident,))]
+            return {"note": note}
         if path == "/api/flashcards/history":
             if set(query) - {"card_id"}: raise ValueError("Unknown history parameter")
             return flash.history(conn, _id(query.get("card_id"), True))

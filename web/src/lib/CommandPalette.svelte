@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { Button } from "@nunera/bracket";
   import { api, type Job } from "./api";
   import { navigation, navigationGroups, type View } from "./workspace";
   let {
@@ -24,15 +25,15 @@
   let selected = $state(0);
   let error = $state("");
   const actions = [
-    { label: "Add a job posting", run: () => onadd() },
+    { label: "Add job", run: () => onadd() },
     { label: "Keyboard shortcuts", run: () => onhelp() },
-    { label: "Reload configuration from disk", run: () => onreload() },
+    { label: "Reload configuration", run: () => onreload() },
   ];
   const choices = $derived(
     [
       ...navigation.map((item) => ({
         label: item.label,
-        meta: item.key || navigationGroups.find((group) => group.views.includes(item.id))?.label || "Section",
+        meta: navigationGroups.find((group) => group.views.includes(item.id))?.label || "Section",
         run: () => onview(item.id),
       })),
       ...actions.map((item) => ({ ...item, meta: "Action" })),
@@ -111,31 +112,33 @@
   onkeydown={key}
 >
   <header>
-    <h2 id="command-title">Go somewhere. Do something.</h2>
-    <button
-      class="icon-button"
+    <h2 id="command-title">Search</h2>
+    <Button
+      variant="ghost"
+      size="sm"
       onclick={onclose}
-      aria-label="Close command palette">×</button
+      aria-label="Close command palette">×</Button
     >
   </header>
   <input
+    type="search"
     bind:this={searchField}
     aria-label="Search workspace sections, commands and jobs"
-    placeholder="Calendar, study, notes, jobs, or an action…"
+    placeholder="Sections, commands, jobs…"
     bind:value={query}
   />{#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   <div class="command-list">
-    {#each choices as item, index}<button
+    {#each choices as item, index}<Button
         data-command={index}
-        class:chosen={selected === index}
+        data-selected={selected === index}
         onfocus={() => (selected = index)}
         onclick={() => run(index)}
-        ><span>{item.label}</span><small>{item.meta}</small></button
+        ><span>{item.label}</span><small>{item.meta}</small></Button
       >{/each}{#if !choices.length}<p class="muted">
-        No matching sections, commands, or jobs.
+        No results.
       </p>{/if}
   </div>
-  <footer><span>↑ ↓ to navigate · Enter to open · Esc to close</span></footer>
+  <footer><span><kbd>↑</kbd> <kbd>↓</kbd> Navigate</span><span><kbd>Enter</kbd> Open</span><span><kbd>Esc</kbd> Close</span></footer>
 </dialog>
 
 <style>
@@ -153,31 +156,41 @@
     gap: 4px;
     margin-top: 16px;
   }
-  .command-list button {
-    padding: 13px 12px;
+  .command-list :global(.br-btn) {
+    width: 100%;
+    padding: 12px;
     text-align: left;
-    display: flex;
-    justify-content: space-between;
-    gap: 20px;
+    justify-content: stretch;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 7px;
+    border-radius: 8px;
     font-size: 13px;
+    white-space: normal;
   }
-  .command-list button.chosen,
-  .command-list button:hover {
+  .command-list :global(.contents) {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+  }
+  .command-list :global(.br-btn[data-selected="true"]),
+  .command-list :global(.br-btn:hover) {
     background: var(--surface-raised);
     border-color: var(--border);
   }
   .command-list small {
     color: var(--muted);
     white-space: nowrap;
-    font-size: 10px;
+    font-size: 11px;
   }
   footer {
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 16px;
     border-top: 1px solid var(--border);
-    padding-top: 16px;
+    padding-top: 14px;
   }
 </style>

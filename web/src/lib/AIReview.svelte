@@ -1,15 +1,26 @@
 <script lang="ts">
   import { api, type TaskRecord } from "./api";
+  import type { MindMapFeedbackRequest } from "./mindMapFeedback";
+  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  const pane = useWorkspaceContext();
+  const instanceId = $props.id();
+  const controlId = `${pane.id}-ai-review-${instanceId}`;
   let {
     purpose,
     text,
     demo = false,
     onresult,
+    mindMap,
+    active = true,
+    previewLabel = "Review AI request",
   }: {
     purpose: string;
     text: string;
     demo?: boolean;
     onresult?: (text: string) => void;
+    mindMap?: MindMapFeedbackRequest;
+    active?: boolean;
+    previewLabel?: string;
   } = $props();
   type Review = {
     review_id: string;
@@ -29,17 +40,29 @@
   let error = $state("");
   let output = $state("");
   let cost = $state<number | null>(null);
-  let reviewedText = $state("");
-  let reviewedPurpose = $state("");
-  const stale = $derived(reviewedText !== text || reviewedPurpose !== purpose);
+  let reviewedRequest = $state("");
+  let outputRequest = $state("");
+  const requestKey = $derived(JSON.stringify(mindMap ?? { purpose, text }));
+  const stale = $derived(reviewedRequest !== requestKey);
+  $effect(() => {
+    if (!active) approved = false;
+  });
   async function preview() {
+    if (!active || busy || demo || (mindMap && (!mindMap.question.trim() || !mindMap.graph.nodes.length))) return;
+    const selectedRequest = requestKey;
+    const body = mindMap
+      ? JSON.parse(selectedRequest) as MindMapFeedbackRequest
+      : { purpose, text };
     busy = true;
     error = "";
     approved = false;
+    review = null;
     try {
-      review = await api<Review>("/ai/preview", { purpose, text });
-      reviewedText = text;
-      reviewedPurpose = purpose;
+      review = await api<Review>(
+        mindMap ? "/ai/mind-map/preview" : "/ai/preview",
+        body,
+      );
+      reviewedRequest = selectedRequest;
       budget = Math.max(0.01, Math.ceil(review.maximum_cost_usd * 100) / 100);
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
@@ -48,8 +71,9 @@
     }
   }
   async function run() {
-    if (!review || stale || !approved || busy) return;
+    if (!active || demo || !review || stale || !approved || busy) return;
     busy = true;
+    const sentRequest = requestKey;
     error = "";
     output = "";
     try {
@@ -69,6 +93,7 @@
         throw new Error(task.error || "AI request failed");
       const result = task.result as { text: string; cost_usd: number | null };
       output = result.text;
+      outputRequest = sentRequest;
       cost = result.cost_usd;
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
@@ -80,13 +105,15 @@
 
 <section class="ai-review" aria-label="Reviewed AI assistance">
   <p class="muted">
-    Only this selection is sent. Nothing changes until you accept a draft.
+    Only the selection you review is sent. AI output is an uncertain draft; verify
+    its claims and apply any changes yourself. Nothing is edited automatically.
   </p>
   <button
     class="button"
     onclick={preview}
-    disabled={busy || !text.trim() || demo}
-    >{busy ? "Working…" : "Review AI request"}</button
+    disabled={!active || busy || !text.trim() || demo ||
+      (mindMap && (!mindMap.question.trim() || !mindMap.graph.nodes.length))}
+    >{busy ? "Working…" : previewLabel}</button
   >
   {#if demo}<p class="muted">
       External AI requests are disabled in the disposable demo.
@@ -107,8 +134,9 @@
         <h4>Instructions</h4>
         <pre>{review.system_prompt}</pre>
       </details>
-      <label
+      <label for={`${controlId}-budget`}
         >Request spending limit (USD)<input
+          id={`${controlId}-budget`}
           type="number"
           bind:value={budget}
           min={0}
@@ -116,15 +144,15 @@
           step="0.01"
         /></label
       >
-      <label class="approval"
-        ><input type="checkbox" bind:checked={approved} /> I approve sending this
+      <label class="approval" for={`${controlId}-approval`}
+        ><input id={`${controlId}-approval`} type="checkbox" bind:checked={approved} /> I approve sending this
         text and the bounded paid request.</label
       >
       {#if stale}<p role="alert">Selection changed. Review again.</p>{/if}
       <button
         class="button primary"
         onclick={run}
-        disabled={busy ||
+        disabled={!active || busy ||
           stale ||
           !approved ||
           budget < review.maximum_cost_usd}>Send approved request</button
@@ -133,12 +161,15 @@
   {/if}
   {#if output}<div class="review-box">
       <h3>AI draft — check before using</h3>
+      {#if outputRequest !== requestKey}
+        <p role="status">This draft belongs to an earlier selection or question, not the current one. Review and send again for new feedback.</p>
+      {/if}
       <pre class="draft">{output}</pre>
       <small
         >Reported cost: {cost === null
           ? "not provided; maximum remains reserved"
           : `$${cost.toFixed(6)}`}</small
-      >{#if onresult}<button class="button" onclick={() => onresult?.(output)}
+      >{#if onresult}<button class="button" disabled={!active} onclick={() => onresult?.(output)}
           >Use this draft for review</button
         >{/if}<button
         class="button"
