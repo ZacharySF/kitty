@@ -12,7 +12,7 @@ import pytest
 from kitty.config import EligibilityRules, Track, WatchlistCompany
 from kitty.core import jobs as jobs_core
 from kitty.core.discovery.ats import GreenhouseAdapter
-from kitty.core.discovery.http import PoliteHttp
+from kitty.core.discovery.http import HttpError, PoliteHttp, RateLimited
 from kitty.core.discovery.base import NormalizedJob
 from kitty.core.discovery.pipeline import CompanyResolver, SourceTally, rejudge, store_posting
 from kitty.core.discovery.public_pages import PageHTTPError, PublicPage, parse_job_postings
@@ -48,6 +48,187 @@ def greenhouse_payload(**kwargs):
                        "absolute_url": "https://job-boards.greenhouse.io/evidence/jobs/42",
                        "content": "<p>Pursuing a bachelor's degree. Must have junior standing.</p>",
                        **kwargs})
+
+
+PROVIDER_DETAILS = [
+    (
+        "workday",
+        "https://evidence.wd1.myworkdayjobs.com/en-US/External/job/Austin-TX/Systems-Intern_R42/apply",
+        "https://evidence.wd1.myworkdayjobs.com/wday/cxs/evidence/External/job/Austin-TX/Systems-Intern_R42",
+    ),
+    (
+        "oracle",
+        "https://evidence.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/42",
+        "https://evidence.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/"
+        "recruitingCEJobRequisitionDetails?onlyData=true&expand=all&finder=ById%3BId%3D42%2CsiteNumber%3DCX_1",
+    ),
+]
+
+
+def provider_payload(provider, **overrides):
+    if provider == "workday":
+        record = {
+            "id": "internal-posting-id-not-the-requisition",
+            "jobReqId": "R42", "title": "Systems Engineering Intern",
+            "externalUrl": PROVIDER_DETAILS[0][1].removesuffix("/apply"),
+            "jobDescription": "<p>Required: embedded systems coursework.</p>",
+            "location": "Austin, TX", "country": {"descriptor": "United States of America"},
+            "canApply": True, "posted": True,
+        }
+        return {"jobPostingInfo": record | overrides}
+    record = {
+        "Id": "42", "SiteNumber": "CX_1", "Title": "Systems Engineering Intern",
+        "ExternalQualificationsStr": "<p>Required: embedded systems coursework.</p>",
+        "PrimaryLocation": "Austin, TX", "PrimaryLocationCountry": "US",
+    }
+    return {"items": [record | overrides]}
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+def test_provider_exact_single_detail_is_parsed_and_persisted(workspace, provider, url, endpoint):
+    job = add(workspace, url=url)
+    pages = Pages(json.dumps(provider_payload(provider)))
+    check = check_posting(job, pages)
+    changed = persist_check(workspace.conn, job.id, check)
+    current = jobs_core.get_job(workspace.conn, job.id)
+    assert pages.requests == [endpoint]
+    assert check.status == "open" and check.posting is not None
+    assert current.is_active and current.verified_at == check.observed_at
+    assert current.jd_text == "Required: embedded systems coursework."
+    assert current.title == "Systems Engineering Intern"
+    assert changed >= {"jd_text", "title"}
+    source = "workday" if provider == "workday" else "employers"
+    assert chosen_facts(workspace.conn, job.id)["jd_text"]["source"] == source
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+@pytest.mark.parametrize("status", [400, 401, 403, 429, 500, 503])
+def test_provider_failed_detail_preserves_prior_availability(workspace, provider, url, endpoint, status):
+    job = add(workspace, url=url)
+    persist_check(workspace.conn, job.id, PostingCheck(
+        "open", "Earlier exact posting", url, "2026-01-01T00:00:00Z",
+    ))
+    check = check_posting(job, Pages(error=PageHTTPError(status, endpoint)))
+    persist_check(workspace.conn, job.id, check)
+    current = jobs_core.get_job(workspace.conn, job.id)
+    assert check.status not in {"open", "closed"}
+    assert current.is_active and current.verified_at == "2026-01-01T00:00:00Z"
+    assert current.jd_text == job.jd_text and current.closed_at is None
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+@pytest.mark.parametrize("error", [HttpError("Source unavailable"), RateLimited("429 from source")])
+def test_provider_source_failure_is_not_posting_removal(workspace, provider, url, endpoint, error):
+    job = add(workspace, url=url)
+    pages = Pages(error=error)
+    check = check_posting(job, pages)
+    persist_check(workspace.conn, job.id, check)
+    assert pages.requests == [endpoint]
+    assert check.status not in {"open", "closed"}
+    assert jobs_core.get_job(workspace.conn, job.id).is_active
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+@pytest.mark.parametrize("text", [
+    "", "not JSON", "null", "[]", "{}",
+    '{"jobPostingInfo": null, "items": []}',
+    '{"jobPostingInfo": [], "items": [null]}',
+    '{"jobPostingInfo": {}, "items": {}}',
+    '{"jobPostingInfo": {}, "items": [{"Id": "42"}]}',
+])
+def test_provider_empty_or_malformed_detail_is_uncertainty(workspace, provider, url, endpoint, text):
+    job = add(workspace, url=url)
+    check = check_posting(job, Pages(text))
+    persist_check(workspace.conn, job.id, check)
+    current = jobs_core.get_job(workspace.conn, job.id)
+    assert check.status not in {"open", "closed"}
+    assert current.is_active and current.verified_at is None and current.jd_text == job.jd_text
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+@pytest.mark.parametrize("failure", [400, 404, 410])
+def test_provider_unrelated_menu_failures_cannot_close_posting(workspace, provider, url, endpoint, failure):
+    job = add(workspace, url=url)
+    unrelated = endpoint.split("/hcmRestApi/")[0].split("/wday/cxs/")[0] + "/dropdowns"
+    check = check_posting(job, Pages(error=PageHTTPError(failure, unrelated)))
+    persist_check(workspace.conn, job.id, check)
+    assert check.status not in {"open", "closed"}
+    assert jobs_core.get_job(workspace.conn, job.id).is_active
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+@pytest.mark.parametrize("redirect", ["tenant", "site", "posting"])
+def test_provider_redirected_detail_is_not_authoritative(workspace, provider, url, endpoint, redirect):
+    job = add(workspace, url=url)
+    if redirect == "tenant":
+        redirected = endpoint.replace("evidence.", "other.", 1)
+    elif redirect == "site":
+        redirected = endpoint.replace("External", "Other").replace("CX_1", "CX_2")
+    else:
+        redirected = endpoint.replace("R42", "R99").replace("Id%3D42", "Id%3D99")
+    check = check_posting(job, Pages(json.dumps(provider_payload(provider)), redirected=redirected))
+    assert check.status == "unverified"
+    removed = check_posting(job, Pages(error=PageHTTPError(404, redirected)))
+    assert removed.status not in {"open", "closed"}
+
+
+@pytest.mark.parametrize("override", [
+    {"externalUrl": PROVIDER_DETAILS[0][1].replace("R42", "R99")},
+    {"externalUrl": PROVIDER_DETAILS[0][1].replace("evidence.", "other.", 1)},
+    {"externalUrl": PROVIDER_DETAILS[0][1].replace("External", "Other")},
+    {"externalUrl": PROVIDER_DETAILS[0][1].replace("evidence.", "www.evidence.", 1)},
+    {"externalUrl": None},
+])
+def test_workday_wrong_posting_tenant_or_site_cannot_verify(workspace, override):
+    _, url, _ = PROVIDER_DETAILS[0]
+    check = check_posting(add(workspace, url=url), Pages(json.dumps(provider_payload("workday", **override))))
+    assert check.status == "unverified"
+
+
+@pytest.mark.parametrize("override", [{"Id": "99"}, {"SiteNumber": "CX_2"}, {"Id": None}])
+def test_oracle_wrong_posting_or_site_cannot_verify(workspace, override):
+    _, url, _ = PROVIDER_DETAILS[1]
+    check = check_posting(add(workspace, url=url), Pages(json.dumps(provider_payload("oracle", **override))))
+    assert check.status == "unverified"
+
+
+def test_oracle_multiple_or_missing_results_are_not_posting_removal(workspace):
+    _, url, _ = PROVIDER_DETAILS[1]
+    job = add(workspace, url=url)
+    exact = provider_payload("oracle")["items"][0]
+    for items in ([], [exact, exact | {"Id": "99"}], [{"Id": "99", "status": "closed"}]):
+        check = check_posting(job, Pages(json.dumps({"items": items})))
+        assert check.status == "unverified"
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+@pytest.mark.parametrize("override", [{"canApply": False}, {"active": False}, {"status": "closed"}])
+def test_provider_undocumented_flags_are_not_closure_evidence(workspace, provider, url, endpoint, override):
+    job = add(workspace, url=url)
+    check = check_posting(job, Pages(json.dumps(provider_payload(provider, **override))))
+    persist_check(workspace.conn, job.id, check)
+    assert check.status == "unverified"
+    assert jobs_core.get_job(workspace.conn, job.id).is_active
+
+
+def test_workday_not_posted_flag_is_not_documented_removal(workspace):
+    _, url, _ = PROVIDER_DETAILS[0]
+    check = check_posting(add(workspace, url=url), Pages(json.dumps(provider_payload("workday", posted=False))))
+    assert check.status == "unverified"
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+@pytest.mark.parametrize("text", ["<h1>Complete the security check</h1>", "Sign in to continue"])
+def test_provider_login_and_challenge_do_not_verify(workspace, provider, url, endpoint, text):
+    check = check_posting(add(workspace, url=url), Pages(text))
+    assert check.status == "blocked"
+
+
+def test_oracle_vanity_domain_does_not_guess_an_authoritative_api(workspace):
+    url = "https://careers.example.org/en/sites/CX_1/job/42"
+    pages = Pages(error=PageHTTPError(404, url))
+    check = check_posting(add(workspace, url=url), pages)
+    assert pages.requests == [url] and check.status == "unverified"
 
 
 def test_newer_direct_qualifications_replace_old_text_and_invalidate_model_tier(workspace):
@@ -148,7 +329,7 @@ def test_exact_detail_refresh_updates_eligibility_and_free_tier_without_discover
      "https://api.lever.co/v0/postings/evidence/11111111-1111-1111-1111-111111111111?mode=json"),
     ("https://jobs.smartrecruiters.com/Evidence/123-systems-intern",
      "https://api.smartrecruiters.com/v1/companies/Evidence/postings/123"),
-])
+] + [(url, endpoint) for _, url, endpoint in PROVIDER_DETAILS])
 @pytest.mark.parametrize("status", [404, 410])
 def test_removed_exact_ats_detail_leaves_active_results(workspace, url, endpoint, status):
     job = add(workspace, url=url)
@@ -363,3 +544,55 @@ def test_successful_verification_timestamp_uses_canonical_utc_storage(workspace)
         "open", "exact active detail", job.url, "2026-10-04T16:46:04.665040-05:00",
     ))
     assert jobs_core.get_job(workspace.conn, job.id).verified_at == "2026-10-04T21:46:04Z"
+
+
+def test_workday_detail_without_location_segment_uses_exact_single_posting(workspace):
+    _, url, endpoint = PROVIDER_DETAILS[0]
+    url = url.replace("/Austin-TX", "")
+    endpoint = endpoint.replace("/Austin-TX", "")
+    payload = provider_payload("workday", externalUrl=url.removesuffix("/apply"))
+    pages = Pages(json.dumps(payload))
+    check = check_posting(add(workspace, url=url), pages)
+    assert pages.requests == [endpoint] and check.status == "open"
+
+
+def test_workday_returned_public_url_may_omit_locale(workspace):
+    _, url, endpoint = PROVIDER_DETAILS[0]
+    payload = provider_payload("workday", externalUrl=url.replace("/en-US", "").removesuffix("/apply"))
+    pages = Pages(json.dumps(payload))
+    check = check_posting(add(workspace, url=url), pages)
+    assert pages.requests == [endpoint] and check.status == "open"
+
+
+def test_oracle_exact_site_scoped_request_does_not_require_undocumented_returned_site_field(workspace):
+    _, url, endpoint = PROVIDER_DETAILS[1]
+    payload = provider_payload("oracle")
+    del payload["items"][0]["SiteNumber"]
+    pages = Pages(json.dumps(payload))
+    check = check_posting(add(workspace, url=url), pages)
+    assert pages.requests == [endpoint] and check.status == "open"
+
+
+@pytest.mark.parametrize("provider,url,endpoint", PROVIDER_DETAILS)
+def test_provider_older_open_or_closed_detail_preserves_newer_availability(workspace, provider, url, endpoint):
+    job = add(workspace, url=url)
+    persist_check(workspace.conn, job.id, PostingCheck(
+        "open", "Newer exact posting", url, "2026-01-01T00:00:00Z",
+    ))
+    removed = check_posting(job, Pages(error=PageHTTPError(
+        410, endpoint, observed_at="2000-01-01T00:00:00Z",
+    )))
+    persist_check(workspace.conn, job.id, removed)
+    assert jobs_core.get_job(workspace.conn, job.id).is_active
+    jobs_core.close_job(workspace.conn, job.id, reason="Newer closure")
+
+    class CachedPages(Pages):
+        def fetch(self, url):
+            page = super().fetch(url)
+            return replace(page, retrieved_at="2000-01-01T00:00:00Z")
+
+    check = check_posting(job, CachedPages(json.dumps(provider_payload(provider))))
+    persist_check(workspace.conn, job.id, check)
+    current = jobs_core.get_job(workspace.conn, job.id)
+    assert check.status == "open" and not current.is_active and current.closed_at
+    assert current.jd_text == job.jd_text and "Older open evidence ignored" in current.verification_reason

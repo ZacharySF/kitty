@@ -20,8 +20,9 @@ import sqlite3
 import time
 import tempfile
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Literal, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from kitty.config import Config
@@ -29,9 +30,10 @@ from kitty.core import jobs as jobs_core
 from kitty.core import questions as questions_core
 from kitty.core import resumes as resumes_core
 from kitty.core.resume_versions import default_resume
+from kitty.core.discovery.text import authorization_jurisdiction
 from kitty.core.refresh import PostingCheck, persist_check
 from kitty.core.apply.auth import authenticate, google_session
-from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, Tab, TabClosed, open_session, open_tab
+from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, SessionEndError, Tab, TabClosed, open_session, open_tab
 from kitty.core.apply.browser import (
     BrowserError, busy_message, ensure_firefox, headless_firefox, hide_automation,
 )
@@ -41,7 +43,7 @@ from kitty.core.apply.fields import (
     plan_for,
 )
 from kitty.core.apply.page import (
-    UnsafeAction, choose_select, fill_text, form_frames, pick_from_list, pick_from_search,
+    ChoiceSelectionError, UnsafeAction, choose_select, fill_text, form_frames, pick_from_list, pick_from_search,
     read_fields, settle, tick, upload, uploads_pending, wait_for_form, wait_for_uploads,
 )
 from kitty.core.apply.urls import detect_ats, form_url
@@ -68,6 +70,46 @@ _MANUAL_CONSENT = re.compile(
     r"einverstanden|einwilligung|datenschutzerklärung)\b", re.I,
 )
 
+OutcomeCause = Literal[
+    "ready", "human_boundary", "missing_applicant_fact", "unsupported_controls",
+    "unavailable", "ineligible", "browser_error",
+]
+
+
+class EligibilityOverride(Enum):
+    """Only an explicit CLI choice can authorize ineligible compatibility research."""
+
+    COMPATIBILITY_RESEARCH = "compatibility_research"
+
+
+def preparation_blocker(job: Job, *, eligibility_override: EligibilityOverride | None = None) -> str | None:
+    """Local exclusions, before inspecting tabs, credentials, or applicant files."""
+    if not job.is_active:
+        return "closed: Posting unavailable; refresh availability before preparing it."
+    if (job.queue_state == "not_eligible" or job.eligibility == "ineligible") and (
+        eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH
+    ):
+        return "ineligible: " + (job.eligibility_reason or "marked not eligible")
+    return None
+
+
+def _outcome_cause(report: FillReport) -> OutcomeCause:
+    """Classify existing statuses and boundary prefixes without changing their evidence."""
+    note = (report.note or "").casefold()
+    if note.startswith("closed:"):
+        return "unavailable"
+    if note.startswith("ineligible:"):
+        return "ineligible"
+    if report.status == "ready":
+        return "ready"
+    if report.error == APPROVAL_CHANGED:
+        return "human_boundary"
+    if report.error or report.status == "error":
+        return "browser_error"
+    if note.startswith(("login:", "captcha:", "verification:", "consent:")):
+        return "human_boundary"
+    return report.cause
+
 
 @dataclass
 class FillReport:
@@ -87,6 +129,10 @@ class FillReport:
     resumed: bool = False
     pages: int = 0
     resume_id: int | None = None  # actual uploaded or previously pinned retained attachment
+    cause: OutcomeCause = "unsupported_controls"
+
+    def __post_init__(self) -> None:
+        self.cause = _outcome_cause(self)
 
 
 @dataclass
@@ -96,6 +142,7 @@ class FormResult:
     filled: list[str] = field(default_factory=list)
     unanswered: list[str] = field(default_factory=list)
     to_log: list[str] = field(default_factory=list)       # unanswered with no answers.yaml entry
+    interaction_errors: list[str] = field(default_factory=list)
     resume_uploaded: bool = False
     fields_found: int = 0
     resume_verified: bool = False
@@ -236,7 +283,7 @@ def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan) -> 
 
 def fill_form(
     page: Tab, config: Config, resume_path: Path | None, *, company: str | None = None,
-    tracks: Sequence[str] = (), preserve_existing: bool = False,
+    tracks: Sequence[str] = (), jurisdiction: str | None = None, preserve_existing: bool = False,
     upload_resume: Callable[[Frame, str, Path], None] | None = None,
 ) -> FormResult:
     """Fill every field on the open page that profile.yaml / answers.yaml covers.
@@ -274,17 +321,22 @@ def fill_form(
     planned = []
     for form_field in fields:
         if form_field.blank:
-            plan = plan_for(form_field, config, company=company, tracks=tracks)
+            plan = plan_for(form_field, config, company=company, tracks=tracks, jurisdiction=jurisdiction)
             if plan is not None:
                 planned.append((form_field, plan))
     # Address lookups can appear before the country/state controls they depend on.
     # Fill those parents first; keep the remaining plans in their original order.
     contact_order = {"country": 0, "state": 1}
     planned.sort(key=lambda item: contact_order.get(item[1].field_name.casefold(), 2))
+    failed_choices: set[tuple[int, str]] = set()
     for form_field, plan in planned:
         try:
             if _apply_plan(frames, form_field, plan) and plan.field_name not in result.filled:
                 result.filled.append(plan.field_name)
+        except ChoiceSelectionError as exc:
+            label = form_field.label or form_field.name or plan.field_name
+            result.interaction_errors.append(f"{label}: {exc}")
+            failed_choices.add((form_field.frame, form_field.key))
         except (BidiError, UnsafeAction):
             continue                      # left blank; reported below if it is required
 
@@ -294,6 +346,8 @@ def fill_form(
     for form_field in final:
         if not form_field.required or (not form_field.blank and not form_field.invalid):
             continue
+        if (form_field.frame, form_field.key) in failed_choices:
+            continue                      # saved answer exists; interacting with its control failed
         label = form_field.label or form_field.name or "unlabelled field"
         if form_field.kind == "file":
             result.unanswered.append(f"{label} (file upload)")
@@ -301,7 +355,10 @@ def fill_form(
         if label not in result.unanswered:
             result.unanswered.append(label)
         if form_field.label and lookup_answer(
-            config, form_field.label, company=company, tracks=tracks,
+            config, form_field.label, company=company, tracks=tracks, jurisdiction=jurisdiction,
+            options=form_field.options,
+        ) is None and plan_for(
+            form_field, config, company=company, tracks=tracks, jurisdiction=jurisdiction,
         ) is None:
             result.to_log.append(form_field.label)
     if uploads_pending(page):
@@ -341,8 +398,17 @@ def _same_posting_page(expected_url: str, actual_url: str) -> bool:
 def fill_job(
     page: Tab, conn: sqlite3.Connection, settings: Settings, config: Config, job: Job,
     *, resume_tab: bool = False, approval: FillApproval | None = None,
+    eligibility_override: EligibilityOverride | None = None,
 ) -> FillReport:
-    """Prepare a retained/new page with real input, then restore its prior foreground tab."""
+    """Prepare through review, never submit; excluded jobs leave the browser untouched."""
+    if eligibility_override is not None and (
+        eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approval is not None
+    ):
+        raise ApprovalError(APPROVAL_CHANGED)
+    if blocker := preparation_blocker(job, eligibility_override=eligibility_override):
+        return _blocked_report(job, blocker)
+    research = job.queue_state == "not_eligible" or job.eligibility == "ineligible"
+    jurisdiction = authorization_jurisdiction(job.location, job.country)
     ats = detect_ats(job.apply_url or job.url)
     url = form_url(job, ats)
     report = FillReport(job_id=job.id, company=job.company_name, title=job.title, url=url,
@@ -395,7 +461,7 @@ def fill_job(
             if authentication_attempted and not policy.approves(page.main.url):
                 report.status, report.note = "blocked", "login: redirected to an unapproved origin; continue manually."
                 break
-            if before.blocker and before.blocker.startswith("login:") and policy.enabled:
+            if before.blocker and before.blocker.startswith("login:") and policy.enabled and not research:
                 if authentication_attempted:
                     report.status, report.note = "blocked", "login: authentication did not advance; continue manually (no automatic retry)."
                     break
@@ -440,7 +506,7 @@ def fill_job(
                 break
             result = fill_form(
                 page, config, resume_path, company=job.company_name,
-                tracks=job.tracks, preserve_existing=resume_tab,
+                tracks=job.tracks, jurisdiction=jurisdiction, preserve_existing=resume_tab,
                 upload_resume=(lambda frame, key, path: _upload_approved(
                     frame, key, path, approval, conn, settings
                 )) if approval is not None else None,
@@ -450,6 +516,7 @@ def fill_job(
             result.filled = [page.bidi.redact(value) for value in result.filled]
             result.unanswered = [page.bidi.redact(value) for value in result.unanswered]
             result.to_log = [value for value in result.to_log if page.bidi.redact(value) == value]
+            result.interaction_errors = [page.bidi.redact(value) for value in result.interaction_errors]
             report.pages += 1
             _record(conn, job, resume, result)
             report.filled.extend(name for name in result.filled if name not in report.filled)
@@ -460,6 +527,13 @@ def fill_job(
                 report.resume_id = resume.id
             elif result.resume_verified and report.resume_label is None:
                 report.resume_label = "existing attachment (retained)"
+            if result.interaction_errors:
+                report.status = "partial"
+                report.note = "Selection interaction failed: " + "; ".join(result.interaction_errors)
+                report.cause = "unsupported_controls"
+                if result.blocker:
+                    report.note += "\n" + result.blocker
+                break
             if result.blocker:
                 report.status, report.note = "blocked", result.blocker
                 break
@@ -477,6 +551,7 @@ def fill_job(
                 report.status = "partial" if result.fields_found else "blocked"
                 report.note = ("Required answers or uploads are missing or invalid: " +
                                "; ".join(result.unanswered)) if result.unanswered else "Page validation errors need your review."
+                report.cause = "missing_applicant_fact" if result.to_log else "unsupported_controls"
                 break
             if after.review or after.boundary:
                 # A fresh review-only page cannot prove earlier required steps.
@@ -536,6 +611,13 @@ def fill_job(
                 "closed", "Employer posting page explicitly reports this posting unavailable",
                 closed_url,
             ))
+    if research and report.status != "error" and not (report.note or "").startswith("closed:"):
+        detail = report.note
+        report.status = "blocked"
+        report.note = ("ineligible: Compatibility research only; " +
+                       (job.eligibility_reason or "marked not eligible") +
+                       (f"\n{detail}" if detail else ""))
+    report.cause = _outcome_cause(report)
     record_attempt(conn, job.id, report.status, blocker=report.note if report.status != "ready" else None,
                    context_id=page.context, url=page.bidi.redact(current_url))
     if job.fill_context_id and not resume_tab:
@@ -553,6 +635,14 @@ def _error_report(job_id: int, job: Job | None, message: str) -> FillReport:
         job_id=job_id, company=job.company_name if job else "?", title=job.title if job else "?",
         url=(job.apply_url or job.url) if job else "", ats=detect_ats(job.url) if job else "other",
         resume_label=None, filled=[], unanswered=[], status="error", error=message,
+    )
+
+
+def _blocked_report(job: Job, message: str) -> FillReport:
+    return FillReport(
+        job_id=job.id, company=job.company_name, title=job.title,
+        url=job.apply_url or job.url, ats=detect_ats(job.apply_url or job.url),
+        resume_label=None, filled=[], unanswered=[], status="blocked", note=message,
     )
 
 
@@ -645,6 +735,7 @@ def _fill_all(
     job_ids: list[int], say: Callable[[str], None], *, keep_open: bool,
     watch: Watch | None = None, background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
     approvals: Mapping[int, FillApproval] | None = None,
+    eligibility_override: EligibilityOverride | None = None,
 ) -> list[FillReport]:
     """Fill each job in its own new tab, pausing `pause` seconds between jobs.
 
@@ -652,6 +743,10 @@ def _fill_all(
     set stop flag ends the run before the next job. `background` tabs open
     behind the current one and the first is not brought forward afterwards.
     """
+    if eligibility_override is not None and (
+        eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approvals is not None
+    ):
+        raise ApprovalError(APPROVAL_CHANGED)
     reports: list[FillReport] = []
     first_tab: Tab | None = None
     for position, job_id in enumerate(job_ids):
@@ -663,8 +758,8 @@ def _fill_all(
         if job is None:
             reports.append(_error_report(job_id, None, f"no job with id {job_id}"))
             continue
-        if not job.is_active:
-            reports.append(_error_report(job_id, job, "Posting unavailable; refresh availability before preparing it."))
+        if blocker := preparation_blocker(job, eligibility_override=eligibility_override):
+            reports.append(_blocked_report(job, blocker))
             continue
         approval = approvals.get(job_id) if approvals is not None else None
         if approvals is not None:
@@ -681,13 +776,14 @@ def _fill_all(
             tab = retained or open_tab(bidi, background=background)
             first_tab = first_tab or tab
             report = fill_job(tab, conn, settings, config, job, resume_tab=retained is not None,
-                              approval=approval)
+                              approval=approval, eligibility_override=eligibility_override)
             reports.append(report)
             if watch is not None:
                 watch.tabs[:] = [old for old in watch.tabs if old.context != tab.context and old.job_id != job.id]
             if not keep_open:
                 tab.close()
-            elif watch is not None and report.ats in RULES and not (report.note or "").startswith("closed:"):
+            elif (watch is not None and report.ats in RULES
+                  and report.cause not in ("unavailable", "ineligible")):
                 watch.tabs.append(_watched_tab(job, tab, report))
         except BidiError as exc:
             message = bidi.redact(str(exc)).strip().splitlines()[0][:300]
@@ -698,8 +794,10 @@ def _fill_all(
             say(f"Browser stopped this job: {message}")
             if isinstance(exc, ConnectionLost):
                 for remaining_id in job_ids[position + 1:]:
-                    reports.append(_error_report(
-                        remaining_id, jobs_core.get_job(conn, remaining_id),
+                    remaining = jobs_core.get_job(conn, remaining_id)
+                    blocker = preparation_blocker(remaining, eligibility_override=eligibility_override) if remaining else None
+                    reports.append(_blocked_report(remaining, blocker) if blocker else _error_report(
+                        remaining_id, remaining,
                         "Browser disconnected before this job could be prepared; reconnect Firefox and review a new plan.",
                     ))
                 break
@@ -717,6 +815,7 @@ def _fill_and_watch(
     on_filled: Callable[[list[FillReport]], None], watch: Watch | None,
     background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
     approvals: Mapping[int, FillApproval] | None = None,
+    eligibility_override: EligibilityOverride | None = None,
 ) -> list[FillReport]:
     """Fill, hand the reports over, then (with a Watch) watch the tabs in the same session.
 
@@ -727,7 +826,8 @@ def _fill_and_watch(
     if watch is not None and watch.tabs:
         watch.tabs[:] = reattach(bidi, watch.tabs)
     reports = _fill_all(bidi, conn, settings, config, job_ids, say, keep_open=keep_open,
-                        watch=watch, background=background, pause=pause, approvals=approvals)
+                        watch=watch, background=background, pause=pause, approvals=approvals,
+                        eligibility_override=eligibility_override)
     on_filled(reports)
     if watch is None or not watch.tabs or watch.stop.is_set():
         return reports
@@ -751,30 +851,62 @@ def fill_jobs(
     background: bool = False,
     pause: float = PAUSE_BETWEEN_JOBS,
     approvals: Mapping[int, FillApproval] | None = None,
+    eligibility_override: EligibilityOverride | None = None,
 ) -> list[FillReport]:
     """Open each job's application form in the kitty Firefox window and fill it.
 
     Opens its own DB connection (called from a TUI worker thread, like
     kitty.core.discovery.pipeline.run_discover). The browser window and its
     tabs stay open for me to review and submit. `on_filled` gets the reports as
-    soon as filling is done. With a `watch` (and watch.hours > 0) it then keeps
-    the session and watches the tabs until each is submitted or closed, the
-    stop flag is set or time is up, and records each submitted application.
+    soon as filling is done. Unconfirmed session cleanup preserves those outcomes
+    and adds a warning to their notes and progress. With a `watch` whose hours
+    are positive, it then keeps the session and watches the tabs until each is
+    submitted or closed, the stop flag is set or time is up, and records each
+    submitted application.
     `headless=True` uses a throwaway invisible browser instead (tests, smoke
     runs); its tabs stay open only while a watch runs. `background` opens
     the tabs behind the one in front (autofill), and `pause` is the wait in
     seconds between two jobs. Web callers supply immutable `approvals`; all are
     checked before opening Firefox and again before each upload. CLI/TUI callers
     without approvals retain their normal pinned-or-default selection.
+    Closed and ineligible jobs return blocked reports before browser access.
+    The typed CLI-only compatibility override can inspect ineligible forms,
+    but cannot authenticate, report readiness, or add them to submission watching.
+    It cannot be combined with reviewed web approvals.
     """
     say = progress or (lambda message: None)
     watch = watch if watch is not None and watch.hours > 0 else None
-    on_filled = on_filled or (lambda reports: None)
+    notify_filled = on_filled or (lambda reports: None)
+    completed: list[FillReport] | None = None
+
+    def report_filled(reports: list[FillReport]) -> None:
+        nonlocal completed
+        completed = reports
+        notify_filled(reports)
+
     conn = connect(settings.db_path)
     try:
+        if eligibility_override is not None and (
+            eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approvals is not None
+        ):
+            raise ApprovalError(APPROVAL_CHANGED)
+        # Entirely excluded runs require no browser session. Mixed runs retain
+        # their original ordering and recheck each exclusion immediately before use.
+        local_reports = []
+        for job_id in job_ids:
+            job = jobs_core.get_job(conn, job_id)
+            if job is None:
+                local_reports.append(_error_report(job_id, None, f"no job with id {job_id}"))
+            elif blocker := preparation_blocker(job, eligibility_override=eligibility_override):
+                local_reports.append(_blocked_report(job, blocker))
+        if len(local_reports) == len(job_ids):
+            report_filled(local_reports)
+            return local_reports
         if approvals is not None:
             for job_id in job_ids:
                 job = jobs_core.get_job(conn, job_id)
+                if job is not None and preparation_blocker(job, eligibility_override=eligibility_override):
+                    continue
                 approval = approvals.get(job_id)
                 if job is None or approval is None:
                     raise ApprovalError(APPROVAL_CHANGED)
@@ -782,8 +914,9 @@ def fill_jobs(
         if headless:
             with headless_firefox(settings) as bidi:
                 return _fill_and_watch(bidi, conn, settings, config, job_ids, say,
-                                       keep_open=watch is not None, on_filled=on_filled,
-                                       watch=watch, background=background, pause=pause, approvals=approvals)
+                                       keep_open=watch is not None, on_filled=report_filled,
+                                       watch=watch, background=background, pause=pause, approvals=approvals,
+                                       eligibility_override=eligibility_override)
         say("opening the kitty Firefox window")
         port = ensure_firefox(settings)
         try:
@@ -794,15 +927,26 @@ def fill_jobs(
             raise SessionBusy(busy_message(port)) from exc
         try:
             return _fill_and_watch(bidi, conn, settings, config, job_ids, say, keep_open=True,
-                                   on_filled=on_filled, watch=watch, background=background,
-                                   pause=pause, approvals=approvals)
+                                   on_filled=report_filled, watch=watch, background=background,
+                                   pause=pause, approvals=approvals, eligibility_override=eligibility_override)
         finally:
             bidi.close()                  # ends remote control only: the window and tabs stay
     except (BrowserError, BidiError) as exc:
+        if isinstance(exc, SessionEndError) and completed is not None:
+            # Filling and its callback already finished. Teardown is a separate
+            # failure, not evidence that the prepared applications failed.
+            message = f"Browser cleanup unconfirmed: {bidi.redact(str(exc))}"
+            for report in completed:
+                report.note = f"{report.note}\n{message}" if report.note else message
+            say(message)
+            return completed
         message = str(exc).strip().splitlines()[0][:300]
-        reports = [_error_report(job_id, jobs_core.get_job(conn, job_id), message)
-                   for job_id in job_ids]
-        on_filled(reports)
+        reports = []
+        for job_id in job_ids:
+            job = jobs_core.get_job(conn, job_id)
+            blocker = preparation_blocker(job, eligibility_override=eligibility_override) if job else None
+            reports.append(_blocked_report(job, blocker) if blocker else _error_report(job_id, job, message))
+        report_filled(reports)
         return reports
     finally:
         conn.close()

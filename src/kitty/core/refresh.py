@@ -2,7 +2,9 @@
 
 Only exact authoritative posting details verify availability. Not-found/gone
 responses from those detail APIs verify removal; other HTTP failures, search
-absence, login pages and unexpected redirects remain uncertainty.
+absence, login pages and unexpected redirects remain uncertainty. Workday CXS and
+Oracle Candidate Experience checks request one exact detail, never dropdowns or
+board searches; their undocumented removal flags do not establish closure.
 """
 from __future__ import annotations
 
@@ -17,7 +19,9 @@ from kitty.core import jobs as jobs_core, likeness
 from kitty.core.discovery.ats import parse_greenhouse, parse_lever, smartrecruiters_description
 from kitty.core.discovery.base import NormalizedJob
 from kitty.core.discovery.http import HttpError, PoliteHttp, RateLimited
+from kitty.core.discovery.employers import _detail_url as oracle_detail_url, parse_oracle
 from kitty.core.discovery.public_pages import PageHTTPError, PublicPages, parse_job_postings
+from kitty.core.discovery.workday import board_urls, parse_workday_detail
 from kitty.dates import now_iso, parse, to_iso
 from kitty.db.connection import transaction
 from kitty.models import Job
@@ -92,6 +96,31 @@ def _detail_endpoint(job: Job, url: str) -> tuple[str, str | None, str | None, s
     if host == "jobs.smartrecruiters.com" and len(path) >= 2:
         slug, identity = path[0], path[1].split("-", 1)[0]
         return f"https://api.smartrecruiters.com/v1/companies/{quote(slug)}/postings/{quote(identity)}", "smartrecruiters", slug, identity
+    workday_host = re.fullmatch(r"([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com", host)
+    if workday_host:
+        if path and re.fullmatch(r"[a-z]{2}-[A-Z]{2}", path[0]):
+            path = path[1:]
+        if path and path[-1] == "apply":
+            path = path[:-1]
+        if len(path) >= 3 and path[1] == "job":
+            tenant, wd = workday_host.groups()
+            slug = f"{tenant}/{wd}/{path[0]}"
+            _, api = board_urls(slug)
+            identity = "/" + "/".join(path[1:])
+            return api + identity, "workday", slug, identity
+    # Only the native Oracle tenant proves where its public REST API lives.
+    # Vanity domains can map to a different tenant; never guess that mapping.
+    if host.endswith(".oraclecloud.com"):
+        match = re.fullmatch(
+            r"((?:/hcmUI/CandidateExperience)?/[a-z]{2}(?:-[A-Z]{2})?/sites/([^/]+))"
+            r"/job/([A-Za-z0-9_-]+)(?:/apply)?/?", parts.path,
+        )
+        if match:
+            portal_path, site, identity = match.groups()
+            slug = f"https://{host}{portal_path}"
+            board = {"kind": "oracle", "url": slug, "site": site,
+                     "api_url": f"https://{host}/hcmRestApi/resources/latest"}
+            return oracle_detail_url(board, identity), "oracle", slug, identity
     return url, None, None, None
 
 
@@ -102,6 +131,17 @@ def _same_posting_url(left: str, right: str) -> bool:
         return canonical_url(url).removesuffix("/apply")
 
     return bool(set(_url_spellings(without_apply(left))) & set(_url_spellings(without_apply(right))))
+
+
+def _same_detail_url(left: str, right: str) -> bool:
+    """API authority includes the exact origin, path and finder/site parameters."""
+    a, b = urlsplit(left), urlsplit(right)
+    return (
+        a.scheme.lower() == b.scheme.lower()
+        and a.netloc.lower() == b.netloc.lower()
+        and a.path.rstrip("/") == b.path.rstrip("/")
+        and parse_qs(a.query, keep_blank_values=True) == parse_qs(b.query, keep_blank_values=True)
+    )
 
 
 def check_posting(job: Job, pages: PublicPages) -> PostingCheck:
@@ -117,26 +157,54 @@ def check_posting(job: Job, pages: PublicPages) -> PostingCheck:
         if re.search(r"captcha challenge|complete (?:the )?(?:captcha|security check)|verify (?:that )?you are human|access denied|sign in to (?:view|continue)|log in to (?:view|continue)", page.text, re.I):
             return PostingCheck("blocked", "Public page requires verification or authentication", page.url)
         if kind:
-            if not _same_posting_url(page.url, endpoint):
+            if not _same_detail_url(page.url, endpoint):
                 return PostingCheck("unverified", "Detail API redirected away from this exact posting", page.url)
             payload = json.loads(page.text)
             if not isinstance(payload, dict):
                 return PostingCheck("unverified", "Detail API returned no posting object", page.url)
-            returned_id = str(payload.get("id", ""))
-            if returned_id != identity:
-                return PostingCheck("unverified", "Detail API did not identify the requested posting", page.url)
-            status = str(payload.get("status", payload.get("state", ""))).lower()
-            if status in {"closed", "expired", "filled", "inactive", "unpublished"} or payload.get("active") is False:
-                return PostingCheck("closed", "Exact ATS detail explicitly marks the posting unavailable", page.url, page.retrieved_at)
-            company = WatchlistCompany(name=job.company_name, ats=kind, slug=slug)
-            if kind == "greenhouse":
-                posting = parse_greenhouse(company, {"jobs": [payload]})[0]
-            elif kind == "lever":
-                posting = parse_lever(company, [payload])[0]
+            if kind == "workday":
+                info = payload.get("jobPostingInfo")
+                if not isinstance(info, dict) or not isinstance(info.get("externalUrl"), str):
+                    return PostingCheck("unverified", "Workday detail lacks exact posting identity", page.url)
+                returned_endpoint, returned_kind, _, _ = _detail_endpoint(job, info["externalUrl"])
+                if returned_kind != "workday" or not _same_detail_url(returned_endpoint, endpoint):
+                    return PostingCheck("unverified", "Workday detail identifies another posting, tenant or site", page.url)
+                # Neither canApply nor posted has a documented closure contract.
+                if (info.get("canApply") is False or info.get("posted") is False
+                        or info.get("active") is False or info.get("status") or info.get("state")):
+                    return PostingCheck("unverified", "Workday application availability is uncertain; not removal evidence", page.url)
+                company = WatchlistCompany(name=job.company_name, ats=kind, slug=slug)
+                posting = parse_workday_detail(company, {"externalPath": identity}, payload)
+            elif kind == "oracle":
+                items = payload.get("items")
+                if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+                    return PostingCheck("unverified", "Oracle detail lacks one exact posting; absence is not closure", page.url)
+                record = items[0]
+                site = slug.rsplit("/", 1)[1]
+                if str(record.get("Id", "")) != identity or (
+                    "SiteNumber" in record and str(record["SiteNumber"]) != site
+                ):
+                    return PostingCheck("unverified", "Oracle detail did not identify the requested posting and site", page.url)
+                if (record.get("canApply") is False or record.get("active") is False
+                        or record.get("status") or record.get("state")):
+                    return PostingCheck("unverified", "Oracle application availability is uncertain; not removal evidence", page.url)
+                posting = parse_oracle({"company": job.company_name, "url": slug}, record, page, "")
             else:
-                posting = NormalizedJob(source=kind, source_job_id=f"{slug}:{identity}",
-                                        company=job.company_name, title=payload.get("name") or "",
-                                        url=job.url, description=smartrecruiters_description(payload), raw=payload)
+                returned_id = str(payload.get("id", ""))
+                if returned_id != identity:
+                    return PostingCheck("unverified", "Detail API did not identify the requested posting", page.url)
+                status = str(payload.get("status", payload.get("state", ""))).lower()
+                if status in {"closed", "expired", "filled", "inactive", "unpublished"} or payload.get("active") is False:
+                    return PostingCheck("closed", "Exact ATS detail explicitly marks the posting unavailable", page.url, page.retrieved_at)
+                company = WatchlistCompany(name=job.company_name, ats=kind, slug=slug)
+                if kind == "greenhouse":
+                    posting = parse_greenhouse(company, {"jobs": [payload]})[0]
+                elif kind == "lever":
+                    posting = parse_lever(company, [payload])[0]
+                else:
+                    posting = NormalizedJob(source=kind, source_job_id=f"{slug}:{identity}",
+                                            company=job.company_name, title=payload.get("name") or "",
+                                            url=job.url, description=smartrecruiters_description(payload), raw=payload)
             if not posting.title or not posting.description:
                 return PostingCheck("unverified", "Exact detail lacks title or qualification evidence", page.url)
             return PostingCheck("open", "Authoritative ATS detail is active", page.url, page.retrieved_at, posting)
@@ -171,7 +239,7 @@ def check_posting(job: Job, pages: PublicPages) -> PostingCheck:
             return PostingCheck("unverified", "Posting has no qualification evidence", page.url)
         return PostingCheck("open", "Exact public JobPosting detail is active", page.url, page.retrieved_at, posting)
     except PageHTTPError as exc:
-        if kind and exc.status_code in {404, 410} and _same_posting_url(exc.url, endpoint):
+        if kind and exc.status_code in {404, 410} and _same_detail_url(exc.url, endpoint):
             return PostingCheck(
                 "closed", f"Authoritative {kind} posting detail returned HTTP {exc.status_code}",
                 exc.url, exc.observed_at,
@@ -183,7 +251,7 @@ def check_posting(job: Job, pages: PublicPages) -> PostingCheck:
     except HttpError as exc:
         status = "blocked" if "robots" in str(exc).lower() else "error"
         return PostingCheck(status, str(exc), endpoint)
-    except (ValueError, KeyError, TypeError, IndexError) as exc:
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError) as exc:
         return PostingCheck("error", f"Invalid posting evidence: {type(exc).__name__}: {exc}", endpoint)
 
 

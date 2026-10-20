@@ -348,6 +348,28 @@ class SourcesFile(_Base):
 
 # ------------------------------------------------------------------- answers
 
+# Only permission to work depends on the job's jurisdiction. Citizenship,
+# nationality, birth country and US-person/export-control identity are facts,
+# not interchangeable evidence of permission to work.
+_WORK_PERMISSION = re.compile(
+    r"\b(sponsor\w*|visa\w*|(?:work|employment) authori[sz]ation|work permit|"
+    r"(?:authori[sz]ed|authori[sz]ation|eligible|entitled|permitted|permission|right|legally able)"
+    r"(?: \w+)* (?:work|employment))\b"
+)
+# If an unfamiliar place is explicitly named, absence from our country table
+# is not evidence that a relative answer belongs to the job's country.
+# Nested "in which you are applying" is relative boilerplate, not a named place.
+_UNRESOLVED_PERMISSION_PLACE = re.compile(
+    r"\b(?:in|within) (?!"
+    r"(?:the )?future\b|advance\b|order to\b|"
+    r"this (?:country|location|position|role|job)\b|"
+    r"(?:the )?country (?:of employment|of application|where|in which)\b|"
+    r"the (?:job|work) location\b|"
+    r"which (?:you are applying|(?:this|the) (?:position|role|job))\b"
+    r")\w+"
+)
+
+
 
 class AnswerEntry(_Base):
     question: str
@@ -689,6 +711,7 @@ class Config:
 
     def answer_for(
         self, question: str, company: str | None = None, tracks: Sequence[str] = (),
+        *, jurisdiction: str | None = None, options: Sequence[str] = (),
     ) -> AnswerEntry | None:
         """The answers.yaml answer for a screening question, or None.
 
@@ -698,12 +721,41 @@ class Config:
         general answer away from jobs in those tracks (`tracks` = the job's). When
         two entries at the same specificity match, nothing is returned: a tie is
         not an answer. "U.S.", "USA" and "United States" count as the same words.
-        Nothing is ever generated.
+        Country-specific work-permission answers require matching explicit field
+        country evidence (question/options), or `jurisdiction` from the job's
+        strict location evidence. This gates exact and phrase matches alike,
+        including countries named only in saved choice aliases. Unresolved
+        permission scopes still count toward ambiguity; only proven mismatches
+        are discarded. Identity facts are not work permission. Nothing is ever
+        generated.
         """
         from kitty.normalize import norm_screening
+        from kitty.core.discovery.text import authorization_countries
 
         company_words = f" {norm_screening(company or '')} "
         job_tracks = set(tracks)
+        field_countries = authorization_countries(" ".join((question, *options)))
+
+        def permission_applies(entry: AnswerEntry) -> bool | None:
+            """True: applicable; False: proven mismatch; None: unresolved."""
+            if not _WORK_PERMISSION.search(norm_screening(entry.question)):
+                return True
+            countries = authorization_countries(" ".join((entry.question, *entry.choices)))
+            if not countries:
+                if _UNRESOLVED_PERMISSION_PLACE.search(norm_screening(
+                    " ".join((entry.question, *entry.choices)),
+                )):
+                    return None
+                return True
+            if len(countries) != 1 or len(field_countries) > 1:
+                return None
+            # Explicit wording asks about that country even on an overseas or
+            # unknown job. Mixed field evidence must not fall back to the job.
+            if field_countries:
+                return field_countries == countries
+            if _UNRESOLVED_PERMISSION_PLACE.search(norm_screening(" ".join((question, *options)))):
+                return None
+            return countries == {jurisdiction} if jurisdiction is not None else None
 
         def applies(entry: AnswerEntry) -> bool:
             if not company and (entry.companies or entry.exclude_companies):
@@ -722,22 +774,29 @@ class Config:
             )
             return not excluded and (not entry.companies or bool(included))
 
-        def choose(entries: list[AnswerEntry]) -> AnswerEntry | None:
-            scoped = [entry for entry in entries if entry.companies or entry.tracks]
+        def choose(entries: list[tuple[AnswerEntry, bool | None]]) -> AnswerEntry | None:
+            scoped = [item for item in entries if item[0].companies or item[0].tracks]
             candidates = scoped or entries
-            return candidates[0] if len(candidates) == 1 else None
+            if len(candidates) != 1:
+                return None
+            entry, permission = candidates[0]
+            return entry if permission is True else None
 
         wanted = norm_screening(question)
-        available = [entry for entry in self.answers.answers if applies(entry)]
+        available = [
+            (entry, permission)
+            for entry in self.answers.answers
+            if applies(entry) and (permission := permission_applies(entry)) is not False
+        ]
         exact = [
-            entry for entry in available
+            (entry, permission) for entry, permission in available
             if norm_screening(entry.question) == wanted
         ]
         if exact or not wanted:
             return choose(exact)
         padded = f" {wanted} "
         phrased = [
-            entry for entry in available
+            (entry, permission) for entry, permission in available
             if any(
                 f" {norm_screening(phrase)} " in padded
                 for phrase in entry.match

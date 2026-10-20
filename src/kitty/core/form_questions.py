@@ -24,7 +24,7 @@ import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Callable
+from typing import Callable, Sequence
 from urllib.parse import parse_qs, urlsplit
 
 from kitty.config import Config, Profile
@@ -32,6 +32,7 @@ from kitty.core import questions as questions_core
 from kitty.core.apply.fields import FormField, clean_label, is_demographic, lookup_answer, profile_plan
 from kitty.core.apply.urls import detect_ats
 from kitty.core.discovery.http import HttpError, PoliteHttp, RateLimited
+from kitty.core.discovery.text import authorization_jurisdiction
 from kitty.db.connection import transaction
 from kitty.normalize import norm_question
 from kitty.settings import Settings
@@ -339,13 +340,18 @@ def is_essay(label: str, kind: str, has_choices: bool) -> bool:
     return bool(_ESSAY.search(norm_question(label)))
 
 
-def classify(label: str, kind: str, choices: tuple[str, ...], demographic: bool, config: Config) -> str:
+def classify(
+    label: str, kind: str, choices: tuple[str, ...], demographic: bool, config: Config,
+    *, company: str | None = None, tracks: Sequence[str] = (), jurisdiction: str | None = None,
+) -> str:
     """One of KINDS for a stored question: what I still have to do about it.
 
     answers.yaml first (I already answered it), then the profile, then
     demographic, essay, and finally choice (has options) or factual (typed fact).
     """
-    if lookup_answer(config, label) is not None:
+    if lookup_answer(
+        config, label, company=company, tracks=tracks, jurisdiction=jurisdiction, options=choices,
+    ) is not None:
         return "answered"
     question = FormQuestion(label, kind or "text", choices=choices, demographic=demographic)
     if kind and kind != "file" and is_profile_field(question, config.profile):
@@ -573,9 +579,25 @@ def _summary(question_id: int, text: str, links: list[sqlite3.Row], config: Conf
     field_kind = kinds.most_common(1)[0][0] if kinds else None
     choices = sets.most_common(1)[0][0] if sets else ()
     demographic = any(link["demographic"] for link in jobs)
+    # A merged question is answered only when every associated form is covered.
+    # A US answer must not hide a relative question also asked by an overseas or
+    # unresolved job, and each form's own choices can name a different country.
+    classifications = [
+        classify(
+            text, link["field_kind"] or "", tuple(json.loads(link["choices"] or "[]")),
+            bool(link["demographic"]), config, company=link["company"],
+            tracks=tuple((link["tracks"] or "").split(";")) if link["tracks"] else (),
+            jurisdiction=authorization_jurisdiction(link["location"], link["country"]),
+        )
+        for link in jobs
+    ]
+    kind = (
+        next((value for value in classifications if value != "answered"), "answered")
+        if classifications else classify(text, field_kind or "", choices, demographic, config)
+    )
     return QuestionSummary(
         id=question_id, text=text,
-        kind=classify(text, field_kind or "", choices, demographic, config),
+        kind=kind,
         field_kind=field_kind,
         job_ids=tuple(dict.fromkeys(link["job_id"] for link in jobs)),
         companies=tuple(name for name, _ in companies.most_common()),
@@ -594,7 +616,8 @@ def summarize(conn: sqlite3.Connection, config: Config) -> list[QuestionSummary]
     rows = conn.execute(
         """
         SELECT q.id, q.text, qj.job_id, qj.field_kind, qj.required, qj.choices, qj.demographic,
-               c.display_name AS company
+               c.display_name AS company, j.location, j.country,
+               (SELECT group_concat(jt.track, ';') FROM job_tracks jt WHERE jt.job_id = j.id) AS tracks
         FROM screening_questions q
         LEFT JOIN question_jobs qj ON qj.question_id = q.id
         LEFT JOIN jobs j ON j.id = qj.job_id

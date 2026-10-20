@@ -23,6 +23,7 @@
     company: string;
     title: string;
     status: string;
+    cause: "ready" | "human_boundary" | "missing_applicant_fact" | "unsupported_controls" | "unavailable" | "ineligible" | "browser_error";
     filled: string[];
     unanswered: string[];
     note: string | null;

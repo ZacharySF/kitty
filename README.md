@@ -552,8 +552,10 @@ uv run kitty refresh --job <ID> --limit 1  # use a local stored job ID; repeat -
 
 Selection prefers favorites, then missing/stale descriptions within best-first
 ranking; `--track` narrows it. Checks use single-posting ATS details or an exact
-public JobPosting record, with robots restrictions, pacing and caching. Unknown
-JavaScript-only pages remain unverified. No paid services or submissions.
+public JobPosting record, with robots restrictions, pacing and caching. Workday
+CXS and native Oracle Candidate Experience details must identify the exact
+tenant, site and posting. Unknown vanity-domain mappings, empty details and failed
+sources remain uncertain, not closed. No paid services or submissions.
 
 Inbox, Jobs and Job Detail distinguish **verified**, **stale**, **unverified**
 and **closed**. Successful live evidence expires after seven days; a discovery
@@ -640,6 +642,13 @@ review/submit boundary permit ready; detection of fields alone does not.
 Old fill markers migrate to attempted, not ready. Missing answers can be saved
 on Profile and retried, including the first answer in an empty answers file.
 
+Explicit job IDs do not bypass eligibility or availability checks. Excluded jobs
+return their reasons without opening tabs or accessing credentials. CLI
+`kitty apply <ID> --include-ineligible` is deliberate compatibility research:
+it cannot authenticate, become ready or register submission watching. Preparation
+reports distinguish ineligible/unavailable jobs, human boundaries, missing facts,
+unsupported controls and browser errors instead of counting touched fields as success.
+
 A valid retained application tab is resumed without navigating away or replacing
 manual choices/attachments. Per-tab browser-storage markers bridge Firefox's
 session-scoped tab IDs; origin and posting checks still apply. A matching URL alone
@@ -668,11 +677,12 @@ company sites) are not watched: mark those by hand. In the terminal Ctrl-C stops
 watching; in the TUI watching goes on across tabs, `w` on the Apply tab stops it,
 and pressing `f` again keeps watching the earlier tabs too.
 
-Firefox takes one remote-control session at a time and keeps it until the
-program holding it ends it (a killed program never does). So while one kitty
-watches, another fill says which process holds the window; if none does (an
-kitty was killed), close the kitty Firefox window and fill again. Closing the
-terminal (SIGHUP) still ends the session cleanly.
+Firefox permits one remote-control session at a time. Stop the existing worker
+before starting another. Session release is confirmed, not inferred from a closed
+socket; an unconfirmed cleanup is reported separately without erasing completed
+job outcomes. An empty process-holder diagnostic is not proof that restarting is
+safe. Preserve unsaved forms before restarting Firefox or reloading an employer
+page. Normal Reload affects that tab, not unrelated application tabs.
 
 It never guesses: a question with no answer in `answers.yaml` is left blank and
 goes into the unanswered-questions list on the Profile screen, so I answer it
@@ -683,15 +693,27 @@ wording for dropdowns that offer no plain "Yes". `companies:` and
 `exclude_companies:` keep prior-interview or employment answers from leaking
 between companies. A graduation dropdown listing terms ("2032 - Spring") gets
 the term of the configured graduation month (Jan-May Spring, Jun-Aug Summer, Sep-Dec Fall).
-Comboboxes first open their existing option list and select an exact matching value
-(including configured/profile aliases) without typing. If no matching choice appears
-during the short list probe, they fall back to search; asynchronous location searches
-retain their loading wait. A choice must remain selected after blur to count as filled.
+Country-bound work-authorization and sponsorship answers are scoped by the
+country in their saved question or choice aliases. A relative question requires
+a proven matching job jurisdiction; mixed, conflicting or unknown locations stay
+unanswered. Explicit field-country evidence is checked too. Citizenship, residence
+and birthplace are not substitutes for permission to work in another country.
+
+Generic comboboxes first open their existing option list and select an exact
+matching value (including configured/profile aliases), then fall back to search
+where supported. Asynchronous location searches retain their loading wait.
+Native Workday lists use their owned list control and inspect the bounded
+hierarchy before selecting one uniquely matching leaf. Ambiguous or incomplete
+lists stop with a selection-specific reason, without repeated answer clicks or
+search fallback. Radio decorations are allowed only inside the uniquely owned
+single-select portal; unrelated controls stay blocked. A committed selection
+after blur is required, not just a click.
 Verified acronym decorations are equivalent to the full option name, so
 `ECE - Electrical and Computer Engineering` can match the saved full major.
 Ambiguous/disabled choices are refused; a major never matches a different program
 merely because its name starts the same way. Editable search text is not proof of
-a selection, and failed choices clear that query.
+a selection. Failed typed searches discard their automation-owned query; native
+Workday navigation preserves existing manual search text.
 Recognized Workday pages can follow guarded Apply/Apply Manually entry and
 non-final Next/Continue steps to Review. Account requirements vary by employer.
 Unknown structures and final application actions are never clicked. Known Oracle

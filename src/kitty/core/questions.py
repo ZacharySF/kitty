@@ -125,13 +125,16 @@ def mark_answered(conn: sqlite3.Connection, question_id: int, answered: bool = T
 def refresh_answered_flags(conn: sqlite3.Connection, config: Config) -> int:
     """Re-check the queue against answers.yaml; return how many are now answered.
 
-    Run after I edit answers.yaml: anything the file now covers drops out of the
-    queue without my touching the database.
+    Run after I edit answers.yaml: only answers covering every associated job
+    drop out of the queue. Reuse form classification so per-job jurisdictions,
+    company/track scope, and country evidence in stored choices stay identical
+    to what the filler can actually answer.
     """
-    answered = 0
+    from kitty.core.form_questions import summarize
+
+    covered = {summary.id for summary in summarize(conn, config) if summary.kind == "answered"}
     for question in list_questions(conn, unanswered_only=False):
-        found = config.answer_for(question.text) is not None
+        found = question.id in covered
         if found != question.answered:
             mark_answered(conn, question.id, found)
-        answered += int(found)
-    return answered
+    return len(covered)

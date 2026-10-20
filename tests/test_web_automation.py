@@ -104,7 +104,7 @@ def test_local_plans_cap_and_exclusions_never_apply(app, workspace, posting):
 @pytest.mark.parametrize("body", [
     {"mode": "selected", "job_ids": [True]}, {"limit": 0}, {"limit": True},
     {"track": False}, {"track": "unknown"}, {"mode": "queue", "job_ids": [1]},
-    {"mode": "selected"}, {"submit": True}, {"mode": []},
+    {"mode": "selected"}, {"submit": True}, {"mode": []}, {"include_ineligible": True},
 ])
 def test_invalid_plan_parameters(app, workspace, body):
     with pytest.raises(APIError) as caught:
@@ -548,3 +548,86 @@ def test_google_action_without_checkbox_remains_manual(app, workspace, posting, 
     })
     assert not captured[0].apply.authentication.enabled
     assert captured[0].apply.authentication._google_email is None
+
+
+@pytest.mark.parametrize("exclusion", ["queue", "eligibility", "closed"])
+def test_selected_exclusion_precedes_credentials_and_keeps_actual_reason(
+    app, workspace, posting, monkeypatch, exclusion,
+):
+    reason = "Applicant graduation does not meet this posting's requirement"
+    if exclusion == "queue":
+        workspace.conn.execute(
+            "UPDATE jobs SET queue_state = 'not_eligible', eligibility_reason = ? WHERE id = ?",
+            (reason, posting.id),
+        )
+    elif exclusion == "eligibility":
+        jobs.set_eligibility(workspace.conn, posting.id, "ineligible", reason)
+    else:
+        workspace.conn.execute("UPDATE jobs SET is_active = 0 WHERE id = ?", (posting.id,))
+    monkeypatch.setattr(web, "load_credentials", lambda *_: pytest.fail("Excluded jobs cannot load credentials"))
+    plan = web.post(app, workspace.conn, "/api/automation/plan", {
+        "mode": "selected", "job_ids": [posting.id],
+    })
+    assert plan["job_ids"] == [] and plan["jobs"] == []
+    assert plan["left"] == [{
+        "job_id": posting.id, "company": posting.company_name, "title": posting.title,
+        "reason": ("closed: Posting unavailable; refresh availability before preparing it."
+                   if exclusion == "closed" else f"ineligible: {reason}"),
+    }]
+    with pytest.raises(APIError) as caught:
+        web.post(app, workspace.conn, "/api/automation/start", {
+            "mode": "selected", "job_ids": [posting.id], "fingerprint": plan["fingerprint"],
+            "confirmed": True,
+        })
+    assert caught.value.status == 409
+    assert app.automation.snapshot()["reports"] == []
+    assert applications.get_application_for_job(workspace.conn, posting.id) is None
+
+
+def test_selected_mixed_plan_keeps_each_exclusion_without_replacements(app, workspace, posting):
+    ineligible, _ = jobs.upsert_job(
+        workspace.conn, company="Excluded Fixture", title="Doctoral internship",
+        url="https://example.invalid/doctoral",
+        eligibility="ineligible", eligibility_reason="Requires current PhD enrollment",
+    )
+    closed, _ = jobs.upsert_job(
+        workspace.conn, company="Closed Fixture", title="Closed internship",
+        url="https://example.invalid/closed",
+    )
+    workspace.conn.execute("UPDATE jobs SET is_active = 0 WHERE id = ?", (closed.id,))
+    plan = web.post(app, workspace.conn, "/api/automation/plan", {
+        "mode": "selected", "job_ids": [ineligible.id, posting.id, closed.id],
+    })
+    assert plan["job_ids"] == [posting.id]
+    assert [item["job_id"] for item in plan["left"]] == [ineligible.id, closed.id]
+    assert plan["left"][0]["reason"] == "ineligible: Requires current PhD enrollment"
+    assert plan["left"][1]["reason"].startswith("closed:")
+
+
+def test_new_ineligibility_invalidates_review_before_browser_or_credentials(
+    app, workspace, posting, monkeypatch,
+):
+    body = {"mode": "selected", "job_ids": [posting.id]}
+    plan = web.post(app, workspace.conn, "/api/automation/plan", body)
+    jobs.set_eligibility(workspace.conn, posting.id, "ineligible", "UK-only posting")
+    monkeypatch.setattr(web, "load_credentials", lambda *_: pytest.fail("Excluded job cannot load credentials"))
+    monkeypatch.setattr(web.filler, "fill_jobs", lambda *a, **kw: pytest.fail("Stale review cannot start browser"))
+    with pytest.raises(APIError) as caught:
+        web.post(app, workspace.conn, "/api/automation/start", {
+            **body, "confirmed": True, "fingerprint": plan["fingerprint"],
+        })
+    assert caught.value.status == 409
+    assert app.automation.snapshot()["running"] is False
+
+
+def test_structured_causes_survive_web_report_serialization(app, posting):
+    ready = report(posting.id, "ready")
+    controls = replace(
+        report(posting.id), note="Selection interaction failed: saved choice did not commit",
+        cause="unsupported_controls",
+    )
+    missing = replace(report(posting.id), cause="missing_applicant_fact")
+    for outcome in (ready, controls, missing):
+        app.automation._filled([outcome])
+        assert app.automation.snapshot()["reports"][0]["cause"] == outcome.cause
+        assert app.automation.snapshot()["reports"][0]["note"] == outcome.note

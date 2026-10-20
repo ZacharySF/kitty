@@ -2,8 +2,8 @@
 
 WebDriver BiDi is the W3C remote-control protocol built into Firefox: JSON
 commands and replies over a WebSocket on a local port. This module has only
-what the form filler needs: open a tab, go to a URL, list its frames, run a
-JavaScript function, type, click one element, and attach a file.
+what the form filler needs: open or reload a tab, go to a URL, list its frames,
+run a JavaScript function, type, click one element, and attach a file.
 
 Page scripts run in a private "sandbox" realm, the same isolation browser
 extensions get: they see and change the page's DOM, but the page cannot see
@@ -11,7 +11,9 @@ them or anything they keep in their globals. So the filler does not stamp
 attributes on the page's elements; it remembers them in the sandbox instead.
 
 Ending a session (close()) leaves Firefox, its window and every tab open. That
-is the point: I review each filled tab and click submit myself, later.
+is the point: I review each filled tab and click submit myself, later. A failed
+close raises and retains this controller's connection for a possible retry:
+disconnecting alone would leave Firefox's direct BiDi session orphaned.
 """
 
 from __future__ import annotations
@@ -57,11 +59,26 @@ class ConnectionLost(BidiError):
 class SessionBusy(BidiError):
     """Firefox already has a remote-control session; it allows only one at a time.
 
-    Firefox (checked on 155) keeps a session until someone sends session.end:
-    closing the connection does not end it, and nothing else can attach to it.
-    So a program that died while holding one blocks remote control until
-    Firefox restarts.
+    Firefox keeps a direct BiDi session until someone sends session.end:
+    closing the connection does not end it. Reconnection endpoints exist only
+    for HTTP-upgraded sessions, not the direct sessions this client creates.
     """
+
+
+class SessionEndError(BidiError):
+    """Cleanup was not confirmed; retain the owner and its recovery metadata."""
+
+    def __init__(self, url: str, session_id: str, detail: str, *, acknowledged: bool) -> None:
+        self.url = url
+        self.session_id = session_id
+        self.end_acknowledged = acknowledged
+        super().__init__(
+            f"Firefox did not confirm cleanup of this controller's session "
+            f"{session_id} at {url}: {detail}. The owning connection was not "
+            "discarded; retry close() on this controller if it is still connected. "
+            "Firefox cannot reattach a disconnected direct BiDi session. Preserve "
+            "open forms before manually restarting Firefox; no restart was attempted."
+        )
 
 
 
@@ -69,6 +86,9 @@ class Bidi:
     """One WebDriver BiDi session with a running Firefox."""
 
     def __init__(self, url: str) -> None:
+        self.url = url
+        self._session_ended = False
+        self._session_end_acknowledged = False
         self._secrets: tuple[str, ...] = ()
         try:
             # legacy=True: a plain connection object, closed in close() (the session
@@ -81,9 +101,10 @@ class Bidi:
         self._ids = itertools.count(1)
         try:
             # "ignore": a dialog a page opens stays up for me instead of being dismissed.
-            self.command("session.new", {"capabilities": {"alwaysMatch": {
+            session = self.command("session.new", {"capabilities": {"alwaysMatch": {
                 "unhandledPromptBehavior": {"default": "ignore"},
             }}})
+            self.session_id: str = session["sessionId"]
         except BidiError as exc:
             self._ws.close()
             if "Maximum number of active sessions" in str(exc):
@@ -99,18 +120,32 @@ class Bidi:
         """Sanitize page/transport diagnostics before displaying or persisting them."""
         return redact(text, self._secrets)
 
+    @property
+    def session_end_acknowledged(self) -> bool:
+        """Whether this controller received session.end's reply, before teardown."""
+        return self._session_end_acknowledged
+
+    @property
+    def session_ended(self) -> bool:
+        """Whether Firefox confirmed release, not merely receipt of session.end."""
+        return self._session_ended
+
     def command(self, method: str, params: dict[str, Any], *, timeout: float = 30.0) -> dict:
         """Send one command and wait for its reply. Events and late replies are skipped."""
+        return self._command(self._ws, method, params, timeout=timeout)
+
+    def _command(self, ws: ClientConnection, method: str, params: dict[str, Any],
+                 *, timeout: float) -> dict:
         command_id = next(self._ids)
         try:
-            self._ws.send(json.dumps({"id": command_id, "method": method, "params": params}))
+            ws.send(json.dumps({"id": command_id, "method": method, "params": params}))
             deadline = time.monotonic() + timeout
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise BidiError(f"{method} timed out after {timeout:.0f}s")
                 try:
-                    message = json.loads(self._ws.recv(timeout=remaining))
+                    message = json.loads(ws.recv(timeout=remaining))
                 except TimeoutError:
                     raise BidiError(f"{method} timed out after {timeout:.0f}s") from None
                 if message.get("id") != command_id:
@@ -121,17 +156,49 @@ class Bidi:
                         f"{method}: {message.get('error')}: {message.get('message')}"
                     )) from None
                 return message.get("result", {})
-        except WebSocketException as exc:
+        except (OSError, WebSocketException) as exc:
             raise ConnectionLost(self.redact(
                 f"lost the connection to Firefox during {method}: {exc}"
             )) from None
 
     def close(self) -> None:
-        """End the session. Firefox and its tabs keep running."""
+        """Release remote control without closing tabs; raise if cleanup is unconfirmed.
+
+        Firefox replies before deleting its session, so a successful reply alone
+        is insufficient. The sessionless status probe never creates or ends a
+        session. If another controller acquires one meanwhile, cleanup remains
+        conservatively unconfirmed; that controller is never disturbed.
+        """
+        if self._session_ended:
+            return
         try:
-            self.command("session.end", {}, timeout=5)
-        except BidiError:
-            pass
+            if self._session_end_acknowledged:
+                try:
+                    self.command("session.end", {}, timeout=5)
+                except ConnectionLost:
+                    # A previous end reply was received, but its status probe
+                    # failed. Recheck release even if the owner socket is now gone.
+                    pass
+            else:
+                self.command("session.end", {}, timeout=5)
+                self._session_end_acknowledged = True
+            with connect(
+                self.url, max_size=None, open_timeout=5, legacy=True,
+                logger=_TRANSPORT_LOGGER,
+            ) as probe:
+                status = self._command(probe, "session.status", {}, timeout=5)
+            if not status.get("ready"):
+                raise BidiError(
+                    "Firefox still reports an active session (this session or "
+                    "a newly connected controller)"
+                )
+        except (BidiError, OSError, WebSocketException) as exc:
+            # Do not manufacture an orphan by discarding our only attached socket.
+            raise SessionEndError(
+                self.url, self.session_id, self.redact(str(exc)),
+                acknowledged=self._session_end_acknowledged,
+            ) from exc
+        self._session_ended = True
         self._ws.close()
 
 
@@ -268,6 +335,16 @@ class Tab:
         """Navigate and wait until the document is parsed (not for every image)."""
         self.bidi.command("browsingContext.navigate",
                           {"context": self.context, "url": url, "wait": "interactive"},
+                          timeout=timeout)
+
+    def reload(self, *, timeout: float = 45.0) -> None:
+        """Normally refresh this tab in place, waiting until its new document is parsed.
+
+        Uses Firefox's normal cache and reload behavior, including any page
+        dialogs; it neither creates a replacement tab nor navigates other tabs.
+        """
+        self.bidi.command("browsingContext.reload",
+                          {"context": self.context, "wait": "interactive"},
                           timeout=timeout)
 
     def frames(self) -> list[Frame]:

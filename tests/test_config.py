@@ -1,5 +1,6 @@
 """Config validation, including the line numbers in error messages."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,8 @@ import yaml
 
 from kitty.config import (
     CONFIG_FILES,
+    AnswerEntry,
+    AnswersFile,
     ConfigError,
     DEFAULT_VIEWS,
     Profile,
@@ -153,3 +156,206 @@ def test_unquoted_yes_is_still_a_text_answer(tmp_path):
 
     answers = parse_file(path, AnswersFile)
     assert answers.answers[0].answer == "Yes"
+
+
+def _jurisdiction_config(workspace):
+    return replace(workspace.config, answers=AnswersFile(answers=[
+        AnswerEntry(
+            question="Are you legally authorized to work in the United States?",
+            answer="Yes", match=["authorized to work", "work authorization"],
+            choices=["I am authorized to work in the United States for any employer"],
+        ),
+        AnswerEntry(
+            question="Will you now or in the future require sponsorship?",
+            answer="No", match=["require sponsorship", "need sponsorship"],
+            choices=["I do not require sponsorship for employment in the United States"],
+        ),
+    ]))
+
+
+@pytest.mark.parametrize(("question", "jurisdiction", "options", "expected"), [
+    ("Are you authorized to work in this country?", None, (), False),
+    ("Are you authorized to work in this country?", "US", (), True),
+    ("Are you authorized to work in this country?", "SG", (), False),
+    ("Are you authorized to work in Singapore?", "US", (), False),
+    ("Are you authorized to work in Pakistan?", "US", (), False),
+    ("Are you authorized to work in your country of residence?", "US", (), False),
+    ("Are you authorized to work in the United States?", None, (), True),
+    ("Are you authorized to work in the U.S.?", "SG", (), True),
+    ("Are you authorized to work here?", None,
+     ("Authorized to work in Singapore", "Not authorized"), False),
+    ("Are you authorized to work here?", None,
+     ("Authorized to work in the United States", "Not authorized"), True),
+    ("Are you authorized to work in the United States?", "US",
+     ("Authorized to work in Singapore", "Not authorized"), False),
+    ("Are you authorized to work in the US or Singapore?", "US", (), False),
+    ("Tell us whether you are authorized to work here", None, (), False),
+    ("Will you now or in the future require sponsorship?", None, (), False),
+    ("Will you now or in the future require sponsorship?", "US", (), True),
+    ("Will you require sponsorship in the UK?", "US", (), False),
+    ("Will you require sponsorship in the United States?", None, (), True),
+    ("Will you need sponsorship here?", "US",
+     ("No sponsorship required in Singapore", "Yes"), False),
+])
+def test_country_specific_permission_gates_exact_alias_and_choices(
+    workspace, question, jurisdiction, options, expected,
+):
+    config = _jurisdiction_config(workspace)
+    assert (config.answer_for(question, jurisdiction=jurisdiction, options=options) is not None) is expected
+
+
+@pytest.mark.parametrize(("question", "jurisdiction", "options", "expected"), [
+    ("Are you authorized to work here?", None, (), None),
+    ("Are you authorized to work here?", "US", (), "US"),
+    ("Are you authorized to work here?", "SG", (), "SG"),
+    ("Are you authorized to work here?", "GB", (), "GB"),
+    ("Are you authorized to work in the United States?", "SG", (), "US"),
+    ("Are you legally authorized to work in Singapore?", "US", (), "SG"),
+    ("Are you authorized to work in the UK?", "US", (), "GB"),
+    ("Are you authorized to work here?", "US",
+     ("Authorized to work in Singapore", "Not authorized"), "SG"),
+    ("Are you authorized to work in the US or Singapore?", "US", (), None),
+    ("Are you authorized to work in the United States?", "US",
+     ("Authorized to work in Singapore", "Not authorized"), None),
+    ("Are you authorized to work in Pakistan?", "US", (), None),
+    ("Are you authorized to work in your country of residence?", "US", (), None),
+])
+def test_country_evidence_resolves_permission_alias_alternatives(
+    workspace, question, jurisdiction, options, expected,
+):
+    entries = {
+        code: AnswerEntry(
+            question=f"Are you legally authorized to work in {country}?",
+            answer=f"Saved {code} permission fact", match=["authorized to work"],
+        )
+        for code, country in (
+            ("US", "the United States"), ("SG", "Singapore"), ("GB", "the United Kingdom"),
+        )
+    }
+    config = replace(workspace.config, answers=AnswersFile(answers=list(entries.values())))
+    assert config.answer_for(question, jurisdiction=jurisdiction, options=options) is (
+        entries[expected] if expected is not None else None
+    )
+
+
+@pytest.mark.parametrize(("scope", "company", "tracks", "ambiguous"), [
+    ({"companies": ["Acme"]}, "Acme", (), True),
+    ({"companies": ["Acme"]}, "Other", (), False),
+    ({"companies": ["Acme"]}, None, (), False),
+    ({"exclude_companies": ["Acme"]}, "Acme", (), False),
+    ({"tracks": ["hardware"]}, None, ("hardware",), True),
+    ({"tracks": ["hardware"]}, None, ("other",), False),
+    ({"tracks": ["hardware"]}, None, (), False),
+    ({"exclude_tracks": ["hardware"]}, None, ("hardware",), False),
+])
+def test_unresolved_permission_ambiguity_respects_company_and_track_scope(
+    workspace, scope, company, tracks, ambiguous,
+):
+    permission = AnswerEntry(
+        question="Are you legally authorized to work in the US?", answer="Yes",
+        match=["authorized to work"], **scope,
+    )
+    sponsorship = AnswerEntry(
+        question="Will you require sponsorship?", answer="No", match=["sponsorship"],
+    )
+    config = replace(workspace.config, answers=AnswersFile(answers=[permission, sponsorship]))
+    question = "Are you authorized to work and do you require sponsorship?"
+    assert config.answer_for(question, company, tracks) is (
+        None if ambiguous else sponsorship
+    )
+
+
+@pytest.mark.parametrize(("location", "country", "expected"), [
+    ("Chicago, IL", None, "US"),
+    ("Chicago; Austin, TX", None, "US"),
+    ("Chicago; London", None, None),
+    ("Chicago, London", None, None),
+    ("Chicago; London", "United States", None),
+    ("Chicago", "Singapore", None),
+    ("Singapore", "United States", None),
+    ("Remote", None, None),
+    ("Remote", "US", "US"),
+    (None, None, None),
+    (None, "US", "US"),
+    ("Chicago; Unknown office", None, None),
+    ("Chicago; Remote", None, None),
+    ("Singapore", "Singapore", "SG"),
+    ("United Kingdom", None, "GB"),
+    ("London, United Kingdom", None, None),
+    ("London", None, None),
+    ("London", "Singapore", None),
+    ("Contact us", None, None),
+    ("London, Singapore", "Singapore", None),
+])
+def test_authorization_jurisdiction_requires_consistent_exclusive_evidence(location, country, expected):
+    from kitty.core.discovery.text import authorization_jurisdiction
+
+    assert authorization_jurisdiction(location, country) == expected
+
+
+@pytest.mark.parametrize("question", [
+    "What is your citizenship?",
+    "What is your nationality?",
+    "Have you previously held citizenship in the United States?",
+    "What is your country of birth?",
+    "Are you a US person for export-control purposes?",
+])
+def test_identity_answers_do_not_depend_on_job_jurisdiction(workspace, question):
+    entry = AnswerEntry(question=question, answer="My saved fact", choices=["United States"])
+    config = replace(workspace.config, answers=AnswersFile(answers=[entry]))
+    assert config.answer_for(question) is entry
+    assert config.answer_for(question, jurisdiction="SG") is entry
+
+
+def test_permission_scope_keeps_general_device_source_and_specificity(workspace):
+    entries = [
+        AnswerEntry(question="Do you have a device?", answer="Yes", match=["device"]),
+        AnswerEntry(question="How did you hear about us?", answer="Website", match=["hear about"]),
+        AnswerEntry(question="What device?", answer="Laptop", match=["device"], companies=["Acme"]),
+        AnswerEntry(question="Device preference?", answer="Desktop", match=["device"], tracks=["hardware"]),
+    ]
+    config = replace(workspace.config, answers=AnswersFile(answers=entries))
+    assert config.answer_for("Which device do you own?", jurisdiction="SG").answer == "Yes"
+    assert config.answer_for("How did you hear about this job?", jurisdiction="SG").answer == "Website"
+    assert config.answer_for("Which device do you own?", "Acme", jurisdiction="SG").answer == "Laptop"
+    assert config.answer_for("Which device do you own?", tracks=["hardware"], jurisdiction="SG").answer == "Desktop"
+    assert config.answer_for("Which device do you own?", "Acme", ["hardware"], jurisdiction="SG") is None
+
+
+def test_field_planning_preserves_country_evidence_without_using_profile_residence(workspace):
+    from kitty.core.apply.fields import FormField, lookup_answer, plan_for
+
+    config = _jurisdiction_config(workspace)
+    config = replace(config, profile=config.profile.model_copy(update={
+        "country": "United States", "work_authorization": "Yes",
+    }))
+    generic = FormField(key="auth", kind="radio", label="Are you authorized to work here?",
+                        options=("Yes", "No"))
+    singapore = replace(generic, options=("Authorized to work in Singapore", "Not authorized"))
+    assert plan_for(generic, config) is None
+    assert plan_for(generic, config, jurisdiction="US") is not None
+    assert plan_for(singapore, config, jurisdiction="US") is None
+    assert lookup_answer(config, generic.label, jurisdiction="US", options=singapore.options) is None
+    explicit_us = replace(generic, label="Are you authorized to work in the United States?")
+    assert plan_for(explicit_us, config) is not None
+
+
+@pytest.mark.parametrize(("place", "jurisdiction", "expected"), [
+    ("", "US", True),
+    ("", "SG", False),
+    ("", None, False),
+    (" in Singapore", "US", False),
+    (" in Wakanda", "US", False),
+])
+def test_relative_application_country_clause_uses_only_proven_jurisdiction(
+    workspace, place, jurisdiction, expected,
+):
+    from kitty.core.apply.fields import lookup_answer
+
+    config = _jurisdiction_config(workspace)
+    question = (
+        "Are you legally authorized to work in the country in which you are applying"
+        f"{place}?"
+    )
+    answer = lookup_answer(config, question, company="Vertiv", jurisdiction=jurisdiction)
+    assert answer is (config.answers.answers[0] if expected else None)

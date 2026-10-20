@@ -113,16 +113,21 @@ def is_resume_input(field: FormField) -> bool:
 
 def lookup_answer(
     config: Config, label: str, *, company: str | None = None, tracks: Sequence[str] = (),
+    jurisdiction: str | None = None, options: Sequence[str] = (),
 ) -> AnswerEntry | None:
     """The answers.yaml entry for this question, or None.
 
     Config.answer_for already ignores case and punctuation; this also drops
     '(required)' markers. A named employer's exact "ever worked for" question
     may use the saved generic company-history wording, with normal scope/tie
-    rules. Other near misses are not answers.
+    rules. `options` preserves explicit field-country evidence; `jurisdiction`
+    is the strict job jurisdiction, never the applicant's residence/citizenship.
+    Other near misses are not answers.
     """
     for text in dict.fromkeys((label, clean_label(label))):
-        if text and (entry := config.answer_for(text, company, tracks)) is not None:
+        if text and (entry := config.answer_for(
+            text, company, tracks, jurisdiction=jurisdiction, options=options,
+        )) is not None:
             return entry
     if company:
         original = f" {norm_screening(clean_label(label))} "
@@ -146,7 +151,10 @@ def lookup_answer(
                 r"have you ever worked for " + re.escape(employer) +
                 r"(?: one of our current brands or any of our predecessor firms)?", words,
             ):
-                return config.answer_for("Have you worked for this company?", company, tracks)
+                return config.answer_for(
+                    "Have you worked for this company?", company, tracks,
+                    jurisdiction=jurisdiction, options=options,
+                )
     return None
 
 
@@ -541,19 +549,26 @@ def _answer_plan(field: FormField, entry: AnswerEntry) -> Plan:
 
 def plan_for(
     field: FormField, config: Config, *, company: str | None = None, tracks: Sequence[str] = (),
+    jurisdiction: str | None = None,
 ) -> Plan | None:
     """What to put in `field`: answers.yaml first, then profile.yaml, else None.
 
     answers.yaml wins because I wrote that exact question's answer myself.
     `tracks` are the job's tracks; they pick the discipline (profile.discipline_by_track).
     File inputs are not planned here; the filler handles the resume.
+    Country-specific permission requires explicit field evidence or the strict
+    job `jurisdiction`; neither residence nor citizenship supplies that context.
     """
     if field.kind in ("file", "unsupported") or not field.label and not field.name:
         return None
-    entry = lookup_answer(config, field.label, company=company, tracks=tracks)
+    entry = lookup_answer(
+        config, field.label, company=company, tracks=tracks,
+        jurisdiction=jurisdiction, options=field.options,
+    )
     if entry is None and field.kind == "checkbox" and len(field.options) == 1:
         entry = lookup_answer(
             config, field.options[0], company=company, tracks=tracks,
+            jurisdiction=jurisdiction, options=field.options,
         )                                                       # "I agree to ..." boxes
     if entry is not None:
         return _answer_plan(field, entry)

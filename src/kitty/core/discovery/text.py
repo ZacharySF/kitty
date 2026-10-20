@@ -154,3 +154,83 @@ def us_location(location: str | None, country: str | None = None) -> bool | None
     if country:
         return False
     return None
+
+
+# Explicit country names already recognized by the discovery location rules.
+# Unlike _us_part, this does not treat a city/state name or the pronoun "us"
+# in a screening question as an explicit country.
+_AUTHORIZATION_COUNTRIES = {
+    "US": ("united states",),
+    "GB": ("united kingdom", "uk", "england", "scotland", "northern ireland"),
+    "CA": ("canada",), "MX": ("mexico",), "BR": ("brazil",),
+    "AR": ("argentina",), "CL": ("chile",), "CO": ("colombia",),
+    "IE": ("ireland",), "FR": ("france",), "DE": ("germany",),
+    "NL": ("netherlands",), "CH": ("switzerland",), "ES": ("spain",),
+    "IT": ("italy",), "PL": ("poland",), "SE": ("sweden",),
+    "FI": ("finland",), "NO": ("norway",), "DK": ("denmark",),
+    "BE": ("belgium",), "AT": ("austria",), "CZ": ("czech",),
+    "HU": ("hungary",), "RO": ("romania",), "PT": ("portugal",),
+    "GR": ("greece",), "IL": ("israel",), "IN": ("india",),
+    "CN": ("china",), "HK": ("hong kong",), "TW": ("taiwan",),
+    "JP": ("japan",), "KR": ("south korea",), "KP": ("north korea",), "SG": ("singapore",),
+    "MY": ("malaysia",), "TH": ("thailand",), "VN": ("vietnam",),
+    "PH": ("philippines",), "ID": ("indonesia",), "AU": ("australia",),
+    "NZ": ("new zealand",), "ZA": ("south africa",),
+    "AE": ("uae",), "SA": ("saudi",), "EG": ("egypt",), "TR": ("turkey",),
+}
+
+
+def authorization_countries(text: str) -> frozenset[str]:
+    """Explicit, recognized countries in screening wording; never infer identity."""
+    from kitty.normalize import norm_screening
+
+    words = f" {norm_screening(text)} "
+    return frozenset(
+        code for code, names in _AUTHORIZATION_COUNTRIES.items()
+        if any(f" {name} " in words for name in names)
+    )
+
+
+def authorization_jurisdiction(location: str | None, country: str | None = None) -> str | None:
+    """A proven single job jurisdiction, not eligibility's permissive any-US rule.
+
+    Only US geography is resolved from cities/states. Other countries require an
+    explicit country name and no unresolved location parts. Conflicting country
+    and location evidence, mixed locations, and unknown locations abstain.
+    """
+    country_codes = authorization_countries(country or "")
+    # Country metadata commonly uses the lowercase US ISO code.
+    if country and country.strip().lower() in {"us", "usa"}:
+        country_codes = frozenset({"US"})
+    if country and len(country_codes) != 1:
+        return None
+    parts = [
+        part.strip() for part in re.split(r";|\||\bor\b|/|\band\b|&", location or "", flags=re.I)
+        if part.strip()
+    ]
+    resolved: set[str] = set(country_codes)
+    for part in parts:
+        explicit = authorization_countries(part)
+        # Reuse the eligibility recognizer, but do not let its case-insensitive
+        # "us" token turn ordinary prose into proof of a US work location.
+        us_part = _us_part(re.sub(r"\bus\b", "", part))
+        if len(explicit) > 1:
+            return None
+        if _FOREIGN_WORDS.search(part):
+            # _us_part intentionally gives US evidence priority for eligibility;
+            # authorization cannot do that for "Chicago, London" or "Paris, TX".
+            if us_part is True or not explicit:
+                return None
+            if any(
+                not authorization_countries(match.group())
+                for match in _FOREIGN_WORDS.finditer(part)
+            ):
+                return None                    # foreign city/region not resolved to a country
+            resolved.update(explicit)
+        elif us_part is True:
+            resolved.add("US")
+        elif country_codes and part.lower() in {"remote", "hybrid", "onsite", "on-site"}:
+            continue
+        else:
+            return None
+    return next(iter(resolved)) if len(resolved) == 1 else None

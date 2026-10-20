@@ -2,6 +2,8 @@
 
 from dataclasses import replace
 
+import pytest
+
 from kitty.config import AnswerEntry, AnswersFile
 from kitty.core import form_questions as fq
 from kitty.core import jobs as jobs_core
@@ -205,3 +207,96 @@ def test_a_failed_fetch_stores_nothing(workspace):
 
     assert result.failed == {"ReadTimeout": 1}
     assert fq.summarize(workspace.conn, workspace.config) == []
+
+
+def _permission_answers(workspace):
+    return replace(workspace.config, answers=AnswersFile(answers=[
+        AnswerEntry(
+            question="Are you authorized to work in the United States?", answer="Yes",
+            match=["authorized to work"],
+        ),
+        AnswerEntry(
+            question="Will you require sponsorship?", answer="No", match=["require sponsorship"],
+            choices=["No sponsorship required in the United States"],
+        ),
+    ]))
+
+
+@pytest.mark.parametrize(("location", "country"), [
+    ("Singapore", "Singapore"),
+    ("London", "United Kingdom"),
+    ("Chicago;London", None),
+    ("Chicago", "Singapore"),
+    ("Remote", None),
+    (None, None),
+])
+def test_merged_relative_permission_is_not_globally_answered_for_mixed_jobs(workspace, location, country):
+    conn = workspace.conn
+    config = _permission_answers(workspace)
+    us = _queued_job(conn, "US Co", "Intern US", "https://example.invalid/us", location="Chicago", country="US")
+    other = _queued_job(conn, "Other Co", "Intern Other", "https://example.invalid/other",
+                        location=location, country=country)
+    relative = "Are you authorized to work in this country?"
+    questions_core.log_question(conn, relative, job_id=us.id)
+    assert next(s for s in fq.summarize(conn, config) if s.text == relative).kind == "answered"
+    assert questions_core.refresh_answered_flags(conn, config) == 1
+
+    questions_core.log_question(conn, relative, job_id=other.id)
+    summary = next(s for s in fq.summarize(conn, config) if s.text == relative)
+    assert summary.kind == "factual" and set(summary.job_ids) == {us.id, other.id}
+    assert questions_core.refresh_answered_flags(conn, config) == 0
+    assert next(q for q in questions_core.list_questions(conn) if q.text == relative).answered is False
+
+
+def test_explicit_us_permission_remains_answered_without_job_country(workspace):
+    config = _permission_answers(workspace)
+    question = "Are you authorized to work in the United States?"
+    questions_core.log_question(workspace.conn, question)
+    assert next(s for s in fq.summarize(workspace.conn, config) if s.text == question).kind == "answered"
+    assert questions_core.refresh_answered_flags(workspace.conn, config) == 1
+
+
+def test_stored_choices_scope_sponsorship_per_form_not_most_common_choices(workspace):
+    conn = workspace.conn
+    config = _permission_answers(workspace)
+    question = "Will you require sponsorship?"
+    for number, choices in enumerate([
+        ("No sponsorship required in the United States", "Yes"),
+        ("No sponsorship required in the United States", "Yes"),
+        ("No sponsorship required in Singapore", "Yes"),
+    ]):
+        job = _queued_job(conn, f"Co{number}", "Intern", f"https://example.invalid/{number}",
+                          location="Chicago", country="US")
+        questions_core.record_form_question(
+            conn, question, job.id, field_kind="radio", required=True,
+            choices=choices, demographic=False,
+        )
+    summary = next(s for s in fq.summarize(conn, config) if s.text == question)
+    assert summary.choices[0] == "No sponsorship required in the United States"
+    assert summary.kind == "choice"
+    assert questions_core.refresh_answered_flags(conn, config) == 0
+
+
+def test_country_specific_generic_question_with_no_job_is_unanswered(workspace):
+    config = _permission_answers(workspace)
+    question = "Will you require sponsorship?"
+    questions_core.log_question(workspace.conn, question)
+    assert next(s for s in fq.summarize(workspace.conn, config) if s.text == question).kind == "factual"
+    assert questions_core.refresh_answered_flags(workspace.conn, config) == 0
+
+
+def test_classification_uses_stored_company_and_track_scope(workspace):
+    conn = workspace.conn
+    track = workspace.config.track_names[0]
+    question = "What device do you use?"
+    config = replace(workspace.config, answers=AnswersFile(answers=[
+        AnswerEntry(question=question, answer="Laptop", companies=["Acme"], tracks=[track]),
+    ]))
+    acme = _queued_job(conn, "Acme", "Intern", "https://example.invalid/acme", tracks=[track])
+    questions_core.log_question(conn, question, job_id=acme.id)
+    assert next(s for s in fq.summarize(conn, config) if s.text == question).kind == "answered"
+    assert questions_core.refresh_answered_flags(conn, config) == 1
+    other = _queued_job(conn, "Other", "Intern", "https://example.invalid/other", tracks=[track])
+    questions_core.log_question(conn, question, job_id=other.id)
+    assert next(s for s in fq.summarize(conn, config) if s.text == question).kind == "factual"
+    assert questions_core.refresh_answered_flags(conn, config) == 0

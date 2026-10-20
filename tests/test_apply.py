@@ -15,7 +15,7 @@ from kitty.config import AnswerEntry, AnswersFile, load_config
 from kitty.core import jobs as jobs_core
 from kitty.core import questions as questions_core
 from kitty.core import resumes as resumes_core
-from kitty.core.apply.bidi import Tab, open_tab
+from kitty.core.apply.bidi import Bidi, SessionBusy, SessionEndError, Tab, open_tab
 from kitty.core.apply.browser import headless_firefox
 from kitty.core.apply.fields import FormField, graduation_answer_spellings, match_option, plan_for
 from kitty.core.apply.filler import _apply_plan, _watched_tab, choose_resume, fill_job, fill_jobs
@@ -75,6 +75,7 @@ def _job(space, form: str):
     job, _ = jobs_core.upsert_job(
         space.conn, company="Fixture Co", title=f"{form} intern",
         url=(FORMS / f"{form}.html").as_uri(), tracks=[space.track.name],
+        location="Arlington, TX, United States", country="US",
     )
     return job
 
@@ -124,6 +125,166 @@ def _logged(space) -> set[str]:
 
 
 # ------------------------------------------------------------ browser tests
+
+
+def test_tab_reload_replaces_only_its_document_and_keeps_context(page, tmp_path):
+    document = tmp_path / "reload.html"
+    document.write_text(
+        "<!doctype html><title>Reload fixture</title><input value='Initial'>"
+        "<script>window.documentToken = Math.random().toString(36);</script>"
+    )
+    page.goto(document.as_uri())
+    unrelated = open_tab(page.bidi, background=True)
+    try:
+        unrelated.goto(document.as_uri())
+        _js(page, "() => { window.manualMarker = 'old document'; }")
+        _js(unrelated, """() => {
+            window.manualMarker = 'unrelated document';
+            document.querySelector('input').value = 'Unsaved manual answer';
+        }""")
+        context = page.context
+        token = _js(page, "() => window.documentToken")
+        history_length = _js(page, "() => history.length")
+        unrelated_state = _js(unrelated, """() => [
+            window.documentToken, window.manualMarker, location.href, history.length,
+            document.querySelector('input').value
+        ]""")
+        contexts = {
+            node["context"] for node in
+            page.bidi.command("browsingContext.getTree", {})["contexts"]
+        }
+
+        page.reload()
+
+        assert page.context == context
+        assert page.main.context == context
+        assert _js(page, "() => window.documentToken") != token
+        assert _js(page, "() => window.manualMarker ?? null") is None
+        assert _js(page, "() => performance.getEntriesByType('navigation')[0].type") == "reload"
+        assert _js(page, "() => [location.href, history.length]") == [
+            document.as_uri(), history_length,
+        ]
+        assert _js(unrelated, """() => [
+            window.documentToken, window.manualMarker, location.href, history.length,
+            document.querySelector('input').value
+        ]""") == unrelated_state
+        assert {
+            node["context"] for node in
+            page.bidi.command("browsingContext.getTree", {})["contexts"]
+        } == contexts
+    finally:
+        unrelated.close()
+
+
+def test_busy_session_does_not_displace_existing_controller(page):
+    page.goto((FORMS / "greenhouse.html").as_uri())
+    _js(page, "() => document.querySelector('input').value = 'Manual value'")
+    session_id = page.bidi.session_id
+
+    with pytest.raises(SessionBusy):
+        Bidi(page.bidi.url)
+
+    assert page.bidi.session_id == session_id
+    assert not page.bidi.session_ended
+    assert _value(page, "input") == "Manual value"
+
+
+def test_session_close_confirms_release_and_is_idempotent_across_controllers(tmp_path):
+    if find_firefox() is None:
+        pytest.skip("firefox is not on PATH")
+    with headless_firefox(Settings.load(root=tmp_path)) as owner:
+        tab = open_tab(owner)
+        tab.goto((FORMS / "greenhouse.html").as_uri())
+        _js(tab, "() => document.querySelector('input').value = 'Retained manual value'")
+        session_id = owner.session_id
+
+        owner.close()
+
+        assert owner.session_ended
+        assert owner.session_end_acknowledged
+        assert owner.session_id == session_id
+        replacement = Bidi(owner.url)
+        try:
+            assert replacement.session_id != session_id
+            retained = next(
+                node for node in
+                replacement.command("browsingContext.getTree", {})["contexts"]
+                if node["url"] == (FORMS / "greenhouse.html").as_uri()
+            )
+            retained_tab = Tab(replacement, retained["context"])
+            owner.close()  # A repeated close must not end the new controller's session.
+            assert _value(retained_tab, "input") == "Retained manual value"
+        finally:
+            replacement.close()
+
+
+def test_failed_session_end_preserves_owner_socket_for_retry(tmp_path, monkeypatch):
+    if find_firefox() is None:
+        pytest.skip("firefox is not on PATH")
+    with headless_firefox(Settings.load(root=tmp_path)) as owner:
+        tab = open_tab(owner)
+        tab.goto((FORMS / "greenhouse.html").as_uri())
+        _js(tab, "() => document.querySelector('input').value = 'Still here'")
+
+        def unavailable_send(*_args, **_kwargs):
+            raise OSError("temporary transport send failure")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(owner._ws, "send", unavailable_send)
+            with pytest.raises(SessionEndError) as failed:
+                owner.close()
+
+        assert failed.value.session_id == owner.session_id
+        assert failed.value.url == owner.url
+        assert not failed.value.end_acknowledged
+        assert not owner.session_ended
+        assert _value(tab, "input") == "Still here"  # Real Firefox is still controlled.
+        owner.close()
+        assert owner.session_ended
+        replacement = Bidi(owner.url)
+        replacement.close()  # The retry released the real session, not just its socket.
+
+
+def test_cleanup_probe_failure_is_not_success_and_can_be_rechecked(tmp_path, monkeypatch):
+    from kitty.core.apply import bidi as bidi_module
+
+    if find_firefox() is None:
+        pytest.skip("firefox is not on PATH")
+    with headless_firefox(Settings.load(root=tmp_path)) as owner:
+        owner.protect_secrets("fixture-private-value")
+
+        def unavailable_probe(*_args, **_kwargs):
+            raise OSError("fixture-private-value: status connection unavailable")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(bidi_module, "connect", unavailable_probe)
+            with pytest.raises(SessionEndError) as failed:
+                owner.close()
+
+        assert failed.value.session_id == owner.session_id
+        assert failed.value.url == owner.url
+        assert failed.value.end_acknowledged
+        assert owner.session_end_acknowledged
+        assert not owner.session_ended
+        assert "fixture-private-value" not in str(failed.value)
+        owner.close()  # The previous end reply is retained even after its socket closes.
+        assert owner.session_ended
+        replacement = Bidi(owner.url)
+        replacement.close()
+
+
+def test_disconnected_session_cleanup_raises_with_owned_identity(tmp_path):
+    if find_firefox() is None:
+        pytest.skip("firefox is not on PATH")
+    with pytest.raises(SessionEndError) as failed:
+        with headless_firefox(Settings.load(root=tmp_path)) as owner:
+            session_id, endpoint = owner.session_id, owner.url
+            owner._ws.close()  # Deliberate lost transport in this throwaway Firefox only.
+
+    assert failed.value.session_id == session_id == owner.session_id
+    assert failed.value.url == endpoint == owner.url
+    assert not failed.value.end_acknowledged
+    assert not owner.session_ended
 
 
 def test_application_browser_denies_location_requests(page):
@@ -237,7 +398,7 @@ def test_lever_like_form(space, page):
     assert json.loads(_value(page, "#selected-location"))["name"] == location
     assert _value(page, "input[name='urls[GitHub]']") == profile.github
     assert _value(page, "input[name=org]") == ""
-    sponsorship = space.config.answer_for("Will you now or in the future require sponsorship?")
+    sponsorship = space.config.answer_for("Will you now or in the future require sponsorship?", jurisdiction="US")
     checked = _js(page, "() => document.querySelector(\"input[name='cards[abc][field0]']:checked\").value")
     assert checked == sponsorship.answer
     assert _value(page, "select[name='eeo[gender]']") == ""
@@ -499,6 +660,116 @@ def test_fill_jobs_reports_each_job_and_never_records_an_application(space):
     assert messages
     count = space.conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0]
     assert count == 0
+
+
+@pytest.mark.parametrize("headless", [False, True], ids=["headed", "headless"])
+def test_fill_jobs_preserves_completed_outcomes_when_session_cleanup_fails(
+    space, monkeypatch, headless,
+):
+    from contextlib import ExitStack
+    from urllib.parse import urlsplit
+    from kitty.core.apply import filler
+
+    if find_firefox() is None:
+        pytest.skip("firefox is not on PATH")
+    job = _job(space, "lever")
+    messages = []
+    callbacks = []
+    delivered = []
+    failed_owners = []
+    close = Bidi.close
+
+    def filled(reports):
+        delivered.append(reports)
+        callbacks.append([replace(report) for report in reports])
+
+    def fail_cleanup(owner):
+        # Isolate only teardown: the real orchestration and fixture form filling
+        # have already produced meaningful reports and notified the consumer.
+        assert len(callbacks) == 1
+        failed_owners.append(owner)
+        raise SessionEndError(
+            owner.url, owner.session_id, "fixture session.end transport unavailable",
+            acknowledged=False,
+        )
+
+    with ExitStack() as stack:
+        if not headless:
+            # Exercise the headed branch against a throwaway Firefox, never the
+            # user's browser. Release the fixture's session before fill_jobs owns it.
+            host = stack.enter_context(headless_firefox(space.settings))
+            port = urlsplit(host.url).port
+            host.close()
+            monkeypatch.setattr(filler, "ensure_firefox", lambda settings: port)
+            monkeypatch.setattr(filler, "hide_automation", lambda port: True)
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(Bidi, "close", fail_cleanup)
+                reports = fill_jobs(
+                    space.settings, space.config, [job.id, 999_999],
+                    headless=headless, progress=messages.append, on_filled=filled, pause=0,
+                )
+        finally:
+            if not headless:
+                for owner in failed_owners:
+                    close(owner)  # Test-only recovery before disposing of this browser.
+
+    assert len(failed_owners) == 1
+    assert len(callbacks) == 1
+    assert delivered[0] is reports
+    prepared, missing = reports
+    assert (prepared.job_id, prepared.status, prepared.company) == (job.id, "partial", "Fixture Co")
+    assert {"resume", "full name", "email"} <= set(prepared.filled)
+    assert prepared.unanswered and prepared.error is None
+    assert (missing.status, missing.error) == ("error", "no job with id 999999")
+    for report, before_cleanup in zip(reports, callbacks[0]):
+        # Cleanup adds evidence, but cannot replace fields, status, missing
+        # answers, resume identity, or a genuine per-job error.
+        assert replace(report, note=before_cleanup.note) == before_cleanup
+        assert report.note.startswith(before_cleanup.note or "")
+        assert "Browser cleanup unconfirmed:" in report.note
+        assert "Firefox did not confirm cleanup" in report.note
+        assert failed_owners[0].session_id in report.note
+        assert "no restart was attempted" in report.note
+    assert any("Browser cleanup unconfirmed:" in message for message in messages)
+    assert space.conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("headless", [False, True], ids=["headed", "headless"])
+def test_fill_jobs_browser_failure_before_filling_remains_an_error(space, monkeypatch, headless):
+    from contextlib import contextmanager
+    from kitty.core.apply import filler
+    from kitty.core.apply.bidi import BidiError
+
+    job = _job(space, "lever")
+    callbacks = []
+
+    def unavailable_session(*args, **kwargs):
+        raise BidiError("fixture browser connection unavailable before filling")
+
+    @contextmanager
+    def unavailable_headless(settings):
+        unavailable_session()
+        yield
+
+    monkeypatch.setattr(filler, "ensure_firefox", lambda settings: 12345)
+    monkeypatch.setattr(filler, "hide_automation", lambda port: True)
+    monkeypatch.setattr(filler, "open_session", unavailable_session)
+    monkeypatch.setattr(filler, "headless_firefox", unavailable_headless)
+
+    reports = fill_jobs(
+        space.settings, space.config, [job.id], headless=headless,
+        on_filled=lambda reports: callbacks.append([replace(report) for report in reports]),
+    )
+
+    assert callbacks == [reports]
+    assert reports[0].job_id == job.id
+    assert reports[0].status == "error"
+    assert reports[0].error == "fixture browser connection unavailable before filling"
+    assert reports[0].filled == []
+    stored = jobs_core.get_job(space.conn, job.id)
+    assert (stored.fill_state, stored.fill_attempted_at) == (job.fill_state, job.fill_attempted_at)
+    assert space.conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 0
 
 
 # --------------------------------------------------------------- pure tests
@@ -801,6 +1072,93 @@ def test_zero_filled_missing_answer_stays_retryable(space, page):
     _assert_nothing_submitted(page)
 
 
+@pytest.mark.parametrize("consumer", ["form", "job"])
+def test_native_workday_commit_failure_is_reported_once_without_losing_upload(
+    space, page, monkeypatch, consumer,
+):
+    from kitty.core.apply import filler
+
+    job = _job(space, "workday_steps")
+    page.goto(job.url)
+    _js(page, """() => {
+        const information = document.querySelector('#information');
+        information.insertAdjacentHTML('afterbegin', `
+          <label for="source--source">How Did You Hear About Us?*</label>
+          <div data-automation-id="multiSelectContainer" id="source-owner">
+            <input id="source--source" data-uxi-widget-type="selectinput"
+              data-uxi-multiselect-id="source-owner" aria-required="true"
+              style="position:absolute;width:1px;height:1px;opacity:0">
+            <span data-automation-id="promptSearchButton" data-uxi-widget-type="selectinputicon"
+              data-uxi-selectinputicon-type="promptSearchButton" data-uxi-multiselect-id="source-owner"
+              style="display:inline-block;padding:12px;border:1px solid">List</span>
+          </div>
+          <div data-automation-id="responsiveMonikerPrompt" data-automation-type="singleSelectPrompt"
+            data-associated-widget="source-owner" hidden>
+            <div role="option" aria-selected="false" data-automation-id="menuItem"
+              data-association-widget="source-owner" style="padding:12px;border:1px solid">
+              <div data-automation-id="promptLeafNode" data-uxi-widget-type="multiselectlistitem"
+                data-uxi-multiselect-id="source-owner" data-uxi-multiselectlistitem-type="1"
+                data-uxi-multiselectlistitem-hassidecharm="false">
+                <input type="radio" data-automation-id="radioBtn">
+                <div data-automation-id="promptOption" data-automation-label="Company careers page">
+                  Company careers page
+                </div>
+              </div>
+            </div>
+          </div>
+          <label>Why this position? <textarea name="motivation" required></textarea></label>
+        `);
+        window.__sourceOpens = []; window.__sourceAttempts = []; window.__sourceQueries = 0;
+        const portal = document.querySelector('[data-associated-widget]');
+        document.querySelector('[data-automation-id=promptSearchButton]').onclick = event => {
+            window.__sourceOpens.push(event.isTrusted);
+            if (event.isTrusted) portal.hidden = false;
+        };
+        document.querySelector('[data-automation-id=menuItem]').onclick = event => {
+            window.__sourceAttempts.push(event.isTrusted);
+            // Deliberately no selectedItemList receipt: this click did not commit.
+        };
+        document.querySelector('#source--source').oninput = () => window.__sourceQueries++;
+    }""")
+    source = next(field for field in read_fields([page.main]) if field.element_id == "source--source")
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question=source.label, answer="Employer careers site", choices=["Company careers page"]),
+    ]))
+    reason = f"{source.label}: Workday choice selection was not committed"
+
+    if consumer == "form":
+        result = filler.fill_form(page, config, space.settings.root / "resume.pdf")
+        assert result.interaction_errors == [reason]
+        assert result.unanswered == ["Why this position?"]
+        assert result.to_log == ["Why this position?"]
+        assert result.resume_uploaded and result.resume_verified
+        assert result.blocker is None
+        assert {"resume", "first name"} <= set(result.filled)
+    else:
+        monkeypatch.setattr(filler, "detect_ats", lambda url: "workday")
+        report = fill_job(page, space.conn, space.settings, config, job, resume_tab=True)
+        assert report.status == "partial"
+        assert report.note == "Selection interaction failed: " + reason
+        assert report.cause == "unsupported_controls"
+        assert report.unanswered == ["Why this position?"]
+        assert {"resume", "first name"} <= set(report.filled)
+        assert report.resume_id == choose_resume(space.conn, config, job).id
+        assert report.resume_label == space.track.default_resume
+        assert _logged(space) == {"Why this position?"}
+        stored = jobs_core.get_job(space.conn, job.id)
+        assert stored.fill_state == "partial"
+        assert stored.fill_blocker == report.note
+        assert stored.fill_ready_at is None and stored.application_id is None
+
+    assert _value(page, "[name=first_name]") == "Pat"
+    assert _js(page, "() => window.__sourceOpens") == [True]
+    assert _js(page, "() => window.__sourceAttempts") == [True]
+    assert _js(page, "() => window.__sourceQueries") == 0
+    assert _js(page, "() => [window.__steps, window.__uploads, window.__submitted]") == [0, 1, 0]
+    assert not _js(page, "() => !!document.querySelector('#source-owner [data-automation-id=selectedItemList]')")
+    assert space.conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 0
+
+
 def test_workday_steps_resume_manual_choices_and_upload_without_submitting(space, page, monkeypatch):
     from kitty.core.apply import filler
     from kitty.core.apply.autofill import plan_run
@@ -846,6 +1204,7 @@ def test_preflight_reports_actual_gate_without_filling(space, page, markup, bloc
     result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
     assert result.status == "blocked"
     assert result.note.startswith(blocker)
+    assert result.cause == ("unavailable" if blocker == "closed:" else "human_boundary")
     assert result.filled == []
     stored = jobs_core.get_job(space.conn, job.id)
     assert stored.fill_ready_at is None
@@ -2028,3 +2387,187 @@ def test_standard_oracle_form_preserves_answers_and_verifies_separate_attachment
             assert report.status == "blocked"
         else:
             assert report.status == "partial"
+
+
+@pytest.mark.parametrize("exclusion", ["queue", "eligibility", "closed"])
+@pytest.mark.parametrize("entry", ["direct", "batch", "headed", "headless"])
+def test_excluded_preparation_has_no_browser_or_credential_effects(space, monkeypatch, exclusion, entry):
+    from kitty.core.apply import filler
+
+    job = _job(space, "lever")
+    reason = "Requires graduation before the applicant's recorded date"
+    if exclusion == "queue":
+        space.conn.execute("UPDATE jobs SET queue_state = 'not_eligible', eligibility_reason = ? WHERE id = ?",
+                           (reason, job.id))
+    elif exclusion == "eligibility":
+        jobs_core.set_eligibility(space.conn, job.id, "ineligible", reason)
+    else:
+        space.conn.execute("UPDATE jobs SET is_active = 0 WHERE id = ?", (job.id,))
+    job = jobs_core.get_job(space.conn, job.id)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Excluded preparation must not inspect or change the browser, applicant files, or credentials")
+
+    for name in ("ensure_firefox", "headless_firefox", "hide_automation", "open_session",
+                 "open_tab", "_retained_tab", "choose_resume", "load_credentials"):
+        monkeypatch.setattr(filler, name, forbidden)
+    callbacks = []
+    if entry == "direct":
+        result = fill_job(object(), space.conn, space.settings, space.config, job)
+    elif entry == "batch":
+        result, = filler._fill_all(
+            object(), space.conn, space.settings, space.config, [job.id], forbidden, keep_open=True,
+        )
+    else:
+        reports = fill_jobs(
+            space.settings, space.config, [job.id], headless=entry == "headless",
+            on_filled=lambda reports: callbacks.append(reports),
+        )
+        result, = reports
+        assert callbacks == [reports]
+    assert result.status == "blocked"
+    assert result.cause == ("unavailable" if exclusion == "closed" else "ineligible")
+    assert reason in result.note if exclusion != "closed" else result.note.startswith("closed:")
+    assert result.filled == [] and result.pages == 0 and result.error is None
+    assert jobs_core.get_job(space.conn, job.id).fill_attempted_at is None
+    assert space.conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 0
+
+
+def test_mixed_preparation_preserves_exclusions_when_browser_cannot_start(space, monkeypatch):
+    from kitty.core.apply import filler
+    from kitty.core.apply.browser import BrowserError
+
+    excluded = _job(space, "greenhouse")
+    jobs_core.set_eligibility(space.conn, excluded.id, "ineligible", "Requires PhD enrollment")
+    eligible = _job(space, "lever")
+    closed = _job(space, "ashby")
+    space.conn.execute("UPDATE jobs SET is_active = 0 WHERE id = ?", (closed.id,))
+
+    def unavailable(settings):
+        raise BrowserError("Fixture Firefox unavailable")
+
+    monkeypatch.setattr(filler, "ensure_firefox", unavailable)
+    callbacks = []
+    reports = fill_jobs(
+        space.settings, space.config, [excluded.id, eligible.id, closed.id],
+        on_filled=lambda reports: callbacks.append(reports),
+    )
+    assert callbacks == [reports]
+    assert [report.job_id for report in reports] == [excluded.id, eligible.id, closed.id]
+    assert [report.cause for report in reports] == ["ineligible", "browser_error", "unavailable"]
+    assert "Requires PhD enrollment" in reports[0].note
+    assert reports[1].error == "Fixture Firefox unavailable"
+    assert reports[2].note.startswith("closed:")
+
+
+@pytest.mark.parametrize(("location", "country", "expected"), [
+    ("Arlington, TX, United States", "US", "Yes"),
+    ("Arlington, TX; London, United Kingdom", None, ""),
+    ("London, United Kingdom", "GB", ""),
+    ("Berlin, Germany", "DE", ""),
+    (None, None, ""),
+    ("Arlington, TX", "GB", ""),
+])
+def test_job_jurisdiction_controls_relative_permission_fields(space, page, tmp_path, location, country, expected):
+    document = tmp_path / "authorization.html"
+    document.write_text("""<!doctype html><h1>Apply for this job</h1>
+      <form id="application" onsubmit="window.submitted++; return false">
+        <label>Resume<input name="resume" type="file" required></label>
+        <label>Are you legally authorized to work in this country?
+          <input name="authorization" required></label>
+        <button type="submit">Submit application</button>
+      </form><script>window.submitted = 0;</script>""")
+    job, _ = jobs_core.upsert_job(
+        space.conn, company="Jurisdiction Fixture", title="Engineering internship",
+        url=document.as_uri(), location=location, country=country, tracks=[space.track.name],
+    )
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(
+            question="Are you legally authorized to work in the United States?", answer="Yes",
+            match=["authorized to work"],
+        ),
+    ]))
+    result = fill_job(page, space.conn, space.settings, config, job)
+    assert _value(page, "[name=authorization]") == expected
+    assert _js(page, "() => window.submitted") == 0
+    if not expected:
+        assert result.status != "ready"
+        assert result.cause == "missing_applicant_fact"
+        assert any("authorized to work" in question for question in result.unanswered)
+        assert _logged(space) == set(result.unanswered)
+    else:
+        assert result.unanswered == [] and _logged(space) == set()
+
+
+def test_explicit_research_override_never_authenticates_or_becomes_ready(space, page, monkeypatch):
+    from kitty.config import AuthenticationSettings
+    from kitty.core.apply import filler
+
+    job = _job(space, "workday_entry")
+    jobs_core.set_eligibility(space.conn, job.id, "ineligible", "UK-only posting")
+    job = jobs_core.get_job(space.conn, job.id)
+    config = replace(space.config, apply=space.config.apply.model_copy(deep=True))
+    config.apply.authentication = AuthenticationSettings(
+        enabled=True, approved_origins=["https://example.invalid"], allow_account_creation=True,
+    )
+    monkeypatch.setattr(filler, "load_credentials", lambda *_: pytest.fail("Research must not load credentials"))
+    monkeypatch.setattr(filler, "authenticate", lambda *_: pytest.fail("Research must not authenticate"))
+    result = fill_job(
+        page, space.conn, space.settings, config, job,
+        eligibility_override=filler.EligibilityOverride.COMPATIBILITY_RESEARCH,
+    )
+    assert result.status == "blocked" and result.cause == "ineligible"
+    assert result.note.startswith("ineligible: Compatibility research only; UK-only posting")
+    assert _js(page, "() => [...document.querySelectorAll('input[type=email], input[type=password]')]"
+                     ".every(e => !e.value)")
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+
+
+@pytest.mark.parametrize("override", [True, "compatibility_research"])
+def test_untyped_eligibility_override_cannot_bypass_gates(space, override):
+    from kitty.core.apply import filler
+
+    job = _job(space, "lever")
+    with pytest.raises(filler.ApprovalError):
+        fill_job(object(), space.conn, space.settings, space.config, job, eligibility_override=override)
+
+
+def test_reviewed_plan_cannot_authorize_ineligible_research(space):
+    from kitty.core.apply import filler
+
+    job = _job(space, "lever")
+    with pytest.raises(filler.ApprovalError):
+        fill_jobs(
+            space.settings, space.config, [job.id], approvals={},
+            eligibility_override=filler.EligibilityOverride.COMPATIBILITY_RESEARCH,
+        )
+
+
+def test_cli_requires_explicit_ineligible_research_choice(space, monkeypatch):
+    from types import SimpleNamespace
+    from typer.testing import CliRunner
+    from kitty import cli
+    from kitty.core.apply import filler
+
+    job = _job(space, "lever")
+    jobs_core.set_eligibility(space.conn, job.id, "ineligible", "Requires PhD enrollment")
+    monkeypatch.setattr(cli, "_open", lambda: SimpleNamespace(
+        settings=space.settings, config=space.config, conn=space.conn, close=lambda: None,
+    ))
+    with monkeypatch.context() as guard:
+        guard.setattr(filler, "ensure_firefox", lambda *_: pytest.fail("Explicit IDs must not bypass eligibility"))
+        result = CliRunner().invoke(cli.app, ["apply", str(job.id), "--no-watch"])
+    assert result.exit_code == 0, result.output
+    assert "Requires PhD enrollment" in result.output and "ineligible: 1" in result.output
+    assert jobs_core.get_job(space.conn, job.id).fill_attempted_at is None
+    if find_firefox() is None:
+        pytest.skip("firefox is not on PATH")
+    researched = CliRunner().invoke(cli.app, [
+        "apply", str(job.id), "--include-ineligible", "--headless", "--no-watch",
+    ])
+    assert researched.exit_code == 0, researched.output
+    assert "Compatibility research explicitly enabled" in researched.output
+    assert "ineligible: 1" in researched.output
+    stored = jobs_core.get_job(space.conn, job.id)
+    assert stored.fill_attempted_at is not None and stored.fill_state == "blocked"
+    assert stored.fill_ready_at is None and stored.application_id is None

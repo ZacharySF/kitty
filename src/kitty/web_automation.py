@@ -39,7 +39,7 @@ def _authentication_plan(app, selected: list[dict], mode: str) -> tuple[dict, st
     problem = None
     email = app.config.profile.email.strip()
     google_available = bool(email and "@" in email and not any(c.isspace() for c in email))
-    if mode != "google":
+    if mode != "google" and selected:
         try:
             credentials = load_credentials(app.settings)
         except CredentialError as exc:
@@ -293,19 +293,18 @@ def preparation_plan(app, conn, body: dict) -> dict:
         job = jobs.get_job(conn, job_id)
         if job is None:
             raise _error(404, "Selected job not found")
-        reason = None
-        if not job.is_active:
-            reason = "posting closed"
-        elif job.application_id is not None:
-            reason = "already applied"
-        elif job.queue_state in ("skipped", "not_eligible", "applied"):
-            reason = f"queue state {job.queue_state}"
-        elif track and track not in job.tracks:
-            reason = "outside selected track"
-        elif mode != "selected" and job.fill_state == "ready":
-            reason = "already verified ready at last attempt; select individually to recheck retained tab"
-        elif len(selected) >= cap:
-            reason = f"over this run's cap of {cap}"
+        reason = filler.preparation_blocker(job)
+        if reason is None:
+            if job.application_id is not None:
+                reason = "already applied"
+            elif job.queue_state in ("skipped", "applied"):
+                reason = f"queue state {job.queue_state}"
+            elif track and track not in job.tracks:
+                reason = "outside selected track"
+            elif mode != "selected" and job.fill_state == "ready":
+                reason = "already verified ready at last attempt; select individually to recheck retained tab"
+            elif len(selected) >= cap:
+                reason = f"over this run's cap of {cap}"
         if reason:
             left.append({"job_id": job.id, "company": job.company_name, "title": job.title, "reason": reason})
             continue

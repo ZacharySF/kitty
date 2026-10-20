@@ -179,6 +179,8 @@ class Job:
     like_score: float | None = None
     #: Terms it shares most with my favorites, for "like your favorites: ...".
     like_terms: list[str] = field(default_factory=list)
+    #: Persisted posting country; absent in legacy projections, never inferred from residence.
+    country: str | None = None
 
     @property
     def is_favorite(self) -> bool:
@@ -213,6 +215,7 @@ class Job:
             title=row["title"],
             url=row["url"],
             location=row["location"],
+            country=row["country"] if "country" in keys else None,
             is_remote=None if row["is_remote"] is None else bool(row["is_remote"]),
             apply_url=row["apply_url"],
             season=row["season"],

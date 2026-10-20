@@ -4,8 +4,9 @@ The window has to outlive kitty: I review each filled form and click submit
 myself, possibly long after the command (or TUI worker) has finished. So
 kitty starts system Firefox as a detached process with its own profile
 under data/firefox and remote control (WebDriver BiDi) on a local port, then
-attaches to it. Ending the session leaves the window and every tab open. If
-that Firefox is already running (from an earlier `kitty apply`) it is reused.
+attaches to it. Confirmed session cleanup leaves the window and every tab open;
+failed cleanup is reported instead of silently orphaning remote control. If that
+Firefox is already running (from an earlier `kitty apply`) it is reused.
 
 Detached means more than a new process group: a desktop session puts every
 process a terminal starts into that terminal's systemd scope and kills the
@@ -32,7 +33,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from kitty.core.apply.bidi import Bidi, BidiError, SessionBusy, open_session
+from kitty.core.apply.bidi import Bidi, BidiError, SessionBusy, SessionEndError, open_session
 from kitty.settings import Settings
 
 #: Preferences written to the filler profile's user.js on every start (it is
@@ -141,8 +142,8 @@ def session_holders(port: int) -> list[str]:
     """Other programs connected to Firefox's remote-control port, as "pid 123: command".
 
     Linux only (reads /proc); elsewhere, or when nothing is connected, the list is
-    empty. Used to tell "another kitty is still running" from "a dead one left
-    its session behind" when Firefox refuses a new session.
+    empty. This is diagnostic evidence, not proof that a session is unowned:
+    disconnected Firefox sessions persist, and process inspection can be incomplete.
     """
     inodes = _client_socket_inodes(port)
     holders: list[str] = []
@@ -171,9 +172,12 @@ def busy_message(port: int) -> str:
             "Apply tab, or quit that TUI). Connected: " + "; ".join(holders)
         )
     return (
-        "The kitty Firefox still holds a remote-control session from an kitty that "
-        "ended without letting go; Firefox keeps it until it restarts. Close the kitty "
-        "Firefox window (finish or note any open forms first), then run this again."
+        "Firefox reports an existing remote-control session, but no other connected "
+        "controller was identified. It may be a disconnected controller's session. "
+        "If its owner is still running, retry close() there; a disconnected direct "
+        "BiDi session cannot be reattached. Keep open forms intact. If no owner can "
+        "release it, preserve your work before manually restarting only the kitty "
+        "Firefox window; kitty will not restart it automatically."
     )
 
 
@@ -289,8 +293,8 @@ def hide_automation(port: int, *, wait_seconds: float = 15.0) -> bool:
             _chrome_eval(bidi, _RESTART_AS_ASSISTANT)
         finally:
             bidi.close()
-    except SessionBusy:
-        raise                             # another session holds Firefox: the caller explains
+    except (SessionBusy, SessionEndError):
+        raise                             # busy or unconfirmed cleanup must remain actionable
     except BidiError:
         return False
     deadline = time.monotonic() + wait_seconds
@@ -298,6 +302,8 @@ def hide_automation(port: int, *, wait_seconds: float = 15.0) -> bool:
     while time.monotonic() < deadline:
         try:
             return not automation_flag_shown(port)
+        except SessionEndError:
+            raise
         except BidiError:
             time.sleep(0.5)
     return False

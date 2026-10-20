@@ -5,6 +5,9 @@ ARIA choices and value-backed application listboxes are fields, not navigation.
 Consent policy belongs to the caller; reading a legal choice never accepts it.
 Native/ARIA fields in nested open shadow roots use tree-local label and list IDs.
 Closed roots remain unsupported; composed ancestor guards apply to every write.
+Workday's owned native list icon, category rows and back header are navigation
+only; complete hierarchy discovery, unique leaf matching and committed receipts
+remain the answer boundary.
 
 All JavaScript here runs in the filler's private sandbox (see bidi.py). The
 reader remembers each element it found under a key such as "e12" in a
@@ -106,7 +109,12 @@ _DOM_HELPERS_JS = (
     const owner = e.getAttribute('data-uxi-multiselect-id');
     if (!owner) return null;
     const group = closest(e, '[data-automation-id=multiSelectContainer]');
-    return group?.id === owner ? group : null;
+    if (group?.id !== owner) return null;
+    const owners = queryAll('[data-automation-id=multiSelectContainer]', e.getRootNode())
+      .filter(candidate => candidate.id === owner);
+    const inputs = queryAll('input[data-uxi-widget-type=selectinput][data-uxi-multiselect-id]', group)
+      .filter(candidate => candidate.getAttribute('data-uxi-multiselect-id') === owner);
+    return owners.length === 1 && inputs.length === 1 && inputs[0] === e ? group : null;
   };
   const hitAt = (x, y) => {
     let hit = document.elementFromPoint(x, y);
@@ -244,6 +252,7 @@ box => {""" + _DOM_HELPERS_JS + r"""
     return box.value && text ? [text] : [];
   }
   const multiselect = multiselectOf(box);
+  if (box.matches('input[data-uxi-widget-type=selectinput]') && !multiselect) return [];
   if (multiselect) return queryAll('[data-automation-id=selectedItemList] [data-automation-id=promptOption][data-automation-label]', multiselect)
     .filter(e => closest(e, '[data-uxi-multiselect-id]')?.getAttribute('data-uxi-multiselect-id') === box.getAttribute('data-uxi-multiselect-id'))
     .map(e => e.getAttribute('data-automation-label')).filter(Boolean);
@@ -516,6 +525,10 @@ class UnsafeAction(RuntimeError):
     """Raised when a fill helper is pointed at something that is not a form field."""
 
 
+class ChoiceSelectionError(BidiError):
+    """A known choice widget failed terminally; do not retry with typed queries."""
+
+
 # ------------------------------------------------------------------ reading
 
 
@@ -690,6 +703,15 @@ _CLEAR_JS = r"""
 """
 
 
+# Only discard text owned by this attempt. Native Workday navigation never
+# writes a query, so its failures must preserve the existing/manual text.
+_DISCARD_QUERY_JS = r"""
+(key, preserve) => {
+  if (!preserve) return (""" + _FILL_JS + r""")(key, '');
+}
+"""
+
+
 def fill_text(frame: Frame, key: str, value: str) -> None:
     """Set a text box or textarea. It never presses Enter.
 
@@ -820,22 +842,46 @@ _SUGGESTIONS_JS = (r"""
   if (!fieldSafe(box)) return want === 'list' ? {texts: [], loading: false} : null;
   const listId = box.getAttribute('aria-controls') || box.getAttribute('aria-owns');
   const multiselect = multiselectOf(box);
+  if (box.matches('input[data-uxi-widget-type=selectinput]') && !multiselect)
+    return want === 'list' ? {texts: [], loading: false} : null;
   // Workday portals carry the exact input owner's ID, not an aria-controls ID.
   // Never inspect another question's portal or pick one of duplicate owners.
   const prompts = multiselect ? queryAll(
     '[data-automation-id=responsiveMonikerPrompt][data-automation-type=singleSelectPrompt][data-associated-widget]',
     box.getRootNode()
-  ).filter(e => e.getAttribute('data-associated-widget') === multiselect.id && fieldSafe(e)) : [];
-  const scope = listId ? reference(box, listId)
-    : prompts.length === 1 ? prompts[0] : multiselect || parentOf(box);
+  ).filter(e => e.getAttribute('data-associated-widget') === multiselect.id) : [];
+  const scope = multiselect ? (prompts.length === 1 && fieldSafe(prompts[0]) ? prompts[0] : null)
+    : listId ? reference(box, listId) : parentOf(box);
   const oracleGrid = scope?.getAttribute('role') === 'grid' &&
     box.matches('input.cx-select-input[role=combobox][aria-haspopup=grid]');
   const selector = listId ? (oracleGrid ? '[role=gridcell]' : '[role=option]') : '[role=option], .__CLASS__';
   const shown = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  // Workday renders single-choice leaves with a radio inside the option.
+  // Allow only that control in this input's unique portal, never arbitrary inputs.
+  const workdayOptionRadio = (option, control) => {
+    const leaf = closest(control, '[data-automation-id=promptLeafNode][data-uxi-widget-type=multiselectlistitem]');
+    return !!multiselect && prompts.length === 1 && scope === prompts[0] &&
+      control.matches('input[type=radio][data-automation-id=radioBtn]') && fieldSafe(control) &&
+      closest(control, '[role=option]') === option &&
+      leaf?.getAttribute('data-uxi-multiselect-id') === multiselect.id &&
+      leaf.getAttribute('data-uxi-multiselectlistitem-hassidecharm') === 'false' &&
+      queryAll('input', option).length === 1;
+  };
+  const hasActions = option => queryAll('button, input, textarea, select, a[href], [role=button], [role=link], [role=checkbox], [role=radio], [role=combobox]', option)
+    .some(control => !workdayOptionRadio(option, control));
+  const workdayLeaf = option => {
+    if (!multiselect) return true;
+    const items = queryAll('[data-uxi-widget-type=multiselectlistitem]', option);
+    if (!items.length) return true; // Older plain role=option prompts.
+    return items.length === 1 && items[0].matches('[data-automation-id=promptLeafNode]') &&
+      items[0].getAttribute('data-uxi-multiselect-id') === multiselect.id &&
+      items[0].getAttribute('data-uxi-multiselectlistitem-hassidecharm') === 'false' &&
+      (!items[0].hasAttribute('data-uxi-multiselectlistitem-type') ||
+        items[0].getAttribute('data-uxi-multiselectlistitem-type') === '1');
+  };
   const options = scope ? queryAll(selector, scope).filter(
     e => shown(e) && fieldSafe(e) && !closest(e, '[data-automation-id=selectedItemList]') &&
-      e.getAttribute('aria-disabled') !== 'true' &&
-      !queryAll('button, input, a[href], [role=button], [role=link]', e).length
+      e.getAttribute('aria-disabled') !== 'true' && !hasActions(e) && workdayLeaf(e)
   ) : [];
   if (want === 'list') {
     const busy = scope ? queryAll('__LOADING__', scope) : [];
@@ -865,8 +911,7 @@ _SUGGESTIONS_JS = (r"""
         ['button', 'input', 'a'].includes(tag)) return false;
     // the events a mouse click sends: Lever picks a place on mousedown, react-select on click
     for (const type of ['mousedown', 'mouseup', 'click'])
-      if (fieldSafe(box) && fieldSafe(option) &&
-          !queryAll('button, input, a[href], [role=button], [role=link]', option).length)
+      if (fieldSafe(box) && fieldSafe(option) && !hasActions(option))
         option.dispatchEvent(new MouseEvent(type, {bubbles: true, composed: true, cancelable: true, button: 0}));
     return true;
   }
@@ -874,12 +919,13 @@ _SUGGESTIONS_JS = (r"""
   const r = option.getBoundingClientRect();
   const hit = r.width && r.height
     ? hitAt(r.left + r.width / 2, r.top + r.height / 2) : null;
+  const actionHit = closest(hit, 'button, input, a[href], [role=button], [role=link]');
   return {
     role: oracleGrid && option.getAttribute('role') === 'gridcell' ? 'option' : option.getAttribute('role'), tag: option.tagName.toLowerCase(),
     css: String(option.className), text: option.innerText || composedText(option),
     pointerOnly: oracleGrid || box.matches('button[type=button][aria-haspopup=listbox], input[data-uxi-widget-type=selectinput]'),
     reachable: !!hit && contains(option, hit) &&
-      !closest(hit, 'button, input, a[href], [role=button], [role=link]'),
+      (!actionHit || workdayOptionRadio(option, actionHit)),
   };
 }
 """).replace("__CLASS__", _SUGGESTION_CLASS).replace("__LOADING__", _LOADING_SELECTOR)
@@ -889,22 +935,242 @@ _SUGGESTIONS_JS = (r"""
 _ARROW_DOWN = "\ue015"
 
 
+# Workday's native list icon and hierarchical prompt have explicit owner IDs.
+# Only these proven navigation controls may be clicked; category titles never
+# become answer candidates. All clicks still use real, unobstructed pointers.
+_WORKDAY_MENU_JS = r"""
+(key, want = 'state', expected = '') => {""" + _DOM_HELPERS_JS + r"""
+  const box = globalThis.kittyByKey.get(key);
+  if (!box?.matches('input[data-uxi-widget-type=selectinput][data-uxi-multiselect-id]'))
+    return want === 'state' ? {mode: 'other'} : null;
+  const owner = multiselectOf(box);
+  const blocked = () => want === 'state' ? {mode: 'blocked'} : null;
+  if (!owner || !fieldSafe(box) || !fieldSafe(owner)) return blocked();
+  const icons = queryAll('[data-automation-id=promptSearchButton][data-uxi-widget-type=selectinputicon][data-uxi-selectinputicon-type=promptSearchButton][data-uxi-multiselect-id]', box.getRootNode())
+    .filter(e => e.getAttribute('data-uxi-multiselect-id') === owner.id);
+  // Older prompt variants without this icon retain the existing input path.
+  if (!icons.length) return want === 'state'
+    ? {mode: queryAll('[data-automation-id=promptSearchButton]', owner).length ? 'blocked' : 'other'} : null;
+  const actions = 'button, input, textarea, select, a[href], [role=button], [role=link], [role=checkbox], [role=radio], [role=combobox]';
+  const safe = e => !!e && fieldSafe(e) && !e.matches(actions) &&
+    !queryAll(actions, e).length;
+  if (icons.length !== 1 || !icons[0].matches('span') ||
+      !contains(owner, icons[0]) || !safe(icons[0])) return blocked();
+  if ((""" + _COMBO_VALUES_JS + r""")(box).length) return blocked();
+  const shown = e => !!e?.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+  const reachable = e => {
+    if (!safe(e) || !shown(e)) return false;
+    e.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    const r = e.getBoundingClientRect(), hit = hitAt(r.left + r.width / 2, r.top + r.height / 2);
+    return !!hit && contains(e, hit) && !closest(hit, actions) && safe(e) && fieldSafe(box);
+  };
+  const prompts = queryAll('[data-automation-id=responsiveMonikerPrompt][data-automation-type=singleSelectPrompt][data-associated-widget]', box.getRootNode())
+    .filter(e => e.getAttribute('data-associated-widget') === owner.id);
+  if (prompts.length > 1 || (prompts.length && !fieldSafe(prompts[0]))) return blocked();
+  const prompt = prompts.length && shown(prompts[0]) ? prompts[0] : null;
+  if (want === 'open') return !prompt && reachable(icons[0]) ? icons[0] : null;
+  const title = e => (e.innerText || composedText(e)).replace(/\s+/g, ' ').trim();
+  const categories = prompt ? queryAll('[role=option][data-automation-id=menuItem][data-association-widget]', prompt)
+    .filter(e => {
+      const leaves = queryAll('[data-automation-id=promptLeafNode][data-uxi-widget-type=multiselectlistitem]', e);
+      return e.getAttribute('data-association-widget') === owner.id && safe(e) && shown(e) &&
+        leaves.length === 1 && leaves[0].getAttribute('data-uxi-multiselect-id') === owner.id &&
+        leaves[0].getAttribute('data-uxi-multiselectlistitem-type') === '2' &&
+        leaves[0].getAttribute('data-uxi-multiselectlistitem-hassidecharm') === 'true';
+    }) : [];
+  const headers = prompt ? queryAll('[data-uxi-widget-type=multiselectlistheader][data-uxi-multiselectlistheader-clickable=true][data-uxi-multiselect-id]', prompt)
+    .filter(e => e.getAttribute('data-uxi-multiselect-id') === owner.id && safe(e) && shown(e) &&
+      !closest(e, '[role=option]')) : [];
+  const backs = headers.length === 1 ? queryAll('span[data-automation-id=backButton]', headers[0]) : [];
+  const back = backs.length === 1 && safe(backs[0]) ? backs[0] : null;
+  if (want === 'category') {
+    const matches = categories.filter(e => title(e) === expected);
+    return matches.length === 1 && reachable(matches[0]) ? matches[0] : null;
+  }
+  if (want === 'back') return back && reachable(back) ? back : null;
+  const suggestions = (""" + _SUGGESTIONS_JS + r""")(key, 0, 'list');
+  const rows = prompt ? queryAll('[role=option]', prompt) : [];
+  const allHeaders = prompt ? queryAll('[data-uxi-widget-type=multiselectlistheader]', prompt) : [];
+  // A filtered-out row/header is an unexplored branch, not evidence that the
+  // remaining visible leaf is unique. Disabled, foreign, hidden and malformed
+  // branches must all prevent committing a hierarchy-wide answer.
+  const incomplete = rows.length !== categories.length + suggestions.texts.length ||
+    allHeaders.length !== headers.length || (headers.length > 0 && !back);
+  const error = prompt && queryAll('[role=alert]', prompt).some(e => shown(e) && title(e));
+  const names = categories.map(title);
+  const header = headers.length === 1 ? title(headers[0]) : '';
+  return {mode: 'native', open: !!prompt, categories: names, back: !!back,
+    texts: suggestions.texts, loading: suggestions.loading || prompt?.getAttribute('aria-busy') === 'true',
+    error: !!error, incomplete, signature: JSON.stringify([header, names, suggestions.texts])};
+}
+"""
+
+
+def _wait_workday_menu(frame: Frame, key: str, previous: str | None = None) -> dict[str, Any] | None:
+    """Wait for an owned root/child menu, never turn an error into a retry."""
+    start = changed = time.monotonic()
+    last = None
+    while time.monotonic() - start < 8.0:
+        state = frame.call(_WORKDAY_MENU_JS, key)
+        if state["mode"] != "native" or state["error"]:
+            return None
+        signature = state["signature"]
+        if not state["open"] or state["loading"] or signature == previous:
+            last = None
+            changed = time.monotonic()
+        elif state["incomplete"]:
+            return None
+        elif signature != last:
+            last, changed = signature, time.monotonic()
+        elif state["texts"] or state["categories"] or time.monotonic() - changed >= 2.0:
+            return state
+        time.sleep(0.2)
+    return None
+
+
+def _pick_workday_list(
+    frame: Frame, key: str, candidates: tuple[str, ...], *, location: bool,
+    graduation: str | None,
+) -> bool | None:
+    """Use the native list, raising terminal failures; None means another variant."""
+    state = frame.call(_WORKDAY_MENU_JS, key)
+    if state["mode"] == "other":
+        return None
+    if state["mode"] != "native":
+        raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+    try:
+        return _choose_workday_leaf(frame, key, candidates, state,
+                                    location=location, graduation=graduation)
+    except ChoiceSelectionError:
+        raise
+    except (BidiError, UnsafeAction) as exc:
+        raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete") from exc
+
+
+def _choose_workday_leaf(
+    frame: Frame, key: str, candidates: tuple[str, ...], state: dict[str, Any], *,
+    location: bool, graduation: str | None,
+) -> bool:
+    """Discover the entire owned hierarchy before committing its unique saved leaf."""
+    if not state["open"]:
+        opener = frame.node(_WORKDAY_MENU_JS, key, "open")
+        if opener is None:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+        frame.click(opener)
+    state = _wait_workday_menu(frame, key)
+    # An existing child, even one containing a matching leaf, cannot establish
+    # uniqueness across its siblings. Reach the root through owned back controls
+    # before discovering any answer; never reset the query to navigate.
+    for _ in range(8):
+        if state is None:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+        if not state["back"]:
+            break
+        back = frame.node(_WORKDAY_MENU_JS, key, "back")
+        if back is None:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+        frame.click(back)
+        state = _wait_workday_menu(frame, key, state["signature"])
+    if state is None or state["back"]:
+        raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+    remaining = 64
+    menus: dict[tuple[str, ...], dict[str, Any]] = {}
+    leaves: list[tuple[tuple[str, ...], str]] = []
+
+    def visit(menu: dict[str, Any], path: tuple[str, ...]) -> bool:
+        nonlocal remaining
+        if not menu["texts"] and not menu["categories"]:
+            return False  # No loaded rows prove that this branch was explored.
+        menus[path] = menu
+        leaves.extend((path, _option_title(text)) for text in menu["texts"])
+        categories = menu["categories"]
+        if len(set(categories)) != len(categories) or any(not name for name in categories):
+            return False
+        if categories and len(path) >= 8:
+            return False
+        for category in categories:
+            if remaining <= 0:
+                return False
+            target = frame.node(_WORKDAY_MENU_JS, key, "category", category)
+            if target is None:
+                return False
+            remaining -= 1
+            frame.click(target)
+            child = _wait_workday_menu(frame, key, menu["signature"])
+            if child is None or not child["back"] or not visit(child, (*path, category)):
+                return False
+            # Only an explicitly owned clickable header proves "back". Never
+            # click an answer or guess a breadcrumb from its visible text.
+            target = frame.node(_WORKDAY_MENU_JS, key, "back")
+            if target is None:
+                return False
+            frame.click(target)
+            restored = _wait_workday_menu(frame, key, child["signature"])
+            if restored is None or restored["signature"] != menu["signature"]:
+                return False
+        return True
+
+    if not visit(state, ()):
+        raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+    # Count candidate occurrences across every category, not just the first
+    # matching menu. Even two configured aliases cannot identify which source
+    # category the user intended when both are offered.
+    matches = [
+        (path, text) for path, text in leaves
+        if match_option(candidates, [text], location=location, prefix=False,
+                        graduation=graduation) is not None
+    ]
+    if not matches:
+        raise ChoiceSelectionError("Workday saved choice was not found in the fully inspected hierarchy")
+    if len(matches) != 1:
+        raise ChoiceSelectionError("Workday saved choice is ambiguous")
+    path, text = matches[0]
+    current = _wait_workday_menu(frame, key)
+    if current is None or current["signature"] != state["signature"]:
+        raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+    for depth, category in enumerate(path, 1):
+        target = frame.node(_WORKDAY_MENU_JS, key, "category", category)
+        if target is None:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+        frame.click(target)
+        current = _wait_workday_menu(frame, key, current["signature"])
+        if current is None or current["signature"] != menus[path[:depth]]["signature"]:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+    options = [_option_title(value) for value in current["texts"]]
+    try:
+        committed = _click_match(frame, key, options, (text,), location=location,
+                                 prefix=False, graduation=graduation, preserve_query=True)
+    except (BidiError, UnsafeAction) as exc:
+        raise ChoiceSelectionError("Workday choice selection was not committed") from exc
+    if not committed:
+        raise ChoiceSelectionError("Workday choice selection was not committed")
+    return True
+
+
 def pick_from_search(
     frame: Frame, key: str, search_text: str, candidates: tuple[str, ...], *,
     location: bool, prefix: bool = True, graduation: str | None = None,
 ) -> bool:
     """Type into a search-as-you-type box and click the suggestion that matches.
 
-    The only element ever clicked is a suggestion: a role="option" in the list
-    the box controls (react-select, Greenhouse) or a Lever location suggestion
-    next to the box. If nothing matches, the typed text is cleared.
+    Generic suggestions must be owned options or adjacent Lever locations;
+    failed queries are cleared. Workday's native list variant instead uses its
+    owned icon/category/back controls without typing or clearing query text.
+    Native failures raise ChoiceSelectionError, never a retryable search miss;
+    do not retry its failed endpoint or substitute a different answer.
     """
     if _guard(frame, key, custom=("combobox",)) == "combobox":
         return False                             # non-editable ARIA field, never type into it
     selected = frame.call(_SUGGESTIONS_JS, key, 0, "selected")
     if selected:
-        return match_option(candidates, selected, location=location, prefix=False,
-                            graduation=graduation) is not None
+        matches = match_option(candidates, selected, location=location, prefix=False,
+                               graduation=graduation) is not None
+        if not matches and frame.call(_WORKDAY_MENU_JS, key)["mode"] != "other":
+            raise ChoiceSelectionError("Workday choice already has a different committed selection")
+        return matches
+    native = _pick_workday_list(frame, key, candidates, location=location, graduation=graduation)
+    if native is not None:
+        return native
     if not frame.call(_REACHABLE_JS, key):
         return False
     typed = " ".join(search_text.split())[:80]     # no newlines: typing one would press Enter
@@ -925,12 +1191,22 @@ def pick_from_list(
     Only exact names / configured aliases count in this possibly partial list.
     The short probe avoids the search wait on boxes that stay empty until typed;
     actual searches retain their full loading-indicator wait (notably Lever).
+    Workday native lists use bounded, structurally proven category navigation,
+    never category names as answers; only a matching committed leaf succeeds.
+    Native terminal failures raise ChoiceSelectionError rather than returning a
+    retryable False, including a fully inspected but unmatched saved choice.
     """
     _guard(frame, key, custom=("combobox",))
     selected = frame.call(_SUGGESTIONS_JS, key, 0, "selected")
     if selected:
-        return match_option(candidates, selected, location=location, prefix=False,
-                            graduation=graduation) is not None
+        matches = match_option(candidates, selected, location=location, prefix=False,
+                               graduation=graduation) is not None
+        if not matches and frame.call(_WORKDAY_MENU_JS, key)["mode"] != "other":
+            raise ChoiceSelectionError("Workday choice already has a different committed selection")
+        return matches
+    native = _pick_workday_list(frame, key, candidates, location=location, graduation=graduation)
+    if native is not None:
+        return native
     if not frame.call(_REACHABLE_JS, key):
         return False
     frame.call(_CLEAR_JS, key)
@@ -945,27 +1221,27 @@ def pick_from_list(
 
 def _click_match(
     frame: Frame, key: str, options: list[str], candidates: tuple[str, ...], *,
-    location: bool, prefix: bool, graduation: str | None = None,
+    location: bool, prefix: bool, graduation: str | None = None, preserve_query: bool = False,
 ) -> bool:
     """Click a matching suggestion and verify that its selected value sticks."""
     index = match_option(candidates, options, location=location, prefix=prefix,
                          graduation=graduation)
     if index is None:
-        frame.call(_FILL_JS, key, "")
+        frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
     found = frame.call(_SUGGESTIONS_JS, key, index, "check", options[index])
     if found is None or _option_title(found["text"]) != options[index]:
-        frame.call(_FILL_JS, key, "")
+        frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
     role, tag, css = found["role"], found["tag"], found["css"]
     if (role != "option" and _SUGGESTION_CLASS not in css) or tag in ("button", "input", "a"):
         raise UnsafeAction(f"refusing to click <{tag} role={role}>")
     option = frame.node(_SUGGESTIONS_JS, key, index, "node", options[index])
     if option is None:
-        frame.call(_FILL_JS, key, "")
+        frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
     if not found["reachable"] and found.get("pointerOnly"):
-        frame.call(_FILL_JS, key, "")
+        frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
     try:
         if found["reachable"]:
@@ -973,7 +1249,7 @@ def _click_match(
         else:
             frame.call(_SUGGESTIONS_JS, key, index, "click", options[index])
     except BidiError:
-        frame.call(_FILL_JS, key, "")
+        frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         raise
     frame.call(_SUGGESTIONS_JS, key, 0, "selected")
     frame.call("(key) => globalThis.kittyByKey.get(key).blur()", key)
@@ -983,7 +1259,7 @@ def _click_match(
         if match_option((options[index], *candidates), selected, location=location, prefix=False) is not None:
             return True
         time.sleep(0.1)
-    frame.call(_FILL_JS, key, "")
+    frame.call(_DISCARD_QUERY_JS, key, preserve_query)
     return False
 
 

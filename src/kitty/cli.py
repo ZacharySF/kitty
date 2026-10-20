@@ -7,6 +7,7 @@ core package, so the TUI and a future MCP server behave identically.
 from __future__ import annotations
 
 import signal
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -508,13 +509,17 @@ def apply(
     track: Annotated[Optional[str], typer.Option("--track", help="Only jobs in this track (with --queued / --top).")] = None,
     headless: Annotated[bool, typer.Option("--headless", help="Use an invisible browser that closes afterwards.")] = False,
     no_watch: Annotated[bool, typer.Option("--no-watch", help="Do not watch the tabs for your submit afterwards.")] = False,
+    include_ineligible: Annotated[bool, typer.Option(
+        "--include-ineligible",
+        help="Explicit compatibility research on ineligible jobs only; never ready, authenticated or watched.",
+    )] = False,
 ) -> None:
     """Open each job's application form in Firefox and fill it. You review and submit.
 
     Afterwards it watches the tabs (config/apply.yaml watch_hours) and records each
     application when its tab shows the board's confirmation page. Ctrl-C stops watching.
     """
-    from kitty.core.apply.filler import fill_jobs
+    from kitty.core.apply.filler import EligibilityOverride, fill_jobs
     from kitty.core.apply.watch import Watch
 
     workspace = _open()
@@ -528,8 +533,9 @@ def apply(
             picked = jobs_core.list_jobs(workspace.conn, jobs_core.JobFilter(
                 order="best", prefer_cities=config.prefer_cities,
                 prefer_remote=config.profile.open_to_remote,
-                queue_states=["queued"] if queued and not top else ["new", "queued"],
-                eligibility=["boosted", "eligible", "ambiguous", "unknown"],
+                queue_states=(["queued", "not_eligible"] if queued and not top else ["new", "queued", "not_eligible"])
+                if include_ineligible else (["queued"] if queued and not top else ["new", "queued"]),
+                eligibility=None if include_ineligible else ["boosted", "eligible", "ambiguous", "unknown"],
                 not_applied=True, tracks=[track] if track else None, limit=top,
             ))
             chosen += [job.id for job in picked if job.id not in chosen]
@@ -537,11 +543,16 @@ def apply(
             error_console.print("Nothing to fill: give job ids, --queued or --top N.")
             raise typer.Exit(code=1)
 
+        if include_ineligible:
+            console.print("[bold yellow]Compatibility research explicitly enabled for ineligible jobs.[/bold yellow] "
+                          "They cannot become ready, use account automation, or enter submission watching.")
+
         def filled(reports) -> None:
             for report in reports:
                 _print_fill_report(report)
-            console.print("\n[bold yellow]Nothing was submitted.[/bold yellow] Review each tab, "
-                          "fill what is left, and click submit yourself.")
+            _print_fill_causes(reports)
+            console.print("\n[bold yellow]Nothing was submitted.[/bold yellow] Review eligible applications "
+                          "before submitting yourself. Ineligible tabs, if explicitly requested, are research only.")
 
         def applied(tab) -> None:
             days = ", ".join(f"+{day}" for day in config.apply.followup_days)
@@ -560,6 +571,7 @@ def apply(
                 fill_jobs(
                     workspace.settings, config, chosen, headless=headless, on_filled=filled,
                     watch=watch, progress=lambda message: console.print(f"[dim]{escape(message)}[/dim]"),
+                    eligibility_override=EligibilityOverride.COMPATIBILITY_RESEARCH if include_ineligible else None,
                 )
         except KeyboardInterrupt:
             console.print("\nStopped.")
@@ -567,8 +579,8 @@ def apply(
             ids = " ".join(str(tab.job_id) for tab in watch.tabs)
             console.print(f"Not seen submitted: {ids}. After you submit, mark it: "
                           "[bold]kitty status <id> applied[/bold]")
-        elif watch is None:
-            console.print("After you submit, mark it: [bold]kitty status <id> applied[/bold]")
+        elif watch is None and not include_ineligible:
+            console.print("After you submit an eligible application, mark it: [bold]kitty status <id> applied[/bold]")
     finally:
         workspace.close()
 
@@ -598,6 +610,7 @@ def _print_fill_report(report) -> None:
     colour = {"ready": "green", "partial": "yellow", "attempted": "cyan", "blocked": "yellow"}.get(report.status, "red")
     console.print(f"\n[bold]{report.job_id}  {escape(report.company)} - {escape(report.title)}[/bold]"
                   f"  [{colour}]{report.status}[/]")
+    console.print(f"  cause: {escape((report.cause or 'unsupported_controls').replace('_', ' '))}")
     console.print(f"  {report.ats}  [dim]{escape(report.url)}[/dim]")
     console.print(f"  resume (uploaded or retained): {escape(report.resume_label or 'not verified')}")
     if report.resumed:
@@ -612,6 +625,15 @@ def _print_fill_report(report) -> None:
         console.print(f"  note: {escape(report.note)}")
     if report.error:
         console.print(f"  [red]error: {escape(report.error)}[/red]")
+
+
+def _print_fill_causes(reports) -> None:
+    counts = Counter(report.cause for report in reports)
+    if counts:
+        console.print("\n[bold]Preparation outcomes[/bold]: " + "; ".join(
+            f"{escape((cause or 'unsupported_controls').replace('_', ' '))}: {count}"
+            for cause, count in sorted(counts.items(), key=lambda item: item[0] or "")
+        ))
 
 
 @app.command()
@@ -666,6 +688,7 @@ def autofill(
                 return
             for report in result.reports:
                 _print_fill_report(report)
+            _print_fill_causes(result.reports)
             _print_left_out(result.plan)
             if not result.plan.job_ids:
                 console.print("\nNothing to fill.")

@@ -1,13 +1,14 @@
 """Owned selector commits and retained values in isolated headless Firefox."""
 from dataclasses import replace
 from urllib.parse import quote
+import json
 
 import pytest
 
 from test_apply import FORMS, _js, firefox, page, space
 from kitty.core.apply.fields import is_resume_input, plan_for
 from kitty.core.apply.page import (
-    UnsafeAction, fill_text, pick_from_list, read_fields, tick, upload,
+    ChoiceSelectionError, UnsafeAction, fill_text, pick_from_list, read_fields, tick, upload,
 )
 
 
@@ -788,6 +789,62 @@ def _portal_source_picker(page, *, owner="source-owner", duplicate=False, commit
     return next(f for f in read_fields([page.main]) if f.element_id == "source--source")
 
 
+def _radio_portal_source_picker(page):
+    field = _portal_source_picker(page)
+    _js(page, """() => {
+      const portal=document.querySelector('[data-associated-widget]');
+      portal.setAttribute('aria-busy','false');
+      const option=portal.firstElementChild;option.hidden=false;
+      option.innerHTML=`<div data-automation-id="promptLeafNode"
+        data-uxi-widget-type="multiselectlistitem" data-uxi-multiselect-id="source-owner"
+        data-uxi-multiselectlistitem-hassidecharm="false">
+          <input type="radio" data-automation-id="radioBtn">
+          <div data-automation-id="promptOption">Company careers page</div>
+        </div>`;
+    }""")
+    return field
+
+
+def test_workday_owned_radio_option_commits_saved_choice_with_real_pointer(page, space):
+    from kitty.config import AnswerEntry, AnswersFile
+    from kitty.core.apply.filler import _apply_plan
+
+    field = _radio_portal_source_picker(page)
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question=field.label, answer="Company careers page"),
+    ]))
+
+    assert _apply_plan([page.main], field, plan_for(field, config))
+    final = next(f for f in read_fields([page.main]) if f.element_id == field.element_id)
+    assert not final.blank and not final.invalid
+    assert _js(page, """() => document.querySelector(
+      '#source-owner [data-automation-id=promptOption]'
+    ).getAttribute('data-automation-label')""") == "Company careers page"
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("mutation", [
+    "leaf.setAttribute('data-uxi-multiselect-id','another-question')",
+    "radio.removeAttribute('data-automation-id')",
+    "radio.type='submit'",
+    "radio.type='checkbox'",
+    "radio.disabled=true",
+    "leaf.insertAdjacentHTML('beforeend','<button>Submit</button>')",
+])
+def test_workday_radio_options_reject_foreign_or_action_controls(page, mutation):
+    field = _radio_portal_source_picker(page)
+    _js(page, """() => {
+      const leaf=document.querySelector('[data-automation-id=promptLeafNode]'),
+        radio=leaf.querySelector('input');
+      """ + mutation + ";}")
+
+    assert not pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    assert next(f for f in read_fields([page.main]) if f.element_id == field.element_id).blank
+    assert _js(page, "() => window.trusted") == []
+    assert _js(page, "() => window.submitted") == 0
+
+
 def test_workday_source_waits_for_exact_owned_portal_and_requires_selection_receipt(page, space):
     from kitty.config import AnswerEntry, AnswersFile
     from kitty.core.apply.filler import _apply_plan
@@ -862,4 +919,395 @@ def test_saved_unmapped_gpa_and_specific_major_never_commit_broader_choices(page
     assert not pick_from_list(page.main, field.key, plan.candidates, location=False)
     assert next(f for f in read_fields([page.main]) if f.key == field.key).blank
     assert _js(page, "() => window.trusted") == []
+    assert _js(page, "() => window.submitted") == 0
+
+
+def _native_workday_source(page, *, commit=True, tree=None):
+    """Observed Workday owner/icon/type=2 category/clickable-header contract."""
+    if tree is None:
+        tree = {
+            "root": ["Website", "PwC Job Board"],
+            "Website": ["I found the job on a job board", "I was referred by a search engine"],
+            "PwC Job Board": ["Company careers page"],
+        }
+    _load(page, '''
+      <label for="source--source">How Did You Hear About Us?*</label>
+      <div data-automation-id="multiSelectContainer" id="source-owner">
+        <input id="source--source" data-uxi-widget-type="selectinput"
+          data-uxi-multiselect-id="source-owner" value="stale query" aria-required="true"
+          style="position:absolute;width:1px;height:1px;opacity:0">
+        <span data-automation-id="promptSearchButton" data-uxi-widget-type="selectinputicon"
+          data-uxi-selectinputicon-type="promptSearchButton" data-uxi-multiselect-id="source-owner"
+          style="display:inline-block;padding:12px;border:1px solid">List</span>
+      </div>
+      <label for="manual">Manual answer</label><input id="manual" value="Do not replace">
+      <div data-automation-id="responsiveMonikerPrompt" data-automation-type="singleSelectPrompt"
+        data-associated-widget="source-owner" hidden></div>
+    ''', '''
+      const box=document.querySelector('#source--source'),
+        owner=document.querySelector('#source-owner'),
+        portal=document.querySelector('[data-associated-widget]'),
+        icon=owner.querySelector('[data-automation-id=promptSearchButton]');
+      window.navigation=[];window.queryChanges=0;
+      const tree=__TREE__;
+      window.renderMenu=name => {
+        portal.hidden=false;portal.innerHTML='';
+        portal.removeAttribute('aria-busy');
+        if(name!=='root') {
+          const header=document.createElement('div');
+          header.setAttribute('data-uxi-widget-type','multiselectlistheader');
+          header.setAttribute('data-uxi-multiselect-id','source-owner');
+          header.setAttribute('data-uxi-multiselectlistheader-clickable','true');
+          header.innerHTML='<span data-automation-id="backButton" style="display:inline-block;padding:12px">Back</span>'+
+            '<div data-automation-id="promptTitle">'+name+'</div>';
+          header.querySelector('span').onclick=e=>{
+            window.navigation.push(['back',e.isTrusted]);
+            const parent=Object.keys(tree).find(key=>tree[key].includes(name));
+            if(e.isTrusted && parent)window.renderMenu(parent);
+          };
+          portal.append(header);
+        }
+        for(const text of tree[name]) {
+          const category=Object.hasOwn(tree,text), option=document.createElement('div');
+          option.setAttribute('role','option');option.setAttribute('aria-selected','false');
+          option.setAttribute('data-automation-id','menuItem');
+          option.setAttribute('data-association-widget','source-owner');
+          option.style.cssText='padding:12px;border:1px solid;max-width:400px';
+          option.innerHTML='<div data-automation-id="promptLeafNode" data-uxi-widget-type="multiselectlistitem" '+
+            'data-uxi-multiselect-id="source-owner" data-uxi-multiselectlistitem-type="'+(category?'2':'1')+'" '+
+            'data-uxi-multiselectlistitem-hassidecharm="'+category+'">'+
+            (category?'':'<input type="radio" data-automation-id="radioBtn">')+
+            '<div data-automation-id="promptOption" data-automation-label="'+text+'">'+text+'</div></div>';
+          option.onclick=e=>{
+            if(category) {
+              window.navigation.push([text,e.isTrusted]);
+              if(e.isTrusted)window.renderMenu(text);
+              return;
+            }
+            window.trusted.push(e.isTrusted);
+            if(!e.isTrusted || !__COMMIT__)return;
+            const receipt=document.createElement('ul');
+            receipt.setAttribute('data-automation-id','selectedItemList');
+            receipt.setAttribute('data-uxi-multiselect-id','source-owner');
+            receipt.innerHTML='<li><div role="option"><p data-automation-id="promptOption" '+
+              'data-automation-label="'+text+'">'+text+'</p></div></li>';
+            owner.append(receipt);box.value='';portal.hidden=true;
+          };
+          portal.append(option);
+        }
+      };
+      // This widget's text-query endpoint fails; only its native list opens.
+      box.oninput=()=>{window.queryChanges++;portal.hidden=false;portal.innerHTML='';};
+      icon.onclick=e=>{
+        window.navigation.push(['open',e.isTrusted]);
+        if(e.isTrusted)window.renderMenu('root');
+      };
+    '''.replace("__COMMIT__", str(commit).lower()).replace("__TREE__", json.dumps(tree)))
+    return next(f for f in read_fields([page.main]) if f.element_id == "source--source")
+
+
+@pytest.mark.parametrize("query", ["Company careers page", ""])
+def test_workday_native_list_recovers_failed_search_and_commits_exact_configured_alias(page, space, query):
+    from kitty.config import AnswerEntry, AnswersFile
+    from kitty.core.apply.filler import _apply_plan
+
+    field = _native_workday_source(page)
+    # Reproduce the failed text-query path before using the native list control.
+    fill_text(page.main, field.key, query)
+    assert _js(page, "() => window.queryChanges") >= 1
+    assert _js(page, "() => document.querySelector('[data-associated-widget]').children.length") == 0
+    # Close the failed query popup exactly as a user can, without clearing text.
+    _js(page, "() => document.querySelector('[data-associated-widget]').hidden=true")
+    changes = _js(page, "() => window.queryChanges")
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question=field.label, answer="Employer careers site", choices=["Company careers page"]),
+    ]))
+
+    assert _apply_plan([page.main], field, plan_for(field, config))
+    final = next(f for f in read_fields([page.main]) if f.element_id == field.element_id)
+    assert not final.blank and not final.invalid
+    assert _js(page, "() => window.navigation") == [
+        ["open", True], ["Website", True], ["back", True], ["PwC Job Board", True],
+        ["back", True], ["PwC Job Board", True],
+    ]
+    assert _js(page, "() => window.queryChanges") == changes
+    assert _js(page, "() => document.querySelector('#source-owner [data-automation-label]').getAttribute('data-automation-label')") == "Company careers page"
+    assert _js(page, "() => document.querySelector('#manual').value") == "Do not replace"
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
+
+
+def test_workday_native_list_returns_from_existing_child_without_clearing_query(page):
+    field = _native_workday_source(page)
+    _js(page, "() => window.renderMenu('Website')")
+    assert pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    assert _js(page, "() => window.navigation")[0] == ["back", True]
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("commit", [False, True])
+def test_workday_native_list_never_substitutes_category_or_unconfigured_leaf(page, commit):
+    from kitty.core.apply.page import pick_from_search
+
+    field = _native_workday_source(page, commit=commit)
+    candidates = ("Company careers page",) if not commit else ("Website",)
+    reason = "fully inspected hierarchy" if commit else "selection was not committed"
+    with pytest.raises(ChoiceSelectionError, match=reason):
+        pick_from_search(page.main, field.key, "Website", candidates, location=False)
+    final = next(f for f in read_fields([page.main]) if f.element_id == field.element_id)
+    assert final.invalid  # Preserved query text is not a committed answer.
+    assert not _js(page, "() => !!document.querySelector('#source-owner [data-automation-id=selectedItemList]')")
+    assert _js(page, "() => document.querySelector('#source--source').value") == "stale query"
+    assert _js(page, "() => document.querySelector('#manual').value") == "Do not replace"
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => window.trusted") == ([] if commit else [True])
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("mutation", [
+    "icon.setAttribute('data-uxi-multiselect-id','foreign-owner')",
+    "icon.after(icon.cloneNode(true))",
+    "icon.setAttribute('role','button')",
+    "icon.innerHTML='<button type=submit>Submit</button>'",
+    "icon.outerHTML='<button type=submit '+Array.from(icon.attributes).map(a=>a.name+'=\"'+a.value+'\"').join(' ')+'>Submit</button>'",
+    "icon.insertAdjacentHTML('beforebegin','<button type=submit id=wrapper></button>');document.querySelector('#wrapper').append(icon)",
+    "owner.after(owner.cloneNode(true))",
+    "icon.style.position='relative';icon.insertAdjacentHTML('afterend','<div style=\"position:fixed;inset:0;background:white;z-index:1000\">Overlay</div>')",
+])
+def test_workday_native_opener_rejects_foreign_ambiguous_actions_and_overlays(page, mutation):
+    field = _native_workday_source(page)
+    _js(page, """() => {
+      const owner=document.querySelector('#source-owner'),
+        icon=owner.querySelector('[data-automation-id=promptSearchButton]');
+      """ + mutation + ";}")
+    with pytest.raises(ChoiceSelectionError, match="hierarchy is unavailable or incomplete"):
+        pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    assert _js(page, "() => window.navigation") == []
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => document.querySelector('#source--source').value") == "stale query"
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("mutation", [
+    "owner.setAttribute('aria-disabled','true')",
+    "owner.setAttribute('inert','')",
+    "box.readOnly=true",
+])
+def test_workday_native_opener_preserves_disabled_and_readonly_widgets(page, mutation):
+    field = _native_workday_source(page)
+    _js(page, """() => {
+      const owner=document.querySelector('#source-owner'),box=owner.querySelector('input');
+      """ + mutation + ";}")
+    with pytest.raises(UnsafeAction):
+        pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    assert _js(page, "() => window.navigation") == []
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("mutation", [
+    "for(const option of portal.querySelectorAll('[role=option]'))option.setAttribute('data-association-widget','foreign')",
+    "for(const leaf of portal.querySelectorAll('[data-automation-id=promptLeafNode]'))leaf.setAttribute('data-uxi-multiselect-id','foreign')",
+    "for(const leaf of portal.querySelectorAll('[data-automation-id=promptLeafNode]'))leaf.insertAdjacentHTML('beforeend','<input type=checkbox aria-label=Consent>')",
+    "for(const leaf of portal.querySelectorAll('[data-automation-id=promptLeafNode]'))leaf.insertAdjacentHTML('beforeend','<button type=submit>Submit</button>')",
+    "for(const leaf of portal.querySelectorAll('[data-automation-id=promptLeafNode]'))leaf.insertAdjacentHTML('beforeend','<textarea>Other answer</textarea>')",
+    "for(const leaf of portal.querySelectorAll('[data-automation-id=promptLeafNode]'))leaf.setAttribute('data-uxi-multiselectlistitem-hassidecharm','false')",
+    "for(const option of portal.querySelectorAll('[role=option]'))option.setAttribute('aria-disabled','true')",
+    "portal.after(portal.cloneNode(true))",
+])
+def test_workday_native_categories_reject_foreign_ambiguous_and_action_controls(page, mutation):
+    field = _native_workday_source(page)
+    _js(page, """() => {
+      window.renderMenu('root');const portal=document.querySelector('[data-associated-widget]');
+      """ + mutation + ";}")
+    with pytest.raises(ChoiceSelectionError, match="hierarchy is unavailable or incomplete"):
+        pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    assert _js(page, "() => window.navigation") == []
+    assert _js(page, "() => window.trusted") == []
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("mutation", [
+    "header.setAttribute('data-uxi-multiselect-id','foreign')",
+    "header.setAttribute('data-uxi-multiselectlistheader-clickable','false')",
+    "header.setAttribute('role','button')",
+    "header.setAttribute('aria-disabled','true')",
+    "header.after(header.cloneNode(true))",
+    "header.querySelector('span').outerHTML='<button type=submit data-automation-id=backButton>Back</button>'",
+])
+def test_workday_native_back_requires_owned_unambiguous_nonaction_header(page, mutation):
+    field = _native_workday_source(page)
+    _js(page, """() => {
+      window.renderMenu('Website');
+      const header=document.querySelector('[data-uxi-widget-type=multiselectlistheader]');
+      """ + mutation + ";}")
+    with pytest.raises(ChoiceSelectionError, match="hierarchy is unavailable or incomplete"):
+        pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    assert _js(page, "() => window.navigation") == []
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("error", [False, True])
+def test_workday_native_terminal_empty_or_error_does_not_clear_or_retry(page, error):
+    field = _native_workday_source(page)
+    _js(page, """error => {
+      const portal=document.querySelector('[data-associated-widget]');
+      portal.hidden=false;portal.innerHTML=error?'<div role=alert>Unable to load options</div>':'';
+    }""", error)
+    with pytest.raises(ChoiceSelectionError, match="hierarchy is unavailable or incomplete"):
+        pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    assert _js(page, "() => window.navigation") == []
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => document.querySelector('#source--source').value") == "stale query"
+    assert _js(page, "() => window.submitted") == 0
+
+
+def test_workday_native_committed_receipt_prevents_reopening_or_overwriting(page):
+    from kitty.core.apply.page import pick_from_search
+
+    field = _native_workday_source(page)
+    assert pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    navigation = _js(page, "() => window.navigation")
+    with pytest.raises(ChoiceSelectionError, match="different committed selection"):
+        pick_from_list(page.main, field.key, ("Another source",), location=False)
+    assert pick_from_search(page.main, field.key, "unrelated query", ("Company careers page",), location=False)
+    assert _js(page, "() => window.navigation") == navigation
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => document.querySelector('#manual').value") == "Do not replace"
+    assert _js(page, "() => window.submitted") == 0
+
+
+def test_workday_native_existing_matching_leaf_requires_complete_root_discovery(page):
+    field = _native_workday_source(page)
+    _js(page, "() => window.renderMenu('PwC Job Board')")
+    assert pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    assert _js(page, "() => window.navigation") == [
+        ["back", True], ["Website", True], ["back", True], ["PwC Job Board", True],
+        ["back", True], ["PwC Job Board", True],
+    ]
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => window.trusted") == [True]
+    assert not next(f for f in read_fields([page.main]) if f.element_id == field.element_id).blank
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("start", ["root", "Saved"])
+def test_workday_native_duplicate_leaf_in_separate_categories_never_commits(page, start):
+    field = _native_workday_source(page, tree={
+        "root": ["Saved", "Other source"],
+        "Saved": ["Company careers page"],
+        "Other source": ["Company careers page"],
+    })
+    _js(page, "name => window.renderMenu(name)", start)
+
+    with pytest.raises(ChoiceSelectionError, match="saved choice is ambiguous"):
+        pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    final = next(f for f in read_fields([page.main]) if f.element_id == field.element_id)
+    assert final.invalid
+    assert not _js(page, "() => !!document.querySelector('#source-owner [data-automation-id=selectedItemList]')")
+    assert _js(page, "() => window.trusted") == []
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => document.querySelector('#source--source').value") == "stale query"
+    assert _js(page, "() => document.querySelector('#manual').value") == "Do not replace"
+    assert all(trusted for _, trusted in _js(page, "() => window.navigation"))
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("failure", [
+    "error", "loading", "empty", "inaccessible", "hidden-branch", "missing-back", "depth-limit",
+])
+def test_workday_native_matching_leaf_cannot_commit_before_complete_discovery(page, failure):
+    tree = {"root": ["Company careers page", "Other"], "Other": ["Unrelated"]}
+    if failure == "depth-limit":
+        tree["Other"] = ["Level 1"]
+        for depth in range(1, 9):
+            tree[f"Level {depth}"] = [f"Level {depth + 1}"] if depth < 8 else ["Unrelated"]
+    field = _native_workday_source(page, tree=tree)
+    _js(page, """failure => {
+      const render=window.renderMenu;
+      window.renderMenu=name=>{
+        render(name);
+        const portal=document.querySelector('[data-associated-widget]');
+        if(name==='root' && failure==='inaccessible')
+          Array.from(portal.children).find(e=>e.textContent==='Other').style.pointerEvents='none';
+        if(name==='root' && failure==='hidden-branch')
+          Array.from(portal.children).find(e=>e.textContent==='Other').hidden=true;
+        if(name!=='Other')return;
+        if(failure==='error')
+          portal.insertAdjacentHTML('beforeend','<div role=alert>Unable to load options</div>');
+        if(failure==='loading')portal.setAttribute('aria-busy','true');
+        if(failure==='empty')
+          portal.querySelectorAll('[role=option]').forEach(e=>e.remove());
+        if(failure==='missing-back')portal.querySelector('[data-automation-id=backButton]').remove();
+      };
+    }""", failure)
+
+    with pytest.raises(ChoiceSelectionError, match="hierarchy is unavailable or incomplete"):
+        pick_from_list(page.main, field.key, ("Company careers page",), location=False)
+    final = next(f for f in read_fields([page.main]) if f.element_id == field.element_id)
+    assert final.invalid
+    assert not _js(page, "() => !!document.querySelector('#source-owner [data-automation-id=selectedItemList]')")
+    assert _js(page, "() => window.trusted") == []
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => document.querySelector('#source--source').value") == "stale query"
+    assert _js(page, "() => document.querySelector('#manual').value") == "Do not replace"
+    assert all(trusted for _, trusted in _js(page, "() => window.navigation"))
+    assert _js(page, "() => window.submitted") == 0
+
+
+def test_workday_native_unique_saved_leaf_commits_only_after_later_branch_is_checked(page, space):
+    from kitty.config import AnswerEntry, AnswersFile
+    from kitty.core.apply.filler import _apply_plan
+
+    field = _native_workday_source(page, tree={
+        "root": ["Saved", "Later source"],
+        "Saved": ["Company careers page"],
+        "Later source": ["A different answer"],
+    })
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question=field.label, answer="Company careers page"),
+    ]))
+
+    assert _apply_plan([page.main], field, plan_for(field, config))
+    assert _js(page, "() => window.navigation") == [
+        ["open", True], ["Saved", True], ["back", True],
+        ["Later source", True], ["back", True], ["Saved", True],
+    ]
+    final = next(f for f in read_fields([page.main]) if f.element_id == field.element_id)
+    assert not final.blank and not final.invalid
+    assert _js(page, "() => document.querySelector('#source-owner [data-automation-label]').getAttribute('data-automation-label')") == "Company careers page"
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => document.querySelector('#manual').value") == "Do not replace"
+    assert _js(page, "() => window.submitted") == 0
+
+
+def test_workday_native_uncommitted_saved_choice_stops_plan_without_retrying(page, space):
+    from kitty.config import AnswerEntry, AnswersFile
+    from kitty.core.apply.filler import _apply_plan
+
+    field = _native_workday_source(page, commit=False)
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question=field.label, answer="Employer careers site",
+                    choices=["Company careers page"]),
+    ]))
+
+    with pytest.raises(ChoiceSelectionError, match="selection was not committed"):
+        _apply_plan([page.main], field, plan_for(field, config))
+    final = next(f for f in read_fields([page.main]) if f.element_id == field.element_id)
+    assert final.invalid
+    assert not _js(page, "() => !!document.querySelector('#source-owner [data-automation-id=selectedItemList]')")
+    assert _js(page, "() => window.navigation") == [
+        ["open", True], ["Website", True], ["back", True],
+        ["PwC Job Board", True], ["back", True], ["PwC Job Board", True],
+    ]
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.queryChanges") == 0
+    assert _js(page, "() => document.querySelector('#source--source').value") == "stale query"
+    assert _js(page, "() => document.querySelector('#manual').value") == "Do not replace"
     assert _js(page, "() => window.submitted") == 0
