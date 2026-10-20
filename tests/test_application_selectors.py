@@ -512,6 +512,47 @@ def test_contact_state_needs_saved_fact_and_exact_offered_state(space, saved):
                             prefix=not plan.exact_choices) is None
 
 
+def test_address_state_is_selected_before_dependent_city(page, space):
+    from kitty.core.apply.filler import fill_form
+
+    _load(page, '''
+      <div class="input-row">
+        <label for="city">City<span class="input-row__label--required-star"></span></label>
+        <div class="cx-select-container">
+          <input class="cx-select-input" id="city" role="combobox" aria-haspopup="grid"
+            aria-controls="cities" aria-expanded="false" aria-required="true">
+          <div id="cities" role="grid" hidden></div>
+        </div>
+      </div>
+      <label for="state">State*</label>
+      <select id="state" required><option value="">Select state</option><option>TX</option></select>
+    ''', '''
+      const city=document.querySelector('#city'), cities=document.querySelector('#cities'),
+        state=document.querySelector('#state');
+      city.onclick=() => {cities.hidden=false;city.setAttribute('aria-expanded','true');};
+      state.onchange=() => {
+        city.value='';city.closest('.input-row').classList.remove('input-row--filled');
+        cities.innerHTML=state.value==='TX'
+          ? '<div role="row"><div role="gridcell" tabindex="-1" aria-selected="false">Arlington, TX</div></div>'
+          : '';
+      };
+      cities.onclick=e => {
+        if (!e.isTrusted || !e.target.matches('[role=gridcell]') || state.value!=='TX') return;
+        window.trusted.push(e.isTrusted);
+        city.value=e.target.innerText;city.closest('.input-row').classList.add('input-row--filled');
+        cities.remove();city.setAttribute('aria-expanded','false');
+      };
+    ''')
+
+    result = fill_form(page, space.config, None)
+
+    assert _js(page, "() => document.querySelector('#city').value") == "Arlington, TX"
+    assert _js(page, "() => document.querySelector('#state').value") == "TX"
+    assert result.unanswered == []
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
+
+
 def test_saved_graduation_answer_authorizes_bucket_without_replacing_profile_date(page, space):
     from kitty.config import AnswerEntry, AnswersFile
     from kitty.core.apply.filler import _apply_plan

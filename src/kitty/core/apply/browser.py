@@ -48,6 +48,8 @@ PREFS: dict[str, bool | int | str] = {
     "browser.formfill.enable": False,
     "extensions.formautofill.addresses.enabled": False,
     "extensions.formautofill.creditCards.enabled": False,
+    # deny new device-location requests so permission prompts do not cover forms
+    "permissions.default.geo": 2,
     # forms are filled while the window may sit behind other windows; do not slow its timers
     "dom.timeout.enable_budget_timer_throttling": False,
     # lets hide_automation restart remote control in Firefox's non-automation mode

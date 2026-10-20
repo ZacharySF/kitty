@@ -753,6 +753,13 @@ widgets and passive collection frames do not authorize or require challenge
 interaction. Supported but unanswered required radio groups remain questions to
 complete, not evidence that the control type is unsupported.
 
+Saved country and state fields are filled before dependent city choices, even when
+the form displays City first. Missing personal facts and unavailable choices remain
+unanswered; the filler does not invent values to complete the address.
+After Oracle email verification, preparation resumes the owned application tab
+across its email and section routes. Recovery requires the same employer origin,
+candidate site and exact job ID; it never substitutes another application's tab.
+
 The [application autonomy and privacy research](docs/APPLICATION_AUTONOMY_RESEARCH.md)
 records provider account capabilities, implemented preparation/resumption
 boundaries and remaining tenant-specific gaps. There is no promise of unattended
@@ -763,8 +770,13 @@ consent, unknown answers and final submission still need an appropriate handoff.
 The window is system Firefox (`$KITTY_FIREFOX` or `firefox` on PATH) started with
 remote control (WebDriver BiDi) on `127.0.0.1:9333` (`KITTY_BROWSER_PORT`). While
 it runs, Firefox shows the striped "under remote control" address bar, and any program
-on this computer could drive that window, which is why it uses its own profile. Close
-the window when done; the next fill starts it again with the same logins.
+on this computer could drive that window, which is why it uses its own profile.
+Closing and reopening it reuses that profile, but employers can expire cookies or
+require sign-in or email verification again. Keep application tabs open to preserve
+in-progress browser values; restoring a login does not restore an unsaved form.
+New device-location permission requests are blocked by default in this application
+profile, not in everyday Firefox. Typed address fields and job-location filters
+continue to work normally.
 
 To answer questions before the filler meets them, `kitty questions collect`
 reads the forms of the queue's jobs without a browser (default: active, `new` and

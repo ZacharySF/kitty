@@ -126,6 +126,40 @@ def _logged(space) -> set[str]:
 # ------------------------------------------------------------ browser tests
 
 
+def test_application_browser_denies_location_requests(page):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<!doctype html><title>Location permission</title>")
+
+        def log_message(self, *_args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        worker = Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            page.goto(f"http://127.0.0.1:{server.server_port}/")
+            permission = _js(page, """async () => ({
+                secure: window.isSecureContext,
+                state: (await navigator.permissions.query({name: 'geolocation'})).state
+            })""")
+            assert permission == {"secure": True, "state": "denied"}
+            error = _js(page, """() => new Promise(resolve => {
+                navigator.geolocation.getCurrentPosition(
+                    () => resolve('location-shared'), e => resolve(e.code), {timeout: 2000});
+            })""")
+            assert error == 1  # PERMISSION_DENIED, not a provider failure or timeout.
+        finally:
+            server.shutdown()
+            worker.join()
+
+
 def test_greenhouse_like_form(space, page):
     profile = space.config.profile
     job = _job(space, "greenhouse")
@@ -1032,6 +1066,36 @@ def test_retained_workday_tab_requires_exact_posting_identity(space):
         assert (_retained_tab(bidi, job) is not None) is expected
     current["url"] = login + quote("/External/job/City/Role_R-1/apply", safe="") + "&redirect="
     assert _retained_tab(bidi, job) is None
+
+
+@pytest.mark.parametrize(("current_url", "owned", "expected"), [
+    ("https://tenant.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/114233/apply/section/1", True, True),
+    ("https://tenant.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/114233/apply/section/2", True, True),
+    ("https://tenant.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/1142330/apply/section/1", True, False),
+    ("https://tenant.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/OTHER/job/114233/apply/section/1", True, False),
+    ("https://other.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/114233/apply/section/1", True, False),
+    ("https://tenant.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/114233/apply/confirmation", True, False),
+    ("https://tenant.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/114233/apply/section/1", False, False),
+])
+def test_retained_oracle_verified_application_stays_bound_to_its_job(
+    space, current_url, owned, expected,
+):
+    from types import SimpleNamespace
+    from kitty.core.apply.filler import _retained_tab
+
+    url = "https://tenant.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/114233"
+    job = replace(_job(space, "unanswered"), url=url, apply_url=None,
+                  fill_context_id="before-verification", fill_url=url + "/apply/email",
+                  fill_blocker="verification: confirm email ownership")
+    current = {"context": "new-session-context", "url": current_url,
+               "_kitty_marker": "before-verification" if owned else "another-application"}
+    bidi = SimpleNamespace(command=lambda *args, **kwargs: {"contexts": [current]})
+
+    retained = _retained_tab(bidi, job)
+
+    assert (retained is not None) is expected
+    if expected:
+        assert retained.context == "new-session-context"
 
 
 def _safety_form(space, page):

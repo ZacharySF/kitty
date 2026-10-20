@@ -271,12 +271,17 @@ def fill_form(
             frames = form_frames(page)
             fields = read_fields(frames)
 
+    planned = []
     for form_field in fields:
-        if not form_field.blank:
-            continue
-        plan = plan_for(form_field, config, company=company, tracks=tracks)
-        if plan is None:
-            continue
+        if form_field.blank:
+            plan = plan_for(form_field, config, company=company, tracks=tracks)
+            if plan is not None:
+                planned.append((form_field, plan))
+    # Address lookups can appear before the country/state controls they depend on.
+    # Fill those parents first; keep the remaining plans in their original order.
+    contact_order = {"country": 0, "state": 1}
+    planned.sort(key=lambda item: contact_order.get(item[1].field_name.casefold(), 2))
+    for form_field, plan in planned:
         try:
             if _apply_plan(frames, form_field, plan) and plan.field_name not in result.filled:
                 result.filled.append(plan.field_name)
@@ -594,6 +599,20 @@ def _retained_tab(bidi: Bidi, job: Job) -> Tab | None:
             _authentication_origin(context.get("url", "")) ==
             _authentication_origin(job.apply_url or job.url) and
             _authentication_origin(context.get("url", "")) is not None):
+        return Tab(bidi, context["context"])
+    # Oracle keeps the job in its path after email verification and section changes.
+    oracle_url = job.apply_url or job.url
+    oracle_source = urlsplit(oracle_url)
+    oracle_posting = re.fullmatch(
+        r"(/hcmUI/CandidateExperience/[^/]+/sites/[^/]+/job/\d+)"
+        r"(?:/apply(?:/(?:email|section/\d+))?)?/?",
+        unquote(oracle_source.path),
+    )
+    if (detect_ats(oracle_url) == "oracle" and oracle_posting and
+            (old.scheme, old.netloc) == (current.scheme, current.netloc) ==
+            (oracle_source.scheme, oracle_source.netloc) and
+            re.fullmatch(re.escape(oracle_posting[1]) + r"/apply/(?:email|section/\d+)/?",
+                         unquote(current.path))):
         return Tab(bidi, context["context"])
     # Workday steps can change path without changing this retained application.
     source = urlsplit(job.url)
