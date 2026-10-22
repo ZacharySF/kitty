@@ -1,19 +1,20 @@
 """Deciding what goes into one form field. Pure functions, no browser.
 
 The filler reads each field's label (and name / id / autocomplete), then asks
-`plan_for` what to put there. Values only ever come from two places:
+`plan_for` what to put there. Values come from, in order:
 
-* config/answers.yaml, matched on the normalized question text, and
+* config/answers.yaml, matched on the normalized question text,
 * config/profile.yaml, for the handful of contact and education fields every
-  form asks for (name, email, phone, links, school, major, graduation, city).
+  form asks for (name, email, phone, links, school, major, graduation, city), and
+* a plain offered source choice for "how did you hear about us".
 
-When neither gives a confident match the answer is None and the field is left
-blank. Nothing is guessed, and demographic (EEO) questions are never filled
-from the profile.
+When none gives a confident match the answer is None and the field is left
+blank. Demographic (EEO) questions are only ever filled from answers.yaml.
 """
 
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass
 from typing import Callable, Sequence
@@ -23,6 +24,12 @@ from kitty.normalize import norm_location, norm_question, norm_screening
 
 #: Kinds of field the page reader reports.
 TEXT_KINDS = ("text", "textarea")
+
+MANUAL_CONSENT = re.compile(
+    r"\b(?:agree|consent|certify|attest|signature|terms(?: and conditions| of use| of service)?|"
+    r"privacy (?:policy|notice)|accept.{0,80}(?:privacy|data processing)|"
+    r"einverstanden|einwilligung|datenschutzerklärung)\b", re.I,
+)
 
 #: Demographic / EEO questions: only answers.yaml may fill these.
 _DEMOGRAPHIC = re.compile(
@@ -124,10 +131,17 @@ def lookup_answer(
     is the strict job jurisdiction, never the applicant's residence/citizenship.
     Other near misses are not answers.
     """
+    # "Postal Code Extension" (ZIP+4) is a different fact from "Postal Code";
+    # a parent answer never fills its extension sub-field.
+    extension = re.search(r"\bextension\b", label, re.I)
     for text in dict.fromkeys((label, clean_label(label))):
         if text and (entry := config.answer_for(
             text, company, tracks, jurisdiction=jurisdiction, options=options,
         )) is not None:
+            if extension and not any(
+                re.search(r"\bextension\b", phrase, re.I) for phrase in (entry.question, *entry.match)
+            ):
+                return None
             return entry
     if company:
         original = f" {norm_screening(clean_label(label))} "
@@ -415,6 +429,12 @@ def _phone_country_code(phone: str | None, default_region: str | None) -> tuple[
         code = "1"
     else:
         return ()
+    region = norm_question(default_region or "")
+    if code == "1" and region in {"united states", "united states of america", "us", "usa"}:
+        # "+1" alone is shared by Canada and the Caribbean; lists that name the
+        # region ("🇺🇸 (+1) United States") need the saved country with its code.
+        return (f"+{code}", code, "(+1) United States", "(+1) United States of America",
+                "United States (+1)", "United States of America (+1)", "+1 United States")
     return (f"+{code}", code)
 
 
@@ -474,7 +494,12 @@ def profile_plan(field: FormField, profile: Profile, *, tracks: Sequence[str] = 
     if auto == "tel-country-code" or _full(
         r"(phone )?country( territory)?( phone)? code|country calling code", words
     ):
-        return plan("phone country code", *_phone_country_code(profile.phone, profile.country))
+        codes = _phone_country_code(profile.phone, profile.country)
+        if "(+1) United States" in codes:
+            # Long virtualized lists ("254 matches") render the saved region only
+            # after searching for it; "+1" alone would surface Canada first.
+            return Plan("phone country code", codes, search_text="United States")
+        return plan("phone country code", *codes)
     if auto in ("tel", "tel-national") or _full(
         r"(your )?(mobile |cell |primary )?(phone|telephone|mobile)( number)?|telefonnummer", words
     ):
@@ -542,18 +567,77 @@ def _answer_plan(field: FormField, entry: AnswerEntry) -> Plan:
         if period and period[0] == period[1]:
             year, month = divmod(period[0], 12)
             graduation = f"{year:04d}-{month + 1:02d}"
+    search_text: str | None = entry.answer
+    # Nationality lists may name people ("American") rather than the country.
+    if (re.fullmatch(r"(your |current |primary )?(nationality|nationalities)", norm_question(clean_label(field.label)))
+            and len(_country_names(entry.answer)) > 1):
+        candidates += ["American", *_country_names(entry.answer)[1:]]
+        search_text = None                 # search each spelling in turn
     name = clean_label(field.label) or clean_label(field.options[0] if field.options else "")
-    return Plan(name[:60], tuple(dict.fromkeys(candidates)), search_text=entry.answer,
+    return Plan(name[:60], tuple(dict.fromkeys(candidates)), search_text=search_text,
                 from_answers=True, graduation=graduation)
+
+
+# ----------------------------------------------------------- source choices
+
+_SOURCE = re.compile(
+    r"\bhow (did|do) you (first )?(hear|learn|find out|come to know|come across|find)\b|"
+    r"\bwhere did you (first )?(hear|find|learn|see)\b|"
+    r"^(referral |recruitment |applicant |candidate |job |application )?source\b"
+)
+_SOURCE_SKIP = re.compile(
+    r"\b(referr\w*|employee|recruiter|agency|staffing|other|specify|select|choose|please)\b"
+)
+_SOURCE_PREFERENCE = (
+    re.compile(r"\b(company|career|careers|corporate) (web ?site|site|page|portal)\b|\bcompany website\b"),
+    re.compile(r"\blinkedin\b"),
+    re.compile(r"\b(job board|indeed|handshake|glassdoor|ziprecruiter|internet|online|website|web)\b"),
+    re.compile(r"\b(university|college|campus|career fair)\b"),
+)
+
+
+def is_source_question(label: str) -> bool:
+    """True for recruitment-source questions, not learning or source-code questions."""
+    words = norm_question(clean_label(label))
+    return bool(_SOURCE.search(words)) and bool(
+        re.search(r"\b(us|company|position|role|job|opportunity|vacancy|opening|recruitment|careers)\b", words)
+        or re.fullmatch(r"(referral |recruitment |applicant |candidate |job |application )?source", words)
+    )
+
+
+def pick_source_option(options: Sequence[str], rng: random.Random | None = None) -> str | None:
+    """A plain online source from the offered list, else any plain option, else None.
+
+    Referral, recruiter, agency and "Other" choices are skipped: they ask for a
+    name or explanation that has no saved answer.
+    """
+    rng = rng or random.Random()
+    usable = [o for o in options if norm_question(o) and not _SOURCE_SKIP.search(norm_question(o))]
+    for pattern in _SOURCE_PREFERENCE:
+        preferred = [o for o in usable if pattern.search(norm_question(o))]
+        if preferred:
+            return rng.choice(preferred)
+    return rng.choice(usable) if usable else None
+
+
+def _source_plan(field: FormField, saved: Plan | None) -> Plan | None:
+    """Keep a saved source that is offered; otherwise pick an offered option."""
+    if saved is not None and (not field.options or match_option(saved.candidates, field.options) is not None):
+        return saved
+    picked = pick_source_option(field.options) if field.options else None
+    if picked is None:
+        return saved
+    return Plan(clean_label(field.label)[:60] or "source", (picked,), exact_choices=True)
 
 
 def plan_for(
     field: FormField, config: Config, *, company: str | None = None, tracks: Sequence[str] = (),
     jurisdiction: str | None = None,
 ) -> Plan | None:
-    """What to put in `field`: answers.yaml first, then profile.yaml, else None.
+    """What to put in `field`: answers.yaml, then profile.yaml, else None.
 
-    answers.yaml wins because I wrote that exact question's answer myself.
+    answers.yaml wins because I wrote that exact question's answer myself, except
+    that a saved source the field does not offer falls back to an offered option.
     `tracks` are the job's tracks; they pick the discipline (profile.discipline_by_track).
     File inputs are not planned here; the filler handles the resume.
     Country-specific permission requires explicit field evidence or the strict
@@ -571,7 +655,10 @@ def plan_for(
             jurisdiction=jurisdiction, options=field.options,
         )                                                       # "I agree to ..." boxes
     if entry is not None:
-        return _answer_plan(field, entry)
+        plan = _answer_plan(field, entry)
+        return _source_plan(field, plan) if is_source_question(field.label) else plan
     if is_demographic(field.label):
         return None
-    return profile_plan(field, config.profile, tracks=tracks)
+    return profile_plan(field, config.profile, tracks=tracks) or (
+        _source_plan(field, None) if is_source_question(field.label) else None
+    )

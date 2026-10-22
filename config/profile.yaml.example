@@ -19,6 +19,31 @@ discipline_by_track: {}         # optional: track name -> discipline
 standing: ""
 graduation: ""                 # YYYY-MM, when known
 
+# Required timeline editors use these explicit records, never the flat education
+# fields above. Leave unknown facts null; no dates, earned degrees or employment
+# classifications are inferred. Dates, when provided, must be quoted YYYY-MM.
+education_records: []
+# - school: "Example University"
+#   degree: "Bachelor's Degree"
+#   field_of_study: "Example Studies"
+#   start_date: null
+#   end_date: null
+#   expected_end_date: "2032-05"
+#   current: true
+#   graduated: false
+#   comments: null
+employment_records: []
+# - employer: "Example Organization"
+#   title: "Example Role"
+#   start_date: "2030-06"
+#   end_date: "2030-08"
+#   current: false
+#   employment_type: null        # copy only your confirmed offered classification
+#   description: null
+#   city: null
+#   state: null
+#   country: null
+
 home_city: ""
 home_state: ""
 city_by_track: {}               # optional: track name -> city in the same state

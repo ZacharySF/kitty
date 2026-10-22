@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import ipaddress
+import json
 import ssl
 import threading
 import time
@@ -21,7 +22,7 @@ import pytest
 from kitty.config import AuthenticationSettings
 from kitty.core import jobs as jobs_core
 from kitty.core.apply import bidi as bidi_module
-from kitty.core.apply.auth import authenticate
+from kitty.core.apply.auth import authenticate, authentication_pending
 from kitty.core.apply.bidi import open_tab
 from kitty.core.apply.browser import headless_firefox
 from kitty.core.apply.credentials import CREDENTIALS_FILE, load_credentials
@@ -167,7 +168,12 @@ def page(firefox):
 
 
 @pytest.fixture
-def site(https_site):
+def site(https_site, firefox):
+    from kitty.core.apply.auth import _EXISTING_ACCOUNTS, _REJECTED_ACCOUNTS
+
+    # Each case owns a synthetic account, while Firefox is shared for speed.
+    _REJECTED_ACCOUNTS.pop(firefox, None)
+    _EXISTING_ACCOUNTS.pop(firefox, None)
     https_site.login_page = LOGIN.format(extra="", method="post")
     https_site.accept = True
     https_site.requests.clear()
@@ -440,8 +446,12 @@ def test_failed_registration_request_never_falls_back_to_login(workspace, site, 
     site.login_page = LOGIN.format(extra='<a href="/signup">Create account</a>', method="post")
     space = _space(workspace, site, allow_account_creation=True, account_mode="create")
     report = fill_job(page, space.conn, space.settings, space.config, _job(space, site))
-    assert len(_posts(site)) == 1 and "confirm" in _posts(site)[0][1]
-    assert report.status == "blocked" and "did not advance" in report.note
+    assert report.status == "blocked"
+    assert _posts(site) == [("/session", {
+        "email": [EMAIL], "password": [PASSWORD], "confirm": [PASSWORD],
+    })]
+    assert _value(page, "[name=email]") == _value(page, "[name=password]") == ""
+    assert not any(path == "/apply" for _, path, _ in site.requests)
 
 
 def test_login_choice_never_submits_an_already_open_registration(workspace, site, page):
@@ -962,10 +972,14 @@ def test_account_action_is_distinguished_from_navigation_across_structures(
     assert not any(path in ("/signup", "/apply") for _, path, _ in site.requests)
 
 
-def test_unrelated_cookie_agreement_does_not_block_an_open_account_form(workspace, site, page):
-    cookie = """<aside role="dialog"><p>By clicking “Accept All Cookies,” you agree
-      to the storing of cookies on your device.</p>
-      <button onclick="fetch('/cookies', {method:'POST'})">Accept Cookies</button></aside>"""
+@pytest.mark.parametrize("notice", [
+    "By clicking “Accept All Cookies,” you agree to the storing of cookies on your device.",
+    # Observed on AeroVironment's Workday create-account page (2026-10-22).
+    "By continuing to use this site, closing this banner, or clicking “I Agree”, you agree to the use of cookies.",
+])
+def test_unrelated_cookie_agreement_does_not_block_an_open_account_form(workspace, site, page, notice):
+    cookie = f"""<aside role="dialog"><p>{notice}</p>
+      <button onclick="fetch('/cookies', {{method:'POST'}})">Accept Cookies</button></aside>"""
     site.login_page = cookie + SIGNUP
     space = _space(workspace, site, allow_account_creation=True)
     page.goto(site.origin + "/login")
@@ -1179,12 +1193,14 @@ def test_created_account_can_require_a_separate_sign_in(workspace, site, page, m
     page.goto(site.origin + "/login")
     result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
 
-    assert result.acted and result.blocker is None
+    assert result.acted
     creation = ("/session", {"email": [EMAIL], "password": [PASSWORD], "confirm": [PASSWORD]})
     if mode == "auto":
+        assert result.blocker is None
         assert _posts(site) == [creation, ("/session", {"email": [EMAIL], "password": [PASSWORD]})]
         assert any(path == "/application" for _, path, _ in site.requests)
     else:
+        assert result.blocker.startswith("login:") and "separate sign-in" in result.blocker
         assert _posts(site) == [creation]
         assert _value(page, "[name=email]") == _value(page, "[name=password]") == ""
 
@@ -1231,7 +1247,7 @@ def test_conditional_existing_account_hint_is_not_evidence_to_switch(workspace, 
     space = _space(workspace, site, allow_account_creation=True)
     page.goto(site.origin + "/login")
     result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
-    assert result.acted and result.blocker is None
+    assert result.acted and "did not advance" in result.blocker
     assert _posts(site) == [
         ("/session", {"email": [EMAIL], "password": [PASSWORD], "confirm": [PASSWORD]}),
     ]
@@ -1757,3 +1773,643 @@ def test_hidden_credential_error_and_help_text_do_not_block_valid_sign_in(worksp
         time.sleep(0.1)
     assert page.main.url == site.origin + "/application"
     assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+
+
+IDENTITY_FIRST = """<!doctype html><title>Sign in</title><body><h1>Sign in</h1>
+<form method="post" action="/identify">
+  <label>Email address <input type="email" name="email" autocomplete="username"></label>
+  <button type="submit">Continue</button>
+</form></body>"""
+
+PASSWORD_NEXT = f"""<!doctype html><title>Sign in</title><body><h1>Sign in</h1>
+<p>Continue as {EMAIL}</p><form method="post" action="/session">
+  <input type="hidden" name="email" value="{EMAIL}">
+  <label>Password <input type="password" name="password"></label>
+  <button type="submit">Continue</button>
+</form></body>"""
+
+
+@pytest.mark.parametrize("mode", ["auto", "login", "recognized"])
+@pytest.mark.parametrize("input_type", ["email", "text"])
+def test_identity_first_posts_only_email_then_resolves_a_fresh_password_stage(
+    workspace, site, page, mode, input_type,
+):
+    site.login_page = IDENTITY_FIRST.replace('type="email"', f'type="{input_type}"')
+    site.post_responses = [PASSWORD_NEXT]
+    space = _space(workspace, site, account_mode=mode)
+    page.goto(site.origin + "/login")
+
+    assert authentication_pending(page)
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert result.filled == ("email", "password")
+    assert _posts(site) == [
+        ("/identify", {"email": [EMAIL]}),
+        ("/session", {"email": [EMAIL], "password": [PASSWORD]}),
+    ]
+    assert page.main.url == site.origin + "/application"
+    assert not authentication_pending(page)
+    assert not any(path == "/apply" for _, path, _ in site.requests)
+    assert not any(PASSWORD in str(fields) for method, _, fields in site.requests if method == "GET")
+
+
+def test_identity_transition_waits_for_delayed_replacement_and_button_enablement(
+    workspace, site, page,
+):
+    replacement = PASSWORD_NEXT.replace('<button type="submit">', '<button type="submit" disabled>')
+    site.login_page = IDENTITY_FIRST + """<script>
+      document.querySelector('form').addEventListener('submit', event => {
+        event.preventDefault();
+        document.body.dataset.identityAttempts = String(
+          Number(document.body.dataset.identityAttempts || 0) + 1);
+        setTimeout(() => {
+          document.body.innerHTML = """ + json.dumps(replacement) + """;
+          setTimeout(() => document.querySelector('button').disabled = false, 250);
+        }, 350);
+      });
+    </script>"""
+    space = _space(workspace, site)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert result.filled == ("email", "password")
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    assert page.main.url == site.origin + "/application"
+
+
+@pytest.mark.parametrize("heading", ["Apply", "Contact information", "Newsletter", "Join our talent community"])
+def test_pending_auth_does_not_reclassify_ordinary_email_forms(site, page, heading):
+    site.login_page = IDENTITY_FIRST.replace("<h1>Sign in</h1>", f"<h1>{heading}</h1>")
+    page.goto(site.origin + "/login")
+    assert not authentication_pending(page)
+    assert _value(page, "[name=email]") == ""
+    assert not _posts(site)
+
+
+@pytest.mark.parametrize("message", [
+    "Incorrect email or password.",
+    "Invalid username or password.",
+    "The password you entered is incorrect.",
+    "Your account has been temporarily locked.",
+    "Sign-in failed.",
+])
+def test_pending_auth_retains_a_rejected_identity_stage_without_writing(workspace, site, page, message):
+    site.login_page = IDENTITY_FIRST.replace("</form>", (
+        f'<p role="alert">{message}</p></form>'))
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    assert authentication_pending(page)
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+    assert not result.acted and "rejected sign-in" in result.blocker
+    assert result.filled == () and _value(page, "[name=email]") == ""
+    assert not _posts(site)
+
+
+@pytest.mark.parametrize("hazard", ["wrong-account", "two-accounts", "hidden-account", "extra-field", "get", "origin"])
+def test_password_stage_requires_current_identity_and_transport_proof(
+    workspace, site, page, hazard,
+):
+    password_page = PASSWORD_NEXT
+    if hazard == "wrong-account":
+        password_page = password_page.replace(EMAIL, "other.synthetic@example.invalid")
+    elif hazard == "two-accounts":
+        password_page = password_page.replace("</p>", " or other.synthetic@example.invalid</p>")
+    elif hazard == "hidden-account":
+        password_page = password_page.replace(f'value="{EMAIL}"', 'value="other.synthetic@example.invalid"')
+    elif hazard == "extra-field":
+        password_page = password_page.replace("<button", '<label>Date of birth<input name="dob"></label><button')
+    elif hazard == "get":
+        password_page = password_page.replace('method="post"', 'method="get"')
+    else:
+        password_page = password_page.replace('action="/session"', 'action="https://unapproved.invalid/session"')
+    site.login_page = IDENTITY_FIRST
+    site.post_responses = [password_page]
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker.startswith("login:")
+    assert _posts(site) == [("/identify", {"email": [EMAIL]})]
+    assert _value(page, "[name=password]") == ""
+    assert not any(PASSWORD in str(fields) for _, _, fields in site.requests)
+
+
+@pytest.mark.parametrize(("boundary", "markup"), [
+    ("verification:", '<label>Enter verification code<input autocomplete="one-time-code"></label>'),
+    ("captcha:", '<div class="g-recaptcha">Complete the CAPTCHA</div>'),
+    ("consent:", '<label><input type="checkbox" required>I agree to biometric processing</label>'),
+])
+def test_identity_stage_stops_at_verification_challenge_and_sensitive_consent(
+    workspace, site, page, boundary, markup,
+):
+    site.login_page = IDENTITY_FIRST
+    site.post_responses = [PASSWORD_NEXT.replace("<button", markup + "<button")]
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker.startswith(boundary)
+    assert _posts(site) == [("/identify", {"email": [EMAIL]})]
+    if boundary != "consent:":
+        assert _value(page, "[name=password]") == ""
+    else:
+        assert not page.main.call("() => document.querySelector('[type=checkbox]').checked")
+
+
+def test_same_shape_field_replacement_after_email_write_never_reuses_a_form(
+    workspace, site, page,
+):
+    site.login_page += """<script>
+      document.querySelector('[name=email]').addEventListener('input', () => {
+        const form = document.querySelector('form');
+        const replacement = form.cloneNode(true);
+        replacement.querySelector('[name=email]').value = '';
+        replacement.querySelector('[name=password]').value = '';
+        form.replaceWith(replacement);
+      }, {once:true});
+    </script>"""
+    space = _space(workspace, site)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert not result.acted and "changed" in result.blocker
+    assert result.filled == ("email",)
+    assert _value(page, "[name=password]") == ""
+    assert not _posts(site)
+
+
+@pytest.mark.parametrize("response", [
+    '<h1>Welcome</h1>',
+    '<h1>Loading</h1><script>setInterval(() => document.body.dataset.tick = Date.now(), 20)</script>',
+])
+def test_disappearing_password_or_dom_churn_is_not_verified_departure(
+    workspace, site, page, monkeypatch, response,
+):
+    from kitty.core.apply import auth
+
+    monkeypatch.setattr(auth, "_AUTH_WAIT_SECONDS", 0.6)
+    site.post_responses = [response]
+    space = _space(workspace, site)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and "did not advance" in result.blocker
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    assert not any(path == "/apply" for _, path, _ in site.requests)
+
+
+def test_replaced_unchanged_login_is_not_progress_or_permission_to_retry(
+    workspace, site, page, monkeypatch,
+):
+    from kitty.core.apply import auth
+
+    monkeypatch.setattr(auth, "_AUTH_WAIT_SECONDS", 0.6)
+    site.post_responses = [LOGIN.format(extra="", method="post") + """<script>
+      setInterval(() => document.body.dataset.tick = Date.now(), 20);
+      setTimeout(() => {
+        const form = document.querySelector('form'); form.replaceWith(form.cloneNode(true));
+      }, 100);
+    </script>"""]
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and "did not advance" in result.blocker
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    assert _value(page, "[name=password]") == ""
+
+
+def test_delayed_application_render_requires_a_recognized_loaded_receipt(workspace, site, page):
+    site.post_responses = ['<h1>Loading</h1><script>setTimeout(() => { document.body.innerHTML = ' +
+                           json.dumps(APPLICATION) + '; }, 350)</script>']
+    space = _space(workspace, site)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert _value(page, "[name=preferred_name]") == ""
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+
+
+@pytest.mark.parametrize("mode", ["auto", "create"])
+def test_existing_account_signal_prevents_any_new_creation_attempt(workspace, site, page, mode):
+    site.login_page = SIGNUP.replace("</form>", (
+        '<p role="alert">An account with this email already exists.</p>'
+        '<a href="/signin">Already have an account? Sign in</a></form>'))
+    site.pages["/signin"] = LOGIN.format(extra="", method="post")
+    space = _space(workspace, site, allow_account_creation=True, account_mode=mode)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    if mode == "auto":
+        assert result.acted and result.blocker is None
+        assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    else:
+        assert not result.acted and "already has an account" in result.blocker
+        assert result.filled == () and _value(page, "[name=password]") == ""
+        assert not _posts(site)
+
+
+def test_conflicting_missing_account_after_existing_signal_never_creates_a_duplicate(
+    workspace, site, page,
+):
+    site.login_page = SIGNUP.replace("</form>", (
+        '<p role="alert">Email is already registered.</p><a href="/signin">Sign in</a></form>'))
+    site.pages["/signin"] = LOGIN.format(extra="", method="post")
+    site.post_responses = [LOGIN.format(method="post", extra=(
+        '<p role="alert">No account found.</p><a href="/signup">Create account</a>'))]
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and "conflicts" in result.blocker
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    assert not any(path == "/signup" for _, path, _ in site.requests)
+
+
+def test_distinct_delayed_email_entry_controls_are_bounded_semantic_progress(workspace, site, page):
+    site.login_page = """<!doctype html><body><h1>Candidate account</h1>
+      <button type="button" onclick="this.remove(); setTimeout(() => {
+        document.querySelector('section').innerHTML =
+          '&lt;button type=&quot;button&quot; onclick=&quot;location.href=\\'/email-signin\\'&quot;&gt;Continue with email&lt;/button&gt;';
+      }, 250)">Sign in</button><section></section></body>"""
+    site.pages["/email-signin"] = IDENTITY_FIRST
+    site.post_responses = [PASSWORD_NEXT]
+    space = _space(workspace, site)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert _posts(site) == [
+        ("/identify", {"email": [EMAIL]}),
+        ("/session", {"email": [EMAIL], "password": [PASSWORD]}),
+    ]
+
+
+def test_approved_identity_first_creation_supports_password_confirmation(workspace, site, page):
+    site.login_page = IDENTITY_FIRST.replace("<h1>Sign in</h1>", "<h1>Create account</h1>")
+    password_page = PASSWORD_NEXT.replace("<h1>Sign in</h1>", "<h1>Create account</h1>").replace(
+        "<button", '<label>Confirm password<input type="password" name="confirm"></label><button')
+    site.post_responses = [password_page]
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert result.filled == ("email", "password", "passwordConfirm")
+    assert _posts(site) == [
+        ("/identify", {"email": [EMAIL]}),
+        ("/session", {"email": [EMAIL], "password": [PASSWORD], "confirm": [PASSWORD]}),
+    ]
+    assert not any(path == "/apply" for _, path, _ in site.requests)
+
+
+@pytest.mark.parametrize("lost_stage", ["identity", "password"])
+def test_lost_identity_or_password_click_reply_observes_without_repeating(
+    workspace, site, page, monkeypatch, lost_stage,
+):
+    from kitty.core.apply import auth
+    from kitty.core.apply.bidi import BidiError
+
+    site.login_page = IDENTITY_FIRST
+    site.post_responses = [PASSWORD_NEXT]
+    space = _space(workspace, site)
+    guarded_click = auth._guarded_click
+    clicks = []
+
+    def click(frame, target_js, *args, **kwargs):
+        if target_js == auth._ACCOUNT_TARGET_JS:
+            stage = "identity" if "|identity|" in args[3] else "password"
+            clicks.append(stage)
+            outcome = guarded_click(frame, target_js, *args, **kwargs)
+            if outcome is None and stage == lost_stage:
+                raise BidiError("synthetic discarded navigation reply")
+            return outcome
+        return guarded_click(frame, target_js, *args, **kwargs)
+
+    monkeypatch.setattr(auth, "_guarded_click", click)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert clicks == ["identity", "password"]
+    assert _posts(site) == [
+        ("/identify", {"email": [EMAIL]}),
+        ("/session", {"email": [EMAIL], "password": [PASSWORD]}),
+    ]
+
+
+@pytest.mark.parametrize(("mode", "message"), [
+    ("login", "Password is incorrect."),
+    ("create", "Email is already registered."),
+])
+def test_rejection_and_existing_account_guards_are_atomic_between_writes(
+    workspace, site, page, mode, message,
+):
+    site.login_page = SIGNUP if mode == "create" else LOGIN.format(extra="", method="post")
+    site.login_page += """<script>
+      document.querySelector('[name=email]').addEventListener('input', () => {
+        const alert = document.createElement('p'); alert.setAttribute('role', 'alert');
+        alert.textContent = """ + json.dumps(message) + """;
+        document.body.append(alert);
+      }, {once:true});
+    </script>"""
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert not result.acted and result.blocker.startswith("login:")
+    assert result.filled == ("email",)
+    assert _value(page, "[name=password]") == ""
+    assert not _posts(site)
+
+
+def test_existing_only_policy_does_not_create_after_explicit_account_not_found(
+    workspace, site, page,
+):
+    site.post_responses = [LOGIN.format(method="post", extra=(
+        '<p role="alert">No account found.</p><a href="/signup">Create account</a>'))]
+    space = _space(workspace, site, allow_account_creation=False, account_mode="login")
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker.startswith("login:")
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    assert not any(path == "/signup" for _, path, _ in site.requests)
+
+
+@pytest.mark.parametrize("mode", ["auto", "create"])
+@pytest.mark.parametrize("entry", ["login", "signup"])
+def test_manual_account_origin_stops_before_any_credential_write(
+    workspace, site, page, mode, entry,
+):
+    space = _space(workspace, site, allow_account_creation=True, account_mode=mode,
+                   manual_account_origins=[site.origin])
+    page.goto(site.origin + "/" + entry)
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert not result.acted and "configured for manual authentication" in result.blocker
+    assert result.filled == ()
+    assert _value(page, "[name=email]") == _value(page, "[name=password]") == ""
+    assert not _posts(site)
+
+
+@pytest.mark.parametrize("mode", ["auto", "create"])
+def test_declared_existing_origin_overrides_creation_and_uses_only_sign_in(
+    workspace, site, page, mode,
+):
+    site.login_page = SIGNUP.replace("</form>", '<a href="/signin">Sign in</a></form>')
+    site.pages["/signin"] = LOGIN.format(extra="", method="post")
+    space = _space(workspace, site, allow_account_creation=True, account_mode=mode,
+                   existing_account_origins=[site.origin])
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    assert not any(path == "/signup" for _, path, _ in site.requests)
+
+
+def test_declared_existing_origin_never_creates_after_account_not_found(workspace, site, page):
+    site.post_responses = [LOGIN.format(method="post", extra=(
+        '<p role="alert">No account found.</p><a href="/signup">Create account</a>'))]
+    space = _space(workspace, site, allow_account_creation=True,
+                   existing_account_origins=[site.origin])
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker.startswith("login:")
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    assert not any(path == "/signup" for _, path, _ in site.requests)
+
+
+def test_manual_origin_is_rechecked_after_identity_navigation(workspace, site, page):
+    manual = site.origin.replace("127.0.0.1", "localhost")
+    site.login_page = IDENTITY_FIRST
+    site.post_responses = [
+        '<script>location.href = ' + json.dumps(manual + "/password-step") + '</script>']
+    site.pages["/password-step"] = PASSWORD_NEXT
+    space = _space(workspace, site, approved_origins=[site.origin, manual],
+                   manual_account_origins=[manual])
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and "configured for manual authentication" in result.blocker
+    assert result.filled == ("email",)
+    assert _posts(site) == [("/identify", {"email": [EMAIL]})]
+    assert _value(page, "[name=password]") == ""
+
+
+def test_initial_delayed_identity_form_is_observed_without_guessing_an_entry(workspace, site, page):
+    site.login_page = '<h1>Loading</h1><script>setTimeout(() => document.body.innerHTML = ' + \
+                      json.dumps(IDENTITY_FIRST) + ', 350)</script>'
+    site.post_responses = [PASSWORD_NEXT]
+    space = _space(workspace, site, account_mode="recognized")
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert _posts(site) == [
+        ("/identify", {"email": [EMAIL]}),
+        ("/session", {"email": [EMAIL], "password": [PASSWORD]}),
+    ]
+
+
+@pytest.mark.parametrize("continued", ["remove-alert", "reload", "new-tab"])
+def test_observed_rejection_cannot_be_retried_by_replacing_its_error_page(
+    workspace, site, page, continued,
+):
+    site.post_responses = [LOGIN.format(method="post", extra=(
+        '<p role="alert">Incorrect email or password.</p>'))]
+    space = _space(workspace, site, allow_account_creation=True)
+    credentials = load_credentials(space.settings)
+    policy = space.config.apply.authentication
+    page.goto(site.origin + "/login")
+    rejected = authenticate(page, policy, credentials)
+    assert rejected.acted and "rejected sign-in" in rejected.blocker
+
+    active = page
+    if continued == "remove-alert":
+        page.main.call("() => document.querySelector('[role=alert]').remove()", page_realm=True)
+    elif continued == "reload":
+        page.goto(site.origin + "/login")
+    else:
+        active = open_tab(page.bidi)
+        active.goto(site.origin + "/login")
+    try:
+        result = authenticate(active, policy, credentials)
+        assert not result.acted and "rejected sign-in" in result.blocker
+        assert result.filled == ()
+        assert _value(active, "[name=email]") == _value(active, "[name=password]") == ""
+        assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+        assert not any(path == "/signup" for _, path, _ in site.requests)
+    finally:
+        if active is not page:
+            active.close()
+
+
+@pytest.mark.parametrize("change_password", [False, True])
+def test_existing_account_evidence_survives_reload_and_password_changes(
+    workspace, site, page, change_password,
+):
+    from kitty.core.apply.credentials import ApplicationCredentials
+
+    site.login_page = SIGNUP.replace("</form>", (
+        '<p role="alert">Email is already registered.</p><a href="/signin">Sign in</a></form>'))
+    site.pages["/signin"] = LOGIN.format(extra="", method="post")
+    space = _space(workspace, site, allow_account_creation=True, account_mode="create")
+    policy = space.config.apply.authentication
+    credentials = load_credentials(space.settings)
+    page.goto(site.origin + "/login")
+    blocked = authenticate(page, policy, credentials)
+    assert not blocked.acted and "already has an account" in blocked.blocker
+    assert not _posts(site)
+
+    site.login_page = SIGNUP.replace("</form>", '<a href="/signin">Sign in</a></form>')
+    page.goto(site.origin + "/login")
+    if change_password:
+        credentials = ApplicationCredentials(EMAIL, "Updated-Synthetic-Pass#43")
+    result = authenticate(page, policy, credentials)
+
+    assert result.acted and result.blocker is None
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [credentials.password]})]
+    assert not any(path == "/signup" for _, path, _ in site.requests)
+
+
+@pytest.mark.parametrize("mode", ["login", "create"])
+def test_credentials_preserve_literal_whitespace_and_hash_characters(
+    workspace, site, page, mode,
+):
+    from kitty.core.apply.credentials import ApplicationCredentials, credential_binding
+
+    password = "  Synthetic # literal whitespace password  "
+    credentials = ApplicationCredentials(EMAIL, password)
+    site.login_page = SIGNUP if mode == "create" else LOGIN.format(extra="", method="post")
+    space = _space(workspace, site, allow_account_creation=True, account_mode=mode)
+    policy = space.config.apply.authentication
+    policy._credential_binding = credential_binding(credentials)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, policy, credentials)
+
+    assert result.acted and result.blocker is None
+    expected = {"email": [EMAIL], "password": [password]}
+    if mode == "create":
+        expected["confirm"] = [password]
+    assert _posts(site) == [("/session", expected)]
+    assert not any(password in str(fields) for method, _, fields in site.requests if method == "GET")
+    assert password not in str(result)
+    assert not any(path == "/apply" for _, path, _ in site.requests)
+
+
+@pytest.mark.parametrize("heading", [
+    "Sign in to your account", "Log in to continue", "Candidate home",
+    "Create your account", "Create an account to apply",
+])
+def test_pending_auth_accepts_explicit_staged_account_headings(site, page, heading):
+    site.login_page = IDENTITY_FIRST.replace("<h1>Sign in</h1>", f"<h1>{heading}</h1>")
+    page.goto(site.origin + "/login")
+    assert authentication_pending(page)
+    assert _value(page, "[name=email]") == ""
+    assert not _posts(site)
+
+
+@pytest.mark.parametrize("mode", ["login", "create"])
+@pytest.mark.parametrize("provisional", ["empty-tree", "empty-url", "blank-url", "pending-url"])
+def test_account_entry_waits_for_consistent_document_receipts(
+    workspace, site, page, monkeypatch, mode, provisional,
+):
+    from kitty.core.apply import auth
+    from kitty.core.apply.bidi import Tab
+
+    if mode == "create":
+        site.login_page = LOGIN.format(extra='<a href="/signup">Create account</a>', method="post")
+    else:
+        site.login_page = (
+            '<h1>Candidate account</h1><a href="/signin">Already registered? Sign in instead</a>')
+        site.pages["/signin"] = LOGIN.format(extra="", method="post")
+    space = _space(workspace, site, allow_account_creation=True, account_mode=mode)
+    frames = Tab.frames
+    guarded_click = auth._guarded_click
+    pending = False
+    observations = 0
+    entry_clicks = 0
+
+    def observed_frames(tab):
+        nonlocal pending, observations
+        current = frames(tab)
+        if tab.context == page.context and pending:
+            pending = False
+            observations += 1
+            if provisional == "empty-tree":
+                return []
+            url = {"empty-url": "", "blank-url": "about:blank",
+                   "pending-url": site.origin + "/provisional-document"}[provisional]
+            return [replace(current[0], url=url), *current[1:]]
+        return current
+
+    def click(frame, target_js, *args, **kwargs):
+        nonlocal pending, entry_clicks
+        entry = target_js == auth._ENTRY_TARGET_JS
+        if entry:
+            entry_clicks += 1
+        try:
+            return guarded_click(frame, target_js, *args, **kwargs)
+        finally:
+            if entry:
+                pending = True
+
+    monkeypatch.setattr(Tab, "frames", observed_frames)
+    monkeypatch.setattr(auth, "_guarded_click", click)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert observations == entry_clicks == 1
+    expected = {"email": [EMAIL], "password": [PASSWORD]}
+    if mode == "create":
+        expected["confirm"] = [PASSWORD]
+    assert _posts(site) == [("/session", expected)]
+    assert page.main.url == site.origin + "/application"
+    assert not any(path == "/apply" for _, path, _ in site.requests)
+
+
+@pytest.mark.parametrize(("container", "attributes"), [
+    ("section", ""), ("div", 'role="form"'), ("div", 'role="dialog"'), ("div", ""),
+])
+def test_formless_account_scope_includes_its_identity_outside_the_password_row(
+    workspace, site, page, container, attributes,
+):
+    site.login_page = f"""<!doctype html><body><{container} {attributes}>
+      <div><label>Username<input name="username" autocomplete="username"></label></div>
+      <div><label>Password<input type="password" name="password"></label>
+        <div role="button" aria-label="Log in" tabindex="0" style="width:100px;height:30px"
+          onclick="fetch('/session', {{method:'POST', body:new URLSearchParams({{
+            username:document.querySelector('[name=username]').value,
+            password:document.querySelector('[name=password]').value}})}})
+            .then(() => location.href='/application')"></div>
+      </div></{container}></body>"""
+    space = _space(workspace, site)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert result.filled == ("email", "password")
+    assert _posts(site) == [("/session", {"username": [EMAIL], "password": [PASSWORD]})]
+    assert page.main.url == site.origin + "/application"
+    assert not any(path == "/apply" for _, path, _ in site.requests)
+
+
+def test_password_only_scope_does_not_adopt_a_separate_newsletter_identity(workspace, site, page):
+    site.login_page = PASSWORD_NEXT.replace("</body>", (
+        '<aside><form method="post" action="/newsletter"><label>Newsletter email'
+        '<input type="email" name="newsletter"></label><button>Subscribe</button></form></aside></body>'))
+    space = _space(workspace, site)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+
+    assert result.acted and result.blocker is None
+    assert result.filled == ("password",)
+    assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
+    assert not any(path in ("/newsletter", "/apply") for _, path, _ in site.requests)

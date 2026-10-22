@@ -84,3 +84,74 @@ def test_legacy_fill_marker_migrates_to_attempt_not_ready(tmp_path):
     assert row["queue_state"] == "queued"
     assert row["my_notes"] == "My manual note"
     assert row["verification_status"] == "unverified" and row["verified_at"] is None
+
+
+def test_migration_resources_survive_removal_of_import_alias(tmp_path, workspace, monkeypatch):
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from kitty.core.workspace import sync_config_to_db
+    from kitty.db import migrations
+
+    alias = tmp_path / 'import-alias'
+    alias.symlink_to(Path(migrations.__file__).resolve().parent, target_is_directory=True)
+    spec = importlib.util.spec_from_file_location('migration_alias_probe', alias / 'migrations.py')
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    alias.unlink()
+    conn = connect(tmp_path / 'after-alias-removal.sqlite')
+    try:
+        module.migrate(conn)
+        sync_config_to_db(conn, workspace.config)
+        assert {row['name'] for row in conn.execute('SELECT name FROM tracks')} == set(workspace.config.track_names)
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize('exists', [False, True])
+def test_missing_bundled_migrations_cannot_bootstrap_a_partial_workspace(tmp_path, monkeypatch, exists):
+    from kitty.db import migrations
+    directory = tmp_path / 'missing-or-empty'
+    if exists:
+        directory.mkdir()
+    monkeypatch.setattr(migrations, 'MIGRATIONS_DIR', directory)
+    conn = connect(tmp_path / 'uninitialized.sqlite')
+    try:
+        with pytest.raises(FileNotFoundError):
+            migrations.migrate(conn)
+        assert conn.execute('SELECT COUNT(*) FROM schema_version').fetchone()[0] == 0
+    finally:
+        conn.close()
+
+def test_recovery_strategy_migration_preserves_history_and_constraints(tmp_path):
+    import shutil
+    import sqlite3
+
+    early = tmp_path / "before-strategies"
+    early.mkdir()
+    for migration in available_migrations():
+        if migration.version < 29:
+            shutil.copy(migration.path, early / migration.path.name)
+    conn = connect(tmp_path / "recovery.sqlite")
+    try:
+        migrate(conn, early)
+        conn.execute(
+            "INSERT INTO application_recovery_events(id,created_at,action,result,reason,step) "
+            "VALUES(41,'t','retry','failed','supported_retry',2)"
+        )
+        migrate(conn)
+        row = conn.execute("SELECT * FROM application_recovery_events WHERE id=41").fetchone()
+        assert (row["action"], row["result"], row["step"]) == ("retry", "failed", 2)
+        conn.execute(
+            "INSERT INTO application_recovery_events(created_at,action,result,reason) "
+            "VALUES('t','recommit','no_effect','commit_saved_value')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO application_recovery_events(created_at,action,result,reason) "
+                "VALUES('t','arbitrary_script','completed','untrusted')"
+            )
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    finally:
+        conn.close()

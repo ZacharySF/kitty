@@ -4,15 +4,20 @@ Only an enabled policy with exact HTTPS origins can send credentials. It may com
 from local configuration or a fingerprint-bound website review for one run.
 Account creation additionally needs `allow_account_creation`. Auto mode follows
 the site's recognized sign-in or registration form; explicit modes restrict it.
+Declared existing-account origins force login-only even when creation is enabled;
+manual-account origins stop before credential writes, including after navigation.
 
-Recognition requires one visible email/password account form and a single
-credential action, distinguished from links and buttons that only switch flows.
+Recognition requires one bound account form and a single credential action,
+including explicit email-first stages and visibly identity-bound password steps.
 Accessibility overlays derive account semantics only from their directly
 associated hidden native submit; clicks use a real, unobstructed pointer target.
-Only an explicit account-not-found/already-exists alert permits one automatic
-switch, never a bad-password retry. CAPTCHA, verification, unsafe destinations,
-extra fields and different saved values stop all credential writes. Authorized
-account creation includes routine required terms/privacy choices, not factual
+Only explicit account-status evidence or a distinct post-creation sign-in stage
+permits an automatic alternate flow; a password is never retried.
+Up to eight stages (three distinct entry controls) are observed synchronously,
+with six-second semantic receipt waits. A click, rerender or URL change alone
+never proves departure. CAPTCHA, verification,
+unsafe destinations, extra fields and different saved values stop all writes.
+Authorized account creation includes routine required terms/privacy choices, not factual
 certifications, marketing, waivers or final application actions. Other consent
 remains manual. Every write, agreement click and credential click repeats guards.
 
@@ -32,9 +37,10 @@ import re
 import time
 from dataclasses import dataclass
 from hmac import compare_digest
+from weakref import WeakKeyDictionary
 
 from kitty.config import AuthenticationSettings, _authentication_origin
-from kitty.core.apply.bidi import BidiError, Frame, Tab
+from kitty.core.apply.bidi import Bidi, BidiError, Frame, Tab
 from kitty.core.apply.credentials import ApplicationCredentials, credential_binding
 from kitty.core.apply.oracle_email import oracle_email_gate
 from kitty.core.apply.page import (
@@ -44,10 +50,17 @@ from kitty.core.apply.page import (
 #: Frames that are themselves a challenge widget (form_frames skips them, so look here).
 _CHALLENGE_FRAMES = re.compile(
     r"recaptcha|hcaptcha|turnstile|challenges\.cloudflare\.com|arkoselabs|funcaptcha", re.I)
+_INVISIBLE_BADGE = re.compile(r"/recaptcha/(?:api2|enterprise)/anchor\?(?:[^#]*&)?size=invisible(?:&|$)", re.I)
 _SIGN_IN_REJECTED = (
     "login: employer rejected sign-in or the account may be locked; "
     "resolve it in the retained tab before retrying"
 )
+
+# Process-local reviewed credential tokens only: never persist/log raw credentials.
+# Retain rejection/account existence across reloads and new owned tabs, then
+# release it with the controller. Durable manual/existing-origin policy is separate.
+_REJECTED_ACCOUNTS: WeakKeyDictionary[Bidi, set[tuple[str, str]]] = WeakKeyDictionary()
+_EXISTING_ACCOUNTS: WeakKeyDictionary[Bidi, set[tuple[str, str]]] = WeakKeyDictionary()
 
 #: Shared page-side analysis. Returns {state, els}: `state` is plain data for
 #: Python, `els` the elements that later writes and the click act on.
@@ -61,7 +74,9 @@ _ANALYZE = r"""
     try { const x = new URL(u, location.href); return x.protocol === 'https:' && approved.includes(x.origin); }
     catch { return false; }
   };
-  const state = {blocker: null, submitBlocker: null, hasPassword: false, mode: null, roles: [], signature: '',
+  const state = {blocker: null, submitBlocker: null, hasPassword: false, hasIdentity: false,
+                 rejected: false,
+                 stage: null, accountStatus: null, mode: null, roles: [], signature: '',
                  url: location.href, action: null, preparePost: false, top: window.top === window};
   const els = {};
   const stop = blocker => { state.blocker = blocker; return {state, els}; };
@@ -69,7 +84,8 @@ _ANALYZE = r"""
 
   const visibleAny = s => [...document.querySelectorAll(s)].some(visible);
   if (visibleAny('input[autocomplete=one-time-code], input[name=otp], input[name=verificationCode]') ||
-      /\b(?:enter (?:the |your )?(?:verification|security|authentication) code|verify your (?:email|account)|two-factor authentication|multi-factor authentication)\b/i.test(body))
+      /\b(?:enter (?:the |your )?(?:verification|security|authentication) code|verify your (?:email|account)|two-factor authentication|multi-factor authentication)\b/i.test(body) ||
+      (/\bcheck your email\b/i.test(body) && /\benter the (?:code|otp)\b/i.test(body)))
     return stop('verification: complete the verification or MFA step yourself');
   if ([...document.querySelectorAll('iframe')].some(f => visible(f) &&
         /recaptcha|hcaptcha|turnstile|challenges\.cloudflare\.com|arkoselabs|funcaptcha/i.test(f.src || '')) ||
@@ -78,40 +94,77 @@ _ANALYZE = r"""
     return stop('captcha: a CAPTCHA is on the sign-in page; sign in yourself');
 
   const passwords = [...document.querySelectorAll('input[type=password]')].filter(visible);
-  if (!passwords.length) return stop('login: no visible password box to fill; sign in yourself');
-  state.hasPassword = true;
+  state.hasPassword = passwords.length > 0;
+  const identityInputs = [...document.querySelectorAll(
+    'input[type=email], input[autocomplete=username], input[autocomplete=email], input[type=text], input:not([type])'
+  )].filter(e => visible(e) && (e.type === 'email' ||
+    /^(?:username|email)$/i.test(e.getAttribute('autocomplete') || '') ||
+    /e-?mail|user ?name|user ?id/i.test([e.name, e.id, e.getAttribute('aria-label'),
+      e.getAttribute('placeholder'), ...(e.labels || [])].map(x => x?.innerText || x || '').join(' '))));
+  state.hasIdentity = identityInputs.length > 0;
   if (!originOk(location.href)) return stop('login: this page is not an approved origin for credentials');
   if (!state.top) {
     let topOk = false;
     try { topOk = originOk(window.top.location.href); } catch { topOk = false; }
     if (!topOk) return stop('login: the sign-in form is in a cross-origin frame; sign in yourself');
   }
-  const credentialAlerts = [...document.querySelectorAll(
+  // Field errors are often bound only through aria-errormessage (Eightfold).
+  const fieldErrors = [...passwords, ...identityInputs]
+    .map(e => e.getAttribute('aria-errormessage') && document.getElementById(e.getAttribute('aria-errormessage')))
+    .filter(Boolean);
+  const alertTexts = [...new Set([...document.querySelectorAll(
     '[role=alert], [aria-live=assertive], .error, .error-message, [data-automation-id=errorMessage]'
-  )].filter(visible).map(text).join(' ');
-  if (/\b(?:(?:wrong|incorrect|invalid) (?:e-?mail(?: address)?|password|credentials)|account (?:is|has been|might be) (?:temporarily )?locked)\b/i.test(credentialAlerts))
-    return stop('""" + _SIGN_IN_REJECTED + r"""');
+  ), ...fieldErrors])].filter(visible).map(text);
+  const credentialAlerts = alertTexts.join(' ');
+  state.rejected =
+    /\b(?:wrong|incorrect|invalid) (?:e-?mail(?: address)?|user ?name|password|credentials|login)\b/i.test(credentialAlerts) ||
+    /\b(?:password|credentials|sign[ -]?in|log[ -]?in)\b[^.!?]{0,80}\b(?:incorrect|invalid|not correct|do(?:es)? not match|failed|unsuccessful)\b/i.test(credentialAlerts) ||
+    /\baccount (?:is|has been|might be) (?:temporarily )?locked\b/i.test(credentialAlerts);
+  const accountAlerts = alertTexts.filter(t => !/^(?:if|when)\b/i.test(t)).join(' ');
+  if (/(?:account(?: with (?:this|your) email(?: address)?)? already exists|email (?:is )?already (?:registered|in use))/i.test(accountAlerts))
+    state.accountStatus = 'exists';
+  else if (/(?:no account (?:exists|found)|account (?:does not|doesn't) exist|could(?: not|n't) find (?:an? |your )?account|email (?:is not registered|not found)|user(?:name)? not found|(?:don['’]t|do not) recognize (?:this|your|that) e-?mail)/i.test(accountAlerts))
+    state.accountStatus = 'missing';
+  if (!passwords.length && !identityInputs.length)
+    return stop('login: no visible account fields to fill; sign in yourself');
   if (passwords.length > 2 || passwords.some(e => e.disabled || e.readOnly))
     return stop('login: unrecognized or unavailable password boxes; sign in yourself');
 
-  const forms = new Set(passwords.map(p => p.form));
+  const anchors = passwords.length ? passwords : identityInputs;
+  const forms = new Set(anchors.map(p => p.form));
   if (forms.size !== 1) return stop('login: unrecognized sign-in form; sign in yourself');
   const LOGIN = /^(?:sign in|sign-in|signin|log in|log-in|login|log on)$/i;
-  const CREATE = /^(?:create account|create an account|create my account|sign up|sign-up|signup|register)$/i;
+  const CREATE = /^(?:create account|create an account|create my account|create your account|sign up|sign-up|signup|register)$/i;
+  const NEXT = /^(?:continue|next)$/i;
+  const LOGIN_HEADING = /^(?:candidate (?:sign in|login|account|home)|(?:sign in|log in|login)(?: to (?:your account|continue|apply))?)$/i;
+  const CREATE_HEADING = /^(?:create (?:an? |your |my )?account|sign up|register)(?: to (?:apply|continue))?$/i;
+  const headings = [...document.querySelectorAll('h1, h2, [role=heading]')].filter(visible).map(text);
+  const identityFirst = !passwords.length;
+  const anchorForm = anchors[0].form;
+  // A form-less component may wrap only its password/action row. Resolve the
+  // shared identity scope too, without borrowing fields from another native
+  // form or an unrelated semantic account region.
+  const accountRegion = anchors[0].closest('section, [role=dialog], dialog, [role=form], main');
+  const scopedIdentifiers = identityInputs.filter(e => anchorForm ? e.form === anchorForm :
+    !e.form && (!accountRegion || accountRegion.contains(e)));
+  const staged = identityFirst || !scopedIdentifiers.length;
   const controlsIn = box => [...new Set([
     ...box.querySelectorAll('button, input[type=submit], input[type=button], [role=button]'),
     ...(box.tagName === 'FORM' ? [...box.elements].filter(e =>
       e.matches('button, input[type=submit], input[type=button]')) : [])
   ])].filter(e => visible(e) && !e.closest('[aria-hidden=true]'));
-  let box = passwords[0].form;
+  let box = anchors[0].form;
   if (!box) {
-    box = passwords[0].parentElement;
-    while (box && !(passwords.every(p => box.contains(p)) &&
-                    box.querySelector('input[type=email], input[autocomplete=username], input[autocomplete=email], input[type=text], input:not([type])') &&
-                    controlsIn(box).some(e => LOGIN.test(text(e)) || CREATE.test(text(e)))))
+    box = anchors[0].parentElement;
+    while (box && !(anchors.every(p => box.contains(p)) &&
+                    scopedIdentifiers.every(e => box.contains(e)) &&
+                    controlsIn(box).some(e => LOGIN.test(text(e)) || CREATE.test(text(e)) ||
+                      (staged && NEXT.test(text(e))))))
       box = box.parentElement;
-    if (!box) return stop('login: no sign-in button next to the password box; sign in yourself');
+    if (!box) return stop('login: no account action next to the account fields; sign in yourself');
   }
+  if (staged && !headings.some(t => LOGIN_HEADING.test(t) || CREATE_HEADING.test(t)))
+    return stop('login: an email field alone does not identify an account form; continue yourself');
 
   els.box = box;
   const labelOf = e => {
@@ -173,16 +226,31 @@ _ANALYZE = r"""
   if (controls.some(e => /submit|apply|send application|finish/i.test(text(semanticAction(e)))))
     return stop('login: the sign-in form also holds application actions; continue yourself');
   const accountControls = controls.filter(e => LOGIN.test(text(semanticAction(e))) ||
-    CREATE.test(text(semanticAction(e))));
+    CREATE.test(text(semanticAction(e))) || (staged && NEXT.test(text(e))));
   // Native submits establish the credential action; type=button controls and
   // links alongside them can switch flows without becoming a second submit.
   const submits = accountControls.filter(e => e.form === box && e.type === 'submit');
-  const candidates = submits.length ? submits : accountControls;
+  let candidates = submits.length ? submits : accountControls;
+  // Identity-first components (Eightfold) offer "Continue" beside a non-submit
+  // "Create an account" flow switch. Continue is the single email action; the
+  // switch is never a second credential submit.
+  if (candidates.length > 1 && staged) {
+    const nexts = candidates.filter(e => NEXT.test(text(e)));
+    if (nexts.length === 1 && candidates.every(e => e === nexts[0] || e.type !== 'submit' || !e.form))
+      candidates = nexts;
+  }
   if (candidates.length !== 1) return stop('login: no single Sign in or Create account action; sign in yourself');
   const button = candidates[0];
   const nativeAction = nativeFor(button);
   const action = semanticAction(button);
-  state.mode = LOGIN.test(text(action)) ? 'login' : 'create';
+  state.mode = CREATE.test(text(action)) ? 'create' :
+    staged && NEXT.test(text(action)) &&
+      headings.some(t => CREATE_HEADING.test(t))
+      ? 'create' : 'login';
+  state.stage = identityFirst ? 'identity' : 'password';
+  if (state.rejected) return stop('""" + _SIGN_IN_REJECTED + r"""');
+  if (state.mode === 'create' && state.accountStatus === 'exists')
+    return stop('login: this email already has an account; use the existing-account sign-in');
   if (/submit|apply/i.test(button.getAttribute('aria-label') || '') &&
       !(nativeAction && /^submit$/i.test(text(button))))
     return stop('login: the account button also holds application actions; continue yourself');
@@ -206,7 +274,10 @@ _ANALYZE = r"""
   const externalAgreement = new RegExp(
     String.raw`\bby (?:(?:clicking|selecting) [“"' ]*${actionWords}|${actionVerb})\b[^.]{0,200}\b(?:agree|accept|consent|terms|privacy)`, 'i');
   if (agreement.test(text(region) + ' ' + described) || externalAgreement.test(body) ||
-      /\bby (?:continuing|proceeding)\b[^.]{0,200}\b(?:agree|accept|consent|terms|privacy)/i.test(body) ||
+      // "By continuing to use this site, closing this banner…" is cookie/site-use
+      // notice text, not an agreement attached to the account action.
+      [...body.matchAll(/\bby (?:continuing|proceeding)\b[^.]{0,200}\b(?:agree|accept|consent|terms|privacy)/gi)]
+        .some(m => !/\b(?:cookies?|this (?:web)?site|banner|browsing)\b/i.test(m[0])) ||
       /agree|accept|consent|terms|privacy/i.test(button.getAttribute('aria-label') || ''))
     state.submitBlocker = 'consent: credential fields are prepared; signing in or creating this account accepts terms, so review them and submit yourself';
 
@@ -220,7 +291,17 @@ _ANALYZE = r"""
   if (identifiers.length === 1) id1 = identifiers[0];
   else if (identifiers.length === 2 && state.mode === 'create' && !confirmLike(identifiers[0]) && confirmLike(identifiers[1]))
     [id1, id2] = identifiers;
-  else return stop('login: no single email or username box; sign in yourself');
+  else if (!identifiers.length && passwords.length) {
+    // A password-only step must visibly name exactly the approved identity.
+    // Hidden inputs, a previous form locator and a remembered email are not proof.
+    const identities = [...new Set(body.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [])];
+    if (identities.length !== 1 || (email !== null && identities[0] !== email))
+      return stop('login: the password step does not uniquely show the approved account; continue yourself');
+    const hiddenIds = [...box.querySelectorAll('input[type=hidden]')].filter(e =>
+      /^(?:email|username|user_?id)$/i.test(e.name));
+    if (email !== null && hiddenIds.some(e => e.value && e.value !== email))
+      return stop('login: the password step holds a different account identity; continue yourself');
+  } else return stop('login: no single email or username box; sign in yourself');
 
   const form = button.form || button.closest('form') || (box.tagName === 'FORM' ? box : null);
   if (form) {
@@ -258,8 +339,9 @@ _ANALYZE = r"""
     els.form = form;
   }
 
-  els.email = id1; els.password = passwords[0];
-  state.roles = ['email', 'password'];
+  if (id1) els.email = id1;
+  if (passwords.length) els.password = passwords[0];
+  state.roles = [...(id1 ? ['email'] : []), ...(passwords.length ? ['password'] : [])];
   if (id2) { els.emailConfirm = id2; state.roles.splice(1, 0, 'emailConfirm'); }
   if (password2) { els.passwordConfirm = password2; state.roles.push('passwordConfirm'); }
   els.button = button;
@@ -275,8 +357,14 @@ _ANALYZE = r"""
     if (els[role].value && els[role].value !== value)
       return stop('login: the sign-in form already holds other values; continue yourself');
   }
-  state.signature = [location.href, state.action, state.mode, text(button), text(action),
-    ...state.roles.map(r => [r, els[r].name, els[r].id, els[r].type].join(':'))].join('|');
+  const keys = globalThis.kittyAuthKeys ??= new WeakMap();
+  const key = e => {
+    if (!keys.has(e)) keys.set(e, globalThis.kittyAuthCounter = (globalThis.kittyAuthCounter || 0) + 1);
+    return keys.get(e);
+  };
+  state.signature = [performance.timeOrigin, location.href, state.action, state.mode, state.stage,
+    key(box), key(button), text(button), text(action),
+    ...state.roles.map(r => [r, key(els[r]), els[r].name, els[r].id, els[r].type].join(':'))].join('|');
   return {state, els};
 }
 """
@@ -344,9 +432,11 @@ _ACCOUNT_TERMS_JS = r"""
         (!checked && !required)) return denied;
     terms.push(e);
   }
-  const clauses = (document.body?.innerText || '').match(
+  // Cookie/site-use notices ("by continuing to use this site…") are not account terms.
+  const clauses = ((document.body?.innerText || '').match(
     /\bby (?:creating (?:an? |your |this )?(?:external )?account|clicking [“"' ]*create (?:an? )?account|signing up|registering|continuing|proceeding)[^.]{0,600}(?:\.|$)/gi
-  ) || [];
+  ) || []).filter(text => !/^by (?:continuing|proceeding)\b/i.test(text) ||
+    !/\b(?:cookies?|this (?:web)?site|banner|browsing)\b/i.test(text));
   if (clauses.some(text => !legal.test(text) || excluded.test(text))) return denied;
   if (state.submitBlocker && !terms.length && !clauses.length) return denied;
   return {allowed: true, terms};
@@ -426,9 +516,13 @@ _ENTRY_TARGET_JS = r"""
 (approved, mode) => {
   const {state, els} = (""" + _ANALYZE + r""")(approved, null, null);
   if (!state.top || !approved.includes(location.origin) || location.protocol !== 'https:') return false;
-  if (state.blocker && /^(?:captcha|verification|consent):/.test(state.blocker)) return state.blocker;
+  if (state.rejected) return '""" + _SIGN_IN_REJECTED + r"""';
+  if (state.blocker && (/^(?:captcha|verification|consent):/.test(state.blocker) ||
+      state.blocker === '""" + _SIGN_IN_REJECTED + r"""')) return state.blocker;
   const body = document.body?.innerText || '';
-  if (!state.hasPassword && /\bby (?:creating (?:an? |your )?(?:external )?account|signing (?:up|in)|logging in|registering|continuing)\b[^.]{0,200}\b(?:agree|accept|consent|terms|privacy)/i.test(body))
+  const entryTerms = body.match(/\bby (?:creating (?:an? |your )?(?:external )?account|signing (?:up|in)|logging in|registering|continuing)\b[^.]{0,200}\b(?:agree|accept|consent|terms|privacy)/gi) || [];
+  if (!state.hasPassword && entryTerms.some(m => !/^by continuing\b/i.test(m) ||
+      !/\b(?:cookies?|this (?:web)?site|banner|browsing)\b/i.test(m)))
     return 'consent: review the account-entry terms and open the account form yourself';
   const visible = e => e.getClientRects().length > 0 &&
     getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
@@ -440,8 +534,8 @@ _ENTRY_TARGET_JS = r"""
   const controls = [...document.querySelectorAll('a, button, input[type=submit], input[type=button], [role=button]')]
     .filter(visible);
   if (controls.some(e => /submit|apply|send application|finish/i.test(text(e)))) return false;
-  const login = /^(?:sign in|sign-in|signin|log in|log-in|login|log on)$/i;
-  const create = /^(?:create account|create an account|create my account|sign up|sign-up|signup|register)$/i;
+  const login = /^(?:(?:already (?:have an account|registered)\??|existing (?:user|account)\??)\s*[-:–]?\s*)?(?:sign in|sign-in|signin|log in|log-in|login|log on)(?: instead)?$/i;
+  const create = /^(?:(?:don['’]?t have an account\??|new (?:user|here)\??)\s*[-:–]?\s*)?(?:create account|create an account|create my account|create your account|sign up|sign-up|signup|register)$/i;
   const eligible = controls.filter(e => !e.disabled && e.getAttribute('aria-disabled') !== 'true');
   const navigations = eligible.filter(e => e.tagName === 'A' ? e.hasAttribute('href')
     : (e.form || e.closest('form')) ? e.type === 'button' : (
@@ -478,6 +572,15 @@ _ENTRY_TARGET_JS = r"""
   } else if ((el.form || el.closest('form')) ? el.type !== 'button' : !(
       el.tagName === 'BUTTON' || el.type === 'button' || el.getAttribute('role') === 'button')) return false;
   return el;
+}
+"""
+
+_ENTRY_RECEIPT_JS = r"""
+(approved, mode) => {
+  const target = (""" + _ENTRY_TARGET_JS + r""")(approved, mode);
+  if (!target || target.nodeType !== 1) return null;
+  return [location.href, target.tagName, target.getAttribute('href') || '',
+    (target.innerText || target.value || '').replace(/\s+/g, ' ').trim()].join('|');
 }
 """
 
@@ -683,16 +786,155 @@ def google_session(page: Tab, policy: AuthenticationSettings, email: str) -> Aut
 
 
 
+_AUTH_WAIT_SECONDS = 15.0  # Workday account creation alone took ~3s live
+_NO_PROGRESS = (
+    "login: the account action did not advance to a verified next step; "
+    "continue in the retained tab without repeating credentials"
+)
+
+
+def _auth_context(
+    page: Tab, approved: list[str],
+) -> tuple[Frame | None, dict | None, str | None]:
+    """Read current account forms without passing applicant credentials to a realm."""
+    frames = page.frames()
+    if not frames:
+        raise BidiError("account document navigation is pending")
+    top = frames[0]
+    live = top.call("() => ({url: location.href, loading: document.readyState === 'loading'})")
+    # getTree and the live realm can straddle a navigation. An empty/blank
+    # provisional URL is neither an approved document nor an unsafe-origin
+    # receipt. Read-only callers may wait; credential callers still fail closed.
+    provisional = ("", "about:blank")
+    if any(url not in provisional and _authentication_origin(url) not in approved
+           for url in (top.url, live["url"])):
+        return None, None, "login: this page is not an approved origin for credentials"
+    if (top.url in provisional or live["url"] in provisional or
+            top.url != live["url"] or live["loading"]):
+        raise BidiError("account document navigation is pending")
+    # An invisible reCAPTCHA badge anchor (size=invisible) is not a challenge; a
+    # served challenge appears as its own bframe/iframe and still stops here.
+    if any(_CHALLENGE_FRAMES.search(frame.url) and not _INVISIBLE_BADGE.search(frame.url)
+           for frame in frames[1:]):
+        return None, None, "captcha: a CAPTCHA is on the sign-in page; sign in yourself"
+    found = []
+    for frame in form_frames(page):
+        state = frame.call(_SNAPSHOT_JS, approved, None, None)
+        # form_frames takes a fresh tree; it can race the navigation after the
+        # first top-document observation too. Bind its account receipt to the
+        # actual document instead of a provisional destination.
+        if state["top"]:
+            if any(url not in provisional and _authentication_origin(url) not in approved
+                   for url in (frame.url, state["url"])):
+                return frame, state, "login: this page is not an approved origin for credentials"
+            if (frame.url in provisional or state["url"] in provisional or
+                    frame.url != state["url"]):
+                raise BidiError("account document navigation is pending")
+        blocker = state["blocker"]
+        if state["rejected"]:
+            return frame, state, _SIGN_IN_REJECTED
+        if blocker and (blocker == _SIGN_IN_REJECTED or
+                        blocker.startswith(("captcha:", "verification:", "consent:"))):
+            return frame, state, blocker
+        if state["hasPassword"] or state["stage"] or state["accountStatus"]:
+            found.append((frame, state))
+    if len(found) > 1:
+        return None, None, "login: multiple account forms; choose one yourself"
+    if found:
+        frame, state = found[0]
+        return frame, state, None
+    return None, None, None
+
+
+def authentication_pending(page: Tab) -> bool:
+    """Recognize account stages using authenticate's analyzer, without loading secrets.
+
+    Ordinary applicant/contact/newsletter email fields are not account stages:
+    identity-only forms need an explicit account heading and a unique account or
+    Next/Continue action. Unsafe recognized account forms still need a handoff.
+    This is detection, not origin approval or permission to send credentials.
+    """
+    try:
+        origin = _authentication_origin(page.main.url)
+        if origin is None or origin == _GOOGLE_ORIGIN:
+            return False
+        _, state, _ = _auth_context(page, [origin])
+        return bool(state and (state["stage"] or state["hasPassword"]))
+    except (BidiError, UnsafeAction):
+        return False
+
+
+def _wait_auth_receipt(
+    page: Tab, approved: list[str], before: dict | None, *,
+    entry_mode: str | None = None, entry_receipt: str | None = None,
+) -> tuple[Frame | None, dict | None, str | None]:
+    """Wait for semantic account progress or a loaded application, never DOM churn.
+
+    After credential submission, replacing an unchanged form is not progress.
+    Observe a new stage/mode, explicit account-status receipt, or a recognized
+    application boundary. Read-only navigation races never repeat the action.
+    """
+    from kitty.core.apply.preflight import inspect_page
+
+    deadline = time.monotonic() + _AUTH_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            frame, state, blocker = _auth_context(page, approved)
+            if blocker:
+                return frame, state, blocker
+            if state:
+                changed = not before or state["signature"] != before["signature"]
+                semantic = not before or any(
+                    state[key] != before[key] for key in ("stage", "mode", "accountStatus")
+                )
+                if changed and (entry_mode is not None or semantic):
+                    return frame, state, None
+                if state["accountStatus"] and (
+                    not before or state["accountStatus"] != before["accountStatus"]
+                ):
+                    return frame, state, None
+            if not state:
+                original = page.main
+                url = original.call("() => location.href")
+                snapshot = inspect_page(page)
+                if snapshot.blocker and snapshot.blocker.startswith(
+                    ("captcha:", "verification:", "consent:")
+                ):
+                    return None, None, snapshot.blocker
+                if (not snapshot.blocker and snapshot.has_fields and
+                        (snapshot.boundary or snapshot.step) and
+                        _authentication_origin(url) in approved and snapshot.url == url and
+                        original.call(
+                            "(url) => location.href === url && document.readyState === 'complete'",
+                            url,
+                        )):
+                    return None, None, None
+                if entry_mode is not None:
+                    receipt = original.call(_ENTRY_RECEIPT_JS, approved, entry_mode)
+                    if receipt and receipt != entry_receipt:
+                        return None, None, None
+        except BidiError:
+            # Only observations are retried; a discarded click reply is not an
+            # authorization to submit the same password a second time.
+            pass
+        time.sleep(0.15)
+    return None, None, _NO_PROGRESS
+
+
 def authenticate(
     page: Tab, policy: AuthenticationSettings, credentials: ApplicationCredentials,
 ) -> AuthResult:
-    """Prepare one recognized account form; submit only when no human decision is needed."""
+    """Run bounded recognized account stages; never infer success from a click."""
     if policy.account_mode == "google":
         return AuthResult(blocker="login: Google session reuse never accepts employer credentials")
     if not policy.enabled:
         return AuthResult(blocker="login: login automation is off (apply.yaml authentication.enabled)")
+    binding = credential_binding(credentials)
+    # Existence belongs to the identity, not its current password. This empty
+    # password is fingerprint input only and is never sent to a browser realm.
+    identity_binding = credential_binding(ApplicationCredentials(credentials.email, ""))
     if policy._credential_binding is not None and not compare_digest(
-        policy._credential_binding, credential_binding(credentials),
+        policy._credential_binding, binding,
     ):
         return AuthResult(blocker="login: saved credentials changed after review; review the plan again")
     page.bidi.protect_secrets(credentials.email, credentials.password)
@@ -700,126 +942,201 @@ def authenticate(
     secrets = (credentials.email, credentials.password)
     filled: list[str] = []
     acted = False
+    desired = policy.account_mode
+    submitted: set[tuple[str, str]] = set()
+    entries: set[tuple[str, str | None]] = set()
+    existing_account = False
+    rejected_accounts = _REJECTED_ACCOUNTS.setdefault(page.bidi, set())
+    existing_accounts = _EXISTING_ACCOUNTS.setdefault(page.bidi, set())
+    origin: str | None = None
+
+    def result(blocker: str | None = None) -> AuthResult:
+        if blocker == _SIGN_IN_REJECTED:
+            rejected_origin = origin
+            try:
+                rejected_origin = _authentication_origin(page.main.url)
+            except (BidiError, UnsafeAction):
+                pass
+            if rejected_origin in approved:
+                rejected_accounts.add((rejected_origin, binding))
+        return AuthResult(acted=acted, blocker=blocker, filled=tuple(filled))
+
     try:
+        origin = _authentication_origin(page.main.url)
+        if origin in policy.manual_account_origins:
+            return result("login: this account origin is configured for manual authentication; continue yourself")
+        if (origin, binding) in rejected_accounts:
+            return result(_SIGN_IN_REJECTED)
+        if origin in policy.existing_account_origins or (origin, identity_binding) in existing_accounts:
+            existing_account = True
+            desired = "login"
+            policy = policy.model_copy(update={"account_mode": "login", "allow_account_creation": False})
         oracle = oracle_email_gate(page, policy, credentials)
         if oracle is not None:
             return AuthResult(acted=oracle.acted, blocker=oracle.blocker, filled=oracle.filled)
-        for entry in (False, True):
-            frames = page.frames()
-            if not frames or _authentication_origin(frames[0].url) not in approved:
-                return AuthResult(blocker="login: this page is not an approved origin for credentials")
-            if any(_CHALLENGE_FRAMES.search(frame.url) for frame in frames[1:]):
-                return AuthResult(blocker="captcha: a CAPTCHA is on the sign-in page; sign in yourself")
-            found = []
-            for frame in form_frames(page):
-                state = frame.call(_SNAPSHOT_JS, approved, None, None)   # no values before approval
-                blocker = state["blocker"]
-                if blocker and blocker.split(":")[0] in ("captcha", "verification", "consent"):
-                    return AuthResult(blocker=blocker)
-                if state["hasPassword"]:
-                    found.append((frame, state))
-            if len(found) > 1:
-                return AuthResult(blocker="login: multiple account forms; choose one yourself")
-            if found:
-                frame, state = found[0]
-                if state["blocker"]:
-                    return AuthResult(blocker=state["blocker"])
-                if policy.account_mode in ("auto", "recognized") or state["mode"] == policy.account_mode:
-                    break
-            if entry or policy.account_mode == "recognized":
-                return AuthResult(blocker="login: no single recognizable form for the chosen account action; continue yourself")
-            if policy.account_mode == "create" and not policy.allow_account_creation:
-                return AuthResult(blocker="login: account creation is off")
-            blocker = _guarded_click(
-                page.main, _ENTRY_TARGET_JS, approved, policy.account_mode,
-                fallback="login: no safe entry to the chosen account form; open it yourself",
-            )
+        for _ in range(8):
+            origin = _authentication_origin(page.main.url)
+            if origin in policy.manual_account_origins:
+                return result("login: this account origin is configured for manual authentication; continue yourself")
+            if (origin, binding) in rejected_accounts:
+                return result(_SIGN_IN_REJECTED)
+            # Never retain a frame/form locator across navigation or identity
+            # transitions. The writer also binds each field to this DOM instance.
+            frame, state, blocker = _auth_context(page, approved)
+            document_origin = _authentication_origin(state["url"]) if state else origin
+            if document_origin in policy.manual_account_origins:
+                return result("login: this account origin is configured for manual authentication; continue yourself")
+            if (document_origin, binding) in rejected_accounts:
+                return result(_SIGN_IN_REJECTED)
+            if (origin in policy.existing_account_origins or
+                    document_origin in policy.existing_account_origins or
+                    (origin, identity_binding) in existing_accounts or
+                    (document_origin, identity_binding) in existing_accounts):
+                existing_account = True
+                desired = "login"
             if blocker:
-                return AuthResult(blocker=blocker)
-            settle(page)
-            deadline = time.monotonic() + 6
-            while time.monotonic() < deadline:
-                ready = False
-                for candidate in form_frames(page):
-                    observed = candidate.call(_SNAPSHOT_JS, approved, None, None)
-                    if observed["hasPassword"] or (
-                        observed["blocker"] and observed["blocker"].startswith(("verification:", "captcha:"))
-                    ):
-                        ready = True
-                        break
-                if ready:
-                    break
-                time.sleep(0.15)
-        if not (policy.approves(frame.url) and policy.approves(state["url"])
-                and (state["action"] is None or policy.approves(state["action"]))):
-            return AuthResult(blocker="login: this page is not an approved origin for credentials")
-        if state["mode"] == "create" and not policy.allow_account_creation:
-            return AuthResult(blocker="login: this site wants a new account; account creation is off "
-                                      "(apply.yaml authentication.allow_account_creation)")
-        for role in state["roles"]:
-            done = frame.call(_WRITE_JS, approved, *secrets, state["signature"], role)
-            if done is not True:
-                return AuthResult(blocker=done if isinstance(done, str) else _CHANGED, filled=tuple(filled))
-            filled.append(role)
-        settle(page)
-        authorize_terms = policy.allow_account_creation and state["mode"] == "create"
-        if authorize_terms:
-            for _ in range(8):
-                proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
-                if not proof["allowed"] or not proof["pending"]:
-                    break
-                blocker = _guarded_click(
-                    frame, _TERMS_TARGET_JS, approved, *secrets, state["signature"],
-                    fallback="consent: the required account terms changed or cannot be selected safely",
+                return result(blocker)
+            if state and state["accountStatus"] == "exists":
+                existing_account = True
+                if document_origin in approved:
+                    existing_accounts.add((document_origin, identity_binding))
+                if policy.account_mode == "auto":
+                    desired = "login"
+                elif desired == "create":
+                    return result("login: this email already has an account; use the existing-account sign-in")
+            elif state and state["accountStatus"] == "missing" and policy.account_mode == "auto":
+                if existing_account or ("create", "password") in submitted:
+                    return result("login: account-state evidence conflicts; do not create another account")
+                desired = "create"
+            if desired == "create" and not policy.allow_account_creation:
+                return result("login: this site requires an account; account creation is off "
+                              "(apply.yaml authentication.allow_account_creation)")
+            if (state and state["blocker"] and not state["accountStatus"] and
+                    (desired in ("auto", "recognized") or not state["mode"] or
+                     state["mode"] == desired)):
+                return result(state["blocker"])
+            chosen = state and state["stage"] and (
+                desired in ("auto", "recognized") or state["mode"] == desired
+            )
+            if not chosen:
+                receipt = page.main.call(_ENTRY_RECEIPT_JS, approved, desired)
+                if not state and receipt is None:
+                    _, delayed, blocker = _wait_auth_receipt(
+                        page, approved, None, entry_mode=desired,
+                    )
+                    if blocker:
+                        return result(blocker)
+                    if delayed is not None:
+                        continue
+                    receipt = page.main.call(_ENTRY_RECEIPT_JS, approved, desired)
+                if desired == "recognized":
+                    return result("login: no single recognizable form for the chosen account action; continue yourself")
+                entry_key = (desired, receipt)
+                if entry_key in entries or len(entries) >= 3:
+                    return result(_NO_PROGRESS)
+                entries.add(entry_key)
+                try:
+                    blocker = _guarded_click(
+                        page.main, _ENTRY_TARGET_JS, approved, desired,
+                        fallback="login: no safe entry to the chosen account form; open it yourself",
+                    )
+                except BidiError:
+                    # Navigation may destroy the click's reply. Observe once;
+                    # never resolve and click that entry again on this attempt.
+                    blocker = None
+                if blocker:
+                    return result(blocker)
+                _, _, blocker = _wait_auth_receipt(
+                    page, approved, state, entry_mode=desired, entry_receipt=receipt,
                 )
                 if blocker:
-                    return AuthResult(blocker=blocker, filled=tuple(filled))
-                next_proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
-                if not next_proof["allowed"] or next_proof["pending"] >= proof["pending"]:
-                    return AuthResult(blocker="consent: account agreement selection was not confirmed",
-                                      filled=tuple(filled))
-            else:
-                return AuthResult(blocker="consent: too many account agreements; review them yourself",
-                                  filled=tuple(filled))
-        blocker = _guarded_click(frame, _ACCOUNT_TARGET_JS, approved, *secrets,
-                                 state["signature"], authorize_terms)
-        if blocker:
-            return AuthResult(blocker=blocker, filled=tuple(filled))
-        acted = True
-        settle(page)
-        login_after_creation = False
-        for current in form_frames(page):
-            observed = current.call(_SNAPSHOT_JS, approved, None, None)
-            if observed["blocker"] and (observed["blocker"] == _SIGN_IN_REJECTED or
-                                        observed["blocker"].startswith(("verification:", "captcha:"))):
-                return AuthResult(acted=True, blocker=observed["blocker"], filled=tuple(filled))
-            if (policy.account_mode == "auto" and state["mode"] == "create" and
-                    observed["mode"] == "login" and observed["hasPassword"] and
-                    not observed["blocker"]):
-                login_after_creation = True
-        if policy.account_mode == "auto":
-            # A distinct post-creation login is a new step, never a password retry.
-            # Otherwise switch only on an explicit account-exists/not-found error.
-            opposite = "login" if login_after_creation else frame.call(r"""(approved, previous) => {
-              const {state} = (""" + _ANALYZE + r""")(approved, null, null);
-              if (state.blocker || !state.hasPassword) return null;
-              const messages = [...document.querySelectorAll(
-                '[role=alert], [aria-live=assertive], .error, .error-message, [data-automation-id=errorMessage]'
-              )].filter(e => e.getClientRects().length &&
-                getComputedStyle(e).visibility !== 'hidden').map(e => e.innerText).join(' ');
-              if (previous === 'login' && /(?:no account (?:exists|found)|account (?:does not|doesn't) exist|could(?: not|n't) find (?:an? |your )?account|email (?:is not registered|not found)|user(?:name)? not found)/i.test(messages))
-                return 'create';
-              if (previous === 'create' && /(?:account(?: with (?:this|your) email(?: address)?)? already exists|email (?:is )?already (?:registered|in use))/i.test(messages))
-                return 'login';
-              return null;
-            }""", approved, state["mode"])
-            if opposite:
-                if opposite == "create" and not policy.allow_account_creation:
-                    return AuthResult(acted=True, blocker="login: this site requires an account; account creation is off",
-                                      filled=tuple(filled))
-                switched = authenticate(page, policy.model_copy(update={"account_mode": opposite}), credentials)
-                return AuthResult(acted=True, blocker=switched.blocker,
-                                  filled=tuple(dict.fromkeys((*filled, *switched.filled))))
+                    return result(blocker)
+                continue
+            if state["blocker"]:
+                return result(state["blocker"])
+            if not (policy.approves(frame.url) and policy.approves(state["url"]) and
+                    (state["action"] is None or policy.approves(state["action"]))):
+                return result("login: this page is not an approved origin for credentials")
+            if state["mode"] == "create":
+                if existing_account:
+                    return result("login: an existing account was observed; another account will not be created")
+                if not policy.allow_account_creation:
+                    return result("login: this site wants a new account; account creation is off "
+                                  "(apply.yaml authentication.allow_account_creation)")
+            attempt = (state["mode"], state["stage"])
+            if attempt in submitted:
+                return result(_NO_PROGRESS)
+            for role in state["roles"]:
+                done = frame.call(_WRITE_JS, approved, *secrets, state["signature"], role)
+                if done is not True:
+                    return result(done if isinstance(done, str) else _CHANGED)
+                if role not in filled:
+                    filled.append(role)
+            authorize_terms = policy.allow_account_creation and state["mode"] == "create"
+            if authorize_terms:
+                for _ in range(8):
+                    proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
+                    if not proof["allowed"] or not proof["pending"]:
+                        break
+                    blocker = _guarded_click(
+                        frame, _TERMS_TARGET_JS, approved, *secrets, state["signature"],
+                        fallback="consent: the required account terms changed or cannot be selected safely",
+                    )
+                    if blocker:
+                        return result(blocker)
+                    next_proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
+                    if not next_proof["allowed"] or next_proof["pending"] >= proof["pending"]:
+                        return result("consent: account agreement selection was not confirmed")
+                else:
+                    return result("consent: too many account agreements; review them yourself")
+            # Component forms (Workday) validate on blur; a click that arrives
+            # during that re-render is consumed without submitting. Let the last
+            # field commit before the single account action.
+            frame.call("() => { document.activeElement?.blur?.(); }")
+            time.sleep(0.8)
+            deadline = time.monotonic() + _AUTH_WAIT_SECONDS
+            while True:
+                readiness = frame.call("""(...args) => {
+                  const target = (""" + _ACCOUNT_TARGET_JS + r""")(...args);
+                  return typeof target === 'string' ? target : !!target;
+                }""", approved, *secrets, state["signature"], authorize_terms)
+                if (not isinstance(readiness, str) or "account action is disabled" not in readiness or
+                        time.monotonic() >= deadline):
+                    break
+                time.sleep(0.15)
+            if readiness is not True:
+                return result(readiness if isinstance(readiness, str) else _CHANGED)
+            # A synchronous receipt is checked after every write. The click
+            # resolver repeats the rejection, ownership, values and terms guards.
+            submitted.add(attempt)
+            try:
+                blocker = _guarded_click(
+                    frame, _ACCOUNT_TARGET_JS, approved, *secrets,
+                    state["signature"], authorize_terms,
+                )
+            except BidiError:
+                # The request may already have left; keep its one-shot guard.
+                blocker = None
+            if blocker:
+                return result(blocker)
+            acted = True
+            _, observed, blocker = _wait_auth_receipt(page, approved, state)
+            if blocker:
+                return result(blocker)
+            if observed is None:
+                if document_origin is not None:
+                    existing_accounts.add((document_origin, identity_binding))
+                return result()
+            if (state["stage"] == "password" and state["mode"] == "create" and
+                    observed["mode"] == "login" and not observed["blocker"]):
+                existing_account = True
+                if document_origin is not None:
+                    existing_accounts.add((document_origin, identity_binding))
+                if policy.account_mode != "auto":
+                    return result("login: account creation reached a separate sign-in step; continue yourself")
+                desired = "login"
+            elif state["stage"] == "password" and not observed["accountStatus"]:
+                return result(_NO_PROGRESS)
+        return result("login: the bounded account-stage limit was reached; continue in the retained tab")
     except (BidiError, UnsafeAction):
-        return AuthResult(acted=acted, blocker=_FAILED, filled=tuple(filled))
-    return AuthResult(acted=True, filled=tuple(filled))
+        return result(_FAILED)

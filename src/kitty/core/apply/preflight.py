@@ -94,6 +94,24 @@ _PROVIDER_ENTRY_JS = r"""
     const id = new URL(location.href).searchParams.get('gh_jid');
     if (id && /^\d+$/.test(id) && location.pathname.endsWith('-' + id))
       selector = '[data-cy="Hero"] button[data-cy="Button"][type=button]';
+  } else if (/^\/careers\/job\/\d+\/?$/.test(location.pathname) &&
+      document.querySelector('a[href*="/careers/apply?pid="]')) {
+    // Eightfold posting: the CTA is a same-origin link to this exact pid's form.
+    const pid = location.pathname.match(/\d+/)[0];
+    const links = queryAll('a[href*="/careers/apply?pid="]').filter(shown).filter(a => {
+      try {
+        const u = new URL(a.href);
+        // Sandbox Xrays cannot iterate URLSearchParams; match the query exactly.
+        return u.origin === location.origin && u.pathname === '/careers/apply' &&
+          new RegExp('^\\?pid=' + pid + '(?:&domain=[A-Za-z0-9.-]+)?$').test(u.search) &&
+          !u.hash && !u.username && !u.password && (!a.target || a.target === '_self');
+      } catch { return false; }
+    });
+    if (links.length !== 1) return null;
+    const e = links[0];
+    if (e.closest('form, [role=form], [aria-disabled=true], [aria-hidden=true], [inert]') ||
+        !/^apply now$/i.test(e.innerText.trim())) return null;
+    return e;
   }
   if (!selector) return null;
   const candidates = queryAll(selector).filter(shown);
@@ -108,12 +126,17 @@ _PROVIDER_ENTRY_JS = r"""
 
 _COOKIE_REJECT_JS = r"""
 () => {
+  // Only exact provider "reject all" controls; declining grants nothing.
   const dayforce = location.hostname === 'jobs.dayforcehcm.com' &&
     document.querySelector('button[test-id="cookie-preferences-banner-reject-button"][type=button]');
-  const e = dayforce || document.querySelector('#onetrust-reject-all-handler');
+  const oracle = /\.oraclecloud\.com$/.test(location.hostname) &&
+    document.querySelectorAll('.cookie-consent-modal button.cookie-consent__button.decline[type=button]');
+  const ketch = document.querySelectorAll('#ketch-consent-banner button#ketch-banner-button-secondary');
+  const single = list => list && list.length === 1 ? list[0] : null;
+  const e = dayforce || single(oracle) || single(ketch) || document.querySelector('#onetrust-reject-all-handler');
   if (!e || !e.getClientRects().length || getComputedStyle(e).visibility === 'hidden' ||
       getComputedStyle(e).display === 'none' || e.disabled || e.form ||
-      (!dayforce && !e.closest('#onetrust-banner-sdk, #onetrust-pc-sdk')) ||
+      (!dayforce && !e.closest('#onetrust-banner-sdk, #onetrust-pc-sdk, .cookie-consent-modal, #ketch-consent-banner')) ||
       !(dayforce ? /^reject$/i : /^reject all$/i).test(e.innerText.trim())) return null;
   return e;
 }
@@ -258,13 +281,26 @@ _SNAPSHOT = r"""
     has('input[type=email][name=primary-email]');
   const oracleSections = queryAll('form.apply-flow__content-form apply-flow-section[data-scroll-spy="apply-flow-sections"]');
   const oracleForm = oracleSections.length > 0;
+  const eightfoldForm = location.protocol === 'https:' && location.pathname === '/careers/apply' &&
+    /^\d+$/.test(new URL(location.href).searchParams.get('pid') || '') && queryAll('form').length === 1 &&
+    has('form input[id="Contact_Information_firstname"], form input[id="Contact_Information_email"], ' +
+        'form input[data-test-id="Contact_Information_firstname"], form input[data-test-id="Contact_Information_email"]');
   // Oracle's standard flow renders every section together; the numeric route
   // follows scrolling, not a safe Next action. Hidden sections cannot be verified.
   const oracleCompleteSurface = oracleForm && oracleSections.every(e =>
     visible(e) && e.getAttribute('aria-hidden') !== 'true');
-  const knownForm = workday || ashbyForm || smartForm || oracleForm ||
+  const eightfoldOnboarding = location.protocol === 'https:' && location.pathname === '/careers/apply' &&
+    queryAll('[data-testid=onboarding-manual-information-button]').length === 1 &&
+    queryAll('input[type=file]').length === 1;
+  const knownForm = workday || ashbyForm || smartForm || oracleForm || eightfoldForm ||
     has('form#application, form#application_form, form#application-form, form.ashby-application-form');
-  if (!step && (ashbyForm || smartForm || oracleForm))
+  if (!step && eightfoldOnboarding) step = 'Profile import';
+  // Eightfold's post-signup profile form ("Create your profile") precedes the
+  // job's own application; its Submit creates the candidate profile only.
+  const eightfoldProfile = location.protocol === 'https:' && location.pathname === '/careers/apply' &&
+    /\bProfile Bootstrapping\b/.test(body) && all('h1, h2, h3, [role=heading]').some(e => /^create your profile$/i.test(text(e)));
+  if (!step && eightfoldProfile) step = 'Create profile';
+  if (!step && (ashbyForm || smartForm || oracleForm || eightfoldForm))
     step = smartScreening && smartForm ? 'Application screening' : 'Application details';
   const boundary = knownForm && (!oracleForm || oracleCompleteSurface) && controls.some(e =>
     /^(submit(?: application)?|send application|review(?: application)?|bewerbung (?:absenden|abschicken|senden))$/i.test(text(e)) ||
@@ -274,16 +310,28 @@ _SNAPSHOT = r"""
       /^(?:candidate (?:account|home|sign in|login)|sign in|log in|create (?:an? )?account|sign up|register)$/i.test(text(e))) &&
     all('a, button, [role=button]').some(e =>
       /^(?:sign in|log in|create (?:an? )?account|sign up|register|(?:sign in|continue|log in) with google)$/i.test(text(e)));
-  const primaryNotices = all('h1, h2, [role=alert], main > p, [role=main] > p, body > p, .jobDisplay .job > p')
+  const primaryNotices = all('h1, h2, [role=alert], main > p, [role=main] > p, body > p, .jobDisplay .job > p, [data-automation-id=errorContainer] [data-automation-id=errorMessage]')
     .filter(e => !closest(e, 'footer, nav, aside')).map(text);
   if (!document.body?.childElementCount) primaryNotices.push(body);
   const unavailable = primaryNotices.some(value =>
-    /\b(?:this (?:job|position|posting) (?:is (?:no longer (?:available|posted)|closed)|has (?:closed|been (?:closed|filled)))|no longer accepting applications|(?:job|job posting|posting|position) (?:has expired|not found|no longer exists|is no longer available|has been removed)|page (?:not found|(?:cannot|could not) be found))\b/i.test(value));
+    /\b(?:this (?:job|position|posting) (?:is (?:no longer (?:available|posted)|closed)|has (?:closed|been (?:closed|filled)))|no longer accepting applications|(?:job|job posting|posting|position) (?:has expired|not found|no longer exists|is no longer available|has been removed)|page (?:not found|(?:cannot|could not) be found)|page you are looking for (?:doesn[’']t|does not) exist)\b/i.test(value));
   let blocker = null;
+  // Some ATSs (Eightfold) put autocomplete=one-time-code on ordinary answers to
+  // suppress autofill. Only code-named fields, or a page of nothing but such
+  // fields, are verification evidence.
+  const otpInputs = all('input[autocomplete=one-time-code]');
+  const codeNamed = e => /\b(?:code|otp|pin|passcode|verification|verify|token)\b|one[- ]time/i.test([
+    ...[...(e.labels || [])].map(text), e.getAttribute('aria-label'), e.placeholder, e.name, e.id,
+    e.getAttribute('data-test-id')].filter(Boolean).join(' ').replace(/[_-]/g, ' '));
+  const otpOnly = otpInputs.length > 0 &&
+    all('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=file]), textarea, select')
+      .every(e => otpInputs.includes(e));
   if (unavailable)
     blocker = 'closed: the primary page notice says this posting is unavailable';
-  else if (has('input[autocomplete=one-time-code], input[name=otp], input[name=verificationCode]') ||
-      /\b(?:enter (?:the |your )?(?:verification|security|authentication) code|verify your (?:email|account)|two-factor authentication|multi-factor authentication)\b/i.test(body))
+  else if (otpInputs.some(codeNamed) || otpOnly ||
+      has('input[name=otp], input[name=verificationCode], input[id^="pin-code-"][inputmode=numeric]') ||
+      /\b(?:enter (?:the |your )?(?:verification|security|authentication) code|verify your (?:email|account)|two-factor authentication|multi-factor authentication)\b/i.test(body) ||
+      (/\bcheck your email\b/i.test(body) && /\benter the (?:code|otp)\b/i.test(body)))
     blocker = 'verification: complete the verification or MFA step yourself';
   else if (dataDomeChallenge ||
       has('iframe[src*="/bframe"], iframe[title*="challenge" i], [role=dialog] [class*=captcha]') ||
@@ -291,10 +339,13 @@ _SNAPSHOT = r"""
     blocker = 'captcha: a visible challenge needs your action';
   else if (oracleLoading)
     blocker = 'loading: wait for the application loading overlay to clear, then resume';
-  else if (all('[aria-modal=true], [role=dialog], dialog[open], #onetrust-banner-sdk, #onetrust-pc-sdk')
+  else if (!eightfoldProfile && all('[aria-modal=true], [role=dialog], dialog[open], #onetrust-banner-sdk, #onetrust-pc-sdk')
       .some(e => /\b(?:cookies?|consent|privacy preferences|terms and conditions)\b/i.test(text(e))))
     blocker = 'consent: review the visible consent dialog yourself';
-  else if (accountLanding || oracleEmail ||
+  // iCIMS-style /login: a lone account email (plus acknowledgement) before any application.
+  else if (accountLanding || oracleEmail || (/\/login\/?$/.test(location.pathname) &&
+      all('form input[type=email]').length === 1 && !knownForm &&
+      all('form input:not([type=hidden]):not([type=email]):not([type=checkbox]):not([type=submit]):not([type=button]), form textarea, form select').length === 0) ||
       has('input[type=password]') || (!has('form input:not([type=hidden]), form textarea, form select') &&
       /\b(?:sign in to (?:apply|continue)|log in to (?:apply|continue)|create an account to (?:apply|continue))\b/i.test(body)))
     blocker = 'login: sign in or create the required account yourself';
@@ -318,6 +369,17 @@ _SNAPSHOT = r"""
     (e.required || e.getAttribute('aria-required') === 'true' ||
      (['checkbox', 'radio'].includes(customKind(e) || e.type) &&
       closest(e, '[role=group], [role=radiogroup]')?.getAttribute('aria-required') === 'true'));
+  const invalidProfileItems = oracleForm ? all('[data-profile-item-invalid="true"]') : [];
+  // These observed Add buttons mean required structured records are absent,
+  // not that a personal-answer field is unknown. Unrecognized invalid items
+  // still block below without guessing which record editor they belong to.
+  const missingProfileSections = [
+    ['education', 'timeline-add-education-button', /^add education$/i],
+    ['experience', 'timeline-add-experience-button', /^add experience$/i],
+  ].filter(([, id, label]) => invalidProfileItems.some(e =>
+    e.tagName === 'BUTTON' && e.id === id && label.test(text(e)) &&
+    oracleSections.includes(closest(e, 'apply-flow-section[data-scroll-spy="apply-flow-sections"]'))))
+    .map(([section]) => section);
   // A radiogroup is represented by radio choices, not unrelated writable fields.
   const unsupported = all('[aria-required=true]').some(e =>
     e.getAttribute('role') === 'radiogroup'
@@ -326,13 +388,13 @@ _SNAPSHOT = r"""
       : !representedRequired(e) && !uploadedGroup(e) &&
         !queryAll('input[type=file]', e).some(input => uploadGroupFor(input) === e) &&
         !queryAll(fieldSelector, e).some(supportedControl)) ||
-    (oracleForm && has('[data-profile-item-invalid="true"]'));
+    invalidProfileItems.length > 0;
   const hasFields = fields.length > 0 || queryAll('input[type=file]')
     .some(e => visible(e.parentElement || e.getRootNode().host));
   const signature = location.href + '|' + step + '|' + entry + '|' + entryProof + '|' +
     fields.map(e => e.name + ':' + e.id + ':' + (e.type || customKind(e))).join('|');
   return {blocker, step, review, boundary, safeNext, signature, entry, hasFields,
-    unsupportedRequired: unsupported,
+    unsupportedRequired: unsupported, missingProfileSections,
     errors: errors.length + fields.filter(e => e.willValidate && !e.validity.valid).length,
     workday, url: location.href};
 }
@@ -341,6 +403,12 @@ _SNAPSHOT = r"""
 
 @dataclass(frozen=True)
 class Preflight:
+    """Form gates, including required structured records whose editors stay manual.
+
+    Missing profile sections diagnose unsupported controls, not missing applicant
+    facts. The empty default keeps existing snapshot constructors compatible.
+    """
+
     frame: Frame
     url: str
     signature: str
@@ -353,6 +421,7 @@ class Preflight:
     entry: str = ''
     has_fields: bool = False
     unsupported_required: bool = False
+    missing_profile_sections: tuple[str, ...] = ()
 
 
 def _listing_blocker(url: str) -> str | None:
@@ -369,7 +438,8 @@ def inspect_page(page: Tab) -> Preflight:
     """Separate page-level gates from controls needing manual completion.
 
     Unsupported required controls prevent advancement/readiness, not filling
-    other known fields on an otherwise recognized application form.
+    other known fields on an otherwise recognized application form. Required
+    profile-section diagnostics are combined across frames just like those gates.
     """
     snapshots = []
     for index, frame in enumerate(form_frames(page)):
@@ -390,6 +460,7 @@ def inspect_page(page: Tab) -> Preflight:
             step=data['step'], review=data['review'], boundary=data['boundary'],
             safe_next=data['safeNext'], errors=data['errors'], entry=data['entry'],
             has_fields=data['hasFields'], unsupported_required=data['unsupportedRequired'],
+            missing_profile_sections=tuple(data.get('missingProfileSections', ())),
         )
         if snapshot.blocker:
             return snapshot
@@ -403,7 +474,9 @@ def inspect_page(page: Tab) -> Preflight:
     if selected is None:
         selected = next((s for s in snapshots if s.entry), snapshots[0])
     return replace(selected, errors=sum(s.errors for s in snapshots),
-                   unsupported_required=any(s.unsupported_required for s in snapshots))
+                   unsupported_required=any(s.unsupported_required for s in snapshots),
+                   missing_profile_sections=tuple(dict.fromkeys(
+                       section for s in snapshots for section in s.missing_profile_sections)))
 
 
 def wait_for_page(page: Tab, *, previous: str | None = None, seconds: float = 12) -> Preflight:

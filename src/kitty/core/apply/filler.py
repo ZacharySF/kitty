@@ -21,6 +21,7 @@ import time
 import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Mapping, Sequence
 from urllib.parse import urlsplit
@@ -32,14 +33,21 @@ from kitty.core import resumes as resumes_core
 from kitty.core.resume_versions import default_resume
 from kitty.core.discovery.text import authorization_jurisdiction
 from kitty.core.refresh import PostingCheck, persist_check
-from kitty.core.apply.auth import authenticate, google_session
+from kitty.core.apply.auth import authenticate, authentication_pending, google_session
+from kitty.core.apply.residence_gate import complete_residence_gate, prepare_profile_bootstrap, residence_gate, submit_profile_bootstrap
 from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, SessionEndError, Tab, TabClosed, open_session, open_tab
 from kitty.core.apply.browser import (
     BrowserError, busy_message, ensure_firefox, headless_firefox, hide_automation,
 )
-from kitty.core.apply.credentials import CredentialError, load_credentials
+from kitty.core.apply.credentials import CredentialError, credential_binding, load_credentials
+from kitty.core.apply.email_verification import complete_email_verification
+from kitty.core.apply.records import fill_required_records
+from kitty.core.apply.recovery import Action, Blocker, Result as RecoveryResult
+from kitty.core.apply.recovery_runtime import (
+    JobRecovery, PreparationStopped, finish_model_reservation, model_planner,
+)
 from kitty.core.apply.fields import (
-    TEXT_KINDS, FormField, Plan, is_affirmative, is_resume_input, lookup_answer, match_option,
+    MANUAL_CONSENT, TEXT_KINDS, FormField, Plan, is_affirmative, is_resume_input, lookup_answer, match_option,
     plan_for,
 )
 from kitty.core.apply.page import (
@@ -64,11 +72,6 @@ _ACCOUNT_FIELD_LABELS = {
     "email": "account email", "emailConfirm": "account email confirmation",
     "password": "account password", "passwordConfirm": "account password confirmation",
 }
-_MANUAL_CONSENT = re.compile(
-    r"\b(?:agree|consent|certify|attest|signature|terms(?: and conditions| of use| of service)?|"
-    r"privacy (?:policy|notice)|accept.{0,80}(?:privacy|data processing)|"
-    r"einverstanden|einwilligung|datenschutzerklärung)\b", re.I,
-)
 
 OutcomeCause = Literal[
     "ready", "human_boundary", "missing_applicant_fact", "unsupported_controls",
@@ -130,6 +133,7 @@ class FillReport:
     pages: int = 0
     resume_id: int | None = None  # actual uploaded or previously pinned retained attachment
     cause: OutcomeCause = "unsupported_controls"
+    recovery: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.cause = _outcome_cause(self)
@@ -147,6 +151,7 @@ class FormResult:
     fields_found: int = 0
     resume_verified: bool = False
     blocker: str | None = None
+    interrupted: bool = False
 
 
 def choose_resume(conn: sqlite3.Connection, config: Config, job: Job) -> Resume | None:
@@ -251,12 +256,11 @@ def _upload_approved(
 def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan) -> bool:
     """Put a planned value into one field; return True when it was set."""
     frame = page_frames[form_field.frame]
-    if (_MANUAL_CONSENT.search(form_field.label) or
-            any(_MANUAL_CONSENT.search(option) for option in form_field.options)):
+    if (MANUAL_CONSENT.search(form_field.label) or
+            any(MANUAL_CONSENT.search(option) for option in form_field.options)):
         return False
     if form_field.kind in TEXT_KINDS:
-        fill_text(frame, form_field.key, plan.candidates[0])
-        return True
+        return fill_text(frame, form_field.key, plan.candidates[0])
     if form_field.kind == "combobox":
         # Prefer the actual choices before filtering them by a spelling. Async or
         # virtualized lists may need a query before they expose the desired option.
@@ -285,6 +289,7 @@ def fill_form(
     page: Tab, config: Config, resume_path: Path | None, *, company: str | None = None,
     tracks: Sequence[str] = (), jurisdiction: str | None = None, preserve_existing: bool = False,
     upload_resume: Callable[[Frame, str, Path], None] | None = None,
+    checkpoint: Callable[[FormResult], bool] | None = None,
 ) -> FormResult:
     """Fill every field on the open page that profile.yaml / answers.yaml covers.
 
@@ -292,6 +297,9 @@ def fill_form(
     selections from an earlier attempt. Only blank fields are written.
     """
     result = FormResult()
+    if checkpoint is not None and not checkpoint(result):
+        result.interrupted = True
+        return result
     frames, fields = wait_for_form(page)
     if uploads_pending(page):
         if not wait_for_uploads(page):
@@ -321,7 +329,8 @@ def fill_form(
     planned = []
     for form_field in fields:
         if form_field.blank:
-            plan = plan_for(form_field, config, company=company, tracks=tracks, jurisdiction=jurisdiction)
+            plan = plan_for(form_field, config, company=company, tracks=tracks,
+                            jurisdiction=jurisdiction)
             if plan is not None:
                 planned.append((form_field, plan))
     # Address lookups can appear before the country/state controls they depend on.
@@ -330,6 +339,9 @@ def fill_form(
     planned.sort(key=lambda item: contact_order.get(item[1].field_name.casefold(), 2))
     failed_choices: set[tuple[int, str]] = set()
     for form_field, plan in planned:
+        if checkpoint is not None and not checkpoint(result):
+            result.interrupted = True
+            break
         try:
             if _apply_plan(frames, form_field, plan) and plan.field_name not in result.filled:
                 result.filled.append(plan.field_name)
@@ -340,6 +352,9 @@ def fill_form(
         except (BidiError, UnsafeAction):
             continue                      # left blank; reported below if it is required
 
+    # Invalid saved values are diagnosed by the recovery agent, not silently retyped here.
+    if checkpoint is not None and not checkpoint(result):
+        result.interrupted = True
     settle(page, timeout_ms=5000)          # let uploads and dropdown lookups finish
     final = read_fields(form_frames(page))
     result.fields_found = len(final)
@@ -395,10 +410,91 @@ def _same_posting_page(expected_url: str, actual_url: str) -> bool:
     return detail_url(expected) == detail_url(actual)
 
 
+def _recover_page(recovery, before, result, *, retry, absorb, verify) -> bool:
+    """Diagnose, execute one guarded strategy, observe its outcome, then replan."""
+    if not recovery.config.apply.recovery.enabled or recovery.handed_off:
+        return False
+    observation = recovery.observe(before, result)
+    while True:
+        verify()
+        if recovery.progress:
+            recovery.progress(f'recovering:{recovery.job.id}:planning')
+        decision = recovery.agent.decide(observation)
+        recovery.active_tool = decision.action.value
+        recovery.journal.record(recovery.agent.event(decision))
+        if decision.action == Action.HANDOFF:
+            recovery.handed_off = True
+            recovery.record(decision, RecoveryResult.HANDED_OFF)
+            return False
+        prior, prior_snapshot = observation, before
+        try:
+            recovery.guard()
+            current = recovery.observe(inspect_page(recovery.page), result)
+            capability = {
+                Action.FOCUS: current.can_focus, Action.RECOMMIT: current.can_recommit,
+                Action.RETRY: current.can_retry, Action.RELOAD: current.can_reload,
+            }.get(decision.action, True)
+            if (not capability or current.blocker not in (
+                    Blocker.NONE, Blocker.UNKNOWN, Blocker.LOADING, Blocker.TRANSIENT
+                ) or (current.busy and decision.action in (Action.FOCUS, Action.RECOMMIT, Action.RETRY))):
+                recovery.handed_off = True
+                recovery.record(decision, RecoveryResult.DENIED)
+                return False
+            if decision.action == Action.WAIT:
+                if recovery.stop is not None:
+                    recovery.stop.wait(decision.wait_seconds)
+                else:
+                    time.sleep(decision.wait_seconds)
+            elif decision.action == Action.FOCUS:
+                recovery.focus()
+            elif decision.action == Action.RECOMMIT:
+                names = recovery.recommit()
+                if result is not None:
+                    result.filled.extend(name for name in names if name not in result.filled)
+                    absorb(result)
+            elif decision.action == Action.RETRY:
+                result = retry()
+                absorb(result)
+            elif decision.action == Action.RELOAD:
+                recovery.page.goto(recovery.page.main.url)
+            before = inspect_page(recovery.page)
+            observation = recovery.observe(before, result)
+            # API success, DOM churn and a nonempty write log are not proof that
+            # the form accepted anything. Require fresh state improvement.
+            improved = (
+                observation.required_count < prior.required_count or
+                observation.invalid_count < prior.invalid_count or
+                (prior.busy and not observation.busy) or
+                (bool(before.step) and before.step != prior_snapshot.step) or
+                (bool(before.entry) and before.entry != prior_snapshot.entry)
+            )
+            focus_restored = decision.action == Action.FOCUS and prior.can_focus and not observation.can_focus
+            outcome = (RecoveryResult.OBSERVED if decision.action == Action.INSPECT else
+                       RecoveryResult.COMPLETED if improved or focus_restored else RecoveryResult.NO_EFFECT)
+            recovery.record(decision, outcome)
+            if improved:
+                recovery.refresh_progress()
+                return True
+        except PreparationStopped:
+            recovery.record(decision, RecoveryResult.CANCELLED)
+            raise
+        except UnsafeAction:
+            recovery.record(decision, RecoveryResult.DENIED)
+            raise
+        except BidiError as exc:
+            recovery.record(decision, RecoveryResult.FAILED)
+            if isinstance(exc, (ConnectionLost, TabClosed)):
+                raise
+            # Reobserve a stale/covered control; never replay it blindly.
+            before = inspect_page(recovery.page)
+            observation = recovery.observe(before, result)
+
+
 def fill_job(
     page: Tab, conn: sqlite3.Connection, settings: Settings, config: Config, job: Job,
     *, resume_tab: bool = False, approval: FillApproval | None = None,
     eligibility_override: EligibilityOverride | None = None,
+    recovery_planner=None, progress=None, stop=None,
 ) -> FillReport:
     """Prepare through review, never submit; excluded jobs leave the browser untouched."""
     if eligibility_override is not None and (
@@ -428,9 +524,86 @@ def fill_job(
     visited: set[str] = set()
     previous: str | None = None
     authentication_attempted = False
+    verification_attempts = 0
+    credentials = None
     closed_url: str | None = None
     policy = config.apply.authentication
     foreground: Tab | None = None
+    recovery = None
+
+    def absorb(result):
+        nonlocal resume_verified
+        # Account values can be echoed in field labels/errors; never persist them.
+        result.filled = [page.bidi.redact(value) for value in result.filled]
+        result.unanswered = [page.bidi.redact(value) for value in result.unanswered]
+        result.to_log = [value for value in result.to_log if page.bidi.redact(value) == value]
+        result.interaction_errors = [page.bidi.redact(value) for value in result.interaction_errors]
+        _record(conn, job, resume, result)
+        report.filled.extend(name for name in result.filled if name not in report.filled)
+        report.unanswered = result.unanswered
+        resume_verified = resume_verified or result.resume_verified
+        if result.resume_uploaded and resume:
+            report.resume_label, report.resume_id = resume.label, resume.id
+        elif result.resume_verified and report.resume_label is None:
+            report.resume_label = "existing attachment (retained)"
+
+    def verify():
+        if approval is not None:
+            current = jobs_core.get_job(conn, job.id)
+            if current is None:
+                raise ApprovalError(APPROVAL_CHANGED)
+            approval.resume(conn, settings, current)
+        recovery.checkpoint()
+
+    def verify_email(*, started=None, sent=False):
+        nonlocal credentials, authentication_attempted, verification_attempts
+        if verification_attempts >= 2:
+            report.status, report.note = "blocked", "verification: repeated email challenges need your review."
+            return False
+        verification_attempts += 1
+        verify()
+        try:
+            credentials = load_credentials(settings)
+        except CredentialError as exc:
+            report.status, report.note = "blocked", str(exc)
+            return False
+        if policy._credential_binding is not None and credential_binding(credentials) != policy._credential_binding:
+            raise ApprovalError(APPROVAL_CHANGED)
+        page.bidi.protect_secrets(credentials.email, credentials.password)
+        if progress:
+            progress(f'verifying:{job.id}')
+        result = complete_email_verification(
+            page, conn, job.id, policy, credentials, requested_at=started,
+            request_sent=sent, checkpoint=verify,
+            accepted_navigation=recovery.accepted_navigation,
+        )
+        recovery.mutated = recovery.mutated or result.acted
+        if not result.verified and result.blocker is None and not result.acted:
+            # The challenge was no longer present (transition snapshot); re-inspect.
+            verification_attempts -= 1
+            time.sleep(0.5)
+            return True
+        if result.verified:
+            if "employer email verification" not in report.filled:
+                report.filled.append("employer email verification")
+            authentication_attempted = False
+            recovery.accepted_navigation()
+            return True
+        report.status, report.note = "blocked", result.blocker
+        return False
+
+    def rescue(snapshot, result=None):
+        try:
+            return _recover_page(
+                recovery, snapshot, result, absorb=absorb, verify=verify,
+                retry=lambda: fill_form(
+                    page, config, None, company=job.company_name, tracks=job.tracks,
+                    jurisdiction=jurisdiction, preserve_existing=True, checkpoint=recovery.checkpoint,
+                ),
+            )
+        finally:
+            recovery.active_tool = None
+
     try:
         # Firefox can silently drop dropdown pointer/key actions in a background
         # tab even though script-based contact writes work. Focus the target for
@@ -452,7 +625,10 @@ def fill_job(
         if not resume_tab:
             page.goto(url)
         settle(page)
+        recovery = JobRecovery(conn, settings, config, job, page, jurisdiction=jurisdiction,
+                               planner=recovery_planner, progress=progress, stop=stop)
         for _ in range(12):
+            verify()
             before = wait_for_page(page, previous=previous)
             if authentication_attempted and before.blocker and before.blocker.startswith("login:"):
                 # Account redirects can render their verification notice after
@@ -461,13 +637,44 @@ def fill_job(
             if authentication_attempted and not policy.approves(page.main.url):
                 report.status, report.note = "blocked", "login: redirected to an unapproved origin; continue manually."
                 break
-            if before.blocker and before.blocker.startswith("login:") and policy.enabled and not research:
+            if (not research and policy.enabled and policy.email_verification.enabled
+                    and before.blocker and before.blocker.startswith("verification:")):
+                if verify_email():
+                    visited.discard(before.signature)
+                    continue
+                break
+            if not research and policy.enabled and residence_gate(page):
+                # Eightfold's pre-account country/privacy gate precedes any
+                # sign-in form; its consent check is dialog-shaped, so handle
+                # it before the generic consent/unsupported classification.
+                if complete_residence_gate(page, config, allow_terms=policy.allow_account_creation):
+                    report.filled.append("country of residence")
+                    recovery.mutated = True
+                    visited.discard(before.signature)
+                    settle(page)
+                    continue
+                report.status, report.note = "blocked", (
+                    "consent: the Eightfold country/privacy step needs your review before the account form")
+                report.cause = "human_boundary"
+                break
+            account_stage = bool(before.blocker and before.blocker.startswith("login:")) or authentication_pending(page)
+            if account_stage and (not policy.enabled or research):
+                report.status, report.note = "blocked", "login: account access is not authorized for this run."
+                break
+            if account_stage and policy.enabled and not research:
                 if authentication_attempted:
                     report.status, report.note = "blocked", "login: authentication did not advance; continue manually (no automatic retry)."
                     break
                 if not policy.approves(page.main.url) or not policy.approves(before.url):
                     report.status, report.note = "blocked", "login: this origin is not approved for credentials."
                     break
+                from kitty.config import _authentication_origin
+                if _authentication_origin(page.main.url) in policy.manual_account_origins:
+                    report.status, report.note = "blocked", "login: this saved account requires manual sign-in; existing sessions can be reused."
+                    break
+                if progress:
+                    progress(f'authenticating:{job.id}')
+                authentication_started = datetime.now(timezone.utc).replace(microsecond=0)
                 authentication_attempted = True
                 if policy.account_mode == "google":
                     authentication = google_session(page, policy, config.profile.email.strip())
@@ -480,19 +687,46 @@ def fill_job(
                     page.bidi.protect_secrets(credentials.email, credentials.password)
                     authentication = authenticate(page, policy, credentials)
                 report.filled.extend(_ACCOUNT_FIELD_LABELS[role] for role in authentication.filled)
+                recovery.mutated = recovery.mutated or bool(authentication.filled) or authentication.acted
+                if (policy.email_verification.enabled and authentication.blocker
+                        and authentication.blocker.startswith("verification:")):
+                    if verify_email(started=authentication_started,
+                                    sent=authentication.acted and "email" in authentication.filled):
+                        visited.discard(before.signature)
+                        continue
+                    break
+                if authentication.blocker and residence_gate(page):
+                    # Eightfold asks for the country of residence before its
+                    # account form. No password has been submitted yet, so the
+                    # account stage may run once more after this single fact.
+                    if complete_residence_gate(page, config, allow_terms=policy.allow_account_creation):
+                        report.filled.append("country of residence")
+                        recovery.mutated = True
+                        if "password" not in authentication.filled:
+                            authentication_attempted = False
+                        visited.discard(before.signature)
+                        settle(page)
+                        continue
                 if authentication.blocker or not authentication.acted:
                     report.status = "partial" if authentication.filled and not authentication.acted else "blocked"
                     report.note = authentication.blocker or before.blocker
                     break
                 previous = before.signature
                 settle(page)
+                recovery.accepted_navigation()
                 continue
             if before.blocker:
+                if before.blocker.startswith("loading:") and rescue(before):
+                    visited.discard(before.signature)
+                    continue
                 if before.blocker.startswith("closed:"):
                     closed_url = before.url
                 report.status, report.note = "blocked", before.blocker
                 break
             if before.signature in visited:
+                if rescue(before):
+                    visited.discard(before.signature)
+                    continue
                 report.status, report.note = "blocked", "Application step did not advance or repeated; continue manually."
                 break
             visited.add(before.signature)
@@ -500,8 +734,25 @@ def fill_job(
             if before.entry:
                 advance(before, ats)
                 settle(page)
+                recovery.accepted_navigation()
                 continue
+            if not research and (config.profile.education_records or config.profile.employment_records):
+                record = fill_required_records(page, config, company=job.company_name,
+                                               tracks=job.tracks, checkpoint=verify)
+                report.filled.extend(name for name in record.filled if name not in report.filled)
+                if record.changed:
+                    recovery.mutated = True
+                    recovery.refresh_progress()
+                    visited.discard(before.signature)
+                    continue
+                if record.handled and record.blocker:
+                    report.status, report.note = "blocked", record.blocker
+                    report.cause = record.cause
+                    break
             if not (before.step or before.boundary):
+                if rescue(before):
+                    visited.discard(before.signature)
+                    continue
                 report.status, report.note = "blocked", "Unsupported application page: no recognized form or safe entry; continue manually."
                 break
             result = fill_form(
@@ -510,24 +761,17 @@ def fill_job(
                 upload_resume=(lambda frame, key, path: _upload_approved(
                     frame, key, path, approval, conn, settings
                 )) if approval is not None else None,
+                checkpoint=recovery.checkpoint,
             )
-            # A site can echo account values in field labels or errors. Never persist
-            # those echoes in preparation evidence or the unanswered-questions queue.
-            result.filled = [page.bidi.redact(value) for value in result.filled]
-            result.unanswered = [page.bidi.redact(value) for value in result.unanswered]
-            result.to_log = [value for value in result.to_log if page.bidi.redact(value) == value]
-            result.interaction_errors = [page.bidi.redact(value) for value in result.interaction_errors]
+            absorb(result)
             report.pages += 1
-            _record(conn, job, resume, result)
-            report.filled.extend(name for name in result.filled if name not in report.filled)
-            report.unanswered = result.unanswered
-            resume_verified = resume_verified or result.resume_verified
-            if result.resume_uploaded and resume:
-                report.resume_label = resume.label
-                report.resume_id = resume.id
-            elif result.resume_verified and report.resume_label is None:
-                report.resume_label = "existing attachment (retained)"
+            if result.interrupted and rescue(inspect_page(page), result):
+                visited.discard(before.signature)
+                continue
             if result.interaction_errors:
+                if rescue(inspect_page(page), result):
+                    visited.discard(before.signature)
+                    continue
                 report.status = "partial"
                 report.note = "Selection interaction failed: " + "; ".join(result.interaction_errors)
                 report.cause = "unsupported_controls"
@@ -535,25 +779,71 @@ def fill_job(
                     report.note += "\n" + result.blocker
                 break
             if result.blocker:
+                if rescue(inspect_page(page), result):
+                    visited.discard(before.signature)
+                    continue
                 report.status, report.note = "blocked", result.blocker
                 break
             after = inspect_page(page)
             if after.blocker:
+                if after.blocker.startswith("loading:") and rescue(after, result):
+                    visited.discard(before.signature)
+                    continue
                 if after.blocker.startswith("closed:"):
                     closed_url = after.url
                 report.status, report.note = "blocked", after.blocker
                 break
+            if before.step == "Create profile" and not research:
+                # Eightfold's candidate profile (not the job application): set its
+                # unlabelled residence chooser and required privacy acknowledgment
+                # last, since list interactions above can reset them, then create it.
+                if prepare_profile_bootstrap(page, config, allow_terms=policy.allow_account_creation):
+                    if "country of residence" not in report.filled:
+                        report.filled.append("country of residence")
+                if submit_profile_bootstrap(page, config, allow_terms=policy.allow_account_creation):
+                    report.pages += 1
+                    recovery.mutated = True
+                    settle(page)
+                    recovery.accepted_navigation()
+                    visited.discard(before.signature)
+                    continue
+                report.status, report.note = "partial", (
+                    "Eightfold profile step still needs required answers: " + "; ".join(result.unanswered)
+                    if result.unanswered else "Eightfold profile step could not be completed; review it.")
+                report.cause = "missing_applicant_fact" if result.to_log else "unsupported_controls"
+                break
             if after.unsupported_required:
+                if rescue(after, result):
+                    visited.discard(before.signature)
+                    continue
                 report.status = "blocked"
-                report.note = "unsupported: required custom controls need manual completion. Review any fields already filled."
+                report.cause = "unsupported_controls"
+                if after.missing_profile_sections:
+                    report.note = (
+                        "unsupported: required profile records need manual completion: " +
+                        ", ".join(after.missing_profile_sections) +
+                        ". Open each section's Add editor, enter and save your records, then resume. "
+                        "Review any other required controls and fields already filled."
+                    )
+                else:
+                    report.note = "unsupported: required custom controls need manual completion. Review any fields already filled."
                 break
             if result.unanswered or after.errors:
+                if rescue(after, result):
+                    visited.discard(before.signature)
+                    continue
                 report.status = "partial" if result.fields_found else "blocked"
                 report.note = ("Required answers or uploads are missing or invalid: " +
                                "; ".join(result.unanswered)) if result.unanswered else "Page validation errors need your review."
                 report.cause = "missing_applicant_fact" if result.to_log else "unsupported_controls"
                 break
             if after.review or after.boundary:
+                if any(f.invalid or (f.required and f.blank) for f in read_fields(form_frames(page))):
+                    if rescue(after, result):
+                        visited.discard(before.signature)
+                        continue
+                    report.status, report.note = "blocked", "Required application fields still need review."
+                    break
                 # A fresh review-only page cannot prove earlier required steps.
                 if not resume_verified:
                     report.status, report.note = "blocked", "Resume upload is not verified; review or attach your resume manually."
@@ -568,12 +858,23 @@ def fill_job(
                     break
                 advance(after, ats)
                 settle(page)
+                recovery.accepted_navigation()
+                continue
+            if after.step and after.signature != before.signature:
+                # Filling moved to another recognized step (e.g. a resume import
+                # opening its profile form); inspect it rather than give up.
+                previous = before.signature
                 continue
             report.status = "partial" if report.filled else "blocked"
             report.note = "Unsupported application page: no recognized review boundary or safe next step; continue manually."
             break
         else:
             report.status, report.note = "blocked", "Application step limit reached; continue manually."
+    except PreparationStopped as exc:
+        report.status, report.note = "blocked", str(exc)
+    except OSError:
+        report.status = "blocked"
+        report.note = "Recovery evidence could not be saved; review local storage before resuming. The application tab is retained."
     except TabClosed:
         report.status = "blocked"
         report.error = report.note = (
@@ -618,6 +919,13 @@ def fill_job(
                        (job.eligibility_reason or "marked not eligible") +
                        (f"\n{detail}" if detail else ""))
     report.cause = _outcome_cause(report)
+    if recovery is not None:
+        try:
+            recovery.journal.outcome(report.cause, report.status == "ready")
+        except OSError:
+            report.status, report.cause = "blocked", "unsupported_controls"
+            report.note = "Recovery evidence could not be saved; review local storage before resuming."
+        report.recovery = recovery.journal.events
     record_attempt(conn, job.id, report.status, blocker=report.note if report.status != "ready" else None,
                    context_id=page.context, url=page.bidi.redact(current_url))
     if job.fill_context_id and not resume_tab:
@@ -736,6 +1044,7 @@ def _fill_all(
     watch: Watch | None = None, background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
     approvals: Mapping[int, FillApproval] | None = None,
     eligibility_override: EligibilityOverride | None = None,
+    recovery_planner=None, on_report=None, stop=None,
 ) -> list[FillReport]:
     """Fill each job in its own new tab, pausing `pause` seconds between jobs.
 
@@ -749,17 +1058,23 @@ def _fill_all(
         raise ApprovalError(APPROVAL_CHANGED)
     reports: list[FillReport] = []
     first_tab: Tab | None = None
+    def publish():
+        if on_report is not None:
+            on_report(reports)
+
     for position, job_id in enumerate(job_ids):
         if position:
             _pause(pause, watch)
-        if watch is not None and watch.stop.is_set():
+        if (stop is not None and stop.is_set()) or (watch is not None and watch.stop.is_set()):
             break
         job = jobs_core.get_job(conn, job_id)
         if job is None:
             reports.append(_error_report(job_id, None, f"no job with id {job_id}"))
+            publish()
             continue
         if blocker := preparation_blocker(job, eligibility_override=eligibility_override):
             reports.append(_blocked_report(job, blocker))
+            publish()
             continue
         approval = approvals.get(job_id) if approvals is not None else None
         if approvals is not None:
@@ -769,6 +1084,7 @@ def _fill_all(
                 approval.resume(conn, settings, job)
             except ApprovalError as exc:
                 reports.append(_error_report(job_id, job, str(exc)))
+                publish()
                 continue
         say(f"[{position + 1}/{len(job_ids)}] {job.company_name} - {job.title}")
         try:
@@ -776,7 +1092,9 @@ def _fill_all(
             tab = retained or open_tab(bidi, background=background)
             first_tab = first_tab or tab
             report = fill_job(tab, conn, settings, config, job, resume_tab=retained is not None,
-                              approval=approval, eligibility_override=eligibility_override)
+                              approval=approval, eligibility_override=eligibility_override,
+                              recovery_planner=recovery_planner, progress=say,
+                              stop=stop if stop is not None else watch.stop if watch is not None else None)
             reports.append(report)
             if watch is not None:
                 watch.tabs[:] = [old for old in watch.tabs if old.context != tab.context and old.job_id != job.id]
@@ -800,7 +1118,9 @@ def _fill_all(
                         remaining_id, remaining,
                         "Browser disconnected before this job could be prepared; reconnect Firefox and review a new plan.",
                     ))
+                publish()
                 break
+        publish()
     if first_tab is not None and keep_open and not background:
         try:
             first_tab.activate()
@@ -816,6 +1136,7 @@ def _fill_and_watch(
     background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
     approvals: Mapping[int, FillApproval] | None = None,
     eligibility_override: EligibilityOverride | None = None,
+    recovery_planner=None, on_report=None, stop=None,
 ) -> list[FillReport]:
     """Fill, hand the reports over, then (with a Watch) watch the tabs in the same session.
 
@@ -827,7 +1148,8 @@ def _fill_and_watch(
         watch.tabs[:] = reattach(bidi, watch.tabs)
     reports = _fill_all(bidi, conn, settings, config, job_ids, say, keep_open=keep_open,
                         watch=watch, background=background, pause=pause, approvals=approvals,
-                        eligibility_override=eligibility_override)
+                        eligibility_override=eligibility_override, recovery_planner=recovery_planner,
+                        on_report=on_report, stop=stop)
     on_filled(reports)
     if watch is None or not watch.tabs or watch.stop.is_set():
         return reports
@@ -847,6 +1169,7 @@ def fill_jobs(
     progress: Callable[[str], None] | None = None,
     headless: bool = False,
     on_filled: Callable[[list[FillReport]], None] | None = None,
+    on_report: Callable[[list[FillReport]], None] | None = None,
     watch: Watch | None = None,
     background: bool = False,
     pause: float = PAUSE_BETWEEN_JOBS,
@@ -875,13 +1198,16 @@ def fill_jobs(
     It cannot be combined with reviewed web approvals.
     """
     say = progress or (lambda message: None)
+    stop = watch.stop if watch is not None else None
     watch = watch if watch is not None and watch.hours > 0 else None
     notify_filled = on_filled or (lambda reports: None)
     completed: list[FillReport] | None = None
+    recovery_ai = recovery_budget = None
 
     def report_filled(reports: list[FillReport]) -> None:
         nonlocal completed
         completed = reports
+        finish_model_reservation(conn, config, recovery_budget)
         notify_filled(reports)
 
     conn = connect(settings.db_path)
@@ -911,12 +1237,14 @@ def fill_jobs(
                 if job is None or approval is None:
                     raise ApprovalError(APPROVAL_CHANGED)
                 approval.resume(conn, settings, job)
+        recovery_ai, recovery_budget = model_planner(config)
         if headless:
             with headless_firefox(settings) as bidi:
                 return _fill_and_watch(bidi, conn, settings, config, job_ids, say,
                                        keep_open=watch is not None, on_filled=report_filled,
                                        watch=watch, background=background, pause=pause, approvals=approvals,
-                                       eligibility_override=eligibility_override)
+                                       eligibility_override=eligibility_override, recovery_planner=recovery_ai,
+                                       on_report=on_report, stop=stop)
         say("opening the kitty Firefox window")
         port = ensure_firefox(settings)
         try:
@@ -928,7 +1256,8 @@ def fill_jobs(
         try:
             return _fill_and_watch(bidi, conn, settings, config, job_ids, say, keep_open=True,
                                    on_filled=report_filled, watch=watch, background=background,
-                                   pause=pause, approvals=approvals, eligibility_override=eligibility_override)
+                                   pause=pause, approvals=approvals, eligibility_override=eligibility_override,
+                                   recovery_planner=recovery_ai, on_report=on_report, stop=stop)
         finally:
             bidi.close()                  # ends remote control only: the window and tabs stay
     except (BrowserError, BidiError) as exc:
@@ -949,4 +1278,7 @@ def fill_jobs(
         report_filled(reports)
         return reports
     finally:
-        conn.close()
+        try:
+            finish_model_reservation(conn, config, recovery_budget)
+        finally:
+            conn.close()

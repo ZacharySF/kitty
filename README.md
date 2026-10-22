@@ -7,9 +7,11 @@ track every application to its outcome.
 **Two rules the code enforces, not just documents:**
 
 1. It never submits an application. It opens pages; I submit.
-2. It never invents answers, qualifications, or facts about the applicant. Screening
-   answers come only from `config/answers.yaml`. The local resume editor creates
-   bounded, fact-preserving candidates for explicit review; it never silently promotes them.
+2. It never invents qualifications or facts about the applicant. Screening facts
+   come from `config/answers.yaml` and the saved profile. Recruitment-source choices
+   may use a plain offered source when the saved wording is unavailable. The local
+   resume editor creates bounded, fact-preserving candidates for explicit review;
+   it never silently promotes them.
 
 Stages 1-7 are built: tracker, discovery, LLM triage, the daily flow and apply
 session, a niche-company finder, Gmail status proposals with reports and export,
@@ -684,9 +686,10 @@ job outcomes. An empty process-holder diagnostic is not proof that restarting is
 safe. Preserve unsaved forms before restarting Firefox or reloading an employer
 page. Normal Reload affects that tab, not unrelated application tabs.
 
-It never guesses: a question with no answer in `answers.yaml` is left blank and
-goes into the unanswered-questions list on the Profile screen, so I answer it
-once. `match:` phrases on an answer make it apply to differently worded
+Applicant facts are never guessed: an unanswered screening question stays blank
+and goes into the Profile screen's unanswered list, so I answer it once. Facts
+persist in the private local configuration across sessions. `match:` phrases
+make a saved answer apply to differently worded
 versions of the same question ("authorized to work", "sponsorship"); "U.S.",
 "USA" and "United States" count as the same words. `choices:` records my exact
 wording for dropdowns that offer no plain "Yes". `companies:` and
@@ -699,6 +702,64 @@ a proven matching job jurisdiction; mixed, conflicting or unknown locations stay
 unanswered. Explicit field-country evidence is checked too. Citizenship, residence
 and birthplace are not substitutes for permission to work in another country.
 
+College enrollment does not establish age; a single citizenship or no previously
+held citizenship does not establish the absence of another current citizenship.
+An employer missing from a resume does not prove no employment or contractor
+history. Explicitly confirmed answers take precedence over profile inference.
+Current study and expected completion must not be recorded as an earned degree.
+
+Recruitment-source selectors keep an offered saved source first. Otherwise they
+prefer a plain company/careers website or online source from the actual options;
+referral, recruiter, agency and "Other—specify" choices are excluded. Learning
+questions and source-code questions are not recruitment-source selectors.
+
+Autonomy improvements follow the same-case loop: observe a real failure, isolate
+its cause, implement a reusable repair, add a consumer-visible regression check,
+then rerun the original case without submission. One-off browser scripts are
+verification work, not evidence that the application implements that capability.
+Oracle split month/year controls now retain receipts for observed native option
+selections even when the shared date row lacks its generic filled marker; a
+typed query alone remains insufficient. Required education/experience records
+are reported explicitly, but their editors still need additional workflow support.
+Verification must match the owned posting, account, employer sender and a fresh
+message; a query containing an old thread is not sufficient. CAPTCHA, unknown
+facts, sensitive consents and final submission remain explicit human boundaries.
+The persistent flowcharts and action gates are in
+[docs/AUTONOMY_PROTOCOL.md](docs/AUTONOMY_PROTOCOL.md), linked from the repository's
+agent instructions. Private checkpoints preserve evidence and next actions, not
+credentials or new authorization.
+
+The preparation worker has a bounded, local recovery agent. Each tool gets a fresh
+structural diagnosis and an observed outcome. It can wait for loading, restore its
+owned tab's focus, recommit invalid text only when it exactly matches a saved answer,
+retry freshly detected supported blank fields, or reload a proven pristine loading
+page. Different/manual values, consent and unsupported controls stay untouched.
+The agent cannot replay login/account creation, uploads or Submit. Failed/no-effect
+strategies are excluded on unchanged evidence; step/action limits, cycles, Stop and
+deadlines never reset. See `recovery` in `config/apply.yaml.example` and protocol
+section 8 for limits.
+
+Optional model-directed tool selection uses the configured OpenRouter model only
+after a fresh review and explicit per-run approval. Structural metadata and typed
+action/outcome history only; no page text, labels, answers, URLs, resumes, credentials or mail. Request/token/
+dollar caps share the existing daily AI ledger. Local guards still decide whether
+each proposed tool may execute. No API key or paid approval is needed locally.
+
+The UI exposes the current job/action, streams completed job reports and lists
+fixer receipts. SQLite `application_recovery_events` persists categorized actions
+and outcomes. `settings.data_dir/application-recovery/PROTOCOL_FEEDBACK.md` is an
+atomically regenerated, owner-only evidence report, not self-modifying code,
+executable instructions or model training.
+
+Recovery distinguishes inspection (`observed`), verified improvement (`completed`),
+and an action that returned without improving its target (`no_effect`). DOM signature
+churn or a nonempty write log does not prove acceptance. Recommitting invalid saved
+text is an agent strategy, not an unconditional second pass in the normal filler.
+
+Oracle choice-loading skeletons are not resume-upload indicators. Explicit
+resume-analysis indicators and unknown progress remain blocking; excluding a
+known lookup spinner does not waive required-field validation.
+
 Generic comboboxes first open their existing option list and select an exact
 matching value (including configured/profile aliases), then fall back to search
 where supported. Asynchronous location searches retain their loading wait.
@@ -708,6 +769,9 @@ lists stop with a selection-specific reason, without repeated answer clicks or
 search fallback. Radio decorations are allowed only inside the uniquely owned
 single-select portal; unrelated controls stay blocked. A committed selection
 after blur is required, not just a click.
+Text writes also require a fresh native value after blur. A cleared, replaced or
+rounded-away value is not credited as filled. Safe telephone formatting and
+native newline normalization retain equivalent-value receipts.
 Verified acronym decorations are equivalent to the full option name, so
 `ECE - Electrical and Computer Engineering` can match the saved full major.
 Ambiguous/disabled choices are refused; a major never matches a different program
@@ -745,6 +809,8 @@ authentication:
   account_mode: recognized       # login or create explicitly chooses an account action
   approved_origins:
     - https://example.wd5.myworkdayjobs.com
+  existing_account_origins: []   # never create another account on these origins
+  manual_account_origins: []     # no automatic credential writes on these origins
 ```
 
 `recognized` only handles an already displayed account form. Explicit `login` or
@@ -755,6 +821,11 @@ after an explicit account-not-found or already-registered error. An incorrect
 password or a conditional "Already have an account?" hint never triggers a retry.
 A sent action is not proof an account was created; the filler checks the next
 page and stops for email activation, verification or MFA.
+Account stages have bounded semantic waits and fresh tree, document and frame
+receipts before each credential write. Empty provisional navigation metadata is
+waited out read-only; a real unapproved document still fails closed. Email-first
+and password-next flows do not require a whole new account attempt. A rejected
+credential pair is not replayed by the same controller.
 
 Employer-password mode recognizes email/password account forms, confirmation
 fields and accessible component controls. Native credential submits require POST.

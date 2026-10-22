@@ -4,6 +4,11 @@ Local job-search discovery, preparation and tracking. See [README.md](README.md)
 for commands and [docs/SPEC.md](docs/SPEC.md) for behavior; its addendum takes
 precedence over historical stage descriptions.
 
+Before starting or resuming work, read [AGENTS.md](AGENTS.md) and follow the
+checkpoint gates in [docs/AUTONOMY_PROTOCOL.md](docs/AUTONOMY_PROTOCOL.md).
+Re-check the relevant gate before live-account actions and completion claims.
+The private checkpoint records progress, not new authorization.
+
 ## Hard rules
 
 - Never submit an application. Fill supported fields, stop for review, and only
@@ -13,9 +18,11 @@ precedence over historical stage descriptions.
   remain unanswered.
 - Explicitly user-authorized login and account-creation automation is permitted
   on approved employer/ATS origins using locally stored credentials. Never expose
-  credentials in logs or send them to unapproved origins. Consent, MFA, email
-  verification, CAPTCHAs and other challenges require human handling. Never bypass
-  site access controls or submit a job application.
+  credentials in logs or send them to unapproved origins. Sensitive consent, MFA,
+  CAPTCHAs and other challenges require human handling. Employer email-verification
+  handoffs require explicit authorization for the matching account and employer;
+  without it, leave verification to the user. This is not general mailbox or MFA
+  authorization. Never bypass site access controls or submit a job application.
 - Keep runtime configuration, watchlists, resumes, browser profiles, mail, cached
   responses, discovered jobs, application history and secrets out of Git. Publish
   only generic `.example` configuration and clearly synthetic fixtures.

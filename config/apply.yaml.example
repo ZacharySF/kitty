@@ -11,9 +11,32 @@ autofill_pause_seconds: 15
 # CLI/TUI account automation is off unless enabled here; the website can authorize a reviewed run.
 # Credentials come only from .private/application-credentials.env (APPLICATION_ACCOUNT_EMAIL,
 # APPLICATION_ACCOUNT_PASSWORD, chmod 600), and go only to exact approved HTTPS origins.
-# CAPTCHA, MFA, email verification, consent and the application's submit stay yours.
+# CAPTCHA, MFA, consent and the application's submit stay yours. Employer email
+# verification is separately opt-in below; this is not general mailbox access.
 authentication:
   enabled: false
   allow_account_creation: false
   account_mode: recognized  # login or create can follow one clear account-entry link
   approved_origins: []   # e.g. https://example.wd5.myworkdayjobs.com
+  existing_account_origins: []  # Declared/observed existing accounts are never recreated.
+  manual_account_origins: []   # Reuse signed-in sessions; do not retry rejected defaults.
+  email_verification:
+    enabled: false
+    # Populate only exact reviewed HTTPS employer origins and bare sender emails:
+    # scopes: [{origin: "https://careers.example.invalid", sender_email: "verify@example.invalid"}]
+    # No scopes are authorized by this public example. Authentication may remain
+    # disabled here when the website separately enables a reviewed run.
+    scopes: []
+    max_wait_seconds: 60
+    max_age_seconds: 600
+
+# Model assistance is separately approved for each reviewed web run. It reuses
+# the model, prices and shared daily budget in AI settings; no automatic paid calls.
+recovery:
+  enabled: true
+  max_actions: 6
+  max_recovery_seconds: 45
+  max_stall_seconds: 20
+  max_job_seconds: 300
+  max_model_requests: 4
+  max_cost_usd: 0.10

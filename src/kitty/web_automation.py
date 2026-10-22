@@ -46,6 +46,9 @@ def _authentication_plan(app, selected: list[dict], mode: str) -> tuple[dict, st
             problem = str(exc)
         else:
             binding = credential_binding(credentials)
+    verification = policy.email_verification.model_dump(mode="json")
+    verification["scopes"] = [scope for scope in verification["scopes"] if scope["origin"] in origins]
+    verification["enabled"] = bool(verification["enabled"] and verification["scopes"] and mode != "google")
     return {
         "enabled": policy.enabled,
         "allow_account_creation": mode in ("auto", "create") or (mode == "configured" and policy.allow_account_creation),
@@ -57,6 +60,9 @@ def _authentication_plan(app, selected: list[dict], mode: str) -> tuple[dict, st
         "google_email": email if mode == "google" else None,
         "google_available": google_available,
         "mode": mode,
+        "existing_account_origins": list(policy.existing_account_origins),
+        "manual_account_origins": list(policy.manual_account_origins),
+        "email_verification": verification,
     }, binding
 
 
@@ -101,6 +107,7 @@ class AutomationController:
             "running": False, "phase": "idle", "job_ids": [], "reports": [],
             "observed": [], "error": None, "started_at": None, "finished_at": None,
             "watched_count": 0,
+            "activity": None, "last_activity_at": None,
         }
 
     def snapshot(self) -> dict:
@@ -136,6 +143,7 @@ class AutomationController:
                 "running": True, "phase": "filling", "job_ids": list(plan["job_ids"]),
                 "reports": [], "observed": [], "error": None, "started_at": _stamp(),
                 "finished_at": None, "watched_count": 0,
+                "activity": None, "last_activity_at": _stamp(),
             }
             observe = watch and captured.apply.watch_hours > 0
             self._watch = Watch(
@@ -178,8 +186,9 @@ class AutomationController:
             safe.append(row)
         with self._lock:
             self._state["reports"] = safe
-            if reports and all(item.status == "error" for item in reports):
-                self._state["error"] = "Browser could not prepare any selected jobs"
+            if reports:
+                self._state["error"] = ("Browser could not prepare any selected jobs"
+                                        if all(item.status == "error" for item in reports) else None)
 
     def _watching(self, count: int) -> None:
         with self._lock:
@@ -193,6 +202,15 @@ class AutomationController:
             self._state["watched_count"] = len(self._tabs)
 
     def _progress(self, message: str) -> None:
+        import re
+        activity = re.fullmatch(r"(preparing|authenticating|verifying|recovering):([0-9]+)(?::(planning|inspect|wait|focus|recommit|retry|reload|handoff))?", message)
+        if activity:
+            stage, identifier, action = activity.groups()
+            with self._lock:
+                if self._state["phase"] != "stopping":
+                    self._state["phase"] = {"preparing": "filling", "authenticating": "authenticating", "verifying": "verifying", "recovering": "recovering"}[stage]
+                self._state["activity"] = {"job_id": int(identifier), "action": action or stage}
+                self._state["last_activity_at"] = _stamp()
         # Core catches watcher disconnects so prepared forms stay usable. Surface
         # the failed observation instead of presenting a healthy completion.
         if message.startswith("stopped watching:"):
@@ -208,7 +226,7 @@ class AutomationController:
                 watch.stop.set()
         try:
             filler.fill_jobs(self.settings, config, ids, watch=watch, progress=self._progress,
-                             on_filled=filled, background=background,
+                             on_filled=filled, on_report=self._filled, background=background,
                              pause=config.apply.autofill_pause_seconds, approvals=approvals)
         except filler.ApprovalError:
             with self._lock:
@@ -326,17 +344,21 @@ def preparation_plan(app, conn, body: dict) -> dict:
             "warnings": [] if available else ["No verified registered PDF; upload must be reviewed manually"],
         })
     authentication, credential_binding = _authentication_plan(app, selected, auth_mode)
+    from kitty import web_ai
+    recovery, recovery_model = web_ai.recovery_offer(app, conn)
     fingerprint = hashlib.sha256(json.dumps({
         "mode": mode, "track": track, "cap": cap,
         "jobs": [asdict(approval) for approval in approvals.values()],
         "available": [job["resume"]["available"] if job["resume"] else None for job in selected],
         "authentication": authentication, "credential_binding": credential_binding,
+        "recovery": recovery, "recovery_model": recovery_model,
         "config": {name: getattr(app.config, name).model_dump(mode="json")
                    for name in ("profile", "answers", "apply", "tracks")},
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return {"mode": mode, "track": track, "cap": cap, "job_ids": [job["id"] for job in selected],
             "jobs": selected, "left": left, "fingerprint": fingerprint, "_approvals": approvals,
             "authentication": authentication,
+            "recovery": recovery, "_recovery_model": recovery_model,
             "_credential_binding": credential_binding,
             "note": "Historical local snapshot only, not live readiness. Reviewed resume bytes, URLs, answers, account choice and saved credentials are bound to this plan; changes require review again. Unknown answers stay blank. Final application Submit stays manual; separately authorized account requests may be sent."}
 
@@ -367,11 +389,11 @@ def post(app, conn, path: str, body: dict) -> dict | None:
     if path in {"/api/automation/plan", "/api/automation/preflight", "/api/automation/start"}:
         allowed = {"mode", "track", "limit", "job_ids", "authentication_mode"}
         if path.endswith("/start"):
-            allowed |= {"confirmed", "watch", "background", "authorize_authentication", "fingerprint"}
+            allowed |= {"confirmed", "watch", "background", "authorize_authentication", "authorize_recovery_ai", "fingerprint"}
         _keys(body, allowed)
         if path.endswith("/start"):
             _confirm(app, body)
-            for key in ("watch", "background", "authorize_authentication"):
+            for key in ("watch", "background", "authorize_authentication", "authorize_recovery_ai"):
                 if key in body and type(body[key]) is not bool:
                     raise _error(400, f"{key} must be a boolean")
         captured = copy.deepcopy(app.config)
@@ -398,6 +420,9 @@ def post(app, conn, path: str, body: dict) -> dict | None:
                     allow_account_creation=auth["allow_account_creation"],
                     account_mode=(captured.apply.authentication.account_mode
                                   if mode == "configured" else mode),
+                    existing_account_origins=auth["existing_account_origins"],
+                    email_verification=auth["email_verification"],
+                    manual_account_origins=auth["manual_account_origins"],
                 )
                 policy._credential_binding = plan["_credential_binding"]
                 if mode == "google":
@@ -407,8 +432,18 @@ def post(app, conn, path: str, body: dict) -> dict | None:
             captured.apply.authentication = policy
             if any(job["resume"] and not job["resume"]["available"] for job in plan["jobs"]):
                 raise _error(409, "A selected resume is unavailable or changed; choose a verified PDF and review the plan again")
-            return app.automation.start(captured, plan, watch=body.get("watch", True),
-                                        background=body.get("background", plan["mode"] != "selected"))
+            grant = None
+            if body.get("authorize_recovery_ai") is True:
+                from kitty import web_ai
+                grant = web_ai.reserve_recovery(app, conn, plan["_recovery_model"])
+                captured.apply.recovery._model_grant = grant
+            try:
+                return app.automation.start(captured, plan, watch=body.get("watch", True),
+                                            background=body.get("background", plan["mode"] != "selected"))
+            except Exception:
+                if grant is not None:
+                    web_ai.cancel_recovery_reservation(conn, grant["reservation_id"])
+                raise
         return {**{key: value for key, value in plan.items() if not key.startswith("_")},
                 "demo": app.settings.demo, "watch_hours": captured.apply.watch_hours,
                 "firefox_configured": bool(app.settings.firefox_path),

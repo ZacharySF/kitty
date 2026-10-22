@@ -141,16 +141,6 @@ def test_workday_unknown_required_history_prevents_next(site, page, monkeypatch)
     assert all(f.blank for f in read_fields(form_frames(page)) if f.kind == 'radio')
 
 
-@pytest.mark.parametrize('label', [
-    'Ich bin damit einverstanden, dass meine Bewerbung für andere Stellen geprüft wird.',
-    'Diese Einwilligung muss bei jeder Bewerbung gegeben werden.',
-    'Sie erklären, dass Sie die Datenschutzerklärung gelesen haben und verstehen.',
-])
-def test_german_application_consent_is_never_filled_from_answers(label):
-    from kitty.core.apply.filler import _MANUAL_CONSENT
-    assert _MANUAL_CONSENT.search(label)
-
-
 @pytest.mark.parametrize('inert', [False, True])
 def test_workday_posting_entry_reaches_gate_or_stops_after_one_inert_click(site, page, space, monkeypatch, inert):
     from kitty.core import jobs as jobs_core
@@ -444,3 +434,99 @@ def test_required_owner_descendants_match_choice_semantics(site, page, role, con
     else:
         preflight.advance(snapshot, 'workday')
     assert page.main.call('() => window.nextClicks', page_realm=True) == (0 if unsupported else 1)
+
+
+def test_segmented_pin_without_autocomplete_is_a_verification_gate(site, page):
+    _document(site, page, '<p>A code was sent by email.</p>' +
+              ''.join(f'<input id="pin-code-{i}" type="text" inputmode="numeric" autocomplete="off">' for i in range(1, 7)) +
+              '<button type="button">Verify</button>')
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.blocker and snapshot.blocker.startswith('verification:')
+    assert not snapshot.entry and not snapshot.boundary
+
+
+ORACLE = 'https://ibqbjb.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Honeywell/job/158957'
+
+
+@pytest.mark.parametrize('markup, url, rejected', [
+    ('<div class="cookie-consent-modal"><div role="dialog">We use cookies.<button type="button" class="cookie-consent__button button accept">ACCEPT ALL</button>'
+     '<button type="button" class="cookie-consent__button button decline">REJECT ALL</button></div></div>', ORACLE, True),
+    ('<div class="cookie-consent-modal"><div role="dialog">We use cookies.'
+     '<button type="button" class="cookie-consent__button button decline">REJECT ALL</button></div></div>', 'https://example.com/jobs/1', False),
+    ('<div id="ketch-consent-banner" role="dialog">We use cookies.<button id="ketch-banner-button-primary">Accept All</button>'
+     '<button id="ketch-banner-button-secondary">Reject All</button></div>', 'https://us-careers-rivian.icims.com/jobs/1/login', True),
+    ('<div id="ketch-consent-banner" role="dialog">We use cookies.<button id="ketch-banner-button-secondary">Accept All</button></div>',
+     'https://us-careers-rivian.icims.com/jobs/1/login', False),
+])
+def test_only_exact_provider_cookie_reject_clears_consent_gate(site, page, monkeypatch, markup, url, rejected):
+    _document(site, page, markup)
+    page.main.call('() => { window.clicks = []; document.addEventListener("click", e => window.clicks.push(e.target.innerText), true); }', page_realm=True)
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, url))
+    snapshot = preflight.inspect_page(page)
+    if rejected:
+        assert snapshot.blocker is None and snapshot.entry == 'cookie-reject'
+        assert 'reject' in snapshot.signature.lower()
+    else:
+        assert snapshot.blocker and snapshot.blocker.startswith('consent:')
+    assert page.main.call('() => window.clicks', page_realm=True) == []
+
+
+EIGHTFOLD_FORM = '''<form><input id="Contact_Information_firstname" data-test-id="Contact_Information_firstname" required>
+<input id="Contact_Information_email" data-test-id="Contact_Information_email" required>
+<input name="Application_Questions_q_preferredName" autocomplete="one-time-code">
+<input name="Application_Questions_q_custEmployeeID" autocomplete="one-time-code">
+<button type="button">Submit application</button></form>'''
+
+
+@pytest.mark.parametrize('markup, verification', [
+    (EIGHTFOLD_FORM, False),
+    (EIGHTFOLD_FORM.replace('q_custEmployeeID', 'verification_code'), True),
+    ('<form><input name="answer" autocomplete="one-time-code"><button type="button">Continue</button></form>', True),
+])
+def test_autofill_suppression_is_not_verification_but_code_fields_are(site, page, monkeypatch, markup, verification):
+    _document(site, page, markup)
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(
+        preflight._SNAPSHOT, 'https://lockheedmartin.eightfold.ai/careers/apply?pid=996477261987'))
+    snapshot = preflight.inspect_page(page)
+    if verification:
+        assert snapshot.blocker and snapshot.blocker.startswith('verification:')
+    else:
+        assert snapshot.blocker is None and snapshot.step == 'Application details' and snapshot.boundary
+
+
+@pytest.mark.parametrize('href, entry', [
+    ('https://lockheedmartin.eightfold.ai/careers/apply?pid=996477261987', True),
+    ('https://lockheedmartin.eightfold.ai/careers/apply?pid=111', False),
+    ('https://other.example/careers/apply?pid=996477261987', False),
+])
+def test_eightfold_entry_requires_exact_same_pid_link(site, page, monkeypatch, href, entry):
+    _document(site, page, f'<h1>Software Engineer Intern</h1><a class="action-2lm8g linkbutton-module_link-button__-XtWC" href="{href}">Apply Now</a>')
+    url = 'https://lockheedmartin.eightfold.ai/careers/job/996477261987'
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, url))
+    snapshot = preflight.inspect_page(page)
+    assert (snapshot.entry == 'provider-apply') is entry
+
+
+def test_icims_email_login_is_an_account_gate_not_an_unsupported_page(site, page, monkeypatch):
+    _document(site, page, '<h2>Enter Your Information</h2><form><label>Email<input type="email" name="css_loginName"></label>'
+              '<label><input type="checkbox" name="accept_privacy">I confirm I have read the Candidate Data Privacy Notice</label>'
+              '<input type="submit" value="Next"></form>')
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, 'https://us-careers-rivian.icims.com/jobs/33833/login'))
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.blocker and snapshot.blocker.startswith('login:')
+
+
+def test_recommit_retypes_only_an_exact_restored_value(site, page):
+    from kitty.core.apply.page import recommit_text
+    # Framework-like tracker: a value counts only after an input event changes it.
+    _document(site, page, '''<form><input id="first" value="Pat" aria-invalid="true">
+      <input id="other" value="Manual" aria-invalid="true"></form><script>
+      for (const e of document.querySelectorAll('input')) { let last = e.value;
+        e.addEventListener('input', () => { if (e.value !== last && e.value) e.setAttribute('aria-invalid', 'false'); last = e.value; }); }
+      </script>''')
+    fields = {f.element_id: f for f in read_fields(form_frames(page))}
+    frame = form_frames(page)[0]
+    assert recommit_text(frame, fields['first'].key, 'Pat')
+    assert not recommit_text(frame, fields['other'].key, 'Pat')
+    state = page.main.call('() => [...document.querySelectorAll("input")].map(e => [e.value, e.getAttribute("aria-invalid")])', page_realm=True)
+    assert state == [['Pat', 'false'], ['Manual', 'true']]

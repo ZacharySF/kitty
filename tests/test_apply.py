@@ -853,6 +853,49 @@ def test_plan_takes_answers_first_then_profile_and_never_guesses(space):
     assert plan_for(_field("Gender", kind="select", options=("Male", "Female")), config) is None
 
 
+def test_college_and_single_citizenship_do_not_establish_other_screening_facts(space):
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question="Citizenship Status", answer="U.S. citizen"),
+        AnswerEntry(question="What citizenships have you previously held?", answer="None"),
+    ]))
+    for label in (
+        "Are you over the age of 18?",
+        "Please specify dual citizenship if applicable",
+        "Have you ever worked as an employee for Vertiv, or any other Vertiv Legal Entity?",
+        "Have you ever worked as a contractor for Vertiv (currently or previously)?",
+    ):
+        assert plan_for(_field(label), config, company="Vertiv") is None
+    confirmed = replace(config, answers=AnswersFile(answers=[
+        AnswerEntry(question="Are you over the age of 18?", answer="Yes"),
+        AnswerEntry(question="Please specify dual citizenship if applicable", answer="Not Applicable"),
+    ]))
+    assert plan_for(_field("Are you over the age of 18?"), confirmed).candidates == ("Yes",)
+    assert plan_for(_field("Please specify dual citizenship if applicable"), confirmed).candidates == ("Not Applicable",)
+
+
+def test_source_question_keeps_an_offered_saved_source_else_picks_a_plain_offered_one(space):
+    from kitty.core.apply.fields import pick_source_option
+
+    label = "How did you come to know about this opportunity?"
+    saved = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question="How did you hear about us?", answer="Company website",
+                    match=["how did you come to know about this opportunity"]),
+    ]))
+    offered = ("Select", "Employee Referral", "Company website", "LinkedIn")
+    assert plan_for(_field(label, kind="select", options=offered), saved).candidates[0] == "Company website"
+    others = ("Select one", "Employee Referral", "Other", "Vertiv Careers Website", "Indeed")
+    for config in (saved, space.config):
+        plan = plan_for(_field(label, kind="select", options=others), config)
+        assert plan.candidates == ("Vertiv Careers Website",)
+    # unopened search box: the saved answer is still typed
+    assert plan_for(_field(label, kind="combobox"), saved).candidates[0] == "Company website"
+    # referral, recruiter and "Other" ask for a name or explanation; never chosen
+    assert pick_source_option(("Employee Referral", "Recruiter", "Other - please specify")) is None
+    assert pick_source_option(("Employee Referral", "Billboard")) == "Billboard"
+    for label in ("How do you learn a programming language?", "Source code"):
+        assert plan_for(_field(label, kind="select", options=("Books", "Online", "Classroom")), space.config) is None
+
+
 def test_answer_match_phrases_cover_reworded_questions_but_ties_answer_nothing(space):
     answers = AnswersFile(answers=[
         AnswerEntry(question="Are you legally authorized to work in the US?", answer="Yes",
@@ -1732,6 +1775,52 @@ def test_pending_upload_never_becomes_ready_even_with_local_file_selected(
     _assert_nothing_submitted(page)
 
 
+@pytest.mark.parametrize("required_lookup", [False, True])
+def test_oracle_lookup_loading_is_not_a_resume_upload(space, page, monkeypatch, required_lookup):
+    from kitty.core.apply import filler
+    from kitty.core.apply.page import wait_for_uploads
+
+    job = _safety_form(space, page)
+    _attach_fixture_resume(space, page)
+    monkeypatch.setattr(filler, "wait_for_uploads", lambda tab: wait_for_uploads(tab, timeout_ms=0))
+    _js(page, """required => {
+        document.querySelector('[name=first_name]').value = 'Manual name';
+        const lookup = document.createElement('div');
+        lookup.className = 'cx-select-container';
+        if (required) lookup.setAttribute('aria-required', 'true');
+        lookup.innerHTML = '<div role="progressbar" tabindex="0" aria-busy="true" aria-label="Nationality Loading screen" class="skeleton cx-select--loading"></div>';
+        document.querySelector('#application').appendChild(lookup);
+    }""", required_lookup)
+    assert wait_for_uploads(page, timeout_ms=0)
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert result.status == ("blocked" if required_lookup else "ready")
+    assert (jobs_core.get_job(space.conn, job.id).fill_ready_at is None) == required_lookup
+    _assert_nothing_submitted(page)
+
+
+@pytest.mark.parametrize("indicator", [
+    '<div role="progressbar" class="cx-select--loading">Loading</div>',
+    '<div class="cx-select-container"><div role="progressbar">Uploading resume</div></div>',
+    '<div class="cx-select-container"><div role="progressbar" class="cx-select--loading resume-upload-working">Analyzing resume</div></div>',
+])
+def test_unproven_or_explicit_resume_progress_still_blocks_readiness(space, page, monkeypatch, indicator):
+    from kitty.core.apply import filler
+    from kitty.core.apply.page import wait_for_uploads
+
+    job = _safety_form(space, page)
+    _attach_fixture_resume(space, page)
+    monkeypatch.setattr(filler, "wait_for_uploads", lambda tab: wait_for_uploads(tab, timeout_ms=0))
+    _js(page, """html => {
+        document.querySelector('[name=first_name]').value = 'Manual name';
+        document.querySelector('#application').insertAdjacentHTML('beforeend', html);
+    }""", indicator)
+    assert not wait_for_uploads(page, timeout_ms=0)
+    result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert result.status == "blocked"
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+    _assert_nothing_submitted(page)
+
+
 def test_retained_manual_values_are_protected_before_resume_parser_can_run(space, page):
     job = _safety_form(space, page)
     _js(page, """() => {
@@ -2387,6 +2476,106 @@ def test_standard_oracle_form_preserves_answers_and_verifies_separate_attachment
             assert report.status == "blocked"
         else:
             assert report.status == "partial"
+
+
+@pytest.mark.parametrize("embedded", [False, True])
+@pytest.mark.parametrize("other_gate", ["unknown-profile-item", "custom-control"])
+def test_required_oracle_profile_records_clear_only_after_completion(space, page, embedded, other_gate):
+    from kitty.core.apply.preflight import inspect_page
+
+    job = _job(space, "unanswered")
+    page.goto(job.url)
+    _js(page, """async (embedded, otherGate) => {
+      window.submitted = 0; window.recordEditorClicks = 0;
+      document.body.innerHTML = `
+        <form class="apply-flow__content-form">
+          <apply-flow-section data-scroll-spy="apply-flow-sections" aria-hidden="false">
+            <label>First Name<input name="first_name" required></label>
+            <label>Import your profile from resume
+              <input class="apply-flow-profile-import-awli__file-upload" type="file"></label>
+            <label>Upload Resume<input class="file-form-element__input" name="attachment-upload"
+              type="file" aria-required="true"></label>
+          </apply-flow-section>
+          <apply-flow-section id="education" data-scroll-spy="apply-flow-sections" aria-hidden="false">
+            <button type="button" id="timeline-add-education-button"
+              data-profile-item-invalid="true">ADD EDUCATION</button>
+          </apply-flow-section>
+          <apply-flow-section id="experience" data-scroll-spy="apply-flow-sections" aria-hidden="false">
+            <button type="button" id="timeline-add-experience-button"
+              data-profile-item-invalid="true">ADD EXPERIENCE</button>
+          </apply-flow-section>
+          <apply-flow-section data-scroll-spy="apply-flow-sections" aria-hidden="false">
+            ${otherGate === 'unknown-profile-item'
+              ? `<button type="button" id="other-required-control" data-profile-item-invalid="true">
+                   ADD EDUCATION</button>`
+              : '<div id="other-required-control" aria-required="true">Required custom editor</div>'}
+          </apply-flow-section>
+          <button type="submit">SUBMIT</button>
+        </form>`;
+      document.querySelector('form').onsubmit = e => { e.preventDefault(); window.submitted++; };
+      document.addEventListener('click', e => {
+        if (e.target.closest('button[data-profile-item-invalid]')) window.recordEditorClicks++;
+      });
+      document.querySelector('[type=submit]').onclick = () => window.submitted++;
+      if (embedded) {
+        const section = document.querySelector('#education');
+        const frame = document.createElement('iframe');
+        const loaded = new Promise(resolve => frame.onload = resolve);
+        frame.srcdoc = '<form class="apply-flow__content-form">' + section.outerHTML +
+          '</form><script>window.recordEditorClicks=0;window.submitted=0;' +
+          'document.addEventListener("click",()=>window.recordEditorClicks++);' +
+          'document.addEventListener("submit",e=>{e.preventDefault();window.submitted++;});</script>';
+        section.remove();
+        document.body.append(frame);
+        await loaded;
+      }
+    }""", embedded, other_gate)
+    education_frame = page.frames()[1] if embedded else page.main
+    snapshot = inspect_page(page)
+    assert snapshot.frame.context == page.main.context
+    assert set(snapshot.missing_profile_sections) == {"education", "experience"}
+    assert snapshot.unsupported_required
+
+    first = "education" if embedded else "experience"
+    second = "experience" if embedded else "education"
+    for remaining, completed in [
+        ({"education", "experience"}, first), ({second}, second), (set(), None),
+    ]:
+        snapshot = inspect_page(page)
+        assert set(snapshot.missing_profile_sections) == remaining
+        assert snapshot.unsupported_required
+        report = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+        assert report.status == "blocked"
+        assert report.cause == "unsupported_controls"
+        assert report.unanswered == []
+        assert _logged(space) == set()
+        assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+        for section in remaining:
+            assert section in report.note.casefold()
+        if remaining:
+            assert "record" in report.note.casefold() and "manual" in report.note.casefold()
+        if completed:
+            frame = education_frame if completed == "education" else page.main
+            # The provider clears this flag after the applicant saves a record.
+            frame.call("""section => document.querySelector(
+              '#timeline-add-' + section + '-button').removeAttribute('data-profile-item-invalid')
+            """, completed)
+
+    # Clearing the known record gates must not hide another unsupported control.
+    assert inspect_page(page).missing_profile_sections == ()
+    _js(page, "() => document.querySelector('#other-required-control').remove()")
+    completed = inspect_page(page)
+    assert completed.missing_profile_sections == ()
+    assert not completed.unsupported_required
+    report = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
+    assert report.status == "ready" and report.cause == "ready"
+    assert report.unanswered == []
+    assert jobs_core.get_job(space.conn, job.id).fill_ready_at
+    assert _js(page, "() => [window.submitted, window.recordEditorClicks]") == [0, 0]
+    if embedded:
+        assert education_frame.call("() => [window.submitted, window.recordEditorClicks]",
+                                    page_realm=True) == [0, 0]
+    assert space.conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("exclusion", ["queue", "eligibility", "closed"])

@@ -8,7 +8,7 @@ import pytest
 from test_apply import FORMS, _js, firefox, page, space
 from kitty.core.apply.fields import is_resume_input, plan_for
 from kitty.core.apply.page import (
-    ChoiceSelectionError, UnsafeAction, fill_text, pick_from_list, read_fields, tick, upload,
+    ChoiceSelectionError, UnsafeAction, fill_text, pick_from_list, pick_from_search, read_fields, tick, upload,
 )
 
 
@@ -72,6 +72,134 @@ def test_oracle_grid_requires_real_commit_and_reachable_pointer(page, covered):
     assert next(f for f in read_fields([page.main]) if f.element_id == "country").blank
     assert _js(page, "() => window.submitted") == 0
     assert _js(page, "() => window.trusted") == ([] if covered else [True])
+
+
+def _oracle_date(page, *, part="month", mode="commit"):
+    values = {"month": "May", "year": "2030"}
+    markup = '<div class="datepicker-row quick-apply-flow-datepicker-row input-row input-row--with-placeholder input-row--has-picker">'
+    for component, value in values.items():
+        ident = f"{component}-endDate-46"
+        markup += f'''
+          <div class="cx-select-container">
+            <label for="{ident}">End Date {component.title()}</label>
+            <input id="{ident}" name="endDate" class="cx-select-input" role="combobox"
+              aria-haspopup="grid" aria-controls="{ident}-listbox" aria-expanded="false">
+            <button id="{ident}-reset-button" type="button" hidden>Remove {component}</button>
+            <div id="{ident}-listbox" role="grid" hidden>
+              <div role="row"><div role="gridcell" tabindex="-1" aria-selected="false">{value}</div></div>
+            </div>
+          </div>'''
+    markup += '''</div>
+      <div role="grid"><div role="gridcell" onclick="window.submitted++">May</div>
+        <div role="gridcell" onclick="window.submitted++">2030</div></div>'''
+    _load(page, markup, f'''
+      for (const box of document.querySelectorAll('input.cx-select-input')) {{
+        const list=document.getElementById(box.getAttribute('aria-controls'));
+        const reset=document.getElementById(box.id+'-reset-button');
+        const open=() => {{list.hidden=false;box.setAttribute('aria-expanded','true');}};
+        box.onclick=open;
+        box.onkeydown=e => {{if(e.key==='ArrowDown')open();}};
+        box.oninput=() => {{reset.hidden=!box.value;open();}};
+        reset.onclick=() => {{
+          box.value='';reset.hidden=true;
+          box.dispatchEvent(new Event('input',{{bubbles:true}}));
+          list.hidden=true;box.setAttribute('aria-expanded','false');
+        }};
+        list.querySelector('[role=gridcell]').onclick=e => {{
+          window.trusted.push(e.isTrusted);
+          if(!e.isTrusted)return;
+          if ({mode!r} !== 'noop') box.value=e.currentTarget.textContent;
+          reset.hidden=!box.value;
+          // A component may emit edits during the selection itself.
+          box.dispatchEvent(new Event('input',{{bubbles:true}}));
+          list.remove();box.setAttribute('aria-expanded','false');
+          if ({mode!r} === 'open') box.setAttribute('aria-expanded','true');
+          if ({mode!r} === 'invalid') box.setAttribute('aria-invalid','true');
+          if ({mode!r} === 'replace') box.replaceWith(box.cloneNode(true));
+          window.clickedState={{value:box.value,expanded:box.getAttribute('aria-expanded'),
+            resetVisible:!reset.hidden}};
+        }};
+      }}
+    ''')
+    return next(f for f in read_fields([page.main]) if f.element_id == f"{part}-endDate-46")
+
+
+@pytest.mark.parametrize(("part", "query", "expected"), [
+    ("month", None, "May"), ("year", None, "2030"), ("year", "20", "2030"),
+])
+def test_oracle_date_part_trusted_click_commits_before_shared_row_is_filled(
+    page, part, query, expected,
+):
+    from kitty.core.apply.page import _SUGGESTIONS_JS
+
+    field = _oracle_date(page, part=part)
+    assert field.blank
+    if query is None:
+        assert pick_from_list(page.main, field.key, (expected,), location=False)
+    else:
+        assert pick_from_search(page.main, field.key, query, (expected,), location=False)
+    assert page.main.call(_SUGGESTIONS_JS, field.key, 0, "selected") == [expected]
+    fields = {f.element_id: f for f in read_fields([page.main])}
+    assert not fields[field.element_id].blank and not fields[field.element_id].invalid
+    other = "year" if part == "month" else "month"
+    assert fields[f"{other}-endDate-46"].blank
+    assert not _js(page, "() => document.querySelector('.datepicker-row').classList.contains('input-row--filled')")
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("change", ["clear", "edit", "change-event", "silent-edit", "replace"])
+def test_oracle_date_part_receipt_is_revoked_by_clear_edit_or_replacement(page, change):
+    from kitty.core.apply.page import _SUGGESTIONS_JS
+
+    field = _oracle_date(page)
+    assert pick_from_list(page.main, field.key, ("May",), location=False)
+    if change == "clear":
+        reset = page.main.node("() => document.getElementById('month-endDate-46-reset-button')")
+        page.main.click(reset)
+    elif change == "edit":
+        fill_text(page.main, field.key, "Ma")
+        fill_text(page.main, field.key, "May")
+    elif change == "change-event":
+        _js(page, "() => document.getElementById('month-endDate-46').dispatchEvent(new Event('change',{bubbles:true}))")
+    elif change == "silent-edit":
+        _js(page, "() => document.getElementById('month-endDate-46').value='Ma'")
+        assert page.main.call(_SUGGESTIONS_JS, field.key, 0, "selected") == []
+        _js(page, "() => document.getElementById('month-endDate-46').value='May'")
+    else:
+        _js(page, "() => {const box=document.getElementById('month-endDate-46');box.replaceWith(box.cloneNode(true));}")
+    assert page.main.call(_SUGGESTIONS_JS, field.key, 0, "selected") == []
+    current = next(f for f in read_fields([page.main]) if f.element_id == field.element_id)
+    assert page.main.call(_SUGGESTIONS_JS, current.key, 0, "selected") == []
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize(("mode", "query"), [
+    ("commit", "May"), ("noop", "May"), ("noop", "Ma"),
+])
+def test_oracle_date_part_typed_query_and_visible_reset_do_not_prove_commit(page, mode, query):
+    from kitty.core.apply.page import _SUGGESTIONS_JS
+
+    field = _oracle_date(page, mode=mode)
+    assert not pick_from_search(page.main, field.key, query, ("May",), location=False)
+    assert _js(page, "() => window.clickedState") == {
+        "value": query, "expanded": "false", "resetVisible": True,
+    }
+    assert page.main.call(_SUGGESTIONS_JS, field.key, 0, "selected") == []
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize("mode", ["noop", "replace", "open", "invalid"])
+def test_oracle_date_part_requires_same_connected_valid_closed_native_value(page, mode):
+    from kitty.core.apply.page import _SUGGESTIONS_JS
+
+    field = _oracle_date(page, mode=mode)
+    assert not pick_from_list(page.main, field.key, ("May",), location=False)
+    assert page.main.call(_SUGGESTIONS_JS, field.key, 0, "selected") == []
+    assert _js(page, "() => window.trusted") == [True]
+    assert _js(page, "() => window.submitted") == 0
 
 
 def _workday(page):
@@ -1311,3 +1439,35 @@ def test_workday_native_uncommitted_saved_choice_stops_plan_without_retrying(pag
     assert _js(page, "() => document.querySelector('#source--source').value") == "stale query"
     assert _js(page, "() => document.querySelector('#manual').value") == "Do not replace"
     assert _js(page, "() => window.submitted") == 0
+
+
+@pytest.mark.parametrize('failure', ['blur_reset', 'replacement', 'rounded_identifier'])
+def test_text_commit_rejects_lost_or_changed_values(page, failure):
+    numeric = failure == 'rounded_identifier'
+    kind = 'number' if numeric else 'text'
+    _load(page, f'<label>Reference <input id="receipt" type="{kind}"></label>')
+    value = '9007199254740993' if numeric else 'Exact supplied value'
+    _js(page, """failure => {
+      const box = document.querySelector('#receipt');
+      box.addEventListener('blur', () => {
+        if (failure === 'blur_reset') box.value = '';
+        else if (failure === 'rounded_identifier') box.value = String(Number(box.value));
+        else { const replacement = box.cloneNode(true); box.replaceWith(replacement); }
+      }, {once: true});
+    }""", failure)
+    field = next(f for f in read_fields([page.main]) if f.element_id == 'receipt')
+    assert not fill_text(page.main, field.key, value)
+    assert _js(page, '() => window.submitted') == 0
+
+
+def test_text_receipt_accepts_native_line_endings_and_phone_formatting(page):
+    _load(page, '<label>Comment <textarea id=\"comment\"></textarea></label><label>Phone <input id=\"phone\" type=\"tel\"></label>')
+    _js(page, """() => document.querySelector('#phone').addEventListener('blur', event => {
+      event.target.value = '(555) 123-4567';
+    })""")
+    fields = {f.element_id: f for f in read_fields([page.main])}
+    assert fill_text(page.main, fields['comment'].key, 'First line' + chr(13) + chr(10) + 'Second line')
+    assert _js(page, '() => document.querySelector("#comment").value') == 'First line' + chr(10) + 'Second line'
+    assert fill_text(page.main, fields['phone'].key, '5551234567')
+    assert _js(page, '() => document.querySelector(\"#phone\").value') == '(555) 123-4567'
+    assert _js(page, '() => window.submitted') == 0

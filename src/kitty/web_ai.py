@@ -282,6 +282,77 @@ def _completion(app, review_id, plan, key):
         raise _error(502, 'AI request failed or timed out. It may have been billed; no automatic retry was made.') from None
 
 
+def recovery_offer(app, conn):
+    """Reuse AI settings/catalog/ledger; structural recovery has separate run approval."""
+    from kitty.web_server import APIError
+    policy = app.config.apply.recovery
+    public = {
+        'enabled': policy.enabled, 'max_actions': policy.max_actions,
+        'max_seconds': policy.max_recovery_seconds, 'max_job_seconds': policy.max_job_seconds,
+        'ai_available': False, 'model': None, 'maximum_cost_usd': policy.max_cost_usd,
+        'max_requests': policy.max_model_requests, 'problem': None,
+        'privacy_notice': 'Only structural counts and bounded tool results go to OpenRouter. No page text, applicant answers, credentials, screenshots or email. Human boundaries remain protected.',
+    }
+    private = None
+    if not policy.enabled or app.settings.demo or policy.max_cost_usd <= 0:
+        return public, private
+    try:
+        key = _key(app)
+        settings = _settings(conn)
+        model = conn.execute('SELECT * FROM ai_models WHERE id=?', (settings['model'],)).fetchone()
+        if not key or model is None:
+            public['problem'] = 'Configure a model and key in AI settings to enable model-assisted recovery.'
+        elif _now() - datetime.fromisoformat(model['fetched_at']) > timedelta(hours=24):
+            public['problem'] = 'Refresh model prices in AI settings before enabling model-assisted recovery.'
+        elif model['context_length'] < 8192:
+            public['problem'] = 'Choose a model with at least 8192 context tokens in AI settings.'
+        elif _spent(conn) + Decimal(str(policy.max_cost_usd)) > Decimal(settings['daily_budget_usd']):
+            public['problem'] = 'The recovery cap exceeds the remaining shared AI daily budget.'
+        else:
+            public.update(ai_available=True, model=model['id'])
+            private = {
+                'model': model['id'], 'prompt_price': model['prompt_price'],
+                'completion_price': model['completion_price'],
+                'maximum_cost_usd': str(policy.max_cost_usd),
+                'key_binding': hashlib.sha256(key.encode()).hexdigest(),
+                'settings_fingerprint': _fingerprint(app, settings),
+            }
+    except (APIError, ValueError, InvalidOperation):
+        public['problem'] = 'AI settings or price metadata need review; local recovery remains available.'
+    return public, private
+
+
+def reserve_recovery(app, conn, reviewed):
+    """Reserve the entire reviewed batch ceiling before its first possible request."""
+    if reviewed is None:
+        raise _error(409, 'Model-assisted recovery is unavailable; review AI settings first')
+    with transaction(conn, immediate=True):
+        settings = _settings(conn)
+        key = _key(app)
+        if (reviewed['settings_fingerprint'] != _fingerprint(app, settings) or
+                reviewed['key_binding'] != hashlib.sha256(key.encode()).hexdigest()):
+            raise _error(409, 'AI settings changed; review the preparation plan again')
+        cap = Decimal(reviewed['maximum_cost_usd'])
+        if _spent(conn) + cap > Decimal(settings['daily_budget_usd']):
+            raise _error(409, 'Recovery exceeds the remaining shared AI daily budget')
+        identifier = secrets.token_hex(16)
+        stamp = _now()
+        safe = {key: value for key, value in reviewed.items() if key not in {'key_binding', 'settings_fingerprint'}}
+        conn.execute(
+            "INSERT INTO ai_reviews(id,purpose,plan_json,fingerprint,expires_at,created_at,state,reserved_usd) VALUES(?,?,?,?,?,?,'running',?)",
+            (identifier, 'application-recovery', json.dumps(safe), reviewed['settings_fingerprint'],
+             (stamp + timedelta(minutes=10)).isoformat(), stamp.isoformat(), str(cap)),
+        )
+    return {**safe, 'key': key, 'reservation_id': identifier}
+
+
+def cancel_recovery_reservation(conn, identifier):
+    """Only for a controller that demonstrably failed before starting its worker."""
+    with transaction(conn):
+        conn.execute("UPDATE ai_reviews SET state='failed',reserved_usd='0',actual_usd='0',completed_at=? WHERE id=? AND purpose='application-recovery' AND state='running'",
+                     (_now().isoformat(), identifier))
+
+
 def get(app, conn, path, query):
     if path != '/api/ai/status':
         return None

@@ -307,6 +307,14 @@ def test_identity_answers_do_not_depend_on_job_jurisdiction(workspace, question)
     assert config.answer_for(question, jurisdiction="SG") is entry
 
 
+def test_postal_code_answer_never_fills_its_extension_subfield(workspace):
+    from kitty.core.apply.fields import lookup_answer
+    postal = AnswerEntry(question="Postal Code", answer="76001", match=["postal code"])
+    config = replace(workspace.config, answers=AnswersFile(answers=[postal]))
+    assert lookup_answer(config, "Postal Code") is postal
+    assert lookup_answer(config, "Postal Code Extension") is None
+
+
 def test_permission_scope_keeps_general_device_source_and_specificity(workspace):
     entries = [
         AnswerEntry(question="Do you have a device?", answer="Yes", match=["device"]),
@@ -359,3 +367,150 @@ def test_relative_application_country_clause_uses_only_proven_jurisdiction(
     )
     answer = lookup_answer(config, question, company="Vertiv", jurisdiction=jurisdiction)
     assert answer is (config.answers.answers[0] if expected else None)
+
+
+def test_record_and_verification_defaults_preserve_existing_callers(workspace):
+    from kitty.config import AuthenticationSettings
+
+    assert workspace.config.profile.education_records == []
+    assert workspace.config.profile.employment_records == []
+    auth = AuthenticationSettings()
+    assert not auth.email_verification.enabled and auth.email_verification.scopes == []
+    assert auth.email_verification.max_wait_seconds == 60
+    assert auth.email_verification.max_age_seconds == 600
+    assert AuthenticationSettings().email_verification is not auth.email_verification
+
+
+def test_explicit_record_models_preserve_in_progress_and_unknown_facts():
+    from kitty.config import EducationRecord, EmploymentRecord
+
+    education = EducationRecord(school="Example College", degree="Bachelor's Degree",
+                                expected_end_date="2034-06", current=True, graduated=False)
+    employment = EmploymentRecord(employer="Synthetic Workshop", title="Assistant",
+                                  start_date="2030-02", end_date="2031-07", current=False)
+    assert education.end_date is None and education.start_date is None
+    assert education.expected_end_date == "2034-06" and education.graduated is False
+    assert employment.employment_type is None
+    assert employment.description is None and employment.city is None
+
+
+@pytest.mark.parametrize("dates", [
+    {"start_date": ""}, {"end_date": "2031-00"}, {"end_date": "2031-13"},
+    {"start_date": "31-02"}, {"end_date": "2031-7"}, {"start_date": "2031-02-01"},
+    {"start_date": "0000-01"}, {"start_date": " 2031-02"},
+    {"start_date": "2032-02", "end_date": "2031-02"},
+])
+@pytest.mark.parametrize("kind", ["education", "employment"])
+def test_record_dates_reject_invalid_months_and_reverse_ranges(kind, dates):
+    from pydantic import ValidationError
+    from kitty.config import EducationRecord, EmploymentRecord
+
+    with pytest.raises(ValidationError):
+        if kind == "education":
+            EducationRecord(school="Example College", **dates)
+        else:
+            EmploymentRecord(employer="Synthetic Workshop", title="Assistant", **dates)
+
+
+@pytest.mark.parametrize("facts", [
+    {"current": True, "end_date": "2031-07"},
+    {"current": True, "graduated": True},
+    {"graduated": True, "expected_end_date": "2034-06"},
+    {"end_date": "2031-07", "expected_end_date": "2034-06"},
+    {"start_date": "2035-01", "expected_end_date": "2034-06"},
+    {"graduated": "yes"}, {"current": 1},
+])
+def test_education_rejects_contradictory_or_coerced_status(facts):
+    from pydantic import ValidationError
+    from kitty.config import EducationRecord
+
+    with pytest.raises(ValidationError):
+        EducationRecord(school="Example College", **facts)
+
+
+def test_employment_rejects_current_with_actual_end_and_blank_identity():
+    from pydantic import ValidationError
+    from kitty.config import EducationRecord, EmploymentRecord
+
+    for facts in ({"current": True, "end_date": "2031-07"}, {"current": "false"},
+                  {"employer": " "}, {"title": " "}):
+        with pytest.raises(ValidationError):
+            EmploymentRecord(**({"employer": "Synthetic Workshop", "title": "Assistant"} | facts))
+    with pytest.raises(ValidationError):
+        EducationRecord(school=" ")
+
+
+def test_profile_loads_explicit_records_without_flat_profile_synthesis(workspace, tmp_path):
+    data = workspace.config.profile.model_dump()
+    data["education_records"] = [{
+        "school": "Example College", "degree": "Bachelor's Degree",
+        "expected_end_date": "2034-06", "current": True, "graduated": False,
+    }]
+    data["employment_records"] = [{
+        "employer": "Synthetic Workshop", "title": "Assistant", "current": False,
+        "start_date": "2030-02", "end_date": "2031-07",
+    }]
+    path = tmp_path / "profile.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    profile = parse_file(path, Profile)
+    assert len(profile.education_records) == len(profile.employment_records) == 1
+    assert profile.education_records[0].graduated is False
+    assert profile.employment_records[0].employment_type is None
+
+
+def test_email_verification_scopes_are_exact_normalized_and_independent_of_auth_opt_in():
+    from kitty.config import AuthenticationSettings, EmailVerificationSettings
+
+    policy = AuthenticationSettings(email_verification=EmailVerificationSettings(
+        enabled=True, scopes=[{"origin": "https://CAREERS.example.invalid:443/",
+                               "sender_email": "Verify+application@MAIL.example.invalid"}]))
+    assert not policy.enabled
+    scope = policy.email_verification.scopes[0]
+    assert scope.origin == "https://careers.example.invalid"
+    assert scope.sender_email == "Verify+application@mail.example.invalid"
+
+
+@pytest.mark.parametrize("origin", [
+    "http://careers.example.invalid", "https://*.example.invalid",
+    "https://careers.example.invalid/login", "https://careers.example.invalid?x=1",
+    "https://user@careers.example.invalid", "https://careers.example.invalid/#fragment",
+    "https://careers.example.invalid\\evil", "https://careers.example.invalid\n",
+])
+def test_email_verification_rejects_unsafe_or_nonexact_origins(origin):
+    from pydantic import ValidationError
+    from kitty.config import EmailVerificationScope
+
+    with pytest.raises(ValidationError):
+        EmailVerificationScope(origin=origin, sender_email="verify@mail.example.invalid")
+
+
+@pytest.mark.parametrize("sender", [
+    "*@mail.example.invalid", "verify@*.example.invalid", "Name <verify@mail.example.invalid>",
+    "verify@mail.example.invalid\nBcc:other@example.invalid", "verify@mail.example.invalid ",
+    "verify@mail.example.invalid,other@example.invalid", "verify", "verify@-mail.example.invalid",
+    "verify..request@mail.example.invalid", ".verify@mail.example.invalid", "verify@localhost",
+])
+def test_email_verification_rejects_wildcard_display_name_and_unsafe_sender(sender):
+    from pydantic import ValidationError
+    from kitty.config import EmailVerificationScope
+
+    with pytest.raises(ValidationError):
+        EmailVerificationScope(origin="https://careers.example.invalid", sender_email=sender)
+
+
+@pytest.mark.parametrize("values", [
+    {"enabled": True}, {"enabled": "true"},
+    {"max_wait_seconds": 4}, {"max_wait_seconds": 121},
+    {"max_age_seconds": 29}, {"max_age_seconds": 901},
+    {"max_wait_seconds": True}, {"max_age_seconds": "600"},
+    {"scopes": [
+        {"origin": "https://CAREERS.example.invalid:443/", "sender_email": "one@mail.example.invalid"},
+        {"origin": "https://careers.example.invalid", "sender_email": "two@mail.example.invalid"},
+    ]},
+])
+def test_email_verification_requires_unique_scopes_and_bounded_strict_settings(values):
+    from pydantic import ValidationError
+    from kitty.config import EmailVerificationSettings
+
+    with pytest.raises(ValidationError):
+        EmailVerificationSettings(**values)

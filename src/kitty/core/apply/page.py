@@ -8,6 +8,8 @@ Closed roots remain unsupported; composed ancestor guards apply to every write.
 Workday's owned native list icon, category rows and back header are navigation
 only; complete hierarchy discovery, unique leaf matching and committed receipts
 remain the answer boundary.
+Oracle date parts can also retain an observed trusted option click's changed
+native value before the shared date row is complete; later edits revoke it.
 
 All JavaScript here runs in the filler's private sandbox (see bidi.py). The
 reader remembers each element it found under a key such as "e12" in a
@@ -16,6 +18,7 @@ sandbox-only map, so the page's own HTML is never marked.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -65,15 +68,23 @@ e => {
     if (!node.matches('button[type=button][aria-haspopup=listbox][name][id][value]') ||
         (node.hasAttribute('role') && node.getAttribute('role') !== 'combobox')) return false;
     const group = closest(node, '[data-automation-id^="formField-"][data-fkit-id]');
+    // Questionnaire questions label the single list button with a fieldset legend.
+    const legendOwned = group?.getAttribute('data-fkit-id') === node.id &&
+      group.querySelectorAll('fieldset > legend').length === 1 &&
+      group.querySelectorAll('button[aria-haspopup=listbox]').length === 1;
     return group?.getAttribute('data-fkit-id') === node.id &&
-      Array.from(group.querySelectorAll('label[for]')).some(label => label.htmlFor === node.id) &&
+      (Array.from(group.querySelectorAll('label[for]')).some(label => label.htmlFor === node.id) || legendOwned) &&
       Array.from(node.parentElement?.children || []).filter(sibling =>
         sibling.matches('input[type=text]') && sibling.value === node.value).length === 1;
   };
   if (closest(e, ':disabled, [disabled], [readonly], [aria-disabled=true], [aria-readonly=true], [inert]')) return false;
   const actions = 'button, a[href], input[type=submit], input[type=image], input[type=reset], [role=button], [role=link]';
+  // Lever wraps its resume input in a non-navigating <a href="#"> trigger; set_files
+  // never activates that ancestor, so it is not an action barrier for file inputs.
+  const fileTrigger = node => e.matches('input[type=file]') && node !== e &&
+    node.matches('a[href="#"]:not([target]):not([download])');
   for (let node = e; node; node = node.assignedSlot || node.parentElement || node.getRootNode()?.host) {
-    if (node.matches?.(actions) && !(node === e && (listButton(e) || e.matches('button[type=button][role=checkbox], button[type=button][role=radio], button[type=button][role=combobox], input[type=button][role=checkbox], input[type=button][role=radio]'))))
+    if (node.matches?.(actions) && !fileTrigger(node) && !(node === e && (listButton(e) || e.matches('button[type=button][role=checkbox], button[type=button][role=radio], button[type=button][role=combobox], input[type=button][role=checkbox], input[type=button][role=radio]'))))
       return false;
   }
   return true;
@@ -241,6 +252,24 @@ node => {
 """
 
 
+#: Oracle's split date fields share a row, so its filled class is not a per-part
+#: receipt. Keep any observed click proof tied to the exact native field/owner.
+_ORACLE_DATE_PART_JS = r"""
+box => {
+  if (!box?.isConnected ||
+      !box.matches('input.cx-select-input[role=combobox][aria-haspopup=grid]')) return null;
+  const part = box.id.split('-')[0], name = box.getAttribute('name');
+  if (!['month', 'year'].includes(part) || !name || !box.id.startsWith(part + '-' + name + '-')) return null;
+  const owner = closest(box, '.cx-select-container');
+  const row = closest(box, '.datepicker-row.quick-apply-flow-datepicker-row.input-row.input-row--has-picker');
+  const listId = box.getAttribute('aria-controls');
+  if (!owner || !row || !contains(row, owner) || !listId ||
+      queryAll('input.cx-select-input[role=combobox][aria-haspopup=grid]', owner).length !== 1) return null;
+  return {owner, row, id: box.id, name, listId, root: box.getRootNode()};
+}
+"""
+
+
 #: Committed values, never the combobox's editable search query. React Select
 #: uses both class-name prefixes and generated CSS suffixes across ATS versions.
 _COMBO_VALUES_JS = r"""
@@ -276,6 +305,18 @@ box => {""" + _DOM_HELPERS_JS + r"""
       return values;
     }
     const committed = globalThis.kittyCommittedCombos?.get(box);
+    if (committed?.date) {
+      const date = (""" + _ORACLE_DATE_PART_JS + r""")(box);
+      if (!date || !fieldSafe(box) || value !== committed.value ||
+          box.getAttribute('aria-expanded') !== 'false' || box.getAttribute('aria-invalid') === 'true' ||
+          date.owner !== committed.date.owner || date.row !== committed.date.row ||
+          date.id !== committed.date.id || date.name !== committed.date.name ||
+          date.listId !== committed.date.listId || date.root !== committed.date.root) {
+        globalThis.kittyCommittedCombos.delete(box);
+        return [];
+      }
+      return [committed.text];
+    }
     return committed && value === committed.value && box.getAttribute('aria-invalid') !== 'true'
       ? [committed.text] : [];
   }
@@ -432,8 +473,12 @@ _READ_FIELDS_JS = r"""
     const key = keyOf(el);
     const question = questionEl(el);
     const uploadGroup = type === 'file' ? uploadGroupFor(el) : null;
-    const resumeRegion = type === 'file' &&
-      closest(el, 'oc-resume-upload, [data-test="resume-upload"], [data-test="resume-upload-container"]');
+    // Eightfold's post-signup "Profile Bootstrapping": one file input beside
+    // its "Enter information" (manual) alternative is the resume upload.
+    const eightfoldOnboarding = !!document.querySelector('[data-testid=onboarding-manual-information-button]') &&
+      queryAll('input[type=file]').length === 1;
+    const resumeRegion = type === 'file' && (eightfoldOnboarding ||
+      closest(el, 'oc-resume-upload, [data-test="resume-upload"], [data-test="resume-upload-container"]'));
     const uploadLabel = uploadGroup ? ownLabel(uploadGroup) : '';
     const own = ownLabel(el);
     const group = choice ? closest(el, '[role=group], [role=radiogroup], fieldset') : null;
@@ -447,7 +492,12 @@ _READ_FIELDS_JS = r"""
     if (multiselectOf(el)) kind = 'combobox';
     const unownedPrompt = el.matches('input[data-uxi-widget-type=selectinput]') && !multiselectOf(el);
     if (unownedPrompt) kind = 'unsupported';
-    const label = uploadLabel || (resumeRegion ? 'Resume' : '') || groupLabel || (choice || type === 'file'
+    // Workday questionnaire list buttons say only "Select One Required"; the
+    // question is the group's fieldset legend.
+    const listLegend = tag === 'button' && el.matches('[aria-haspopup=listbox]') &&
+      /^select one\b/i.test(own) ? closest(el, '[data-automation-id^="formField-"]')?.querySelector('fieldset > legend') : null;
+    const label = uploadLabel || (resumeRegion ? 'Resume' : '') || groupLabel || (listLegend ? textOf(listLegend) : '') ||
+      (choice || type === 'file'
       ? (question ? textOf(question) : own)
       : (own || (question ? textOf(question) : '')));
     let blank = !el.value;
@@ -469,7 +519,8 @@ _READ_FIELDS_JS = r"""
                 group?.getAttribute('aria-required') === 'true' || group?.hasAttribute('required') ||
                 (el.getAttribute('aria-required') !== 'false' &&
                  (looksRequired(ownLabelEl(el)) || looksRequired(question) ||
-                  looksRequired(group && queryAll('legend', group)[0]))),
+                  looksRequired(group && queryAll('legend', group)[0]) || looksRequired(listLegend) ||
+                  (!!listLegend && /\brequired$/i.test(el.getAttribute('aria-label') || '')))),
       options: tag === 'select'
         ? Array.from(el.options).filter(o => o.value !== '' && !o.disabled && !o.parentElement.disabled).map(o => clean(o.textContent))
         : [],
@@ -712,13 +763,50 @@ _DISCARD_QUERY_JS = r"""
 """
 
 
-def fill_text(frame: Frame, key: str, value: str) -> None:
-    """Set a text box or textarea. It never presses Enter.
-
-    The box is blurred afterwards so date pickers and suggestion lists close.
-    """
+def fill_text(frame: Frame, key: str, value: str) -> bool:
+    """Write without Enter and verify the connected field after its blur handlers."""
     _guard(frame, key)
     frame.call(_FILL_JS, key, value)
+    return bool(frame.call(r"""(key, expected) => {""" + _DOM_HELPERS_JS + r"""
+      const el = globalThis.kittyByKey.get(key);
+      if (!fieldSafe(el) || !el.matches('input:not([type=password]),textarea')) return false;
+      const actual = el.value;
+      if (actual === expected.replace(/\r\n?/g, String.fromCharCode(10))) return true;
+      if (el.type === 'tel' || el.inputMode === 'tel') {
+        const digits = value => value.replace(/[^0-9]/g, '');
+        return !!digits(expected) && digits(actual) === digits(expected);
+      }
+      return el.type === 'number' && expected.trim() !== '' &&
+        Number.isSafeInteger(Number(expected)) && el.valueAsNumber === Number(expected);
+    }""", key, value))
+
+
+def can_recommit_text(frame: Frame, key: str, value: str) -> bool:
+    """Observe an exact saved invalid value without changing a manual value."""
+    return frame.call(r"""(key, value) => {""" + _DOM_HELPERS_JS + r"""
+      const el = globalThis.kittyByKey.get(key);
+      return fieldSafe(el) && el.matches('input:not([type=password]), textarea') &&
+        el.value === value && !el.readOnly &&
+        (el.getAttribute('aria-invalid') === 'true' || !el.checkValidity());
+    }""", key, value) is True
+
+
+def recommit_text(frame: Frame, key: str, value: str) -> bool:
+    """Re-enter a value the field already shows verbatim so the framework records it.
+
+    Some ATSs (Eightfold) restore saved DOM values that their own state still
+    treats as blank. Only an exact current match is retyped; any other existing
+    value is never touched.
+    """
+    _guard(frame, key)
+    if frame.call(r"""(key, value) => {""" + _DOM_HELPERS_JS + r"""
+      const el = globalThis.kittyByKey.get(key);
+      return fieldSafe(el) && el.matches('input:not([type=password]), textarea') && el.value === value;
+    }""", key, value) is not True:
+        return False
+    # Clear first: frameworks ignore an input event whose value matches their tracker.
+    frame.call(_FILL_JS, key, "")
+    return fill_text(frame, key, value)
 
 
 _SELECT_JS = r"""
@@ -838,6 +926,23 @@ _LOADING_SELECTOR = ".dropdown-loading-results, [aria-busy=true]"
 _SUGGESTIONS_JS = (r"""
 (key, index, want, expected = null) => {""" + _DOM_HELPERS_JS + r"""
   const box = globalThis.kittyByKey.get(key);
+  if (want === 'commit') {
+    const attempts = globalThis.kittyOracleDateClicks;
+    const attempt = attempts?.get(box);
+    attempts?.delete(box);
+    if (attempt?.observed) {
+      const date = (""" + _ORACLE_DATE_PART_JS + r""")(box), before = attempt.date;
+      const value = (box.value || '').replace(/\s+/g, ' ').trim();
+      // Only the just-completed native click can mint this receipt. Closing a
+      // typed query or clicking a no-op option is not a value transition.
+      if (date && fieldSafe(box) && date.owner === before.owner && date.row === before.row &&
+          date.id === before.id && date.name === before.name && date.listId === before.listId &&
+          date.root === before.root && attempt.before !== value && value === attempt.text &&
+          box.getAttribute('aria-expanded') === 'false' && box.getAttribute('aria-invalid') !== 'true')
+        (globalThis.kittyCommittedCombos ??= new WeakMap()).set(box, {value, text: attempt.text, date});
+    }
+    return (""" + _COMBO_VALUES_JS + r""")(box);
+  }
   if (want === 'selected') return (""" + _COMBO_VALUES_JS + r""")(box);
   if (!fieldSafe(box)) return want === 'list' ? {texts: [], loading: false} : null;
   const listId = box.getAttribute('aria-controls') || box.getAttribute('aria-owns');
@@ -868,7 +973,7 @@ _SUGGESTIONS_JS = (r"""
       queryAll('input', option).length === 1;
   };
   const hasActions = option => queryAll('button, input, textarea, select, a[href], [role=button], [role=link], [role=checkbox], [role=radio], [role=combobox]', option)
-    .some(control => !workdayOptionRadio(option, control));
+    .some(control => !(control === option && listButton(option)) && !workdayOptionRadio(option, control));
   const workdayLeaf = option => {
     if (!multiselect) return true;
     const items = queryAll('[data-uxi-widget-type=multiselectlistitem]', option);
@@ -879,8 +984,12 @@ _SUGGESTIONS_JS = (r"""
       (!items[0].hasAttribute('data-uxi-multiselectlistitem-type') ||
         items[0].getAttribute('data-uxi-multiselectlistitem-type') === '1');
   };
+  // Eightfold renders options as <button type=button role=option> inside the
+  // listbox named by aria-controls; such a button only chooses that option.
+  const listButton = e => !!listId && scope?.getAttribute('role') === 'listbox' &&
+    e.matches('button[type=button][role=option]') && !closest(e, '[aria-disabled=true], [inert]');
   const options = scope ? queryAll(selector, scope).filter(
-    e => shown(e) && fieldSafe(e) && !closest(e, '[data-automation-id=selectedItemList]') &&
+    e => shown(e) && (fieldSafe(e) || listButton(e)) && !closest(e, '[data-automation-id=selectedItemList]') &&
       e.getAttribute('aria-disabled') !== 'true' && !hasActions(e) && workdayLeaf(e)
   ) : [];
   if (want === 'list') {
@@ -902,6 +1011,27 @@ _SUGGESTIONS_JS = (r"""
       if (!choices.has(box)) choices.set(box, new Map());
       choices.get(box).set(identity, title(option));
     }
+    const date = oracleGrid && (""" + _ORACLE_DATE_PART_JS + r""")(box);
+    if (date && box.getAttribute('aria-expanded') === 'true') {
+      const receipts = globalThis.kittyCommittedCombos ??= new WeakMap();
+      const watched = globalThis.kittyOracleDateInputs ??= new WeakSet();
+      if (!watched.has(box)) {
+        watched.add(box);
+        for (const type of ['input', 'change'])
+          box.addEventListener(type, () => receipts.delete(box), {capture: true});
+      }
+      const attempts = globalThis.kittyOracleDateClicks ??= new WeakMap();
+      const attempt = {date, text: expected, observed: false};
+      attempts.set(box, attempt);
+      option.addEventListener('click', event => {
+        if (attempts.get(box) !== attempt || !event.isTrusted ||
+            !fieldSafe(box) || !fieldSafe(option) || hasActions(option) ||
+            reference(box, date.listId) !== scope || !contains(scope, option) ||
+            box.getAttribute('aria-expanded') !== 'true' || title(option) !== expected) return;
+        attempt.before = box.value.replace(/\s+/g, ' ').trim();
+        attempt.observed = true;
+      }, {capture: true, once: true});
+    }
   }
   else if (targets.get(key) !== option) return null;
   if (want === 'node') return option;
@@ -920,12 +1050,20 @@ _SUGGESTIONS_JS = (r"""
   const hit = r.width && r.height
     ? hitAt(r.left + r.width / 2, r.top + r.height / 2) : null;
   const actionHit = closest(hit, 'button, input, a[href], [role=button], [role=link]');
+  // Eightfold renders each option as <button type=button role=option> inside the
+  // listbox the box controls (aria-controls); such a button only chooses.
+  const controlled = box.getAttribute('aria-controls') && box.getRootNode().getElementById?.(box.getAttribute('aria-controls'));
+  // type=button never submits its form, so form ownership is harmless here.
+  const ownedButton = option.matches('button[type=button][role=option]') &&
+    !!controlled && controlled.getAttribute('role') === 'listbox' && controlled.contains(option) &&
+    !option.querySelector('button, input, a[href], [role=button], [role=link]');
   return {
+    ownedButton,
     role: oracleGrid && option.getAttribute('role') === 'gridcell' ? 'option' : option.getAttribute('role'), tag: option.tagName.toLowerCase(),
     css: String(option.className), text: option.innerText || composedText(option),
     pointerOnly: oracleGrid || box.matches('button[type=button][aria-haspopup=listbox], input[data-uxi-widget-type=selectinput]'),
     reachable: !!hit && contains(option, hit) &&
-      (!actionHit || workdayOptionRadio(option, actionHit)),
+      (!actionHit || workdayOptionRadio(option, actionHit) || (ownedButton && actionHit === option)),
   };
 }
 """).replace("__CLASS__", _SUGGESTION_CLASS).replace("__LOADING__", _LOADING_SELECTOR)
@@ -970,10 +1108,13 @@ _WORKDAY_MENU_JS = r"""
   const prompt = prompts.length && shown(prompts[0]) ? prompts[0] : null;
   if (want === 'open') return !prompt && reachable(icons[0]) ? icons[0] : null;
   const title = e => (e.innerText || composedText(e)).replace(/\s+/g, ' ').trim();
-  const categories = prompt ? queryAll('[role=option][data-automation-id=menuItem][data-association-widget]', prompt)
+  // Newer Workday tenants omit data-association-widget on category rows; the
+  // single owned leaf node (multiselect-id === owner.id) still binds the row.
+  const categories = prompt ? queryAll('[role=option][data-automation-id=menuItem]', prompt)
     .filter(e => {
       const leaves = queryAll('[data-automation-id=promptLeafNode][data-uxi-widget-type=multiselectlistitem]', e);
-      return e.getAttribute('data-association-widget') === owner.id && safe(e) && shown(e) &&
+      const association = e.getAttribute('data-association-widget');
+      return (association === null || association === owner.id) && safe(e) && shown(e) &&
         leaves.length === 1 && leaves[0].getAttribute('data-uxi-multiselect-id') === owner.id &&
         leaves[0].getAttribute('data-uxi-multiselectlistitem-type') === '2' &&
         leaves[0].getAttribute('data-uxi-multiselectlistitem-hassidecharm') === 'true';
@@ -1047,6 +1188,25 @@ def _pick_workday_list(
         raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete") from exc
 
 
+_COMPANY_SITE_ANSWER = re.compile(r"company (?:careers? )?(?:web ?site|site|page)")
+_BRANDED_COMPANY_SITE = re.compile(
+    r"(?:[\w&.\-]+ ){0,3}(?:corporate|company)(?: careers?)? (?:web ?site|site|page)", re.I)
+
+
+def _menu_control(frame: Frame, key: str, want: str, expected: str = "") -> str | None:
+    """Resolve an owned menu control, waiting out Workday's row slide animation.
+
+    Rows are hit-tested; during the back/forward transition another row covers
+    the target. Only resolution is retried, never a click.
+    """
+    deadline = time.monotonic() + 2.0
+    while True:
+        target = frame.node(_WORKDAY_MENU_JS, key, want, expected)
+        if target is not None or time.monotonic() >= deadline:
+            return target
+        time.sleep(0.15)
+
+
 def _choose_workday_leaf(
     frame: Frame, key: str, candidates: tuple[str, ...], state: dict[str, Any], *,
     location: bool, graduation: str | None,
@@ -1066,7 +1226,7 @@ def _choose_workday_leaf(
             raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
         if not state["back"]:
             break
-        back = frame.node(_WORKDAY_MENU_JS, key, "back")
+        back = _menu_control(frame, key, "back")
         if back is None:
             raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
         frame.click(back)
@@ -1091,7 +1251,7 @@ def _choose_workday_leaf(
         for category in categories:
             if remaining <= 0:
                 return False
-            target = frame.node(_WORKDAY_MENU_JS, key, "category", category)
+            target = _menu_control(frame, key, "category", category)
             if target is None:
                 return False
             remaining -= 1
@@ -1101,7 +1261,7 @@ def _choose_workday_leaf(
                 return False
             # Only an explicitly owned clickable header proves "back". Never
             # click an answer or guess a breadcrumb from its visible text.
-            target = frame.node(_WORKDAY_MENU_JS, key, "back")
+            target = _menu_control(frame, key, "back")
             if target is None:
                 return False
             frame.click(target)
@@ -1120,6 +1280,10 @@ def _choose_workday_leaf(
         if match_option(candidates, [text], location=location, prefix=False,
                         graduation=graduation) is not None
     ]
+    if not matches and any(_COMPANY_SITE_ANSWER.fullmatch(" ".join(c.casefold().split())) for c in candidates):
+        # Tenants brand the company-site source ("AV Corporate Website"). A saved
+        # "company careers site" answer means that leaf only when it is unique.
+        matches = [(path, text) for path, text in leaves if _BRANDED_COMPANY_SITE.fullmatch(text.strip())]
     if not matches:
         raise ChoiceSelectionError("Workday saved choice was not found in the fully inspected hierarchy")
     if len(matches) != 1:
@@ -1129,7 +1293,7 @@ def _choose_workday_leaf(
     if current is None or current["signature"] != state["signature"]:
         raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
     for depth, category in enumerate(path, 1):
-        target = frame.node(_WORKDAY_MENU_JS, key, "category", category)
+        target = _menu_control(frame, key, "category", category)
         if target is None:
             raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
         frame.click(target)
@@ -1234,12 +1398,21 @@ def _click_match(
         frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
     role, tag, css = found["role"], found["tag"], found["css"]
-    if (role != "option" and _SUGGESTION_CLASS not in css) or tag in ("button", "input", "a"):
+    if (role != "option" and _SUGGESTION_CLASS not in css) or tag in ("input", "a") or (
+            tag == "button" and not found.get("ownedButton")):
         raise UnsafeAction(f"refusing to click <{tag} role={role}>")
     option = frame.node(_SUGGESTIONS_JS, key, index, "node", options[index])
     if option is None:
         frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
+    # Workday slides child menus in; a pointer-only row is briefly covered.
+    settle_until = time.monotonic() + 2.0
+    while not found["reachable"] and found.get("pointerOnly") and time.monotonic() < settle_until:
+        time.sleep(0.15)
+        again = frame.call(_SUGGESTIONS_JS, key, index, "check", options[index])
+        if again is None or _option_title(again["text"]) != options[index]:
+            break
+        found = again
     if not found["reachable"] and found.get("pointerOnly"):
         frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
@@ -1251,7 +1424,7 @@ def _click_match(
     except BidiError:
         frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         raise
-    frame.call(_SUGGESTIONS_JS, key, 0, "selected")
+    frame.call(_SUGGESTIONS_JS, key, 0, "commit")
     frame.call("(key) => globalThis.kittyByKey.get(key).blur()", key)
     deadline = time.monotonic() + 0.8
     while time.monotonic() < deadline:
@@ -1299,7 +1472,11 @@ _BUSY_JS = r"""
 () => {""" + _DOM_HELPERS_JS + r"""
   return queryAll('.resume-upload-working, [role=progressbar]')
     .some(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' &&
-      !closest(e, '[data-automation-id=progressBar]'));
+      !closest(e, '[data-automation-id=progressBar]') &&
+      // Oracle lookup skeletons load choices, not a resume. Keep explicit
+      // resume-analysis indicators blocking even inside a lookup container.
+      !(e.matches('.cx-select--loading') && closest(e, '.cx-select-container') &&
+        !e.matches('.resume-upload-working')));
 }
 """
 

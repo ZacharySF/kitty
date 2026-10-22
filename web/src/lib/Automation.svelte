@@ -30,6 +30,7 @@
     error: string | null;
     resumed: boolean;
     resume_label: string | null;
+    recovery?: { action: string; result: string; reason: string; step: number }[];
   };
   type Status = {
     running: boolean;
@@ -39,6 +40,8 @@
     observed: { job_id: number; label: string }[];
     error: string | null;
     watched_count: number;
+    activity?: { job_id: number; action: string } | null;
+    last_activity_at?: string | null;
   };
   type Plan = {
     fingerprint: string;
@@ -74,6 +77,17 @@
       google_email: string | null;
       google_available: boolean;
       mode: "auto" | "configured" | "login" | "create" | "google";
+      existing_account_origins: string[];
+      manual_account_origins: string[];
+      email_verification?: {
+        enabled: boolean; scopes: {origin: string; sender_email: string}[];
+        max_wait_seconds: number; max_age_seconds: number;
+      };
+    };
+    recovery?: {
+      enabled: boolean; max_actions: number; max_seconds: number; max_job_seconds: number;
+      ai_available: boolean; model: string | null; maximum_cost_usd: number;
+      max_requests: number; problem: string | null; privacy_notice: string;
     };
   };
   let status = $state<Status | null>(null);
@@ -83,12 +97,16 @@
   let limit = $state(10);
   let watching = $state(true);
   let allowAuth = $state(false);
+  let allowRecoveryAI = $state(false);
   let showQuestions = $state(false);
   let showOptions = $state(false);
   const labels: Record<string, string> = {
     idle: "Not running",
     starting: "Opening Firefox",
     filling: "Filling known answers",
+    authenticating: "Accessing employer account",
+    verifying: "Verifying employer email",
+    recovering: "Fixer checking stalled form",
     watching: "Waiting for your submission confirmation",
     stopping: "Stopping safely",
     stopped: "Stopped",
@@ -150,6 +168,7 @@
     if (!pane.active) {
       clearTimeout(timer);
       allowAuth = false;
+      allowRecoveryAI = false;
       plan = null;
       if (dialog?.open) dialog.close();
     } else if (mounted) void refresh();
@@ -162,6 +181,7 @@
     busy = true;
     error = "";
     allowAuth = false;
+    allowRecoveryAI = false;
     try {
       planInput = {
         mode,
@@ -195,6 +215,7 @@
         confirmed: true,
         watch: watching,
         authorize_authentication: allowAuth,
+        authorize_recovery_ai: allowRecoveryAI,
         fingerprint: plan.fingerprint,
       });
       dialog.close();
@@ -374,6 +395,9 @@
           {status.watched_count} tabs watched</span
         >{/if}
     </div>
+    {#if status.running && status.activity}<p class="muted" role="status">
+        Job #{status.activity.job_id} · {status.activity.action.replaceAll("_", " ")}
+      </p>{/if}
     {#if status.phase === "stopping"}<p class="muted">
         Stopping at the next safe boundary; an in-flight form operation may
         finish. Application tabs stay open.
@@ -404,6 +428,14 @@
               {#if report.note || report.error}<p class="muted">
                   {report.error || report.note}
                 </p>{/if}
+              {#if report.recovery?.some(event => event.action !== "outcome")}
+                <details>
+                  <summary>Fixer activity</summary>
+                  <ul>{#each report.recovery.filter(event => event.result !== "planned" && event.action !== "outcome") as event}
+                    <li>{event.action} · {event.result.replaceAll("_", " ")} · {event.reason.replaceAll("_", " ")}</li>
+                  {/each}</ul>
+                </details>
+              {/if}
               {#if ["partial", "blocked", "error"].includes(report.status) &&
                 !/^(closed|listing):/.test(report.note || "")}
                 {#if /^(login|consent|captcha|verification):/.test(report.note || "")}
@@ -522,6 +554,16 @@
       <details>
         <summary>Approved account destinations</summary>
         <ul>{#each plan.authentication.approved_origins as origin}<li><code>{origin}</code></li>{:else}<li>No eligible HTTPS destination.</li>{/each}</ul>
+        {#if plan.authentication.manual_account_origins?.length}
+          <p class="muted">These accounts stay manual; existing signed-in sessions can be reused:</p>
+          <ul>{#each plan.authentication.manual_account_origins as origin}<li><code>{origin}</code></li>{/each}</ul>
+        {/if}
+        {#if plan.authentication.email_verification?.enabled}
+          <p class="muted">Scoped Gmail verification:</p>
+          <ul>{#each plan.authentication.email_verification.scopes as scope}
+            <li><code>{scope.origin}</code> · <code>{scope.sender_email}</code></li>
+          {/each}</ul>
+        {/if}
       </details>
       <label class="check">
         <input type="checkbox" bind:checked={allowAuth} disabled={busy ||
@@ -533,9 +575,32 @@
         {#if plan.authentication.allow_account_creation && plan.authentication.mode !== "google"}
           Required routine account terms are included.
         {/if}
-        Other consent, CAPTCHA, MFA, email verification and final submission stay manual.
+        {#if plan.authentication.email_verification?.enabled}
+          Fresh matching employer emails may be read in your signed-in Gmail session. Codes and mail are not sent to AI.
+          Other consent, CAPTCHA, non-email security checks and final submission stay manual.
+        {:else}
+          Other consent, CAPTCHA, MFA, email verification and final submission stay manual.
+        {/if}
       </p>
     </div>
+    {#if plan.recovery}
+      <div class="auth">
+        <h4>Stall recovery</h4>
+        <p class="muted">{plan.recovery.enabled
+          ? `Local fixer · up to ${plan.recovery.max_actions} actions / ${plan.recovery.max_seconds}s. No credentials or submissions are replayed.`
+          : "Automatic recovery is disabled."}</p>
+        <label class="check">
+          <input type="checkbox" bind:checked={allowRecoveryAI} disabled={busy || !plan.recovery.ai_available} />
+          Allow model-assisted recovery{plan.recovery.model ? ` · ${plan.recovery.model}` : ""}
+          · ${plan.recovery.maximum_cost_usd.toFixed(2)} maximum for this entire batch
+        </label>
+        {#if plan.recovery.problem}<p class="muted">{plan.recovery.problem}</p>{/if}
+        <details><summary>Recovery permissions</summary>
+          <p class="muted">{plan.recovery.privacy_notice}</p>
+          <p class="muted">Inspect fresh field state, wait for loading, restore the owned tab’s focus, recommit an exact saved invalid value, retry supported blank fields, or reload a proven pristine page. Ineffective strategies are not repeated on unchanged evidence. Unknown facts and security checks are handed back to you.</p>
+        </details>
+      </div>
+    {/if}
     <p>
       Continuing opens these employer pages and may upload the resumes listed
       above. Review every filled form in Firefox, then press Submit yourself.

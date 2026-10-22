@@ -13,7 +13,7 @@ from pathlib import Path
 
 from kitty.dates import now_iso
 
-MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 _FILENAME = re.compile(r"^(\d{3})_([a-z0-9_]+)\.sql$")
 
 _SCHEMA_VERSION_DDL = """
@@ -39,6 +39,8 @@ class Migration:
 def available_migrations(directory: Path | None = None) -> list[Migration]:
     """All migration files on disk, ordered by version."""
     folder = directory or MIGRATIONS_DIR
+    if directory is None and not folder.is_dir():
+        raise FileNotFoundError("Bundled database migrations are unavailable; repair the installation")
     found: list[Migration] = []
     for path in sorted(folder.glob("*.sql")):
         match = _FILENAME.match(path.name)
@@ -47,6 +49,8 @@ def available_migrations(directory: Path | None = None) -> list[Migration]:
                 f"migration {path.name} must be named NNN_lower_snake.sql"
             )
         found.append(Migration(int(match.group(1)), match.group(2), path))
+    if directory is None and not found:
+        raise FileNotFoundError("Bundled database migrations are empty; repair the installation")
     return found
 
 

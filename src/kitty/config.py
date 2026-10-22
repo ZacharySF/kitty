@@ -166,6 +166,78 @@ class Target(_Base):
     note: str | None = None
 
 
+def _record_month(value: str | None) -> str | None:
+    if value is not None and not re.fullmatch(r"[1-9]\d{3}-(?:0[1-9]|1[0-2])", value):
+        raise ValueError("record dates must be YYYY-MM")
+    return value
+
+
+class EducationRecord(_Base):
+    """Explicit attendance and qualification facts; a planned degree is not earned."""
+
+    school: str = Field(min_length=1)
+    degree: str | None = None
+    field_of_study: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    expected_end_date: str | None = None
+    current: StrictBool | None = None
+    graduated: StrictBool | None = None
+    comments: str | None = None
+
+    _dates = field_validator("start_date", "end_date", "expected_end_date")(_record_month)
+
+    @field_validator("school")
+    @classmethod
+    def _school_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("school must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _consistent_facts(self) -> EducationRecord:
+        if self.current is True and (self.end_date is not None or self.graduated is True):
+            raise ValueError("current education cannot have an actual end date or earned degree")
+        if self.expected_end_date is not None and (self.end_date is not None or self.graduated is True):
+            raise ValueError("expected completion cannot also be actual completion or graduation")
+        for end in (self.end_date, self.expected_end_date):
+            if self.start_date and end and end < self.start_date:
+                raise ValueError("education completion cannot precede its start")
+        return self
+
+
+class EmploymentRecord(_Base):
+    """Employment facts only; titles never determine an employment classification."""
+
+    employer: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    start_date: str | None = None
+    end_date: str | None = None
+    current: StrictBool | None = None
+    employment_type: str | None = None
+    description: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+
+    _dates = field_validator("start_date", "end_date")(_record_month)
+
+    @field_validator("employer", "title")
+    @classmethod
+    def _identity_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("employer and title must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _consistent_facts(self) -> EmploymentRecord:
+        if self.current is True and self.end_date is not None:
+            raise ValueError("current employment cannot have an end date")
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("employment end cannot precede its start")
+        return self
+
+
 class Profile(_Base):
     """config/profile.yaml - facts about me. Nothing here is ever invented.
 
@@ -200,6 +272,8 @@ class Profile(_Base):
     open_to_remote: bool = True
     work_authorization: str | None = None
     targets: list[Target] = Field(default_factory=list)
+    education_records: list[EducationRecord] = Field(default_factory=list)
+    employment_records: list[EmploymentRecord] = Field(default_factory=list)
 
     @property
     def given_name(self) -> str:
@@ -591,26 +665,74 @@ def _authentication_origin(url: str, *, origin_only: bool = False) -> str | None
         return None
 
 
+class EmailVerificationScope(_Base):
+    """One approved employer origin and exact verification sender, never a domain glob."""
+
+    origin: str
+    sender_email: str
+
+    @field_validator("origin")
+    @classmethod
+    def _origin(cls, value: str) -> str:
+        origin = _authentication_origin(value, origin_only=True)
+        if origin is None:
+            raise ValueError("verification origin must be an exact HTTPS origin")
+        return origin
+
+    @field_validator("sender_email")
+    @classmethod
+    def _sender(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_+-]+(?:\.[A-Za-z0-9_+-]+)*@[A-Za-z0-9.-]+", value):
+            raise ValueError("verification sender must be one exact bare email address")
+        local, domain = value.rsplit("@", 1)
+        origin = _authentication_origin("https://" + domain, origin_only=True)
+        if origin is None or "." not in domain or len(value) > 254 or len(local) > 64:
+            raise ValueError("verification sender must have a valid exact email domain")
+        return local + "@" + domain.lower()
+
+
+class EmailVerificationSettings(_Base):
+    """Read-only employer verification permission; not general mail or MFA access."""
+
+    enabled: StrictBool = False
+    scopes: list[EmailVerificationScope] = Field(default_factory=list)
+    max_wait_seconds: int = Field(default=60, ge=5, le=120, strict=True)
+    max_age_seconds: int = Field(default=600, ge=30, le=900, strict=True)
+
+    @model_validator(mode="after")
+    def _scoped_permission(self) -> EmailVerificationSettings:
+        origins = [scope.origin for scope in self.scopes]
+        if len(origins) != len(set(origins)):
+            raise ValueError("verification scopes must have unique origins")
+        if self.enabled and not self.scopes:
+            raise ValueError("enabled email verification requires explicit scopes")
+        return self
+
+
 class AuthenticationSettings(_Base):
     """Explicit local approval only; neither discovered jobs nor ATS names opt in."""
 
     enabled: StrictBool = False
     allow_account_creation: StrictBool = False
     approved_origins: list[str] = Field(default_factory=list)
+    #: User-declared account facts survive web-run approval without naming employers in code.
+    existing_account_origins: list[str] = Field(default_factory=list)
+    manual_account_origins: list[str] = Field(default_factory=list)
     #: Auto selects the site's recognized form; explicit policies may restrict the flow.
     account_mode: Literal["auto", "recognized", "login", "create", "google"] = "auto"
+    email_verification: EmailVerificationSettings = Field(default_factory=EmailVerificationSettings)
     _credential_binding: str | None = PrivateAttr(default=None)
     # Google session reuse is authorized only by a reviewed website run.
     _google_email: str | None = PrivateAttr(default=None)
 
-    @field_validator("approved_origins")
+    @field_validator("approved_origins", "existing_account_origins", "manual_account_origins")
     @classmethod
     def _exact_origins(cls, value: list[str]) -> list[str]:
         origins: list[str] = []
         for item in value:
             origin = _authentication_origin(item, origin_only=True)
             if origin is None:
-                raise ValueError("approved_origins must contain exact HTTPS origins only")
+                raise ValueError("account origin lists must contain exact HTTPS origins only")
             if origin not in origins:
                 origins.append(origin)
         return origins
@@ -627,6 +749,20 @@ class AuthenticationSettings(_Base):
         """Approve only an enabled, exact HTTPS origin, including nondefault port."""
         origin = _authentication_origin(url)
         return self.enabled and origin is not None and origin in self.approved_origins
+
+
+class RecoverySettings(_Base):
+    """Bounded local recovery; remote reasoning requires a separately reviewed run."""
+
+    enabled: StrictBool = True
+    max_actions: int = Field(default=6, ge=1, le=12, strict=True)
+    max_recovery_seconds: int = Field(default=45, ge=5, le=120, strict=True)
+    max_stall_seconds: int = Field(default=20, ge=5, le=60, strict=True)
+    max_job_seconds: int = Field(default=300, ge=30, le=900, strict=True)
+    max_model_requests: int = Field(default=4, ge=1, le=12, strict=True)
+    max_cost_usd: float = Field(default=0.10, ge=0, le=5, allow_inf_nan=False)
+    # Issued by a fingerprint-bound web review, never read from runtime YAML.
+    _model_grant: dict[str, Any] | None = PrivateAttr(default=None)
 
 
 class ApplyFile(_Base):
@@ -647,6 +783,7 @@ class ApplyFile(_Base):
     autofill_pause_seconds: float = Field(default=15.0, ge=2)
     #: Login and account creation remain off unless explicitly approved locally.
     authentication: AuthenticationSettings = Field(default_factory=AuthenticationSettings)
+    recovery: RecoverySettings = Field(default_factory=RecoverySettings)
 
     @field_validator("followup_days")
     @classmethod

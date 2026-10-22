@@ -5,6 +5,7 @@ import json
 import threading
 from collections import Counter
 from dataclasses import replace
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -631,3 +632,79 @@ def test_structured_causes_survive_web_report_serialization(app, posting):
         app.automation._filled([outcome])
         assert app.automation.snapshot()["reports"][0]["cause"] == outcome.cause
         assert app.automation.snapshot()["reports"][0]["note"] == outcome.note
+
+
+def _recovery_model(app, workspace):
+    from kitty import web_ai
+    web_ai._write_key(app, 'synthetic-recovery-key')
+    workspace.conn.execute('INSERT INTO ai_models VALUES(?,?,?,?,?,?)', (
+        'synthetic/recovery', 'Synthetic recovery', '0.000001', '0.000002', 100000,
+        web_ai._now().isoformat(),
+    ))
+    workspace.conn.execute("UPDATE ai_settings SET model='synthetic/recovery',daily_budget_usd='0.15' WHERE id=1")
+    workspace.conn.commit()
+
+
+def test_remote_recovery_requires_available_review_before_browser(app, workspace, posting, monkeypatch):
+    monkeypatch.setattr(app.automation, 'start', lambda *a, **k: pytest.fail('Unapproved model recovery started browser'))
+    body = {'mode': 'selected', 'job_ids': [posting.id]}
+    plan = web.post(app, workspace.conn, '/api/automation/preflight', body)
+    with pytest.raises(APIError) as error:
+        web.post(app, workspace.conn, '/api/automation/start', {
+            **body, 'confirmed': True, 'fingerprint': plan['fingerprint'], 'authorize_recovery_ai': True,
+        })
+    assert error.value.status == 409
+    assert workspace.conn.execute('SELECT COUNT(*) FROM ai_reviews').fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('change', ['cap', 'manual_origin', 'price'])
+def test_recovery_policy_or_price_drift_invalidates_review(app, workspace, posting, monkeypatch, change):
+    _recovery_model(app, workspace)
+    body = {'mode': 'selected', 'job_ids': [posting.id]}
+    plan = web.post(app, workspace.conn, '/api/automation/preflight', body)
+    if change == 'cap':
+        app.config.apply.recovery.max_cost_usd = 0.05
+    elif change == 'manual_origin':
+        app.config.apply.authentication.manual_account_origins = ['https://boards.greenhouse.io']
+    else:
+        workspace.conn.execute("UPDATE ai_models SET prompt_price='0.000003'")
+        workspace.conn.commit()
+    monkeypatch.setattr(app.automation, 'start', lambda *a, **k: pytest.fail('Stale recovery review started browser'))
+    with pytest.raises(APIError) as error:
+        web.post(app, workspace.conn, '/api/automation/start', {
+            **body, 'confirmed': True, 'fingerprint': plan['fingerprint'], 'authorize_recovery_ai': True,
+        })
+    assert error.value.status == 409
+    assert workspace.conn.execute('SELECT COUNT(*) FROM ai_reviews').fetchone()[0] == 0
+
+
+def test_recovery_reservations_share_ai_daily_budget_and_omit_keys(app, workspace):
+    from kitty import web_ai
+    _recovery_model(app, workspace)
+    public, reviewed = web_ai.recovery_offer(app, workspace.conn)
+    assert public['ai_available']
+    assert 'synthetic-recovery-key' not in json.dumps(public)
+    grant = web_ai.reserve_recovery(app, workspace.conn, reviewed)
+    assert web_ai._spent(workspace.conn) == Decimal('0.1')
+    with pytest.raises(APIError) as error:
+        web_ai.reserve_recovery(app, workspace.conn, reviewed)
+    assert error.value.status == 409
+    ledger = workspace.conn.execute('SELECT plan_json FROM ai_reviews WHERE id=?', (grant['reservation_id'],)).fetchone()[0]
+    assert 'synthetic-recovery-key' not in ledger and 'key_binding' not in ledger
+    assert workspace.conn.execute('SELECT COUNT(*) FROM ai_reviews').fetchone()[0] == 1
+
+
+def test_recovery_reservation_is_released_if_worker_never_started(app, workspace, posting, monkeypatch):
+    from kitty import web_ai
+    _recovery_model(app, workspace)
+    body = {'mode': 'selected', 'job_ids': [posting.id]}
+    plan = web.post(app, workspace.conn, '/api/automation/preflight', body)
+    def fail_before_start(*args, **kwargs):
+        raise RuntimeError('Synthetic failure before worker start')
+    monkeypatch.setattr(app.automation, 'start', fail_before_start)
+    with pytest.raises(RuntimeError):
+        web.post(app, workspace.conn, '/api/automation/start', {
+            **body, 'confirmed': True, 'fingerprint': plan['fingerprint'], 'authorize_recovery_ai': True,
+        })
+    assert web_ai._spent(workspace.conn) == 0
+    assert workspace.conn.execute('SELECT state FROM ai_reviews').fetchone()[0] == 'failed'
