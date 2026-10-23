@@ -6,10 +6,12 @@
   import Dashboard from "./Dashboard.svelte";
   import {
     navigation,
-    navigationGroups,
-    navigationRelations,
+    viewEnabled,
+    visibleGroups,
+    visibleRelations,
     type View,
   } from "./workspace";
+  import { activeModules } from "./modules.svelte";
   import {
     mountGraph,
     webglAvailable,
@@ -45,12 +47,17 @@
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const sections = navigationGroups.map((group) => ({
-    label: group.label,
-    items: group.views
-      .filter((id) => id !== "today" && (group.label !== "Job search" || id === "jobs"))
-      .map((id) => navigation.find((item) => item.id === id)!),
-  }));
+  const enabled = $derived(activeModules.enabled);
+  const applyai = $derived(enabled.includes("applyai"));
+  const workspaceTools = $derived(enabled.includes("workspace"));
+  const sections = $derived(
+    visibleGroups(enabled).map((group) => ({
+      label: group.label,
+      items: group.views
+        .filter((id) => id !== "today" && (group.label !== "Job search" || id === "jobs"))
+        .map((id) => navigation.find((item) => item.id === id)!),
+    })),
+  );
 
   let atlas = $state<Atlas | null>(null);
   let atlasError = $state("");
@@ -76,7 +83,8 @@
   const itemCounts = $derived.by(() => {
     const counts = new Map<View, number>();
     for (const item of atlas?.sections ?? [])
-      if(item.count!==null)counts.set(item.view,item.count+(counts.get(item.view)||0));
+      if (item.count !== null && viewEnabled(item.view, enabled))
+        counts.set(item.view, item.count + (counts.get(item.view) || 0));
     return counts;
   });
   const graph = $derived.by(() => {
@@ -115,7 +123,7 @@
     }
     const visible = new Set(nodes.map(node => node.id));
     const existing = new Set(links.map(link => `${link.source}\0${link.target}`));
-    for (const [a, b] of navigationRelations)
+    for (const [a, b] of visibleRelations(enabled))
       if (visible.has(`view:${a}`) && visible.has(`view:${b}`) &&
           !existing.has(`view:${a}\0view:${b}`) && !existing.has(`view:${b}\0view:${a}`))
         links.push({
@@ -193,6 +201,11 @@
   let atlasRequest = 0;
   async function loadAtlas() {
     const request = ++atlasRequest;
+    if (!enabled.length) {
+      atlas = null;
+      atlasError = "";
+      return;
+    }
     try {
       const result = await api<Atlas>("/atlas");
       if (request !== atlasRequest) return;
@@ -205,6 +218,11 @@
   let dailyRequest = 0;
   async function refreshDaily() {
     const request = ++dailyRequest;
+    if (!workspaceTools) {
+      daily = { events: null, focus: null, due: null, opportunities: null };
+      dailyLoading = false;
+      return;
+    }
     dailyLoading = true;
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -309,41 +327,43 @@
     };
   });
 
-  const readouts = $derived([
-    { label: "Events today", value: daily.events, view: "calendar" as View },
-    {
-      label: "Focused today",
-      value:
-        daily.focus === null ? null : `${Math.floor(daily.focus / 60)} min`,
-      view: "study" as View,
-    },
-    { label: "Cards due", value: daily.due, view: "flashcards" as View },
-    {
-      label: "Opportunities",
-      value: daily.opportunities,
-      view: "opportunities" as View,
-    },
-    {
-      label: "Jobs to explore",
-      value: workspace?.counts.jobs ?? null,
-      view: "jobs" as View,
-    },
-    {
-      label: "In your queue",
-      value: workspace?.counts.queued ?? null,
-      view: "queue" as View,
-    },
-    {
-      label: "Applications",
-      value: workspace?.counts.applications ?? null,
-      view: "pipeline" as View,
-    },
-    {
-      label: "Saved jobs",
-      value: workspace?.counts.favorites ?? null,
-      view: "favorites" as View,
-    },
-  ]);
+  const readouts = $derived(
+    [
+      { label: "Events today", value: daily.events, view: "calendar" as View },
+      {
+        label: "Focused today",
+        value:
+          daily.focus === null ? null : `${Math.floor(daily.focus / 60)} min`,
+        view: "study" as View,
+      },
+      { label: "Cards due", value: daily.due, view: "flashcards" as View },
+      {
+        label: "Opportunities",
+        value: daily.opportunities,
+        view: "opportunities" as View,
+      },
+      {
+        label: "Jobs to explore",
+        value: workspace?.counts?.jobs ?? null,
+        view: "jobs" as View,
+      },
+      {
+        label: "In your queue",
+        value: workspace?.counts?.queued ?? null,
+        view: "queue" as View,
+      },
+      {
+        label: "Applications",
+        value: workspace?.counts?.applications ?? null,
+        view: "pipeline" as View,
+      },
+      {
+        label: "Saved jobs",
+        value: workspace?.counts?.favorites ?? null,
+        view: "favorites" as View,
+      },
+    ].filter((readout) => viewEnabled(readout.view, enabled)),
+  );
 </script>
 
 {#snippet sectionList(large: boolean)}
@@ -485,6 +505,19 @@
       <button class="icon-button" aria-label="Dismiss linked count message" onclick={() => (atlasError = "")}>×</button>
     </p>{/if}
 
+    {#if !enabled.length}
+      <section class="selected" aria-label="No modules active">
+        <p class="eyebrow">Modules are off</p>
+        <strong>Turn on Workspace or Apply AI</strong>
+        <p>Only the core shell and settings are active. Choose modules in Settings; they start after you restart kitty.</p>
+        <div class="row">
+          <Button intent="primary" size="sm" onclick={() => onview("settings")}
+            >Open module settings <Icon name="arrow" size={14} /></Button
+          >
+        </div>
+      </section>
+    {/if}
+
     <details class="block" open={mode === "list" ? undefined : true}>
       <summary>Sections</summary>
       {#if mode === "list"}<p class="muted small">
@@ -492,7 +525,7 @@
         </p>{:else}{@render sectionList(false)}{/if}
     </details>
 
-    <details class="block">
+    {#if readouts.length}<details class="block">
       <summary>Today</summary>
       <div class="readouts" aria-busy={dailyLoading}>
         {#each readouts as readout}
@@ -508,13 +541,13 @@
           ? "Updating your day…"
           : "Live local totals · — means unavailable, not zero."}
       </p>
-      <Button size="sm" onclick={onguide}
+      {#if applyai}<Button size="sm" onclick={onguide}
         ><Icon name="questions" size={15} /> How to apply</Button
       >
       <div class="brief">
         <Dashboard {revision} {onopenjob} onview={(view) => onview(view)} />
-      </div>
-    </details>
+      </div>{/if}
+    </details>{/if}
   </Panel>
 </div>
 

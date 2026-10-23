@@ -1,14 +1,67 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
+  import { api, type ModuleId, type ModulesState } from "./api";
   import ThemePicker from "./ThemePicker.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
   import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
   import type { View } from "./workspace";
-  let { onview }: { onview: (view: View) => void } = $props();
+  import { activeModules } from "./modules.svelte";
+  let { onview, onchange }: { onview: (view: View) => void; onchange: () => Promise<void> } = $props();
   let layout = $state(graphLayout());
   let physics = $state(graphPhysics());
   let notice = $state("");
   let error = $state("");
+  let modules = $state<ModulesState | null>(null);
+  let selection = $state<ModuleId[]>([]);
+  let savingModules = $state(false);
+  let moduleNotice = $state("");
+  let moduleError = $state("");
+  const modulesDirty = $derived(
+    !!modules && (selection.length !== modules.configured.length || selection.some(id => !modules!.configured.includes(id))),
+  );
+  const changes = $derived.by(() => {
+    if (!modules) return { start: [] as string[], stop: [] as string[] };
+    const label = (id: ModuleId) => modules!.available.find(item => item.id === id)?.label ?? id;
+    return {
+      start: modules.configured.filter(id => !modules!.enabled.includes(id)).map(label),
+      stop: modules.enabled.filter(id => !modules!.configured.includes(id)).map(label),
+    };
+  });
+  export function hasUnsavedChanges() { return modulesDirty; }
+  function adopt(next: ModulesState) {
+    modules = next;
+    selection = [...next.configured];
+  }
+  onMount(() => {
+    let cancelled = false;
+    api<ModulesState>("/modules")
+      .then(next => { if (!cancelled) adopt(next); })
+      .catch(cause => { if (!cancelled) moduleError = (cause as Error).message; });
+    return () => { cancelled = true; };
+  });
+  function toggleModule(id: ModuleId, on: boolean) {
+    if (!modules) return;
+    moduleNotice = "";
+    selection = modules.available.map(item => item.id).filter(item => (item === id ? on : selection.includes(item)));
+  }
+  async function saveModules() {
+    if (!modules || savingModules) return;
+    savingModules = true;
+    moduleError = "";
+    moduleNotice = "";
+    try {
+      adopt(await api<ModulesState>("/modules", { enabled: selection }));
+      moduleNotice = modules?.restart_required
+        ? "Saved. Restart kitty to apply this change; nothing restarts automatically."
+        : "Saved. This matches what is already running.";
+      await onchange();
+    } catch (cause) {
+      moduleError = `Could not save modules: ${(cause as Error).message}`;
+    } finally {
+      savingModules = false;
+    }
+  }
   const labels: Record<keyof GraphPhysics, string> = { repulsion: "Repulsion", spring: "Spring", damping: "Damping" };
   const explanations: Record<keyof GraphPhysics, string> = {
     repulsion: "How strongly nodes push apart. Increase to give crowded branches more room.",
@@ -28,6 +81,33 @@
 <section class="settings-workspace" aria-label="Workspace settings">
   <header><h1>Settings</h1></header>
   <Panel title="Appearance"><div class="setting-row"><span>Theme</span><ThemePicker /></div></Panel>
+  <Panel title="Modules">
+    <p class="muted">Turn parts of kitty on or off. A saved choice applies the next time kitty starts; your data is never removed.</p>
+    {#if modules}
+      <fieldset class="modules" disabled={savingModules}>
+        <legend class="sr-only">Modules</legend>
+        {#each modules.available as item (item.id)}
+          <label class="module-row">
+            <input type="checkbox" checked={selection.includes(item.id)} onchange={(event) => toggleModule(item.id, event.currentTarget.checked)} />
+            <span>
+              <strong>{item.label}</strong>
+              <small>{item.description}</small>
+              <small class="state">{modules.enabled.includes(item.id) ? "Active now" : "Not active now"}{#if modules.configured.includes(item.id) !== modules.enabled.includes(item.id)} · {modules.configured.includes(item.id) ? "starts after restart" : "stops after restart"}{/if}</small>
+            </span>
+          </label>
+        {/each}
+      </fieldset>
+      <div class="links">
+        <Button intent="primary" size="sm" disabled={!modulesDirty || savingModules} onclick={saveModules}>{savingModules ? "Saving…" : "Save modules"}</Button>
+        <Button size="sm" variant="ghost" disabled={!modulesDirty || savingModules} onclick={() => { if (modules) selection = [...modules.configured]; moduleNotice = ""; }}>Discard changes</Button>
+      </div>
+      {#if modulesDirty}<p class="muted" role="status">Unsaved selection.</p>{/if}
+      {#if modules.restart_required}<p class="restart" role="status">Restart kitty to apply the saved selection{#if changes.start.length} · turns on: {changes.start.join(", ")}{/if}{#if changes.stop.length} · turns off: {changes.stop.join(", ")}{/if}. Until then the running session is unchanged.</p>{/if}
+      {#if modules.error}<p role="alert">The saved module selection could not be read ({modules.error}). The running session is unaffected; saving a new selection replaces it.</p>{/if}
+    {:else if !moduleError}<p class="muted" role="status">Loading modules…</p>{/if}
+    {#if moduleNotice}<p class="muted" role="status">{moduleNotice}</p>{/if}
+    {#if moduleError}<p role="alert">{moduleError}</p>{/if}
+  </Panel>
   <Panel title="Schemas">
     <label class="setting-row" title="The layout used when you open Home or a section schema">Default layout<select value={layout} onchange={(event) => { layout = event.currentTarget.value as GraphLayout; save(); }}>{#each GRAPH_LAYOUTS as item}<option value={item.id}>{item.label}</option>{/each}</select></label>
     <div class="physics">{#each Object.keys(PHYSICS_LIMITS) as (keyof GraphPhysics)[] as key}
@@ -37,7 +117,7 @@
     {#if notice}<p class="muted" role="status">{notice}</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
   </Panel>
-  <Panel title="Application settings"><div class="links"><Button onclick={() => onview("profile")}>Profile & saved answers</Button><Button onclick={() => onview("ai")}>AI & privacy</Button></div></Panel>
+  <Panel title="Application settings"><div class="links">{#if activeModules.enabled.includes("applyai")}<Button onclick={() => onview("profile")}>Profile & saved answers</Button>{/if}<Button onclick={() => onview("ai")}>AI & privacy</Button></div></Panel>
 </section>
 <style>
   .settings-workspace { display: grid; gap: 1rem; max-width: 850px; margin: 0 auto; }
@@ -52,4 +132,11 @@
   input[type=range] { width: 100%; accent-color: var(--accent); }
   .links { display: flex; flex-wrap: wrap; gap: .65rem; }
   .muted { color: var(--muted); font-size: .8rem; }
+  .modules { display: grid; gap: .5rem; margin: .75rem 0; padding: 0; border: 0; min-width: 0; }
+  .module-row { display: flex; align-items: start; gap: .75rem; padding: .65rem .75rem; border: 1px solid var(--border-fine, var(--border)); border-radius: 8px; cursor: pointer; }
+  .module-row span { display: grid; gap: .15rem; }
+  .module-row small { color: var(--muted); line-height: 1.5; }
+  .module-row .state { font-variant-numeric: tabular-nums; }
+  .module-row input { margin-top: .2rem; accent-color: var(--accent); }
+  .restart { margin: .75rem 0 0; padding: .55rem .75rem; border: 1px solid var(--warning); border-radius: 8px; font-size: .85rem; }
 </style>

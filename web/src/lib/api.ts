@@ -70,18 +70,35 @@ export interface Discovery {
   error: string | null;
   result: string | null;
 }
+export type ModuleId = "applyai" | "workspace";
+export interface ModuleInfo {
+  id: ModuleId;
+  label: string;
+  description: string;
+}
+export interface ModulesState {
+  /** Active for this process. Never changes until kitty restarts. */
+  enabled: ModuleId[];
+  /** Saved selection; applies on the next restart. */
+  configured: ModuleId[];
+  available: ModuleInfo[];
+  restart_required: boolean;
+  /** Present when the pending modules.yaml cannot be read; the running app is unaffected. */
+  error?: string;
+}
 export interface Bootstrap {
   demo: boolean;
-  tracks: { name: string; label: string; weekly_target: number }[];
-  counts: {
+  modules: ModulesState;
+  tracks?: { name: string; label: string; weekly_target: number }[];
+  counts?: {
     jobs: number;
     queued: number;
     applications: number;
     favorites: number;
   };
-  weekly_total: number;
-  streak_days: number;
-  today: string;
+  weekly_total?: number;
+  streak_days?: number;
+  today?: string;
 }
 
 export interface TaskRecord {

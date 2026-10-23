@@ -292,3 +292,10 @@ Stage 1: done.
   sensitive or externally consequential actions still require a decision.
   Existing sandbox/tool permissions and all application human boundaries remain.
   Sources and limits are in `docs/APPLICATION_AUTONOMY_RESEARCH.md`.
+- Built-in modules: the core shell, settings, AI-provider/budget controls and local
+  storage infrastructure are always available. `applyai` owns career workflows;
+  `workspace` owns notes/documents/study/planning. They do not depend on each other.
+  `config/modules.yaml` stores a restart-only selection; absent means both modules
+  for existing workspaces, while fresh CLI/desktop workspaces start core-only.
+  Disabled modules have no UI entries, commands, MCP tools, routes or workers, but
+  their data and configuration remain. Existing global migrations stay in place.

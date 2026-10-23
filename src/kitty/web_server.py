@@ -3,12 +3,17 @@
 Run ``kitty-web`` after building ``web/dist``. The API never submits forms,
 starts paid discovery, or exposes configuration/credentials. Demo workspaces use
 only public example configuration and are discarded when the process exits.
+
+Features belong to the ``applyai`` and ``workspace`` modules (kitty.modules). The
+active set is frozen at start-up; routes of a disabled module answer 403 and none
+of its extensions, workers or credentials are loaded.
 """
 from __future__ import annotations
 
 import argparse
 import dataclasses
 import hashlib
+import importlib
 import json
 import re
 import shutil
@@ -22,14 +27,12 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from kitty.config import Config, ConfigError
-from kitty.core import applications, demo, favorites, jobs, resumes, resume_versions
-from kitty.core import followups, today, tracks
-from kitty.core.apply.filler import choose_resume, resume_file
+from kitty.core.bootstrap import configure_modules
 from kitty.core.workspace import open_workspace
-from kitty.dates import parse_user_date
 from kitty.db import connect
 from kitty.db.connection import transaction
 from kitty.models import Job, Resume
+from kitty.modules import ModuleDisabledError, modules_state
 from kitty.settings import Settings, find_project_root
 from kitty.web_tasks import TaskRunner
 
@@ -82,6 +85,8 @@ def _job_json(job: Job) -> dict[str, Any]:
 
 
 def _pdf_bytes(settings: Settings, resume: Resume) -> bytes:
+    from kitty.core.apply.filler import resume_file
+
     path = resume_file(settings, resume)
     try:
         if path.suffix.lower() != ".pdf" or not path.is_file() or path.stat().st_size > MAX_FILE:
@@ -104,29 +109,65 @@ def _pdf_available(settings: Settings, resume: Resume) -> bool:
     return True
 
 
+#: API route prefix -> owning module; the longest matching prefix wins. Anything not
+#: listed (tasks, ai status/settings/models, atlas home, bootstrap, modules, reload)
+#: belongs to the always-on core.
+ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
+    *((prefix, "applyai") for prefix in (
+        "/api/dashboard", "/api/job-options", "/api/jobs", "/api/pipeline", "/api/reminders",
+        "/api/job-tools", "/api/automation", "/api/questions", "/api/resumes", "/api/profile",
+        "/api/sources", "/api/finder", "/api/reports", "/api/mail", "/api/triage",
+        "/api/postings", "/api/schema/jobs", "/api/schema/import-jobs", "/api/atlas/sections/jobs")),
+    *((prefix, "workspace") for prefix in (
+        "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
+        "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
+        "/api/ai/run", "/api/atlas/sections")),
+), key=lambda item: -len(item[0])))
+#: Extension modules per feature module, in dispatch order; None is the always-on core.
+EXTENSIONS: tuple[tuple[str | None, str], ...] = (
+    ("applyai", "web_jobs"), ("applyai", "web_automation"), ("applyai", "web_resumes"),
+    ("applyai", "web_profile"), ("applyai", "web_insights"),
+    ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
+    ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
+    (None, "web_ai"),
+    ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
+)
+
+
+def route_module(path: str) -> str | None:
+    """The module that owns an API path, or None for core routes."""
+    for prefix, module in ROUTE_MODULES:
+        if path == prefix or path.startswith(prefix + "/"):
+            return module
+    return None
+
+
 class WebApplication:
-    """Local services and configuration; each HTTP request owns its connection."""
+    """Local services and configuration; each HTTP request owns its connection.
+
+    The active module set is frozen when the process starts (``config.modules``).
+    Only the extensions, workers and credentials of active modules exist; a pending
+    selection saved through ``/api/modules`` takes effect in the next process.
+    """
 
     def __init__(self, settings: Settings, config: Config, static_dir: Path):
         self.settings = settings
         self.config = config
+        self.modules: tuple[str, ...] = tuple(config.modules)
         self.static_dir = static_dir.resolve()
         self.mutation_lock = threading.Lock()
         self.discovery_lock = threading.Lock()
         self.discovery: dict[str, Any] = {"running": False, "error": None, "result": None}
-        from kitty import web_automation, web_insights, web_jobs, web_profile, web_resumes
-
-        from kitty import web_ai, web_calendar, web_flashcards, web_notes
-        from kitty import web_documents, web_opportunities, web_study
-        from kitty import web_atlas, web_backlinks, web_schema
-
-        self.extensions = (
-            web_jobs, web_automation, web_resumes, web_profile, web_insights,
-            web_calendar, web_opportunities, web_study, web_flashcards, web_notes, web_documents, web_ai,
-            web_schema, web_atlas, web_backlinks,
+        self.extensions = tuple(
+            importlib.import_module(f"kitty.{name}") for module, name in EXTENSIONS
+            if module is None or module in self.modules
         )
         self.tasks = TaskRunner()
-        self.automation = web_automation.AutomationController(settings)
+        self.automation = None
+        if "applyai" in self.modules:
+            from kitty import web_automation
+
+            self.automation = web_automation.AutomationController(settings)
         for extension in self.extensions:
             start = getattr(extension, "start", None)
             if start:
@@ -138,15 +179,36 @@ class WebApplication:
             stop = getattr(extension, "stop", None) or getattr(extension, "close", None)
             if stop:
                 stop(self)
-        self.automation.close()
+        if self.automation is not None:
+            self.automation.close()
         self.tasks.close()
 
+    def require_module(self, module: str) -> None:
+        """403 unless `module` is in this process's active snapshot."""
+        if module not in self.modules:
+            raise APIError(403, str(ModuleDisabledError(module)))
+
+    def guard(self, path: str) -> None:
+        """Reject a request for a disabled module before any handler or worker runs."""
+        module = route_module(path)
+        if module is not None:
+            self.require_module(module)
+
+    def modules_state(self) -> dict[str, Any]:
+        return modules_state(self.modules, self.settings.config_dir)
+
     def reload_config(self) -> None:
-        """Refresh validated config after an explicit, serialized settings change."""
-        with open_workspace(self.settings) as workspace:
+        """Refresh validated config after an explicit, serialized settings change.
+
+        The active module snapshot is pinned: a pending modules.yaml edit is neither
+        applied nor validated here.
+        """
+        with open_workspace(self.settings, modules=self.modules) as workspace:
             self.config = workspace.config
 
-    def job_filter(self, view: str) -> jobs.JobFilter:
+    def job_filter(self, view: str):
+        from kitty.core import jobs
+
         if view not in {"jobs", "inbox", "queue", "applications", "favorites"}:
             raise APIError(400, "Unknown job view")
         return jobs.JobFilter(
@@ -162,15 +224,31 @@ class WebApplication:
         if match:
             self._no_query(query)
             return self.tasks.snapshot(match[1])
+        self.guard(path)
         for extension in self.extensions:
             result = extension.get(self, conn, path, query)
             if result is not None:
                 return result
+        if path == "/api/modules":
+            self._no_query(query)
+            return self.modules_state()
         if path == "/api/bootstrap":
             self._no_query(query)
+            return self._bootstrap(conn)
+        if "applyai" in self.modules:
+            result = self._applyai_get(conn, path, query)
+            if result is not None:
+                return result
+        raise APIError(404, "API route not found")
+
+    def _bootstrap(self, conn: sqlite3.Connection) -> dict:
+        """Core shell state; careers figures exist only while applyai is active."""
+        result: dict[str, Any] = {"demo": self.settings.demo, "modules": self.modules_state()}
+        if "applyai" in self.modules:
+            from kitty.core import jobs, today, tracks
+
             digest = today.build_digest(conn, self.config)
-            return {
-                "demo": self.settings.demo,
+            result.update({
                 "tracks": [{"name": name, "label": name.replace("_", " ").title(),
                             "weekly_target": target} for name, target in tracks.weekly_targets(conn).items()],
                 "counts": {key: jobs.count_jobs(conn, self.job_filter(view)) for key, view in (
@@ -178,7 +256,13 @@ class WebApplication:
                     ("applications", "applications"), ("favorites", "favorites"))},
                 "weekly_total": digest.weekly_total, "streak_days": digest.streak_days,
                 "today": today.digest_text(digest),
-            }
+            })
+        return result
+
+    def _applyai_get(self, conn: sqlite3.Connection, path: str, query: dict[str, str]) -> dict | None:
+        from kitty.core import applications, jobs, resumes, resume_versions
+        from kitty.core.apply.filler import choose_resume
+
         match = re.fullmatch(r"/api/jobs/([1-9][0-9]{0,17})", path)
         if match:
             self._no_query(query)
@@ -216,7 +300,7 @@ class WebApplication:
                               ("id", "track", "status", "is_default", "created_at")}
                              for version in resume_versions.list_versions(conn, self.settings)],
             }
-        raise APIError(404, "API route not found")
+        return None
 
     @staticmethod
     def _no_query(query: dict) -> None:
@@ -225,10 +309,23 @@ class WebApplication:
 
     @staticmethod
     def _job(conn: sqlite3.Connection, job_id: int) -> Job:
+        from kitty.core import jobs
+
         job = jobs.get_job(conn, job_id)
         if job is None:
             raise APIError(404, "Job not found")
         return job
+
+    def set_modules(self, body: dict) -> dict:
+        """Persist the pending module selection; the active snapshot never changes."""
+        enabled = body.get("enabled")
+        if set(body) != {"enabled"} or not isinstance(enabled, list):
+            raise APIError(400, "Expected {\"enabled\": [module ids]}")
+        try:
+            configure_modules(self.settings.config_dir, enabled)
+        except ValueError as exc:
+            raise APIError(400, str(exc)) from None
+        return self.modules_state()
 
     def mutate(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
         if path == "/api/reload":
@@ -236,13 +333,23 @@ class WebApplication:
                 raise APIError(400, "Reload expects an empty object")
             self.reload_config()
             return {"ok": True}
+        if path == "/api/modules":
+            return self.set_modules(body)
+        self.guard(path)
         for extension in self.extensions:
             result = extension.post(self, conn, path, body)
             if result is not None:
                 return result
+        return self._mutate_job(conn, path, body)
+
+    def _mutate_job(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
         match = re.fullmatch(r"/api/jobs/([1-9][0-9]{0,17})", path)
-        if not match:
+        if match is None:
             raise APIError(404, "API route not found")
+        from kitty.core import applications, favorites, followups, jobs, resumes
+        from kitty.core.apply.filler import choose_resume
+        from kitty.dates import parse_user_date
+
         if set(body) - {"action", "value", "when", "note"} or not isinstance(body.get("action"), str):
             raise APIError(400, "Expected an action and optional value")
         action, value = body["action"], body.get("value")
@@ -462,6 +569,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _get_api(self, path: str, query: dict[str, str]) -> None:
         app = self.server.app
+        app.guard(path)
         with closing(connect(app.settings.db_path)) as conn:
             for extension in app.extensions:
                 download = getattr(extension, "download", None)
@@ -472,6 +580,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
             match = re.fullmatch(r"/api/resumes/([1-9][0-9]{0,17})/pdf", path)
             if match:
+                from kitty.core import resumes
+
                 app._no_query(query)
                 resume = resumes.get_resume(conn, int(match[1]))
                 if resume is None:
@@ -500,7 +610,9 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def _serve(settings: Settings, static_dir: Path, port: int) -> None:
     with open_workspace(settings) as workspace:
-        if settings.demo:
+        if settings.demo and workspace.config.enabled("applyai"):
+            from kitty.core import demo
+
             demo.seed(workspace.conn, settings, workspace.config)
         app = WebApplication(settings, workspace.config, static_dir)
     with LocalHTTPServer(app, port) as server:

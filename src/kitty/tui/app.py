@@ -1,38 +1,38 @@
-"""The Textual app: screen registry, global keys and the command palette.
+"""The applyai TUI: job screens, global keys and the job command palette.
 
-The app owns the database connection and the parsed config; screens read them
-through `self.app`. Everything it does is a call into `kitty.core`.
+`KittyApp` is only built when the applyai module is enabled (tui/shell.py's
+`create_app` decides); the shared shell it extends owns the database connection,
+parsed config and Modules screen. Everything it does is a call into `kitty.core`.
 """
 
 from __future__ import annotations
 
-import asyncio
-import signal
 import threading
 from functools import partial
 
-from textual.app import App
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 
+from kitty.config import ConfigError, load_config
 from kitty.core import jobs as jobs_core
-from kitty.core.workspace import Workspace, open_workspace, sync_config_to_db
+from kitty.core.workspace import Workspace, sync_config_to_db
+from kitty.modules import ModuleDisabledError
 from kitty.tui.helpers import job_label
 from kitty.tui.navigation import PLACES
 from kitty.tui.screens.apply import ApplyScreen
 from kitty.tui.screens.dashboard import DashboardScreen
 from kitty.tui.screens.finder import FinderScreen
-from kitty.tui.screens.help_screen import HelpScreen
 from kitty.tui.screens.inbox import InboxScreen
 from kitty.tui.screens.job_detail import JobDetailScreen
 from kitty.tui.screens.jobs import JobsScreen
 from kitty.tui.screens.modals import AddJobModal
+from kitty.tui.screens.modules import ModulesScreen
 from kitty.tui.screens.pipeline import PipelineScreen
 from kitty.tui.screens.profile import ProfileScreen
 from kitty.tui.screens.reports import ReportsScreen
 from kitty.tui.screens.resume import ResumeScreen
 from kitty.tui.screens.sources import SourcesScreen
-from kitty.tui.theme import DARK_FANTASY
+from kitty.tui.shell import APPLYAI, ShellApp
 
 #: Palette label -> screen name, in workflow order.
 MAIN_SCREENS: dict[str, str] = {place.label: place.screen for place in PLACES}
@@ -107,17 +107,18 @@ class JobCommands(Provider):
                 )
 
 
-class KittyApp(App):
-    """The kitty TUI."""
+class KittyApp(ShellApp):
+    """The applyai TUI: the job screens on top of the shared shell."""
 
-    CSS_PATH = "styles.tcss"
-    TITLE = "kitty"
-    COMMANDS = App.COMMANDS | {ScreenCommands, ActionCommands, JobCommands}
+    COMMANDS = ShellApp.COMMANDS | {ScreenCommands, ActionCommands, JobCommands}
+    HOME = "dashboard"
+    places = PLACES
 
     BINDINGS = [
         Binding("question_mark", "help", "Help", key_display="?"),
         # The tab bar at the top shows these, so they stay out of the footer.
         *[Binding(place.key, f"goto('{place.screen}')", place.label, show=False) for place in PLACES],
+        Binding("M", "goto('modules')", "Modules", show=False),
         Binding("ctrl+r", "reload_config", "Reload config"),
         Binding("q", "quit", "Quit"),
     ]
@@ -133,58 +134,23 @@ class KittyApp(App):
         "finder": FinderScreen,
         "profile": ProfileScreen,
         "reports": ReportsScreen,
+        "modules": ModulesScreen,
     }
 
-    def __init__(self, *, demo: bool = False, workspace: Workspace | None = None) -> None:
-        super().__init__()
-        self.workspace = workspace or open_workspace(demo=demo)
-        self.sub_title = (
-            "demo database" if self.workspace.settings.demo else str(self.workspace.settings.db_path.name)
-        )
+    def __init__(self, *, workspace: Workspace) -> None:
+        if APPLYAI not in workspace.config.modules:
+            raise ModuleDisabledError(APPLYAI)
+        super().__init__(workspace=workspace)
         #: Held by the fill worker while it fills or watches: Firefox allows one
         #: remote-control session, so a new fill waits for the previous one to end.
         self.browser_lock = threading.Lock()
         #: Filled tabs still waiting for my submit; the next fill keeps watching them.
         self.watched_tabs: list = []
 
-    # -------------------------------------------------------------- context
-
-    @property
-    def conn(self):
-        """The open SQLite connection every screen reads from."""
-        return self.workspace.conn
-
-    @property
-    def config(self):
-        """The parsed yaml config."""
-        return self.workspace.config
-
     @property
     def views(self):
         """Saved views from views.yaml, in file order."""
         return self.workspace.config.views.views
-
-    def on_mount(self) -> None:
-        self.register_theme(DARK_FANTASY)
-        self.theme = DARK_FANTASY.name
-        self.push_screen("dashboard")
-        self._exit_on_hangup()
-
-    def _exit_on_hangup(self) -> None:
-        """Closing the terminal (SIGHUP) or SIGTERM exits normally instead of killing the app.
-
-        A normal exit cancels the fill worker, which ends its Firefox session; a
-        killed app would leave Firefox refusing remote control until it restarts.
-        """
-        loop = asyncio.get_running_loop()
-        for name in ("SIGHUP", "SIGTERM"):
-            try:
-                loop.add_signal_handler(getattr(signal, name), self.exit)
-            except (AttributeError, NotImplementedError, RuntimeError, ValueError):
-                pass                      # no such signal here, or not the main thread
-
-    def on_unmount(self) -> None:
-        self.workspace.close()
 
     # -------------------------------------------------------------- actions
 
@@ -192,8 +158,7 @@ class KittyApp(App):
         """Switch to one of the main screens, leaving Job Detail if it is open."""
         if isinstance(self.screen, JobDetailScreen):
             self.pop_screen()
-        if self.screen.name != name:
-            self.switch_screen(name)
+        super().action_goto(name)
 
     def open_job(self, job_id: int) -> None:
         """Show Job Detail for a job, replacing any detail screen already open."""
@@ -211,10 +176,10 @@ class KittyApp(App):
 
     def action_reload_config(self) -> None:
         """Re-read the yaml files and sync them into the database."""
-        from kitty.config import ConfigError, load_config
-
         try:
-            self.workspace.config = load_config(self.workspace.settings.config_dir)
+            self.workspace.config = load_config(
+                self.workspace.settings.config_dir, modules=self.modules,
+            )
         except ConfigError as exc:
             self.notify(
                 f"Config not reloaded: {exc.problems[0]}", severity="error", timeout=10
@@ -228,33 +193,3 @@ class KittyApp(App):
         screen = self.screen
         if hasattr(screen, "refresh_data"):
             screen.refresh_data()
-
-    def action_help(self) -> None:
-        """Show the key list, built from the active screen's live bindings."""
-        self.push_screen(HelpScreen(self._binding_rows(), self.screen.__class__.__name__))
-
-    def _binding_rows(self) -> list[tuple[str, str, str]]:
-        """Collect (key, description, where) from the active bindings."""
-        rows: list[tuple[str, str, str]] = []
-        seen: set[tuple[str, str]] = set()
-        for key, active in self.screen.active_bindings.items():
-            binding = active.binding
-            if not binding.show or not binding.description:
-                continue
-            where = type(active.node).__name__.removesuffix("Screen") or "App"
-            entry = (binding.key_display or key, binding.description)
-            if entry in seen:
-                continue
-            seen.add(entry)
-            rows.append((entry[0], entry[1], where))
-        where = self.screen.__class__.__name__.removesuffix("Screen")
-        for key, description in getattr(self.screen, "EXTRA_HELP", ()):
-            rows.append((key, description, where))
-        rows.append(("ctrl+p", "Command palette: screens, actions, jobs", "App"))
-        rows.extend((place.key.upper(), f"Go to {place.label}", "App") for place in PLACES)
-        return sorted(rows, key=lambda row: (row[2] != "App", row[0]))
-
-
-def run(demo: bool = False) -> None:
-    """Entry point used by `kitty tui`."""
-    KittyApp(demo=demo).run()

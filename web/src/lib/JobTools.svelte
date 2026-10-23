@@ -46,7 +46,7 @@
     followups: Reminder[];
   };
   let data = $state<Workflow | null>(null);
-  let tracks = $state<Bootstrap["tracks"]>([]);
+  let tracks = $state<NonNullable<Bootstrap["tracks"]>>([]);
   let tier = $state("");
   let queueState = $state("new");
   let deadline = $state("");
@@ -76,7 +76,7 @@
       .then(async ([workflow, workspace]) => {
         if (cancelled) return;
         data = workflow;
-        tracks = workspace.tracks;
+        tracks = workspace.tracks ?? [];
         tier = workflow.tier || "";
         queueState = workflow.queue_state;
         deadline = workflow.deadline_at?.slice(0, 10) || "";

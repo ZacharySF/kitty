@@ -474,7 +474,7 @@ def _apply_remote(conn, calendar_id, remote, mapping=None):
                  (calendar_id, remote['id'], ident, remote.get('etag'), event['revision'], json.dumps(remote), json.dumps(remote)))
 
 
-def preview_sync(conn, body):
+def preview_sync(conn, body, *, applyai=True):
     """Freeze local writes and recipients, including events outside the UI range."""
     selected = body.get('calendar_ids', [])
     if not isinstance(selected, list) or not selected or any(not isinstance(v, str) for v in selected):
@@ -487,6 +487,8 @@ def preview_sync(conn, body):
         review['calendars'].append({k: cal[k] for k in ('id', 'revision', 'name', 'timezone', 'color')})
         rows = conn.execute('SELECT e.*,m.google_id,m.synced_revision,m.remote_json FROM calendar_events e LEFT JOIN calendar_google_events m ON m.event_id=e.id WHERE e.calendar_id=? AND (m.event_id IS NULL OR e.revision!=m.synced_revision) ORDER BY e.id', (calendar_id,))
         for row in rows:
+            if not applyai and local.applyai_sourced(row['source_key']):
+                continue
             if row['deleted'] and not row['google_id']:
                 continue
             if conn.execute('SELECT 1 FROM calendar_google_conflicts WHERE event_id=? AND resolved_at IS NULL', (row['id'],)).fetchone():
@@ -505,7 +507,7 @@ def preview_sync(conn, body):
     return review
 
 
-def sync(settings, conn, body):
+def sync(settings, conn, body, *, applyai=True):
     if body.get('confirmed') is not True:
         local.fail('Confirm fetching Google data and the selected push direction')
     direction = body.get('direction', 'pull')
@@ -519,7 +521,7 @@ def sync(settings, conn, body):
     selected = body.get('calendar_ids', [])
     if not isinstance(selected, list) or not selected:
         local.fail('Select at least one linked calendar')
-    review = preview_sync(conn, body)
+    review = preview_sync(conn, body, applyai=applyai)
     if direction == 'both' and body.get('review') != review:
         local.fail('Local calendar changes differ from the reviewed preview; prepare and approve a fresh sync preview', 409)
     reviewed = {v['id']: v['revision'] for v in review['events']}
@@ -606,6 +608,8 @@ def sync(settings, conn, body):
                 continue
             rows = conn.execute('SELECT e.*,m.google_id,m.etag,m.synced_revision FROM calendar_events e LEFT JOIN calendar_google_events m ON m.event_id=e.id WHERE e.calendar_id=? AND (m.event_id IS NULL OR e.revision!=m.synced_revision)', (calendar_id,)).fetchall()
             for row in rows:
+                if not applyai and local.applyai_sourced(row['source_key']):
+                    continue
                 if conn.execute('SELECT 1 FROM calendar_google_conflicts WHERE event_id=? AND resolved_at IS NULL', (row['id'],)).fetchone():
                     continue
                 if row['deleted'] and not row['google_id']:

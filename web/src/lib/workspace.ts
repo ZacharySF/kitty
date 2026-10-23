@@ -1,39 +1,61 @@
+import type { ModuleId } from "./api";
+
+/** `module` is the owner; core views (null) are always available. */
 export const navigation = [
-  { id: "today", label: "Atlas", icon: "atlas" },
-  { id: "calendar", label: "Calendar", icon: "calendar" },
-  { id: "opportunities", label: "Opportunities & projects", icon: "opportunities" },
-  { id: "study", label: "Study", icon: "study" },
-  { id: "flashcards", label: "Flashcards", icon: "flashcards" },
-  { id: "notes", label: "Notes & canvas", icon: "notes" },
-  { id: "documents", label: "Documents & PDF", icon: "notes" },
-  { id: "schema", label: "Mind maps", icon: "schema" },
-  { id: "ai", label: "AI settings", icon: "ai" },
-  { id: "inbox", label: "New jobs", icon: "inbox" },
-  { id: "queue", label: "Prepare applications", icon: "queue" },
-  { id: "jobs", label: "Find jobs", icon: "jobs" },
-  { id: "pipeline", label: "My applications", icon: "applications" },
-  { id: "applications", label: "Application list", icon: "applications" },
-  { id: "favorites", label: "Saved jobs", icon: "favorites" },
-  { id: "reminders", label: "Reminders", icon: "today" },
-  { id: "sources", label: "Job sources", icon: "sources" },
-  { id: "resumes", label: "My resumes", icon: "resumes" },
-  { id: "settings", label: "Settings", icon: "settings" },
-  { id: "profile", label: "My profile", icon: "settings" },
-  { id: "finder", label: "Find companies", icon: "jobs" },
-  { id: "reports", label: "Reports & exports", icon: "reports" },
-  { id: "mail", label: "Email updates", icon: "mail" },
-  { id: "triage", label: "Rank jobs", icon: "sources" },
-  { id: "questions", label: "Application questions", icon: "questions" },
-] as const;
+  { id: "today", label: "Atlas", icon: "atlas", module: null },
+  { id: "calendar", label: "Calendar", icon: "calendar", module: "workspace" },
+  { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
+  { id: "study", label: "Study", icon: "study", module: "workspace" },
+  { id: "flashcards", label: "Flashcards", icon: "flashcards", module: "workspace" },
+  { id: "notes", label: "Notes & canvas", icon: "notes", module: "workspace" },
+  { id: "documents", label: "Documents & PDF", icon: "notes", module: "workspace" },
+  { id: "schema", label: "Mind maps", icon: "schema", module: "workspace" },
+  { id: "ai", label: "AI settings", icon: "ai", module: null },
+  { id: "inbox", label: "New jobs", icon: "inbox", module: "applyai" },
+  { id: "queue", label: "Prepare applications", icon: "queue", module: "applyai" },
+  { id: "jobs", label: "Find jobs", icon: "jobs", module: "applyai" },
+  { id: "pipeline", label: "My applications", icon: "applications", module: "applyai" },
+  { id: "applications", label: "Application list", icon: "applications", module: "applyai" },
+  { id: "favorites", label: "Saved jobs", icon: "favorites", module: "applyai" },
+  { id: "reminders", label: "Reminders", icon: "today", module: "applyai" },
+  { id: "sources", label: "Job sources", icon: "sources", module: "applyai" },
+  { id: "resumes", label: "My resumes", icon: "resumes", module: "applyai" },
+  { id: "settings", label: "Settings", icon: "settings", module: null },
+  { id: "profile", label: "My profile", icon: "settings", module: "applyai" },
+  { id: "finder", label: "Find companies", icon: "jobs", module: "applyai" },
+  { id: "reports", label: "Reports & exports", icon: "reports", module: "applyai" },
+  { id: "mail", label: "Email updates", icon: "mail", module: "applyai" },
+  { id: "triage", label: "Rank jobs", icon: "sources", module: "applyai" },
+  { id: "questions", label: "Application questions", icon: "questions", module: "applyai" },
+] as const satisfies readonly { id: string; label: string; icon: string; module: ModuleId | null }[];
 export type View = (typeof navigation)[number]["id"];
-export const navigationGroups: { label: string; views: View[] }[] = [
+
+type Enabled = readonly string[];
+export function moduleOf(view: View): ModuleId | null {
+  return navigation.find(item => item.id === view)?.module ?? null;
+}
+/** True when the view is core or its owning module is active in this process. */
+export function viewEnabled(view: View, enabled: Enabled): boolean {
+  const owner = moduleOf(view);
+  return owner === null || enabled.includes(owner);
+}
+export function isView(value: string): value is View {
+  return navigation.some(item => item.id === value);
+}
+export function visibleNavigation(enabled: Enabled) {
+  return navigation.filter(item => viewEnabled(item.id, enabled));
+}
+
+export const navigationGroups: { label: string; shortcut: string; views: View[] }[] = [
   {
     label: "Plan",
+    shortcut: "Ctrl + Alt",
     views: ["today", "calendar", "opportunities", "reminders"],
   },
-  { label: "Study", views: ["study", "flashcards", "notes", "schema", "documents"] },
+  { label: "Study", shortcut: "Ctrl + X", views: ["study", "flashcards", "notes", "schema", "documents"] },
   {
     label: "Job search",
+    shortcut: "Ctrl + C",
     views: [
       "jobs",
       "inbox",
@@ -50,8 +72,17 @@ export const navigationGroups: { label: string; views: View[] }[] = [
       "reports",
     ],
   },
-  { label: "Settings", views: ["settings", "profile", "ai"] },
+  { label: "Settings", shortcut: "Ctrl + V", views: ["settings", "profile", "ai"] },
 ];
+/**
+ * Groups with their enabled views. A group that would only offer the atlas home
+ * is dropped: with every module off the header shows just Settings.
+ */
+export function visibleGroups(enabled: Enabled) {
+  return navigationGroups
+    .map(group => ({ ...group, views: group.views.filter(view => viewEnabled(view, enabled)) }))
+    .filter(group => group.views.some(view => view !== "today"));
+}
 /**
  * Related sections, drawn as edges between section hubs on the atlas home.
  * Single source of truth for "what connects to what"; pairs are undirected.
@@ -89,7 +120,8 @@ export const navigationRelations: [View, View][] = [
   ["ai", "notes"],
   ["ai", "flashcards"],
 ];
-export const shortcutGroups = [
+type ShortcutGroup = { title: string; module?: ModuleId; shortcuts: string[][] };
+const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Navigate",
     shortcuts: [
@@ -116,6 +148,7 @@ export const shortcutGroups = [
   },
   {
     title: "Study",
+    module: "workspace",
     shortcuts: [
       ["Space / p", "Start, pause, or resume the study timer"],
       ["s / r", "Stop / reset the study timer"],
@@ -125,6 +158,7 @@ export const shortcutGroups = [
   },
   {
     title: "Browse & select",
+    module: "applyai",
     shortcuts: [
       ["Ctrl / ⌘ + F", "Search jobs; company-only in Inbox"],
       ["/", "Search roles and companies"],
@@ -141,6 +175,7 @@ export const shortcutGroups = [
   },
   {
     title: "Job decisions",
+    module: "applyai",
     shortcuts: [
       ["Right-click", "Confirm deletion of a job or its selected group; submitted applications stay protected"],
       ["*", "Star selection; unstar if all are already starred"],
@@ -163,6 +198,7 @@ export const shortcutGroups = [
   },
   {
     title: "Application preparation",
+    module: "applyai",
     shortcuts: [
       ["F / Shift + F", "Review autofill for marked, opened or focused jobs"],
       ["w", "Stop browser worker; New jobs uses its time-window key"],
@@ -170,6 +206,7 @@ export const shortcutGroups = [
   },
   {
     title: "My applications",
+    module: "applyai",
     shortcuts: [
       ["↑ ↓ ← →", "Move between application cards"],
       ["Enter / s / u / n / o", "Open / status / undo / next action / posting"],
@@ -180,6 +217,7 @@ export const shortcutGroups = [
   },
   {
     title: "My resumes",
+    module: "applyai",
     shortcuts: [
       ["t / Shift + T", "Next / previous track"],
       ["g", "Generate candidate"],
@@ -192,6 +230,7 @@ export const shortcutGroups = [
   },
   {
     title: "Profile & sources",
+    module: "applyai",
     shortcuts: [
       [
         "e / w / r / n in My profile",
@@ -204,6 +243,7 @@ export const shortcutGroups = [
   },
   {
     title: "Find companies",
+    module: "applyai",
     shortcuts: [
       ["j / k / ↑ / ↓", "Choose proposal"],
       ["a / Enter", "Review approval"],
@@ -213,3 +253,34 @@ export const shortcutGroups = [
     ],
   },
 ];
+/** Pairs of related sections whose both ends are available. */
+export function visibleRelations(enabled: Enabled): [View, View][] {
+  return navigationRelations.filter(([a, b]) => viewEnabled(a, enabled) && viewEnabled(b, enabled));
+}
+const shortNames: Partial<Record<View, string>> = {
+  calendar: "Calendar", study: "Study", notes: "Notes", schema: "Mind maps", ai: "AI",
+};
+/** Shortcut help for the active modules; navigation lines list only reachable targets. */
+export function shortcutsFor(enabled: Enabled): ShortcutGroup[] {
+  const groups = visibleGroups(enabled);
+  const searches = enabled.includes("applyai") ? "commands, sections, and jobs" : "commands and sections";
+  const targets = (Object.keys(shortNames) as View[]).filter(view => viewEnabled(view, enabled)).map(view => shortNames[view]);
+  return shortcutGroups
+    .filter(group => !group.module || enabled.includes(group.module))
+    .map(group => {
+      if (group.title !== "Navigate") return group;
+      return {
+        ...group,
+        shortcuts: group.shortcuts.flatMap(row => {
+          if (row[0].startsWith("Ctrl + Alt /"))
+            return groups.length
+              ? [[groups.map(item => item.shortcut).join(" / "), `${groups.map(item => item.label).join(" / ")} (outside text editing)`]]
+              : [];
+          if (row[0].startsWith("Ctrl / ⌘ + K")) return [[row[0], `Search ${searches}`]];
+          if (row[0].startsWith("Calendar /"))
+            return [[targets.join(" / "), row[1]]];
+          return [row];
+        }),
+      };
+    });
+}

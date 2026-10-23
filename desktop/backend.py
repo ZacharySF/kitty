@@ -12,19 +12,29 @@ import threading
 from pathlib import Path
 
 
-def prepare_workspace(root: Path, examples: Path) -> None:
+def prepare_workspace(root: Path, examples: Path, package: str) -> None:
     """Reuse selected workspaces in place; never copy databases or overwrite config."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     config = root / "config"
     config.mkdir(exist_ok=True, mode=0o700)
+    settings_module = importlib.import_module(f"{package}.settings")
+    bootstrap = importlib.import_module(f"{package}.core.bootstrap")
+    settings = settings_module.Settings(
+        root=root, db_path=root / "data" / "apply.db", demo=False,
+        anthropic_key_set=False,
+    )
+    enabled = bootstrap.initialize_modules(settings)
     for example in examples.glob("*.yaml.example"):
+        if example.name == "modules.yaml.example" or "applyai" not in enabled:
+            continue
         destination = config / example.name.removesuffix(".example")
         try:
             with destination.open("x", encoding="utf-8") as output:
                 output.write(example.read_text(encoding="utf-8"))
         except FileExistsError:
             pass
-    for directory in ("data", "resumes", ".private"):
+    directories = ("data", ".private", "resumes") if "applyai" in enabled else ("data", ".private")
+    for directory in directories:
         (root / directory).mkdir(exist_ok=True, mode=0o700)
 
 
@@ -89,7 +99,8 @@ def main() -> None:
     if not (assets / "index.html").is_file():
         parser.exit(1, "The packaged website is missing; reinstall kitty!.\n")
     root = args.workspace.expanduser().resolve()
-    prepare_workspace(root, bundle / "examples")
+    package = (bundle / "backend-package.txt").read_text().strip()
+    prepare_workspace(root, bundle / "examples", package)
     # Also serialize distinct desktop processes accidentally selecting the same root.
     with (root / ".private" / "desktop.lock").open("a") as lock:
         try:
@@ -97,7 +108,6 @@ def main() -> None:
         except BlockingIOError:
             parser.exit(1, "This workspace already has a desktop backend.\n")
         try:
-            package = (bundle / "backend-package.txt").read_text().strip()
             serve(root, assets, package)
         except Exception:
             # Config errors and SDK exceptions can contain secrets; don't print them.

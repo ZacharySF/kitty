@@ -299,7 +299,8 @@ def test_sync_create_update_delete_requires_fresh_all_date_recipient_review(work
         google.sync(workspace.settings, workspace.conn, body)
     with pytest.raises(APIError, match='fresh sync preview'):
         google.sync(workspace.settings, workspace.conn, {**body, 'external_approved': True})
-    review = web_calendar.post(None, workspace.conn, '/api/calendar/google/preview', body)
+    app = SimpleNamespace(modules=workspace.config.modules)
+    review = web_calendar.post(app, workspace.conn, '/api/calendar/google/preview', body)
     assert review['events'][0]['attendees'] == ['guest@example.invalid']
     assert review['events'][0]['start'].startswith('2028-')
     item = edit(workspace, item, title='Reviewed later')
@@ -495,7 +496,7 @@ def test_public_event_resource_editor_creates_reads_updates_and_deletes_reviewed
         def start(self, kind, work):
             return {'kind': kind, 'status': 'completed', 'result': work()}
 
-    app = SimpleNamespace(settings=workspace.settings, tasks=ImmediateTasks())
+    app = SimpleNamespace(settings=workspace.settings, tasks=ImmediateTasks(), modules=workspace.config.modules)
     body = {'resource': 'events', 'calendar_id': 'remote', 'action': 'create', 'meet': True,
             'params': {'sendUpdates': 'externalOnly'},
             'data': {'summary': 'Reviewed appointment', 'start': {'date': '2026-11-01'}, 'end': {'date': '2026-11-02'},

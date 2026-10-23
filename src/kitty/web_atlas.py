@@ -24,7 +24,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 from kitty.core import calendar, backlinks
-from kitty.core.opportunity_sources import DEFAULTS as OPPORTUNITY_SOURCES
+from kitty.modules import MODULE_IDS
 
 EVENT_WINDOW = timedelta(days=30)
 SECTION_LIMIT = 180
@@ -51,6 +51,10 @@ HOME_COUNTS = {
     'application': 'SELECT COUNT(*) FROM applications',
     'opportunity': "SELECT COUNT(*) FROM opportunities WHERE status <> 'skipped'",
 }
+#: Owning module of each home kind; a kind is neither listed nor counted without it.
+KIND_MODULES = {'subject': 'workspace', 'deck': 'workspace', 'notebook': 'workspace',
+                'schema': 'workspace', 'event': 'workspace', 'opportunity': 'workspace',
+                'job': 'applyai', 'application': 'applyai'}
 
 
 def _api_error(status: int, message: str):
@@ -76,9 +80,9 @@ def _home_count(conn, sql) -> int | None:
         raise
 
 
-def _upcoming_events(conn, now) -> int | None:
+def _upcoming_events(conn, now, applyai=True) -> int | None:
     try:
-        occurrences = calendar.occurrences(conn, now.isoformat(), (now + EVENT_WINDOW).isoformat())
+        occurrences = calendar.occurrences(conn, now.isoformat(), (now + EVENT_WINDOW).isoformat(), applyai=applyai)
     except sqlite3.OperationalError as exc:
         if _missing(exc):
             return None
@@ -90,12 +94,15 @@ def _upcoming_events(conn, now) -> int | None:
     return len({event['id'] for event in occurrences})
 
 
-def atlas(conn: sqlite3.Connection, now: datetime | None = None) -> dict:
+def atlas(conn: sqlite3.Connection, now: datetime | None = None, modules=MODULE_IDS) -> dict:
+    """Section counts for the active modules only; others are neither listed nor queried."""
     moment = now or datetime.now(UTC)
-    counts = {kind: _home_count(conn, sql) for kind, sql in HOME_COUNTS.items()}
-    counts['event'] = _upcoming_events(conn, moment)
+    kinds = {kind: spec for kind, spec in KINDS.items() if KIND_MODULES[kind] in modules}
+    counts = {kind: _home_count(conn, sql) for kind, sql in HOME_COUNTS.items() if kind in kinds}
+    if 'event' in kinds:
+        counts['event'] = _upcoming_events(conn, moment, 'applyai' in modules)
     return {'sections': [{'kind': kind, 'label': label, 'view': view, 'count': counts[kind]}
-                         for kind, (label, view) in KINDS.items()]}
+                         for kind, (label, view) in kinds.items()]}
 
 
 def _section_rows(conn, sql, params=()):
@@ -398,6 +405,8 @@ def _study_section(conn, focus=None):
 
 def _opportunity_sources(conn):
     """Monitored providers as `sources()` would list them, without seeding (read-only)."""
+    from kitty.core.opportunity_sources import DEFAULTS as OPPORTUNITY_SOURCES
+
     rows = _section_rows(conn, '''SELECT id, name, category, enabled, last_status, last_count
         FROM opportunity_sources''')
     if not rows and not _count(conn, "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table'"
@@ -482,7 +491,7 @@ def _focus(section, query):
 def get(app, conn, path, query):
     if path == '/api/atlas':
         app._no_query(query)
-        return atlas(conn)
+        return atlas(conn, modules=app.modules)
     section = path.removeprefix('/api/atlas/sections/')
     if path != f'/api/atlas/sections/{section}' or section not in SECTIONS:
         return None

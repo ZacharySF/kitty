@@ -12,7 +12,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
 
-from kitty.tui.navigation import PLACES
+from kitty.tui.navigation import Place
 
 
 class HelpScreen(ModalScreen[None]):
@@ -24,22 +24,28 @@ class HelpScreen(ModalScreen[None]):
         ("q", "dismiss_help", "Close"),
     ]
 
-    def __init__(self, rows: list[tuple[str, str, str]], screen_name: str) -> None:
+    def __init__(
+        self, rows: list[tuple[str, str, str]], screen_name: str, places: tuple[Place, ...] = (),
+    ) -> None:
         super().__init__()
         self.rows = rows
         self.screen_name = screen_name
+        self.places = places
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal help-modal"):
             yield Static(f"Keys - {self.screen_name}", classes="modal-title")
             yield DataTable(id="help-table", cursor_type="row", zebra_stripes=True)
-            screens = ", ".join(f"{place.label} {place.key.upper()}" for place in PLACES)
-            yield Static(
-                f"Screens, in workflow order: {screens} (or click the tabs). "
-                "enter on a job opens Job Detail; esc goes back. "
-                "ctrl+p opens the command palette. u undoes the last status change only.",
-                classes="modal-hint",
-            )
+            if self.places:
+                screens = ", ".join(f"{place.label} {place.key.upper()}" for place in self.places)
+                hint = (
+                    f"Screens, in workflow order: {screens} (or click the tabs). "
+                    "enter on a job opens Job Detail; esc goes back. "
+                    "ctrl+p opens the command palette. u undoes the last status change only."
+                )
+            else:
+                hint = "ctrl+p opens the command palette. enter or space switches a module."
+            yield Static(hint, classes="modal-hint")
 
     def on_mount(self) -> None:
         table = self.query_one("#help-table", DataTable)

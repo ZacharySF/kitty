@@ -2,8 +2,9 @@
   import { onMount } from "svelte";
   import { Button } from "@nunera/bracket";
   import { api, type Job } from "./api";
-  import { navigation, navigationGroups, type View } from "./workspace";
+  import { navigationGroups, visibleNavigation, type View } from "./workspace";
   let {
+    enabled,
     onclose,
     onview,
     onopenjob,
@@ -11,6 +12,7 @@
     onhelp,
     onreload,
   }: {
+    enabled: readonly string[];
     onclose: () => void;
     onview: (view: View) => void;
     onopenjob: (id: number) => void;
@@ -24,14 +26,15 @@
   let jobs = $state<Job[]>([]);
   let selected = $state(0);
   let error = $state("");
-  const actions = [
-    { label: "Add job", run: () => onadd() },
+  const applyai = $derived(enabled.includes("applyai"));
+  const actions = $derived([
+    ...(applyai ? [{ label: "Add job", run: () => onadd() }] : []),
     { label: "Keyboard shortcuts", run: () => onhelp() },
     { label: "Reload configuration", run: () => onreload() },
-  ];
+  ]);
   const choices = $derived(
     [
-      ...navigation.map((item) => ({
+      ...visibleNavigation(enabled).map((item) => ({
         label: item.label,
         meta: navigationGroups.find((group) => group.views.includes(item.id))?.label || "Section",
         run: () => onview(item.id),
@@ -56,7 +59,7 @@
     selected = 0;
     let cancelled = false;
     const timer = setTimeout(() => {
-      if (!text) {
+      if (!text || !applyai) {
         jobs = [];
         return;
       }
@@ -123,8 +126,8 @@
   <input
     type="search"
     bind:this={searchField}
-    aria-label="Search workspace sections, commands and jobs"
-    placeholder="Sections, commands, jobs…"
+    aria-label={applyai ? "Search workspace sections, commands and jobs" : "Search workspace sections and commands"}
+    placeholder={applyai ? "Sections, commands, jobs…" : "Sections, commands…"}
     bind:value={query}
   />{#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   <div class="command-list">

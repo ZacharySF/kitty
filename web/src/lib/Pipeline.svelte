@@ -76,7 +76,7 @@
     }
     if (event.key === "t") {
       event.preventDefault();
-      const names = ["", ...(workspace?.tracks.map((t) => t.name) || [])];
+      const names = ["", ...(workspace?.tracks?.map((t) => t.name) || [])];
       track = names[(names.indexOf(track) + 1) % names.length];
       await load();
       return true;

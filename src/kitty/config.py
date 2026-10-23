@@ -9,7 +9,7 @@ location back onto the YAML node tree, which is why the raw text is composed
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from ipaddress import IPv4Address, IPv6Address
 from pathlib import Path
 import re
@@ -829,6 +829,12 @@ class Config:
     resume_terms: ResumeTermsFile
     triage: TriageFile
     apply: ApplyFile
+    #: Active module snapshot for this process (see kitty.modules); never re-read mid-run.
+    modules: tuple[str, ...] = field(default_factory=lambda: _all_modules())
+
+    def enabled(self, module: str) -> bool:
+        """Whether `module` is in this process's active snapshot."""
+        return module in self.modules
 
     def track(self, name: str) -> Track | None:
         """The track with this name, or None."""
@@ -943,12 +949,44 @@ class Config:
         return choose(phrased)
 
 
-def load_config(config_dir: Path) -> Config:
-    """Load every config file from `config_dir`.
+def _all_modules() -> tuple[str, ...]:
+    from kitty.modules import MODULE_IDS
+
+    return MODULE_IDS
+
+
+def _inert_config(modules: tuple[str, ...]) -> Config:
+    """Empty careers config for a process without the applyai module.
+
+    Nothing is read from disk: missing or malformed careers YAML cannot matter to
+    a module that is off. Blank values mean any stray careers code finds no facts.
+    """
+    return Config(
+        profile=Profile(name="", email="", school="", major="", standing="",
+                        graduation="", home_city="", home_state=""),
+        tracks=TracksFile(tracks=[]), sources=SourcesFile(sources={}),
+        watchlist=WatchlistFile(), answers=AnswersFile(), skills=SkillsFile(),
+        conferences=ConferencesFile(), views=DEFAULT_VIEWS, resume_terms=ResumeTermsFile(),
+        triage=TriageFile(), apply=ApplyFile(), modules=modules,
+    )
+
+
+def load_config(config_dir: Path, *, modules: Sequence[str] | None = None) -> Config:
+    """Load the config files of the active modules from `config_dir`.
+
+    `modules` is the process's frozen active snapshot; None reads
+    config/modules.yaml (a missing file means every module). The careers files are
+    only read, and only validated, when applyai is active, so a pending selection
+    never changes what a running process loads.
 
     Problems from all files are collected into a single ConfigError so one run of
     `kitty doctor` shows everything that needs fixing.
     """
+    from kitty.modules import load_modules, normalize_modules
+
+    active = normalize_modules(modules) if modules is not None else load_modules(config_dir)
+    if "applyai" not in active:
+        return _inert_config(active)
     parsed: dict[str, Any] = {}
     problems: list[ConfigProblem] = []
     empties: dict[str, Any] = {
@@ -975,4 +1013,4 @@ def load_config(config_dir: Path) -> Config:
 
     if problems:
         raise ConfigError(problems)
-    return Config(**parsed)
+    return Config(**parsed, modules=active)
