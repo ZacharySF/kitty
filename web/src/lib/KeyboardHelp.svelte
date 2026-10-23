@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { shortcutGroups } from "./workspace";
-  let { onclose }: { onclose: () => void } = $props();
+  import { shortcutsFor } from "./workspace";
+  let { enabled, onclose }: { enabled: readonly string[]; onclose: () => void } = $props();
+  const groups = $derived(shortcutsFor(enabled));
   let dialog: HTMLDialogElement;
   onMount(() => dialog.showModal());
 </script>
@@ -28,7 +29,7 @@
     contextual; controls remain available by mouse. Browser print, reload, and
     close-tab shortcuts are untouched.
   </p>
-  {#each shortcutGroups as group}<section>
+  {#each groups as group}<section>
       <h3>{group.title}</h3>
       <dl>
         {#each group.shortcuts as [keys, action]}<div>

@@ -10,6 +10,7 @@ import os
 import sqlite3
 
 from kitty.config import CONFIG_FILES, ConfigError, parse_file
+from kitty.modules import MODULES_FILE, load_modules
 from kitty.core import resumes as resumes_core
 from kitty.core import sources as sources_core
 from kitty.db import connect, current_version, latest_version, pending_migrations
@@ -178,15 +179,46 @@ def check_tracks(conn: sqlite3.Connection) -> list[Check]:
     return results
 
 
+def check_modules(settings: Settings) -> tuple[list[Check], tuple[str, ...] | None]:
+    """Validate config/modules.yaml; return the checks and the selection (None if unreadable)."""
+    path = settings.config_path(MODULES_FILE)
+    try:
+        selection = load_modules(settings.config_dir)
+    except ConfigError as exc:
+        return [
+            Check(
+                name=f"config/{MODULES_FILE}", ok=False,
+                detail=f"line {problem.line or '?'}: {problem.location} {problem.message}".strip(),
+                fix=problem.hint,
+            )
+            for problem in exc.problems
+        ], None
+    if not path.exists():
+        return [Check(
+            name=f"config/{MODULES_FILE}", ok=True,
+            detail="not present - every module is enabled (existing workspace)",
+        )], selection
+    enabled = ", ".join(selection) or "none (core only)"
+    return [Check(name=f"config/{MODULES_FILE}", ok=True, detail=f"enabled: {enabled}")], selection
+
+
 def run_all(settings: Settings, conn: sqlite3.Connection | None = None) -> list[Check]:
-    """Run every check. Opens its own connection when the database exists."""
-    results = check_config(settings) + check_database(settings) + check_env(settings)
+    """Run every check of the active modules. Opens its own connection when the database exists.
+
+    The careers config, resumes, tracks and sources are only checked while the
+    applyai module is on, so a core-only or workspace-only workspace stays healthy
+    without any of those files.
+    """
+    module_checks, selection = check_modules(settings)
+    careers = selection is not None and "applyai" in selection
+    results = module_checks + (check_config(settings) if careers else [])
+    results += check_database(settings) + (check_env(settings) if careers else [])
 
     owned: sqlite3.Connection | None = None
-    if conn is None and settings.db_path.exists():
+    if careers and conn is None and settings.db_path.exists():
         owned = conn = connect(settings.db_path)
     try:
-        if conn is not None and not pending_migrations(conn):
+        if careers and conn is not None and not pending_migrations(conn):
             results += check_resumes(conn) + check_tracks(conn) + check_sources(conn)
     finally:
         if owned is not None:

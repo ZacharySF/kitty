@@ -26,7 +26,7 @@
   let task = $state<TaskRecord | null>(null);
   let selected = $state(0);
   let track = $state("");
-  let tracks = $state<Bootstrap["tracks"]>([]);
+  let tracks = $state<NonNullable<Bootstrap["tracks"]>>([]);
   let limit = $state(10);
   let ids = $state("");
   let preview = $state<
@@ -232,7 +232,7 @@
   onMount(() => {
     void refresh();
     void api<Bootstrap>("/bootstrap")
-      .then((data) => (tracks = data.tracks))
+      .then((data) => (tracks = data.tracks ?? []))
       .catch(
         (cause) =>
           (error =

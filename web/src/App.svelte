@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { api, type Bootstrap } from "./lib/api";
-  import { navigation, navigationGroups, type View } from "./lib/workspace";
+  import { navigation, navigationGroups, isView, viewEnabled, visibleGroups, type View } from "./lib/workspace";
+  import { setActiveModules } from "./lib/modules.svelte";
   import { Badge, Button } from "@nunera/bracket";
   import Icon from "./lib/Icon.svelte";
   import GettingStarted from "./lib/GettingStarted.svelte";
@@ -39,6 +40,11 @@
   const emptyTrail: WorkspaceTrail = { section: null, root: null, nodes: [] };
   const trail = $derived(activeTab.pane?.breadcrumbs() ?? emptyTrail);
   let workspace = $state<Bootstrap | null>(null);
+  const enabled = $derived(workspace?.modules.enabled ?? []);
+  const applyai = $derived(enabled.includes("applyai"));
+  const studyTools = $derived(enabled.includes("workspace"));
+  const groups = $derived(visibleGroups(enabled));
+  let moduleNotice = $state("");
   let error = $state("");
   let loading = $state(true);
   let palette = $state(false);
@@ -111,8 +117,17 @@
       });
     }
   }
+  function disabledNotice(target: View) {
+    const owner = navigation.find(item => item.id === target);
+    const info = workspace?.modules.available.find(item => item.id === owner?.module);
+    const pending = owner?.module && workspace?.modules.configured.includes(owner.module);
+    return `${owner?.label ?? "That page"} belongs to the ${info?.label ?? owner?.module} module, which is off in this session. ${
+      pending ? "It is saved as on and starts after you restart kitty." : "Turn it on in Settings, then restart kitty."}`;
+  }
   function navigate(next: View) {
+    if (workspace && !viewEnabled(next, enabled)) { moduleNotice = disabledNotice(next); return false; }
     if (!mayLeaveEditor()) return false;
+    moduleNotice = "";
     activeTab.view = next;
     activeTab.initialJobId = null;
     activeTab.epoch += 1;
@@ -141,19 +156,21 @@
     if (parent?.onclick) parent.onclick();
     else schemaRoot();
   }
-  function openJob(id: number) { if (navigate("jobs")) activeTab.initialJobId = id; }
+  function openJob(id: number) { if (applyai && navigate("jobs")) activeTab.initialJobId = id; }
   function studyText(event: Event) {
+    if (!studyTools) return;
     const detail = (event as CustomEvent).detail;
     const next: View = detail?.purpose === "flashcards" ? "flashcards" : "study";
     if (view === next || detail?.routed || !navigate(next)) return;
     void tick().then(() => window.dispatchEvent(new CustomEvent("kitty-study-text", { detail: { ...detail, routed: true } })));
   }
   function studyFocus(event: Event) {
+    if (!studyTools) return;
     const detail = (event as CustomEvent).detail;
     if (view === "study" || detail?.routed || !navigate("study")) return;
     void tick().then(() => window.dispatchEvent(new CustomEvent("kitty-study-focus", { detail: { ...detail, routed: true } })));
   }
-  function showGuide() { guide = true; }
+  function showGuide() { if (applyai) guide = true; }
   $effect(() => { if (guide && guideDialog && !guideDialog.open) guideDialog.showModal(); });
 
   let bootstrapRequest = 0;
@@ -163,6 +180,7 @@
     try {
       const data = await api<Bootstrap>("/bootstrap");
       if (request !== bootstrapRequest) return;
+      setActiveModules(data.modules.enabled);
       workspace = data;
       revision += 1;
     } catch (cause) {
@@ -180,7 +198,14 @@
     finally { loading = false; }
   }
   function readRoute() {
-    const next = navigation.find(item => item.id === window.location.hash.slice(1))?.id || "today";
+    const hash = window.location.hash.slice(1);
+    let next: View = isView(hash) ? hash : "today";
+    let redirected = false;
+    if (workspace && !viewEnabled(next, enabled)) {
+      moduleNotice = disabledNotice(next);
+      next = "today";
+      redirected = true;
+    }
     const savedId = window.history.state?.workspaceTabId;
     const target = tabs.find(tab => tab.id === savedId) ?? activeTab;
     if (target.view !== next) {
@@ -191,8 +216,25 @@
       target.scrollY = 0;
     }
     activeId = target.id;
+    if (redirected) route(target, true);
     if (!workspace) void refresh();
   }
+  // A deep link read before bootstrap may name a view the active modules do not provide.
+  $effect(() => {
+    if (!workspace) return;
+    const blocked = tabs.filter(tab => !viewEnabled(tab.view, enabled));
+    if (!blocked.length) return;
+    untrack(() => {
+      for (const tab of blocked) {
+        moduleNotice = disabledNotice(tab.view);
+        tab.view = "today";
+        tab.initialJobId = null;
+        tab.epoch += 1;
+        tab.scrollY = 0;
+        if (tab.id === activeId) route(tab, true);
+      }
+    });
+  });
   onMount(() => {
     readRoute();
     window.addEventListener("kitty-study-text", studyText);
@@ -226,12 +268,12 @@
         !window.getSelection()?.toString() && !event.getModifierState("AltGraph")) {
       const group = event.ctrlKey && event.altKey && ["Alt", "Control"].includes(event.key) ? "Plan"
         : event.ctrlKey && !event.altKey ? ({ x: "Study", c: "Job search", v: "Settings" } as Record<string, string>)[event.key.toLowerCase()] : null;
-      if (group) { event.preventDefault(); await focusGroup(group); return; }
+      if (group && groups.some(item => item.label === group)) { event.preventDefault(); await focusGroup(group); return; }
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault(); palette = true; return;
     }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f" && applyai) {
       if (typing && !["inbox", "jobs", "queue", "applications", "favorites"].includes(view)) return;
       event.preventDefault();
       if (!["inbox", "jobs", "queue", "applications", "favorites"].includes(view)) {
@@ -277,15 +319,15 @@
       {/if}
     </nav>
     <nav class="workspace-groups" aria-label="Workspace groups">
-      {#each navigationGroups as group, index}<button aria-current={sectionGroup === group.label ? "page" : undefined}
-        title={`${group.label} · Focus its schema node: ${["Ctrl + Alt", "Ctrl + X", "Ctrl + C", "Ctrl + V"][index]}`}
+      {#each groups as group}<button aria-current={sectionGroup === group.label ? "page" : undefined}
+        title={`${group.label} · Focus its schema node: ${group.shortcut}`}
         onclick={() => navigate(group.views[0])}>{group.label}</button>{/each}
     </nav>
     <ThemePicker />
     <button
       class="system-command"
       onclick={() => (palette = true)}
-      aria-label="Search pages, jobs and commands"
+      aria-label={applyai ? "Search pages, jobs and commands" : "Search pages and commands"}
       ><Icon name="jobs" size={15} /><span>Search anything</span><kbd
         >Ctrl K</kbd
       ></button
@@ -300,14 +342,24 @@
     >
   </header>
   <WorkspaceTabs bind:this={tabBar} tabs={tabLabels} {activeId} onselect={selectTab} onclose={closeTab} onnew={newTab} />
-  <StudyFocusBar {revision} demo={workspace?.demo ?? true} />
-  {#if view !== "calendar"}<CalendarReminders />{/if}
+  {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
+  {#if studyTools && view !== "calendar"}<CalendarReminders />{/if}
   <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">
         <Badge label="DEMO" intent="warning" size="sm" />Synthetic workspace.
         Local changes work; external actions are disabled.
         <button class="icon-button" aria-label="Dismiss demo notice" onclick={() => (demoHidden = true)}>×</button>
       </div>{/if}
+    {#if workspace?.modules.restart_required && view !== "settings"}<div class="demo-notice" role="status">
+        Module changes are saved but not active yet. Restart kitty to apply them.
+        <button class="text-button" onclick={() => navigate("settings")}>Review in Settings</button>
+      </div>{/if}
+    {#if moduleNotice}<div class="demo-notice" role="status">
+        {moduleNotice}
+        {#if view !== "settings"}<button class="text-button" onclick={() => navigate("settings")}>Open Settings</button>{/if}
+        <button class="icon-button" aria-label="Dismiss module message" onclick={() => (moduleNotice = "")}>×</button>
+      </div>{/if}
+    {#if loading && !workspace && !error}<p class="muted" role="status">Loading workspace…</p>{/if}
     {#if error}<div class="error-banner" role="alert">
         {error}<button class="button" onclick={refresh}>Try again</button><button class="icon-button" aria-label="Dismiss workspace message" onclick={() => (error = "")}>×</button>
       </div>{/if}
@@ -318,6 +370,7 @@
         tabindex="0"
         hidden={tab.id !== activeId} inert={tab.id !== activeId}
       >
+        {#if (workspace && viewEnabled(tab.view, enabled)) || tab.view === "settings" || tab.view === "ai"}
         <WorkspacePane
           bind:this={tab.pane} tabId={tab.id} view={tab.view}
           active={tab.id === activeId} {workspace} {revision}
@@ -325,14 +378,15 @@
           onchange={refresh}
           onview={next => { if (tab.id === activeId) navigate(next); }}
           onopenjob={id => { if (tab.id === activeId) openJob(id); }}
-          onadd={() => { if (tab.id === activeId) addJob = true; }}
+          onadd={() => { if (tab.id === activeId && applyai) addJob = true; }}
           onguide={() => { if (tab.id === activeId) showGuide(); }}
         />
+        {/if}
       </div>
     {/each}
   </main>
 </div>
-{#if guide}<dialog
+{#if guide && applyai}<dialog
     bind:this={guideDialog}
     class="workspace-dialog guide-dialog"
     aria-labelledby="guide-title"
@@ -356,15 +410,16 @@
     />
   </dialog>{/if}
 {#if palette}<CommandPalette
+    {enabled}
     onclose={() => (palette = false)}
     onview={navigate}
     onopenjob={openJob}
-    onadd={() => (addJob = true)}
+    onadd={() => { if (applyai) addJob = true; }}
     onhelp={() => (help = true)}
     onreload={() => void reload()}
   />{/if}
-{#if help}<KeyboardHelp onclose={() => (help = false)} />{/if}
-{#if addJob}<AddJob
+{#if help}<KeyboardHelp {enabled} onclose={() => (help = false)} />{/if}
+{#if addJob && applyai}<AddJob
     {workspace}
     onclose={() => (addJob = false)}
     onsaved={async (id) => {

@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from kitty.config import CONFIG_FILES
+from kitty.modules import MODULES_FILE, load_modules, normalize_modules, save_modules
 from kitty.settings import Settings
 
 #: profile.yaml fields `init` asks about, in the order it asks.
@@ -33,25 +36,68 @@ class CopyResult:
     path: Path
 
 
-def copy_examples(settings: Settings) -> list[CopyResult]:
-    """Create any missing config file from its .example. Never overwrites.
+def initialize_modules(settings: Settings, enabled: Sequence[str] | None = None) -> tuple[str, ...]:
+    """Settle config/modules.yaml for `kitty init`; return the selection it implies.
+
+    An existing file is validated and kept. Otherwise `enabled` is written when
+    given, a brand-new workspace (no careers config yet) gets ``enabled: []`` and
+    a pre-module workspace keeps its absent file, which means every module.
+    """
+    target = settings.config_path(MODULES_FILE)
+    if target.exists():
+        return load_modules(settings.config_dir)
+    if enabled is not None:
+        return save_modules(settings.config_dir, normalize_modules(enabled))
+    legacy = any(
+        settings.config_path(name).exists() for name, _model, required, _example in CONFIG_FILES
+        if required
+    )
+    return load_modules(settings.config_dir) if legacy else save_modules(settings.config_dir, ())
+
+
+def copy_examples(settings: Settings, modules: Sequence[str] | None = None) -> list[CopyResult]:
+    """Create any missing careers config file from its .example. Never overwrites.
 
     All runtime YAML files are local-only; only their generic .example templates
-    are committed. An existing local file is always reported as 'kept'.
+    are committed. An existing local file is always reported as 'kept'. Without
+    the applyai module (`modules`, default: modules.yaml) nothing is copied.
     """
+    active = normalize_modules(modules) if modules is not None else load_modules(settings.config_dir)
     results: list[CopyResult] = []
+    if "applyai" not in active:
+        return results
     for filename, _model, _required, has_example in CONFIG_FILES:
         target = settings.config_path(filename)
-        example = settings.config_path(f"{filename}.example")
+        candidates = [settings.config_dir, Path(__file__).resolve().parents[3] / "config"]
+        if hasattr(sys, "_MEIPASS"):
+            candidates.insert(1, Path(sys._MEIPASS) / "examples")
+        example = next((folder / f"{filename}.example" for folder in candidates
+                        if (folder / f"{filename}.example").is_file()), None)
 
-        if target.exists():
+        if target.exists() or target.is_symlink():
             results.append(CopyResult(filename, "kept", target))
-        elif has_example and example.exists():
-            shutil.copy(example, target)
+        elif has_example and example is not None:
+            try:
+                with target.open("x", encoding="utf-8") as output:
+                    target.chmod(0o600)
+                    output.write(example.read_text(encoding="utf-8"))
+            except FileExistsError:
+                results.append(CopyResult(filename, "kept", target))
+                continue
             results.append(CopyResult(filename, "created", target))
         else:
             results.append(CopyResult(filename, "no_example", target))
     return results
+
+
+def configure_modules(config_dir: Path, enabled: Sequence[str]) -> tuple[str, ...]:
+    """Provision missing public defaults, then persist a restart-only selection."""
+    selection = normalize_modules(enabled)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    settings = Settings(root=config_dir.parent, db_path=config_dir.parent / "data" / "apply.db",
+                        demo=False, anthropic_key_set=False)
+    copy_examples(settings, selection)
+    return save_modules(config_dir, selection)
 
 
 def _replace_scalar(text: str, key: str, value: str) -> str:

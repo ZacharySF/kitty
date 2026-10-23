@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, type TaskRecord } from "./api";
   import AIReview from "./AIReview.svelte";
+  import { activeModules } from "./modules.svelte";
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
   type Model = {
@@ -35,6 +36,7 @@
   let message = $state("");
   let purpose = $state("summarize");
   let text = $state("");
+  const workspaceTools = $derived(activeModules.enabled.includes("workspace"));
   const choices = $derived(
     status?.models.filter((m) =>
       `${m.id} ${m.name}`.toLowerCase().includes(search.toLowerCase()),
@@ -106,9 +108,10 @@
   <section class="panel ai-panel">
     <h2>Connect OpenRouter</h2>
     <p>
-      Choose your model, speed/cost preference, and budget. Use AI for a
-      selected note, study plan, flashcard draft, or opportunity summary—not
-      automatic account actions.
+      Choose your model, speed/cost preference, and budget.{#if workspaceTools}
+        Use AI for a selected note, study plan, flashcard draft, or
+        opportunity summary—not automatic account actions.{:else}
+        Every inference request is reviewed first; nothing runs automatically.{/if}
     </p>
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if message}<p role="status">{message}</p>{/if}
@@ -205,7 +208,7 @@
       </p>
     {:else}<p>Loading AI settings…</p>{/if}
   </section>
-  <section class="panel ai-panel">
+  {#if workspaceTools}<section class="panel ai-panel">
     <h2>Work with selected text</h2>
     <label
       >Help with<select bind:value={purpose}
@@ -225,7 +228,7 @@
       ></textarea></label
     >
     <AIReview {purpose} {text} {demo} />
-  </section>
+  </section>{/if}
 </div>
 
 <style>

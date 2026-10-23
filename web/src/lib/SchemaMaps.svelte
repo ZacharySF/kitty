@@ -6,9 +6,12 @@
   import type { GraphLayout, GraphLink, GraphNode } from "./graph3d";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import MindMapFeedback from "./MindMapFeedback.svelte";
+  import { activeModules } from "./modules.svelte";
   let { revision = 0, demo = false, section = "schema", embedded = false }: { revision?: number; demo?: boolean; section?: "schema" | "study"; embedded?: boolean } =
     $props();
   const pane = useWorkspaceContext();
+  // Importing tracked jobs reads Apply AI data; it exists only while that module is active.
+  const canImportJobs = $derived(activeModules.enabled.includes("applyai"));
   let container = $state<HTMLElement>();
   function confirm(message: string) {
     return pane.active && window.confirm(message);
@@ -1866,7 +1869,7 @@
               disabled={!editable || current.graph.nodes.length >= 300}
               >Add node</Button
             >
-            {#if current.mode === "jobs"}<Button
+            {#if current.mode === "jobs" && canImportJobs}<Button
                 onclick={() => {
                   showJobs = !showJobs;
                   if (showJobs) void findJobs();
@@ -2223,7 +2226,7 @@
         {/if}
       </div>
     {/if}
-    {#if showJobs && current.mode === "jobs"}<Panel
+    {#if showJobs && current.mode === "jobs" && canImportJobs}<Panel
         title="Import selected tracked jobs / factual sources only"
         ><div class="toolbar">
           <label

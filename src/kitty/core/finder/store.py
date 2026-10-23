@@ -222,7 +222,7 @@ def append_to_watchlist(config_dir: Path, entry: str) -> None:
         text += "\n"
     path.write_text(f"{text}\n{entry}", encoding="utf-8")
     try:
-        load_config(config_dir)
+        load_config(config_dir, modules=("applyai",))
     except ConfigError:
         if before is None:
             path.unlink()
@@ -239,11 +239,11 @@ def approve(conn: sqlite3.Connection, settings: Settings, config: Config, candid
     appended watchlist would not load (the file is left unchanged).
     """
     candidate = _pending(conn, candidate_id)
-    in_file = {norm_company(c.name) for c in load_config(settings.config_dir).watchlist.companies}
+    in_file = {norm_company(c.name) for c in load_config(settings.config_dir, modules=("applyai",)).watchlist.companies}
     if candidate.norm_name not in in_file:
         tracks = tracks_for_area(candidate.area, config.track_names)
         append_to_watchlist(settings.config_dir, watchlist_entry(candidate, tracks, now_iso()[:10]))
-    entry = next(c for c in load_config(settings.config_dir).watchlist.companies
+    entry = next(c for c in load_config(settings.config_dir, modules=("applyai",)).watchlist.companies
                  if norm_company(c.name) == candidate.norm_name)
     with transaction(conn):
         companies_core.upsert_company(

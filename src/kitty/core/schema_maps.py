@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -24,6 +26,21 @@ MAX_BYTES = 1_000_000
 
 class SchemaConflict(ValueError):
     """Reload or export local edits rather than overwriting another window."""
+
+
+#: Source kinds whose live data belongs to the ApplyAI module.
+APPLYAI_KINDS = frozenset({'job', 'company'})
+_applyai: ContextVar[bool] = ContextVar('schema_applyai', default=True)
+
+
+@contextmanager
+def applyai_scope(enabled: bool):
+    """Request-scoped: while off, job/company sources keep their link but show no live data."""
+    token = _applyai.set(enabled)
+    try:
+        yield
+    finally:
+        _applyai.reset(token)
 
 
 def _text(value, name, limit=200, required=False):
@@ -176,6 +193,8 @@ def _revision(row, value):
 
 def _lookup(conn, kind, source_id):
     """Read-only live view of one source record; deleted sources report missing."""
+    if kind in APPLYAI_KINDS and not _applyai.get():
+        return {'unavailable': True}
     if kind == 'calendar_task':
         row = conn.execute('SELECT data FROM calendar_tasks WHERE id=? AND deleted=0', (source_id,)).fetchone()
         return {'label': json.loads(row['data']).get('title', '')} if row else {'missing': True}

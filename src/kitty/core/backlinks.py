@@ -18,7 +18,7 @@ import re
 import sqlite3
 import uuid
 
-from kitty.core import schema_maps
+from kitty.core import calendar, schema_maps
 from kitty.db.connection import transaction
 
 PER_NODE = 12
@@ -143,8 +143,10 @@ def _study_tasks(conn):
         yield 'study_task', row['id'], row['title'], '\n'.join([row['title'], *parts])
 
 
-def _events(conn):
-    for row in conn.execute('SELECT id,title,data FROM calendar_events WHERE deleted=0 ORDER BY updated_at DESC LIMIT ?', (RECENT['calendar_event'],)).fetchall():
+def _events(conn, applyai=True):
+    for row in conn.execute('SELECT id,title,data,source_key FROM calendar_events WHERE deleted=0 ORDER BY updated_at DESC LIMIT ?', (RECENT['calendar_event'],)).fetchall():
+        if not applyai and calendar.applyai_sourced(row['source_key']):
+            continue
         data = _json(row['data'], {})
         description = data.get('description') if isinstance(data, dict) and isinstance(data.get('description'), str) else ''
         yield 'calendar_event', row['id'], row['title'], f"{row['title']}\n{description}"
@@ -185,19 +187,24 @@ SOURCES = (('note_pages', _notes), ('study_subjects', _subjects), ('study_projec
            ('flash_decks', _decks), ('jobs', _jobs))
 
 
-def _records(conn):
-    """Yield (kind, id, title, text) for recent local records; absent or older tables are skipped."""
+def _records(conn, applyai=True):
+    """Yield (kind, id, title, text) for recent local records; absent or older tables are skipped.
+
+    Without ApplyAI, jobs and calendar copies imported from ApplyAI data are omitted.
+    """
     for table, source in SOURCES:
+        if table == 'jobs' and not applyai:
+            continue
         if not _exists(conn, table):
             continue
         try:
-            rows = list(source(conn))
+            rows = list(source(conn, applyai) if table == 'calendar_events' else source(conn))
         except sqlite3.OperationalError:
             continue
         yield from rows
 
 
-def scan(conn, terms, per_term=PER_NODE):
+def scan(conn, terms, per_term=PER_NODE, *, applyai=True):
     """Match each ``key -> phrase`` against bounded local records.
 
     Returns ``({key: [reference, ...]}, scanned)``. References are deduplicated per
@@ -211,7 +218,7 @@ def scan(conn, terms, per_term=PER_NODE):
         index.setdefault(tokens[0], []).append((key, tokens))
     found = {key: {} for key in terms}
     scanned, budget = {}, TOTAL_CHARS
-    for kind, record_id, title, text in _records(conn):
+    for kind, record_id, title, text in _records(conn, applyai):
         text = (text or '')[:RECORD_CHARS]
         budget -= len(text)
         if budget < 0:
@@ -280,8 +287,8 @@ def _connected(document):
     return {(edge['from'], edge['to']) for edge in document['edges']} | {(edge['to'], edge['from']) for edge in document['edges']}
 
 
-def _suggest(conn, document):
-    found, scanned = scan(conn, _terms(document))
+def _suggest(conn, document, applyai=True):
+    found, scanned = scan(conn, _terms(document), applyai=applyai)
     sourced, ids, connected = _targets(document), {node['id'] for node in document['nodes']}, _connected(document)
     result = {}
     for node_id, references in found.items():
@@ -295,17 +302,17 @@ def _suggest(conn, document):
     return result, scanned
 
 
-def suggestions(conn, map_id):
+def suggestions(conn, map_id, *, applyai=True):
     row = schema_maps._row(conn, map_id)
     document = json.loads(row['graph_json'])
-    found, scanned = _suggest(conn, document)
+    found, scanned = _suggest(conn, document, applyai)
     return {'map_id': row['id'], 'revision': row['revision'],
             'suggestions': [{'node_id': node['id'], 'label': node['label'], 'references': found[node['id']]}
                             for node in document['nodes'] if found.get(node['id'])],
             'scanned': scanned}
 
 
-def mentions(conn, term, exclude=None):
+def mentions(conn, term, exclude=None, *, applyai=True):
     """Linked mentions of an arbitrary term, e.g. a note page title or study subject."""
     term = schema_maps._text(term, 'Term', 200)
     tokens = phrase(term)
@@ -314,7 +321,7 @@ def mentions(conn, term, exclude=None):
         if kind not in VIEWS or not record_id:
             raise ValueError('Exclude must look like <kind>:<id>')
         exclude = (kind, record_id)
-    found, scanned = scan(conn, {'term': tokens} if tokens else {}, PER_TERM + (1 if exclude else 0))
+    found, scanned = scan(conn, {'term': tokens} if tokens else {}, PER_TERM + (1 if exclude else 0), applyai=applyai)
     references = [item for item in found.get('term', []) if (item['kind'], str(item['id'])) != exclude][:PER_TERM]
     return {'term': term, 'references': references, 'scanned': scanned}
 
@@ -419,7 +426,7 @@ def _clamp(value):
     return max(-100000.0, min(100000.0, float(value)))
 
 
-def apply(conn, body):
+def apply(conn, body, *, applyai=True):
     """Link every reference currently suggested for the accepted nodes; revision-checked and idempotent."""
     schema_maps._fields(body, {'map_id', 'revision', 'node_ids'})
     node_ids = body.get('node_ids')
@@ -433,7 +440,7 @@ def apply(conn, body):
         nodes = {node['id']: node for node in document['nodes']}
         if any(key not in nodes for key in node_ids):
             raise ValueError('A selected node is no longer in this map')
-        found, _ = _suggest(conn, document)
+        found, _ = _suggest(conn, document, applyai)
         sourced, connected, changed = _targets(document), _connected(document), False
         edge_ids = {edge['id'] for edge in document['edges']}
         for node_id in node_ids:

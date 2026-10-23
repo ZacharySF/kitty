@@ -13,8 +13,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-#: Marker used to recognise the project root when walking up from the cwd.
-ROOT_MARKER = Path("config") / "tracks.yaml"
+#: Markers that identify the project root when walking up from the cwd. modules.yaml
+#: is the neutral one (a core-only workspace has no careers files); tracks.yaml is
+#: kept so pre-module workspaces are still found.
+ROOT_MARKERS = (Path("config") / "modules.yaml", Path("config") / "tracks.yaml")
 
 #: Remote-control (WebDriver BiDi) port of the Firefox window the form filler drives.
 #: Not Firefox's default 9222, so it never collides with another automated browser.
@@ -30,7 +32,8 @@ def find_firefox() -> str | None:
 
 
 def find_project_root(start: Path | None = None) -> Path:
-    """Return the project root: the nearest ancestor holding config/tracks.yaml.
+    """Return the project root: the nearest ancestor holding config/modules.yaml
+    or, in a pre-module workspace, config/tracks.yaml.
 
     Falls back to the current directory so a fresh `kitty init` still works
     before any config exists.
@@ -41,7 +44,7 @@ def find_project_root(start: Path | None = None) -> Path:
 
     here = (start or Path.cwd()).resolve()
     for candidate in [here, *here.parents]:
-        if (candidate / ROOT_MARKER).exists():
+        if any((candidate / marker).exists() for marker in ROOT_MARKERS):
             return candidate
     return here
 

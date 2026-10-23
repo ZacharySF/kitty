@@ -107,7 +107,7 @@
           >Browse jobs<Icon name="arrow" size={15} /></button
         >
         <button class="text-button" onclick={() => onview("favorites")}
-          >Saved jobs{workspace
+          >Saved jobs{workspace?.counts
             ? ` (${workspace.counts.favorites})`
             : ""}</button
         >

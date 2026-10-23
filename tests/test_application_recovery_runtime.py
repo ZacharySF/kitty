@@ -10,6 +10,7 @@ from kitty.core import jobs
 from kitty.core.apply.filler import fill_form, fill_job, fill_jobs
 from kitty.core.apply.recovery_runtime import JobRecovery, PreparationStopped
 from kitty.core.apply.watch import Watch
+from kitty.settings import find_firefox
 
 
 def test_transient_blur_rejection_is_retried_without_reupload_or_submission(space, page):
@@ -69,6 +70,8 @@ def test_job_deadline_stops_before_a_new_field_write(space, page):
 
 
 def test_cancel_without_submission_watching_preserves_completed_report(space):
+    if find_firefox() is None:
+        pytest.skip("firefox is not on PATH")
     first, second = _job(space, 'application_safety'), _job(space, 'greenhouse')
     monitor = Watch(hours=0)
     observed = []

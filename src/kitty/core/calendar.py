@@ -26,6 +26,11 @@ EVENT_FIELDS = {'title', 'start', 'end', 'timezone', 'all_day', 'description', '
                 'source_key', 'source_url', 'attachments', 'event_type', 'google_options'}
 TASK_FIELDS = {'title', 'description', 'due', 'timezone', 'priority', 'status', 'tags', 'project', 'calendar_id',
                'repeat_frequency', 'repeat_interval', 'repeat_until'}
+#: Source-key prefixes of calendar copies imported from ApplyAI data. Without that
+#: module they are hidden (and never retired or synced); the rows are kept.
+APPLYAI_SOURCES = frozenset({'job', 'application', 'status', 'reminder'})
+#: Prefixes `import_jobs` refreshes, i.e. retires when the source no longer lists them.
+REFRESHED_SOURCES = APPLYAI_SOURCES | {'opportunity'}
 
 
 def fail(message, status=400):
@@ -253,7 +258,20 @@ def _event(conn, ident, include_deleted=False):
             'updated_at': row['updated_at'], 'source_overridden': bool(row['source_overridden'])}
 
 
-def get_event(conn, ident):
+def applyai_sourced(source_key):
+    """Whether a calendar copy was imported from ApplyAI data (jobs, applications, reminders)."""
+    return (source_key or '').split(':', 1)[0] in APPLYAI_SOURCES
+
+
+def ensure_visible(conn, ident, *, applyai=True):
+    """404 for an ApplyAI-sourced copy while that module is off; the row itself is kept."""
+    row = conn.execute('SELECT source_key FROM calendar_events WHERE id=?', (ident,)).fetchone()
+    if row is not None and not applyai and applyai_sourced(row['source_key']):
+        fail('Event not found', 404)
+
+
+def get_event(conn, ident, *, applyai=True):
+    ensure_visible(conn, ident, applyai=applyai)
     return _event(conn, ident)
 
 
@@ -335,7 +353,7 @@ def _occurrence_end(data, start, duration):
     return stamp(end, data['all_day'])
 
 
-def occurrences(conn, start, end, *, search='', calendar_id=None, include_hidden=False):
+def occurrences(conn, start, end, *, search='', calendar_id=None, include_hidden=False, applyai=True):
     lower = instant(start)
     upper = instant(end)
     if upper <= lower or upper - lower > timedelta(days=740):
@@ -345,6 +363,8 @@ def occurrences(conn, start, end, *, search='', calendar_id=None, include_hidden
                         (calendar_id,) if calendar_id else ())
     output = []
     for row in rows:
+        if not applyai and applyai_sourced(row['source_key']):
+            continue
         data = json.loads(row['data'])
         if search.casefold() not in ' '.join([data['title'], data['description'], data['location']]).casefold():
             continue
@@ -707,9 +727,9 @@ def availability(events, start, end, *, exclude_id=None):
     return {'busy': [{'start': a.isoformat(), 'end': b.isoformat(), 'events': ids} for a, b, ids in merged], 'free': free, 'conflicts': conflicts}
 
 
-def due_reminders(conn, *, at=None):
+def due_reminders(conn, *, at=None, applyai=True):
     at = at or datetime.now(UTC)
-    events = occurrences(conn, (at - timedelta(days=1)).isoformat(), (at + timedelta(days=29)).isoformat())
+    events = occurrences(conn, (at - timedelta(days=1)).isoformat(), (at + timedelta(days=29)).isoformat(), applyai=applyai)
     dismissed = {(r['event_id'], r['occurrence'], r['minutes']) for r in conn.execute('SELECT * FROM calendar_reminder_dismissals')}
     output = []
     for e in events:
@@ -731,11 +751,13 @@ def dismiss_reminder(conn, body):
     return {'ok': True}
 
 
-def activity(conn, start, end, tz='UTC'):
+def activity(conn, start, end, tz='UTC', *, applyai=True):
     lower, upper, z = instant(start), instant(end), zone(tz)
     counts = {}
     for table, field, kind in [('calendar_history', 'created_at', 'calendar_edits'), ('applications', 'applied_at', 'applications'),
                                ('status_events', 'occurred_at', 'status_updates')]:
+        if not applyai and table != 'calendar_history':
+            continue
         for row in conn.execute(f'SELECT {field} AS at FROM {table}' + (" WHERE state='confirmed'" if table == 'status_events' else '')):
             try:
                 dt = instant(row['at'])
@@ -771,20 +793,22 @@ def _source_event(conn, body):
     return True
 
 
-def import_jobs(conn):
+def import_jobs(conn, *, applyai=True):
+    """Refresh source-dated calendar copies; job, application and reminder dates only with ApplyAI."""
     changed = 0
     errors = []
     entries = []
-    for row in conn.execute('SELECT j.*,c.display_name AS company FROM jobs j JOIN companies c ON c.id=j.company_id WHERE j.deadline_at IS NOT NULL'):
-        entries.append((f'job:{row["id"]}:deadline', f'Deadline · {row["company"]} · {row["title"]}', row['deadline_at'], row['url'], 'Job deadline (source date)', 'UTC'))
-    for row in conn.execute('SELECT a.*,j.title,j.url,c.display_name AS company FROM applications a JOIN jobs j ON j.id=a.job_id JOIN companies c ON c.id=j.company_id'):
-        for field, label in [('applied_at', 'Applied'), ('next_action_at', 'Next action')]:
-            if row[field]:
-                entries.append((f'application:{row["id"]}:{field}', f'{label} · {row["company"]} · {row["title"]}', row[field], row['url'], row['next_action_note'] or '' if field == 'next_action_at' else 'Application submission', 'UTC'))
-    for row in conn.execute("SELECT s.*,j.title,j.url,c.display_name AS company FROM status_events s JOIN applications a ON a.id=s.application_id JOIN jobs j ON j.id=a.job_id JOIN companies c ON c.id=j.company_id WHERE s.state='confirmed' AND s.to_status='interview' AND s.undoes_event_id IS NULL"):
-        entries.append((f'status:{row["id"]}:interview', f'Interview status · {row["company"]} · {row["title"]}', row['occurred_at'], row['url'], 'Confirmed interview status activity; not an inferred interview appointment.', 'UTC'))
-    for row in conn.execute("SELECT r.*,j.title,j.url,c.display_name AS company FROM reminders r LEFT JOIN jobs j ON j.id=r.job_id LEFT JOIN companies c ON c.id=j.company_id WHERE r.done_at IS NULL"):
-        entries.append((f'reminder:{row["id"]}', f'{row["kind"].title()} · {row["company"] or "Reminder"} · {row["title"] or ""}', row['due_at'], row['url'] or '', row['note'] or 'Existing reminder; not a source deadline.', 'UTC'))
+    if applyai:
+        for row in conn.execute('SELECT j.*,c.display_name AS company FROM jobs j JOIN companies c ON c.id=j.company_id WHERE j.deadline_at IS NOT NULL'):
+            entries.append((f'job:{row["id"]}:deadline', f'Deadline · {row["company"]} · {row["title"]}', row['deadline_at'], row['url'], 'Job deadline (source date)', 'UTC'))
+        for row in conn.execute('SELECT a.*,j.title,j.url,c.display_name AS company FROM applications a JOIN jobs j ON j.id=a.job_id JOIN companies c ON c.id=j.company_id'):
+            for field, label in [('applied_at', 'Applied'), ('next_action_at', 'Next action')]:
+                if row[field]:
+                    entries.append((f'application:{row["id"]}:{field}', f'{label} · {row["company"]} · {row["title"]}', row[field], row['url'], row['next_action_note'] or '' if field == 'next_action_at' else 'Application submission', 'UTC'))
+        for row in conn.execute("SELECT s.*,j.title,j.url,c.display_name AS company FROM status_events s JOIN applications a ON a.id=s.application_id JOIN jobs j ON j.id=a.job_id JOIN companies c ON c.id=j.company_id WHERE s.state='confirmed' AND s.to_status='interview' AND s.undoes_event_id IS NULL"):
+            entries.append((f'status:{row["id"]}:interview', f'Interview status · {row["company"]} · {row["title"]}', row['occurred_at'], row['url'], 'Confirmed interview status activity; not an inferred interview appointment.', 'UTC'))
+        for row in conn.execute("SELECT r.*,j.title,j.url,c.display_name AS company FROM reminders r LEFT JOIN jobs j ON j.id=r.job_id LEFT JOIN companies c ON c.id=j.company_id WHERE r.done_at IS NULL"):
+            entries.append((f'reminder:{row["id"]}', f'{row["kind"].title()} · {row["company"] or "Reminder"} · {row["title"] or ""}', row['due_at'], row['url'] or '', row['note'] or 'Existing reminder; not a source deadline.', 'UTC'))
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='opportunities'").fetchone():
         for row in conn.execute('SELECT id,title,url,deadline,timezone,description FROM opportunities WHERE deadline IS NOT NULL'):
             entries.append((f'opportunity:{row["id"]}:deadline', f'Deadline · {row["title"]}', row['deadline'], row['url'], row['description'] or '', row['timezone'] or 'UTC'))
@@ -803,13 +827,14 @@ def import_jobs(conn):
     active = {entry[0] for entry in entries}
     with transaction(conn):
         for row in conn.execute("SELECT * FROM calendar_events WHERE deleted=0 AND source_overridden=0 AND source_key IS NOT NULL").fetchall():
-            if row['source_fingerprint'] and row['source_key'].split(':', 1)[0] in {'job', 'application', 'status', 'reminder', 'opportunity'} and row['source_key'] not in active:
+            # Without ApplyAI its copies are left exactly as they are, not retired.
+            if row['source_fingerprint'] and row['source_key'].split(':', 1)[0] in (REFRESHED_SOURCES if applyai else {'opportunity'}) and row['source_key'] not in active:
                 _update(conn, row['id'], json.loads(row['data']), deleted=True, manual=False)
                 changed += 1
     return {'changed': changed, 'review_errors': errors, 'source_count': len(entries)}
 
 
-def preview_csv(conn, content, tz='UTC'):
+def preview_csv(conn, content, tz='UTC', *, applyai=True):
     content = text(content, 'CSV', 8 * 1024 * 1024)
     zone(tz)
     reader = csv.DictReader(io.StringIO(content))
@@ -824,6 +849,8 @@ def preview_csv(conn, content, tz='UTC'):
             dt = instant(row['date'], z, len(row['date']) == 10)
             all_day = len(row['date']) == 10
             if row.get('job_id'):
+                if not applyai:
+                    fail('job_id needs the ApplyAI module, which is disabled')
                 if not row['job_id'].isdigit() or not conn.execute('SELECT 1 FROM jobs WHERE id=?', (int(row['job_id']),)).fetchone():
                     fail('job_id does not exist')
             key = 'csv:' + hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest()
@@ -955,13 +982,15 @@ def import_reviewed(conn, items):
     return {'created': created, 'duplicates': duplicates, 'undo_ids': undo_ids}
 
 
-def export_ics(conn, calendar_id=None):
+def export_ics(conn, calendar_id=None, *, applyai=True):
     from icalendar import Calendar, Event, Alarm
     result = Calendar()
     result.add('prodid', '-//kitty!//Local calendar//EN')
     result.add('version', '2.0')
     rows = conn.execute('SELECT * FROM calendar_events WHERE deleted=0' + (' AND calendar_id=?' if calendar_id else ''), (calendar_id,) if calendar_id else ())
     for row in rows:
+        if not applyai and applyai_sourced(row['source_key']):
+            continue
         data = json.loads(row['data'])
         uid = data['source_key'][4:] if (data['source_key'] or '').startswith('ics:') else row['id'] + '@kitty.local'
         def component(item, recurrence=None, cancelled=False):

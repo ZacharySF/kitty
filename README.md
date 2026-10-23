@@ -1,8 +1,8 @@
 # kitty
 
-A personal job-search tool: find jobs across several tracks, filter out the ones
-I am not eligible for, pick the right resume, apply through a fast queue, and
-track every application to its outcome.
+A local workspace with two optional built-in modules: **ApplyAI** for job discovery,
+application preparation and tracking, and **Workspace** for notes, documents,
+study and planning. The shell and settings work with either module, both, or neither.
 
 **Two rules the code enforces, not just documents:**
 
@@ -40,17 +40,21 @@ TUI and the MCP server all call the same functions.
 ## Setup
 
 ```bash
-uv sync                  # create .venv and install
-uv run kitty init      # copy config examples, ask ~5 questions, create the database
-uv run kitty doctor    # check config, schema, keys, resumes, source health
+uv sync                         # create .venv and install
+uv run kitty init --yes          # new workspaces start with the core only
+uv run kitty modules list
+uv run kitty modules enable applyai workspace
+uv run kitty doctor             # check the enabled modules
 ```
 
-`init` never overwrites a config file that already exists, and `--yes` skips the
-questions. If you would rather not type `uv run` every time:
+`init` never overwrites existing configuration. To enable modules during initial
+setup, use `kitty init --module applyai --module workspace`; `--yes` skips profile
+questions. Enabling ApplyAI installs missing generic configuration defaults;
+applicant fields remain blank until you supply facts.
 
-Only generic `config/*.yaml.example` templates are shared. Initialization copies
-missing templates without changing existing local YAML. Keep applicant facts,
-preferences, answers, watchlists and source selections in ignored `config/*.yaml`.
+Only generic `config/*.yaml.example` templates are shared. Existing local YAML is
+preserved. Keep applicant facts, preferences, answers, watchlists and source
+selections in ignored `config/*.yaml`.
 `PRIVATE_CONTEXT.md` is an optional ignored local notebook for personal context;
 it is not application configuration. Never commit it, `.env`, resumes, databases,
 exports, cached responses, discovered jobs or application history.
@@ -58,6 +62,39 @@ exports, cached responses, discovered jobs or application history.
 ```bash
 source .venv/bin/activate    # then just `kitty ...`
 ```
+
+## Modules
+
+| Module | Features |
+| --- | --- |
+| ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports |
+| Workspace (`workspace`) | Notes, documents/PDFs, canvas, mind maps, backlinks, flashcards, study, calendar, tasks and projects/opportunities |
+| Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
+
+Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
+tracker), or `kitty modules enable/disable <id>`. Selection is stored locally:
+
+```yaml
+# config/modules.yaml
+enabled: [applyai, workspace]
+```
+
+Save, then **quit and restart Kitty** to activate the change. Refresh/reload does
+not unload running modules, restart workers or discard drafts. Settings shows
+the active and saved selections separately. CLI invocations are separate
+processes, so the next command uses the saved selection.
+
+Disabled modules disappear from navigation, commands, shortcuts, atlas sections
+and MCP tool listings; their routes/actions are refused and their workers do not
+start. Their data, attachments and configuration are retained for re-enabling.
+ApplyAI reminders work without Workspace; career calendar contributions and
+cross-module results appear only while both modules are enabled.
+
+Existing workspaces without `modules.yaml` retain both modules. Fresh CLI and
+desktop workspaces start core-only. The database still uses the existing global
+migrations; disabling does not drop tables or run down-migrations. These are
+built-in modules, not installable third-party extensions.
+
 
 ## Try it on fake data first
 

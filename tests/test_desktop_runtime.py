@@ -33,7 +33,7 @@ def test_selected_workspace_is_reused_without_overwriting(tmp_path):
     database.write_bytes(b"existing database must never be copied or replaced")
     resume = root / "resumes/registered.pdf"
     resume.write_bytes(b"%PDF-existing")
-    prepare_workspace(root, PROJECT / "config")
+    prepare_workspace(root, PROJECT / "config", "kitty")
     assert profile.read_text() == "name: Existing person\n"
     assert database.read_bytes() == b"existing database must never be copied or replaced"
     assert resume.read_bytes() == b"%PDF-existing"

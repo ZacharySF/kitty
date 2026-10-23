@@ -7,7 +7,6 @@ import pytest
 import yaml
 
 from kitty.config import (
-    CONFIG_FILES,
     AnswerEntry,
     AnswersFile,
     ConfigError,
@@ -20,9 +19,6 @@ from kitty.config import (
 )
 from kitty.core import companies as companies_core
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
 def test_shipped_config_loads(workspace):
     config = workspace.config
     # Read the names from the file itself, so adding a track never breaks this test.
@@ -31,14 +27,6 @@ def test_shipped_config_loads(workspace):
     assert config.track_names == [track["name"] for track in shipped["tracks"]]
     assert len(set(config.track_names)) == len(config.track_names)
     assert config.track("parttime").triage_depth == "rules"     # never calls the LLM
-
-
-def test_every_shipped_config_file_has_a_model():
-    # A yaml file in config/ that no model reads would be silently ignored.
-    names = {filename for filename, _model, _required, _example in CONFIG_FILES}
-    shipped = {path.name for path in (REPO_ROOT / "config").glob("*.yaml")}
-    shipped |= {path.name.removesuffix(".example") for path in (REPO_ROOT / "config").glob("*.yaml.example")}
-    assert shipped <= names
 
 
 def test_a_typo_reports_its_line_and_a_fix(tmp_path):

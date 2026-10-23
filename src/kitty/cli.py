@@ -17,6 +17,7 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
+from typer.core import TyperGroup
 
 from kitty import __version__
 from kitty.config import ConfigError, load_config
@@ -29,12 +30,82 @@ from kitty.core import urlmeta
 from kitty.core.workspace import Workspace, open_workspace
 from kitty.dates import now_iso, parse_user_date
 from kitty.models import PIPELINE_STATUSES
+from kitty.modules import MODULE_IDS, available_modules, load_modules
 from kitty.settings import Settings
 
+#: The module whose commands, screens and tools need the careers config.
+APPLYAI = "applyai"
+
+#: Top-level commands that belong to a module. Every other command is core and is
+#: always listed and runnable: init, doctor, modules, tui and mcp (the last two show
+#: or serve only what the enabled modules provide).
+COMMAND_MODULES: dict[str, str] = dict.fromkeys(
+    (
+        "add", "status", "list", "fav", "unfav", "favorites", "discover", "refresh", "apply",
+        "autofill", "triage", "coach", "today", "report", "export", "finder", "schedule",
+        "resumes", "import", "demo", "gmail", "proposals", "questions",
+    ),
+    "applyai",
+)
+
+
+def _module_error(lines: list[str]) -> typer.Exit:
+    """Print an error to stderr and return the exit to raise."""
+    for line in lines:
+        error_console.print(line)
+    return typer.Exit(code=1)
+
+
+class _ModuleGroup(TyperGroup):
+    """The top-level group: lists and runs only the commands of enabled modules.
+
+    The selection is read from config/modules.yaml when the command line is resolved,
+    which happens before any feature code, so a disabled command cannot reach it. A
+    modules.yaml that cannot be read leaves only the core commands (doctor and
+    modules show what is wrong).
+    """
+
+    @staticmethod
+    def _enabled() -> tuple[str, ...]:
+        """The enabled modules for this process; empty when modules.yaml is unreadable."""
+        try:
+            return load_modules(Settings.load().config_dir)
+        except ConfigError:
+            return ()
+
+    def list_commands(self, ctx):
+        enabled = self._enabled()
+        return [
+            name for name in super().list_commands(ctx)
+            if COMMAND_MODULES.get(name) in (None, *enabled)
+        ]
+
+    def resolve_command(self, ctx, args):
+        module = COMMAND_MODULES.get(args[0]) if args else None
+        if module is not None:
+            try:
+                enabled = load_modules(Settings.load().config_dir)
+            except ConfigError as exc:
+                raise _module_error(
+                    ["[bold red]Cannot read config/modules.yaml:[/bold red]",
+                     *[f"  {problem}" for problem in exc.problems],
+                     "\nFix it, or run [bold]kitty doctor[/bold]."],
+                ) from exc
+            if module not in enabled:
+                raise _module_error([
+                    f"[bold red]`kitty {args[0]}` belongs to the {module} module, which is not enabled.[/bold red]",
+                    f"Enable it with [bold]kitty modules enable {module}[/bold] and start kitty again; "
+                    "your data is kept either way.",
+                ])
+        return super().resolve_command(ctx, args)
+
+
 app = typer.Typer(
+    cls=_ModuleGroup,
     add_completion=False,
     no_args_is_help=True,
-    help="Personal job-search tracker: track applications, and (later) find and triage jobs.",
+    help="Personal job-search tracker and workspace: modules you enable add the job tracker "
+         "(applyai) and notes, study and planning tools (workspace).",
 )
 resumes_app = typer.Typer(no_args_is_help=True, help="Register, improve locally, review and version resumes.")
 import_app = typer.Typer(no_args_is_help=True, help="Import past applications.")
@@ -44,6 +115,8 @@ app.add_typer(import_app, name="import")
 app.add_typer(demo_app, name="demo")
 schedule_app = typer.Typer(no_args_is_help=True, help="Run discovery on a timer.")
 app.add_typer(schedule_app, name="schedule")
+modules_app = typer.Typer(no_args_is_help=True, help="Choose which modules this workspace uses.")
+app.add_typer(modules_app, name="modules")
 
 console = Console()
 error_console = Console(stderr=True)
@@ -57,16 +130,21 @@ def _settings() -> Settings:
     return Settings.load(demo=bool(_state["demo"]))
 
 
+def _config_exit(exc: ConfigError) -> typer.Exit:
+    """Print a config error's problems to stderr; return the exit to raise."""
+    error_console.print("[bold red]Config problems:[/bold red]")
+    for problem in exc.problems:
+        error_console.print(f"  {problem}")
+    error_console.print("\nRun [bold]kitty doctor[/bold] after fixing them.")
+    return typer.Exit(code=1)
+
+
 def _open() -> Workspace:
     """Open the workspace or exit with a readable config error."""
     try:
         return open_workspace(_settings())
     except ConfigError as exc:
-        error_console.print("[bold red]Config problems:[/bold red]")
-        for problem in exc.problems:
-            error_console.print(f"  {problem}")
-        error_console.print("\nRun [bold]kitty doctor[/bold] after fixing them.")
-        raise typer.Exit(code=1) from exc
+        raise _config_exit(exc) from exc
 
 
 @app.callback(invoke_without_command=True)
@@ -91,12 +169,29 @@ def main_callback(
 @app.command()
 def init(
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Take defaults, ask nothing.")] = False,
+    module: Annotated[Optional[list[str]], typer.Option(
+        "--module", "-m",
+        help=f"Select this module ({', '.join(MODULE_IDS)}) when the workspace has no "
+             "config/modules.yaml yet; repeat for several. Default for a new workspace: none, core only.",
+    )] = None,
 ) -> None:
-    """Set up the workspace: config files, the database, and your profile."""
+    """Set up the workspace: modules, config files, the database, and (applyai) your profile."""
     settings = _settings()
     console.print(f"[bold]Workspace:[/bold] {settings.root}")
 
-    for result in bootstrap.copy_examples(settings):
+    try:
+        before = settings.config_path("modules.yaml").exists()
+        enabled = bootstrap.initialize_modules(settings, list(module) if module else None)
+        results = bootstrap.copy_examples(settings, enabled)
+    except ConfigError as exc:
+        raise _config_exit(exc) from exc
+    except ValueError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=2) from exc
+    if module and before:
+        console.print("  kept     config/modules.yaml (change it with `kitty modules enable|disable`)")
+    console.print(f"  modules  {', '.join(enabled) if enabled else 'none (core only)'}")
+    for result in results:
         if result.action == "created":
             console.print(f"  created  config/{result.filename}")
         elif result.action == "kept":
@@ -104,7 +199,8 @@ def init(
     env_action = bootstrap.ensure_env_file(settings)
     console.print(f"  {'created ' if env_action == 'created' else 'kept    '} .env")
 
-    if not yes:
+    applyai = APPLYAI in enabled
+    if applyai and not yes:
         console.print("\n[bold]A few questions for config/profile.yaml[/bold] (Enter keeps the current value)")
         answers: dict[str, str] = {}
         for key, question in bootstrap.PROFILE_QUESTIONS:
@@ -114,21 +210,28 @@ def init(
 
     workspace = _open()
     try:
-        from kitty.core.workspace import sync_config_to_db
+        if applyai:
+            from kitty.core.workspace import sync_config_to_db
 
-        counts = sync_config_to_db(workspace.conn, workspace.config)
-        console.print(
-            f"\n[bold]Database:[/bold] {workspace.settings.db_path} "
-            f"({counts['tracks']} tracks, {counts['sources']} sources, "
-            f"{counts['watchlist']} watchlist companies)"
-        )
+            counts = sync_config_to_db(workspace.conn, workspace.config)
+            console.print(
+                f"\n[bold]Database:[/bold] {workspace.settings.db_path} "
+                f"({counts['tracks']} tracks, {counts['sources']} sources, "
+                f"{counts['watchlist']} watchlist companies)"
+            )
+        else:
+            console.print(f"\n[bold]Database:[/bold] {workspace.settings.db_path}")
     finally:
         workspace.close()
 
     console.print("\n[bold]Try these next:[/bold]")
     console.print("  kitty doctor                     # check everything is wired up")
-    console.print("  kitty --demo demo reset          # build a throwaway database")
-    console.print("  kitty --demo tui                 # learn the TUI on fake data")
+    console.print("  kitty modules list               # see which modules are on")
+    if applyai:
+        console.print("  kitty --demo demo reset          # build a throwaway database")
+        console.print("  kitty --demo tui                 # learn the TUI on fake data")
+    else:
+        console.print("  kitty modules enable applyai     # add the job tracker (takes effect on restart)")
 
 
 # ----------------------------------------------------------------- doctor
@@ -1378,12 +1481,13 @@ def demo_reset() -> None:
 
 @app.command()
 def tui() -> None:
-    """Open the terminal UI."""
+    """Open the terminal UI (job screens need the applyai module; otherwise a core Modules screen)."""
     workspace = _open()
+    modules = workspace.config.modules     # frozen for this process; the app reuses it
     workspace.close()          # the app opens its own connection
-    from kitty.tui.app import KittyApp
+    from kitty.tui.shell import create_app
 
-    KittyApp(demo=bool(_state["demo"])).run()
+    create_app(demo=bool(_state["demo"]), modules=modules).run()
 
 
 # ---- mcp
@@ -1393,10 +1497,83 @@ def tui() -> None:
 def mcp() -> None:
     """Run the MCP server over stdio for an agent. Never submits; stdout is the protocol."""
     workspace = _open()        # config problems go to stderr and exit before serving
+    modules = workspace.config.modules     # frozen for this process; later edits wait for a restart
     workspace.close()          # each tool call opens its own connection
     from kitty.mcp_server import run_stdio
 
-    run_stdio(_settings())
+    run_stdio(_settings(), modules)
+
+
+# ------------------------------------------------------------------ modules
+
+_RESTART_NOTE = (
+    "Changes apply the next time kitty starts: a running web server, TUI or MCP server "
+    "keeps the modules it started with. Your data is never removed."
+)
+
+
+def _configured_modules() -> tuple[Path, tuple[str, ...]]:
+    """The config directory and the modules.yaml selection, or exit with a readable error."""
+    config_dir = _settings().config_dir
+    try:
+        return config_dir, load_modules(config_dir)
+    except ConfigError as exc:
+        raise _config_exit(exc) from exc
+
+
+def _change_modules(ids: list[str], *, enable: bool) -> None:
+    """Persist `current + ids` (enable) or `current - ids` (disable) and say what happens next."""
+    unknown = [item for item in ids if item not in MODULE_IDS]
+    if unknown:
+        error_console.print(
+            f"[bold red]Unknown module {escape(', '.join(unknown))}.[/bold red] "
+            f"Available: {', '.join(MODULE_IDS)}."
+        )
+        raise typer.Exit(code=2)
+    config_dir, current = _configured_modules()
+    wanted = {*current, *ids} if enable else set(current) - set(ids)
+    selection = tuple(item for item in MODULE_IDS if item in wanted)
+    if selection == current:
+        console.print(f"Nothing to change: enabled modules are {', '.join(current) or 'none (core only)'}.")
+        return
+    try:
+        saved = bootstrap.configure_modules(config_dir, selection)
+    except (ValueError, OSError) as exc:
+        error_console.print(f"[bold red]Could not save config/modules.yaml:[/bold red] {escape(str(exc))}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"Saved config/modules.yaml: {', '.join(saved) or 'none (core only)'}.")
+    console.print(f"[dim]{_RESTART_NOTE}[/dim]")
+
+
+@modules_app.command("list")
+def modules_list() -> None:
+    """Show each module and whether config/modules.yaml enables it."""
+    _config_dir, enabled = _configured_modules()
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("module")
+    table.add_column("state")
+    table.add_column("what it adds", overflow="fold")
+    for item in available_modules():
+        on = item["id"] in enabled
+        table.add_row(item["id"], "[green]enabled[/green]" if on else "[dim]disabled[/dim]", item["description"])
+    console.print(table)
+    console.print(f"\n[dim]{_RESTART_NOTE}[/dim]")
+
+
+@modules_app.command("enable")
+def modules_enable(
+    ids: Annotated[list[str], typer.Argument(metavar="MODULE...", help=f"One or more of: {', '.join(MODULE_IDS)}.")],
+) -> None:
+    """Enable modules (takes effect when kitty next starts)."""
+    _change_modules(ids, enable=True)
+
+
+@modules_app.command("disable")
+def modules_disable(
+    ids: Annotated[list[str], typer.Argument(metavar="MODULE...", help=f"One or more of: {', '.join(MODULE_IDS)}.")],
+) -> None:
+    """Disable modules (takes effect when kitty next starts; data stays)."""
+    _change_modules(ids, enable=False)
 
 
 # ---- gmail (Stage 6: read-only Gmail proposes status changes; I confirm them)
