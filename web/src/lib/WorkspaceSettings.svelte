@@ -6,6 +6,8 @@
   import DesktopSettings from "./DesktopSettings.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
   import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
+  import GraphLookToggle from "./GraphLookToggle.svelte";
+  import { setGraphLook } from "./graphPreferences";
   import type { View } from "./workspace";
   import { activeModules } from "./modules.svelte";
   let { onview, onchange }: { onview: (view: View) => void; onchange: () => Promise<void> } = $props();
@@ -111,11 +113,12 @@
     {#if moduleError}<p role="alert">{moduleError}</p>{/if}
   </Panel>
   <Panel title="Schemas">
+    <div class="setting-row"><span>Graph look · remembered for every graph</span><GraphLookToggle /></div>
     <label class="setting-row" title="The layout used when you open Home or a section schema">Default layout<select value={layout} onchange={(event) => { layout = event.currentTarget.value as GraphLayout; save(); }}>{#each GRAPH_LAYOUTS as item}<option value={item.id}>{item.label}</option>{/each}</select></label>
     <div class="physics">{#each Object.keys(PHYSICS_LIMITS) as (keyof GraphPhysics)[] as key}
       <label title={explanations[key]}><span>{labels[key]}</span><input type="range" aria-label={labels[key]} aria-describedby={`graph-${key}-help`} min={PHYSICS_LIMITS[key].min} max={PHYSICS_LIMITS[key].max} step={PHYSICS_LIMITS[key].step} value={physics[key]} oninput={(event) => { physics[key] = Number(event.currentTarget.value); save(); }} /><output>{physics[key].toFixed(key === "repulsion" ? 0 : 2)}</output><small id={`graph-${key}-help`}>{explanations[key]}</small></label>
     {/each}</div>
-    <Button size="sm" onclick={() => { layout = "tree"; physics = { ...DEFAULT_PHYSICS }; save(); }}>Reset graph settings</Button>
+    <Button size="sm" onclick={() => { layout = "tree"; physics = { ...DEFAULT_PHYSICS }; save(); try { setGraphLook("2d"); } catch { error = "This browser could not save local preferences."; } }}>Reset graph settings</Button>
     {#if notice}<p class="muted" role="status">{notice}</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
   </Panel>

@@ -14,12 +14,12 @@
   import { activeModules } from "./modules.svelte";
   import {
     mountGraph,
-    webglAvailable,
     type GraphHandle,
     type GraphLink,
     type GraphNode,
   } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
+  import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
   const pane = useWorkspaceContext();
@@ -62,6 +62,7 @@
   let atlas = $state<Atlas | null>(null);
   let atlasError = $state("");
   const layout = graphLayout();
+  let look = $state(graphLook());
   const physics = graphPhysics();
   let mode = $state<"loading" | "graph" | "list">("loading");
   let notice = $state("");
@@ -283,22 +284,19 @@
     const syncSettings = () => {
       handle?.setLayout(graphLayout());
       handle?.setPhysics(graphPhysics());
+      look = graphLook();
+      void handle?.setLook(look).catch(cause => { notice = (cause as Error).message; });
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     void (async () => {
       await loadAtlas();
       if (disposed) return;
-      if (!webglAvailable()) {
-        mode = "list";
-        notice =
-          "WebGL is unavailable in this browser, so the 3D atlas is replaced by the section list.";
-        return;
-      }
       try {
         const mounted = await mountGraph(container, {
           ...graph,
           layout,
           physics,
+          look: graphLook(),
           reducedMotion,
           active: pane.active,
           onSelect: (node) => {
@@ -413,11 +411,11 @@
     role="region"
     data-kitty-panel="graph"
     tabindex="-1"
-    aria-label="3D atlas of your workspace"
+    aria-label={`${look === "2d" ? "2D" : "3D"} atlas of your workspace`}
     aria-describedby={`${atlasId}-description`}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      A map of workspace sections. Drag to rotate, scroll to zoom, select a section to open its map.
+      A map of workspace sections. {look === "2d" ? "Drag nodes to move, drag the background to pan" : "Drag to rotate"}, scroll to zoom, select a section to open its map.
     </p>
     <div class="canvas" bind:this={container}></div>
     {#if mode === "list"}
@@ -430,7 +428,7 @@
       </div>
     {:else}
       <div class="stage-caption" aria-hidden="true">
-        <span>Drag to rotate · scroll to zoom · Ctrl + ← / → to turn</span>
+        <span>{look === "2d" ? "Drag a node to move · drag background to pan · scroll or pinch to zoom" : "Drag to rotate · scroll to zoom · Ctrl + ← / → to turn"}</span>
       </div>
       {#if mode === "loading"}<p class="stage-loading" role="status">
           Drawing your atlas…
@@ -445,6 +443,7 @@
     title="Workspace"
     aria-label="Atlas controls and navigation"
   >
+    <GraphLookToggle />
 
     <div class="search">
       <label for={`${atlasId}-search`}>Find a section <kbd>/</kbd></label>

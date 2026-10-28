@@ -355,3 +355,13 @@ Stage 1: done.
 - 2026-10-27: The top bar and workspace tabs are pinned (`.workbench-top`, sticky
   with a glass backdrop). Its measured height is published as `--workbench-top`;
   page-level sticky panels (job detail, mind-map toolbar) offset by it.
+- 2026-10-28: Graphs default to a fresh 2D canvas renderer with theme-colored group
+  regions, pill labels that fade with zoom, and a constant-size hover glow. Settings
+  → Schemas and every graph's 2D/3D buttons share one remembered browser preference;
+  existing 3D layouts remain available where WebGL is supported. This covers the
+  atlas, section graphs, saved mind-map graphs and merged schema networks. Both
+  renderers expose viewport-coordinate `nodeAt`, `nodePoint` and drag-end callbacks
+  for graph interactions. No LearnHarness source or assets are included.
+  Shared browser behavior checks run with
+  `PLAYWRIGHT_BROWSERS_PATH=<browser-store-path> PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test web/tests/graphRenderers.browser.test.mjs`;
+  NixOS browsers are supplied by `nix shell nixpkgs#playwright-driver.browsers`.

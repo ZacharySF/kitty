@@ -1173,7 +1173,7 @@
   function netLabel(id: string) {
     return network?.nodes.find((n) => n.id === id)?.label ?? id;
   }
-  /** Leave the 3D views for the authoritative 2D editor with the node selected, focused and in view. */
+  /** Leave the read-only graph for the editor with the node selected, focused and in view. */
   async function editInMap(mapId: number, nodeId: string) {
     if (current?.id !== mapId) {
       await open(mapId);
@@ -1453,7 +1453,7 @@
   {/if}
   {#if error}<div role="alert" class="error">{error}</div>{/if}
   <div class="toolbar views" role="group" aria-label="Schema view">
-    {#each [["edit", "Mind map"], ["map3d", "3D"], ["network", "All maps"]] as [id, text]}<Button
+    {#each [["edit", "Mind map"], ["map3d", "Graph"], ["network", "All maps"]] as [id, text]}<Button
         intent={view === id ? "primary" : "neutral"}
         aria-pressed={view === id}
         disabled={id === "map3d" && !current}
@@ -1612,7 +1612,7 @@
                 </li>{/if}
             </ul>
           {:else}<p>
-              Select a node in the 3D network or the adjacency table to see
+              Select a node in the network or the adjacency table to see
               which maps it appears in, its live source status, and to jump to
               editing it.
             </p>{/if}
@@ -1759,7 +1759,7 @@
         <main class="graph-pane">
           {#if pane.active}
           <SchemaNetwork
-            title={`3D map / ${current.title}`}
+            title={`Map / ${current.title}`}
             nodes={mapGraph.nodes}
             links={mapGraph.links}
             bind:layout={mapLayout}
@@ -1821,8 +1821,8 @@
                 >Edit in 2D editor</Button
               >
             {:else}<p>
-                Select a node in 3D or the adjacency table. Editing happens in
-                the 2D editor.
+                Select a node in the graph or the adjacency table. Editing happens in
+                the mind-map editor.
               </p>{/if}
           </Panel>
         </aside>
