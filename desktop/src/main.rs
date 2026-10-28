@@ -1,3 +1,4 @@
+mod owner;
 mod update_lifecycle;
 mod updates;
 mod workspace_path;
@@ -42,6 +43,9 @@ impl Drop for Backend {
 struct Desktop {
     backend: Mutex<Backend>,
     background: AtomicBool,
+    background_item: CheckMenuItem<tauri::Wry>,
+    background_available: bool,
+    update_item: MenuItem<tauri::Wry>,
     lifecycle: Mutex<update_lifecycle::Lifecycle>,
     preferences: PathBuf,
     root: PathBuf,
@@ -131,7 +135,7 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
     });
 }
 
-fn start_backend(root: &Path) -> Result<(Backend, Url), Box<dyn std::error::Error>> {
+fn start_backend(root: &Path) -> Result<(Backend, Url, mpsc::Receiver<owner::Command>), Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let packaged = executable.parent().ok_or("Desktop executable has no directory")?.join("kitty-web");
     // Tauri dev and cargo smoke binaries use the target-suffixed staging sidecar.
@@ -145,14 +149,18 @@ fn start_backend(root: &Path) -> Result<(Backend, Url), Box<dyn std::error::Erro
     let mut backend = Backend(Some(child));
     let output = backend.0.as_mut().unwrap().stdout.take().ok_or("Backend readiness pipe unavailable")?;
     let (send, receive) = mpsc::sync_channel(1);
+    let (commands, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut output = BufReader::new(output);
         let mut line = String::new();
         let result = output.read_line(&mut line).map(|_| line);
         let _ = send.send(result);
-        // Keep diagnostics private and keep the child pipe from becoming full.
-        let mut sink = std::io::sink();
-        let _ = std::io::copy(&mut output, &mut sink);
+        // stdout remains a private, fixed-command channel after readiness.
+        for line in output.lines().map_while(Result::ok) {
+            if let Some(command) = owner::parse(&line) {
+                if commands.send(command).is_err() { break; }
+            }
+        }
     });
     let line = match receive.recv_timeout(Duration::from_secs(90)) {
         Ok(result) => result?,
@@ -172,7 +180,7 @@ fn start_backend(root: &Path) -> Result<(Backend, Url), Box<dyn std::error::Erro
         || origin.query().is_some() || origin.fragment().is_some() {
         return Err("Backend did not bind a private loopback origin".into());
     }
-    Ok((backend, origin))
+    Ok((backend, origin, receiver))
 }
 
 fn show(app: &tauri::AppHandle) {
@@ -199,6 +207,37 @@ fn request_quit(app: &tauri::AppHandle) {
         app.state::<Desktop>().lifecycle.lock().stopped();
         app.exit(0);
     });
+}
+
+fn report_desktop(app: &tauri::AppHandle) {
+    let state = app.state::<Desktop>();
+    let line = owner::state_line(state.background.load(Ordering::SeqCst), state.background_available);
+    if let Some(input) = state.backend.lock().0.as_mut().and_then(|child| child.stdin.as_mut()) {
+        let _ = input.write_all(line.as_bytes());
+        let _ = input.flush();
+    };
+}
+
+fn set_background(app: &tauri::AppHandle, enabled: bool) {
+    let state = app.state::<Desktop>();
+    if state.background_available {
+        let temporary = state.preferences.with_extension("json.new");
+        let bytes = if enabled { b"{\"background\":true}".as_slice() } else { b"{\"background\":false}".as_slice() };
+        if fs::write(&temporary, bytes).and_then(|_| fs::rename(&temporary, &state.preferences)).is_ok() {
+            state.background.store(enabled, Ordering::SeqCst);
+        }
+    }
+    let _ = state.background_item.set_checked(state.background.load(Ordering::SeqCst));
+    report_desktop(app);
+}
+
+fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
+    match command {
+        owner::Command::CheckUpdates => updates::check(app),
+        owner::Command::NewQuickNote => open_quick_note(app, "quick-note".into()),
+        owner::Command::KeepRunning(enabled) => set_background(app, enabled),
+        owner::Command::Quit => request_quit(app),
+    }
 }
 
 fn main() {
@@ -228,27 +267,29 @@ fn main() {
             let background = fs::read(&preferences).ok()
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                 .and_then(|value| value["background"].as_bool()).unwrap_or(false);
-            let (backend, origin) = start_backend(&root)?;
-            app.manage(Desktop {
-                backend: Mutex::new(backend), background: AtomicBool::new(background),
-                lifecycle: Mutex::new(update_lifecycle::Lifecycle::default()), preferences,
-                root: root.clone(), origin: origin.clone(), next_note: AtomicU64::new(1),
-            });
+            let (backend, origin, commands) = start_backend(&root)?;
             let show_item = MenuItem::with_id(app, "show", "Show kitty!", true, None::<&str>)?;
             let note_item = MenuItem::with_id(app, "quick-note", "New quick note", true, None::<&str>)?;
             let background_item = CheckMenuItem::with_id(app, "background", "Keep running on close (monitoring / reminders)", true, background, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit kitty! (save and stop workers)", true, Some("Ctrl+Shift+Q"))?;
             let update = MenuItem::with_id(app, "updates", "Check for updates…", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &note_item, &background_item, &update, &quit])?;
-            // Also expose the native window menu: some Linux desktops have no tray.
-            app.set_menu(menu.clone())?;
             let tray = TrayIconBuilder::new().tooltip("kitty!").menu(&menu)
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?).build(app);
-            if tray.is_err() {
-                app.state::<Desktop>().background.store(false, Ordering::SeqCst);
+            let background_available = tray.is_ok();
+            if !background_available {
                 background_item.set_checked(false)?;
                 background_item.set_enabled(false)?;
             }
+            app.manage(Desktop {
+                backend: Mutex::new(backend),
+                background: AtomicBool::new(background && background_available),
+                background_item, background_available,
+                update_item: update,
+                lifecycle: Mutex::new(update_lifecycle::Lifecycle::default()), preferences,
+                root: root.clone(), origin: origin.clone(), next_note: AtomicU64::new(1),
+            });
+            report_desktop(app.handle());
             let navigation_origin = origin.clone();
             let note_origin = origin.clone();
             let note_app = app.handle().clone();
@@ -293,6 +334,12 @@ fn main() {
                     break;
                 }
             });
+            let handle = app.handle().clone();
+            thread::spawn(move || {
+                for command in commands {
+                    desktop_command(&handle, command);
+                }
+            });
             if wants_quick_note(&std::env::args().collect::<Vec<_>>()) {
                 open_quick_note(app.handle(), "quick-note".into());
             }
@@ -304,15 +351,8 @@ fn main() {
             "quit" => request_quit(app),
             "updates" => updates::check(app),
             "background" => {
-                let state = app.state::<Desktop>();
-                let enabled = !state.background.load(Ordering::SeqCst);
-                let temporary = state.preferences.with_extension("json.new");
-                let bytes = if enabled { b"{\"background\":true}".as_slice() } else { b"{\"background\":false}".as_slice() };
-                if fs::write(&temporary, bytes).and_then(|_| fs::rename(&temporary, &state.preferences)).is_ok() {
-                    state.background.store(enabled, Ordering::SeqCst);
-                } else if let Some(item) = app.menu().and_then(|menu| menu.get("background")) {
-                    if let Some(item) = item.as_check_menuitem() { let _ = item.set_checked(!enabled); }
-                }
+                let enabled = !app.state::<Desktop>().background.load(Ordering::SeqCst);
+                set_background(app, enabled);
             }
             _ => {},
         })

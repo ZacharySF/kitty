@@ -9,6 +9,7 @@ import select
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -123,3 +124,45 @@ def test_owner_quit_leaves_unrelated_process_alive(backend):
     finally:
         unrelated.terminate()
         unrelated.wait(timeout=10)
+
+
+def owner_line(process, timeout=10):
+    assert select.select([process.stdout], [], [], timeout)[0], "No owner-pipe message"
+    return json.loads(process.stdout.readline())
+
+
+def test_settings_desktop_commands_travel_the_owner_pipe(backend):
+    process, origin, _root = backend
+    local = {"Origin": origin.geturl().rstrip("/"), "Content-Type": "application/json", "X-Kitty-Request": "1"}
+    process.stdin.write(json.dumps({"keep_running": False, "keep_running_available": True}) + "\n")
+    process.stdin.flush()
+    for _ in range(50):
+        status, _headers, body = request(origin, path="/api/desktop")
+        if json.loads(body)["keep_running"] is False:
+            break
+    assert status == 200 and json.loads(body) == {"available": True, "keep_running": False, "keep_running_available": True}
+    assert request(origin, "POST", "/api/desktop/command", local, '{"command":"new-quick-note"}')[0] == 200
+    assert owner_line(process) == {"command": "new-quick-note"}
+    # A request without the local header never reaches the shell.
+    unmarked = {key: value for key, value in local.items() if key != "X-Kitty-Request"}
+    assert request(origin, "POST", "/api/desktop/command", unmarked, '{"command":"quit"}')[0] == 403
+    assert not select.select([process.stdout], [], [], 0.5)[0]
+
+    results = []
+    worker = threading.Thread(target=lambda: results.append(
+        request(origin, "POST", "/api/desktop/command", local, '{"command":"keep-running-on"}')))
+    worker.start()
+    assert owner_line(process) == {"command": "keep-running-on"}
+    process.stdin.write(json.dumps({"keep_running": True, "keep_running_available": True}) + "\n")
+    process.stdin.flush()
+    worker.join(timeout=10)
+    status, _headers, body = results[0]
+    assert status == 200 and json.loads(body)["keep_running"] is True
+
+    assert request(origin, "POST", "/api/desktop/command", local, '{"command":"quit"}')[0] == 200
+    assert owner_line(process) == {"command": "quit"}
+    # Only the shell decides to stop: the backend keeps serving until its owner says quit.
+    assert request(origin, path="/api/desktop")[0] == 200
+    process.stdin.write("quit\n")
+    process.stdin.flush()
+    assert process.wait(timeout=30) == 0
