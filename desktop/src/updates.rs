@@ -15,9 +15,7 @@ fn status(app: &AppHandle, message: &str) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_title(&format!("kitty! — {message}"));
     }
-    if let Some(item) = app.menu().and_then(|menu| menu.get("updates")) {
-        if let Some(item) = item.as_menuitem() { let _ = item.set_text(message); }
-    }
+    let _ = app.state::<Desktop>().update_item.set_text(message);
 }
 
 fn message(app: &AppHandle, text: impl Into<String>, kind: MessageDialogKind) {

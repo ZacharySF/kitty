@@ -555,7 +555,7 @@ Replacing/uninstalling the application does not require deleting it.
 
 ### Signed in-app updates
 
-Use **Check for updates…** in kitty!'s native window or system-tray menu. The native updater
+Use **Check for updates** in **Settings → Desktop** or the system-tray menu. The native updater
 checks the public release feed over HTTPS and verifies the installer against the
 public signing key embedded in the app before installation. There are no updater
 permissions exposed to the website. Save your work and approve the native prompts;
@@ -659,7 +659,13 @@ On Linux sessions exposing both Wayland and X11, the app defaults to XWayland.
 This avoids a WebKitGTK native-Wayland scaling failure that can produce a
 negative device-pixel ratio and a blank, compressed page on fractional-scale
 desktops. An explicit `GDK_BACKEND` is respected; Wayland-only sessions are unchanged.
-Window and updater commands are available in native menus, including the system tray.
+The window has no native menu strip. **Settings → Desktop** provides **Check for
+updates**, **Keep running on close (monitoring / reminders)**, **New quick note**,
+and **Quit kitty! (save and stop workers)**. All remain in the system-tray menu,
+along with **Show kitty!**. Without a system tray, keeping the app running on close
+is unavailable. A browser-only website explains that desktop controls are unavailable.
+The page uses the protected backend API and a fixed command allowlist over the
+shell's private owner pipe; it receives no Tauri IPC permissions.
 
 The main window and quick-note windows are transparent: the default **Harness**
 theme (LearnHarness-style near-black with kitty pink accents) and every other theme

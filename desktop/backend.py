@@ -42,9 +42,22 @@ def serve(root: Path, assets: Path, package: str) -> None:
     server_module = importlib.import_module(f"{package}.web_server")
     settings_module = importlib.import_module(f"{package}.settings")
     workspace_module = importlib.import_module(f"{package}.core.workspace")
+    desktop_module = importlib.import_module(f"{package}.web_desktop")
+    # Keep the owner pipe private: only owner messages use the original stdout;
+    # stray library prints (Python or native) go to /dev/null instead.
+    owner_output = os.fdopen(os.dup(1), "w", encoding="utf-8")
+    discard = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(discard, 1)
+    os.close(discard)
+
+    def send(line: str) -> None:
+        owner_output.write(line + "\n")
+        owner_output.flush()
+
+    owner = desktop_module.DesktopOwner(send)
     settings = settings_module.Settings.load(root=root)
     with workspace_module.open_workspace(settings) as workspace:
-        app = server_module.WebApplication(settings, workspace.config, assets)
+        app = server_module.WebApplication(settings, workspace.config, assets, desktop=owner)
 
     class DesktopHTTPServer(server_module.LocalHTTPServer):
         # A quit must drain accepted HTTP mutations before closing SQLite workers.
@@ -67,10 +80,12 @@ def serve(root: Path, assets: Path, package: str) -> None:
         signal.signal(signal.SIGINT, request_stop)
 
         def owner_channel() -> None:
-            # EOF also closes the backend when the desktop crashes. No HTTP quit route.
+            # EOF also closes the backend when the desktop crashes. No HTTP quit route:
+            # the page may only ask the shell, which answers with this pipe's quit.
             for line in sys.stdin:
                 if line.strip() == "quit":
                     break
+                owner.report(line)
             request_stop()
 
         def shutdown() -> None:
@@ -79,7 +94,7 @@ def serve(root: Path, assets: Path, package: str) -> None:
 
         threading.Thread(target=owner_channel, daemon=True, name="kitty-owner").start()
         threading.Thread(target=shutdown, daemon=True, name="kitty-shutdown").start()
-        print(json.dumps({"origin": server.origin}), flush=True)
+        send(json.dumps({"origin": server.origin}))
         try:
             server.serve_forever(poll_interval=0.1)
         finally:

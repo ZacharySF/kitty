@@ -3,6 +3,7 @@
   import { Button, Panel } from "@nunera/bracket";
   import { api, type ModuleId, type ModulesState } from "./api";
   import ThemePicker from "./ThemePicker.svelte";
+  import DesktopSettings from "./DesktopSettings.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
   import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
   import type { View } from "./workspace";
@@ -81,6 +82,7 @@
 <section class="settings-workspace" aria-label="Workspace settings">
   <header><h1>Settings</h1></header>
   <Panel title="Appearance"><div class="setting-row"><span>Theme</span><ThemePicker /></div></Panel>
+  <DesktopSettings />
   <Panel title="Modules">
     <p class="muted">Turn parts of kitty on or off. A saved choice applies the next time kitty starts; your data is never removed.</p>
     {#if modules}

@@ -131,7 +131,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
-    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"),
+    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), (None, "web_desktop"),
 )
 
 
@@ -151,10 +151,12 @@ class WebApplication:
     selection saved through ``/api/modules`` takes effect in the next process.
     """
 
-    def __init__(self, settings: Settings, config: Config, static_dir: Path):
+    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None):
         self.settings = settings
         self.config = config
         self.modules: tuple[str, ...] = tuple(config.modules)
+        #: The desktop shell's owner pipe (kitty.web_desktop.DesktopOwner); None for kitty-web.
+        self.desktop = desktop
         self.static_dir = static_dir.resolve()
         self.mutation_lock = threading.Lock()
         self.discovery_lock = threading.Lock()
@@ -517,6 +519,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._security(mutation=mutation)
             path, query = self._target()
             if mutation:
+                # Native desktop commands additionally require an explicit page
+                # origin; the shared guard above already rejects a wrong one.
+                if path == "/api/desktop/command" and not self.headers.get_all("Origin", []):
+                    raise APIError(403, "Missing local request origin")
                 self.server.app._no_query(query)
                 body = self._body()
                 with self.server.app.mutation_lock:
