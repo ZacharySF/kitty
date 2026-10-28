@@ -47,7 +47,7 @@ STATIC_TYPES = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
-    ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2",
+    ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
 }
 
 
@@ -119,12 +119,12 @@ class WebApplication:
         from kitty import web_ai, web_calendar, web_flashcards, web_notes
         from kitty import web_documents, web_opportunities, web_study
         from kitty import web_atlas, web_backlinks, web_schema
-        from kitty import web_learnharness
+        from kitty import web_learnharness, web_quick_notes
 
         self.extensions = (
             web_jobs, web_automation, web_resumes, web_profile, web_insights,
             web_calendar, web_opportunities, web_study, web_flashcards, web_notes, web_documents, web_ai,
-            web_schema, web_atlas, web_backlinks, web_learnharness,
+            web_schema, web_atlas, web_backlinks, web_learnharness, web_quick_notes,
         )
         self.tasks = TaskRunner()
         self.automation = web_automation.AutomationController(settings)

@@ -23,6 +23,7 @@
 import type { ForceGraph3DInstance } from "3d-force-graph";
 import type * as Three from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { harmonize } from "./graphPalette";
 
 export type GraphNode = {
   id: string;
@@ -520,9 +521,9 @@ export async function mountGraph(
   probeCanvas.width = probeCanvas.height = 1;
   const probe = probeCanvas.getContext("2d", { willReadFrequently: true })!;
   const cssVar = (name: string) => styles.getPropertyValue(name).trim();
-  const palette = PALETTE_VARS.map((name) => cssVar(name))
+  const palette = harmonize(PALETTE_VARS.map((name) => cssVar(name))
     .filter(Boolean)
-    .map((value) => resolveColor(value, probe));
+    .map((value) => resolveColor(value, probe)));
   if (!palette.length) palette.push(FALLBACK_COLOR);
   let ink = resolveColor(cssVar("--ink") || "#e7dfef", probe);
   let mutedRgb = hexRgb(
@@ -1491,7 +1492,7 @@ export async function mountGraph(
   document.addEventListener("visibilitychange", syncVisibility);
   resizeObserver.observe(el);
   const recolor = () => {
-    const colors = PALETTE_VARS.map(cssVar).filter(Boolean).map(value => resolveColor(value, probe));
+    const colors = harmonize(PALETTE_VARS.map(cssVar).filter(Boolean).map(value => resolveColor(value, probe)));
     if (colors.length) palette.splice(0, palette.length, ...colors);
     ink = resolveColor(cssVar("--ink"), probe);
     mutedRgb = hexRgb(resolveColor(cssVar("--muted"), probe));

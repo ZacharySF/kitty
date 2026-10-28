@@ -17,6 +17,7 @@
   import LearnHarness from "./LearnHarness.svelte";
   import Flashcards from "./Flashcards.svelte";
   import Notes from "./Notes.svelte";
+  import QuickNotes from "./QuickNotes.svelte";
   import Documents from "./Documents.svelte";
   import WorkspaceSettings from "./WorkspaceSettings.svelte";
   import AI from "./AI.svelte";
@@ -96,6 +97,8 @@
     <Calendar {revision} {active} demo={workspace?.demo ?? true} />
   {:else if view === "notes" || view === "schema"}
     <Notes bind:this={notes} {revision} demo={workspace?.demo ?? true} initialMode={view === "schema" ? "mindmap" : undefined} />
+  {:else if view === "quick-notes"}
+    <QuickNotes />
   {:else if view === "opportunities"}
     <Opportunities {revision} demo={workspace?.demo ?? true} />
   {:else if view === "study"}

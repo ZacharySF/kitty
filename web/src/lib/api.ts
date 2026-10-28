@@ -108,7 +108,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
     .json()
     .catch(() => ({ error: `Request failed (${response.status})` }));
   if (!response.ok)
-    throw new Error(data.error || `Request failed (${response.status})`);
+    throw Object.assign(new Error(data.error || `Request failed (${response.status})`), { status: response.status });
   return data as T;
 }
 

@@ -2327,7 +2327,7 @@
   }
   .mapbar {
     position: sticky;
-    top: 0;
+    top: var(--workbench-top, 0px);
     z-index: 5;
     padding: 12px;
     border: 1px solid var(--border);

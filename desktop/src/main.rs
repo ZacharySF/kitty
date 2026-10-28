@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{atomic::{AtomicBool, Ordering}, mpsc},
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, mpsc},
     thread,
     time::Duration,
 };
@@ -41,6 +41,9 @@ struct Desktop {
     quitting: AtomicBool,
     stopped: AtomicBool,
     preferences: PathBuf,
+    root: PathBuf,
+    origin: Url,
+    next_note: AtomicU64,
 }
 
 fn workspace() -> Result<PathBuf, String> {
@@ -77,6 +80,55 @@ fn open_external(url: &Url) {
         // deliberately no frontend shell, file, opener, or notification command.
         let _ = open::that_detached(url.as_str());
     }
+}
+
+/// Quick notes are the kitty origin's own `#quick-note[/<id>]` route, nothing else.
+fn quick_note_target(url: &Url, origin: &Url) -> Option<String> {
+    let fragment = url.fragment()?;
+    let id = fragment.strip_prefix("quick-note").filter(|rest| rest.is_empty() || rest.starts_with('/'))?;
+    let id_ok = id.is_empty() || {
+        let digits = &id[1..];
+        (1..=16).contains(&digits.len()) && !digits.starts_with('0') && digits.bytes().all(|b| b.is_ascii_digit())
+    };
+    let same_origin = url.scheme() == origin.scheme() && url.host_str() == origin.host_str()
+        && url.port_or_known_default() == origin.port_or_known_default()
+        && url.username().is_empty() && url.password().is_none();
+    (id_ok && same_origin && url.path() == "/" && url.query().is_none()).then(|| fragment.to_string())
+}
+
+fn wants_quick_note(args: &[String]) -> bool {
+    args.iter().skip(1).any(|arg| arg == "--quick-note")
+}
+
+// Lets the page paint translucent surfaces only where the window really is
+// transparent; browser tabs keep an opaque canvas. Runs before page scripts.
+const TRANSPARENT_MARKER: &str = "document.documentElement.dataset.window = 'transparent';";
+
+/// A small transparent, undecorated, always-on-top note window. Same private
+/// webview profile and navigation guard as the main window; never IPC.
+fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
+    let app = app.clone();
+    // Window creation from event/menu callbacks must not block the main loop.
+    thread::spawn(move || {
+        let state = app.state::<Desktop>();
+        let mut url = state.origin.clone();
+        url.set_fragment(Some(&fragment));
+        let label = format!("quick-note-{}", state.next_note.fetch_add(1, Ordering::SeqCst));
+        let origin = state.origin.clone();
+        let _ = WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
+            .title("kitty! quick note").inner_size(380.0, 460.0).min_inner_size(260.0, 220.0)
+            .transparent(true).decorations(false).always_on_top(true)
+            .initialization_script(TRANSPARENT_MARKER)
+            .devtools(cfg!(debug_assertions))
+            .data_directory(state.root.join(".private/webview"))
+            .on_navigation(move |url| {
+                if local_url(url, &origin) { true } else { open_external(url); false }
+            })
+            .on_new_window(|url, _features| {
+                open_external(&url);
+                NewWindowResponse::Deny
+            }).build();
+    });
 }
 
 fn start_backend(root: &Path) -> Result<(Backend, Url), Box<dyn std::error::Error>> {
@@ -156,7 +208,9 @@ fn main() {
     // Applies to new private files only; never changes selected existing files.
     unsafe { libc::umask(0o077); }
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if wants_quick_note(&args) { open_quick_note(app, "quick-note".into()) } else { show(app) }
+        }))
         .setup(|app| {
             let root = workspace().map_err(std::io::Error::other)?;
             fs::create_dir_all(root.join(".private"))?;
@@ -169,11 +223,13 @@ fn main() {
             app.manage(Desktop {
                 backend: Mutex::new(backend), background: AtomicBool::new(background),
                 quitting: AtomicBool::new(false), stopped: AtomicBool::new(false), preferences,
+                root: root.clone(), origin: origin.clone(), next_note: AtomicU64::new(1),
             });
             let show_item = MenuItem::with_id(app, "show", "Show kitty!", true, None::<&str>)?;
+            let note_item = MenuItem::with_id(app, "quick-note", "New quick note", true, None::<&str>)?;
             let background_item = CheckMenuItem::with_id(app, "background", "Keep running on close (monitoring / reminders)", true, background, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit kitty! (save and stop workers)", true, Some("Ctrl+Shift+Q"))?;
-            let menu = Menu::with_items(app, &[&show_item, &background_item, &quit])?;
+            let menu = Menu::with_items(app, &[&show_item, &note_item, &background_item, &quit])?;
             let tray = TrayIconBuilder::new().tooltip("kitty!").menu(&menu)
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?).build(app);
             if tray.is_err() {
@@ -182,16 +238,23 @@ fn main() {
                 background_item.set_enabled(false)?;
             }
             let navigation_origin = origin.clone();
+            let note_origin = origin.clone();
+            let note_app = app.handle().clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin))
                 .title("kitty!").inner_size(1280.0, 850.0).min_inner_size(760.0, 500.0)
+                .transparent(true)
+                .initialization_script(TRANSPARENT_MARKER)
                 .devtools(cfg!(debug_assertions))
                 .data_directory(root.join(".private/webview"))
                 .on_navigation(move |url| {
                     if local_url(url, &navigation_origin) { true }
                     else { open_external(url); false }
                 })
-                .on_new_window(|url, _features| {
-                    open_external(&url);
+                .on_new_window(move |url, _features| {
+                    match quick_note_target(&url, &note_origin) {
+                        Some(fragment) => open_quick_note(&note_app, fragment),
+                        None => open_external(&url),
+                    }
                     NewWindowResponse::Deny
                 }).build()?;
             let handle = app.handle().clone();
@@ -216,10 +279,14 @@ fn main() {
                     break;
                 }
             });
+            if wants_quick_note(&std::env::args().collect::<Vec<_>>()) {
+                open_quick_note(app.handle(), "quick-note".into());
+            }
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show(app),
+            "quick-note" => open_quick_note(app, "quick-note".into()),
             "quit" => request_quit(app),
             "background" => {
                 let state = app.state::<Desktop>();
@@ -273,5 +340,26 @@ mod tests {
             assert!(!external_url(&Url::parse(bad).unwrap()));
         }
         assert!(external_url(&Url::parse("https://example.com/path").unwrap()));
+    }
+    #[test]
+    fn quick_note_windows_open_only_for_the_kitty_origin_note_route() {
+        let local = Url::parse("http://127.0.0.1:43721/").unwrap();
+        let target = |url: &str| quick_note_target(&Url::parse(url).unwrap(), &local);
+        assert_eq!(target("http://127.0.0.1:43721/#quick-note").as_deref(), Some("quick-note"));
+        assert_eq!(target("http://127.0.0.1:43721/#quick-note/42").as_deref(), Some("quick-note/42"));
+        for bad in ["http://127.0.0.1:3210/#quick-note", "http://127.0.0.1:43721/api/#quick-note", "http://127.0.0.1:43721/?x=1#quick-note",
+                    "http://127.0.0.1:43721/#quick-note/0", "http://127.0.0.1:43721/#quick-note/4x", "http://127.0.0.1:43721/#notes",
+                    "http://user@127.0.0.1:43721/#quick-note", "https://example.com/#quick-note"] {
+            assert_eq!(target(bad), None, "{bad}");
+        }
+    }
+    #[test]
+    fn quick_note_launch_flag_is_exact() {
+        let args = |values: &[&str]| values.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        assert!(wants_quick_note(&args(&["kitty-workspace", "--quick-note"])));
+        assert!(!wants_quick_note(&args(&["kitty-workspace"])));
+        assert!(!wants_quick_note(&args(&["kitty-workspace", "--quick-notes"])));
+        // argv[0] is never treated as the flag.
+        assert!(!wants_quick_note(&args(&["--quick-note"])));
     }
 }

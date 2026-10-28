@@ -9,6 +9,7 @@
     study: "M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3ZM12 6v16M6 9h3M15 9h3",
     flashcards: "M7 3h14v14H7ZM3 7v14h14M10 8h8M10 12h5",
     notes: "M4 3h16v18H4ZM8 7h8M8 11h8M8 15h4m3 3 4-4",
+    "quick-notes": "M5 4h14v11l-5 5H5ZM14 20v-5h5M8 9h8M8 13h4",
     schema: "M10 4h4v4h-4ZM3 16h4v4H3ZM17 16h4v4h-4ZM12 8v4M5 16v-4h14v4",
     ai: "M12 3v3M9 3h6M5 7h14v13H5ZM8 11h.01M16 11h.01M8 16h8M2 10v6M22 10v6",
     kitty:

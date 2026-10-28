@@ -493,8 +493,8 @@
     min-width: 0;
     overflow: hidden;
     position: sticky;
-    top: 16px;
-    max-height: calc(100vh - 32px);
+    top: calc(var(--workbench-top, 0px) + 16px);
+    max-height: calc(100vh - var(--workbench-top, 0px) - 32px);
     overflow-y: auto;
   }
   .detail-body {

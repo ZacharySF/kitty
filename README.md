@@ -106,6 +106,25 @@ browser filling, Gmail, notifications and paid operations are disabled. Syntheti
 text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
 be registered inside the disposable workspace.
 
+### Quick notes
+
+**Study → Quick notes** is a board of small translucent scratch notes. Each note
+saves as you type (no save button; `Ctrl+S` forces it), can be tinted, pinned to the
+top, searched and deleted. Notes live in the workspace database (`quick_notes`),
+separate from Notes & canvas pages.
+
+**↗ Floating note** (or the pop-out icon on a note) opens one note on its own: in
+the desktop app that is a small transparent, borderless, always-on-top window;
+in a browser it is a popup. `Esc` closes it (already saved). If the same note is
+edited in two windows, the stale one stops and offers *Load latest* or *Keep mine*
+instead of overwriting.
+
+In the desktop app, the tray menu has **New quick note**, and
+`kitty-workspace --quick-note` opens one in the running app (or starts it), so a
+compositor key binding can summon a note, e.g. in niri:
+`Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
+bar; move them with the compositor (niri: `Mod`+drag).
+
 ### Optional LearnHarness extension
 
 **Study → LearnHarness** embeds the full, independently running
@@ -488,6 +507,12 @@ This avoids a WebKitGTK native-Wayland scaling failure that can produce a
 negative device-pixel ratio and a blank, compressed page on fractional-scale
 desktops. An explicit `GDK_BACKEND` is respected; Wayland-only sessions are unchanged.
 Window commands live in the system tray rather than a duplicated window menubar.
+
+The main window and quick-note windows are transparent: the default **Harness**
+theme (LearnHarness-style near-black with kitty pink accents) and every other theme
+draw translucent glass panels over a soft glow, so the desktop shows through.
+Browser tabs keep an opaque background. Titles use the bundled CMU Serif Bold
+(SIL OFL, `web/public/fonts/OFL.txt`).
 
 
 ## Finding jobs (Stage 2)

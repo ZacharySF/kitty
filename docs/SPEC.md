@@ -320,3 +320,22 @@ Stage 1: done.
   (`ansi-to-react` / `linkify-it` quadratic text-scanning DoS), explicitly
   documented; the breaking suggested downgrade is not applied. Setup refuses
   unknown revisions/conflicting local lockfiles. There is no automatic startup.
+- 2026-10-27: Quick notes (Study → Quick notes) are plain-text scratch notes in the
+  `quick_notes` table (body ≤64 KiB, tint rose/lilac/sky/mint/honey/frost, pinned,
+  revision). Autosave sends the last-seen revision; a stale revision gets HTTP 409
+  and never overwrites or deletes. API: `GET /api/quick-notes[/:id]`,
+  `POST /api/quick-notes/{create,save,delete}`. `/#quick-note[/<id>]` renders a
+  single note; the desktop shell opens only that same-origin route as a transparent,
+  undecorated, always-on-top window (from the page, the tray's "New quick note" or
+  `kitty-workspace --quick-note`), with the main window's navigation guard and no IPC.
+- 2026-10-27: The UI follows LearnHarness's look: default "Harness" theme
+  (#141414/#1c1c1c/#434343 with kitty pink accents), mono uppercase chrome, CMU Serif
+  Bold titles, pill controls and translucent panels over a theme-colored glow. The
+  desktop windows are transparent; a pre-page init script marks
+  `<html data-window="transparent">` so browser tabs stay opaque.
+- 2026-10-27: Graph node colors are harmonized: every `--c2..--c6` color is pulled
+  halfway toward the theme accent `--c1` (`web/src/lib/graphPalette.ts`), so groups
+  stay distinguishable but read as one family across all themes.
+- 2026-10-27: The top bar and workspace tabs are pinned (`.workbench-top`, sticky
+  with a glass backdrop). Its measured height is published as `--workbench-top`;
+  page-level sticky panels (job detail, mind-map toolbar) offset by it.

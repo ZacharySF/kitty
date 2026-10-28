@@ -6,6 +6,7 @@ export const navigation = [
   { id: "learnharness", label: "LearnHarness", icon: "study" },
   { id: "flashcards", label: "Flashcards", icon: "flashcards" },
   { id: "notes", label: "Notes & canvas", icon: "notes" },
+  { id: "quick-notes", label: "Quick notes", icon: "quick-notes" },
   { id: "documents", label: "Documents & PDF", icon: "notes" },
   { id: "schema", label: "Mind maps", icon: "schema" },
   { id: "ai", label: "AI settings", icon: "ai" },
@@ -32,7 +33,7 @@ export const navigationGroups: { label: string; views: View[] }[] = [
     label: "Plan",
     views: ["today", "calendar", "opportunities", "reminders"],
   },
-  { label: "Study", views: ["study", "learnharness", "flashcards", "notes", "schema", "documents"] },
+  { label: "Study", views: ["study", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
     label: "Job search",
     views: [
@@ -68,6 +69,7 @@ export const navigationRelations: [View, View][] = [
   ["study", "schema"],
   ["flashcards", "notes"],
   ["notes", "schema"],
+  ["notes", "quick-notes"],
   ["notes", "documents"],
   ["schema", "jobs"],
   ["jobs", "inbox"],

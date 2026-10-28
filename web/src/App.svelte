@@ -193,11 +193,17 @@
     activeId = target.id;
     if (!workspace) void refresh();
   }
+  let topBar = $state<HTMLElement>();
   onMount(() => {
     readRoute();
     window.addEventListener("kitty-study-text", studyText);
     window.addEventListener("kitty-study-focus", studyFocus);
+    // Page-level sticky panels sit below the pinned bar, whose height wraps responsively.
+    const measure = new ResizeObserver(([entry]) =>
+      document.documentElement.style.setProperty("--workbench-top", `${Math.ceil(entry.borderBoxSize[0].blockSize)}px`));
+    if (topBar) measure.observe(topBar);
     return () => {
+      measure.disconnect();
       window.removeEventListener("kitty-study-text", studyText);
       window.removeEventListener("kitty-study-focus", studyFocus);
     };
@@ -256,6 +262,7 @@
 <svelte:head><title>{title} · kitty!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>
 <div class="workbench" class:atlas-home={view === "today"}>
+  <div class="workbench-top" bind:this={topBar}>
   <header class="system-bar" role="group" aria-label="Workspace controls" oncontextmenu={(event) => tabBar?.openMenu(event)}>
     {#if view !== "today"}<button class="schema-back" onclick={schemaBack} aria-label={schemaNodes.length ? "Back to parent schema" : "Back to kitty schema"} title="Back to parent schema">←</button>{/if}
     <a class="wordmark" class:current-schema={view === "today"} href="#today" aria-label="kitty home" aria-current={view === "today" ? "page" : undefined} title="Main kitty schema" onclick={(event) => { event.preventDefault(); navigate("today"); }}>
@@ -300,6 +307,7 @@
     >
   </header>
   <WorkspaceTabs bind:this={tabBar} tabs={tabLabels} {activeId} onselect={selectTab} onclose={closeTab} onnew={newTab} />
+  </div>
   <StudyFocusBar {revision} demo={workspace?.demo ?? true} />
   {#if view !== "calendar"}<CalendarReminders />{/if}
   <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
