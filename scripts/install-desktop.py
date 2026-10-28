@@ -36,6 +36,7 @@ def main() -> None:
     parser.add_argument("--sidecar", type=Path, help="Packaged backend (default: sole desktop/binaries/kitty-web-* file)")
     parser.add_argument("--icon", type=Path, default=root / "desktop/icons/icon.png")
     parser.add_argument("--workspace", type=Path, help="Reuse this workspace; omitted means the native default")
+    parser.add_argument("--appimage-runner", type=Path, help="Launch the AppImage through this runner (NixOS: appimage-run)")
     args = parser.parse_args()
     if args.appimage is not None and args.sidecar is not None:
         parser.error("--appimage and --sidecar are mutually exclusive")
@@ -73,6 +74,11 @@ def main() -> None:
     if args.appimage is not None:
         lines.append("export APPIMAGE_EXTRACT_AND_RUN=1")
     command = [str(application / ("kitty.AppImage" if args.appimage is not None else "kitty-workspace"))]
+    if args.appimage_runner is not None:
+        # e.g. NixOS appimage-run: an FHS environment that keeps APPIMAGE pointing
+        # at the installed file, so signed updates still replace it in place.
+        # Keep the given (GC-rooted) link; resolving it would pin a store path.
+        command.insert(0, str(args.appimage_runner.expanduser().absolute()))
     if args.workspace is not None:
         command.extend(("--workspace", str(args.workspace.expanduser().resolve())))
     lines.append("exec " + shlex.join(command) + ' "$@"')

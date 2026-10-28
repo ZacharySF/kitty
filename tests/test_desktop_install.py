@@ -89,3 +89,25 @@ def test_installed_appimage_launches_replacement_without_source_checkout(tmp_pat
     replacement.chmod(0o755)
     replacement.replace(installed)
     assert subprocess.run([str(launcher)], env=env).returncode == 23
+
+
+def test_appimage_runner_receives_the_installed_image(tmp_path):
+    image = tmp_path / "download.AppImage"
+    image.write_text("#!/bin/sh\nexit 9\n")
+    image.chmod(0o755)
+    runner = tmp_path / "appimage-run"
+    runner.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+    runner.chmod(0o755)
+    icon = tmp_path / "icon.png"
+    icon.write_bytes(b"icon")
+    data = tmp_path / "data"
+    env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(tmp_path / "bin")}
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/install-desktop.py"), "--appimage", str(image),
+         "--appimage-runner", str(runner), "--icon", str(icon)],
+        env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    launch = subprocess.run([str(tmp_path / "bin/kitty-workspace"), "--quick-note"],
+                            env=env, capture_output=True, text=True)
+    assert launch.stdout.splitlines() == [str(data / "kitty/application/kitty.AppImage"), "--quick-note"]

@@ -533,8 +533,14 @@ are not supported by these installers.
   needs AppImage/FUSE support (on Ubuntu 22.04, package `libfuse2`) and compatible
   audio support. A desktop AppImage integrator can add it to your application menu.
   Do not run it as root or keep it in a read-only/system-owned directory.
-- **NixOS:** the `.deb` is not a NixOS package. Use the local launcher installation
-  below; do not try to install the Debian package with `dpkg` on NixOS.
+- **NixOS:** the `.deb` is not a NixOS package. Install the published AppImage
+  through `appimage-run` (an FHS runtime that keeps signed self-updates working):
+  ```bash
+  nix build nixpkgs#appimage-run --out-link ~/.local/share/kitty/appimage-run
+  python3 scripts/install-desktop.py --appimage ~/Downloads/kitty_<version>_amd64.AppImage \
+    --appimage-runner ~/.local/share/kitty/appimage-run/bin/appimage-run
+  ```
+  The out-link is a garbage-collection root. Then launch **kitty!** from the menu.
 
 The Linux installer is named **kitty! Workspace** and its Debian package is
 `kitty-workspace`, distinct from the unrelated `kitty` terminal package.
