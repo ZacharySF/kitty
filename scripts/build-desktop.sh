@@ -20,6 +20,8 @@ fi
 npm --prefix web ci
 npm --prefix web run build
 uv run --locked --with pyinstaller==6.16.0 python desktop/package_backend.py
+# The Terminal module's runtime: the pinned herdr release, checksum-verified.
+uv run --locked python desktop/fetch_herdr.py
 # CI delegates the native build/sign/upload to the official Tauri action.
 if [ "$prepare_only" = true ]; then
   exit 0

@@ -303,11 +303,13 @@ Stage 1: done.
   Sources and limits are in `docs/APPLICATION_AUTONOMY_RESEARCH.md`.
 - Built-in modules: the core shell, settings, AI-provider/budget controls and local
   storage infrastructure are always available. `applyai` owns career workflows;
-  `workspace` owns notes/documents/study/planning. They do not depend on each other.
-  `config/modules.yaml` stores a restart-only selection; absent means both modules
-  for existing workspaces, while fresh CLI/desktop workspaces start core-only.
-  Disabled modules have no UI entries, commands, MCP tools, routes or workers, but
-  their data and configuration remain. Existing global migrations stay in place.
+  `workspace` owns notes/documents/study/planning; `terminal` owns kitty!'s bundled,
+  pinned herdr session (`docs/terminal-dock-design.md`). They do not depend on each
+  other. `config/modules.yaml` stores a restart-only selection; absent means every
+  module for existing workspaces, while fresh CLI/desktop workspaces start core-only.
+  Disabled modules have no UI entries, commands, MCP tools, routes, workers or
+  processes, but their data and configuration remain. Existing global migrations
+  stay in place.
 - Optional external learning extension: Study navigation includes LearnHarness,
   a contained cross-origin frame of the AGPL-3.0-only upstream app (source unchanged)
   at fixed `http://127.0.0.1:3210`. Kitty retains its existing native Study tools;

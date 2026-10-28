@@ -70,7 +70,7 @@ export interface Discovery {
   error: string | null;
   result: string | null;
 }
-export type ModuleId = "applyai" | "workspace";
+export type ModuleId = "applyai" | "workspace" | "terminal";
 export interface ModuleInfo {
   id: ModuleId;
   label: string;

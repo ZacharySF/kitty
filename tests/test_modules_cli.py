@@ -233,7 +233,7 @@ def test_first_time_applyai_activation_provisions_config_without_inventing_facts
 def test_changing_a_pre_module_workspace_starts_from_every_module(home):
     (home / "config").mkdir()
     assert run("modules", "disable", "applyai").exit_code == 0
-    assert load_modules(home / "config") == ("workspace",)
+    assert load_modules(home / "config") == ("workspace", "terminal")
 
 
 def test_changing_nothing_does_not_rewrite_the_file(home):

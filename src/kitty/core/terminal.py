@@ -1,0 +1,258 @@
+"""kitty!'s own herdr runtime: one named session with a private config and socket.
+
+herdr (https://github.com/herdrdev/herdr, Apache-2.0) is bundled at the version
+pinned in ``desktop/fetch_herdr.py``; kitty! never runs a herdr found on PATH and
+never uses herdr's ``default`` session. Only herdr's public commands are used:
+
+* ``herdr --session NAME`` starts the session's server when it is not running (as a
+  detached daemon) and attaches a client on its terminal;
+* ``herdr --session NAME session stop NAME`` stops that server and its panes.
+
+The session's sockets live where herdr keeps every named session,
+``$XDG_CONFIG_HOME/herdr/sessions/NAME`` (default ``~/.config/herdr``), so agents
+can reach it with ``herdr --session NAME``. kitty! creates that directory owner-only
+and refuses a session whose sockets are readable by anyone else. The Harness theme
+lives in kitty!'s own ``.private/herdr/config.toml`` (``HERDR_CONFIG_PATH``), so the
+user's own herdr configuration is never read or changed.
+
+Nothing here starts until a page attaches; ``stop`` stops the session only when this
+process used it.
+"""
+from __future__ import annotations
+
+import fcntl
+import os
+import re
+import socket
+import stat
+import struct
+import subprocess
+import tempfile
+import termios
+import threading
+import time
+from collections.abc import Mapping
+from pathlib import Path
+
+#: Linux ``sockaddr_un.sun_path`` holds 107 bytes plus the terminating NUL.
+SOCKET_PATH_MAX = 107
+READY_TIMEOUT = 15.0
+STOP_TIMEOUT = 30.0
+#: Variables describing the terminal kitty! itself runs in. The pty kitty! creates is
+#: none of these; herdr refuses nested launches while HERDR_ENV=1 is inherited.
+_OUTER_TERMINAL = ("TMUX", "TMUX_PANE", "TERM_PROGRAM", "TERM_PROGRAM_VERSION")
+_SESSION_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+#: herdr config for kitty!'s session: the Harness palette (web/src/lib/themes.ts) on
+#: herdr's terminal base, with transparent panels so the page's surface shows through.
+#: Updates arrive only with kitty!'s signed releases, so herdr's own checks are off.
+HARNESS_CONFIG = """\
+# Written by kitty! for its own herdr session; replaced whenever kitty! starts it.
+onboarding = false
+
+[theme]
+name = "terminal"
+
+[theme.custom]
+panel_bg = "reset"
+sidebar_bg = "reset"
+surface_dim = "#1c1c1c"
+surface0 = "#262626"
+surface1 = "#434343"
+active_row_bg = "#262626"
+selection_bg = "#434343"
+overlay0 = "#8d8d8d"
+overlay1 = "#b4b4b4"
+text = "#e6e6e6"
+subtext0 = "#b4b4b4"
+accent = "#deb2c3"
+mauve = "#c6b5f0"
+peach = "#e4bdcc"
+green = "#a8d5b5"
+yellow = "#e8c872"
+red = "#ee928c"
+blue = "#9cc7f0"
+teal = "#9cc7f0"
+
+[update]
+version_check = false
+manifest_check = false
+"""
+
+
+class TerminalUnavailable(RuntimeError):
+    """kitty!'s herdr session cannot be used; the message is safe to show."""
+
+
+def validate_session_name(name: str) -> str:
+    """herdr's session-name rules, minus its ``default`` session."""
+    if not _SESSION_NAME.fullmatch(name) or name in {".", "..", "default"}:
+        raise TerminalUnavailable(
+            "The herdr session name must be 1-64 letters, digits, '.', '_' or '-', "
+            "and not herdr's default session")
+    return name
+
+
+def herdr_config_dir(environ: Mapping[str, str]) -> Path:
+    """herdr's config directory, resolved exactly as herdr v0.9.5 does on Linux."""
+    if "XDG_CONFIG_HOME" in environ:
+        return Path(environ["XDG_CONFIG_HOME"]) / "herdr"
+    return Path(environ["HOME"]) / ".config" / "herdr"
+
+
+def child_environment(environ: Mapping[str, str], config_path: Path) -> dict[str, str]:
+    """Environment for kitty!'s herdr: nothing from an outer herdr or terminal."""
+    result = {key: value for key, value in environ.items()
+              if not key.startswith("HERDR_") and key not in _OUTER_TERMINAL}
+    result.update(HERDR_CONFIG_PATH=str(config_path), TERM="xterm-256color", COLORTERM="truecolor")
+    return result
+
+
+def _write_private(path: Path, text: str) -> None:
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def _owner_only_directory(path: Path) -> None:
+    """Create `path` 0700, or tighten kitty!'s existing directory to 0700."""
+    path.mkdir(mode=0o700, exist_ok=True)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise TerminalUnavailable(f"{path} is not a directory owned by this user")
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        os.chmod(path, 0o700)
+
+
+def _listening(path: Path) -> bool:
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.connect(str(path))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+class TerminalClient:
+    """One herdr client on a pty; the page stream owning it closes it on detach."""
+
+    def __init__(self, master: int, process: subprocess.Popen):
+        self.master = master
+        self.process = process
+
+    def resize(self, cols: int, rows: int) -> None:
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+    def close(self) -> None:
+        """Detach: the client exits on hangup; the session keeps running."""
+        if self.master >= 0:
+            os.close(self.master)
+            self.master = -1
+        try:
+            self.process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+
+
+class HerdrRuntime:
+    """kitty!'s named herdr session; clients attach lazily, ``stop`` ends it."""
+
+    def __init__(self, binary: str | None, session: str, private_dir: Path,
+                 environ: Mapping[str, str] | None = None):
+        self.binary = binary
+        self.session = session
+        self.private_dir = private_dir
+        self.environ = os.environ if environ is None else environ
+        self._lock = threading.Lock()
+        self._used = False
+
+    @property
+    def config_path(self) -> Path:
+        return self.private_dir / "config.toml"
+
+    def _command(self, *arguments: str) -> list[str]:
+        return [self.binary, "--session", self.session, *arguments]
+
+    def _prepare(self) -> tuple[dict[str, str], Path]:
+        if not self.binary or not os.access(self.binary, os.X_OK) or not Path(self.binary).is_file():
+            raise TerminalUnavailable("The bundled herdr runtime is missing; reinstall kitty!")
+        validate_session_name(self.session)
+        folder = herdr_config_dir(self.environ) / "sessions" / self.session
+        client_socket = folder / "herdr-client.sock"
+        if len(os.fsencode(client_socket)) > SOCKET_PATH_MAX:
+            raise TerminalUnavailable(f"herdr's socket path is longer than {SOCKET_PATH_MAX} bytes: {client_socket}")
+        # Parents may be the user's own herdr directories: create them private, never chmod them.
+        folder.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _owner_only_directory(folder)
+        self.private_dir.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _owner_only_directory(self.private_dir)
+        _write_private(self.config_path, HARNESS_CONFIG)
+        return child_environment(self.environ, self.config_path), folder
+
+    @staticmethod
+    def _verify_private(folder: Path) -> None:
+        if stat.S_IMODE(folder.lstat().st_mode) != 0o700:
+            raise TerminalUnavailable(f"herdr session directory {folder} lost its owner-only permissions")
+        for name in ("herdr.sock", "herdr-client.sock"):
+            info = (folder / name).lstat()
+            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise TerminalUnavailable(f"herdr socket {folder / name} has unsafe permissions; kitty! stopped it")
+
+    def attach(self, cols: int, rows: int) -> TerminalClient:
+        """Start the session if needed and attach a new client of the given size."""
+        with self._lock:
+            environment, folder = self._prepare()
+            master, slave = os.openpty()
+            try:
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                process = subprocess.Popen(
+                    self._command(), stdin=slave, stdout=slave, stderr=slave, env=environment,
+                    cwd=self.environ.get("HOME") or "/", start_new_session=True)
+            except BaseException:
+                os.close(master)
+                raise
+            finally:
+                os.close(slave)
+            self._used = True
+            client = TerminalClient(master, process)
+            try:
+                deadline = time.monotonic() + READY_TIMEOUT
+                while not _listening(folder / "herdr-client.sock"):
+                    if process.poll() is not None or time.monotonic() > deadline:
+                        raise TerminalUnavailable("kitty!'s herdr session did not start")
+                    time.sleep(0.02)
+                self._verify_private(folder)
+            except BaseException:
+                client.close()
+                self._stop_session()
+                self._used = False
+                raise
+            return client
+
+    def _stop_session(self) -> None:
+        try:
+            subprocess.run(self._command("session", "stop", self.session), env=child_environment(
+                self.environ, self.config_path), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=STOP_TIMEOUT, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            pass  # Nothing else may stop it: kitty! never signals a herdr it did not spawn.
+
+    def stop(self) -> None:
+        """Quit: stop the session if this process used it; its clients then exit."""
+        with self._lock:
+            used, self._used = self._used, False
+        if used:
+            self._stop_session()

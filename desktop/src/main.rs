@@ -135,16 +135,27 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
     });
 }
 
+/// A bundled executable beside the desktop binary. Tauri dev and cargo smoke
+/// binaries use the target-suffixed staging copy; installed bundles always use
+/// their own sibling executable, never a checkout.
+fn sidecar(directory: &Path, name: &str, staging: Option<&Path>) -> Option<PathBuf> {
+    let packaged = directory.join(name);
+    if packaged.is_file() { return Some(packaged); }
+    staging.map(|folder| folder.join(format!("{name}-{}", env!("KITTY_TARGET_TRIPLE"))))
+        .filter(|path| path.is_file())
+}
+
 fn start_backend(root: &Path) -> Result<(Backend, Url, mpsc::Receiver<owner::Command>), Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
-    let packaged = executable.parent().ok_or("Desktop executable has no directory")?.join("kitty-web");
-    // Tauri dev and cargo smoke binaries use the target-suffixed staging sidecar.
-    // Installed bundles always use their own sibling executable, never a checkout.
-    let binary = if packaged.is_file() { packaged } else if cfg!(debug_assertions) {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries")
-            .join(format!("kitty-web-{}", env!("KITTY_TARGET_TRIPLE")))
-    } else { return Err("The bundled kitty-web executable is missing".into()); };
-    let child = Command::new(binary).arg("--workspace").arg(root)
+    let directory = executable.parent().ok_or("Desktop executable has no directory")?;
+    let staging = cfg!(debug_assertions).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
+    let binary = sidecar(directory, "kitty-web", staging.as_deref())
+        .ok_or("The bundled kitty-web executable is missing")?;
+    let mut command = Command::new(binary);
+    // The Terminal module runs only kitty!'s pinned herdr, never one from the environment.
+    command.env_remove("KITTY_HERDR");
+    if let Some(herdr) = sidecar(directory, "kitty-herdr", staging.as_deref()) { command.env("KITTY_HERDR", herdr); }
+    let child = command.arg("--workspace").arg(root)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
     let mut backend = Backend(Some(child));
     let output = backend.0.as_mut().unwrap().stdout.take().ok_or("Backend readiness pipe unavailable")?;
@@ -407,6 +418,21 @@ mod tests {
                     "http://user@127.0.0.1:43721/#quick-note", "https://example.com/#quick-note"] {
             assert_eq!(target(bad), None, "{bad}");
         }
+    }
+    #[test]
+    fn sidecars_come_only_from_the_bundle_or_the_debug_staging_folder() {
+        let folder = std::env::temp_dir().join(format!("kitty-sidecar-test-{}", std::process::id()));
+        let (bundle, staging) = (folder.join("bundle"), folder.join("binaries"));
+        fs::create_dir_all(&bundle).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), None);
+        let staged = staging.join(format!("kitty-herdr-{}", env!("KITTY_TARGET_TRIPLE")));
+        fs::write(&staged, b"staged").unwrap();
+        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), Some(staged));
+        assert_eq!(sidecar(&bundle, "kitty-herdr", None), None);
+        fs::write(bundle.join("kitty-herdr"), b"bundled").unwrap();
+        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), Some(bundle.join("kitty-herdr")));
+        fs::remove_dir_all(&folder).unwrap();
     }
     #[test]
     fn quick_note_launch_flag_is_exact() {

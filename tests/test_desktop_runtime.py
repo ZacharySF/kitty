@@ -10,10 +10,13 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+
+from terminal_support import FakeHerdr, FrameReader, websocket
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -166,3 +169,49 @@ def test_settings_desktop_commands_travel_the_owner_pipe(backend):
     process.stdin.write("quit\n")
     process.stdin.flush()
     assert process.wait(timeout=30) == 0
+
+
+@pytest.fixture
+def terminal_workspace(tmp_path, monkeypatch):
+    """A workspace selecting only the Terminal module, with a synthetic herdr."""
+    fake = FakeHerdr(tmp_path)
+    for key, value in {"HOME": str(fake.home), "XDG_CONFIG_HOME": str(fake.home / ".config"),
+                       "KITTY_HERDR": str(fake.binary), "KITTY_HERDR_SESSION": "kitty-desktop-test",
+                       "HERDR_ENV": "1"}.items():
+        monkeypatch.setenv(key, value)
+    config = tmp_path / "workspace" / "config"
+    config.mkdir(parents=True)
+    (config / "modules.yaml").write_text("enabled: [terminal]\n")
+    try:
+        yield fake
+    finally:
+        fake.cleanup("kitty-desktop-test")
+        shutil.rmtree(fake.home, ignore_errors=True)
+
+
+def test_owner_quit_stops_kitty_herdr_session_but_detaching_does_not(terminal_workspace, backend):
+    fake, session = terminal_workspace, "kitty-desktop-test"
+    process, origin, _root = backend
+    headers = {"Origin": origin.geturl(), "Content-Type": "application/json", "X-Kitty-Request": "1"}
+    pages = []
+    for _page in range(2):
+        status, _headers, body = request(origin, "POST", "/api/terminal/session", headers, "{}")
+        assert status == 200
+        status, _headers, connection, rest = websocket(
+            origin.port, f"/api/terminal/socket?token={json.loads(body)['token']}", {})
+        assert status == 101
+        FrameReader(connection, rest).until(b"FAKE-HERDR")
+        pages.append(connection)
+    # A page going away (or a hidden window) only detaches its client.
+    pages[0].close()
+    time.sleep(0.3)
+    assert fake.listening(session)
+    stop = ["--session", session, "session", "stop", session]
+    assert stop not in [item["argv"] for item in fake.invocations()]
+    # Quit kitty! (save and stop workers) also stops kitty!'s herdr server, even with a page attached.
+    process.stdin.write("quit\n")
+    process.stdin.flush()
+    assert process.wait(timeout=30) == 0
+    pages[1].close()
+    assert [item["argv"] for item in fake.invocations()].count(stop) == 1
+    assert not fake.listening(session)

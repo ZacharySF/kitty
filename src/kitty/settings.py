@@ -22,6 +22,9 @@ ROOT_MARKERS = (Path("config") / "modules.yaml", Path("config") / "tracks.yaml")
 #: Not Firefox's default 9222, so it never collides with another automated browser.
 DEFAULT_BROWSER_PORT = 9333
 
+#: kitty!'s own named herdr session. Never herdr's "default" session.
+DEFAULT_HERDR_SESSION = "kitty"
+
 
 def find_firefox() -> str | None:
     """The Firefox binary: $KITTY_FIREFOX, else firefox on PATH."""
@@ -61,6 +64,11 @@ class Settings:
     firefox_path: str | None = None
     #: Local remote-control port of that browser; the window stays open between runs.
     browser_port: int = DEFAULT_BROWSER_PORT
+    #: The pinned herdr binary kitty! bundles ($KITTY_HERDR; the desktop app sets it).
+    #: Never a herdr found on PATH.
+    herdr_path: str | None = None
+    #: Name of kitty!'s herdr session ($KITTY_HERDR_SESSION).
+    herdr_session: str = DEFAULT_HERDR_SESSION
 
     @property
     def config_dir(self) -> Path:
@@ -123,4 +131,6 @@ class Settings:
             anthropic_key_set=bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
             firefox_path=find_firefox(),
             browser_port=int(os.environ.get("KITTY_BROWSER_PORT") or DEFAULT_BROWSER_PORT),
+            herdr_path=os.environ.get("KITTY_HERDR", "").strip() or None,
+            herdr_session=os.environ.get("KITTY_HERDR_SESSION", "").strip() or DEFAULT_HERDR_SESSION,
         )
