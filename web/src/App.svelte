@@ -44,6 +44,7 @@
   const enabled = $derived(workspace?.modules.enabled ?? []);
   const applyai = $derived(enabled.includes("applyai"));
   const studyTools = $derived(enabled.includes("workspace"));
+  const terminal = $derived(enabled.includes("terminal"));
   const groups = $derived(visibleGroups(enabled));
   let moduleNotice = $state("");
   let error = $state("");
@@ -176,6 +177,14 @@
     void tick().then(() => window.dispatchEvent(new CustomEvent("kitty-study-focus", { detail: { ...detail, routed: true } })));
   }
   function showGuide() { if (applyai) guide = true; }
+  /** Bottom edge of the active view's content: the dock first fills the space below it (Q8). */
+  function panelBottom() {
+    const panel = document.getElementById(`workspace-pane-${activeId}`);
+    if (!panel) return window.innerHeight;
+    let bottom = panel.getBoundingClientRect().top;
+    for (const child of panel.children) bottom = Math.max(bottom, child.getBoundingClientRect().bottom);
+    return bottom;
+  }
   $effect(() => { if (guide && guideDialog && !guideDialog.open) guideDialog.showModal(); });
 
   let bootstrapRequest = 0;
@@ -407,6 +416,7 @@
     {/each}
   </main>
 </div>
+{#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock measure={panelBottom} onherdr={() => navigate("herdr")} />{/await}{/if}
 {#if guide && applyai}<dialog
     bind:this={guideDialog}
     class="workspace-dialog guide-dialog"

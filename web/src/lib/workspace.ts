@@ -5,6 +5,7 @@ export const navigation = [
   { id: "today", label: "Atlas", icon: "atlas", module: null },
   { id: "calendar", label: "Calendar", icon: "calendar", module: "workspace" },
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
+  { id: "herdr", label: "herdr", icon: "terminal", module: "terminal" },
   { id: "study", label: "Study", icon: "study", module: "workspace" },
   { id: "learnharness", label: "LearnHarness", icon: "study", module: "workspace" },
   { id: "flashcards", label: "Flashcards", icon: "flashcards", module: "workspace" },
@@ -52,7 +53,7 @@ export const navigationGroups: { label: string; shortcut: string; views: View[] 
   {
     label: "Plan",
     shortcut: "Ctrl + Alt",
-    views: ["today", "calendar", "opportunities", "reminders"],
+    views: ["today", "calendar", "opportunities", "reminders", "herdr"],
   },
   { label: "Study", shortcut: "Ctrl + X", views: ["study", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
