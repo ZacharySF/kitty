@@ -233,7 +233,7 @@
   [data-tint="mint"] { --tint: #a8e0c4; }
   [data-tint="honey"] { --tint: #f0d29a; }
   [data-tint="frost"] { --tint: #e6e6e6; }
-  /* Floats over arbitrary wallpapers/windows: tinted glass, but dense enough to read. */
+  /* Browser popups keep a dense fallback over their opaque canvas. */
   .window {
     height: 100dvh;
     min-height: 0;
@@ -241,6 +241,19 @@
     background:
       linear-gradient(155deg, color-mix(in srgb, var(--tint) 16%, transparent), transparent 70%),
       color-mix(in srgb, var(--solid-panel, #1c1c1c) 76%, transparent);
+  }
+  /* Native floating notes reveal the desktop; retain only the top color wash. */
+  :global(:root[data-window="transparent"][data-surface="quick-note"]) .window {
+    background:
+      linear-gradient(155deg, color-mix(in srgb, var(--tint) 16%, transparent), transparent 70%);
+  }
+  :global(:root[data-window="transparent"][data-surface="quick-note"]) .window :is(header, footer) {
+    background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 76%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--solid-panel, #1c1c1c) 76%, transparent);
+    border-radius: 4px;
+  }
+  :global(:root[data-window="transparent"][data-surface="quick-note"]) .window textarea {
+    text-shadow: 0 1px 2px var(--solid-void, #141414), 0 0 2px var(--solid-void, #141414);
   }
   header, footer {
     display: flex;
