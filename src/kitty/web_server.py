@@ -119,11 +119,12 @@ class WebApplication:
         from kitty import web_ai, web_calendar, web_flashcards, web_notes
         from kitty import web_documents, web_opportunities, web_study
         from kitty import web_atlas, web_backlinks, web_schema
+        from kitty import web_learnharness
 
         self.extensions = (
             web_jobs, web_automation, web_resumes, web_profile, web_insights,
             web_calendar, web_opportunities, web_study, web_flashcards, web_notes, web_documents, web_ai,
-            web_schema, web_atlas, web_backlinks,
+            web_schema, web_atlas, web_backlinks, web_learnharness,
         )
         self.tasks = TaskRunner()
         self.automation = web_automation.AutomationController(settings)
@@ -382,7 +383,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:3210; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         if download:
             self.send_header("Content-Disposition", f'attachment; filename="{download}"')
         self.end_headers()

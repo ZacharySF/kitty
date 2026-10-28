@@ -55,9 +55,14 @@ fn workspace() -> Result<PathBuf, String> {
     Ok(data.join("kitty/workspace"))
 }
 
+// The optional LearnHarness extension is a fixed loopback frame (see web_learnharness.py);
+// WebKitGTK reports subframe loads to the navigation handler too.
+const LEARNHARNESS_PORT: u16 = 3210;
+
 fn local_url(url: &Url, origin: &Url) -> bool {
+    let port = url.port_or_known_default();
     url.scheme() == "http" && url.host_str() == Some("127.0.0.1")
-        && url.port_or_known_default() == origin.port_or_known_default()
+        && (port == origin.port_or_known_default() || port == Some(LEARNHARNESS_PORT))
         && url.username().is_empty() && url.password().is_none()
 }
 
@@ -253,6 +258,14 @@ mod tests {
             assert!(!local_url(&Url::parse(bad).unwrap(), &local));
         }
         assert!(local_url(&Url::parse("http://127.0.0.1:43721/api/jobs?q=cat").unwrap(), &local));
+    }
+    #[test]
+    fn navigation_keeps_only_the_fixed_learnharness_frame_in_app() {
+        let local = Url::parse("http://127.0.0.1:43721/").unwrap();
+        assert!(local_url(&Url::parse("http://127.0.0.1:3210/chat/new").unwrap(), &local));
+        for bad in ["http://localhost:3210/", "https://127.0.0.1:3210/", "http://127.0.0.1:3211/", "http://user@127.0.0.1:3210/"] {
+            assert!(!local_url(&Url::parse(bad).unwrap(), &local));
+        }
     }
     #[test]
     fn external_opener_rejects_non_web_and_credentials() {

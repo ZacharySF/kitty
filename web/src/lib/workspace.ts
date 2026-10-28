@@ -3,6 +3,7 @@ export const navigation = [
   { id: "calendar", label: "Calendar", icon: "calendar" },
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities" },
   { id: "study", label: "Study", icon: "study" },
+  { id: "learnharness", label: "LearnHarness", icon: "study" },
   { id: "flashcards", label: "Flashcards", icon: "flashcards" },
   { id: "notes", label: "Notes & canvas", icon: "notes" },
   { id: "documents", label: "Documents & PDF", icon: "notes" },
@@ -31,7 +32,7 @@ export const navigationGroups: { label: string; views: View[] }[] = [
     label: "Plan",
     views: ["today", "calendar", "opportunities", "reminders"],
   },
-  { label: "Study", views: ["study", "flashcards", "notes", "schema", "documents"] },
+  { label: "Study", views: ["study", "learnharness", "flashcards", "notes", "schema", "documents"] },
   {
     label: "Job search",
     views: [
@@ -62,6 +63,7 @@ export const navigationRelations: [View, View][] = [
   ["opportunities", "calendar"],
   ["opportunities", "study"],
   ["study", "flashcards"],
+  ["study", "learnharness"],
   ["study", "notes"],
   ["study", "schema"],
   ["flashcards", "notes"],

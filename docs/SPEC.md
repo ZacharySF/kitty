@@ -292,3 +292,31 @@ Stage 1: done.
   sensitive or externally consequential actions still require a decision.
   Existing sandbox/tool permissions and all application human boundaries remain.
   Sources and limits are in `docs/APPLICATION_AUTONOMY_RESEARCH.md`.
+- Optional external learning extension: Study navigation includes LearnHarness,
+  a contained cross-origin frame of the AGPL-3.0-only upstream app (source unchanged)
+  at fixed `http://127.0.0.1:3210`. Kitty retains its existing native Study tools;
+  no LearnHarness internals are copied. Standalone teaching, graph and settings
+  remain available without Kitty. Provider logins use the explicit new-tab link.
+- `/api/extensions/learnharness` reports only fixed URL and availability using a
+  two-second loopback HEAD probe, without redirects, response bodies, credentials,
+  arbitrary URL inputs, data import or proxying. Kitty's CSP permits that frame
+  origin only; private API/Host/Origin protections remain intact. The desktop
+  navigation guard also keeps exactly `http://127.0.0.1:3210` in-app, because
+  WebKitGTK reports subframe loads to it; other origins still open externally.
+- `scripts/learnharness.sh setup|start|stop|status|run` makes installation and the
+  optional transient systemd user service reproducible without sudo. The official
+  npm dev server binds only IPv4 loopback. Learning records, settings and auth
+  persist under upstream's ignored `data/kitty-extension/`, with isolated HOME
+  and no inherited Kitty secrets. No provider is configured or paid call made.
+  Kitty demo isolation does not reset this external app's persistent state.
+  Unavailable UI gives setup/start instructions and manual reconnect; provider
+  readiness and generated teaching remain conditional on separately configured
+  LearnHarness credentials/models.
+- Installation pins LearnHarness 0.3.8 at upstream commit
+  `3dc88472eea41eed0d5e5f29c2f16f8d063c415b`; the committed installation
+  lockfile patch reproduces nonbreaking `npm audit fix` changes within upstream
+  manifest ranges, without changing app code or `package.json`. No forced
+  upgrades/downgrades are used. The reviewed audit retains two high findings
+  (`ansi-to-react` / `linkify-it` quadratic text-scanning DoS), explicitly
+  documented; the breaking suggested downgrade is not applied. Setup refuses
+  unknown revisions/conflicting local lockfiles. There is no automatic startup.

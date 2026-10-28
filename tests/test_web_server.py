@@ -297,3 +297,52 @@ def test_discovery_rejects_demo_empty_sources_and_custom_inputs(website):
     website.app.settings = replace(website.app.settings, demo=True)
     assert website.request("/api/sources/run", {"confirm": True})[0] == 403
     assert website.request("/api/bootstrap")[1]["demo"] is True
+
+
+@pytest.mark.parametrize("upstream_status,available", [(200, True), (302, False), (500, False)])
+def test_learnharness_boundary_is_fixed_loopback_not_a_proxy(website, monkeypatch, upstream_status, available):
+    calls = []
+
+    class Probe:
+        def __init__(self, host, port, *, timeout):
+            calls.append((host, port, timeout))
+
+        def request(self, method, path):
+            calls.append((method, path))
+
+        def getresponse(self):
+            return SimpleNamespace(status=upstream_status)
+
+        def close(self):
+            calls.append("closed")
+
+    # Patch only the extension's connection, never the test HTTP client.
+    monkeypatch.setattr("kitty.web_learnharness.HTTPConnection", Probe)
+    status, data, headers = website.request("/api/extensions/learnharness")
+    assert status == 200
+    assert data == {"url": "http://127.0.0.1:3210", "available": available}
+    assert calls == [("127.0.0.1", 3210, 2), ("HEAD", "/"), "closed"]
+    assert "frame-src http://127.0.0.1:3210;" in headers["Content-Security-Policy"]
+    calls.clear()
+    assert website.request("/api/extensions/learnharness?url=https://example.invalid")[0] == 400
+    assert website.request("/api/extensions/learnharness", {"url": "https://example.invalid"})[0] == 404
+    assert calls == []
+    assert website.request("/api/extensions/learnharness/api/keys")[0] == 404
+
+
+def test_learnharness_unavailable_is_not_a_kitty_failure(website, monkeypatch):
+    class Offline:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, *args):
+            raise ConnectionRefusedError("synthetic offline service")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("kitty.web_learnharness.HTTPConnection", Offline)
+    assert website.request("/api/extensions/learnharness")[:2] == (
+        200, {"url": "http://127.0.0.1:3210", "available": False},
+    )
+    assert website.request("/api/bootstrap")[0] == 200

@@ -14,6 +14,7 @@
   import Calendar from "./Calendar.svelte";
   import Opportunities from "./Opportunities.svelte";
   import Study from "./Study.svelte";
+  import LearnHarness from "./LearnHarness.svelte";
   import Flashcards from "./Flashcards.svelte";
   import Notes from "./Notes.svelte";
   import Documents from "./Documents.svelte";
@@ -99,6 +100,8 @@
     <Opportunities {revision} demo={workspace?.demo ?? true} />
   {:else if view === "study"}
     <Study bind:this={study} {revision} demo={workspace?.demo ?? true} />
+  {:else if view === "learnharness"}
+    <LearnHarness />
   {:else if view === "flashcards"}
     <Flashcards {revision} demo={workspace?.demo ?? true} />
   {:else if view === "documents"}
