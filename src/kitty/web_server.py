@@ -50,7 +50,7 @@ STATIC_TYPES = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
-    ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2",
+    ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
 }
 
 
@@ -121,7 +121,7 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "workspace") for prefix in (
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
         "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
-        "/api/ai/run", "/api/atlas/sections")),
+        "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness")),
 ), key=lambda item: -len(item[0])))
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
@@ -131,6 +131,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
+    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"),
 )
 
 
@@ -489,7 +490,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:3210; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         if download:
             self.send_header("Content-Disposition", f'attachment; filename="{download}"')
         self.end_headers()

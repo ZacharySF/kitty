@@ -4,6 +4,7 @@
   import { viewEnabled, type View } from "./workspace";
   import { activeModules } from "./modules.svelte";
   import GraphNavigator from "./GraphNavigator.svelte";
+
   import WorkspaceSettings from "./WorkspaceSettings.svelte";
   import AI from "./AI.svelte";
 
@@ -83,6 +84,14 @@
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
   {:else if view === "today"}
     <GraphNavigator bind:this={atlas} {workspace} {revision} {onview} {onopenjob} {onguide} />
+  {:else if view === "quick-notes"}
+    {#await import("./QuickNotes.svelte")}{@render pending()}{:then { default: QuickNotes }}
+      <QuickNotes />
+    {/await}
+  {:else if view === "learnharness"}
+    {#await import("./LearnHarness.svelte")}{@render pending()}{:then { default: LearnHarness }}
+      <LearnHarness />
+    {/await}
   {:else if view === "settings"}
     <WorkspaceSettings bind:this={settings} {onview} {onchange} />
   {:else if view === "ai"}

@@ -308,3 +308,50 @@ Stage 1: done.
   for existing workspaces, while fresh CLI/desktop workspaces start core-only.
   Disabled modules have no UI entries, commands, MCP tools, routes or workers, but
   their data and configuration remain. Existing global migrations stay in place.
+- Optional external learning extension: Study navigation includes LearnHarness,
+  a contained cross-origin frame of the AGPL-3.0-only upstream app (source unchanged)
+  at fixed `http://127.0.0.1:3210`. Kitty retains its existing native Study tools;
+  no LearnHarness internals are copied. Standalone teaching, graph and settings
+  remain available without Kitty. Provider logins use the explicit new-tab link.
+- `/api/extensions/learnharness` reports only fixed URL and availability using a
+  two-second loopback HEAD probe, without redirects, response bodies, credentials,
+  arbitrary URL inputs, data import or proxying. Kitty's CSP permits that frame
+  origin only; private API/Host/Origin protections remain intact. The desktop
+  navigation guard also keeps exactly `http://127.0.0.1:3210` in-app, because
+  WebKitGTK reports subframe loads to it; other origins still open externally.
+- `scripts/learnharness.sh setup|start|stop|status|run` makes installation and the
+  optional transient systemd user service reproducible without sudo. The official
+  npm dev server binds only IPv4 loopback. Learning records, settings and auth
+  persist under upstream's ignored `data/kitty-extension/`, with isolated HOME
+  and no inherited Kitty secrets. No provider is configured or paid call made.
+  Kitty demo isolation does not reset this external app's persistent state.
+  Unavailable UI gives setup/start instructions and manual reconnect; provider
+  readiness and generated teaching remain conditional on separately configured
+  LearnHarness credentials/models.
+- Installation pins LearnHarness 0.3.8 at upstream commit
+  `3dc88472eea41eed0d5e5f29c2f16f8d063c415b`; the committed installation
+  lockfile patch reproduces nonbreaking `npm audit fix` changes within upstream
+  manifest ranges, without changing app code or `package.json`. No forced
+  upgrades/downgrades are used. The reviewed audit retains two high findings
+  (`ansi-to-react` / `linkify-it` quadratic text-scanning DoS), explicitly
+  documented; the breaking suggested downgrade is not applied. Setup refuses
+  unknown revisions/conflicting local lockfiles. There is no automatic startup.
+- 2026-10-27: Quick notes (Study → Quick notes) are plain-text scratch notes in the
+  `quick_notes` table (body ≤64 KiB, tint rose/lilac/sky/mint/honey/frost, pinned,
+  revision). Autosave sends the last-seen revision; a stale revision gets HTTP 409
+  and never overwrites or deletes. API: `GET /api/quick-notes[/:id]`,
+  `POST /api/quick-notes/{create,save,delete}`. `/#quick-note[/<id>]` renders a
+  single note; the desktop shell opens only that same-origin route as a transparent,
+  undecorated, always-on-top window (from the page, the tray's "New quick note" or
+  `kitty-workspace --quick-note`), with the main window's navigation guard and no IPC.
+- 2026-10-27: The UI follows LearnHarness's look: default "Harness" theme
+  (#141414/#1c1c1c/#434343 with kitty pink accents), mono uppercase chrome, CMU Serif
+  Bold titles, pill controls and translucent panels over a theme-colored glow. The
+  desktop windows are transparent; a pre-page init script marks
+  `<html data-window="transparent">` so browser tabs stay opaque.
+- 2026-10-27: Graph node colors are harmonized: every `--c2..--c6` color is pulled
+  halfway toward the theme accent `--c1` (`web/src/lib/graphPalette.ts`), so groups
+  stay distinguishable but read as one family across all themes.
+- 2026-10-27: The top bar and workspace tabs are pinned (`.workbench-top`, sticky
+  with a glass backdrop). Its measured height is published as `--workbench-top`;
+  page-level sticky panels (job detail, mind-map toolbar) offset by it.

@@ -1202,3 +1202,252 @@ main > :is(.panel, .br-panel, .br-card) {
     animation: none !important;
   }
 }
+
+/* ── LearnHarness look ─────────────────────────────────────────────────────
+   Mono uppercase chrome, CMU serif titles, hairlines, pills and glass panels
+   over a soft nebula drawn from the active theme's graph colors. Surfaces are
+   translucent (see GLASS in themes.ts); the desktop window itself is
+   transparent when the shell marks <html data-window="transparent">. */
+@font-face {
+  font-family: "lh-cmu";
+  src: url("/fonts/cmunbx.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+:root {
+  --font-title: "lh-cmu", "Iowan Old Style", Georgia, serif;
+  --hairline: color-mix(in srgb, var(--br-line) 62%, transparent);
+  --glass: blur(18px) saturate(140%);
+  --nebula:
+    radial-gradient(60vmax 45vmax at 10% 14%, color-mix(in srgb, var(--c1) 14%, transparent), transparent 70%),
+    radial-gradient(48vmax 38vmax at 90% 10%, color-mix(in srgb, var(--c2) 11%, transparent), transparent 70%),
+    radial-gradient(55vmax 45vmax at 80% 90%, color-mix(in srgb, var(--c3) 10%, transparent), transparent 70%),
+    radial-gradient(45vmax 40vmax at 16% 94%, color-mix(in srgb, var(--c4) 8%, transparent), transparent 70%);
+  background: var(--solid-void, var(--br-void));
+}
+:root body {
+  background: var(--nebula), var(--solid-void, var(--br-void));
+  background-attachment: fixed;
+}
+:root[data-window="transparent"] {
+  background: transparent;
+}
+:root[data-window="transparent"] body {
+  background: var(--nebula), color-mix(in srgb, var(--solid-void, #141414) 74%, transparent);
+}
+:root[data-window="transparent"][data-surface="quick-note"] body {
+  background: transparent;
+}
+:root[data-surface="quick-note"] body {
+  overflow: hidden;
+}
+::selection {
+  background: color-mix(in srgb, var(--br-structure) 34%, transparent);
+}
+
+/* Titles: CMU serif, like LearnHarness lesson headings. */
+:root body :is(h1, h2, .br-dialog__title),
+:root body :is(dialog, [role="dialog"]) > header :is(h2, h3) {
+  font-family: var(--font-title);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+:root body h1 {
+  font-size: clamp(28px, 2.8vw, 38px);
+  line-height: 1.15;
+}
+
+/* Chrome text: small tracked monospace capitals. */
+:root body :is(.eyebrow, .br-panel__header, .br-section-title, .br-card__title, .br-field__label, .count-pill, .demo-notice .badge, kbd) {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+:root body :is(.br-btn:not([data-variant="link"]), .button, .pill, .text-button, .br-tab) {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+:root body summary {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+}
+
+/* Pills with hairlines; primary is LearnHarness's light-on-dark inversion. */
+:root body :is(.br-btn, .button, .pill, .system-command, .schema-tab, .schema-back, .search-field) {
+  border-radius: 999px;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
+  color: var(--ink);
+}
+.pill:hover:not(:disabled) {
+  border-color: var(--br-lineHot);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+:root body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root body .br-btn[data-variant="solid"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--solid-void, #141414);
+}
+:root body .br-btn::before,
+:root body .br-btn::after {
+  content: none;
+}
+:root body :is(.button, .br-btn):not([data-variant="solid"]):not(.primary) {
+  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 34%, transparent);
+  border-color: var(--hairline);
+}
+:root body :is(.br-btn[data-variant="ghost"], .br-btn[data-variant="link"]) {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Frame: borderless top bar over a hairline, open main area, glass panels. */
+.workbench {
+  padding: 10px 16px;
+  gap: 10px;
+}
+:root body .system-bar {
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 4px 10px;
+}
+:root body .wordmark {
+  font: 700 20px var(--font-title);
+  letter-spacing: 0;
+}
+:root body .brand-mark {
+  border-radius: 999px;
+  border-color: var(--hairline);
+  background: color-mix(in srgb, var(--br-structure) 10%, transparent);
+}
+:root body .workspace-groups {
+  border-color: var(--hairline);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
+}
+:root body .workspace-groups button {
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: 500 10.5px var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+:root body .workspace-groups button[aria-current="page"] {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+:root body :is(.schema-tab, .schema-back) {
+  min-height: 28px;
+  border-color: var(--hairline);
+  background: transparent;
+  font: 10.5px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+:root body .schema-tab.current-schema {
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
+}
+:root body .system-command {
+  border-color: var(--hairline);
+  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
+  font: 11px var(--font-mono);
+  letter-spacing: 0.04em;
+}
+:root body kbd {
+  border-radius: 6px;
+}
+:root body main {
+  border: 0;
+  background: transparent;
+  padding-top: 14px;
+}
+:root body main.atlas-main {
+  padding-top: 0;
+}
+:root body :is(.panel, .br-panel, .br-card, .atlas, .workspace-tabbar .tab.active) {
+  border-color: var(--hairline);
+  backdrop-filter: var(--glass);
+  -webkit-backdrop-filter: var(--glass);
+}
+:root body :is(.panel, .br-panel, .br-card, .atlas) {
+  border-radius: 14px;
+}
+:root body .atlas {
+  background: transparent;
+  overflow: hidden;
+}
+:root body .workspace-tabbar {
+  border-bottom-color: var(--hairline);
+}
+:root body .workspace-tabbar .tab {
+  border-radius: 10px 10px 0 0;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+:root body .workspace-tabbar .tab.active {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--br-structure) 80%, transparent);
+}
+:root body .workspace-tabbar .tab > button {
+  font-size: 10.5px;
+}
+:root body :is(input, select, textarea):not([class*="br-"]):not(.quick-note textarea) {
+  border-color: var(--hairline);
+  background: color-mix(in srgb, var(--solid-inset, #111) 45%, transparent);
+}
+:root body .demo-notice {
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
+  padding: 6px 14px;
+  width: fit-content;
+  font-size: 12px;
+}
+
+/* Overlays keep text legible over translucent content. */
+:root body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 90%, transparent);
+  border-color: var(--hairline);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+}
+@media (forced-colors: active) {
+  :root body { background: Canvas; }
+}
+
+/* The top bar and tabs stay pinned while the page scrolls; page-level sticky
+   elements offset by --workbench-top (measured in App.svelte). */
+.workbench-top {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: -10px -16px 0;
+  padding: 10px 16px 0;
+  background: color-mix(in srgb, var(--solid-void, #141414) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+:root[data-window="transparent"] .workbench-top {
+  background: color-mix(in srgb, var(--solid-void, #141414) 62%, transparent);
+}
