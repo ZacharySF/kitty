@@ -38,6 +38,7 @@ import time
 from dataclasses import dataclass
 from hmac import compare_digest
 from weakref import WeakKeyDictionary
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from kitty.config import AuthenticationSettings, _authentication_origin
 from kitty.core.apply.bidi import Bidi, BidiError, Frame, Tab
@@ -61,6 +62,81 @@ _SIGN_IN_REJECTED = (
 # release it with the controller. Durable manual/existing-origin policy is separate.
 _REJECTED_ACCOUNTS: WeakKeyDictionary[Bidi, set[tuple[str, str]]] = WeakKeyDictionary()
 _EXISTING_ACCOUNTS: WeakKeyDictionary[Bidi, set[tuple[str, str]]] = WeakKeyDictionary()
+
+
+# Workday's login URL carries the retained application in a once-encoded
+# redirect. A requisition-looking substring is not ownership evidence: bind the
+# exact HTTPS tenant, career site and entire requisition slug, not a loose ID.
+_WORKDAY_HOST = re.compile(r"[a-z0-9-]+\.wd[0-9]+\.myworkdayjobs\.com")
+_WORKDAY_POSTING = re.compile(
+    r"/(?:[a-z]{2}-[A-Z]{2}/)?(?P<site>[^/]+)/job/[^/]+/(?P<slug>[^/]+)"
+    r"(?:/apply(?:/(?:applyManually|autofillWithResume|useMyLastApplication))?)?/?"
+)
+
+
+def workday_application_binding(url: str) -> tuple[str, str] | None:
+    """Read a narrowly recognized Workday posting or same-site login redirect.
+
+    Query redirects must be unique, same-origin and point directly to the same
+    career site's posting. Locale insertion and location-slug punctuation are
+    presentation changes; the full requisition slug must remain exact. Decode
+    only the query layer and path segments; encoded separators, dot segments
+    and nested redirects are never followed. Identity is not authorization.
+    """
+    origin = _authentication_origin(url)
+    if origin is None:
+        return None
+    parsed = urlsplit(url)
+    if not _WORKDAY_HOST.fullmatch(parsed.hostname or "") or parsed.fragment:
+        return None
+
+    def path_parts(path: str) -> list[str] | None:
+        try:
+            parts = [unquote(part, errors="strict") for part in path.split("/")]
+        except UnicodeError:
+            return None
+        if any(part in (".", "..") or any(
+            char in "/\\%?#" or ord(char) < 32 or ord(char) == 127 for char in part
+        ) for part in parts):
+            return None
+        return parts
+
+    parts = path_parts(parsed.path)
+    if parts is None:
+        return None
+    path = "/".join(parts)
+    # Account activation lands on .../login/ok with the same retained redirect.
+    login = re.fullmatch(r"/(?:[a-z]{2}-[A-Z]{2}/)?(?P<site>[^/]+)/login(?:/ok)?/?", path)
+    if login:
+        try:
+            query = parse_qs(parsed.query, keep_blank_values=True, errors="strict")
+        except UnicodeError:
+            return None
+        if set(query) != {"redirect"} or len(query["redirect"]) != 1:
+            return None
+        target = query["redirect"][0]
+        # A root-relative path has exactly one leading slash; all absolute URLs
+        # must repeat the approved tenant origin without userinfo or ambiguity.
+        if target.startswith("/") and not target.startswith("//"):
+            target = origin + target
+        if _authentication_origin(target) != origin:
+            return None
+        redirected = urlsplit(target)
+        target_parts = path_parts(redirected.path)
+        if target_parts is None or redirected.query or redirected.fragment:
+            return None
+        path = "/".join(target_parts)
+    elif parsed.query:
+        # Direct posting URLs may carry source attribution, but never another
+        # navigation target masquerading as a posting.
+        if any(key.lower() in {"redirect", "redirect_uri", "returnurl", "returnto", "url"}
+               for key in parse_qs(parsed.query, keep_blank_values=True)):
+            return None
+    posting = _WORKDAY_POSTING.fullmatch(path)
+    if posting is None or (login and posting["site"] != login["site"]):
+        return None
+    return origin, "/" + posting["site"] + "/job/" + posting["slug"]
+
 
 #: Shared page-side analysis. Returns {state, els}: `state` is plain data for
 #: Python, `els` the elements that later writes and the click act on.
@@ -394,16 +470,18 @@ _WRITE_JS = r"""
 }
 """
 
-# Only required, routine account terms are covered by account-creation approval.
-# Factual attestations, marketing, waivers and application certifications are not.
+# Only required, routine account terms are covered by creation or explicit terms
+# approval. Factual attestations, marketing, waivers and certifications are not.
 _ACCOUNT_TERMS_JS = r"""
 (state, els) => {""" + _DOM_HELPERS_JS + r"""
   const denied = {allowed: false, terms: []};
-  if (state.blocker || state.mode !== 'create' || !els.box) return denied;
+  if (state.blocker || !['create', 'login'].includes(state.mode) || !els.box) return denied;
   const region = closest(els.box, '[role=dialog], dialog, section') || els.box;
   const legal = /\b(?:terms(?: and conditions| of use| of service)?|privacy (?:policy|notice|statement)|data protection notice)\b/i;
   const excluded = /\b(?:certif(?:y|ication)|attest|truthful|accurate|background check|credit check|criminal|drug test|marketing|newsletter|promotional|future opportunities|talent community|arbitration|waiv(?:e|er)|non.?compete|biometric|sell|third.party)\b/i;
-  if (excluded.test(composedText(region))) return denied;
+  const optionalOptIn = /\b(?:marketing|newsletter|promotional|future opportunities|talent community)\b/i;
+  const described = e => (e.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+    .map(id => reference(e, id)).filter(Boolean).map(composedText).join(' ');
   const shown = e => e.getClientRects().length &&
     getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
   const choices = queryAll('input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch]', region)
@@ -411,8 +489,9 @@ _ACCOUNT_TERMS_JS = r"""
   // Some account forms label the one required checkbox only "I agree" and
   // explicitly explain "By selecting the checkbox ... Terms ..." nearby.
   // That clause binds only a single choice, never unrelated or extra consent.
-  const checkboxClause = composedText(region).replace(/\s+/g, ' ').match(
-    /\bby (?:selecting|checking) (?:the |this )?checkbox\b[^.]{0,600}/i)?.[0] || '';
+  const explanations = queryAll('p, [role=note]', region).map(composedText)
+    .filter(text => /\bby (?:selecting|checking) (?:the |this )?checkbox\b/i.test(text));
+  const checkboxClause = explanations.length === 1 ? explanations[0].replace(/\s+/g, ' ') : '';
   const terms = [];
   for (const e of choices) {
     const label = (e.getAttribute('aria-label') ||
@@ -424,21 +503,26 @@ _ACCOUNT_TERMS_JS = r"""
       (/^https:\/\/[^/]+\.myworkdayjobs\.com\//i.test(location.href) &&
        e.getAttribute('data-automation-id') === 'createAccountCheckbox') ||
       /[*✱]\s*$/.test(label);
+    const choiceText = [label, described(e), ...labelsOf(e).map(described)].join(' ');
+    // Expanded privacy notices describe many processing purposes; they are not
+    // separate opt-ins. Classify this choice and its explicit descriptions only.
+    if (!required && !checked && optionalOptIn.test(choiceText) &&
+        e.matches('input[type=checkbox], [role=checkbox]') && fieldSafe(e)) continue;
     if (!required && !checked && /remember|keep me signed in/i.test(label)) continue;
     const explainedAgreement = choices.length === 1 && required && /^i agree$/i.test(label) &&
       legal.test(checkboxClause) && !excluded.test(checkboxClause);
     if (!e.matches('input[type=checkbox], [role=checkbox]') || !fieldSafe(e) ||
-        (!legal.test(label) && !explainedAgreement) || excluded.test(label) ||
+        (!legal.test(label) && !explainedAgreement) || excluded.test(choiceText) ||
         (!checked && !required)) return denied;
     terms.push(e);
   }
   // Cookie/site-use notices ("by continuing to use this site…") are not account terms.
   const clauses = ((document.body?.innerText || '').match(
-    /\bby (?:creating (?:an? |your |this )?(?:external )?account|clicking [“"' ]*create (?:an? )?account|signing up|registering|continuing|proceeding)[^.]{0,600}(?:\.|$)/gi
+    /\bby (?:creating (?:an? |your |this )?(?:external )?account|clicking [“"' ]*(?:create (?:an? )?account|sign[ -]?in|log[ -]?in)|signing (?:up|in)|logging in|registering|continuing|proceeding)[^.]{0,600}(?:\.|$)/gi
   ) || []).filter(text => !/^by (?:continuing|proceeding)\b/i.test(text) ||
     !/\b(?:cookies?|this (?:web)?site|banner|browsing)\b/i.test(text));
   if (clauses.some(text => !legal.test(text) || excluded.test(text))) return denied;
-  if (state.submitBlocker && !terms.length && !clauses.length) return denied;
+  if (state.submitBlocker && !terms.length && !clauses.length && !choices.length) return denied;
   return {allowed: true, terms};
 }
 """
@@ -794,7 +878,8 @@ _NO_PROGRESS = (
 
 
 def _auth_context(
-    page: Tab, approved: list[str],
+    page: Tab, approved: list[str], *,
+    application_binding: tuple[str, str] | None = None,
 ) -> tuple[Frame | None, dict | None, str | None]:
     """Read current account forms without passing applicant credentials to a realm."""
     frames = page.frames()
@@ -812,6 +897,10 @@ def _auth_context(
     if (top.url in provisional or live["url"] in provisional or
             top.url != live["url"] or live["loading"]):
         raise BidiError("account document navigation is pending")
+    if application_binding is not None and any(
+        workday_application_binding(url) != application_binding for url in (top.url, live["url"])
+    ):
+        return None, None, "login: application ownership changed; review a new preparation plan"
     # An invisible reCAPTCHA badge anchor (size=invisible) is not a challenge; a
     # served challenge appears as its own bframe/iframe and still stops here.
     if any(_CHALLENGE_FRAMES.search(frame.url) and not _INVISIBLE_BADGE.search(frame.url)
@@ -830,6 +919,11 @@ def _auth_context(
             if (frame.url in provisional or state["url"] in provisional or
                     frame.url != state["url"]):
                 raise BidiError("account document navigation is pending")
+            if application_binding is not None and any(
+                workday_application_binding(url) != application_binding
+                for url in (frame.url, state["url"])
+            ):
+                return frame, state, "login: application ownership changed; review a new preparation plan"
         blocker = state["blocker"]
         if state["rejected"]:
             return frame, state, _SIGN_IN_REJECTED
@@ -867,6 +961,7 @@ def authentication_pending(page: Tab) -> bool:
 def _wait_auth_receipt(
     page: Tab, approved: list[str], before: dict | None, *,
     entry_mode: str | None = None, entry_receipt: str | None = None,
+    application_binding: tuple[str, str] | None = None,
 ) -> tuple[Frame | None, dict | None, str | None]:
     """Wait for semantic account progress or a loaded application, never DOM churn.
 
@@ -879,7 +974,9 @@ def _wait_auth_receipt(
     deadline = time.monotonic() + _AUTH_WAIT_SECONDS
     while time.monotonic() < deadline:
         try:
-            frame, state, blocker = _auth_context(page, approved)
+            frame, state, blocker = _auth_context(
+                page, approved, application_binding=application_binding,
+            )
             if blocker:
                 return frame, state, blocker
             if state:
@@ -922,9 +1019,15 @@ def _wait_auth_receipt(
 
 
 def authenticate(
-    page: Tab, policy: AuthenticationSettings, credentials: ApplicationCredentials,
+    page: Tab, policy: AuthenticationSettings, credentials: ApplicationCredentials, *,
+    application_url: str | None = None,
 ) -> AuthResult:
-    """Run bounded recognized account stages; never infer success from a click."""
+    """Run bounded account stages, retaining a supplied Workday posting binding.
+
+    The caller supplies its reviewed job URL, never the current login redirect.
+    Binding checks supplement approved origins and existing one-shot credential
+    guards; accepting a login redirect never permits another account submission.
+    """
     if policy.account_mode == "google":
         return AuthResult(blocker="login: Google session reuse never accepts employer credentials")
     if not policy.enabled:
@@ -939,6 +1042,7 @@ def authenticate(
         return AuthResult(blocker="login: saved credentials changed after review; review the plan again")
     page.bidi.protect_secrets(credentials.email, credentials.password)
     approved = [origin for origin in policy.approved_origins if origin != _GOOGLE_ORIGIN]
+    application_binding = workday_application_binding(application_url) if application_url else None
     secrets = (credentials.email, credentials.password)
     filled: list[str] = []
     acted = False
@@ -982,7 +1086,9 @@ def authenticate(
                 return result(_SIGN_IN_REJECTED)
             # Never retain a frame/form locator across navigation or identity
             # transitions. The writer also binds each field to this DOM instance.
-            frame, state, blocker = _auth_context(page, approved)
+            frame, state, blocker = _auth_context(
+                page, approved, application_binding=application_binding,
+            )
             document_origin = _authentication_origin(state["url"]) if state else origin
             if document_origin in policy.manual_account_origins:
                 return result("login: this account origin is configured for manual authentication; continue yourself")
@@ -1023,6 +1129,7 @@ def authenticate(
                 if not state and receipt is None:
                     _, delayed, blocker = _wait_auth_receipt(
                         page, approved, None, entry_mode=desired,
+                        application_binding=application_binding,
                     )
                     if blocker:
                         return result(blocker)
@@ -1048,6 +1155,7 @@ def authenticate(
                     return result(blocker)
                 _, _, blocker = _wait_auth_receipt(
                     page, approved, state, entry_mode=desired, entry_receipt=receipt,
+                    application_binding=application_binding,
                 )
                 if blocker:
                     return result(blocker)
@@ -1072,7 +1180,8 @@ def authenticate(
                     return result(done if isinstance(done, str) else _CHANGED)
                 if role not in filled:
                     filled.append(role)
-            authorize_terms = policy.allow_account_creation and state["mode"] == "create"
+            authorize_terms = policy.allow_account_terms or (
+                policy.allow_account_creation and state["mode"] == "create")
             if authorize_terms:
                 for _ in range(8):
                     proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
@@ -1084,7 +1193,15 @@ def authenticate(
                     )
                     if blocker:
                         return result(blocker)
-                    next_proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
+                    # Framework-controlled choices may acknowledge asynchronously.
+                    # Observe the same choice; never click again to force a receipt.
+                    receipt_deadline = time.monotonic() + 3
+                    while True:
+                        next_proof = frame.call(_TERMS_STATUS_JS, approved, *secrets, state["signature"])
+                        if (not next_proof["allowed"] or next_proof["pending"] < proof["pending"] or
+                                time.monotonic() >= receipt_deadline):
+                            break
+                        time.sleep(0.1)
                     if not next_proof["allowed"] or next_proof["pending"] >= proof["pending"]:
                         return result("consent: account agreement selection was not confirmed")
                 else:
@@ -1120,7 +1237,9 @@ def authenticate(
             if blocker:
                 return result(blocker)
             acted = True
-            _, observed, blocker = _wait_auth_receipt(page, approved, state)
+            _, observed, blocker = _wait_auth_receipt(
+                page, approved, state, application_binding=application_binding,
+            )
             if blocker:
                 return result(blocker)
             if observed is None:

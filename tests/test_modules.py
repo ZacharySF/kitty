@@ -42,14 +42,15 @@ def copy_careers(config_dir: Path) -> None:
 
 
 def test_registry_constants_and_metadata():
-    assert MODULE_IDS == ("applyai", "workspace")
+    assert MODULE_IDS == ("applyai", "workspace", "terminal")
     assert [item["id"] for item in available_modules()] == list(MODULE_IDS)
     assert all(item["label"] and item["description"] for item in available_modules())
 
 
 def test_absent_file_means_every_module_and_selection_is_canonical(tmp_path):
     config_dir = tmp_path / "config"
-    assert load_modules(config_dir) == MODULE_IDS
+    # A pre-module workspace (the user's existing one) keeps every module, Terminal included.
+    assert load_modules(config_dir) == ("applyai", "workspace", "terminal")
     write(config_dir, "enabled: [workspace, applyai]\n")
     assert load_modules(config_dir) == ("applyai", "workspace")
     write(config_dir, "enabled: []\n")
@@ -91,7 +92,7 @@ def test_require_module_raises_a_readable_error_when_disabled(tmp_path):
 
 
 def test_normalize_rejects_non_ids_and_duplicates():
-    assert normalize_modules(["workspace", "applyai"]) == MODULE_IDS
+    assert normalize_modules(["terminal", "workspace", "applyai"]) == MODULE_IDS
     for bad in (["Workspace"], ["applyai", "applyai"], [None], [["applyai"]], ["applyai/../x"]):
         with pytest.raises(ValueError):
             normalize_modules(bad)
@@ -105,7 +106,7 @@ def test_save_modules_is_atomic_validated_and_never_widens_permissions(tmp_path)
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
     target.chmod(0o640)
-    assert save_modules(config_dir, ["workspace", "applyai"]) == MODULE_IDS
+    assert save_modules(config_dir, ["workspace", "applyai"]) == ("applyai", "workspace")
     assert stat.S_IMODE(target.stat().st_mode) == 0o640
     assert save_modules(config_dir, []) == ()
     assert load_modules(config_dir) == ()
@@ -133,7 +134,7 @@ def test_modules_state_separates_active_from_pending(tmp_path):
     config_dir = tmp_path / "config"
     write(config_dir, "enabled: [workspace]\n")
     state = modules_state(MODULE_IDS, config_dir)
-    assert state["enabled"] == ["applyai", "workspace"]
+    assert state["enabled"] == ["applyai", "workspace", "terminal"]
     assert state["configured"] == ["workspace"]
     assert state["restart_required"] is True
     assert [item["id"] for item in state["available"]] == list(MODULE_IDS)
@@ -242,7 +243,7 @@ def test_new_init_is_core_only_and_copies_no_careers_examples(tmp_path):
 
 def test_init_with_applyai_copies_careers_examples(tmp_path):
     settings = example_workspace(tmp_path)
-    assert bootstrap.initialize_modules(settings, ["workspace", "applyai"]) == MODULE_IDS
+    assert bootstrap.initialize_modules(settings, ["workspace", "applyai"]) == ("applyai", "workspace")
     created = {result.filename for result in bootstrap.copy_examples(settings) if result.action == "created"}
     assert {"profile.yaml", "tracks.yaml", "sources.yaml"} <= created
     assert bootstrap.copy_examples(settings, modules=()) == []

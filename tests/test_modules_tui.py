@@ -54,7 +54,7 @@ def test_create_app_picks_the_core_app_without_applyai(core_workspace):
 def test_create_app_picks_the_job_app_with_applyai(workspace):
     app = create_app(workspace=workspace)
     assert type(app) is KittyApp
-    assert app.modules == ("applyai", "workspace")
+    assert app.modules == ("applyai", "workspace", "terminal")
 
 
 def test_job_app_refuses_a_workspace_without_applyai(core_workspace):
@@ -155,6 +155,6 @@ async def test_job_app_reload_keeps_the_frozen_selection(workspace):
         save_modules(workspace.settings.config_dir, ["workspace"])      # pending: applyai off
         await pilot.press("ctrl+r")
         await pilot.pause()
-        assert app.modules == ("applyai", "workspace")
+        assert app.modules == ("applyai", "workspace", "terminal")
         assert app.config.track_names == tracks
         assert app.screen.__class__.__name__ == "DashboardScreen"

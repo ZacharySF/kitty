@@ -12,7 +12,8 @@
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
   import { mountGraph, type GraphHandle, type GraphLayout, type GraphLink } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
+  import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
   const pane = useWorkspaceContext();
@@ -68,6 +69,7 @@
     const syncSettings = () => {
       layout = graphLayout();
       handle?.setPhysics(graphPhysics());
+      void handle?.setLook(graphLook()).catch(cause => { notice = (cause as Error).message; });
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     return () => window.removeEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
@@ -133,6 +135,7 @@
       nodes: initial.nodes,
       links: initial.links,
       layout: initialLayout,
+      look: graphLook(),
       physics: graphPhysics(),
       reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
       active: untrack(() => pane.active),
@@ -158,7 +161,7 @@
       },
       (cause) => {
         if (disposed) return;
-        notice = `${cause instanceof Error ? cause.message : "3D rendering is unavailable."} Use the keyboard-accessible list instead.`;
+        notice = `${cause instanceof Error ? cause.message : "Graph rendering is unavailable."} Use the keyboard-accessible list instead.`;
         mode = "list";
       },
     );
@@ -188,7 +191,7 @@
   class="section-graph-panel"
   aria-label={titles[section]}
 >
-  <div class="section-graph">
+  <div class="section-graph" data-kitty-panel="graph" tabindex="-1" role="region" aria-label={titles[section]}>
     {#if loading}
       <p class="message" role="status">Loading {section} connections…</p>
     {:else if error}
@@ -197,6 +200,7 @@
       <p class="message">{empty[section]}</p>
     {:else}
       <div class="controls">
+        <GraphLookToggle />
         {#if listToggle}
         <div class="view-controls" role="group" aria-label="Graph presentation">
           <Button size="sm" variant={mode === "graph" ? "soft" : "ghost"} aria-pressed={mode === "graph"} onclick={() => mode = "graph"}>Graph</Button>
@@ -241,6 +245,8 @@
 
 <style>
   .section-graph { display: grid; gap: 0.65rem; min-width: 0; }
+  .section-graph:global([data-panel-fullscreen]) { display: flex; flex-direction: column; }
+  .section-graph:global([data-panel-fullscreen]) .canvas { flex: 1; height: auto !important; min-height: 330px; }
   .counts, .notice, .message { margin: 0; }
   .controls, .view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
   .layout { display: flex; align-items: center; gap: 0.45rem; margin-left: auto; color: var(--muted); font-size: 0.8rem; }

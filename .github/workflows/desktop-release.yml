@@ -1,0 +1,133 @@
+name: Desktop release (Linux x86_64)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Source checkout is read-only. The separate releases-only repository is accessed
+# solely by RELEASE_TOKEN in the publication steps, never by checkout.
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  release-linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      UV_PYTHON: '3.12'
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native build and media dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libssl-dev libgtk-3-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf xdg-utils desktop-file-utils libfuse2 \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio
+      - name: Resolve and validate release tag
+        id: version
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          test -n "$SIGNING_KEY" || { echo 'TAURI_SIGNING_PRIVATE_KEY is required'; exit 1; }
+          test -n "$RELEASE_TOKEN" || { echo 'RELEASE_TOKEN for the public releases repository is required'; exit 1; }
+          tag="$(uv run --no-project python -c 'import json; print("v" + json.load(open("desktop/tauri.conf.json"))["version"])')"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"; fi
+          uv run --no-project python scripts/validate-desktop-release.py --tag "$tag"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+      - name: Prepare locked backend and frontend
+        run: |
+          uv sync --locked --group dev
+          bash scripts/build-desktop.sh --prepare-only
+      - name: Check frontend and isolated application runtime
+        run: |
+          npm --prefix web run check
+          uv run --locked pytest -q \
+            tests/test_release_packaging.py tests/test_desktop_install.py \
+            tests/test_desktop_runtime.py tests/test_modules_desktop.py \
+            tests/test_application_recovery_runtime.py \
+            tests/test_web_server.py tests/test_web_jobs.py tests/test_web_tasks.py \
+            tests/test_web_profile.py tests/test_web_resumes.py tests/test_web_insights.py \
+            tests/test_web_terminal.py tests/test_herdr_bundle.py
+          cargo test --manifest-path desktop/Cargo.toml --locked
+      - name: Build signed installers and draft public release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # linuxdeploy's rpath rewrite crashes the static-pie herdr sidecar; see the wrapper.
+          PATCHELF: ${{ github.workspace }}/desktop/appimage_patchelf.py
+        with:
+          owner: ZacharySF
+          repo: kitty-releases
+          # A source-repository SHA is not a valid target in the public repository.
+          releaseCommitish: main
+          projectPath: desktop
+          tauriScript: ${{ github.workspace }}/web/node_modules/.bin/tauri
+          args: --bundles appimage,deb -- --locked
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: kitty! ${{ steps.version.outputs.tag }} (Linux x86_64)
+          releaseBody: |
+            Download the .deb for Ubuntu 22.04+ / compatible Debian-based desktops, or the AppImage for other compatible Linux desktops.
+            Install once, then launch kitty! from your application menu. The native tray menu checks for signed updates.
+            Application updates preserve the separate local workspace; do not delete that workspace when replacing the application.
+            AppImage users: keep the file in a writable directory and enable its executable permission in your file manager.
+            Only installers, signatures and updater metadata are published here; application source remains private.
+          releaseDraft: true
+          prerelease: false
+          generateReleaseNotes: false
+          releaseAssetNamePattern: kitty_[version]_[arch][ext]
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+      - name: Validate actual uploaded installers and updater metadata
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          mkdir release-assets
+          gh release download "$RELEASE_TAG" --repo ZacharySF/kitty-releases --dir release-assets
+          # Draft releases are not addressable by tag; select from the authenticated list.
+          gh api repos/ZacharySF/kitty-releases/releases \
+            --jq "map(select(.tag_name == \"$RELEASE_TAG\"))[0]" > release-assets-info.json
+          uv run --no-project python scripts/validate-desktop-release.py \
+            --tag "$RELEASE_TAG" --assets release-assets --release release-assets-info.json
+          test "$(dpkg-deb --field release-assets/*.deb Version)" = "${RELEASE_TAG#v}"
+          test "$(dpkg-deb --field release-assets/*.deb Architecture)" = amd64
+          # Never replace the unrelated kitty terminal package.
+          test "$(dpkg-deb --field release-assets/*.deb Package)" = kitty-workspace
+          # The Terminal module ships exactly the pinned herdr, with its Apache-2.0 licence.
+          pinned="$(uv run --no-project python -c 'import runpy; print(runpy.run_path("desktop/fetch_herdr.py")["PINS"]["x86_64-unknown-linux-gnu"][1])')"
+          dpkg-deb -x release-assets/*.deb release-deb
+          test "$(sha256sum release-deb/usr/bin/kitty-herdr | cut -d ' ' -f 1)" = "$pinned"
+          cmp release-deb/usr/lib/kitty!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
+          chmod +x release-assets/*.AppImage
+          appimage="$(realpath release-assets/*.AppImage)"
+          (mkdir release-appimage && cd release-appimage && "$appimage" --appimage-extract >/dev/null)
+          test "$(sha256sum release-appimage/squashfs-root/usr/bin/kitty-herdr | cut -d ' ' -f 1)" = "$pinned"
+          cmp release-appimage/squashfs-root/usr/lib/kitty!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
+      - name: Publish validated release and updater feed
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --repo ZacharySF/kitty-releases --draft=false --latest

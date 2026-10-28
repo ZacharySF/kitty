@@ -189,7 +189,7 @@ def test_modules_post_persists_pending_selection_without_activating_it(tmp_path)
         assert state["enabled"] == ["workspace"]
         assert state["configured"] == ["applyai", "workspace"]
         assert state["restart_required"] is True
-        assert load_modules(settings.config_dir) == MODULE_IDS
+        assert load_modules(settings.config_dir) == ("applyai", "workspace")
         # Nothing activates in this process, not even after an explicit reload.
         assert request("/api/reload", {})[0] == 200
         assert app.modules == ("workspace",) and app.config.modules == ("workspace",)
@@ -256,7 +256,7 @@ def test_restart_activates_the_saved_selection_and_preserves_data(tmp_path):
         assert request("/api/notes")[0] == 403 and request("/api/dashboard")[0] == 200
         assert request("/api/modules", {"enabled": ["workspace", "applyai"]})[0] == 200
     with site(settings) as (app, request):
-        assert app.modules == MODULE_IDS
+        assert app.modules == ("applyai", "workspace")
         status, listing = request("/api/notes")
         assert status == 200 and "Preserved notebook" in json.dumps(listing)
         assert "Preserved page" in json.dumps(request("/api/atlas/sections/notes")[1])

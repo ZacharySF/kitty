@@ -1,5 +1,16 @@
 import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphLayout, type GraphPhysics } from "./graph3d";
 
+import type { GraphLook } from "./graph3d";
+export const GRAPH_LOOK_KEY = "kitty.graph.look";
+export function graphLook(): GraphLook {
+  try { return localStorage.getItem(GRAPH_LOOK_KEY) === "3d" ? "3d" : "2d"; }
+  catch { return "2d"; }
+}
+export function setGraphLook(look: GraphLook): void {
+  localStorage.setItem(GRAPH_LOOK_KEY, look);
+  window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
+}
+
 export const GRAPH_LAYOUT_KEY = "kitty.graph.default-layout";
 export const GRAPH_PHYSICS_KEY = "kitty.atlas.physics";
 export const GRAPH_SETTINGS_EVENT = "kitty:graph-settings";

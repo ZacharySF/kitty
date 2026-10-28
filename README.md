@@ -1,8 +1,9 @@
 # kitty
 
-A local workspace with two optional built-in modules: **ApplyAI** for job discovery,
-application preparation and tracking, and **Workspace** for notes, documents,
-study and planning. The shell and settings work with either module, both, or neither.
+A local workspace with three optional built-in modules: **ApplyAI** for job discovery,
+application preparation and tracking, **Workspace** for notes, documents, study and
+planning, and **Terminal** for kitty!'s own bundled herdr terminal session. The shell
+and settings work with any combination of modules, or none.
 
 **Two rules the code enforces, not just documents:**
 
@@ -69,6 +70,7 @@ source .venv/bin/activate    # then just `kitty ...`
 | --- | --- |
 | ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports |
 | Workspace (`workspace`) | Notes, documents/PDFs, canvas, mind maps, backlinks, flashcards, study, calendar, tasks and projects/opportunities |
+| Terminal (`terminal`) | kitty!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window |
 | Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
@@ -76,7 +78,7 @@ tracker), or `kitty modules enable/disable <id>`. Selection is stored locally:
 
 ```yaml
 # config/modules.yaml
-enabled: [applyai, workspace]
+enabled: [applyai, workspace, terminal]
 ```
 
 Save, then **quit and restart Kitty** to activate the change. Refresh/reload does
@@ -90,10 +92,32 @@ start. Their data, attachments and configuration are retained for re-enabling.
 ApplyAI reminders work without Workspace; career calendar contributions and
 cross-module results appear only while both modules are enabled.
 
-Existing workspaces without `modules.yaml` retain both modules. Fresh CLI and
+Existing workspaces without `modules.yaml` retain every module. Fresh CLI and
 desktop workspaces start core-only. The database still uses the existing global
 migrations; disabling does not drop tables or run down-migrations. These are
 built-in modules, not installable third-party extensions.
+
+### Terminal module
+
+The desktop app bundles a pinned herdr (v0.9.5, Apache-2.0; its licence ships as
+`licenses/herdr/LICENSE`) and never uses a herdr found on `PATH`. kitty! runs it as
+its own named session, `kitty` (never herdr's `default` session), so agents can
+reach it with `herdr --session kitty`. Its sockets live where herdr keeps named
+sessions, `~/.config/herdr/sessions/kitty/`: kitty! creates that directory
+owner-only (0700) and refuses a session whose sockets are not owner-only (0600).
+The Harness colours come from kitty!'s private `.private/herdr/config.toml`
+(`HERDR_CONFIG_PATH`), so your own herdr configuration is neither read nor changed.
+Nothing starts until a page opens a terminal. Closing the window with **Keep running
+on close** leaves terminals running and reopening reattaches; **Quit kitty!** (or
+closing the window without that setting, or Ctrl-C on `kitty-web`) stops kitty!'s
+herdr session. With the module off there is no herdr process, socket or route.
+
+The page reaches it through a WebSocket on kitty!'s own loopback origin
+(`/api/terminal/socket`). Browsers cannot add `X-Kitty-Request` to an upgrade, so
+the upgrade requires the exact Host and Origin plus a single-use token that expires
+after 30 seconds and is issued only by the header-protected `POST
+/api/terminal/session`. A development `kitty-web` uses `KITTY_HERDR=<herdr 0.9.5
+binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
 
 ## Try it on fake data first
@@ -143,6 +167,122 @@ browser filling, Gmail, notifications and paid operations are disabled. Syntheti
 text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
 be registered inside the disposable workspace.
 
+### Quick notes
+
+**Study → Quick notes** is a board of small translucent scratch notes. Each note
+saves as you type (no save button; `Ctrl+S` forces it), can be tinted, pinned to the
+top, searched and deleted. Notes live in the workspace database (`quick_notes`),
+separate from Notes & canvas pages.
+
+**↗ Floating note** (or the pop-out icon on a note) opens one note on its own: in
+the desktop app that is a small transparent, borderless, always-on-top window.
+Its editor reveals the desktop with only a faint color wash near the top;
+controls and save status keep a local backing for readability. Board cards and
+browser popups retain their denser backgrounds. `Esc` closes it (already saved).
+If the same note is edited in two windows, the stale one stops and offers
+*Load latest* or *Keep mine* instead of overwriting.
+
+In the desktop app, the tray menu has **New quick note**, and
+`kitty-workspace --quick-note` opens one in the running app (or starts it), so a
+compositor key binding can summon a note, e.g. in niri:
+`Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
+bar; move them with the compositor (niri: `Mod`+drag).
+
+### Optional LearnHarness extension
+
+**Study → LearnHarness** embeds the full, independently running
+[upstream LearnHarness app](https://github.com/amosblomqvist/learnharness)
+(AGPL-3.0-only), not copied teaching/graph code. Teaching sessions, practice,
+knowledge graph and settings remain upstream features. The standalone app stays
+usable at **http://127.0.0.1:3210** even when Kitty is closed.
+
+From this Kitty checkout, with Git, Node.js and npm on PATH:
+
+```bash
+./scripts/learnharness.sh setup   # pinned public clone + reviewed lock patch + npm install
+./scripts/learnharness.sh start   # transient systemd --user service, no sudo
+./scripts/learnharness.sh status
+./scripts/learnharness.sh stop
+# Alternative without systemd: ./scripts/learnharness.sh run (Ctrl+C to stop)
+```
+
+Start again after reboot; no system-wide unit or automatic login startup is
+installed. `journalctl --user -u kitty-learnharness.service` shows service logs.
+Setup uses `~/Projects/learnharness`, pinned to upstream **0.3.8**
+(`3dc88472eea41eed0d5e5f29c2f16f8d063c415b`). App source and `package.json`
+stay unchanged; `scripts/learnharness-dependencies.patch` reproduces the local
+installation lockfile remediation from `npm audit fix` **without `--force`**.
+It resolves the original four critical audit package findings (including Next.js
+and DOMPurify) using existing manifest ranges: Next.js 16.4.3, DOMPurify 3.4.17,
+Sharp 0.35.5, Zod 4.6.7 and related transitives. Setup refuses an unknown
+upstream revision or conflicting lock edits instead of resetting user work.
+**Remaining upstream risk:** npm still reports two high package findings:
+`ansi-to-react@6.2.6` pulls `linkify-it@3.0.3` with quadratic text/`mailto:`
+scanning denial-of-service advisories
+([GHSA-22p9-wv53-3rq4](https://github.com/advisories/GHSA-22p9-wv53-3rq4),
+[GHSA-v245-v573-v5vm](https://github.com/advisories/GHSA-v245-v573-v5vm)).
+The suggested `ansi-to-react@6.1.6` downgrade is breaking and is not applied.
+Loopback and iframe containment do not make upstream content-processing risks
+disappear; avoid untrusted imports and do not expose this developer server on a
+network. No login/boot auto-start is enabled. These audit results describe the
+reviewed installation on 2026-10-27, not a future guarantee.
+The launcher runs `npm run dev -- --hostname 127.0.0.1 --port 3210` in a clean
+environment. The ignored `~/Projects/learnharness/data/kitty-extension/` holds
+persistent learning records/settings, `auth/auth.json` and provider-login files;
+its separate `home/` prevents inherited per-user tool configuration. Setup creates
+directories owner-only. Restarting the server preserves these files.
+No Kitty environment, resumes, applicant records, provider keys or browser profiles
+are passed or copied. Keep any manually added LearnHarness `.env.local` specific
+to LearnHarness; do not link Kitty secrets or data.
+
+Kitty only checks availability with a bounded HEAD request to the fixed loopback
+endpoint: no URL setting, remote server, redirects, data proxy or credential bridge.
+Its content policy allows this frame origin only. The contained frame cannot
+navigate the parent or open provider login popups; use **Open in new tab** for
+provider connections. When stopped, the panel shows setup/start instructions and
+**Reconnect**. On a cold first compilation, wait for the local app to finish loading
+and reconnect. Connection success is availability, not provider readiness.
+
+No provider credentials/models are configured by installation. Generating lessons
+requires your own LearnHarness provider key or supported connection and model
+selection; model/research requests can send learning context externally and may
+cost money. No generated lesson or paid request is part of installation.
+**Kitty demo does not make LearnHarness disposable**: it is a separate persistent
+app. Use only synthetic learning content when verifying the demo.
+
+To run this checkout's new UI/backend without adopting changes into another
+checkout:
+
+```bash
+cd /home/xelo/projects/kitty-worktrees/learnharness-20261027
+npm --prefix web ci
+npm --prefix web run build
+uv run kitty-web --demo --port 8766  # synthetic, no private workspace access
+# Explicit normal use only: reads/migrates the workspace you name.
+KITTY_HOME="/home/xelo/projects/kitty!" uv run kitty-web --port 8765
+```
+
+For the native Kitty application, build this same worktree's packaged sidecar
+and UI, without changing another checkout or the currently running app:
+
+```bash
+nix develop 'path:./desktop#host-toolchain' --offline --max-jobs 0 --command bash scripts/build-desktop.sh
+# Only after explicitly quitting the old Kitty app; normal use, not a test:
+nix develop 'path:./desktop#host-toolchain' --offline --command env \
+  KITTY_HOME="/home/xelo/projects/kitty!" ./desktop/target/release/kitty-workspace
+```
+
+The native app enforces a single instance: starting another binary while Kitty
+is already running can just focus the old app, not load this extension.
+Keep the feature binary and its bundled `kitty-web` sidecar together. Building
+does not replace the installed launcher or activate the feature against private
+data; the browser demo command above is the isolated verification path.
+
+Run these commands from the checkout containing the extension, not an older
+installed binary or another checkout. They need no merge into a dirty checkout.
+`--root "$KITTY_HOME"` can also select a workspace explicitly.
+
+
 ### Start here
 
 **How to apply** in the atlas Today panel opens a three-step guide and checks
@@ -159,7 +299,7 @@ saved. These checks describe saved data, not application readiness.
    own schema, showing only job-type categories at the root. Open a category to
    see every matching job, without 120-item map pages; its searchable Browse list
    progressively reveals rows. Uncategorized jobs remain available in List.
-3. **Select jobs → press F:** marked jobs (otherwise the opened or focused job) go
+3. **Select jobs → press Shift+F:** marked jobs (otherwise the opened or focused job) go
    straight to the reviewed autofill plan. Approved preparation opens Firefox and
    fills known fields. Check each form and submit it yourself; kitty! never submits.
 
@@ -174,7 +314,7 @@ in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting.
 **Canvas fullscreen** puts only the canvas and compact tools on the laptop screen,
 not the whole application. Its exit control and Escape restore the workspace.
-Plain F has no Notes fullscreen or fit action.
+Outside text editing, F fullscreens the focused workspace panel instead.
 
 **Connections** automatically compares note and flashcard text locally:
 explicit `[[Page title]]` links, unlinked title mentions and related concepts
@@ -318,9 +458,19 @@ jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `k` queue state, `R` resume, `e` notes, `s` status, `u` undo, `d` deadline,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,
 `s` skips, `l` defers, `x` marks ineligible and `n`/`p` move between rows.
-`f`/`F` opens the reviewed autofill plan for marked, opened or focused jobs.
+Shift+F opens the reviewed autofill plan for marked, opened or focused jobs.
 Letter shortcuts pause while typing or using dialogs. Native browser print,
 reload and close-tab shortcuts are not intercepted.
+
+**Panel fullscreen:** press F outside text editing to fill the kitty! window with
+the focused view or graph. Click a graph to focus its panel first. F or Esc
+restores the layout; changing workspace tabs or navigating also exits panel
+fullscreen. The window's own fullscreen state never changes. Inputs, textareas,
+selects and contenteditable editors retain their keys; dialogs own Escape first.
+Terminal views reserve bare f for the shell and use Ctrl+Shift+F to toggle panel
+fullscreen (Esc exits). Terminal integrations mark their root with
+`data-kitty-terminal`, including around their hidden input, and mark the
+focusable panel with `data-kitty-panel`.
 
 **Preparation is not submission:** Firefox fills supported fields with your
 verified profile/answers and attaches the approved resume. Review every answer
@@ -401,35 +551,170 @@ Demo restrictions intentionally prevent testing live employer, Gmail or paid cal
 
 ## Desktop app (Linux)
 
+### Download, install, and launch
+
+Open the **[latest desktop release](https://github.com/ZacharySF/kitty-releases/releases/latest)**.
+Downloads are published in a separate public, releases-only repository; application
+source is not included. The supported downloadable platform is **Linux x86_64**,
+built on Ubuntu 22.04 (glibc 2.35); older distributions, ARM, Windows and macOS
+are not supported by these installers.
+
+- **Ubuntu 22.04+ / compatible Debian-based desktops:** download the `.deb`,
+  open it with your graphical software/package installer, and approve installation.
+  The package installs its GTK/WebKit, tray and GStreamer dependencies and a
+  **kitty!** application-menu entry. Launch it from that menu, not from a terminal.
+- **Other compatible Linux desktops:** download the `.AppImage`, move it to a
+  permanent writable folder such as `~/Applications`, enable **Allow executing
+  file as program** in the file's Properties, and double-click it. Your desktop
+  needs AppImage/FUSE support (on Ubuntu 22.04, package `libfuse2`) and compatible
+  audio support. A desktop AppImage integrator can add it to your application menu.
+  Do not run it as root or keep it in a read-only/system-owned directory.
+- **NixOS:** the `.deb` is not a NixOS package. Install the published AppImage
+  through `appimage-run` (an FHS runtime that keeps signed self-updates working):
+  ```bash
+  nix build nixpkgs#appimage-run --out-link ~/.local/share/kitty/appimage-run
+  python3 scripts/install-desktop.py --appimage ~/Downloads/kitty_<version>_amd64.AppImage \
+    --appimage-runner ~/.local/share/kitty/appimage-run/bin/appimage-run
+  ```
+  The out-link is a garbage-collection root. Then launch **kitty!** from the menu.
+
+The Linux installer is named **kitty! Workspace** and its Debian package is
+`kitty-workspace`, distinct from the unrelated `kitty` terminal package.
+
+No Python, Node, Rust, repository checkout, or build shell is needed to run the
+downloadable app. The app starts and stops its own backend on a random loopback
+port. Its default workspace is `~/.local/share/kitty/workspace` (or the native
+XDG data directory); configuration, databases, resumes and other workspace files
+live **outside the application**, are reused in place, and are not overwritten by
+application updates. Back up that workspace as you would other personal data.
+Replacing/uninstalling the application does not require deleting it.
+
+### Signed in-app updates
+
+Use **Check for updates** in **Settings → Desktop** or the system-tray menu. The native updater
+checks the public release feed over HTTPS and verifies the installer against the
+public signing key embedded in the app before installation. There are no updater
+permissions exposed to the website. Save your work and approve the native prompts;
+restart when the app asks so its backend and window run the same new version.
+
+Debian-package updates require administrator authentication through your desktop's
+PolicyKit authentication agent, and the new package's dependencies must already be
+satisfiable. If package installation reports missing dependencies, open the new
+`.deb` from the release page in your graphical package manager. AppImage updates
+replace the existing writable AppImage and need free space beside it for the new
+download. A network/signature/install failure must not be treated as a completed
+update; keep the existing app or install the signed release manually.
+
+Only packaged `.deb` and AppImage installations support native self-installation.
+Loose source-binary installations use the public downloads link instead; rebuild
+and rerun the local installer to replace those binaries. Installing a published
+AppImage with the launcher below retains AppImage self-update support.
+
+### Build and install a local launcher (including NixOS)
+
+For development/build machines, the existing packaging script builds the locked
+website and freezes the locked Python backend into a relocatable `kitty-web`
+sidecar, stages the pinned herdr release as the `kitty-herdr` sidecar
+(`desktop/fetch_herdr.py` downloads it and refuses any binary whose SHA-256 differs
+from its pin; `--from <downloaded asset>` verifies an already downloaded file
+instead), then builds the Tauri app. It requires Python 3.12, uv, Node/npm, Rust,
+GTK3/WebKitGTK 4.1 development libraries, tray/media libraries and packaging tools.
+The frontend CLI comes from `web/package-lock.json`; no global CLI is needed.
+
 ```bash
-# NixOS, reusing the installed cargo/rustc (the pinned GTK/WebKit libraries come from the flake)
+# NixOS: reuse the installed cargo/rustc with pinned GTK/WebKit dependencies.
 nix develop 'path:./desktop#host-toolchain' --offline --max-jobs 0 --command bash scripts/build-desktop.sh
-# any distro with the prerequisites, or the fully pinned toolchain: nix develop ./desktop --command ...
-KITTY_HOME="$PWD" desktop/target/release/kitty-workspace   # open this workspace in the app
+# Install under the same dependency environment, once (no shell needed at launch).
+nix develop 'path:./desktop#host-toolchain' --offline --command \
+  uv run --locked python scripts/install-desktop.py
+# To keep using an existing workspace, add: --workspace /absolute/path/to/workspace
 ```
 
-The script builds the website, packages the backend as a relocatable `kitty-web`
-sidecar and bundles the Tauri app as a `.deb` (plus an AppImage outside NixOS: Tauri's
-AppImage step expects GTK in one library directory, which the Nix store does not
-provide). The app starts its own backend on a random loopback port. Without
-`KITTY_HOME` it uses `~/.local/share/kitty/workspace`; existing workspaces are reused
-in place and configuration is never overwritten.
+The installer copies the built app and its `kitty-web` and `kitty-herdr` sidecars to
+`$XDG_DATA_HOME/kitty/application` (default `~/.local/share/kitty/application`),
+installs the icon and **kitty!** application-menu entry, and creates
+`$XDG_BIN_HOME/kitty-workspace` (default `~/.local/bin/kitty-workspace`).
+It captures only runtime library/schema/media settings from the build environment,
+not secrets, and does not depend on the repository at launch. Keep those Nix
+runtime store paths available. The launcher does not run `nix develop` or need an
+open terminal. The installer never copies over or deletes workspace files.
+`--binary`, `--sidecar`, `--herdr`, and `--icon` can select explicit build artifacts.
+Alternatively, `--appimage /absolute/path/to/downloaded.AppImage` installs a
+published AppImage rather than loose binaries. Its writable installed location
+remains fixed across signed replacements. The launcher sets
+`APPIMAGE_EXTRACT_AND_RUN=1` to avoid requiring FUSE. NixOS still needs a compatible
+ELF loader and runtime libraries; capture them by running the installer inside the
+dependency shell. Neither a checkout nor that shell is needed for subsequent launches.
 
-On NixOS, run the built binary inside the same dependency shell:
+NixOS defaults to a `.deb` build artifact because Tauri's AppImage assembly expects
+GTK in a single library directory, unlike the Nix store. The official downloadable
+AppImage is built on Ubuntu CI. On other build hosts, `KITTY_BUNDLES=deb` or
+`KITTY_BUNDLES=appimage,deb` explicitly selects bundles.
+`bash scripts/build-desktop.sh --prepare-only` prepares website/backend artifacts
+for the official Tauri release action without running a second native build.
+AppImage builds (the script and the release workflow) set `PATCHELF` to
+`desktop/appimage_patchelf.py`: the AppImage tool adds a library path to every
+bundled executable, which crashes the static herdr binary, so the wrapper leaves
+executables without a dynamic loader byte-identical to the pinned release.
+
+The dependency environment exposes matching GStreamer base/good plugins for WebKit
+timer audio. Sound also needs an available output device and a Start/Enable sound
+gesture while kitty! is open.
+
+### Publish a desktop release (maintainers)
+
+The private source repository's **Desktop release (Linux x86_64)** workflow runs
+on a `v*` tag or manual dispatch. The application version in
+`desktop/tauri.conf.json` must match the tag exactly (for example, `v0.1.1`).
+Manual dispatch uses that configuration's version. Commit the version and lockfiles
+first, then push the matching tag, or dispatch the workflow on that commit.
+
+Configure repository secrets `TAURI_SIGNING_PRIVATE_KEY`,
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (empty when the key is unencrypted), and
+`RELEASE_TOKEN`. The latter must grant release/contents write access **only** to
+`ZacharySF/kitty-releases`; the source workflow itself has read-only contents
+permissions. Keep a secure backup of the signing key: replacing it breaks trust
+for already-installed applications. Never commit the private key or password.
+
+CI uses Ubuntu 22.04, Python 3.12 with `uv --locked`, npm's lockfile and locked
+Rust dependencies. It checks the frontend, isolated backend/runtime regressions
+and native Rust tests before the official
+[Tauri release action](https://github.com/tauri-apps/tauri-action) signs and uploads
+the `.deb`, `.AppImage`, their `.sig` files and `latest.json` to a **draft** in the
+public releases repository. A guard downloads the actual uploaded files and
+validates the version/tag, nonempty complete assets, signatures and installer-specific
+`linux-x86_64-deb` / `linux-x86_64-appimage` metadata before publishing as latest.
+A failed guard leaves a draft, not a new public updater feed.
+No source archive, checkout, private workspace or applicant data is uploaded by
+the workflow (GitHub's automatic source archives cover only the releases repository).
+
+The signed updater feed is
+[`latest.json`](https://github.com/ZacharySF/kitty-releases/releases/latest/download/latest.json).
+Metadata generation is owned by the official action, not a separate custom feed
+generator; the executable guard is covered by `tests/test_release_packaging.py`.
+For local verification of release/install tooling:
 
 ```bash
-nix develop 'path:./desktop#host-toolchain' --offline --command env KITTY_HOME="$PWD" ./desktop/target/release/kitty-workspace
+uv run --locked pytest -q tests/test_release_packaging.py tests/test_desktop_install.py
 ```
-The shell exposes matching GStreamer base/good plugins for WebKit timer audio
-(`appsrc`, `appsink`, audio conversion and the system sink). The Debian bundle
-declares base/good and PulseAudio plugin dependencies. Sound still needs an
-available output device and a Start/Enable sound gesture while kitty! is open.
 
 On Linux sessions exposing both Wayland and X11, the app defaults to XWayland.
 This avoids a WebKitGTK native-Wayland scaling failure that can produce a
 negative device-pixel ratio and a blank, compressed page on fractional-scale
 desktops. An explicit `GDK_BACKEND` is respected; Wayland-only sessions are unchanged.
-Window commands live in the system tray rather than a duplicated window menubar.
+The window has no native menu strip. **Settings → Desktop** provides **Check for
+updates**, **Keep running on close (monitoring / reminders)**, **New quick note**,
+and **Quit kitty! (save and stop workers)**. All remain in the system-tray menu,
+along with **Show kitty!**. Without a system tray, keeping the app running on close
+is unavailable. A browser-only website explains that desktop controls are unavailable.
+The page uses the protected backend API and a fixed command allowlist over the
+shell's private owner pipe; it receives no Tauri IPC permissions.
+
+The main window and quick-note windows are transparent: the default **Harness**
+theme (LearnHarness-style near-black with kitty pink accents) and every other theme
+draw translucent glass panels over a soft glow, so the desktop shows through.
+Browser tabs keep an opaque background. Titles use the bundled CMU Serif Bold
+(SIL OFL, `web/public/fonts/OFL.txt`).
 
 
 ## Finding jobs (Stage 2)
@@ -843,6 +1128,7 @@ origin in `config/apply.yaml`:
 authentication:
   enabled: true
   allow_account_creation: false   # true also lets it fill Create account / Sign up forms
+  allow_account_terms: false     # true authorizes required routine terms/privacy during sign-in too
   account_mode: recognized       # login or create explicitly chooses an account action
   approved_origins:
     - https://example.wd5.myworkdayjobs.com
@@ -863,6 +1149,18 @@ receipts before each credential write. Empty provisional navigation metadata is
 waited out read-only; a real unapproved document still fails closed. Email-first
 and password-next flows do not require a whole new account attempt. A rejected
 credential pair is not replayed by the same controller.
+Workday sign-in redirects retain the reviewed application identity across locale
+insertion and location-label punctuation changes. The HTTPS tenant, career site
+and full requisition slug must still match before credentials are written;
+different postings, nested redirects and cross-origin targets are rejected.
+
+Scoped employer email verification reuses Gmail in kitty's dedicated Firefox
+profile. If its Gmail tab was closed, preparation opens a normal background tab
+and waits for the saved session; it never copies everyday-browser cookies or
+requires OAuth status-mail setup. A signed-out or ambiguous mailbox is reported
+specifically. Only the approved sender, exact recipient and fresh request window
+are searched; delivery headers must qualify before reading a message body.
+
 
 Employer-password mode recognizes email/password account forms, confirmation
 fields and accessible component controls. Native credential submits require POST.
@@ -871,10 +1169,16 @@ fallback before any credential is populated; explicit GET and unsafe submit
 overrides are rejected. In password forms, CAPTCHA widgets, extra fields,
 cross-origin frames and boxes already holding other values prevent credential
 writes. Oracle email entry distinguishes empty CAPTCHA placeholders and passive
-badges from an actual challenge; it never solves a challenge. Routine required
-account terms can be selected under account-creation approval; unrelated consent
-cannot. Known cookie notices may be rejected, never accepted. Credentials are
-redacted from reports, stored notes and browser errors.
+badges from an actual challenge; it never solves a challenge. Account-creation
+approval covers required routine sign-up terms. `allow_account_terms` separately
+authorizes required routine terms/privacy during sign-in; reviewed website auto,
+login and create runs include that permission. Consent is classified from its own
+label and directly bound descriptions, not every purpose named in an expanded
+privacy notice. Optional marketing stays unselected; certifications, screening
+permissions and sensitive declarations stay manual. Checkbox acknowledgment is
+observed before sending one account action; no blind double-click. Known cookie
+notices may be rejected, never accepted. Credentials are redacted from reports,
+stored notes and browser errors.
 
 Posting entry waits for Oracle's visible application-loading overlay to clear
 before clicking Apply. A visible interactive DataDome challenge, including one

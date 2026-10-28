@@ -1,8 +1,11 @@
-"""Required Oracle timeline records, using explicit facts and scoped local saves.
+"""Required Oracle timeline records and Workday Work Experience panels.
 
-Selecting a card is not opening its editor. Existing invalid/empty cards are
-inspected before Add; unknown layouts, conflicting values and missing facts
-leave the retained draft for review. This module never submits an application.
+Uses explicit facts and scoped local saves. Selecting a card is not opening its
+editor. Existing invalid/empty cards are inspected before Add; unknown layouts,
+conflicting values and missing facts leave the retained draft for review.
+Workday panels are filled in place only: Add is never clicked and Workday's own
+Save and Continue remains with the preparation loop. This module never submits
+an application.
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ from kitty.config import Config, EducationRecord, EmploymentRecord
 from kitty.core.apply.bidi import BidiError, Frame, Tab
 from kitty.core.apply.fields import FormField, Plan, clean_label, match_option
 from kitty.core.apply.page import (
-    UnsafeAction, _DOM_HELPERS_JS, _SUGGESTIONS_JS, form_frames, read_fields, tick,
+    UnsafeAction, _DOM_HELPERS_JS, _SUGGESTIONS_JS, fill_text, form_frames, read_fields, tick,
 )
 from kitty.normalize import norm_question
 
@@ -318,6 +321,205 @@ def _fill_editor(frame: Frame, kind: str, section: str, record: Record,
     return None, filled, anchors, state['save'], 'unsupported_controls'
 
 
+# Workday renders each Work Experience entry as an already-open panel whose
+# controls carry stable `<prefix>--<slot>` IDs. Only these exact slots are
+# recognized; any other required blank control is an unknown layout.
+_WORKDAY_PANELS = r"""() => {""" + _HELPERS + r"""
+  const known = /--(jobTitle|companyName|location|currentlyWorkHere|roleDescription|(?:start|end)Date-dateSection(?:Month|Year)-input)$/;
+  // Workday date segments can be writable with tabIndex=-1, so the general
+  // reader omits them. Register recognized segments for guarded primitives.
+  const fieldKeys = globalThis.kittyKeys ??= new WeakMap();
+  const fieldsByKey = globalThis.kittyByKey ??= new Map();
+  const fieldKey = e => {
+    if (!known.test(e.id || '') || !fieldSafe(e)) return null;
+    if (!fieldKeys.has(e)) {
+      const key = 'e' + (globalThis.kittyCounter = (globalThis.kittyCounter ?? 0) + 1);
+      fieldKeys.set(e, key);
+      fieldsByKey.set(key, e);
+    }
+    return fieldKeys.get(e);
+  };
+  const fieldLabel = e => {
+    const owner = closest(e, '[data-automation-id^="formField-"]');
+    return owner ? text(queryAll('label, legend', owner)[0]) : '';
+  };
+  // Live Workday labels each record group with aria-labelledby, not an automation id.
+  return queryAll('[role=group][aria-labelledby]').filter(e =>
+    /^Work-Experience-\d+-panel$/.test(e.getAttribute('aria-labelledby')) && shown(e)
+  ).map(panel => ({
+    key: keyOf(panel),
+    controls: queryAll('input, textarea, select', panel).filter(e => shown(e) && e.type !== 'hidden').map(e => {
+      const checkbox = e.type === 'checkbox';
+      const value = checkbox ? '' : (e.value || '');
+      return {
+        id: e.id || '', slot: (known.exec(e.id || '') || [])[1] || null,
+        key: fieldKey(e),
+        label: fieldLabel(e) || e.getAttribute('aria-label') || e.id || '',
+        value, checked: checkbox ? !!e.checked : false, checkbox, safe: fieldSafe(e),
+        blank: checkbox ? false : !value.trim(),
+        required: e.required || e.getAttribute('aria-required') === 'true' || /\*/.test(fieldLabel(e)),
+        invalid: e.getAttribute('aria-invalid') === 'true' || (e.willValidate && !e.validity.valid && !!value),
+      };
+    }),
+  }));
+}"""
+
+_WORKDAY_TEXT = ('jobTitle', 'companyName', 'location',
+                 'startDate-dateSectionMonth-input', 'startDate-dateSectionYear-input',
+                 'endDate-dateSectionMonth-input', 'endDate-dateSectionYear-input', 'roleDescription')
+
+
+def _workday_values(record: EmploymentRecord) -> dict[str, str | bool | None]:
+    """Exact Workday meanings from one explicit employment record; never inferred."""
+    def date(value: str | None, month: bool) -> str | None:
+        if not value:
+            return None
+        year, number = value.split('-')
+        return f'{int(number):02d}' if month else year
+    location = ', '.join(p for p in (record.city, record.state, record.country) if p) or None
+    ended = record.end_date if record.current is not True else None
+    return {
+        'jobTitle': record.title, 'companyName': record.employer, 'location': location,
+        'currentlyWorkHere': record.current, 'roleDescription': record.description or None,
+        'startDate-dateSectionMonth-input': date(record.start_date, True),
+        'startDate-dateSectionYear-input': date(record.start_date, False),
+        'endDate-dateSectionMonth-input': date(ended, True),
+        'endDate-dateSectionYear-input': date(ended, False),
+    }
+
+
+def _workday_same(slot: str, actual: str, wanted: str) -> bool:
+    if 'dateSection' in slot:
+        return actual.strip().isdigit() and int(actual) == int(wanted)
+    if slot == 'roleDescription':
+        return actual.replace('\r\n', '\n').strip() == wanted.replace('\r\n', '\n').strip()
+    return norm_question(actual) == norm_question(wanted)
+
+
+def _workday_label(control: dict) -> str:
+    label = control['label'].rstrip('*').strip()
+    if 'dateSection' in (control['slot'] or ''):
+        label += ' month' if 'Month' in control['slot'] else ' year'
+    return label
+
+
+def _workday_panel(frame: Frame, panel_key: str) -> dict | None:
+    read_fields([frame])           # registers sandbox keys for redrawn controls
+    panels = frame.call(_WORKDAY_PANELS) or []
+    return panels[0] if len(panels) == 1 and panels[0]['key'] == panel_key else None
+
+
+def _workday_slots(state: dict) -> dict[str, dict] | str:
+    slots: dict[str, dict] = {}
+    for control in state['controls']:
+        if control['slot'] is None:
+            if control['required'] and control['blank']:
+                return f"records: unsupported required Workday control {control['label']}"
+            continue
+        if control['slot'] in slots or not control['key'] or not control['safe']:
+            return 'records: Workday Work Experience controls are not uniquely writable'
+        slots[control['slot']] = control
+    if 'jobTitle' not in slots or 'companyName' not in slots:
+        return 'records: unrecognized Workday Work Experience panel layout'
+    return slots
+
+
+def _fill_workday_experience(page: Tab, frame: Frame, records: Sequence[EmploymentRecord],
+                             check: Callable[[], None]) -> RecordResult | None:
+    """Fill one open, required Workday Work Experience panel from the sole record.
+
+    Returns None when no incomplete Workday panel exists. Never clicks Add,
+    Save or navigation; never overwrites or clears an existing value.
+    """
+    read_fields([frame])
+    panels = frame.call(_WORKDAY_PANELS) or []
+    if not any(c['required'] and c['blank'] for p in panels for c in p['controls']):
+        return None
+    result = RecordResult(handled=True)
+    if len(panels) != 1:
+        result.blocker = 'records: multiple Workday Work Experience panels need review'
+        return result
+    if not records:
+        result.blocker = 'records: Workday Work Experience requires an explicit employment record'
+        result.cause = 'missing_applicant_fact'
+        return result
+    if len(records) != 1:
+        result.blocker = 'records: Workday Work Experience needs one unambiguous explicit profile record'
+        return result
+    record, panel = records[0], panels[0]
+    wanted = _workday_values(record)
+    slots = _workday_slots(panel)
+    if isinstance(slots, str):
+        result.blocker = slots
+        return result
+    # Check the whole panel before entering anything: a different existing
+    # value means another (manual) record, never something to overwrite.
+    box = slots.get('currentlyWorkHere')
+    if box and box['checked'] and wanted['currentlyWorkHere'] is not True:
+        result.blocker = 'records: Workday panel marks a current job the configured record does not'
+        return result
+    for slot, control in slots.items():
+        value = wanted.get(slot)
+        if control['checkbox'] or value is None:
+            if (control['required'] and control['blank'] and
+                    not (slot.startswith('endDate') and wanted['currentlyWorkHere'] is True and box)):
+                result.blocker = f'records: missing explicit fact for required Workday {_workday_label(control)}'
+                result.cause = 'missing_applicant_fact'
+                return result
+            continue
+        if not control['blank'] and not _workday_same(slot, control['value'], value):
+            result.blocker = 'records: Workday Work Experience panel already holds different values'
+            return result
+    page.activate()
+    if box and wanted['currentlyWorkHere'] is True and not box['checked']:
+        check()
+        if not tick(frame, box['key']):
+            result.blocker = 'records: no committed Workday current job checkbox'
+            return result
+        result.filled.append('experience: I currently work here')
+    for slot in _WORKDAY_TEXT:
+        value = wanted[slot]
+        if value is None:
+            continue
+        check()
+        state = _workday_panel(frame, panel['key'])
+        current = _workday_slots(state) if state else 'records: Workday panel ownership changed while entering a record'
+        if isinstance(current, str):
+            result.blocker = current
+            return result
+        control = current.get(slot)
+        if control is None or not control['blank']:
+            continue                   # absent (To while current) or already matching
+        fill_text(frame, control['key'], value)   # receipt verified below, incl. MM/YYYY segments
+        result.filled.append(f'experience: {_workday_label(control)}')
+    # Workday's own Save and Continue (owned by the preparation loop) persists
+    # the panel; here only verify committed values after blur handlers.
+    state = _workday_panel(frame, panel['key'])
+    final = _workday_slots(state) if state else 'records: Workday panel disappeared before verification'
+    if isinstance(final, str):
+        result.blocker = final
+        return result
+    for slot, control in final.items():
+        value = wanted.get(slot)
+        if control['invalid']:
+            result.blocker = f'records: Workday {_workday_label(control)} has no valid committed value'
+            return result
+        if control['checkbox']:
+            if value is True and not control['checked']:
+                result.blocker = 'records: Workday current job checkbox was not committed'
+                return result
+            continue
+        if value is not None and not _workday_same(slot, control['value'], value):
+            result.blocker = f'records: Workday {_workday_label(control)} has no committed receipt'
+            return result
+        if control['required'] and control['blank']:
+            result.blocker = f'records: missing explicit fact for required Workday {_workday_label(control)}'
+            result.cause = 'missing_applicant_fact'
+            return result
+    result.changed = bool(result.filled)
+    return result
+
+
 def fill_required_records(page: Tab, config: Config, *, company: str = '', tracks: Sequence[str] = (),
                           checkpoint: Callable[[], None] | None = None) -> RecordResult:
     """Commit at most one required record; the owning preparation loop reinspects.
@@ -414,6 +616,10 @@ def fill_required_records(page: Tab, config: Config, *, company: str = '', track
                     time.sleep(0.1)
                 result.blocker = f'records: local {kind} save lacks a matching committed card and cleared required markers'
                 return result
+            check()
+            workday = _fill_workday_experience(page, frame, config.profile.employment_records, check)
+            if workday is not None:
+                return workday
     except UnsafeAction:
         return RecordResult(handled=True, blocker='records: an unsafe record interaction was refused; preserve the draft for review')
     except BidiError:

@@ -4,9 +4,9 @@ Run ``kitty-web`` after building ``web/dist``. The API never submits forms,
 starts paid discovery, or exposes configuration/credentials. Demo workspaces use
 only public example configuration and are discarded when the process exits.
 
-Features belong to the ``applyai`` and ``workspace`` modules (kitty.modules). The
-active set is frozen at start-up; routes of a disabled module answer 403 and none
-of its extensions, workers or credentials are loaded.
+Features belong to the ``applyai``, ``workspace`` and ``terminal`` modules
+(kitty.modules). The active set is frozen at start-up; routes of a disabled module
+answer 403 and none of its extensions, workers, processes or credentials are loaded.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ STATIC_TYPES = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
-    ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2",
+    ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
 }
 
 
@@ -121,7 +121,8 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "workspace") for prefix in (
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
         "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
-        "/api/ai/run", "/api/atlas/sections")),
+        "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness")),
+    ("/api/terminal", "terminal"),
 ), key=lambda item: -len(item[0])))
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
@@ -131,6 +132,8 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
+    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), (None, "web_desktop"),
+    ("terminal", "web_terminal"),
 )
 
 
@@ -150,14 +153,18 @@ class WebApplication:
     selection saved through ``/api/modules`` takes effect in the next process.
     """
 
-    def __init__(self, settings: Settings, config: Config, static_dir: Path):
+    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None):
         self.settings = settings
         self.config = config
         self.modules: tuple[str, ...] = tuple(config.modules)
+        #: The desktop shell's owner pipe (kitty.web_desktop.DesktopOwner); None for kitty-web.
+        self.desktop = desktop
         self.static_dir = static_dir.resolve()
         self.mutation_lock = threading.Lock()
         self.discovery_lock = threading.Lock()
         self.discovery: dict[str, Any] = {"running": False, "error": None, "result": None}
+        #: Set when the server closes: long-lived upgraded streams end themselves.
+        self.streams_closed = threading.Event()
         self.extensions = tuple(
             importlib.import_module(f"kitty.{name}") for module, name in EXTENSIONS
             if module is None or module in self.modules
@@ -174,7 +181,8 @@ class WebApplication:
                 start(self)
 
     def close(self) -> None:
-        """Stop schedulers first, then drain accepted operations and persistence."""
+        """End open streams and stop schedulers, then drain accepted operations and persistence."""
+        self.streams_closed.set()
         for extension in reversed(self.extensions):
             stop = getattr(extension, "stop", None) or getattr(extension, "close", None)
             if stop:
@@ -434,6 +442,11 @@ class LocalHTTPServer(ThreadingHTTPServer):
         self.authority = f"127.0.0.1:{self.server_address[1]}"
         self.origin = f"http://{self.authority}"
 
+    def server_close(self) -> None:
+        # Upgraded streams outlive requests; end them before joining request threads.
+        self.app.streams_closed.set()
+        super().server_close()
+
 
 class RequestHandler(BaseHTTPRequestHandler):
     server: LocalHTTPServer
@@ -489,7 +502,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:3210; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         if download:
             self.send_header("Content-Disposition", f'attachment; filename="{download}"')
         self.end_headers()
@@ -516,12 +529,18 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._security(mutation=mutation)
             path, query = self._target()
             if mutation:
+                # Native desktop commands additionally require an explicit page
+                # origin; the shared guard above already rejects a wrong one.
+                if path == "/api/desktop/command" and not self.headers.get_all("Origin", []):
+                    raise APIError(403, "Missing local request origin")
                 self.server.app._no_query(query)
                 body = self._body()
                 with self.server.app.mutation_lock:
                     with closing(connect(self.server.app.settings.db_path)) as conn:
                         result = self.server.app.mutate(conn, path, body)
                 self._json(200, result)
+            elif self.command == "GET" and self.headers.get("Upgrade") is not None:
+                self._upgrade(path, query)
             elif path == "/api" or path.startswith("/api/"):
                 self._get_api(path, query)
             else:
@@ -538,6 +557,23 @@ class RequestHandler(BaseHTTPRequestHandler):
         except Exception:
             self.close_connection = True
             self._json(500, {"error": "Local operation failed; inspect CLI diagnostics"})
+
+    def _upgrade(self, path: str, query: dict[str, str]) -> None:
+        """A long-lived same-origin upgrade (the terminal WebSocket).
+
+        Browsers cannot add X-Kitty-Request to an upgrade, so the exact Origin is
+        required here and the owning extension demands a single-use token that only
+        a header-protected API call hands out.
+        """
+        if self.headers.get_all("Origin", []) != [self.server.origin]:
+            raise APIError(403, "Cross-origin requests are not allowed")
+        app = self.server.app
+        app.guard(path)
+        for extension in app.extensions:
+            upgrade = getattr(extension, "upgrade", None)
+            if upgrade and upgrade(app, self, path, query):
+                return
+        raise APIError(404, "API route not found")
 
     def _body(self) -> dict:
         lengths = self.headers.get_all("Content-Length", [])

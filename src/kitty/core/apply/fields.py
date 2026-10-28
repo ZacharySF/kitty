@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Sequence
 
 from kitty.config import AnswerEntry, Config, Profile
-from kitty.normalize import norm_location, norm_question, norm_screening
+from kitty.normalize import norm_company, norm_location, norm_question, norm_screening
 
 #: Kinds of field the page reader reports.
 TEXT_KINDS = ("text", "textarea")
@@ -117,6 +117,13 @@ def is_resume_input(field: FormField) -> bool:
 
 # ----------------------------------------------------------------- answers
 
+# Only routing instructions, never a second qualification or attestation. Keep
+# the question itself intact for employer identity and saved-answer scope checks.
+_EMPLOYER_HISTORY_DIRECTIONS = re.compile(
+    r" if (?:so|yes) (?:please )?(?:answer the questions below|provide additional information)"
+    r" if (?:not|no) (?:please )?continue(?: to the next page)?$"
+)
+
 
 def lookup_answer(
     config: Config, label: str, *, company: str | None = None, tracks: Sequence[str] = (),
@@ -125,15 +132,30 @@ def lookup_answer(
     """The answers.yaml entry for this question, or None.
 
     Config.answer_for already ignores case and punctuation; this also drops
-    '(required)' markers. A named employer's exact "ever worked for" question
-    may use the saved generic company-history wording, with normal scope/tie
-    rules. `options` preserves explicit field-country evidence; `jurisdiction`
-    is the strict job jurisdiction, never the applicant's residence/citizenship.
-    Other near misses are not answers.
+    '(required)' markers. A named employer's prior-employment question may use
+    the saved generic company-history wording, with normal scope/tie rules.
+    Routing-only follow-up instructions do not change that question. `options`
+    preserves explicit field-country evidence; `jurisdiction` is the strict job
+    jurisdiction, never the applicant's residence/citizenship.
     """
     # "Postal Code Extension" (ZIP+4) is a different fact from "Postal Code";
     # a parent answer never fills its extension sub-field.
     extension = re.search(r"\bextension\b", label, re.I)
+    words = norm_screening(clean_label(label))
+    question = _EMPLOYER_HISTORY_DIRECTIONS.sub("", words) if company else words
+    if question != words:
+        # An exact saved question, with or without the routing help, precedes
+        # broad phrase matches. A scoped-out or tied exact answer stays unknown.
+        for text in (label, question):
+            exact = [
+                entry for entry in config.answers.answers
+                if norm_screening(entry.question) == norm_screening(text)
+            ]
+            if exact:
+                scoped = replace(config, answers=config.answers.model_copy(update={"answers": exact}))
+                return scoped.answer_for(
+                    text, company, tracks, jurisdiction=jurisdiction, options=options,
+                )
     for text in dict.fromkeys((label, clean_label(label))):
         if text and (entry := config.answer_for(
             text, company, tracks, jurisdiction=jurisdiction, options=options,
@@ -144,26 +166,31 @@ def lookup_answer(
                 return None
             return entry
     if company:
-        original = f" {norm_screening(clean_label(label))} "
+        originals = {norm_screening(clean_label(label)), norm_screening(question)}
+        if question != words and (entry := config.answer_for(
+            question, company, tracks, jurisdiction=jurisdiction, options=options,
+        )) is not None:
+            return entry
         if any(
-            norm_screening(entry.question) == original.strip() or any(
-                f" {norm_screening(phrase)} " in original for phrase in entry.match
-                if norm_screening(phrase)
+            norm_screening(entry.question) in originals or any(
+                f" {norm_screening(phrase)} " in f" {original} "
+                for original in originals for phrase in entry.match if norm_screening(phrase)
             ) for entry in config.answers.answers
         ):
             return None                # do not bypass an explicit match's scope or tie
         # Only the actual employer (or its explicitly parenthesized alias), not
         # another company, future employment, or an arbitrary history question.
         employers = {
-            norm_question(company),
-            norm_question(re.sub(r"\([^)]*\)", "", company)),
-            *(norm_question(alias) for alias in re.findall(r"\(([^)]+)\)", company)),
+            norm_screening(company),
+            norm_screening(norm_company(company)),
+            norm_screening(re.sub(r"\([^)]*\)", "", company)),
+            *(norm_screening(alias) for alias in re.findall(r"\(([^)]+)\)", company)),
         }
-        words = norm_question(clean_label(label))
         for employer in employers - {""}:
             if re.fullmatch(
-                r"have you ever worked for " + re.escape(employer) +
-                r"(?: one of our current brands or any of our predecessor firms)?", words,
+                r"have you (?:(?:ever|previously) )?(?:worked for|been employed by) " +
+                re.escape(employer) +
+                r"(?: one of our current brands or any of our predecessor firms)?", question,
             ):
                 return config.answer_for(
                     "Have you worked for this company?", company, tracks,

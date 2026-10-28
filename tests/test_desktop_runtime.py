@@ -9,10 +9,14 @@ import select
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+
+from terminal_support import FakeHerdr, FrameReader, websocket
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -123,3 +127,91 @@ def test_owner_quit_leaves_unrelated_process_alive(backend):
     finally:
         unrelated.terminate()
         unrelated.wait(timeout=10)
+
+
+def owner_line(process, timeout=10):
+    assert select.select([process.stdout], [], [], timeout)[0], "No owner-pipe message"
+    return json.loads(process.stdout.readline())
+
+
+def test_settings_desktop_commands_travel_the_owner_pipe(backend):
+    process, origin, _root = backend
+    local = {"Origin": origin.geturl().rstrip("/"), "Content-Type": "application/json", "X-Kitty-Request": "1"}
+    process.stdin.write(json.dumps({"keep_running": False, "keep_running_available": True}) + "\n")
+    process.stdin.flush()
+    for _ in range(50):
+        status, _headers, body = request(origin, path="/api/desktop")
+        if json.loads(body)["keep_running"] is False:
+            break
+    assert status == 200 and json.loads(body) == {"available": True, "keep_running": False, "keep_running_available": True}
+    assert request(origin, "POST", "/api/desktop/command", local, '{"command":"new-quick-note"}')[0] == 200
+    assert owner_line(process) == {"command": "new-quick-note"}
+    # A request without the local header never reaches the shell.
+    unmarked = {key: value for key, value in local.items() if key != "X-Kitty-Request"}
+    assert request(origin, "POST", "/api/desktop/command", unmarked, '{"command":"quit"}')[0] == 403
+    assert not select.select([process.stdout], [], [], 0.5)[0]
+
+    results = []
+    worker = threading.Thread(target=lambda: results.append(
+        request(origin, "POST", "/api/desktop/command", local, '{"command":"keep-running-on"}')))
+    worker.start()
+    assert owner_line(process) == {"command": "keep-running-on"}
+    process.stdin.write(json.dumps({"keep_running": True, "keep_running_available": True}) + "\n")
+    process.stdin.flush()
+    worker.join(timeout=10)
+    status, _headers, body = results[0]
+    assert status == 200 and json.loads(body)["keep_running"] is True
+
+    assert request(origin, "POST", "/api/desktop/command", local, '{"command":"quit"}')[0] == 200
+    assert owner_line(process) == {"command": "quit"}
+    # Only the shell decides to stop: the backend keeps serving until its owner says quit.
+    assert request(origin, path="/api/desktop")[0] == 200
+    process.stdin.write("quit\n")
+    process.stdin.flush()
+    assert process.wait(timeout=30) == 0
+
+
+@pytest.fixture
+def terminal_workspace(tmp_path, monkeypatch):
+    """A workspace selecting only the Terminal module, with a synthetic herdr."""
+    fake = FakeHerdr(tmp_path)
+    for key, value in {"HOME": str(fake.home), "XDG_CONFIG_HOME": str(fake.home / ".config"),
+                       "KITTY_HERDR": str(fake.binary), "KITTY_HERDR_SESSION": "kitty-desktop-test",
+                       "HERDR_ENV": "1"}.items():
+        monkeypatch.setenv(key, value)
+    config = tmp_path / "workspace" / "config"
+    config.mkdir(parents=True)
+    (config / "modules.yaml").write_text("enabled: [terminal]\n")
+    try:
+        yield fake
+    finally:
+        fake.cleanup("kitty-desktop-test")
+        shutil.rmtree(fake.home, ignore_errors=True)
+
+
+def test_owner_quit_stops_kitty_herdr_session_but_detaching_does_not(terminal_workspace, backend):
+    fake, session = terminal_workspace, "kitty-desktop-test"
+    process, origin, _root = backend
+    headers = {"Origin": origin.geturl(), "Content-Type": "application/json", "X-Kitty-Request": "1"}
+    pages = []
+    for _page in range(2):
+        status, _headers, body = request(origin, "POST", "/api/terminal/session", headers, "{}")
+        assert status == 200
+        status, _headers, connection, rest = websocket(
+            origin.port, f"/api/terminal/socket?token={json.loads(body)['token']}", {})
+        assert status == 101
+        FrameReader(connection, rest).until(b"FAKE-HERDR")
+        pages.append(connection)
+    # A page going away (or a hidden window) only detaches its client.
+    pages[0].close()
+    time.sleep(0.3)
+    assert fake.listening(session)
+    stop = ["--session", session, "session", "stop", session]
+    assert stop not in [item["argv"] for item in fake.invocations()]
+    # Quit kitty! (save and stop workers) also stops kitty!'s herdr server, even with a page attached.
+    process.stdin.write("quit\n")
+    process.stdin.flush()
+    assert process.wait(timeout=30) == 0
+    pages[1].close()
+    assert [item["argv"] for item in fake.invocations()].count(stop) == 1
+    assert not fake.listening(session)

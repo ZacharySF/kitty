@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- Browser fixture for tests/graphRenderers.browser.test.mjs: synthetic graph only. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Graph renderer harness</title>
+    <style>
+      html, body { margin: 0; background: #14111b; }
+      #stage {
+        position: relative; width: 800px; height: 600px;
+        --c1: #bd93f9; --c2: #8be9fd; --c3: #ff79c6; --c4: #50fa7b; --c5: #f1fa8c; --c6: #ffb86c;
+        --ink: #e7dfef; --muted: #8f86a0; --chrome: #0e0c14;
+        --br-font-ui: ui-monospace, monospace;
+      }
+      #side { position: absolute; left: 820px; top: 0; width: 200px; height: 600px; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="side"></div>
+    <script type="module" src="./graphHarness.js"></script>
+  </body>
+</html>

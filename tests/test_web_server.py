@@ -297,3 +297,68 @@ def test_discovery_rejects_demo_empty_sources_and_custom_inputs(website):
     website.app.settings = replace(website.app.settings, demo=True)
     assert website.request("/api/sources/run", {"confirm": True})[0] == 403
     assert website.request("/api/bootstrap")[1]["demo"] is True
+
+
+@pytest.mark.parametrize("upstream_status,available", [(200, True), (302, False), (500, False)])
+def test_learnharness_boundary_is_fixed_loopback_not_a_proxy(website, monkeypatch, upstream_status, available):
+    calls = []
+
+    class Probe:
+        def __init__(self, host, port, *, timeout):
+            calls.append((host, port, timeout))
+
+        def request(self, method, path):
+            calls.append((method, path))
+
+        def getresponse(self):
+            return SimpleNamespace(status=upstream_status)
+
+        def close(self):
+            calls.append("closed")
+
+    # Patch only the extension's connection, never the test HTTP client.
+    monkeypatch.setattr("kitty.web_learnharness.HTTPConnection", Probe)
+    status, data, headers = website.request("/api/extensions/learnharness")
+    assert status == 200
+    assert data == {"url": "http://127.0.0.1:3210", "available": available}
+    assert calls == [("127.0.0.1", 3210, 2), ("HEAD", "/"), "closed"]
+    assert "frame-src http://127.0.0.1:3210;" in headers["Content-Security-Policy"]
+    calls.clear()
+    assert website.request("/api/extensions/learnharness?url=https://example.invalid")[0] == 400
+    assert website.request("/api/extensions/learnharness", {"url": "https://example.invalid"})[0] == 404
+    assert calls == []
+    assert website.request("/api/extensions/learnharness/api/keys")[0] == 404
+
+
+def test_learnharness_unavailable_is_not_a_kitty_failure(website, monkeypatch):
+    class Offline:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, *args):
+            raise ConnectionRefusedError("synthetic offline service")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("kitty.web_learnharness.HTTPConnection", Offline)
+    assert website.request("/api/extensions/learnharness")[:2] == (
+        200, {"url": "http://127.0.0.1:3210", "available": False},
+    )
+    assert website.request("/api/bootstrap")[0] == 200
+
+
+def test_quick_notes_http_create_autosave_list_and_delete(website):
+    status, created, _ = website.request("/api/quick-notes/create", {"body": "", "tint": "mint"})
+    assert status == 200 and created["body"] == "" and created["tint"] == "mint"
+    status, saved, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": created["revision"], "body": "idea: glass notes"})
+    assert status == 200 and saved["revision"] == created["revision"] + 1
+    status, stale, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": created["revision"], "body": "old"})
+    assert status == 409 and "another window" in stale["error"]
+    assert website.request(f"/api/quick-notes/{created['id']}")[1]["body"] == "idea: glass notes"
+    assert [note["body"] for note in website.request("/api/quick-notes")[1]["notes"]] == ["idea: glass notes"]
+    status, _, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": saved["revision"], "colour": "rose"})
+    assert status == 400
+    status, _, _ = website.request("/api/quick-notes/delete", {"id": created["id"], "revision": saved["revision"]})
+    assert status == 200 and website.request("/api/quick-notes")[1]["notes"] == []
+    assert website.request(f"/api/quick-notes/{created['id']}")[0] == 404

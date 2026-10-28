@@ -76,18 +76,12 @@
 
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
     if (!pane.active || event.ctrlKey || event.metaKey || event.altKey || busy) return false;
-    if (["f", "F", "w", "q"].includes(event.key) && job && !job.is_active) {
+    if (["F", "w", "q"].includes(event.key) && job && !job.is_active) {
       event.preventDefault();
       message = "Posting unavailable. Recheck availability before preparing it.";
       return true;
     }
-    if (event.key === "f" && job && !job.favorite) {
-      event.preventDefault();
-      await mutate("favorite", true);
-      message = "Saved. Press f again to review your autofill plan.";
-      return true;
-    }
-    if (["f", "F", "w", "q"].includes(event.key))
+    if (["F", "w", "q"].includes(event.key))
       return automation?.handleKey(event) ?? false;
     if (event.key === "r") {
       event.preventDefault();
@@ -493,8 +487,8 @@
     min-width: 0;
     overflow: hidden;
     position: sticky;
-    top: 16px;
-    max-height: calc(100vh - 32px);
+    top: calc(var(--workbench-top, 0px) + 16px);
+    max-height: calc(100vh - var(--workbench-top, 0px) - 32px);
     overflow-y: auto;
   }
   .detail-body {

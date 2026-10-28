@@ -1,10 +1,9 @@
 /**
- * Shared WebGL network renderer for kitty! graphs (atlas home, schema networks).
- *
- * `mountGraph` lazy-loads 3d-force-graph + three, so the WebGL code ships in its
- * own chunk. The element passed to `mountGraph` must be dedicated to the graph:
- * the library replaces its children. Canvas interactions are pointer-only; every
- * caller must offer a keyboard / screen-reader path (lists + `focus(id)`).
+ * Shared switchable Canvas 2D / WebGL 3D network renderer for kitty! graphs.
+ * The default is 2D; the 3D library is loaded only when requested.
+ * Canvas interactions are pointer-only; every caller must offer a keyboard /
+ * screen-reader path (lists + `focus(id)`). Coordinates in the public picking
+ * API are viewport CSS pixels, suitable for external drop targets.
  *
  * Node semantics:
  * - `kind === "hub"` marks hub nodes (matte spheres with quiet labels). When no
@@ -23,6 +22,8 @@
 import type { ForceGraph3DInstance } from "3d-force-graph";
 import type * as Three from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { harmonize } from "./graphPalette";
+import { mountGraph2D } from "./graph2d";
 
 export type GraphNode = {
   id: string;
@@ -41,12 +42,30 @@ export type GraphLink = {
   weight?: number;
 };
 export type GraphLayout = "sphere" | "force" | "tree" | "clusters";
+export type GraphLook = "2d" | "3d";
+export type GraphOptions = {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  layout: GraphLayout;
+  look?: GraphLook;
+  physics?: Partial<GraphPhysics>;
+  onSelect?: (n: GraphNode) => void;
+  onContextMenu?: (n: GraphNode, event: MouseEvent) => void;
+  onHover?: (n: GraphNode | null) => void;
+  onDragEnd?: (n: GraphNode, point: { clientX: number; clientY: number }) => void;
+  reducedMotion?: boolean;
+  active?: boolean;
+};
 export type GraphPhysics = {
   repulsion: number;
   spring: number;
   damping: number;
 };
 export interface GraphHandle {
+  readonly look: GraphLook;
+  setLook(look: GraphLook): Promise<void>;
+  nodePoint(id: string): { x: number; y: number } | null;
+  nodeAt(clientX: number, clientY: number): GraphNode | null;
   update(data: { nodes: GraphNode[]; links: GraphLink[] }): void;
   setLayout(layout: GraphLayout): void;
   setPhysics(p: Partial<GraphPhysics>): void;
@@ -55,6 +74,7 @@ export interface GraphHandle {
   resize(): void;
   destroy(): void;
 }
+export type GraphRenderer = Omit<GraphHandle, "look" | "setLook">;
 
 export const DEFAULT_PHYSICS: GraphPhysics = {
   repulsion: 60,
@@ -486,20 +506,69 @@ function hexRgb(hex: string): [number, number, number] {
 const rgba = ([r, g, b]: [number, number, number], alpha: number) =>
   `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
 
-export async function mountGraph(
-  el: HTMLElement,
-  opts: {
-    nodes: GraphNode[];
-    links: GraphLink[];
-    layout: GraphLayout;
-    physics?: Partial<GraphPhysics>;
-    onSelect?: (n: GraphNode) => void;
-    onContextMenu?: (n: GraphNode, event: MouseEvent) => void;
-    onHover?: (n: GraphNode | null) => void;
-    reducedMotion?: boolean;
-    active?: boolean;
-  },
-): Promise<GraphHandle> {
+/** Stable handle: switching renderers retains current data, focus and preferences. */
+export async function mountGraph(el: HTMLElement, opts: GraphOptions): Promise<GraphHandle> {
+  let look = opts.look ?? "2d";
+  let data = { nodes: opts.nodes, links: opts.links };
+  let layout = opts.layout;
+  let physics = { ...opts.physics };
+  let active = opts.active ?? true;
+  let focused: string | null = null;
+  let destroyed = false;
+  let renderer: GraphRenderer;
+  let switching = Promise.resolve();
+  const create = async (next: GraphLook) => {
+    const mount = next === "2d" ? mountGraph2D : mountGraph3D;
+    const input = { nodes: data.nodes, links: data.links, layout, physics, active };
+    const result = await mount(el, {
+      ...opts, ...input,
+      onSelect(node) { focused = node.id; opts.onSelect?.(node); },
+    });
+    if (destroyed) result.destroy();
+    else {
+      renderer = result;
+      if (data.nodes !== input.nodes || data.links !== input.links) result.update(data);
+      if (layout !== input.layout) result.setLayout(layout);
+      if (physics !== input.physics) result.setPhysics(physics);
+      if (active !== input.active) result.setActive(active);
+      if (focused) result.focus(focused);
+    }
+  };
+  await create(look);
+  return {
+    get look() { return look; },
+    setLook(next) {
+      switching = switching.catch(() => {}).then(async () => {
+        if (destroyed || next === look) return;
+        if (next === "3d" && !webglAvailable())
+          throw new Error("WebGL is unavailable; choose the 2D graph instead.");
+        // The existing 3D engine stays lazy: a 2D graph must not initialize WebGL.
+        // Load that optional backend before releasing the working 2D surface.
+        if (next === "3d") await import("3d-force-graph");
+        if (destroyed) return;
+        renderer.destroy();
+        await create(next);
+        look = next;
+      });
+      return switching;
+    },
+    update(next) {
+      data = next;
+      if (focused && !data.nodes.some(node => node.id === focused)) focused = null;
+      if (!destroyed) renderer.update(data);
+    },
+    setLayout(next) { layout = next; if (!destroyed) renderer.setLayout(next); },
+    setPhysics(next) { physics = { ...physics, ...next }; if (!destroyed) renderer.setPhysics(next); },
+    setActive(next) { active = next; if (!destroyed) renderer.setActive(next); },
+    focus(id) { focused = id; if (!destroyed) renderer.focus(id); },
+    nodePoint(id) { return destroyed ? null : renderer.nodePoint(id); },
+    nodeAt(x, y) { return destroyed ? null : renderer.nodeAt(x, y); },
+    resize() { if (!destroyed) renderer.resize(); },
+    destroy() { destroyed = true; renderer.destroy(); },
+  };
+}
+
+async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphRenderer> {
   if (!webglAvailable())
     throw new Error(
       "WebGL is unavailable in this browser, so the 3D graph cannot be drawn.",
@@ -520,9 +589,9 @@ export async function mountGraph(
   probeCanvas.width = probeCanvas.height = 1;
   const probe = probeCanvas.getContext("2d", { willReadFrequently: true })!;
   const cssVar = (name: string) => styles.getPropertyValue(name).trim();
-  const palette = PALETTE_VARS.map((name) => cssVar(name))
+  const palette = harmonize(PALETTE_VARS.map((name) => cssVar(name))
     .filter(Boolean)
-    .map((value) => resolveColor(value, probe));
+    .map((value) => resolveColor(value, probe)));
   if (!palette.length) palette.push(FALLBACK_COLOR);
   let ink = resolveColor(cssVar("--ink") || "#e7dfef", probe);
   let mutedRgb = hexRgb(
@@ -1155,7 +1224,8 @@ export async function mountGraph(
         10,
         Math.max(0.5, node.data.size ?? (node.hub ? 4 : 1)),
       );
-      node.radius = 0.9 * (node.hub
+      // Overall node scale; kept below 1 so labels and edges, not spheres, dominate.
+      node.radius = 0.6 * (node.hub
         ? 2 + 1.6 * Math.sqrt(size)
         : 1.15 * Math.sqrt(size));
     }
@@ -1345,6 +1415,9 @@ export async function mountGraph(
       if (!rendering) return;
       opts.onContextMenu?.(node.data, event);
     })
+    .onNodeDragEnd((node) => {
+      if (rendering && lastPointer) opts.onDragEnd?.(node.data, lastPointer);
+    })
     .onBackgroundClick(() => {
       if (!rendering) return;
       if (!selectedId) return;
@@ -1383,7 +1456,9 @@ export async function mountGraph(
   const canvas = graph.renderer().domElement;
   const page = canvas.ownerDocument;
   let lastPointer: PointerEvent | null = null;
-  const rememberPointer = (event: PointerEvent) => (lastPointer = event);
+  const rememberPointer = (event: PointerEvent) => {
+    if (event.isTrusted) lastPointer = event;
+  };
   const substitutes = new WeakSet<Event>();
   const releaseRealPointer = (event: PointerEvent) => {
     if (
@@ -1405,6 +1480,8 @@ export async function mountGraph(
     page.dispatchEvent(real);
   };
   canvas.addEventListener("pointerdown", rememberPointer, true);
+  page.addEventListener("pointermove", rememberPointer, true);
+  page.addEventListener("pointerup", rememberPointer, true);
   page.addEventListener("pointerup", releaseRealPointer, true);
 
   const keyboardOrbit = new T.Vector3();
@@ -1491,7 +1568,7 @@ export async function mountGraph(
   document.addEventListener("visibilitychange", syncVisibility);
   resizeObserver.observe(el);
   const recolor = () => {
-    const colors = PALETTE_VARS.map(cssVar).filter(Boolean).map(value => resolveColor(value, probe));
+    const colors = harmonize(PALETTE_VARS.map(cssVar).filter(Boolean).map(value => resolveColor(value, probe)));
     if (colors.length) palette.splice(0, palette.length, ...colors);
     ink = resolveColor(cssVar("--ink"), probe);
     mutedRgb = hexRgb(resolveColor(cssVar("--muted"), probe));
@@ -1515,7 +1592,34 @@ export async function mountGraph(
   controls.enableDamping = !reduced;
   motionQuery.addEventListener("change", onMotionChange);
 
-  const handle: GraphHandle = {
+  canvas.dataset.graphLook = "3d";
+  const handle: GraphRenderer = {
+    nodePoint(id) {
+      const node = byId.get(id);
+      if (destroyed || !node) return null;
+      const point = graph.graph2ScreenCoords(node.x ?? 0, node.y ?? 0, node.z ?? 0);
+      const bounds = el.getBoundingClientRect();
+      return { x: bounds.left + point.x, y: bounds.top + point.y };
+    },
+    nodeAt(x, y) {
+      if (destroyed || !rendering) return null;
+      const bounds = el.getBoundingClientRect();
+      if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return null;
+      const camera = graph.camera() as Three.PerspectiveCamera;
+      const ray = new T.Raycaster();
+      ray.setFromCamera(new T.Vector2((x - bounds.left) / bounds.width * 2 - 1, 1 - (y - bounds.top) / bounds.height * 2), camera);
+      let nearest: SimNode | null = null;
+      let distance = Infinity;
+      for (const node of nodes) {
+        hitCentre.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
+        const radius = Math.max(node.radius * 1.6, 2.6);
+        const hit = ray.ray.intersectSphere(new T.Sphere(hitCentre, radius), hitPoint);
+        if (!hit) continue;
+        const depth = ray.ray.origin.distanceTo(hit);
+        if (depth < distance) { nearest = node; distance = depth; }
+      }
+      return nearest?.data ?? null;
+    },
     update(data) {
       if (destroyed) return;
       ingest(data);
@@ -1597,6 +1701,8 @@ export async function mountGraph(
       controls.removeEventListener?.("start", onControlStart);
       controls.removeEventListener?.("end", onControlEnd);
       canvas.removeEventListener("pointerdown", rememberPointer, true);
+      page.removeEventListener("pointermove", rememberPointer, true);
+      page.removeEventListener("pointerup", rememberPointer, true);
       page.removeEventListener("pointerup", releaseRealPointer, true);
       page.removeEventListener("keydown", rotateFromKeyboard);
       clearHulls();

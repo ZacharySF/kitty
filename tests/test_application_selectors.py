@@ -848,11 +848,26 @@ def test_full_fill_focuses_background_choice_and_preserves_new_user_focus(page, 
     ("Have you ever worked for PwC, one of our current brands, or any of our predecessor firms?",
      "PricewaterhouseCoopers (PwC)", True),
     ("Have you ever worked for Fixture Co?", "Fixture Co", True),
+    ("Have you ever worked for Fixture Co? If so, please answer the questions below. "
+     "If not, continue to the next page.", "Fixture Co", True),
+    ("Have you previously worked for Fixture Co? If Yes, provide additional information; "
+     "if No, please continue.", "Fixture Co", True),
+    ("Have you previously been employed by Fixture Co?", "Fixture Co", True),
+    ("Have you ever worked for FC? If so, please answer the questions below. "
+     "If not, continue to the next page.", "Fixture Company (FC)", True),
     ("Have you ever worked for Other Co?", "Fixture Co", False),
     ("Have you ever worked for a government agency?", "Fixture Co", False),
     ("Have you ever worked for Fixture Co as a government official?", "Fixture Co", False),
     ("Have you ever served in the military?", "Fixture Co", False),
     ("Do you plan to work for Fixture Co?", "Fixture Co", False),
+    ("Have you ever worked for Other Co? If so, please answer the questions below. "
+     "If not, continue to the next page.", "Fixture Co", False),
+    ("Have you ever worked for Fixture Co? If so, do you have a security clearance? "
+     "If not, continue to the next page.", "Fixture Co", False),
+    ("Have you ever worked for Fixture Co? If so, please answer the questions below. "
+     "If not, continue to the next page. I certify this is accurate.", "Fixture Co", False),
+    ("Have you ever worked for Fixture Co or a government agency? If so, please answer "
+     "the questions below. If not, continue to the next page.", "Fixture Co", False),
 ])
 def test_named_previous_employer_uses_only_explicit_generic_saved_history(space, label, company, expected):
     from kitty.config import AnswerEntry, AnswersFile
@@ -870,6 +885,48 @@ def test_named_previous_employer_uses_only_explicit_generic_saved_history(space,
     assert plan_for(field, replace(config, answers=AnswersFile(answers=[])), company=company) is None
     assert plan_for(FormField(key="excluded", kind="radio", label="Have you ever worked for Excluded Co?"),
                     config, company="Excluded Co") is None
+
+
+@pytest.mark.parametrize("restriction", ["company", "track", "tie"])
+def test_employer_history_routing_help_preserves_answer_restrictions(space, restriction):
+    from kitty.config import AnswerEntry, AnswersFile
+    from kitty.core.apply.fields import FormField
+
+    question = "Have you ever worked for Fixture Co?"
+    answer = AnswerEntry(question=question, answer="Yes")
+    if restriction == "company":
+        answer = answer.model_copy(update={"companies": ["Other Co"]})
+    elif restriction == "track":
+        answer = answer.model_copy(update={"tracks": ["other-track"]})
+    entries = [
+        AnswerEntry(question="Generic employer history", answer="No", match=["ever worked for"]),
+        answer,
+    ]
+    if restriction == "tie":
+        entries.append(answer.model_copy(update={"answer": "No"}))
+    field = FormField(
+        key="history", kind="radio", options=("Yes", "No"),
+        label=question + " If so, please answer the questions below. If not, continue to the next page.",
+    )
+    config = replace(space.config, answers=AnswersFile(answers=entries))
+    assert plan_for(field, config, company="Fixture Co", tracks=[space.track.name]) is None
+
+
+def test_employer_history_routing_help_preserves_specific_core_answer(space):
+    from kitty.config import AnswerEntry, AnswersFile
+    from kitty.core.apply.fields import FormField
+
+    question = "Have you ever worked for Fixture Co?"
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(question="Generic employer history", answer="No", match=["ever worked for"]),
+        AnswerEntry(question=question, answer="Yes", companies=["Fixture Co"]),
+    ]))
+    field = FormField(
+        key="history", kind="radio", options=("Yes", "No"),
+        label=question + " If Yes, provide additional information; if No, please continue.",
+    )
+    plan = plan_for(field, config, company="Fixture Co")
+    assert plan is not None and plan.from_answers and plan.candidates == ("Yes",)
 
 
 @pytest.mark.parametrize("scoped", [False, True])

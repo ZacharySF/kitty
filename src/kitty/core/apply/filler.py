@@ -685,7 +685,8 @@ def fill_job(
                         report.status, report.note = "blocked", str(exc)
                         break
                     page.bidi.protect_secrets(credentials.email, credentials.password)
-                    authentication = authenticate(page, policy, credentials)
+                    authentication = authenticate(page, policy, credentials,
+                                                  application_url=job.apply_url or job.url)
                 report.filled.extend(_ACCOUNT_FIELD_LABELS[role] for role in authentication.filled)
                 recovery.mutated = recovery.mutated or bool(authentication.filled) or authentication.acted
                 if (policy.email_verification.enabled and authentication.blocker

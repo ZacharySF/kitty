@@ -3,19 +3,19 @@
   import { Panel, Button } from "@nunera/bracket";
   import {
     mountGraph,
-    webglAvailable,
     type GraphHandle,
     type GraphLayout,
     type GraphLink,
     type GraphNode,
     type GraphPhysics,
   } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
+  import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
   const pane = useWorkspaceContext();
-  // Read-only 3D view of a schema graph plus an equivalent searchable
-  // adjacency table: every 3D interaction has a keyboard/screen-reader path.
+  // Both renderers share an equivalent searchable adjacency table:
+  // every pointer interaction has a keyboard/screen-reader path.
   let {
     title,
     nodes,
@@ -38,6 +38,7 @@
     ["sphere", "Sphere"],
   ];
   const PAGE = 60;
+  let look = $state(graphLook());
   let host = $state<HTMLDivElement>(),
     handle = $state.raw<GraphHandle | null>(null),
     problem = $state(""),
@@ -103,13 +104,11 @@
       layout = graphLayout();
       physics = graphPhysics();
       handle?.setPhysics(physics);
+      look = graphLook();
+      void handle?.setLook(look).then(() => { problem = ""; }).catch(cause => { problem = (cause as Error).message; });
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
-    if (!webglAvailable()) {
-      problem =
-        "WebGL is unavailable in this browser, so the 3D view is off. The adjacency table below has the same nodes and connections.";
-      loading = false;
-    } else {
+    {
       const data = copy();
       shownNodes = nodes;
       shownLinks = links;
@@ -118,6 +117,7 @@
       mountGraph(host!, {
         ...data,
         layout,
+        look: graphLook(),
         physics: { ...physics },
         active: pane.active,
         onSelect: (n) => { if (pane.active) onSelect(n.id); },
@@ -172,15 +172,15 @@
   });
 </script>
 
-<div class="network">
-  <div class="stage-wrap">
+<div class="network" data-kitty-panel="graph" tabindex="-1" role="region" aria-label={title}>
+  <div class="stage-wrap" data-look={look}>
     <div
       class="stage3d"
       bind:this={host}
       role="img"
-      aria-label={`${title}: ${nodes.length} nodes and ${links.length} connections in 3D. Drag with the left or scroll-wheel button held to rotate, scroll to zoom, click a node to inspect it. The adjacency table below lists the same graph for keyboard and screen-reader use.`}
+      aria-label={`${title}: ${nodes.length} nodes and ${links.length} connections in ${look === "2d" ? "2D. Drag nodes to move, drag the background to pan" : "3D. Drag to rotate"}, scroll to zoom, click a node to inspect it. The adjacency table below lists the same graph for keyboard and screen-reader use.`}
     ></div>
-    {#if loading}<p class="overlay">Loading 3D renderer…</p>{/if}
+    {#if loading}<p class="overlay">Loading graph renderer…</p>{/if}
     {#if problem}<p class="overlay problem" role="alert">{problem}</p>{/if}
     {#if !nodes.length && !loading && !problem}<p class="overlay">
         No nodes to show yet.
@@ -196,6 +196,7 @@
     readout={`${nodes.length} nodes · ${links.length} connections`}
   >
     <div class="controls">
+      <GraphLookToggle />
       <label
         >Layout<select bind:value={layout}
           >{#each LAYOUTS as [id, text]}<option value={id}>{text}</option
@@ -305,7 +306,7 @@
     pointer-events: none;
   }
   .stage-wrap::before {
-    content: "┌─ 3d";
+    content: "┌─ " attr(data-look);
     top: 4px;
     left: 6px;
   }

@@ -40,6 +40,16 @@ _GATE_JS = r'''(origin, recipient) => {
   if(location.origin!==origin || document.readyState==='loading')return {kind:'loading'};
   const visible=e=>!!e.getClientRects().length && getComputedStyle(e).visibility!=='hidden' && !e.closest('[hidden],[inert],[aria-hidden="true"]');
   const text=document.body?.innerText||'';
+  const resendText=/^(?:resend(?: (?:email|code|account verification))?|send (?:a )?new code|send code again)$/i;
+  // Workday blocks sign-in on an unverified candidate account and offers its
+  // own "Resend Account Verification" action beside the filled login form.
+  // After Resend, the same login says "An email has been sent to you."
+  if(/\.myworkdayjobs\.com$/.test(location.hostname)&&/\b(?:verify your account before you sign in|an email has been sent to you)\b/i.test(text)&&/\baccount may need verification\b/i.test(text)){
+    const resend=[...document.querySelectorAll('button,input[type=button]')].filter(e=>visible(e)&&!e.disabled&&resendText.test((e.innerText||e.value||'').trim()));
+    // Workday's login also renders a visible "beecatcher" robots-only input.
+    const emails=[...document.querySelectorAll('input[type=email],input[data-automation-id=email]')].filter(visible);
+    return {kind:'link',workday:true,resend:resend.length===1,recipientShown:!!recipient&&emails.length===1&&emails[0].value.toLowerCase()===recipient.toLowerCase()};
+  }
   if([...document.querySelectorAll('input[type=password]')].some(visible))return {kind:'none'};
   if(/authenticator|text message|security key|passkey|biometric|\bsms\b/i.test(text))return {kind:'human'};
   if([...document.querySelectorAll('iframe[src], [data-sitekey]')].some(e=>visible(e)&&/captcha|turnstile/i.test(e.getAttribute('src')||e.outerHTML.slice(0,300))))return {kind:'human'};
@@ -58,7 +68,7 @@ _GATE_JS = r'''(origin, recipient) => {
   else if(email&&pins.length===0&&singles.length===1&&/verification|verify|confirmation|confirm|check your email/i.test(text))fields=singles;
   const buttons=[...document.querySelectorAll('button,input[type=button]')].filter(e=>visible(e)&&!e.disabled);
   const verify=buttons.filter(e=>(knownEightfold?/^(verify|submit)$/i:/^(verify|verify (?:email|code)|confirm (?:email|code))$/i).test((e.innerText||e.value||'').trim()));
-  const resend=buttons.filter(e=>/^(?:resend(?: (?:email|code))?|send (?:a )?new code|send code again)$/i.test((e.innerText||e.value||'').trim()));
+  const resend=buttons.filter(e=>resendText.test((e.innerText||e.value||'').trim()));
   if(fields.length&&verify.length===1)return {kind:'code',eightfold:knownEightfold,count:fields.length,empty:fields.every(e=>!e.value),resend:resend.length===1,recipientShown:!!recipient&&text.toLowerCase().includes(recipient.toLowerCase())};
   if(email&&/check your email|verification (?:email|link)|verify your email|confirm your email/i.test(text)&&!document.querySelector('input:not([type=hidden])'))return {kind:'link',resend:resend.length===1};
   return {kind:'none'};
@@ -75,7 +85,7 @@ _TARGET_JS = r'''(origin, role, index, count) => {
   }
   const buttons=[...document.querySelectorAll('button,input[type=button]')].filter(e=>visible(e)&&!e.disabled);
   const eightfold=location.pathname==='/careers/apply'&&(''' + _SEGMENTS + r''')(6).length===6;
-  const matches=buttons.filter(e=>role==='verify'?(eightfold?/^(verify|submit)$/i:/^(verify|verify (?:email|code)|confirm (?:email|code))$/i).test((e.innerText||e.value||'').trim()):/^(?:resend(?: (?:email|code))?|send (?:a )?new code|send code again)$/i.test((e.innerText||e.value||'').trim()));
+  const matches=buttons.filter(e=>role==='verify'?(eightfold?/^(verify|submit)$/i:/^(verify|verify (?:email|code)|confirm (?:email|code))$/i).test((e.innerText||e.value||'').trim()):/^(?:resend(?: (?:email|code|account verification))?|send (?:a )?new code|send code again)$/i.test((e.innerText||e.value||'').trim()));
   return matches.length===1?matches[0]:null;
 }'''
 
@@ -166,7 +176,7 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
     if checkpoint:
         checkpoint()
     origin = _origin(page)
-    scopes = [scope for scope in settings.scopes if scope.origin == origin]
+    scopes = settings.scopes_for([origin]) if origin else []
     if not origin or not policy.approves(origin) or origin in policy.manual_account_origins or len(scopes) != 1:
         return VerificationResult(blocker='verification: this employer has no approved mailbox scope')
     if policy._credential_binding is not None and credential_binding(credentials) != policy._credential_binding:
@@ -188,7 +198,8 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
     row = None
     acted = False
     try:
-        if request_sent and requested_at is not None:
+        # Workday's blocked Sign In sends nothing; only its Resend action does.
+        if request_sent and requested_at is not None and not gate.get('workday'):
             row = _record_request(conn,page,job_id,origin,sender,recipient,requested_at,settings.max_age_seconds)
         else:
             token = page.main.call('''(origin,key)=>{if(location.origin!==origin)return null;try{return sessionStorage.getItem(key)}catch{return null}}''',origin,_MARKER,page_realm=True)
@@ -290,6 +301,11 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
                 continue
             if actual!=origin:
                 raise UnsafeAction('verification left the approved employer')
+            if gate.get('workday') and link is not None and urlsplit(page.main.url).path == urlsplit(link).path:
+                # The consumed activation URL itself is not an application page;
+                # wait for the employer's own redirect before judging ownership.
+                time.sleep(.2)
+                continue
             if accepted_navigation:
                 accepted_navigation()
             if checkpoint:
@@ -301,8 +317,8 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
                 return VerificationResult(verified=True,acted=True)
             time.sleep(.2)
         return VerificationResult(acted=acted,blocker='verification: the employer did not confirm this code or link; continue in the retained tab')
-    except VerificationMailError:
-        return VerificationResult(acted=acted,blocker='verification: scoped Gmail access is unavailable or ambiguous; review the retained browser')
+    except VerificationMailError as exc:
+        return VerificationResult(acted=acted,blocker=f'verification: {exc}')
     except sqlite3.IntegrityError:
         if row is not None:
             with transaction(conn):

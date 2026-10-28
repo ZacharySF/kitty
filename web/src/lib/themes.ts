@@ -1,6 +1,7 @@
 import { applyTheme, type Theme } from "@nunera/bracket/theme";
 
 export type ThemeId =
+  | "harness"
   | "dracula"
   | "catppuccin-mocha"
   | "tokyo-night"
@@ -34,6 +35,32 @@ export const KITTY_BLOSSOM = " .- .-. -.\n(   .'.   )\n '-.( * ).-'\n    '-' ";
  * is lifted where editor comment colors would be too dim for small controls.
  */
 export const THEMES: readonly KittyTheme[] = [
+  {
+    // LearnHarness's neutral chrome (#141414 / #1c1c1c / #434343) with kitty's pink accents.
+    id: "harness",
+    label: "Harness",
+    scheme: "dark",
+    roles: {
+      void: "#141414",
+      panel: "#1c1c1c",
+      inset: "#111111",
+      raised: "#262626",
+      line: "#434343",
+      lineHot: "#8d8d8d",
+      ink: "#e6e6e6",
+      mute: "#b4b4b4",
+      dim: "#8d8d8d",
+      structure: "#deb2c3",
+      signal: "#e4bdcc",
+      go: "#a8d5b5",
+      reference: "#9cc7f0",
+      caution: "#e8c872",
+      alternate: "#c6b5f0",
+      danger: "#ee928c",
+    },
+    graph: ["#deb2c3", "#c9b3e6", "#b3bfe8", "#e8c4d3", "#d6c1ea", "#e6dce1"],
+    shadow: "#000000",
+  },
   {
     // https://github.com/dracula/dracula-theme#color-palette-oss
     id: "dracula",
@@ -195,11 +222,11 @@ export const THEMES: readonly KittyTheme[] = [
     label: "Kitty",
     scheme: "dark",
     roles: {
-      void: "#2a2028",
-      panel: "#352832",
-      inset: "#261d25",
-      raised: "#43333e",
-      line: "#785765",
+      void: "#1b151a",
+      panel: "#241c22",
+      inset: "#161115",
+      raised: "#30252d",
+      line: "#5e4655",
       lineHot: "#d6a6b8",
       ink: "#f5e8ee",
       mute: "#d9bdca",
@@ -243,7 +270,7 @@ export const THEMES: readonly KittyTheme[] = [
   },
 ];
 
-export const DEFAULT_THEME: ThemeId = "dracula";
+export const DEFAULT_THEME: ThemeId = "harness";
 /** Dispatched on `window` after a theme is applied; `detail` is the ThemeId. */
 export const THEME_EVENT = "kitty:theme";
 const STORAGE_KEY = "kitty.theme";
@@ -264,6 +291,9 @@ function savedTheme(): ThemeId {
   }
 }
 
+/** Surface alpha: panels stay readable while the backdrop shows through. */
+const GLASS: Partial<Record<keyof Palette, number>> = { panel: 62, inset: 50, raised: 72 };
+
 function applyKittyTheme(theme: KittyTheme): void {
   const root = document.documentElement;
   applyTheme(
@@ -271,11 +301,17 @@ function applyKittyTheme(theme: KittyTheme): void {
     root,
     "comfortable",
   );
+  // Bracket derives contrast from opaque hexes first; translucency is layered after.
+  for (const role of ["void", "panel", "inset", "raised"] as const) {
+    root.style.setProperty(`--solid-${role}`, theme.roles[role]);
+    const alpha = GLASS[role];
+    if (alpha) root.style.setProperty(`--br-${role}`, `color-mix(in srgb, ${theme.roles[role]} ${alpha}%, transparent)`);
+  }
   theme.graph.forEach((color, index) =>
     root.style.setProperty(`--c${index + 1}`, color),
   );
   root.style.setProperty("--shadow-tint", theme.shadow);
-  root.style.setProperty("--border-fine", `color-mix(in srgb, ${theme.roles.structure} 34%, ${theme.roles.line})`);
+  root.style.setProperty("--border-fine", `color-mix(in srgb, ${theme.roles.line} 70%, transparent)`);
   root.style.setProperty("--border-colorful", `color-mix(in srgb, ${theme.roles.reference} 48%, ${theme.roles.line})`);
   root.style.setProperty("--border-active", theme.roles.lineHot);
   root.style.setProperty("--motion-fast", "140ms");

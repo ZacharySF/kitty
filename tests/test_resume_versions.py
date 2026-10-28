@@ -299,3 +299,14 @@ def test_flex_alignment_css_preserves_visible_claims(tmp_path):
     assert result['valid'], result['errors']
     assert 'Built Python tools.' in result['extracted_text']
     assert 'Built Rust tools.' in result['extracted_text']
+
+
+def test_browser_that_exits_at_startup_reports_its_exit_status_and_stderr(tmp_path, monkeypatch):
+    browser = tmp_path / 'chromium'
+    browser.write_text('#!/bin/sh\necho "No usable sandbox! user namespaces are disabled" >&2\nexit 7\n')
+    browser.chmod(0o755)
+    monkeypatch.setenv('KITTY_CHROMIUM', str(browser))
+    source = tmp_path / 'source.html'
+    source.write_text('<!DOCTYPE html><html><body><p>Synthetic</p></body></html>')
+    with pytest.raises(RuntimeError, match=r'exited with status 7.*No usable sandbox'):
+        render_pdf(source, tmp_path / 'candidate.pdf')

@@ -395,6 +395,22 @@ def test_browser_origin_change_after_selection_stops_before_message_read(mailbox
     assert mailbox.page.main.call("() => location.hash") == ""
 
 
+def test_browser_closed_mail_tab_reopens_profile_session_and_reads_matching_message(mailbox):
+    request = request_at()
+    mailbox.show([{"headers": headers_for(request), "body": "Verification code: 765432"}])
+    bidi = mailbox.page.bidi
+    mailbox.page.goto("about:blank")
+    before = {node["context"] for node in bidi.command("browsingContext.getTree", {})["contexts"]}
+    try:
+        messages = read_verification_mail(bidi, request)
+        assert [message.text for message in messages] == ["Verification code: 765432"]
+        assert mailbox.application.main.call("() => document.querySelector('input').value") == "Unsaved draft"
+    finally:
+        for node in bidi.command("browsingContext.getTree", {})["contexts"]:
+            if node["context"] not in before:
+                verification_mail.Tab(bidi, node["context"]).close()
+
+
 def test_browser_two_existing_account_surfaces_are_ambiguous(mailbox):
     request = request_at()
     mailbox.show([{"headers": headers_for(request), "body": "Synthetic verification"}])
