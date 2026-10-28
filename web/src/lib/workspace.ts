@@ -137,6 +137,8 @@ const shortcutGroups: ShortcutGroup[] = [
         "Pick a node on the atlas, use its Sections list, or Ctrl / ⌘ + K",
       ],
       ["?", "Show keyboard help"],
+      ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
+      ["Ctrl + Shift + F", "Toggle panel fullscreen inside terminal views"],
       ["Escape", "Close dialog or details; leave a text field"],
     ],
   },
@@ -204,7 +206,7 @@ const shortcutGroups: ShortcutGroup[] = [
     title: "Application preparation",
     module: "applyai",
     shortcuts: [
-      ["F / Shift + F", "Review autofill for marked, opened or focused jobs"],
+      ["Shift + F", "Review autofill for marked, opened or focused jobs"],
       ["w", "Stop browser worker; New jobs uses its time-window key"],
     ],
   },

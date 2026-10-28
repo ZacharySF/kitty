@@ -188,7 +188,7 @@
   class="section-graph-panel"
   aria-label={titles[section]}
 >
-  <div class="section-graph">
+  <div class="section-graph" data-kitty-panel="graph" tabindex="-1" role="region" aria-label={titles[section]}>
     {#if loading}
       <p class="message" role="status">Loading {section} connections…</p>
     {:else if error}
@@ -241,6 +241,8 @@
 
 <style>
   .section-graph { display: grid; gap: 0.65rem; min-width: 0; }
+  .section-graph:global([data-panel-fullscreen]) { display: flex; flex-direction: column; }
+  .section-graph:global([data-panel-fullscreen]) .canvas { flex: 1; height: auto !important; min-height: 330px; }
   .counts, .notice, .message { margin: 0; }
   .controls, .view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
   .layout { display: flex; align-items: center; gap: 0.45rem; margin-left: auto; color: var(--muted); font-size: 0.8rem; }

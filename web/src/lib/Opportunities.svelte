@@ -339,7 +339,6 @@
         void open(item.id);
       }
     }
-    if (event.key === "f") void saveSelected();
     if (event.key === "r") void refresh();
     if (event.key === "Escape") detail = null;
   }
