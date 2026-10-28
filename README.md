@@ -151,10 +151,12 @@ top, searched and deleted. Notes live in the workspace database (`quick_notes`),
 separate from Notes & canvas pages.
 
 **↗ Floating note** (or the pop-out icon on a note) opens one note on its own: in
-the desktop app that is a small transparent, borderless, always-on-top window;
-in a browser it is a popup. `Esc` closes it (already saved). If the same note is
-edited in two windows, the stale one stops and offers *Load latest* or *Keep mine*
-instead of overwriting.
+the desktop app that is a small transparent, borderless, always-on-top window.
+Its editor reveals the desktop with only a faint color wash near the top;
+controls and save status keep a local backing for readability. Board cards and
+browser popups retain their denser backgrounds. `Esc` closes it (already saved).
+If the same note is edited in two windows, the stale one stops and offers
+*Load latest* or *Keep mine* instead of overwriting.
 
 In the desktop app, the tray menu has **New quick note**, and
 `kitty-workspace --quick-note` opens one in the running app (or starts it), so a
