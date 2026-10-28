@@ -29,6 +29,8 @@ fi
 # Use the frontend lockfile's CLI rather than installing another build tool.
 # APPIMAGE_EXTRACT_AND_RUN avoids requiring FUSE while assembling the AppImage.
 export APPIMAGE_EXTRACT_AND_RUN=1
+# linuxdeploy's rpath rewrite crashes the static-pie herdr sidecar; see the wrapper.
+export PATCHELF="$ROOT/desktop/appimage_patchelf.py"
 cd desktop
 bundles="${KITTY_BUNDLES:-appimage,deb}"
 if [ -e /etc/NIXOS ] && [ -z "${KITTY_BUNDLES:-}" ]; then

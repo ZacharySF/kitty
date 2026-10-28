@@ -652,6 +652,10 @@ AppImage is built on Ubuntu CI. On other build hosts, `KITTY_BUNDLES=deb` or
 `KITTY_BUNDLES=appimage,deb` explicitly selects bundles.
 `bash scripts/build-desktop.sh --prepare-only` prepares website/backend artifacts
 for the official Tauri release action without running a second native build.
+AppImage builds (the script and the release workflow) set `PATCHELF` to
+`desktop/appimage_patchelf.py`: the AppImage tool adds a library path to every
+bundled executable, which crashes the static herdr binary, so the wrapper leaves
+executables without a dynamic loader byte-identical to the pinned release.
 
 The dependency environment exposes matching GStreamer base/good plugins for WebKit
 timer audio. Sound also needs an available output device and a Start/Enable sound

@@ -313,15 +313,24 @@ def render_pdf(snapshot: Path, pdf: Path) -> dict:
                 '--disable-sync', '--no-first-run', '--no-default-browser-check',
                 '--disable-extensions', '--disable-breakpad', '--disable-domain-reliability',
                 '--host-resolver-rules=MAP * ~NOTFOUND', 'about:blank']
-        process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                   start_new_session=True)
+        # Chromium's stderr names the cause (sandbox, missing library) when startup fails.
+        log = Path(profile) / 'kitty-chromium-stderr.log'
+        with log.open('wb') as stderr:
+            process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=stderr,
+                                       start_new_session=True)
         stopped = False
         try:
             portfile = Path(profile) / 'DevToolsActivePort'
-            deadline = time.monotonic() + 15
+            # A first launch on a fresh machine can spend many seconds building caches.
+            deadline = time.monotonic() + 60
             while not portfile.exists():
-                if process.poll() is not None or time.monotonic() > deadline:
-                    raise RuntimeError('Offline Chromium did not start; check KITTY_CHROMIUM')
+                status = process.poll()
+                if status is not None or time.monotonic() > deadline:
+                    reason = (f'exited with status {status}' if status is not None
+                              else 'did not open its debugging port within 60 seconds')
+                    detail = log.read_bytes()[-2000:].decode(errors='replace').strip()
+                    raise RuntimeError(f'Offline Chromium {reason}; check KITTY_CHROMIUM'
+                                       + (f'. Chromium stderr: {detail}' if detail else ''))
                 time.sleep(0.05)
             port, browser_path = portfile.read_text().splitlines()[:2]
             browser_ws = browser_connections.enter_context(

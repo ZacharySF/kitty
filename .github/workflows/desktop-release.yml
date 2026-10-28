@@ -76,6 +76,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # linuxdeploy's rpath rewrite crashes the static-pie herdr sidecar; see the wrapper.
+          PATCHELF: ${{ github.workspace }}/desktop/appimage_patchelf.py
         with:
           owner: ZacharySF
           repo: kitty-releases
