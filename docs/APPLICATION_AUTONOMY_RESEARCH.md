@@ -28,6 +28,20 @@ Workday is not universally account-required: its [Candidate Home setup documenta
   If an authorized creation action leads to a distinct recognized sign-in form,
   automatic mode can perform that new sign-in step once. This is not a retry of
   rejected credentials; verification notices and rejection alerts still stop it.
+  A TTM application advanced to My Experience with one already-open, required,
+  empty `Work-Experience-1-panel`. Kitty fills such a panel in place only when
+  it is the sole panel and exactly one explicit `employment_records` entry
+  exists: job title, company, location (explicit city/state/country only),
+  "I currently work here" from `current`, From/To MM/YYYY segments from record
+  dates and role description from `description`. It never clicks Add, never
+  overwrites a differing value, stops on multiple panels or records, and leaves
+  Save and Continue to the normal step loop.
+  Live TTM verification confirmed the record group is identified by
+  `aria-labelledby`, and both MM/YYYY inputs need guarded field keys even when
+  a writable year input has `tabIndex=-1` and the general reader omits it.
+  The repaired worker filled the
+  sole saved record; all recorded values matched and no controls were invalid.
+  It then stopped at resume-upload deferral to preserve retained answers.
 - **Oracle:** Arconic and Vertiv email-first entry accepted the saved account
   alias and reached their standard application forms. A zero-area empty
   `captcha-email-verification` element was not an interactive CAPTCHA. Google's

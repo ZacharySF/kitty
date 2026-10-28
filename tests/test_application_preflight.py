@@ -408,6 +408,79 @@ def test_required_container_with_supported_unanswered_radios_is_not_unsupported(
     assert page.main.call('() => [...document.querySelectorAll("input")].some(e => e.checked)') is False
 
 
+@pytest.mark.parametrize("question", [
+    "Have you ever worked for Fixture? If so, please answer the questions below. "
+    "If not, continue to the next page.",
+    "Have you previously worked as Employee or Intern for Fixture Co? "
+    "If Yes, provide additional information; if No, please continue.",
+])
+def test_saved_employer_history_advances_to_review_without_submit_or_manual_overwrite(
+    site, page, space, monkeypatch, question,
+):
+    from dataclasses import replace
+
+    from kitty.config import AnswerEntry, AnswersFile
+    from kitty.core import jobs as jobs_core
+    from kitty.core.apply import filler
+    from kitty.core.apply.page import upload
+
+    _document(site, page, f'''
+      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <form onsubmit="window.submissions++;return false">
+        <label>Last Name<input id="surname" value="Manually retained surname" required></label>
+        <label>Resume<input type="file" required></label>
+        <div class="question">
+          <label id="history-label">{question} *</label>
+          <div aria-required="true" aria-labelledby="history-label">
+            <label>Yes<input name="history" type="radio" value="true"></label>
+            <label>No<input name="history" type="radio" value="false"></label>
+          </div>
+        </div>
+        <button type="submit" id="final-submit" hidden>Submit application</button>
+      </form>
+      <button data-automation-id="pageFooterNextButton">Save and Continue</button>
+      <script>
+        window.nextClicks=0;window.submissions=0;window.selectedHistory=null;window.choiceTrusted=[];
+        for (const radio of document.querySelectorAll('input[type=radio]'))
+          radio.addEventListener('click', e => window.choiceTrusted.push(e.isTrusted));
+        document.querySelector('[data-automation-id=pageFooterNextButton]').onclick = () => {{
+          window.nextClicks++;
+          window.selectedHistory=document.querySelector('input[name=history]:checked')?.value;
+          document.querySelector('[data-automation-id=progressBarActiveStep]').textContent='Review';
+          document.querySelector('[data-automation-id=pageFooterNextButton]').textContent='Submit application';
+          document.querySelector('#final-submit').hidden=false;
+        }};
+      </script>''')
+    config = replace(space.config, answers=AnswersFile(answers=[
+        AnswerEntry(
+            question="Have you previously been employed by this company?", answer="No",
+            match=["worked for this company", "previously worked as employee or intern"],
+            exclude_companies=["Excluded Co"],
+        ),
+    ]))
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, WORKDAY))
+    monkeypatch.setattr(filler, 'detect_ats', lambda url: 'workday')
+    resume = next(f for f in read_fields(form_frames(page)) if f.kind == 'file')
+    upload(page.main, resume.key, space.settings.root / 'resume.pdf')
+    job, _ = jobs_core.upsert_job(
+        space.conn, company='Fixture Co', title='Saved history intern',
+        url=page.main.url, tracks=[space.track.name],
+    )
+
+    report = filler.fill_job(page, space.conn, space.settings, config, job, resume_tab=True)
+
+    assert report.status == 'ready' and report.pages == 2 and not report.unanswered
+    assert page.main.call('() => window.nextClicks', page_realm=True) == 1
+    assert page.main.call('() => window.selectedHistory', page_realm=True) == 'false'
+    assert page.main.call('() => window.choiceTrusted', page_realm=True) == [True]
+    assert page.main.call('() => document.querySelector("#surname").value') == 'Manually retained surname'
+    assert page.main.call('() => window.submissions', page_realm=True) == 0
+    final = preflight.inspect_page(page)
+    assert final.review and not final.safe_next and not final.errors
+    with pytest.raises(UnsafeAction):
+        preflight.advance(final, 'workday')
+
+
 @pytest.mark.parametrize('role, control, unsupported', [
     ('', '<input name="answer" aria-label="Required custom answer" value="Known">', False),
     ('group', '<input name="answer" aria-label="Required custom answer" value="Known">', False),

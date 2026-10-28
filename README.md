@@ -401,35 +401,145 @@ Demo restrictions intentionally prevent testing live employer, Gmail or paid cal
 
 ## Desktop app (Linux)
 
+### Download, install, and launch
+
+Open the **[latest desktop release](https://github.com/ZacharySF/kitty-releases/releases/latest)**.
+Downloads are published in a separate public, releases-only repository; application
+source is not included. The supported downloadable platform is **Linux x86_64**,
+built on Ubuntu 22.04 (glibc 2.35); older distributions, ARM, Windows and macOS
+are not supported by these installers.
+
+- **Ubuntu 22.04+ / compatible Debian-based desktops:** download the `.deb`,
+  open it with your graphical software/package installer, and approve installation.
+  The package installs its GTK/WebKit, tray and GStreamer dependencies and a
+  **kitty!** application-menu entry. Launch it from that menu, not from a terminal.
+- **Other compatible Linux desktops:** download the `.AppImage`, move it to a
+  permanent writable folder such as `~/Applications`, enable **Allow executing
+  file as program** in the file's Properties, and double-click it. Your desktop
+  needs AppImage/FUSE support (on Ubuntu 22.04, package `libfuse2`) and compatible
+  audio support. A desktop AppImage integrator can add it to your application menu.
+  Do not run it as root or keep it in a read-only/system-owned directory.
+- **NixOS:** the `.deb` is not a NixOS package. Use the local launcher installation
+  below; do not try to install the Debian package with `dpkg` on NixOS.
+
+The Linux installer is named **kitty! Workspace** and its Debian package is
+`kitty-workspace`, distinct from the unrelated `kitty` terminal package.
+
+No Python, Node, Rust, repository checkout, or build shell is needed to run the
+downloadable app. The app starts and stops its own backend on a random loopback
+port. Its default workspace is `~/.local/share/kitty/workspace` (or the native
+XDG data directory); configuration, databases, resumes and other workspace files
+live **outside the application**, are reused in place, and are not overwritten by
+application updates. Back up that workspace as you would other personal data.
+Replacing/uninstalling the application does not require deleting it.
+
+### Signed in-app updates
+
+Use **Check for updates…** in kitty!'s native window or system-tray menu. The native updater
+checks the public release feed over HTTPS and verifies the installer against the
+public signing key embedded in the app before installation. There are no updater
+permissions exposed to the website. Save your work and approve the native prompts;
+restart when the app asks so its backend and window run the same new version.
+
+Debian-package updates require administrator authentication through your desktop's
+PolicyKit authentication agent, and the new package's dependencies must already be
+satisfiable. If package installation reports missing dependencies, open the new
+`.deb` from the release page in your graphical package manager. AppImage updates
+replace the existing writable AppImage and need free space beside it for the new
+download. A network/signature/install failure must not be treated as a completed
+update; keep the existing app or install the signed release manually.
+
+Only packaged `.deb` and AppImage installations support native self-installation.
+Loose source-binary installations use the public downloads link instead; rebuild
+and rerun the local installer to replace those binaries. Installing a published
+AppImage with the launcher below retains AppImage self-update support.
+
+### Build and install a local launcher (including NixOS)
+
+For development/build machines, the existing packaging script builds the locked
+website and freezes the locked Python backend into a relocatable `kitty-web`
+sidecar, then builds the Tauri app. It requires Python 3.12, uv, Node/npm, Rust,
+GTK3/WebKitGTK 4.1 development libraries, tray/media libraries and packaging tools.
+The frontend CLI comes from `web/package-lock.json`; no global CLI is needed.
+
 ```bash
-# NixOS, reusing the installed cargo/rustc (the pinned GTK/WebKit libraries come from the flake)
+# NixOS: reuse the installed cargo/rustc with pinned GTK/WebKit dependencies.
 nix develop 'path:./desktop#host-toolchain' --offline --max-jobs 0 --command bash scripts/build-desktop.sh
-# any distro with the prerequisites, or the fully pinned toolchain: nix develop ./desktop --command ...
-KITTY_HOME="$PWD" desktop/target/release/kitty-workspace   # open this workspace in the app
+# Install under the same dependency environment, once (no shell needed at launch).
+nix develop 'path:./desktop#host-toolchain' --offline --command \
+  uv run --locked python scripts/install-desktop.py
+# To keep using an existing workspace, add: --workspace /absolute/path/to/workspace
 ```
 
-The script builds the website, packages the backend as a relocatable `kitty-web`
-sidecar and bundles the Tauri app as a `.deb` (plus an AppImage outside NixOS: Tauri's
-AppImage step expects GTK in one library directory, which the Nix store does not
-provide). The app starts its own backend on a random loopback port. Without
-`KITTY_HOME` it uses `~/.local/share/kitty/workspace`; existing workspaces are reused
-in place and configuration is never overwritten.
+The installer copies the built app and sidecar to
+`$XDG_DATA_HOME/kitty/application` (default `~/.local/share/kitty/application`),
+installs the icon and **kitty!** application-menu entry, and creates
+`$XDG_BIN_HOME/kitty-workspace` (default `~/.local/bin/kitty-workspace`).
+It captures only runtime library/schema/media settings from the build environment,
+not secrets, and does not depend on the repository at launch. Keep those Nix
+runtime store paths available. The launcher does not run `nix develop` or need an
+open terminal. The installer never copies over or deletes workspace files.
+`--binary`, `--sidecar`, and `--icon` can select explicit build artifacts.
+Alternatively, `--appimage /absolute/path/to/downloaded.AppImage` installs a
+published AppImage rather than loose binaries. Its writable installed location
+remains fixed across signed replacements. The launcher sets
+`APPIMAGE_EXTRACT_AND_RUN=1` to avoid requiring FUSE. NixOS still needs a compatible
+ELF loader and runtime libraries; capture them by running the installer inside the
+dependency shell. Neither a checkout nor that shell is needed for subsequent launches.
 
-On NixOS, run the built binary inside the same dependency shell:
+NixOS defaults to a `.deb` build artifact because Tauri's AppImage assembly expects
+GTK in a single library directory, unlike the Nix store. The official downloadable
+AppImage is built on Ubuntu CI. On other build hosts, `KITTY_BUNDLES=deb` or
+`KITTY_BUNDLES=appimage,deb` explicitly selects bundles.
+`bash scripts/build-desktop.sh --prepare-only` prepares website/backend artifacts
+for the official Tauri release action without running a second native build.
+
+The dependency environment exposes matching GStreamer base/good plugins for WebKit
+timer audio. Sound also needs an available output device and a Start/Enable sound
+gesture while kitty! is open.
+
+### Publish a desktop release (maintainers)
+
+The private source repository's **Desktop release (Linux x86_64)** workflow runs
+on a `v*` tag or manual dispatch. The application version in
+`desktop/tauri.conf.json` must match the tag exactly (for example, `v0.1.1`).
+Manual dispatch uses that configuration's version. Commit the version and lockfiles
+first, then push the matching tag, or dispatch the workflow on that commit.
+
+Configure repository secrets `TAURI_SIGNING_PRIVATE_KEY`,
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (empty when the key is unencrypted), and
+`RELEASE_TOKEN`. The latter must grant release/contents write access **only** to
+`ZacharySF/kitty-releases`; the source workflow itself has read-only contents
+permissions. Keep a secure backup of the signing key: replacing it breaks trust
+for already-installed applications. Never commit the private key or password.
+
+CI uses Ubuntu 22.04, Python 3.12 with `uv --locked`, npm's lockfile and locked
+Rust dependencies. It checks the frontend, isolated backend/runtime regressions
+and native Rust tests before the official
+[Tauri release action](https://github.com/tauri-apps/tauri-action) signs and uploads
+the `.deb`, `.AppImage`, their `.sig` files and `latest.json` to a **draft** in the
+public releases repository. A guard downloads the actual uploaded files and
+validates the version/tag, nonempty complete assets, signatures and installer-specific
+`linux-x86_64-deb` / `linux-x86_64-appimage` metadata before publishing as latest.
+A failed guard leaves a draft, not a new public updater feed.
+No source archive, checkout, private workspace or applicant data is uploaded by
+the workflow (GitHub's automatic source archives cover only the releases repository).
+
+The signed updater feed is
+[`latest.json`](https://github.com/ZacharySF/kitty-releases/releases/latest/download/latest.json).
+Metadata generation is owned by the official action, not a separate custom feed
+generator; the executable guard is covered by `tests/test_release_packaging.py`.
+For local verification of release/install tooling:
 
 ```bash
-nix develop 'path:./desktop#host-toolchain' --offline --command env KITTY_HOME="$PWD" ./desktop/target/release/kitty-workspace
+uv run --locked pytest -q tests/test_release_packaging.py tests/test_desktop_install.py
 ```
-The shell exposes matching GStreamer base/good plugins for WebKit timer audio
-(`appsrc`, `appsink`, audio conversion and the system sink). The Debian bundle
-declares base/good and PulseAudio plugin dependencies. Sound still needs an
-available output device and a Start/Enable sound gesture while kitty! is open.
 
 On Linux sessions exposing both Wayland and X11, the app defaults to XWayland.
 This avoids a WebKitGTK native-Wayland scaling failure that can produce a
 negative device-pixel ratio and a blank, compressed page on fractional-scale
 desktops. An explicit `GDK_BACKEND` is respected; Wayland-only sessions are unchanged.
-Window commands live in the system tray rather than a duplicated window menubar.
+Window and updater commands are available in native menus, including the system tray.
 
 
 ## Finding jobs (Stage 2)
@@ -843,6 +953,7 @@ origin in `config/apply.yaml`:
 authentication:
   enabled: true
   allow_account_creation: false   # true also lets it fill Create account / Sign up forms
+  allow_account_terms: false     # true authorizes required routine terms/privacy during sign-in too
   account_mode: recognized       # login or create explicitly chooses an account action
   approved_origins:
     - https://example.wd5.myworkdayjobs.com
@@ -863,6 +974,18 @@ receipts before each credential write. Empty provisional navigation metadata is
 waited out read-only; a real unapproved document still fails closed. Email-first
 and password-next flows do not require a whole new account attempt. A rejected
 credential pair is not replayed by the same controller.
+Workday sign-in redirects retain the reviewed application identity across locale
+insertion and location-label punctuation changes. The HTTPS tenant, career site
+and full requisition slug must still match before credentials are written;
+different postings, nested redirects and cross-origin targets are rejected.
+
+Scoped employer email verification reuses Gmail in kitty's dedicated Firefox
+profile. If its Gmail tab was closed, preparation opens a normal background tab
+and waits for the saved session; it never copies everyday-browser cookies or
+requires OAuth status-mail setup. A signed-out or ambiguous mailbox is reported
+specifically. Only the approved sender, exact recipient and fresh request window
+are searched; delivery headers must qualify before reading a message body.
+
 
 Employer-password mode recognizes email/password account forms, confirmation
 fields and accessible component controls. Native credential submits require POST.
@@ -871,10 +994,16 @@ fallback before any credential is populated; explicit GET and unsafe submit
 overrides are rejected. In password forms, CAPTCHA widgets, extra fields,
 cross-origin frames and boxes already holding other values prevent credential
 writes. Oracle email entry distinguishes empty CAPTCHA placeholders and passive
-badges from an actual challenge; it never solves a challenge. Routine required
-account terms can be selected under account-creation approval; unrelated consent
-cannot. Known cookie notices may be rejected, never accepted. Credentials are
-redacted from reports, stored notes and browser errors.
+badges from an actual challenge; it never solves a challenge. Account-creation
+approval covers required routine sign-up terms. `allow_account_terms` separately
+authorizes required routine terms/privacy during sign-in; reviewed website auto,
+login and create runs include that permission. Consent is classified from its own
+label and directly bound descriptions, not every purpose named in an expanded
+privacy notice. Optional marketing stays unselected; certifications, screening
+permissions and sensitive declarations stay manual. Checkbox acknowledgment is
+observed before sending one account action; no blind double-click. Known cookie
+notices may be rejected, never accepted. Credentials are redacted from reports,
+stored notes and browser errors.
 
 Posting entry waits for Oracle's visible application-loading overlay to clear
 before clicking Apply. A visible interactive DataDome challenge, including one

@@ -392,3 +392,106 @@ def test_record_interaction_failures_have_typed_non_fact_causes(workspace, monke
     result = records.fill_required_records(object(), workspace.config)
     assert result.handled and result.blocker and not result.changed
     assert result.cause == ('browser_error' if failure == 'transport' else 'unsupported_controls')
+
+
+def _workday(page, *, panels=1, initial=None):
+    """Workday My Experience: open Work-Experience-N panels with MM/YYYY segments."""
+    def text(prefix, slot, label, required=False, area=False):
+        tag = (f'<textarea id="{prefix}--{slot}"></textarea>' if area else
+               f'<input type="text" id="{prefix}--{slot}" {"aria-required=true" if required else ""}>')
+        star = '<abbr title="required">*</abbr>' if required else ''
+        return (f'<div data-automation-id="formField-{slot}"><label for="{prefix}--{slot}">{label}{star}</label>'
+                f'{tag}</div>')
+
+    def date(prefix, slot, label):
+        segments = ''.join(
+            f'<input type="text" role="spinbutton" aria-label="{part}" tabindex="{0 if part == "Month" else -1}" '
+            f'data-automation-id="dateSection{part}-input" id="{prefix}--{slot}-dateSection{part}-input">'
+            for part in ('Month', 'Year'))
+        return (f'<div data-automation-id="formField-{slot}"><fieldset><legend>{label}'
+                f'<abbr title="required">*</abbr></legend>{segments}</fieldset></div>')
+
+    def panel(index):
+        prefix = f'workExperience-{index + 3}'
+        return (f'<div role="group" aria-labelledby="Work-Experience-{index + 1}-panel">'
+                f'<h4>Work Experience {index + 1}</h4>' +
+                text(prefix, 'jobTitle', 'Job Title', True) + text(prefix, 'companyName', 'Company', True) +
+                text(prefix, 'location', 'Location') +
+                f'<div data-automation-id="formField-currentlyWorkHere"><input type="checkbox" '
+                f'id="{prefix}--currentlyWorkHere"><label for="{prefix}--currentlyWorkHere">I currently work here'
+                f'</label></div>' + date(prefix, 'startDate', 'From') +
+                f'<div class="to">{date(prefix, "endDate", "To")}</div>' +
+                text(prefix, 'roleDescription', 'Role Description', area=True) +
+                '<button type="button" data-automation-id="panel-set-delete-button">Delete</button></div>')
+
+    script = r'''
+      window.counts={add:0,save:0,submit:0};
+      document.querySelectorAll('[data-automation-id=add-button]').forEach(b=>b.onclick=()=>window.counts.add++);
+      document.querySelector('[data-automation-id=pageFooterNextButton]').onclick=()=>window.counts.save++;
+      document.querySelector('form').onsubmit=e=>{e.preventDefault();window.counts.submit++;};
+      document.querySelectorAll('[id$=currentlyWorkHere]').forEach(box=>box.onchange=()=>{
+        box.closest('[role=group]').querySelector('.to').hidden=box.checked;});
+      for(const [id,value] of Object.entries(INITIAL)){
+        const el=document.getElementById(id);if(el.type==='checkbox')el.checked=value;else el.value=value;}
+    '''.replace('INITIAL', json.dumps(initial or {}))
+    body = ('<!doctype html><form><h2>My Experience</h2><section aria-label="Work Experience">' +
+            ''.join(panel(i) for i in range(panels)) +
+            '<button type="button" data-automation-id="add-button">Add Another</button></section>'
+            '<section aria-label="Education"><button type="button" data-automation-id="add-button">Add</button>'
+            '</section><button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>'
+            f'<button type="submit">Submit</button></form><script>{script}</script>')
+    page.goto('data:text/html,' + quote(body, safe=''))
+    return page.main
+
+
+def _workday_state(frame):
+    return frame.call("""() => ({counts: window.counts, values: Object.fromEntries(
+      [...document.querySelectorAll('[role=group] input, [role=group] textarea')].map(e =>
+        [e.id, e.type === 'checkbox' ? e.checked : e.value]))})""", page_realm=True)
+
+
+def test_workday_experience_panel_fills_one_record_in_place(workspace, page):
+    frame = _workday(page, initial={'workExperience-3--location': 'Manual City'})
+    record = EMPLOYMENT                 # no explicit location fact: the manual value stays
+    result = fill_required_records(page, _config(workspace, 'experience', [record]))
+    assert result.handled and result.changed and not result.blocker
+    state = _workday_state(frame)
+    assert state['counts'] == {'add': 0, 'save': 0, 'submit': 0}
+    values = state['values']
+    assert values['workExperience-3--jobTitle'] == EMPLOYMENT['title']
+    assert values['workExperience-3--companyName'] == EMPLOYMENT['employer']
+    assert values['workExperience-3--location'] == 'Manual City'     # manual value preserved
+    assert values['workExperience-3--currentlyWorkHere'] is False
+    assert int(values['workExperience-3--startDate-dateSectionMonth-input']) == 2
+    assert values['workExperience-3--startDate-dateSectionYear-input'] == '2030'
+    assert int(values['workExperience-3--endDate-dateSectionMonth-input']) == 7
+    assert values['workExperience-3--endDate-dateSectionYear-input'] == '2031'
+    assert values['workExperience-3--roleDescription'] == EMPLOYMENT['description']
+    again = fill_required_records(page, _config(workspace, 'experience', [record]))
+    assert not again.handled and not again.changed
+    assert _workday_state(frame) == state
+
+
+def test_workday_current_job_ticks_box_and_leaves_to_hidden(workspace, page):
+    frame = _workday(page)
+    record = dict(EMPLOYMENT, current=True, end_date=None)
+    result = fill_required_records(page, _config(workspace, 'experience', [record]))
+    assert result.changed and not result.blocker
+    values = _workday_state(frame)['values']
+    assert values['workExperience-3--currentlyWorkHere'] is True
+    assert values['workExperience-3--endDate-dateSectionMonth-input'] == ''
+    assert _workday_state(frame)['counts'] == {'add': 0, 'save': 0, 'submit': 0}
+
+
+@pytest.mark.parametrize('case', ['different-values', 'two-records', 'two-panels', 'no-records', 'missing-date'])
+def test_workday_experience_panel_refuses_ambiguity_and_conflicts(workspace, page, case):
+    initial = {'workExperience-3--companyName': 'Manual Other Employer'} if case == 'different-values' else None
+    frame = _workday(page, panels=2 if case == 'two-panels' else 1, initial=initial)
+    records = {'two-records': [EMPLOYMENT, dict(EMPLOYMENT, employer='Second Workshop')],
+               'no-records': [], 'missing-date': [dict(EMPLOYMENT, start_date=None)]}.get(case, [EMPLOYMENT])
+    before = _workday_state(frame)
+    result = fill_required_records(page, _config(workspace, 'experience', records))
+    assert result.handled and result.blocker and not result.changed and not result.filled
+    assert result.cause == ('missing_applicant_fact' if case in ('no-records', 'missing-date')
+                            else 'unsupported_controls')
+    assert _workday_state(frame) == before

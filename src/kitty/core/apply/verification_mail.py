@@ -1,9 +1,9 @@
-"""Read a narrowly scoped verification message in an existing Firefox Gmail tab.
+"""Read a narrowly scoped verification message in kitty's Firefox Gmail session.
 
-This is independent of the OAuth status-mail importer. No browser/session is
-created, and neither mailbox credentials nor cookies are read. Search matches
-are candidates only: each message's own delivery headers must qualify before
-its body is read. Unsupported Gmail layouts fail closed.
+This is independent of the OAuth status-mail importer. A normal Gmail tab may
+be opened in the existing browser profile; no mailbox credentials or cookies
+are read. Each message's own delivery headers qualify before its body is read.
+Unsupported Gmail layouts fail closed.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from email.parser import HeaderParser
 from email.utils import getaddresses, parsedate_to_datetime
 from urllib.parse import parse_qs, quote, urlsplit
 
-from kitty.core.apply.bidi import Bidi, BidiError, Frame, Tab
+from kitty.core.apply.bidi import Bidi, BidiError, Frame, Tab, open_tab
 
 _MAIL_ORIGIN = "https://mail.google.com"
 _ACCOUNT_PATH = re.compile(r"/mail/u/[0-9]+/")
@@ -564,10 +564,54 @@ def _restore(frame: Frame, account: tuple[str, str], original: str, owned: str) 
     """, original, owned)
 
 
+def _mailbox_candidates(bidi: Bidi, request: MailRequest,
+                        checkpoint: Callable[[], None] | None):
+    nodes = bidi.command("browsingContext.getTree", {}).get("contexts", [])
+    if not any(_account_url(node.get("url", "")) for node in nodes):
+        # Reuse the profile's signed-in session, not another browser's cookies.
+        # Keep the tab available for the next run or a normal manual sign-in.
+        tab = open_tab(bidi, background=True)
+        tab.goto(_MAIL_ORIGIN + "/mail/u/0/")
+        deadline = time.monotonic() + _WAIT_SECONDS
+        while True:
+            _checkpoint(request, checkpoint)
+            state = tab.main.call(
+                "() => ({origin:location.origin,path:location.pathname,"
+                "ready:document.readyState,"
+                "search:document.querySelectorAll('form[role=search]').length})",
+                page_realm=True,
+            )
+            if state["origin"] == "https://accounts.google.com":
+                raise VerificationMailError("logged_out")
+            if state["origin"] == _MAIL_ORIGIN and state["search"]:
+                account = _account_url(_MAIL_ORIGIN + state["path"])
+                if account is not None:
+                    try:
+                        _surface(tab.main, account)
+                        break
+                    except VerificationMailError as exc:
+                        if exc.kind != "unsupported":
+                            raise
+            if time.monotonic() >= deadline:
+                raise VerificationMailError("unavailable")
+            time.sleep(.1)
+        nodes = bidi.command("browsingContext.getTree", {}).get("contexts", [])
+    candidates = []
+    for node in nodes:
+        _checkpoint(request, checkpoint)
+        account = _account_url(node.get("url", ""))
+        if account is None:
+            continue
+        frame = Frame(bidi, node["context"], node["url"])
+        surface = _surface(frame, account)
+        candidates.append((frame, account, surface["hash"]))
+    return candidates
+
+
 def read_verification_mail(
     bidi: Bidi, request: MailRequest, *, checkpoint: Callable[[], None] | None = None,
 ) -> list[VerificationMessage]:
-    """Return at most three exact, fresh messages; never activate another tab.
+    """Return at most three exact, fresh messages in the existing browser profile.
 
     The caller owns approval, verification-purpose matching and consumption.
     This reader never resends messages or enters a code in an application.
@@ -575,16 +619,7 @@ def read_verification_mail(
     _validate_request(request)
     _checkpoint(request, checkpoint)
     try:
-        candidates: list[tuple[Frame, tuple[str, str], str]] = []
-        tree = bidi.command("browsingContext.getTree", {})
-        for node in tree.get("contexts", []):
-            _checkpoint(request, checkpoint)
-            account = _account_url(node.get("url", ""))
-            if account is None:
-                continue
-            frame = Frame(bidi, node["context"], node["url"])
-            surface = _surface(frame, account)
-            candidates.append((frame, account, surface["hash"]))
+        candidates = _mailbox_candidates(bidi, request, checkpoint)
         if not candidates:
             raise VerificationMailError("unavailable")
         if len(candidates) != 1:

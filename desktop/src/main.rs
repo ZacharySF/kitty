@@ -1,3 +1,7 @@
+mod update_lifecycle;
+mod updates;
+mod workspace_path;
+
 use std::{
     fs,
     io::{BufRead, BufReader, Write},
@@ -38,21 +42,17 @@ impl Drop for Backend {
 struct Desktop {
     backend: Mutex<Backend>,
     background: AtomicBool,
-    quitting: AtomicBool,
-    stopped: AtomicBool,
+    lifecycle: Mutex<update_lifecycle::Lifecycle>,
     preferences: PathBuf,
 }
 
 fn workspace() -> Result<PathBuf, String> {
-    if let Some(root) = std::env::var_os("KITTY_HOME") {
-        if root.is_empty() { return Err("KITTY_HOME must not be empty".into()); }
-        return Ok(PathBuf::from(root));
-    }
-    let data = match std::env::var_os("XDG_DATA_HOME") {
-        Some(path) if Path::new(&path).is_absolute() => PathBuf::from(path),
-        _ => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is unavailable")?).join(".local/share"),
-    };
-    Ok(data.join("kitty/workspace"))
+    workspace_path::select(
+        std::env::args_os().skip(1),
+        std::env::var_os("KITTY_HOME"),
+        std::env::var_os("XDG_DATA_HOME"),
+        std::env::var_os("HOME"),
+    )
 }
 
 fn local_url(url: &Url, origin: &Url) -> bool {
@@ -128,11 +128,18 @@ fn show(app: &tauri::AppHandle) {
 
 fn request_quit(app: &tauri::AppHandle) {
     let state = app.state::<Desktop>();
-    if state.quitting.swap(true, Ordering::SeqCst) { return; }
+    match state.lifecycle.lock().begin_quit() {
+        update_lifecycle::QuitDecision::Stop => {},
+        update_lifecycle::QuitDecision::AlreadyStopping => return,
+        update_lifecycle::QuitDecision::UpdateBusy => {
+            updates::busy(app);
+            return;
+        }
+    }
     let app = app.clone();
     thread::spawn(move || {
         app.state::<Desktop>().backend.lock().stop();
-        app.state::<Desktop>().stopped.store(true, Ordering::SeqCst);
+        app.state::<Desktop>().lifecycle.lock().stopped();
         app.exit(0);
     });
 }
@@ -152,6 +159,8 @@ fn main() {
     unsafe { libc::umask(0o077); }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show(app)))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let root = workspace().map_err(std::io::Error::other)?;
             fs::create_dir_all(root.join(".private"))?;
@@ -163,12 +172,15 @@ fn main() {
             let (backend, origin) = start_backend(&root)?;
             app.manage(Desktop {
                 backend: Mutex::new(backend), background: AtomicBool::new(background),
-                quitting: AtomicBool::new(false), stopped: AtomicBool::new(false), preferences,
+                lifecycle: Mutex::new(update_lifecycle::Lifecycle::default()), preferences,
             });
             let show_item = MenuItem::with_id(app, "show", "Show kitty!", true, None::<&str>)?;
             let background_item = CheckMenuItem::with_id(app, "background", "Keep running on close (monitoring / reminders)", true, background, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit kitty! (save and stop workers)", true, Some("Ctrl+Shift+Q"))?;
-            let menu = Menu::with_items(app, &[&show_item, &background_item, &quit])?;
+            let update = MenuItem::with_id(app, "updates", "Check for updates…", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &background_item, &update, &quit])?;
+            // Also expose the native window menu: some Linux desktops have no tray.
+            app.set_menu(menu.clone())?;
             let tray = TrayIconBuilder::new().tooltip("kitty!").menu(&menu)
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?).build(app);
             if tray.is_err() {
@@ -202,11 +214,13 @@ fn main() {
             thread::spawn(move || loop {
                 thread::sleep(Duration::from_secs(1));
                 let state = handle.state::<Desktop>();
-                if state.quitting.load(Ordering::SeqCst) { break; }
+                let mut lifecycle = state.lifecycle.lock();
+                if lifecycle.can_exit() { break; }
+                if !lifecycle.monitor_backend() { continue; }
                 let exited = state.backend.lock().0.as_mut()
                     .and_then(|child| child.try_wait().ok()).flatten().is_some();
                 if exited {
-                    state.stopped.store(true, Ordering::SeqCst);
+                    lifecycle.stopped();
                     handle.exit(1);
                     break;
                 }
@@ -216,6 +230,7 @@ fn main() {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show(app),
             "quit" => request_quit(app),
+            "updates" => updates::check(app),
             "background" => {
                 let state = app.state::<Desktop>();
                 let enabled = !state.background.load(Ordering::SeqCst);
@@ -234,7 +249,7 @@ fn main() {
     app.run(|app, event| {
         if let RunEvent::ExitRequested { api, .. } = event {
             if let Some(state) = app.try_state::<Desktop>() {
-                if !state.stopped.load(Ordering::SeqCst) {
+                if !state.lifecycle.lock().can_exit() {
                     api.prevent_exit();
                     request_quit(app);
                 }

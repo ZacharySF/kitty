@@ -2413,3 +2413,78 @@ def test_password_only_scope_does_not_adopt_a_separate_newsletter_identity(works
     assert result.filled == ("password",)
     assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD]})]
     assert not any(path in ("/newsletter", "/apply") for _, path, _ in site.requests)
+
+def test_required_account_terms_are_not_blocked_by_expanded_privacy_notice(workspace, site, page):
+    notice = """<details open><summary>Privacy notice</summary>
+      <p>Regional law may regulate criminal records and background check information.</p>
+      <p>Separate optional marketing preferences are described in this notice.</p>
+      </details>"""
+    terms = '<label><input type="checkbox" name="terms" required>Yes I have read and understand the terms and conditions</label>'
+    site.login_page = SIGNUP.replace('<button', notice + terms + '<button')
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+    assert result.acted and result.blocker is None
+    assert _posts(site) == [("/session", {
+        "email": [EMAIL], "password": [PASSWORD], "confirm": [PASSWORD], "terms": ["on"],
+    })]
+    assert page.main.url == site.origin + "/application"
+
+
+def test_required_account_terms_leave_optional_marketing_unselected(workspace, site, page):
+    site.login_page = SIGNUP.replace("<button", """
+      <label><input type="checkbox" name="terms" required>I accept the terms of service</label>
+      <label><input type="checkbox" name="marketing">Send me promotional marketing</label><button""")
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+    assert result.acted and result.blocker is None
+    assert _posts(site) == [("/session", {
+        "email": [EMAIL], "password": [PASSWORD], "confirm": [PASSWORD], "terms": ["on"],
+    })]
+
+
+def test_sensitive_description_bound_to_account_checkbox_stays_manual(workspace, site, page):
+    site.login_page = SIGNUP.replace("<button", """
+      <p id="scope">This also authorizes a background check.</p>
+      <label><input type="checkbox" name="terms" required aria-describedby="scope">I accept the privacy policy</label>
+      <button""")
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+    assert not result.acted and result.blocker.startswith("consent:")
+    assert not _posts(site)
+    assert not page.main.call("() => document.querySelector('[name=terms]').checked")
+
+
+@pytest.mark.parametrize("kind", ["required-checkbox", "implicit-account-terms"])
+def test_explicit_account_terms_authority_allows_signin_without_creation(workspace, site, page, kind):
+    terms = ('<label><input type="checkbox" name="terms" required>I accept the privacy policy</label>'
+             if kind == "required-checkbox" else '<p>By signing in, you agree to the terms of service.</p>')
+    site.login_page = LOGIN.format(extra="", method="post").replace("<button", terms + "<button")
+    space = _space(workspace, site, account_mode="login", allow_account_terms=True)
+    page.goto(site.origin + "/login")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+    expected = {"email": [EMAIL], "password": [PASSWORD]}
+    if kind == "required-checkbox":
+        expected["terms"] = ["on"]
+    assert result.acted and result.blocker is None
+    assert _posts(site) == [("/session", expected)]
+    assert not any(path == "/signup" for _, path, _ in site.requests)
+
+
+def test_account_checkbox_waits_for_async_receipt_without_clicking_twice(workspace, site, page):
+    site.login_page = SIGNUP.replace("<button", """
+      <label><input type="checkbox" name="terms" required onclick="
+        sessionStorage.setItem('terms_clicks', String(Number(sessionStorage.getItem('terms_clicks') || 0) + 1));
+        this.checked = false; setTimeout(() => { this.checked = true; }, 250);
+      ">I accept the terms of service</label><button""")
+    space = _space(workspace, site, allow_account_creation=True)
+    page.goto(site.origin + "/login")
+    page.main.call("() => sessionStorage.removeItem('terms_clicks')")
+    result = authenticate(page, space.config.apply.authentication, load_credentials(space.settings))
+    assert result.acted and result.blocker is None
+    assert page.main.call("() => sessionStorage.getItem('terms_clicks')") == "1"
+    assert _posts(site) == [("/session", {
+        "email": [EMAIL], "password": [PASSWORD], "confirm": [PASSWORD], "terms": ["on"],
+    })]

@@ -256,6 +256,15 @@ Stage 1: done.
 - Workday navigation is ATS-specific: recognized same-posting entry and non-final
   Next/Continue controls only, bounded progression, no automatic consent or submit.
   Populated retained forms defer new resume uploads that could overwrite manual values.
+- Employer-history matching retains the actual employer (including an explicitly
+  parenthesized alias) and saved answer scopes. A plain prior-employment question
+  may use the user's generic company-history answer even when its label appends
+  routing-only "If yes, provide additional information; if no, continue" wording.
+  Other employers, additional qualifications/attestations and ambiguous or
+  excluded answers do not inherit that answer. Explicit question answers retain
+  precedence; no negative history is inferred from a resume. Native choice
+  commitment and required-field checks still gate Save and Continue, and the
+  final application Submit remains manual.
 - 2026-10-09: opt-in sign-in automation (`apply.yaml` `authentication`, off by default).
   Credentials come only from a chmod-600 `.private/application-credentials.env`; exact
   approved HTTPS origins only; account creation is a separate opt-in. One recognized

@@ -70,6 +70,7 @@
     authentication: {
       enabled: boolean;
       allow_account_creation: boolean;
+      allow_account_terms: boolean;
       approved_origins: string[];
       configured_origins: string[];
       credentials_available: boolean;
@@ -572,7 +573,7 @@
         {plan.authentication.mode === "google" ? "Use the reviewed signed-in Google account" : "Sign in or create required employer accounts with my saved credentials"}
       </label>
       <p class="muted">Only reviewed HTTPS destinations receive credentials.
-        {#if plan.authentication.allow_account_creation && plan.authentication.mode !== "google"}
+        {#if plan.authentication.allow_account_terms || plan.authentication.allow_account_creation}
           Required routine account terms are included.
         {/if}
         {#if plan.authentication.email_verification?.enabled}

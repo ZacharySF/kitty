@@ -47,11 +47,13 @@ def _authentication_plan(app, selected: list[dict], mode: str) -> tuple[dict, st
         else:
             binding = credential_binding(credentials)
     verification = policy.email_verification.model_dump(mode="json")
-    verification["scopes"] = [scope for scope in verification["scopes"] if scope["origin"] in origins]
+    verification["scopes"] = [scope.model_dump(mode="json")
+                              for scope in policy.email_verification.scopes_for(origins)]
     verification["enabled"] = bool(verification["enabled"] and verification["scopes"] and mode != "google")
     return {
         "enabled": policy.enabled,
         "allow_account_creation": mode in ("auto", "create") or (mode == "configured" and policy.allow_account_creation),
+        "allow_account_terms": mode in ("auto", "login", "create") or (mode == "configured" and policy.allow_account_terms),
         "approved_origins": sorted(origins),
         "configured_origins": [origin for origin in policy.approved_origins
                                if origin != "https://accounts.google.com"] if policy.enabled else [],
@@ -418,6 +420,7 @@ def post(app, conn, path: str, body: dict) -> dict | None:
                 policy = AuthenticationSettings(
                     enabled=True, approved_origins=origins,
                     allow_account_creation=auth["allow_account_creation"],
+                    allow_account_terms=auth["allow_account_terms"],
                     account_mode=(captured.apply.authentication.account_mode
                                   if mode == "configured" else mode),
                     existing_account_origins=auth["existing_account_origins"],

@@ -19,9 +19,11 @@ discipline_by_track: {}         # optional: track name -> discipline
 standing: ""
 graduation: ""                 # YYYY-MM, when known
 
-# Required timeline editors use these explicit records, never the flat education
-# fields above. Leave unknown facts null; no dates, earned degrees or employment
-# classifications are inferred. Dates, when provided, must be quoted YYYY-MM.
+# Required timeline editors (Oracle) and open Workday Work Experience panels use
+# these explicit records, never the flat education fields above. Workday panels
+# are filled only with exactly one employment record and one panel. Leave unknown
+# facts null; no dates, earned degrees or employment classifications are
+# inferred. Dates, when provided, must be quoted YYYY-MM.
 education_records: []
 # - school: "Example University"
 #   degree: "Bachelor's Degree"

@@ -155,6 +155,9 @@ class JobRecovery:
         self.origin = urlsplit(page.main.url)[:2]
         self.owned_url = page.main.url
         self.posting = posting_key(job.apply_url or job.url)
+        self.workday_posting = auth.workday_application_binding(job.apply_url or job.url)
+        if self.workday_posting is not None:
+            self._check_identity()
         policy = config.apply.recovery
         self.agent = RecoveryAgent(RecoveryPolicy(
             max_steps=policy.max_actions, max_seconds=policy.max_recovery_seconds,
@@ -183,14 +186,24 @@ class JobRecovery:
 
     def _check_identity(self) -> None:
         current = self.page.main.url
-        if (self.page.context != self.context or urlsplit(current)[:2] != self.origin or
-                (current != self.owned_url and
-                 (self.posting is None or posting_key(current) != self.posting))):
+        if self.page.context != self.context:
+            raise PreparationStopped('Application ownership changed; review a new preparation plan.')
+        if self.workday_posting is not None:
+            if auth.workday_application_binding(current) != self.workday_posting:
+                raise PreparationStopped('Application ownership changed; review a new preparation plan.')
+        elif (urlsplit(current)[:2] != self.origin or
+              (current != self.owned_url and
+               (self.posting is None or posting_key(current) != self.posting))):
             raise PreparationStopped('Application ownership changed; review a new preparation plan.')
 
     def accepted_navigation(self) -> None:
         """Called only after an existing guarded entry/Next/auth transaction."""
         current = self.page.main.url
+        if self.page.context != self.context:
+            raise PreparationStopped('Application ownership changed; review a new preparation plan.')
+        if (self.workday_posting is not None and
+                auth.workday_application_binding(current) != self.workday_posting):
+            raise PreparationStopped('Application posting changed; review a new preparation plan.')
         key = posting_key(current)
         if self.posting is not None and key is not None and key != self.posting:
             raise PreparationStopped('Application posting changed; review a new preparation plan.')

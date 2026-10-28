@@ -708,12 +708,31 @@ class EmailVerificationSettings(_Base):
             raise ValueError("enabled email verification requires explicit scopes")
         return self
 
+    def scopes_for(self, origins) -> list[EmailVerificationScope]:
+        """Explicit scopes, plus Workday's tenant account sender for approved origins.
+
+        Workday sends candidate-account verification from ``<tenant>@otp.workday.com``
+        for ``https://<tenant>.wdN.myworkdayjobs.com``. Only that exact sender is
+        derived, and only for an origin the run already approved.
+        """
+        explicit = {scope.origin: scope for scope in self.scopes}
+        result = []
+        for origin in sorted(set(origins)):
+            if origin in explicit:
+                result.append(explicit[origin])
+            elif match := re.fullmatch(r"https://([a-z0-9-]+)\.wd[0-9]+\.myworkdayjobs\.com", origin):
+                result.append(EmailVerificationScope(origin=origin,
+                                                     sender_email=f"{match[1]}@otp.workday.com"))
+        return result
+
 
 class AuthenticationSettings(_Base):
     """Explicit local approval only; neither discovered jobs nor ATS names opt in."""
 
     enabled: StrictBool = False
     allow_account_creation: StrictBool = False
+    #: Explicit authority for required routine account terms, including sign-in.
+    allow_account_terms: StrictBool = False
     approved_origins: list[str] = Field(default_factory=list)
     #: User-declared account facts survive web-run approval without naming employers in code.
     existing_account_origins: list[str] = Field(default_factory=list)
@@ -743,6 +762,8 @@ class AuthenticationSettings(_Base):
             raise ValueError("enabled authentication requires approved_origins")
         if self.allow_account_creation and not self.enabled:
             raise ValueError("account creation requires enabled authentication")
+        if self.allow_account_terms and not self.enabled:
+            raise ValueError("account terms require enabled authentication")
         return self
 
     def approves(self, url: str) -> bool:
