@@ -34,19 +34,23 @@ def main() -> None:
     parser.add_argument("--binary", type=Path, default=root / "desktop/target/release/kitty-workspace")
     parser.add_argument("--appimage", type=Path, help="Install a signed published AppImage instead of loose build files")
     parser.add_argument("--sidecar", type=Path, help="Packaged backend (default: sole desktop/binaries/kitty-web-* file)")
+    parser.add_argument("--herdr", type=Path, help="Pinned herdr runtime (default: sole desktop/binaries/kitty-herdr-* file)")
     parser.add_argument("--icon", type=Path, default=root / "desktop/icons/icon.png")
     parser.add_argument("--workspace", type=Path, help="Reuse this workspace; omitted means the native default")
     parser.add_argument("--appimage-runner", type=Path, help="Launch the AppImage through this runner (NixOS: appimage-run)")
     args = parser.parse_args()
-    if args.appimage is not None and args.sidecar is not None:
-        parser.error("--appimage and --sidecar are mutually exclusive")
-    if args.appimage is None and args.sidecar is None:
-        candidates = list((root / "desktop/binaries").glob("kitty-web-*"))
-        if len(candidates) != 1:
-            parser.error("pass --sidecar when there is not exactly one packaged backend")
-        args.sidecar = candidates[0]
+    if args.appimage is not None and (args.sidecar is not None or args.herdr is not None):
+        parser.error("--appimage excludes --sidecar and --herdr")
+    if args.appimage is None:
+        for option, pattern, label in (("sidecar", "kitty-web-*", "packaged backend"),
+                                       ("herdr", "kitty-herdr-*", "staged herdr runtime")):
+            if getattr(args, option) is None:
+                candidates = list((root / "desktop/binaries").glob(pattern))
+                if len(candidates) != 1:
+                    parser.error(f"pass --{option} when there is not exactly one {label}")
+                setattr(args, option, candidates[0])
     executables = ([(args.appimage, "kitty.AppImage")] if args.appimage is not None else
-                   [(args.binary, "kitty-workspace"), (args.sidecar, "kitty-web")])
+                   [(args.binary, "kitty-workspace"), (args.sidecar, "kitty-web"), (args.herdr, "kitty-herdr")])
     for source in [*(source for source, _ in executables), args.icon]:
         if not source.is_file():
             parser.error(f"missing build artifact: {source}")

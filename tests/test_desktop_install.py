@@ -19,6 +19,9 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     sidecar = build / "kitty-web-x86_64-unknown-linux-gnu"
     sidecar.write_text('#!/bin/sh\nprintf "sidecar started\\n"\n')
     sidecar.chmod(0o755)
+    herdr = build / "kitty-herdr-x86_64-unknown-linux-gnu"
+    herdr.write_text('#!/bin/sh\nprintf "herdr\\n"\n')
+    herdr.chmod(0o755)
     icon = build / "icon.png"
     icon.write_bytes(b"fixture icon")
     data = tmp_path / "user data"
@@ -33,8 +36,8 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(tmp_path / "user bin"),
                         "LD_LIBRARY_PATH": "/fixture/nix/lib", "GST_PLUGIN_SYSTEM_PATH_1_0": "/fixture/nix/gstreamer"}
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
-                             "--binary", str(binary), "--sidecar", str(sidecar), "--icon", str(icon),
-                             "--workspace", str(workspace)], env=env, capture_output=True, text=True)
+                             "--binary", str(binary), "--sidecar", str(sidecar), "--herdr", str(herdr),
+                             "--icon", str(icon), "--workspace", str(workspace)], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     entry = (data / "applications/com.zacharysf.kitty.desktop").read_text()
     command = next(line.removeprefix("Exec=") for line in entry.splitlines() if line.startswith("Exec="))
@@ -47,6 +50,9 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     assert "Terminal=false" in entry
     assert (data / "kitty/application/kitty-workspace").is_file()
     assert (data / "kitty/application/kitty-web").is_file()
+    # The desktop app runs kitty!'s pinned herdr only from beside its own executable.
+    installed_herdr = data / "kitty/application/kitty-herdr"
+    assert installed_herdr.read_bytes() == herdr.read_bytes() and os.access(installed_herdr, os.X_OK)
 
 
 def test_install_without_workspace_uses_native_default(tmp_path):
@@ -58,7 +64,8 @@ def test_install_without_workspace_uses_native_default(tmp_path):
     data = tmp_path / "data"
     env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(tmp_path / "bin")}
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"), "--binary", str(binary),
-                             "--sidecar", str(binary), "--icon", str(icon)], env=env, capture_output=True, text=True)
+                             "--sidecar", str(binary), "--herdr", str(binary), "--icon", str(icon)],
+                            env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     launch = subprocess.run([str(tmp_path / "bin/kitty-workspace")], env=env, capture_output=True, text=True)
     assert launch.returncode == 0, launch.stderr

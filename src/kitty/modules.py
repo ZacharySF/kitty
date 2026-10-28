@@ -1,18 +1,20 @@
 """Built-in feature modules: which of them a workspace has switched on.
 
-Two independent modules sit on top of an always-on core (shell, settings, AI
+Three independent modules sit on top of an always-on core (shell, settings, AI
 provider and budget):
 
 * ``applyai``   - jobs, discovery, sources, companies, profile, resumes, questions,
   preparation, recovery, applications, follow-ups, mail and career reports;
 * ``workspace`` - notes, documents, canvas, schema, backlinks, flashcards, study,
-  calendar, tasks and opportunities.
+  calendar, tasks and opportunities;
+* ``terminal``  - kitty!'s own bundled herdr session (kitty.core.terminal). Off
+  means no herdr process, socket or terminal route exists.
 
 The selection lives in ``config/modules.yaml``::
 
-    enabled: [applyai, workspace]
+    enabled: [applyai, workspace, terminal]
 
-A workspace without the file keeps both modules (existing installs are
+A workspace without the file keeps every module (existing installs are
 unchanged); ``kitty init`` writes ``enabled: []``. A process reads the selection
 once at start-up and treats it as frozen: edits are persisted but only take
 effect in the next process. Nothing is unloaded at run time.
@@ -33,7 +35,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError, field_validator
 
-MODULE_IDS: tuple[str, ...] = ("applyai", "workspace")
+MODULE_IDS: tuple[str, ...] = ("applyai", "workspace", "terminal")
 MODULES_FILE = "modules.yaml"
 
 _INFO: dict[str, tuple[str, str]] = {
@@ -46,6 +48,11 @@ _INFO: dict[str, tuple[str, str]] = {
         "Workspace",
         "Notes, documents, canvas, schema maps, backlinks, flashcards, study, "
         "calendar, tasks and opportunities.",
+    ),
+    "terminal": (
+        "Terminal",
+        "kitty!'s own herdr terminal session: workspaces, tabs, splits and agents, "
+        "streamed into the window.",
     ),
 }
 
