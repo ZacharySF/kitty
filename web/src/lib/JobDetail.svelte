@@ -76,18 +76,12 @@
 
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
     if (!pane.active || event.ctrlKey || event.metaKey || event.altKey || busy) return false;
-    if (["f", "F", "w", "q"].includes(event.key) && job && !job.is_active) {
+    if (["F", "w", "q"].includes(event.key) && job && !job.is_active) {
       event.preventDefault();
       message = "Posting unavailable. Recheck availability before preparing it.";
       return true;
     }
-    if (event.key === "f" && job && !job.favorite) {
-      event.preventDefault();
-      await mutate("favorite", true);
-      message = "Saved. Press f again to review your autofill plan.";
-      return true;
-    }
-    if (["f", "F", "w", "q"].includes(event.key))
+    if (["F", "w", "q"].includes(event.key))
       return automation?.handleKey(event) ?? false;
     if (event.key === "r") {
       event.preventDefault();

@@ -409,6 +409,8 @@
   <div
     class="stage"
     role="region"
+    data-kitty-panel="graph"
+    tabindex="-1"
     aria-label={`${look === "2d" ? "2D" : "3D"} atlas of your workspace`}
     aria-describedby={`${atlasId}-description`}
   >

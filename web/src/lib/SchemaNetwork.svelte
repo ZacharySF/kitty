@@ -172,7 +172,7 @@
   });
 </script>
 
-<div class="network">
+<div class="network" data-kitty-panel="graph" tabindex="-1" role="region" aria-label={title}>
   <div class="stage-wrap" data-look={look}>
     <div
       class="stage3d"

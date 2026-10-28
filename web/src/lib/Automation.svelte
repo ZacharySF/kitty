@@ -263,12 +263,7 @@
       dialog?.open
     )
       return false;
-    if (event.key === "f") {
-      event.preventDefault();
-      void inspect(jobIds.length ? "selected" : "queue");
-      return true;
-    }
-    if (event.key === "F") {
+    if (event.shiftKey && event.key.toLowerCase() === "f") {
       event.preventDefault();
       void inspect(jobIds.length ? "selected" : "favorites");
       return true;

@@ -1451,3 +1451,37 @@ main > :is(.panel, .br-panel, .br-card) {
 :root[data-window="transparent"] .workbench-top {
   background: color-mix(in srgb, var(--solid-void, #141414) 62%, transparent);
 }
+
+/* Panel fullscreen stays inside the window; hidden siblings cannot take focus.
+   Dialogs remain usable above it. No native/browser fullscreen API is involved. */
+html[data-panel-fullscreen] {
+  overflow: hidden;
+}
+html[data-panel-fullscreen] body * {
+  visibility: hidden;
+}
+/* A glass ancestor establishes a containing block for fixed descendants.
+   Release that block only while its panel fills the viewport. */
+:root[data-panel-fullscreen] body :has([data-kitty-panel][data-panel-fullscreen]) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html[data-panel-fullscreen] body [data-kitty-panel][data-panel-fullscreen] {
+  --workbench-top: 0px;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: 100%;
+  height: 100dvh;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+}
+html[data-panel-fullscreen] body :is(
+  [data-kitty-panel][data-panel-fullscreen],
+  [data-kitty-panel][data-panel-fullscreen] *,
+  dialog[open], dialog[open] *,
+  [role="dialog"][aria-modal="true"], [role="dialog"][aria-modal="true"] *
+) {
+  visibility: visible;
+}
