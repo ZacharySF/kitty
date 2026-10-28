@@ -104,7 +104,9 @@ jobs:
         run: |
           mkdir release-assets
           gh release download "$RELEASE_TAG" --repo ZacharySF/kitty-releases --dir release-assets
-          gh api "repos/ZacharySF/kitty-releases/releases/tags/$RELEASE_TAG" > release-assets-info.json
+          # Draft releases are not addressable by tag; select from the authenticated list.
+          gh api repos/ZacharySF/kitty-releases/releases \
+            --jq "map(select(.tag_name == \"$RELEASE_TAG\"))[0]" > release-assets-info.json
           uv run --no-project python scripts/validate-desktop-release.py \
             --tag "$RELEASE_TAG" --assets release-assets --release release-assets-info.json
           test "$(dpkg-deb --field release-assets/*.deb Version)" = "${RELEASE_TAG#v}"
