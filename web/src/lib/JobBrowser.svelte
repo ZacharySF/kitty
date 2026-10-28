@@ -333,9 +333,8 @@
       target?.closest("input:not([type='checkbox']):not([type='radio']), textarea, select, [contenteditable]:not([contenteditable='false']), dialog") ||
       document.querySelector("dialog[open]")
     ) return false;
-    // Capture both f and Shift+F before the detail panel can reinterpret them.
-    // This opens preflight only; the reviewed plan still authorizes every fill.
-    if (event.key.toLowerCase() === "f") {
+    // Bare F belongs to panel fullscreen; Shift+F keeps reviewed preparation.
+    if (event.shiftKey && event.key.toLowerCase() === "f") {
       event.preventDefault();
       await prepareSelected();
       return true;
@@ -695,7 +694,7 @@
           class="button primary"
           disabled={busy || loading || (!marked.length && selected === null && !jobs[cursor])}
           onclick={prepareSelected}
-        >Fill {marked.length ? `${marked.length} selected` : selected !== null ? "opened job" : "focused job"} for review <kbd>F</kbd></button>
+        >Fill {marked.length ? `${marked.length} selected` : selected !== null ? "opened job" : "focused job"} for review <kbd>Shift+F</kbd></button>
         <PostingAvailability
           jobIds={marked.length ? marked : jobs.map(job => job.id)}
           label={marked.length ? "Check selected" : "Check this batch"}
@@ -775,7 +774,7 @@
           </form>
         </details>{/if}
       <p class="shortcut-hint">
-        F to fill selected, opened or focused jobs for review · ↑ / ↓ to focus · Space to select · Enter to open · Ctrl+F or / to search · Right-click to save · Shift-click checkboxes for a range
+        Shift+F to fill selected, opened or focused jobs for review · ↑ / ↓ to focus · Space to select · Enter to open · Ctrl+F or / to search · Right-click to save · Shift-click checkboxes for a range
       </p>
       <details class="advanced-filters" bind:open={preparationOpen}>
         <summary>Prepare another group or check Firefox progress</summary>

@@ -273,7 +273,7 @@ saved. These checks describe saved data, not application readiness.
    own schema, showing only job-type categories at the root. Open a category to
    see every matching job, without 120-item map pages; its searchable Browse list
    progressively reveals rows. Uncategorized jobs remain available in List.
-3. **Select jobs → press F:** marked jobs (otherwise the opened or focused job) go
+3. **Select jobs → press Shift+F:** marked jobs (otherwise the opened or focused job) go
    straight to the reviewed autofill plan. Approved preparation opens Firefox and
    fills known fields. Check each form and submit it yourself; kitty! never submits.
 
@@ -288,7 +288,7 @@ in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting.
 **Canvas fullscreen** puts only the canvas and compact tools on the laptop screen,
 not the whole application. Its exit control and Escape restore the workspace.
-Plain F has no Notes fullscreen or fit action.
+Outside text editing, F fullscreens the focused workspace panel instead.
 
 **Connections** automatically compares note and flashcard text locally:
 explicit `[[Page title]]` links, unlinked title mentions and related concepts
@@ -432,9 +432,19 @@ jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `k` queue state, `R` resume, `e` notes, `s` status, `u` undo, `d` deadline,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,
 `s` skips, `l` defers, `x` marks ineligible and `n`/`p` move between rows.
-`f`/`F` opens the reviewed autofill plan for marked, opened or focused jobs.
+Shift+F opens the reviewed autofill plan for marked, opened or focused jobs.
 Letter shortcuts pause while typing or using dialogs. Native browser print,
 reload and close-tab shortcuts are not intercepted.
+
+**Panel fullscreen:** press F outside text editing to fill the kitty! window with
+the focused view or graph. Click a graph to focus its panel first. F or Esc
+restores the layout; changing workspace tabs or navigating also exits panel
+fullscreen. The window's own fullscreen state never changes. Inputs, textareas,
+selects and contenteditable editors retain their keys; dialogs own Escape first.
+Terminal views reserve bare f for the shell and use Ctrl+Shift+F to toggle panel
+fullscreen (Esc exits). Terminal integrations mark their root with
+`data-kitty-terminal`, including around their hidden input, and mark the
+focusable panel with `data-kitty-panel`.
 
 **Preparation is not submission:** Firefox fills supported fields with your
 verified profile/answers and attaches the approved resume. Review every answer

@@ -15,6 +15,7 @@
   import WorkspacePane from "./lib/WorkspacePane.svelte";
   import WorkspaceTabs from "./lib/WorkspaceTabs.svelte";
   import type { WorkspaceTrail } from "./lib/workspaceContext.svelte";
+  import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -76,6 +77,7 @@
   async function selectTab(id: string) {
     const target = tabs.find(tab => tab.id === id);
     if (!target || id === activeId) return;
+    panelFullscreen?.exit();
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       activeTab.scrollY = window.scrollY;
@@ -87,6 +89,7 @@
   }
   async function newTab() {
     tabBar?.closeMenu(false);
+    panelFullscreen?.exit();
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       activeTab.scrollY = window.scrollY;
@@ -102,6 +105,7 @@
   function closeTab(id: string) {
     const index = tabs.findIndex(tab => tab.id === id);
     if (index < 0 || !mayLeaveEditor(tabs[index])) return;
+    if (id === activeId) panelFullscreen?.exit();
     const wasActive = id === activeId;
     tabs = tabs.filter(tab => tab.id !== id);
     if (!tabs.length) {
@@ -127,6 +131,7 @@
   function navigate(next: View) {
     if (workspace && !viewEnabled(next, enabled)) { moduleNotice = disabledNotice(next); return false; }
     if (!mayLeaveEditor()) return false;
+    panelFullscreen?.exit();
     moduleNotice = "";
     activeTab.view = next;
     activeTab.initialJobId = null;
@@ -207,6 +212,7 @@
       redirected = true;
     }
     const savedId = window.history.state?.workspaceTabId;
+    panelFullscreen?.exit();
     const target = tabs.find(tab => tab.id === savedId) ?? activeTab;
     if (target.view !== next) {
       if (!mayLeaveEditor(target)) { route(activeTab, true); return; }
@@ -236,8 +242,11 @@
     });
   });
   let topBar = $state<HTMLElement>();
+  let panelFullscreen: PanelFullscreen | undefined;
   onMount(() => {
     readRoute();
+    const fullscreen = installPanelFullscreen(window, document);
+    panelFullscreen = fullscreen.panels;
     window.addEventListener("kitty-study-text", studyText);
     window.addEventListener("kitty-study-focus", studyFocus);
     // Page-level sticky panels sit below the pinned bar, whose height wraps responsively.
@@ -245,6 +254,7 @@
       document.documentElement.style.setProperty("--workbench-top", `${Math.ceil(entry.borderBoxSize[0].blockSize)}px`));
     if (topBar) measure.observe(topBar);
     return () => {
+      fullscreen.dispose();
       measure.disconnect();
       window.removeEventListener("kitty-study-text", studyText);
       window.removeEventListener("kitty-study-focus", studyFocus);
@@ -253,7 +263,9 @@
   async function keyboard(event: KeyboardEvent) {
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
     const target = event.target as HTMLElement | null;
-    const typing = !!target?.closest('input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]),textarea,select,[contenteditable="true"]');
+    const context = focusContext(target);
+    if (context === "terminal") return;
+    const typing = context === "text";
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "t") {
       event.preventDefault();
       if (event.repeat) return;
@@ -376,6 +388,7 @@
         id={`workspace-pane-${tab.id}`} role="tabpanel"
         aria-labelledby={`workspace-tab-${tab.id}`}
         tabindex="0"
+        data-kitty-panel="view"
         hidden={tab.id !== activeId} inert={tab.id !== activeId}
       >
         {#if (workspace && viewEnabled(tab.view, enabled)) || tab.view === "settings" || tab.view === "ai"}

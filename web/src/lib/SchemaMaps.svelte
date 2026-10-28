@@ -1911,7 +1911,7 @@
           </details>
         </aside>
         </details>
-        <main class="graph-pane">
+        <main class="graph-pane" data-kitty-panel="graph" tabindex="-1">
           <div class="toolbar">
             <Button onclick={() => arrange("tree")} disabled={!editable}>Tree layout</Button>
             <Button onclick={() => quickAdd()} disabled={!editable}>{node ? "+ Child" : "+ Topic"}</Button>
