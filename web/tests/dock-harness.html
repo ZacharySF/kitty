@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- Browser fixture for tests/dock.browser.test.mjs: synthetic terminal and herdr data only. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dock harness</title>
+    <style>
+      html, body { margin: 0; background: #141414; color: #e6e6e6; }
+      #view { padding: 0; }
+      #content { height: 500px; }
+    </style>
+  </head>
+  <body>
+    <!-- kitty!'s pinned top bar (z-index 40, backdrop blur), out of flow here. -->
+    <div class="workbench-top" style="position: fixed; top: 0; left: 0; right: 0; height: 40px; margin: 0"></div>
+    <div id="view" data-kitty-panel="view" tabindex="0"><div id="content"><button id="outside">Outside</button></div></div>
+    <div id="dock"></div>
+    <script type="module" src="./dockHarness.js"></script>
+  </body>
+</html>

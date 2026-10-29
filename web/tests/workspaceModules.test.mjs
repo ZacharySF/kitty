@@ -28,6 +28,14 @@ test('each module alone exposes only its own views',()=>{
   assert.equal(viewEnabled('ai',[]),true);
 });
 
+test('the herdr view is a Plan node owned by the Terminal module (Q10, Q11)',()=>{
+  assert.equal(viewEnabled('herdr',['terminal']),true);
+  assert.equal(viewEnabled('herdr',['applyai','workspace']),false);
+  assert.ok(!ids(visibleNavigation(['applyai','workspace'])).includes('herdr'));
+  assert.deepEqual(visibleGroups(['terminal']).map(group=>[group.label,group.views]),[['Plan',['today','herdr']],['Settings',['settings','ai']]]);
+  assert.ok(visibleGroups(['applyai','workspace','terminal']).find(group=>group.label==='Plan').views.includes('herdr'));
+});
+
 test('relations never cross into a disabled module',()=>{
   const all=['applyai','workspace'];
   assert.ok(visibleRelations(all).some(([a,b])=>a==='schema'&&b==='jobs'));

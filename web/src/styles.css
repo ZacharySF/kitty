@@ -1485,3 +1485,19 @@ html[data-panel-fullscreen] body :is(
 ) {
   visibility: visible;
 }
+/* Bracket's Button sets an inline visibility on its label, which would otherwise
+   show through a transparent fullscreen panel such as the terminal. */
+html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-fullscreen] *, dialog[open] *, [role="dialog"][aria-modal="true"] *) {
+  visibility: hidden !important;
+}
+
+/* The dock (Dock.svelte) is fixed to the bottom of the window and publishes the
+   room it takes as --dock-space; the page always ends above it. */
+:root body .workbench {
+  padding-bottom: calc(10px + var(--dock-space, 0px));
+}
+/* The herdr view fills its workspace tab above the dock. */
+.herdr-view {
+  height: calc(100dvh - var(--workbench-top, 0px) - var(--dock-space, 0px) - 34px);
+  min-height: 240px;
+}

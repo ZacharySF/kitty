@@ -296,3 +296,75 @@ def test_server_close_ends_open_terminal_streams(tmp_path, herdr):
     assert reader.closed()[:2] == b"\x03\xe9"  # 1001 going away
     connection.close()
     assert STOP in [item["argv"] for item in herdr.invocations()]
+
+
+ACTIVITY = {
+    "workspaces": [
+        {"workspace_id": "w1", "number": 1, "label": "api", "focused": True, "pane_count": 2,
+         "tab_count": 2, "active_tab_id": "w1:t1", "agent_status": "working"},
+        {"workspace_id": "w2", "number": 2, "label": "docs", "focused": False, "pane_count": 1,
+         "tab_count": 1, "active_tab_id": "w2:t1", "agent_status": "something-new"},
+    ],
+    "agents": [
+        {"terminal_id": "t1", "workspace_id": "w1", "tab_id": "w1:t1", "pane_id": "w1:p1", "focused": True,
+         "revision": 3, "agent": "omp", "display_agent": "omp", "name": "Agent", "agent_status": "working"},
+        {"terminal_id": "t2", "workspace_id": "w1", "tab_id": "w1:t2", "pane_id": "w1:p2", "focused": False,
+         "revision": 1, "agent": "codex", "display_agent": "Codex", "name": None, "agent_status": "blocked"},
+        {"terminal_id": "t3", "workspace_id": "w9", "tab_id": "w9:t1", "pane_id": "w9:p1", "focused": False,
+         "revision": 1, "agent": "claude", "agent_status": "done"},
+    ],
+}
+
+
+def test_activity_does_not_start_herdr_when_its_session_is_not_running(tmp_path, herdr):
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        assert running.request("/api/terminal/activity") == (200, {"running": False, "workspaces": []})
+    # The strip only reads: no herdr process, no session directory, no private config.
+    assert herdr.invocations() == []
+    assert not (herdr.home / ".config" / "herdr").exists()
+    assert not (settings.root / ".private" / "herdr").exists()
+
+
+def test_activity_is_refused_when_the_terminal_module_is_off(tmp_path, herdr):
+    settings = make_root(tmp_path, ())
+    with site(settings) as running:
+        assert refused(*running.request("/api/terminal/activity"))
+    assert herdr.invocations() == []
+
+
+def test_activity_reports_herdr_agent_states_per_workspace(tmp_path, herdr):
+    herdr.activity_file.write_text(json.dumps(ACTIVITY))
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        status, _headers, connection, rest = running.connect(running.token())
+        assert status == 101
+        FrameReader(connection, rest).until(b"FAKE-HERDR")
+        status, body = running.request("/api/terminal/activity")
+        connection.close()
+    assert status == 200
+    assert body == {"running": True, "workspaces": [
+        {"id": "w1", "label": "api", "status": "working", "focused": True, "agents": [
+            {"pane": "w1:p1", "name": "Agent", "status": "working"},
+            {"pane": "w1:p2", "name": "Codex", "status": "blocked"},
+        ]},
+        # herdr states kitty! does not know are shown as unknown, never passed through.
+        {"id": "w2", "label": "docs", "status": "unknown", "focused": False, "agents": []},
+    ]}
+    reads = [item for item in herdr.invocations() if item["argv"][2:] in (["workspace", "list"], ["agent", "list"])]
+    assert [item["argv"] for item in reads] == [
+        ["--session", SESSION, "workspace", "list"], ["--session", SESSION, "agent", "list"]]
+    for item in reads:
+        for inherited in ("HERDR_ENV", "HERDR_SESSION", "HERDR_SOCKET_PATH", "TMUX"):
+            assert inherited not in item["env"], inherited
+
+
+def test_unreadable_herdr_activity_is_reported(tmp_path, herdr):
+    herdr.activity_file.write_text("RAW:not json")
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        status, _headers, connection, rest = running.connect(running.token())
+        FrameReader(connection, rest).until(b"FAKE-HERDR")
+        status, body = running.request("/api/terminal/activity")
+        connection.close()
+    assert status == 503 and "agent states" in body["error"]

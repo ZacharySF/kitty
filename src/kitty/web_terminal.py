@@ -1,5 +1,9 @@
 """Terminal module: kitty!'s herdr session streamed over a same-origin WebSocket.
 
+GET  /api/terminal/activity  ->  {"running", "workspaces": [{id, label, status, focused, agents}]}
+    herdr's own agent states (idle/working/blocked/done/unknown) per workspace,
+    read with herdr's CLI. Never starts the session: ``running`` is false while
+    kitty!'s session is not running.
 POST /api/terminal/session  {}  ->  {"token", "socket"}
     Header-protected like every mutation (exact Host/Origin, X-Kitty-Request,
     application/json), so only kitty!'s own page can obtain a token.
@@ -78,6 +82,11 @@ def stop(app) -> None:
 def get(app, conn, path, query):
     if path == SOCKET_PATH:
         raise _error(426, "Open the terminal with a WebSocket upgrade")
+    if path == "/api/terminal/activity":
+        try:
+            return app.terminal.runtime.activity()
+        except TerminalUnavailable as exc:
+            raise _error(503, str(exc)) from None
 
 
 def post(app, conn, path, body):

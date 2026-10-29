@@ -310,6 +310,12 @@ Stage 1: done.
   Disabled modules have no UI entries, commands, MCP tools, routes, workers or
   processes, but their data and configuration remain. Existing global migrations
   stay in place.
+- Terminal dock (`docs/terminal-dock-design.md` Q1, Q3, Q8, Q10): a window-bottom
+  dock shows herdr's real client (transparent, Harness colours), herdr's own
+  per-workspace agent states, or only a thin handle; its state and draggable height
+  are remembered per browser profile, and its first size is the empty area below
+  the main panel. The herdr view is an atlas node under Plan that opens the full
+  session in a workspace tab. Reading agent states never starts herdr.
 - Optional external learning extension: Study navigation includes LearnHarness,
   a contained cross-origin frame of the AGPL-3.0-only upstream app (source unchanged)
   at fixed `http://127.0.0.1:3210`. Kitty retains its existing native Study tools;

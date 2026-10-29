@@ -21,6 +21,7 @@ process used it.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import re
 import socket
@@ -42,6 +43,9 @@ STOP_TIMEOUT = 30.0
 #: none of these; herdr refuses nested launches while HERDR_ENV=1 is inherited.
 _OUTER_TERMINAL = ("TMUX", "TMUX_PANE", "TERM_PROGRAM", "TERM_PROGRAM_VERSION")
 _SESSION_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+#: herdr's ``AgentStatus`` values; anything else is shown as ``unknown``.
+AGENT_STATES = ("idle", "working", "blocked", "done", "unknown")
+ACTIVITY_TIMEOUT = 5.0
 
 #: herdr config for kitty!'s session: the Harness palette (web/src/lib/themes.ts) on
 #: herdr's terminal base, with transparent panels so the page's surface shows through.
@@ -186,11 +190,15 @@ class HerdrRuntime:
     def _command(self, *arguments: str) -> list[str]:
         return [self.binary, "--session", self.session, *arguments]
 
-    def _prepare(self) -> tuple[dict[str, str], Path]:
+    def _session_folder(self) -> Path:
+        """Where herdr keeps this session's sockets, once the runtime and name are valid."""
         if not self.binary or not os.access(self.binary, os.X_OK) or not Path(self.binary).is_file():
             raise TerminalUnavailable("The bundled herdr runtime is missing; reinstall kitty!")
         validate_session_name(self.session)
-        folder = herdr_config_dir(self.environ) / "sessions" / self.session
+        return herdr_config_dir(self.environ) / "sessions" / self.session
+
+    def _prepare(self) -> tuple[dict[str, str], Path]:
+        folder = self._session_folder()
         client_socket = folder / "herdr-client.sock"
         if len(os.fsencode(client_socket)) > SOCKET_PATH_MAX:
             raise TerminalUnavailable(f"herdr's socket path is longer than {SOCKET_PATH_MAX} bytes: {client_socket}")
@@ -249,6 +257,43 @@ class HerdrRuntime:
                 stderr=subprocess.DEVNULL, timeout=STOP_TIMEOUT, check=False)
         except (OSError, subprocess.TimeoutExpired):
             pass  # Nothing else may stop it: kitty! never signals a herdr it did not spawn.
+
+    def _read(self, *arguments: str) -> dict:
+        """One read-only herdr CLI call against kitty!'s running session."""
+        try:
+            result = subprocess.run(
+                self._command(*arguments), env=child_environment(self.environ, self.config_path),
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=ACTIVITY_TIMEOUT, check=False)
+            if result.returncode:
+                raise ValueError(result.returncode)
+            return json.loads(result.stdout)["result"]
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+            raise TerminalUnavailable("kitty!'s herdr session did not report its agent states") from None
+
+    def activity(self) -> dict:
+        """herdr's own agent states per workspace; never starts the session."""
+        folder = self._session_folder()
+        if not _listening(folder / "herdr.sock"):
+            return {"running": False, "workspaces": []}
+
+        def state(item: dict) -> str:
+            value = item.get("agent_status")
+            return value if value in AGENT_STATES else "unknown"
+
+        try:
+            workspaces = self._read("workspace", "list")["workspaces"]
+            agents = self._read("agent", "list")["agents"]
+            return {"running": True, "workspaces": [{
+                "id": str(space["workspace_id"]), "label": str(space.get("label") or space["workspace_id"]),
+                "status": state(space), "focused": space.get("focused") is True,
+                "agents": [{
+                    "pane": str(agent["pane_id"]),
+                    "name": str(agent.get("name") or agent.get("display_agent") or agent.get("agent") or "agent"),
+                    "status": state(agent),
+                } for agent in agents if agent.get("workspace_id") == space["workspace_id"]],
+            } for space in workspaces]}
+        except (KeyError, TypeError, AttributeError):
+            raise TerminalUnavailable("kitty!'s herdr session did not report its agent states") from None
 
     def stop(self) -> None:
         """Quit: stop the session if this process used it; its clients then exit."""
