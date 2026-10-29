@@ -31,6 +31,7 @@ FAKE_HERDR = r'''
 import json, os, select, signal, socket, struct, subprocess, sys, termios, time, fcntl, tty
 LOG = {log!r}
 MODE_FILE = {mode_file!r}
+ACTIVITY_FILE = {activity_file!r}
 argv = sys.argv[1:]
 with open(LOG, "a") as handle:
     handle.write(json.dumps({{"argv": argv, "env": dict(os.environ), "cwd": os.getcwd()}}) + "\n")
@@ -106,6 +107,17 @@ elif rest == []:
             if not data:
                 sys.exit(0)
             os.write(1, b"ECHO:" + data + b"\r\n")
+elif rest in (["workspace", "list"], ["agent", "list"]):
+    if not listening(api):
+        sys.stderr.write("error: no running herdr server for session " + name + "\n")
+        sys.exit(1)
+    kind = rest[0]
+    activity = open(ACTIVITY_FILE).read() if os.path.exists(ACTIVITY_FILE) else "{{}}"
+    if activity.startswith("RAW:"):
+        sys.stdout.write(activity[4:])
+        sys.exit(0)
+    items = json.loads(activity).get(kind + "s", [])
+    print(json.dumps({{"id": "cli:" + kind + ":list", "result": {{"type": kind + "_list", kind + "s": items}}}}))
 else:
     sys.exit(2)
 '''
@@ -118,11 +130,15 @@ class FakeHerdr:
         self.folder = folder
         self.log = folder / "invocations.jsonl"
         self.mode_file = folder / "socket-mode"
+        #: JSON {"workspaces": [...], "agents": [...]} answered by `workspace/agent list`;
+        #: text starting with "RAW:" is printed verbatim instead.
+        self.activity_file = folder / "activity.json"
         self.binary = folder / "herdr"
         # sun_path is 108 bytes; a short HOME keeps herdr's session sockets addressable.
         self.home = Path(tempfile.mkdtemp(prefix="kt", dir="/tmp"))
         self.binary.write_text(f"#!{sys.executable}\n" + textwrap.dedent(
-            FAKE_HERDR.format(log=str(self.log), mode_file=str(self.mode_file))))
+            FAKE_HERDR.format(log=str(self.log), mode_file=str(self.mode_file),
+                              activity_file=str(self.activity_file))))
         self.binary.chmod(0o755)
 
     def session_dir(self, name: str) -> Path:

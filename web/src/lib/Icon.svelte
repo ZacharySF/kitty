@@ -12,6 +12,7 @@
     "quick-notes": "M5 4h14v11l-5 5H5ZM14 20v-5h5M8 9h8M8 13h4",
     schema: "M10 4h4v4h-4ZM3 16h4v4H3ZM17 16h4v4h-4ZM12 8v4M5 16v-4h14v4",
     ai: "M12 3v3M9 3h6M5 7h14v13H5ZM8 11h.01M16 11h.01M8 16h8M2 10v6M22 10v6",
+    terminal: "M3 4h18v16H3Zm4 5 3 3-3 3m6 0h4",
     kitty:
       "M4 10V3l5 4a10 10 0 0 1 6 0l5-4v7a8 8 0 1 1-16 0ZM8 12h.01M16 12h.01m-6 4 2 1 2-1",
     jobs: "m21 21-4.4-4.4M19 10.5a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0",

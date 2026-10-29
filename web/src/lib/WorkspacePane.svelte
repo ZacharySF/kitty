@@ -92,6 +92,10 @@
     {#await import("./LearnHarness.svelte")}{@render pending()}{:then { default: LearnHarness }}
       <LearnHarness />
     {/await}
+  {:else if view === "herdr"}
+    {#await import("./TerminalView.svelte")}{@render pending()}{:then { default: TerminalView }}
+      <div class="herdr-view"><TerminalView label="herdr session" /></div>
+    {/await}
   {:else if view === "settings"}
     <WorkspaceSettings bind:this={settings} {onview} {onchange} />
   {:else if view === "ai"}
