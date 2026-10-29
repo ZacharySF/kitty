@@ -272,6 +272,13 @@
   async function keyboard(event: KeyboardEvent) {
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
     const target = event.target as HTMLElement | null;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "w") {
+      event.preventDefault();
+      if (event.repeat) return;
+      tabBar?.closeMenu(false);
+      closeTab(activeId);
+      return;
+    }
     const context = focusContext(target);
     if (context === "terminal") return;
     const typing = context === "text";
