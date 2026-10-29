@@ -373,3 +373,13 @@ Stage 1: done.
   Shared browser behavior checks run with
   `PLAYWRIGHT_BROWSERS_PATH=<browser-store-path> PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test web/tests/graphRenderers.browser.test.mjs`;
   NixOS browsers are supplied by `nix shell nixpkgs#playwright-driver.browsers`.
+- 2026-10-28: The atlas draws only the sections you choose (terminal-dock design
+  Q13). Drag a node onto the Sections list to hide it; drag a dimmed row onto the
+  graph to show it again; each row's `⋯` menu (also on right-click) offers Open and
+  Show/Hide for keyboard and touch. The choice is one browser preference
+  (`kitty.atlas.hidden`, `web/src/lib/atlasNodes.ts`) shared live by the atlas in
+  every tab. Hidden ids for a disabled module are kept but never drawn, so turning the
+  module back on does not resurrect them; unknown or malformed entries are ignored.
+  Both renderers run the same checks:
+  `node --test web/tests/atlasNodes.browser.test.mjs` (same browser variables as
+  above) and `node --experimental-strip-types --test web/tests/atlasNodes.test.mjs`.
