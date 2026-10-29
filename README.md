@@ -602,24 +602,50 @@ Replacing/uninstalling the application does not require deleting it.
 
 ### Signed in-app updates
 
-Use **Check for updates** in **Settings → Desktop** or the system-tray menu. The native updater
-checks the public release feed over HTTPS and verifies the installer against the
-public signing key embedded in the app before installation. There are no updater
-permissions exposed to the website. Save your work and approve the native prompts;
-restart when the app asks so its backend and window run the same new version.
+In **Settings → Desktop → App updates**, choose **Check for updates** (also in the
+system-tray menu), then **Download update** and **Install and restart**. No manual
+download, quit, replacement or relaunch is needed for routine signed updates.
+The native updater checks the public release feed over HTTPS and verifies the
+installer and announced version against the signing key embedded in the app.
+The website receives no updater permissions. Downloading leaves your workspace
+available; installation waits for accepted work, saves, and restarts automatically.
 
 Debian-package updates require administrator authentication through your desktop's
 PolicyKit authentication agent, and the new package's dependencies must already be
 satisfiable. If package installation reports missing dependencies, open the new
-`.deb` from the release page in your graphical package manager. AppImage updates
-replace the existing writable AppImage and need free space beside it for the new
-download. A network/signature/install failure must not be treated as a completed
-update; keep the existing app or install the signed release manually.
+`.deb` from the release page in your graphical package manager.
+
+AppImage updates require a writable installation directory and space for both the
+replacement and one prior image. After signature verification, the app stages the
+replacement beside the installed image, syncs and closes it, then renames it into
+place. This avoids cross-mount rename failures inside NixOS `appimage-run`. The
+previous executable remains beside it as `kitty.AppImage.previous` (or the original
+AppImage name plus `.previous`). Failed staging/replacement leaves the installed
+image unchanged. To recover an older application, quit kitty! and restore that
+previous image to the original filename; do not delete or replace the workspace.
+A network/signature/install failure is not a completed update.
 
 Only packaged `.deb` and AppImage installations support native self-installation.
 Loose source-binary installations use the public downloads link instead; rebuild
 and rerun the local installer to replace those binaries. Installing a published
 AppImage with the launcher below retains AppImage self-update support.
+
+**NixOS launcher migration for the next desktop release:** existing launchers need
+the current installer once to enable restart outside the old AppImage/FHS process.
+Use the same installed image; there is no need to hunt for another download:
+
+```bash
+python3 scripts/install-desktop.py \
+  --appimage ~/.local/share/kitty/application/kitty.AppImage
+```
+
+Run this with kitty! closed, after installing a release containing these changes.
+The installer retains the generated launcher's working runtime environment,
+configured `appimage-run` link and selected workspace, even when invoked from a
+different development dependency shell. Explicit `--workspace` or
+`--appimage-runner` options change those selections; ambient `KITTY_HOME` and
+`KITTY_DB` never select the installed workspace. Future updates reuse that launcher
+automatically. Custom launchers are not silently rewritten.
 
 ### Build and install a local launcher (including NixOS)
 
@@ -652,10 +678,14 @@ open terminal. The installer never copies over or deletes workspace files.
 `--binary`, `--sidecar`, `--herdr`, and `--icon` can select explicit build artifacts.
 Alternatively, `--appimage /absolute/path/to/downloaded.AppImage` installs a
 published AppImage rather than loose binaries. Its writable installed location
-remains fixed across signed replacements. The launcher sets
-`APPIMAGE_EXTRACT_AND_RUN=1` to avoid requiring FUSE. NixOS still needs a compatible
-ELF loader and runtime libraries; capture them by running the installer inside the
-dependency shell. Neither a checkout nor that shell is needed for subsequent launches.
+remains fixed across signed replacements, with an adjacent `.previous` recovery
+copy. Reinstalling an AppImage preserves the original generated launcher's runtime
+settings instead of capturing a different build shell's library paths.
+The AppImage launcher sets `APPIMAGE_EXTRACT_AND_RUN=1` to avoid requiring FUSE and
+waits for the app; an update restart returns through the original runner with its
+original environment. NixOS AppImages use `--appimage-runner` for their FHS runtime;
+loose source binaries still need the captured dependency-shell libraries.
+Neither a checkout nor a dependency shell is needed for subsequent launches.
 
 NixOS defaults to a `.deb` build artifact because Tauri's AppImage assembly expects
 GTK in a single library directory, unlike the Nix store. The official downloadable
