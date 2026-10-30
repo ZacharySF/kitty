@@ -1,3 +1,4 @@
+mod appimage_update;
 mod owner;
 mod update_lifecycle;
 mod updates;

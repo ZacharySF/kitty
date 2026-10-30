@@ -43,6 +43,10 @@
 <section aria-label="Desktop settings">
   <Panel title="Desktop">
     {#if desktop?.available}
+      <h3>App updates</h3>
+      <p class="muted">Check here for signed updates. kitty! downloads and verifies the update, saves your workspace, then installs and restarts. Your workspace and settings stay in place.</p>
+      <Button size="sm" disabled={pending} onclick={() => command("check-updates")}>Check for updates</Button>
+      <h3>Desktop behavior</h3>
       <label class="keep-running">
         <input type="checkbox" checked={desktop.keep_running === true}
           disabled={pending || !desktop.keep_running_available || desktop.keep_running === null}
@@ -52,7 +56,6 @@
       <p class="muted">Closing the window {desktop.keep_running ? "keeps kitty! running in the system tray" : "quits kitty! and stops workers"}. Quit always saves and stops workers.</p>
       {#if !desktop.keep_running_available}<p class="muted">Keep running on close needs a system tray on this desktop.</p>{/if}
       <div class="actions">
-        <Button size="sm" disabled={pending} onclick={() => command("check-updates")}>Check for updates</Button>
         <Button size="sm" disabled={pending} onclick={() => command("new-quick-note")}>New quick note</Button>
         <Button size="sm" disabled={pending} onclick={() => command("quit")}>Quit kitty! (save and stop workers)</Button>
       </div>
