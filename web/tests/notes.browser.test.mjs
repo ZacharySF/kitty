@@ -34,8 +34,9 @@ async function notes(viewport = DEFAULT, query = "") {
   page.setDefaultTimeout(5000);
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
-  await page.goto(new URL(`tests/notes-harness.html${query}`, base).href);
-  await page.waitForFunction(() => !!window.notesHarness);
+  // The first load pays Vite's cold transform of the whole Notes graph; give it time.
+  await page.goto(new URL(`tests/notes-harness.html${query}`, base).href, { timeout: 60000 });
+  await page.waitForFunction(() => !!window.notesHarness, null, { timeout: 60000 });
   await assert.doesNotReject(title(page).waitFor());
   await until(async () => (await title(page).inputValue()) !== "", "a page opened");
   return { page, problems, context };
