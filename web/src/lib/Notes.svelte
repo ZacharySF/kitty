@@ -2449,7 +2449,6 @@
     background: var(--chrome);
     box-shadow: 0 4px 18px #0003;
   }
-  .focus-tools :global(.br-btn[aria-pressed="true"]) { background: var(--accent); color: var(--surface); }
   .focus-tools .focus-width { display: flex; flex-direction: row; align-items: center; gap: 4px; }
   .focus-width input { width: 65px; }
   .focus-tools :global(details.color-menu) { padding: 0; border: 0; }

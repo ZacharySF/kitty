@@ -71,6 +71,12 @@ window.graphHarness = {
   setActive: (active) => handle.setActive(active),
   setLook: async (look) => { await handle.setLook(look); await window.graphHarness.settled(); return handle.look; },
   look: () => handle.look,
+  /** Resizes the stage as a layout change would (dock shown/hidden, fullscreen). */
+  resize: async (width, height) => {
+    stage.style.width = `${width}px`;
+    stage.style.height = `${height}px`;
+    await window.graphHarness.settled();
+  },
   canvasKind: () => {
     const canvas = stage.querySelector("canvas");
     if (!canvas) return null;

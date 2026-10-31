@@ -261,10 +261,13 @@ details[open] > summary {
   flex-direction: column;
   gap: 12px;
 }
+/* The atlas home fills the window above the dock (padding-bottom, below). Each
+   level passes the height down; the atlas's own floor (GraphNavigator) is the
+   only content that can grow the page, so cramped windows scroll, never clip. */
 .workbench.atlas-home {
   height: 100vh;
   height: 100dvh;
-  min-height: 560px;
+  min-height: min-content;
 }
 .system-bar {
   min-height: 44px;
@@ -422,10 +425,17 @@ main.atlas-main {
   max-width: none;
   padding: 0;
   border: 0;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+main.atlas-main > [role="tabpanel"]:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .panel {
   background: var(--surface);
@@ -906,10 +916,6 @@ main .notes-workspace {
   .workbench {
     padding: 8px;
   }
-  .workbench.atlas-home {
-    height: auto;
-    min-height: 100vh;
-  }
   .system-bar {
     padding: 0 8px;
     min-height: 48px;
@@ -1008,6 +1014,14 @@ main .notes-workspace {
   }
   .button {
     min-height: 44px;
+  }
+}
+/* Phone widths (well below the native window's minimum, even with display
+   scaling): the atlas stacks and the page scrolls. */
+@media (max-width: 599.98px) {
+  .workbench.atlas-home {
+    height: auto;
+    min-height: 100vh;
   }
 }
 @media (max-width: 600px) {
@@ -1313,6 +1327,14 @@ main > :is(.panel, .br-panel, .br-card) {
 :root body :is(.br-btn[data-variant="ghost"], .br-btn[data-variant="link"]) {
   background: transparent;
   border-color: transparent;
+}
+
+/* Toggles that invert when selected keep a complete foreground/background pair
+   that the glass fill above cannot split (it would leave on-accent text on glass). */
+:root body :is(.button, .focus-tools .br-btn)[aria-pressed="true"]:not([data-variant="solid"]):not(.primary) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 
 /* Frame: borderless top bar over a hairline, open main area, glass panels. */

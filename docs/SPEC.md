@@ -401,3 +401,14 @@ Stage 1: done.
   Both renderers run the same checks:
   `node --test web/tests/atlasNodes.browser.test.mjs` (same browser variables as
   above) and `node --experimental-strip-types --test web/tests/atlasNodes.test.mjs`.
+- 2026-10-31: The atlas fits the window above the dock. The workbench, tab panel
+  and atlas pass `min-height: 0` down the flex/grid chain, the sidebar scrolls on its
+  own, and a graph still showing its automatic fit refits whenever its stage resizes
+  (dock shown/hidden, F/Escape, window resize); a view the user panned, zoomed or
+  focused keeps its position. The atlas stacks (and the page scrolls) only below
+  600 CSS px, so the 760×500 native minimum stays side by side even with display
+  scaling. Selected `.button` toggles (Jobs Map/List) and fullscreen drawing tools
+  keep a complete accent/on-accent pair that the glass button fill cannot split.
+  Checked in the real app against the synthetic backend:
+  `node --test web/tests/workbench.browser.test.mjs` (same browser variables as
+  above; `KITTY_TEST_PORT` optionally pins the backend port and Vite one above it).
