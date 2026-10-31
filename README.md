@@ -93,12 +93,12 @@ build, configuration and every command.
 ## Develop
 
 ```bash
-uv run pytest                  # Python core, web adapter, TUI and browser tests
+uv run pytest -n auto          # Python core, web adapter, TUI and browser tests (~6 min)
 npm --prefix web run check     # svelte-check / TypeScript
 cargo test --manifest-path desktop/Cargo.toml
 ```
 
-CI runs the Python tests and the frontend check on every pull request.
+CI runs the Python tests, the frontend check and the web unit tests on every pull request.
 
 ## Built on
 
