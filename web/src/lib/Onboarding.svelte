@@ -23,11 +23,26 @@
   let mounted = false;
   let rect = $state<{ left: number; top: number; width: number; height: number } | null>(null);
   let originalView: View = "today";
+  let originalScroll = 0;
+  let reveals = 0;
 
   $effect(() => {
     if (!dialog) return;
     if (mode && !dialog.open) dialog.showModal();
     else if (!mode && dialog.open) dialog.close();
+  });
+  // Views opened behind the tour may autofocus their own fields (WebKit honours that even
+  // behind a modal dialog), and swapped-out buttons drop focus to the page; keep keyboard
+  // focus on the guide while it is open.
+  function keepFocus() {
+    setTimeout(() => {
+      if (!mode || !dialog?.open || dialog.contains(document.activeElement)) return;
+      dialog.querySelector<HTMLElement>(".tour-card .primary, .welcome-reading .primary")?.focus({ preventScroll: true });
+    });
+  }
+  $effect(() => {
+    void [mode, welcomeStep, stepIndex];
+    void tick().then(keepFocus);
   });
   $effect(() => {
     if (mode !== "tour") { rect = null; return; }
@@ -36,22 +51,44 @@
     untrack(() => {
       if (window.location.hash.slice(1) !== targetView) onview(targetView);
     });
-    void tick().then(() => requestAnimationFrame(() => {
-      document.querySelector(selector)?.scrollIntoView({ block: "nearest", behavior: "instant" });
-      positionHighlight();
-    }));
+    reveals = 0;
+    void tick().then(() => requestAnimationFrame(positionHighlight));
   });
   function positionHighlight() {
     if (mode !== "tour") return;
     const target = document.querySelector(step.selector);
     if (!target) { rect = null; return; }
-    const bounds = target.getBoundingClientRect();
+    // Keep the spotlight on the part of the target that is actually visible between the
+    // workspace header and the dock.
+    const dock = document.querySelector('[data-kitty-panel="dock"]');
+    const floor = dock && !dock.contains(target) ? Math.min(window.innerHeight, dock.getBoundingClientRect().top) : window.innerHeight;
+    let bounds = target.getBoundingClientRect();
+    // Views render after the step changes, so retry a few times until the target is in sight.
+    if (reveals < 3) {
+      const header = document.querySelector(".workbench-top");
+      const ceiling = header && !header.contains(target) && !target.contains(header) ? header.getBoundingClientRect().bottom : 0;
+      const hidden = bounds.top < ceiling || (bounds.bottom > floor && floor - bounds.top < Math.min(bounds.height, 200));
+      const scroller = hidden ? scrollParent(target) : null;
+      if (scroller) {
+        reveals += 1;
+        scroller.scrollBy({ top: bounds.top - ceiling - 16, behavior: "instant" });
+        bounds = target.getBoundingClientRect();
+      }
+    }
+    const top = Math.max(8, bounds.top - 6);
     const next = {
-      left: Math.max(8, bounds.left - 6), top: Math.max(8, bounds.top - 6),
+      left: Math.max(8, bounds.left - 6), top,
       width: Math.max(0, Math.min(window.innerWidth - 16, bounds.width + 12)),
-      height: Math.max(0, Math.min(window.innerHeight - Math.max(8, bounds.top - 6) - 8, bounds.height + 12)),
+      height: Math.max(0, Math.min(floor - top - 8, bounds.bottom + 6 - top)),
     };
     if (JSON.stringify(rect) !== JSON.stringify(next)) rect = next;
+  }
+  function scrollParent(element: Element): Element | null {
+    for (let node = element.parentElement; node; node = node.parentElement) {
+      const { overflowY } = getComputedStyle(node);
+      if (/(auto|scroll)/.test(overflowY) && node.scrollHeight > node.clientHeight) return node;
+    }
+    return document.scrollingElement;
   }
   async function load() {
     try {
@@ -74,6 +111,8 @@
     window.addEventListener("scroll", positionHighlight, true);
     const observer = new MutationObserver(positionHighlight);
     observer.observe(document.getElementById("app")!, { childList: true, subtree: true });
+    document.addEventListener("focusin", keepFocus);
+    document.addEventListener("focusout", keepFocus);
     return () => {
       mounted = false;
       clearTimeout(timer);
@@ -82,6 +121,8 @@
       window.removeEventListener("kitty-onboarding", reopen);
       window.removeEventListener("resize", positionHighlight);
       window.removeEventListener("scroll", positionHighlight, true);
+      document.removeEventListener("focusin", keepFocus);
+      document.removeEventListener("focusout", keepFocus);
     };
   });
   async function save(body: Record<string, boolean>) {
@@ -121,6 +162,7 @@
   }
   function startTour() {
     originalView = (window.location.hash.slice(1) || "today") as View;
+    originalScroll = window.scrollY;
     dockPresent = !!document.querySelector(DOCK_SELECTOR);
     stepIndex = 0; error = ""; mode = "tour";
   }
@@ -137,6 +179,8 @@
       await save({ welcome_completed: true, tutorial_completed: true });
       mode = null;
       onview(originalView);
+      await tick();
+      window.scrollTo(0, originalScroll);
       window.dispatchEvent(new Event("kitty-account-changed"));
     } catch (cause) { error = (cause as Error).message; }
     finally { busy = false; }
