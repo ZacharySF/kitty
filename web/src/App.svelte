@@ -16,6 +16,7 @@
   import WorkspaceTabs from "./lib/WorkspaceTabs.svelte";
   import type { WorkspaceTrail } from "./lib/workspaceContext.svelte";
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
+  import { isCloseTabShortcut } from "./lib/tabShortcut";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -273,8 +274,7 @@
     };
   });
   function closeTabShortcut(event: KeyboardEvent) {
-    if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]') ||
-        !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "w") return;
+    if (!isCloseTabShortcut(event, Boolean(document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')))) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat) return;
