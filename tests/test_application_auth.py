@@ -182,6 +182,14 @@ def site(https_site, firefox):
     return https_site
 
 
+@pytest.fixture(autouse=True)
+def short_progress_wait(monkeypatch):
+    """The local site answers in milliseconds; the live 15 s allowance only slowed refusal cases."""
+    from kitty.core.apply import auth
+
+    monkeypatch.setattr(auth, "_AUTH_WAIT_SECONDS", 3.0)
+
+
 def _space(workspace, site, **policy):
     """Workspace with synthetic credentials and an authentication policy for the site."""
     path = workspace.settings.root / CREDENTIALS_FILE
