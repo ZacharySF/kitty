@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { api, type Bootstrap } from "./api";
-  import { tutorialSteps, type AccountState } from "./onboarding";
+  import { DOCK_SELECTOR, tutorialSteps, type AccountState } from "./onboarding";
   import type { View } from "./workspace";
   import Icon from "./Icon.svelte";
   import ThemePicker from "./ThemePicker.svelte";
@@ -121,7 +121,7 @@
   }
   function startTour() {
     originalView = (window.location.hash.slice(1) || "today") as View;
-    dockPresent = !!document.querySelector('[data-kitty-dock], .terminal-dock');
+    dockPresent = !!document.querySelector(DOCK_SELECTOR);
     stepIndex = 0; error = ""; mode = "tour";
   }
   async function beginTour() {
@@ -149,7 +149,7 @@
   oncancel={(event) => { event.preventDefault(); void finish(); }}>
   {#if mode === "tour"}
     {#if rect}<div class="spotlight" aria-hidden="true" style={`left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`}></div>{:else}<div class="tour-shade"></div>{/if}
-    <section class="tour-card" aria-live="polite">
+    <section class="tour-card" class:raised={rect !== null && rect.top + rect.height / 2 > window.innerHeight / 2 && rect.width > window.innerWidth / 2} aria-live="polite">
       <div class="tour-top"><span class="eyebrow">THE KITTY FIELD GUIDE</span><button class="quiet" onclick={finish} disabled={busy} aria-label="Skip tutorial">Skip tour ↗</button></div>
       <div class="progress" aria-label={`Step ${stepIndex + 1} of ${steps.length}`}>
         {#each steps as item, index}<span class:done={index <= stepIndex}></span>{/each}
@@ -241,5 +241,7 @@
   :global(:root body) .onboarding.tour { position: fixed; inset: 0; width: 100vw; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; overflow: hidden; }:global(:root body) .onboarding.tour::backdrop { background: transparent; backdrop-filter: none; }
   .spotlight { position: fixed; border: 2px solid var(--accent); border-radius: 12px; box-shadow: 0 0 0 9999px color-mix(in srgb, var(--canvas) 76%, transparent); pointer-events: none; }.tour-shade { position: absolute; inset: 0; background: color-mix(in srgb, var(--canvas) 76%, transparent); }
   .tour-card { position: fixed; bottom: 26px; right: 26px; width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 120px); overflow: auto; padding: 24px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 16px; background: color-mix(in srgb, var(--surface) 96%, transparent); backdrop-filter: blur(24px); box-shadow: var(--overlay-shadow); }.tour-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.tour-top .eyebrow { font-size: 9px; }.progress { display: flex; gap: 5px; margin: 17px 0 22px; }.progress span { flex: 1; height: 3px; background: var(--border); border-radius: 3px; }.progress .done { background: var(--accent); }.step-count { font: 10px var(--font-mono); color: var(--accent); display: flex; justify-content: space-between; }.step-count span { color: var(--muted); font-size: 9px; }h2 { font: 500 27px/1.18 var(--heading); letter-spacing: -.025em; margin: 12px 0 16px; }.tour-card .description { font-size: 13px; margin-bottom: 18px; }.tip { display: flex; gap: 10px; align-items: start; color: var(--muted); font-size: 11px; line-height: 1.6; padding: 13px 0; border-top: 1px solid var(--border); }.tip :global(svg) { flex: none; color: var(--accent); }footer { display: flex; justify-content: space-between; margin-top: 13px; }footer .primary { min-width: 125px; }.error-banner { margin-top: 12px; font-size: 12px; }.guide-retry { position: fixed; bottom: 20px; left: 20px; z-index: 100; padding: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--error); border-radius: 8px; }
+  .tour-card.raised { bottom: auto; top: 76px; }
+  @media (max-height: 560px) { .tour-card { padding: 16px 20px; max-height: calc(100dvh - 32px); bottom: 16px; }.tour-card.raised { top: 16px; }.tour-card h2 { font-size: 22px; margin: 4px 0 8px; }.progress { margin: 10px 0 12px; }.tour-card .description { margin-bottom: 10px; line-height: 1.55; }.tip { padding: 8px 0; } }
   @media (max-width: 760px) { :global(:root body) .onboarding:not(.tour) { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); border-radius: 14px; }.welcome-grid { grid-template-columns: 1fr; min-height: 0; }.welcome-art { display: none; }.welcome-reading { padding: 28px 24px; }.welcome-shell > header { padding: 18px; gap: 8px; }h1 { font-size: 40px; }.tour-card { right: 16px; bottom: 16px; padding: 20px; } }
 </style>

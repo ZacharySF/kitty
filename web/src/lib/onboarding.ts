@@ -16,6 +16,8 @@ export interface TutorialStep {
   unavailable?: boolean;
 }
 
+export const DOCK_SELECTOR = '[data-kitty-panel="dock"], .dock-handle';
+
 export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): TutorialStep[] {
   const workspace = enabled.includes("workspace");
   return [
@@ -27,6 +29,10 @@ export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): Tutori
       text: "Modules add Study & planning, Job search, or Terminal tools. Your selection is saved here and takes effect after you restart kitty. Nothing restarts during this tour.",
       tip: "Turning a module off keeps its data. Settings is always available.",
       view: "settings", selector: '[data-tutorial="modules"]' },
+    { id: "providers", title: "AI is optional, and you hold the budget.",
+      text: "kitty works without any AI provider. If you want AI help, connect your own OpenRouter key here and set a daily budget. Paid requests are billed to you by the provider, and each one is shown for review before it runs.",
+      tip: "No key, no cost. Google sign-in never turns on AI or other paid services.",
+      view: "ai", selector: ".ai-panel" },
     { id: "atlas", title: "Your ideas have a place.",
       text: "The Atlas is your home map. Open a section from its node or the list beside it. Search to jump straight to what you need.",
       tip: "Drag to explore · Scroll to zoom · / to search · Ctrl + K to jump anywhere",
@@ -44,6 +50,6 @@ export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): Tutori
     ...(enabled.includes("terminal") && dockPresent ? [{ id: "terminal", title: "Your terminal, close at hand.",
       text: "The terminal dock keeps your shell beside the work. Use its controls to open, resize or tuck it away. This tour never starts a shell or an agent for you.",
       tip: "Ctrl + Shift + F expands a focused terminal panel · Esc returns",
-      view: "today" as View, selector: '[data-kitty-dock], .terminal-dock' }] : []),
+      view: "today" as View, selector: DOCK_SELECTOR }] : []),
   ];
 }
