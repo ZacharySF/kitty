@@ -316,6 +316,14 @@ Stage 1: done.
   are remembered per browser profile, and its first size is the empty area below
   the main panel. The herdr view is an atlas node under Plan that opens the full
   session in a workspace tab. Reading agent states never starts herdr.
+- Agents in kitty! (`docs/terminal-dock-design.md` Q2, Q9): either terminal surface
+  can open a labelled Agent tab running the chosen installed coding agent (omp by
+  default; also Claude and Codex), with the pinned runtime's own skill. Agent
+  selection is remembered locally; startup never sends a task or installs global
+  configuration. Failed startup preserves the tab for inspection. External agents
+  use the displayed named-session CLI commands to create their own labelled tabs
+  and target returned pane IDs. The activity strip reads herdr's own detected
+  states; it does not infer completion from a launch receipt.
 - Study includes LearnHarness, a contained cross-origin frame of the independent
   AGPL-3.0-only upstream app at fixed `http://127.0.0.1:3210`. Native Study tools
   remain separate; upstream app code is unchanged. Provider logins use the

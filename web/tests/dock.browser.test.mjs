@@ -171,3 +171,23 @@ test("the terminal dock opens the full herdr session as a view", async () => {
   assert.deepEqual(problems, []);
   await context.close();
 });
+
+test("Agent launch chooses a coding agent, remembers it, and exposes named-session attachment", async () => {
+  const { page, problems, context } = await harness();
+  await page.getByRole("button", { name: "New Agent tab" }).click();
+  const chooser = page.getByRole("combobox", { name: "Coding agent" });
+  assert.equal(await chooser.inputValue(), "omp");
+  await chooser.selectOption("codex");
+  await page.getByRole("button", { name: "Start agent" }).click();
+  await page.getByRole("status").filter({ hasText: "Agent tab opened" }).waitFor();
+  await page.getByRole("button", { name: "New Agent tab" }).click();
+  assert.equal(await chooser.inputValue(), "codex");
+  await page.getByRole("button", { name: "Attach external agent" }).click();
+  const instructions = page.getByRole("region", { name: "External agent attachment" });
+  await instructions.waitFor();
+  assert.match(await instructions.innerText(), /--session 'kitty-sample'/);
+  assert.match(await instructions.innerText(), /tab create.*--label/);
+  assert.match(await instructions.innerText(), /\/sample\/workspace/);
+  assert.deepEqual(problems, []);
+  await context.close();
+});

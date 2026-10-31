@@ -54,6 +54,9 @@ window.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), method: init.method ?? "GET", headers: init.headers ?? {} });
   if (url === "/api/terminal/session") return json({ token: `token-${++tokens}`, socket: "/api/terminal/socket" });
   if (url === "/api/terminal/activity") return json(ACTIVITY);
+  if (url === "/api/terminal/agents") return json(init.method === "POST"
+    ? { tab: "w1:t2", pane: "w1:p2", kind: JSON.parse(init.body).kind }
+    : { binary: "/sample/bin/herdr", session: "kitty-sample", cwd: "/sample/workspace", default: "omp", kinds: ["omp", "claude", "codex"] });
   return json({ error: "not in harness" }, 404);
 };
 
