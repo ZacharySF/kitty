@@ -60,7 +60,7 @@
           onclick={() => onselect(tab.id)} onkeydown={event => void tabKey(event, index)}
           title={tab.label}
         >{tab.label}</button>
-        <button class="close-tab" aria-label={`Close ${tab.label} tab`} title="Close tab" onclick={() => onclose(tab.id)}>×</button>
+        <button class="close-tab" aria-label={`Close ${tab.label} tab`} title="Close tab · Ctrl+W" onclick={() => onclose(tab.id)}>×</button>
       </div>
     {/each}
   </div>

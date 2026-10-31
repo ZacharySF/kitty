@@ -496,8 +496,10 @@ jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,
 `s` skips, `l` defers, `x` marks ineligible and `n`/`p` move between rows.
 Shift+F opens the reviewed autofill plan for marked, opened or focused jobs.
-Letter shortcuts pause while typing or using dialogs. Native browser print,
-reload and close-tab shortcuts are not intercepted.
+Letter shortcuts pause while typing or using dialogs. Ctrl/⌘W closes the active
+workspace tab using the same unsaved-edit confirmation as its close button; the
+last tab returns to a fresh home tab. Ctrl/⌘T opens a new tab. Native browser
+print and reload shortcuts are not intercepted.
 
 **Panel fullscreen:** press F outside text editing to fill the kitty! window with
 the focused view or graph. Click a graph to focus its panel first. F or Esc
