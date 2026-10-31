@@ -16,6 +16,8 @@
   import WorkspaceTabs from "./lib/WorkspaceTabs.svelte";
   import type { WorkspaceTrail } from "./lib/workspaceContext.svelte";
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
+  import { isCloseTabShortcut } from "./lib/tabShortcut";
+  import Onboarding from "./lib/Onboarding.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -258,6 +260,8 @@
     panelFullscreen = fullscreen.panels;
     window.addEventListener("kitty-study-text", studyText);
     window.addEventListener("kitty-study-focus", studyFocus);
+    // Capture before terminal/editor handlers consume Ctrl+W as word deletion.
+    window.addEventListener("keydown", closeTabShortcut, true);
     // Page-level sticky panels sit below the pinned bar, whose height wraps responsively.
     const measure = new ResizeObserver(([entry]) =>
       document.documentElement.style.setProperty("--workbench-top", `${Math.ceil(entry.borderBoxSize[0].blockSize)}px`));
@@ -267,8 +271,17 @@
       measure.disconnect();
       window.removeEventListener("kitty-study-text", studyText);
       window.removeEventListener("kitty-study-focus", studyFocus);
+      window.removeEventListener("keydown", closeTabShortcut, true);
     };
   });
+  function closeTabShortcut(event: KeyboardEvent) {
+    if (!isCloseTabShortcut(event, Boolean(document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')))) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    tabBar?.closeMenu(false);
+    closeTab(activeId);
+  }
   async function keyboard(event: KeyboardEvent) {
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
     const target = event.target as HTMLElement | null;
@@ -417,6 +430,7 @@
   </main>
 </div>
 {#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock measure={panelBottom} onherdr={() => navigate("herdr")} />{/await}{/if}
+{#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
 {#if guide && applyai}<dialog
     bind:this={guideDialog}
     class="workspace-dialog guide-dialog"

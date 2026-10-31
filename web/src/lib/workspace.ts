@@ -6,6 +6,7 @@ export const navigation = [
   { id: "calendar", label: "Calendar", icon: "calendar", module: "workspace" },
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
   { id: "herdr", label: "herdr", icon: "terminal", module: "terminal" },
+  { id: "tern", label: "Tern", icon: "terminal", module: "terminal" },
   { id: "study", label: "Study", icon: "study", module: "workspace" },
   { id: "learnharness", label: "LearnHarness", icon: "study", module: "workspace" },
   { id: "flashcards", label: "Flashcards", icon: "flashcards", module: "workspace" },
@@ -53,7 +54,7 @@ export const navigationGroups: { label: string; shortcut: string; views: View[] 
   {
     label: "Plan",
     shortcut: "Ctrl + Alt",
-    views: ["today", "calendar", "opportunities", "reminders", "herdr"],
+    views: ["today", "calendar", "opportunities", "reminders", "herdr", "tern"],
   },
   { label: "Study", shortcut: "Ctrl + X", views: ["study", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
@@ -91,6 +92,7 @@ export function visibleGroups(enabled: Enabled) {
  * Single source of truth for "what connects to what"; pairs are undirected.
  */
 export const navigationRelations: [View, View][] = [
+  ["herdr", "tern"],
   ["calendar", "reminders"],
   ["calendar", "study"],
   ["opportunities", "calendar"],

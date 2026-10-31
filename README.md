@@ -70,7 +70,7 @@ source .venv/bin/activate    # then just `kitty ...`
 | --- | --- |
 | ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports |
 | Workspace (`workspace`) | Notes, documents/PDFs, canvas, mind maps, backlinks, flashcards, study, calendar, tasks and projects/opportunities |
-| Terminal (`terminal`) | kitty!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window |
+| Terminal (`terminal`) | kitty!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window; your installed [Stencil Tern](https://stencil.so/tern), if any, opened on a session of kitty!'s own |
 | Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
@@ -130,6 +130,51 @@ atlas, opens the whole session in the workspace tab. In a terminal, bare keys
 (including `f`) go to the shell; **Ctrl+Shift+F** fullscreens the terminal panel and
 **Esc** returns.
 
+**Agents (Q2/Q9).** In either terminal surface, **New Agent tab** starts the chosen
+installed coding agent in a new herdr tab labelled **Agent**, in this kitty!
+workspace's directory. The chooser defaults to **omp**, also supports **claude**
+and **codex**, and remembers the last choice in this browser profile. kitty! does
+not install agents, configure their provider credentials, send them work, or
+bypass their approval prompts. Open the terminal before starting an agent.
+The header-protected `POST /api/terminal/agents` accepts only the selected kind;
+herdr creates the tab and starts the agent in the exact returned pane. Failed or
+blocked startup keeps the tab and reports its IDs rather than retrying or killing it.
+
+The skill comes from the bundled binary's `--skill` output, saved owner-only in
+`.private/herdr/SKILL.md`. omp and Claude receive it through their native appended
+system-instruction file option; Codex receives a developer instruction to read and
+follow that file. Only that tab's `PATH` gets a private `herdr` alias to the bundled
+binary, so the skill's commands work without a separate herdr installation. No
+global skill, agent configuration or existing project instruction file is changed.
+
+**Attach external agent** shows the actual bundled binary, named session and
+workspace directory (`GET /api/terminal/agents`; reading never starts herdr).
+External agents use herdr's own CLI/socket, not a kitty!-specific control API:
+list workspaces, create a separately labelled tab with `tab create --workspace
+<id> --cwd <directory> --label <name> --no-focus`, then target the returned
+`root_pane.pane_id` explicitly. Read herdr's own skill before controlling panes.
+Never rely on another client's focused pane or switch to the `default` session.
+Their tabs appear live in the terminal and herdr view, and detected agent states
+appear in **Agents**. Local CLI/socket access grants full shell access as your user.
+
+**Tern (optional).** With the module on, the **Tern** node under Plan shows
+[Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the bundled
+default; kitty! never bundles Tern (closed-beta, proprietary) and only runs the
+`tern` you installed: the one on `PATH`, or the path saved in the view's **Tern
+executable** section (`.private/tern/settings.json`, owner-only). Without it the view
+says so and points to stencil.so/tern; nothing else changes. **Open in Tern** starts
+kitty!'s own Tern daemon on a private socket,
+`$XDG_RUNTIME_DIR/kitty/tern-<workspace hash>/daemon.sock` (directory 0700, a
+socket others can reach is refused), gives it a `kitty` session in the workspace
+and opens a native Tern window on it (`tern --dir <workspace>`); your own Tern
+daemon and sessions are never read or changed. The view is a status panel (version,
+daemon state, sessions, panes and open windows from `tern inspect --json`, which
+never starts anything): Tern's web client needs WebGPU, which the desktop app's
+WebKitGTK view lacks, so kitty! does not embed it. Scripts reach the session with
+`TERN_DAEMON_SOCKET=<socket> tern ls`. Quit closes the Tern windows kitty! opened
+and stops its Tern daemon (Tern restores the layout next time); closing the window
+with **Keep running on close** leaves them running.
+
 
 ## Try it on fake data first
 
@@ -166,6 +211,16 @@ exact loopback Host/Origin. `--port`, `--root` and `--static-dir` override the p
 workspace and built-asset directory. The refresh button and command palette reload
 configuration from disk; saves in My profile reload it automatically.
 
+The first-run welcome offers **Continue locally** or an optional Google identity
+connection, followed by a skippable guided tour of workspace panels, modules,
+Atlas, quick notes and Study (plus the terminal dock when present). Completion is
+remembered per workspace. Reopen either flow in **Settings → Welcome & account**.
+Google is not required for local/offline use and does not secure the local API or
+sync data. For the owner-created Desktop OAuth client, `KITTY_GOOGLE_CLIENT_ID`,
+`KITTY_GOOGLE_CLIENT_SECRET`,
+system-browser/PKCE flow and privacy boundaries, see
+[Google connection and onboarding setup](docs/GOOGLE_ONBOARDING.md).
+
 For safe exploration without touching real jobs, runtime YAML or resumes:
 
 ```bash
@@ -199,34 +254,35 @@ compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
 
-### Optional LearnHarness extension
+### LearnHarness extension
 
-**Study → LearnHarness** embeds the full, independently running
+**Study → LearnHarness → Start LearnHarness** opens the included
 [upstream LearnHarness app](https://github.com/amosblomqvist/learnharness)
-(AGPL-3.0-only), not copied teaching/graph code. Teaching sessions, practice,
-knowledge graph and settings remain upstream features. The standalone app stays
-usable at **http://127.0.0.1:3210** even when Kitty is closed.
+(AGPL-3.0-only). Desktop installations include its production server and Node.js:
+no source checkout, Git, npm, system Node, or manual service setup is required.
+Teaching, practice, knowledge graph and settings remain the independent upstream
+app, contained in a cross-origin frame at **http://127.0.0.1:3210**.
 
-From this Kitty checkout, with Git, Node.js and npm on PATH:
+Start is explicit, not a login/boot service. Kitty stops only the learning server
+it started when that Kitty instance quits. Learning records and provider
+connections persist separately in the selected workspace's `data/learnharness/`
+(`auth.json` and an isolated `home/`); nothing is imported from another checkout.
+The bundled app in `kitty-web --demo` uses disposable demo storage. A healthy
+independently started service on port 3210 is reused without modifying its storage
+or stopping it. **Reconnect** only probes availability and reloads the frame.
 
-```bash
-./scripts/learnharness.sh setup   # pinned public clone + reviewed lock patch + npm install
-./scripts/learnharness.sh start   # transient systemd --user service, no sudo
-./scripts/learnharness.sh status
-./scripts/learnharness.sh stop
-# Alternative without systemd: ./scripts/learnharness.sh run (Ctrl+C to stop)
-```
-
-Start again after reboot; no system-wide unit or automatic login startup is
-installed. `journalctl --user -u kitty-learnharness.service` shows service logs.
-Setup uses `~/Projects/learnharness`, pinned to upstream **0.3.8**
-(`3dc88472eea41eed0d5e5f29c2f16f8d063c415b`). App source and `package.json`
-stay unchanged; `scripts/learnharness-dependencies.patch` reproduces the local
-installation lockfile remediation from `npm audit fix` **without `--force`**.
-It resolves the original four critical audit package findings (including Next.js
-and DOMPurify) using existing manifest ranges: Next.js 16.4.3, DOMPurify 3.4.17,
-Sharp 0.35.5, Zod 4.6.7 and related transitives. Setup refuses an unknown
-upstream revision or conflicting lock edits instead of resetting user work.
+The production payload is built from upstream **0.3.8**
+(`3dc88472eea41eed0d5e5f29c2f16f8d063c415b`) in a fresh public temporary clone,
+never a developer's learning checkout. `scripts/build-desktop.sh` runs
+`desktop/package_learnharness.py`, applies the reviewed dependency-lock patch,
+uses `npm ci`, builds Next's standalone output, and runs upstream's payload
+guard against private data/auth/env files and missing prompt assets.
+The desktop resources under `licenses/learnharness/` include the AGPL license,
+corresponding `source.tar.gz`, exact dependency-lock patch and Node's licenses.
+App source and `package.json` stay unchanged. The dependency patch resolves the
+original critical package findings within upstream's manifest ranges, without
+`--force`: Next.js 16.4.3, DOMPurify 3.4.17, Sharp 0.35.5, Zod 4.6.7 and related
+transitives.
 **Remaining upstream risk:** npm still reports two high package findings:
 `ansi-to-react@6.2.6` pulls `linkify-it@3.0.3` with quadratic text/`mailto:`
 scanning denial-of-service advisories
@@ -234,64 +290,57 @@ scanning denial-of-service advisories
 [GHSA-v245-v573-v5vm](https://github.com/advisories/GHSA-v245-v573-v5vm)).
 The suggested `ansi-to-react@6.1.6` downgrade is breaking and is not applied.
 Loopback and iframe containment do not make upstream content-processing risks
-disappear; avoid untrusted imports and do not expose this developer server on a
-network. No login/boot auto-start is enabled. These audit results describe the
-reviewed installation on 2026-10-27, not a future guarantee.
-The launcher runs `npm run dev -- --hostname 127.0.0.1 --port 3210` in a clean
-environment. The ignored `~/Projects/learnharness/data/kitty-extension/` holds
-persistent learning records/settings, `auth/auth.json` and provider-login files;
-its separate `home/` prevents inherited per-user tool configuration. Setup creates
-directories owner-only. Restarting the server preserves these files.
-No Kitty environment, resumes, applicant records, provider keys or browser profiles
-are passed or copied. Keep any manually added LearnHarness `.env.local` specific
-to LearnHarness; do not link Kitty secrets or data.
+disappear; avoid untrusted imports and do not expose the server on a network.
+These audit results describe the reviewed installation on 2026-10-27, not a
+future guarantee.
 
-Kitty only checks availability with a bounded HEAD request to the fixed loopback
-endpoint: no URL setting, remote server, redirects, data proxy or credential bridge.
-Its content policy allows this frame origin only. The contained frame cannot
-navigate the parent or open provider login popups; use **Open in new tab** for
-provider connections. When stopped, the panel shows setup/start instructions and
-**Reconnect**. On a cold first compilation, wait for the local app to finish loading
-and reconnect. Connection success is availability, not provider readiness.
+Kitty checks availability with a bounded HEAD request to the fixed loopback
+endpoint. An explicit protected `POST /api/extensions/learnharness/start` starts
+only the bundled runtime; it accepts no URL, settings or credentials. There is no
+data proxy or credential bridge. The server binds only IPv4 loopback, runs with
+a clean environment and receives no Kitty provider keys, applicant data, resumes
+or browser profiles. The iframe cannot navigate the parent or open provider-login
+popups; use **Open in new tab** for provider connections.
 
 No provider credentials/models are configured by installation. Generating lessons
 requires your own LearnHarness provider key or supported connection and model
-selection; model/research requests can send learning context externally and may
-cost money. No generated lesson or paid request is part of installation.
-**Kitty demo does not make LearnHarness disposable**: it is a separate persistent
-app. Use only synthetic learning content when verifying the demo.
+selection; requests can send learning context externally and may cost money.
+Availability is not provider readiness. Installation and smoke verification make
+no paid requests. Do not enter private applicant data.
 
-To run this checkout's new UI/backend without adopting changes into another
-checkout:
+Source development:
 
 ```bash
-cd /home/xelo/projects/kitty-worktrees/learnharness-20261027
 npm --prefix web ci
 npm --prefix web run build
-uv run kitty-web --demo --port 8766  # synthetic, no private workspace access
-# Explicit normal use only: reads/migrates the workspace you name.
-KITTY_HOME="/home/xelo/projects/kitty!" uv run kitty-web --port 8765
+uv run python desktop/package_learnharness.py  # build the included learning runtime
+uv run kitty-web --demo --port 8766            # disposable synthetic workspace
 ```
 
-For the native Kitty application, build this same worktree's packaged sidecar
-and UI, without changing another checkout or the currently running app:
+An independent source service remains optional:
 
 ```bash
-nix develop 'path:./desktop#host-toolchain' --offline --max-jobs 0 --command bash scripts/build-desktop.sh
-# Only after explicitly quitting the old Kitty app; normal use, not a test:
-nix develop 'path:./desktop#host-toolchain' --offline --command env \
-  KITTY_HOME="/home/xelo/projects/kitty!" ./desktop/target/release/kitty-workspace
+./scripts/learnharness.sh setup
+./scripts/learnharness.sh start
+./scripts/learnharness.sh status
+./scripts/learnharness.sh stop
+# Without systemd: ./scripts/learnharness.sh run (Ctrl+C to stop)
 ```
 
-The native app enforces a single instance: starting another binary while Kitty
-is already running can just focus the old app, not load this extension.
-Keep the feature binary and its bundled `kitty-web` sidecar together. Building
-does not replace the installed launcher or activate the feature against private
-data; the browser demo command above is the isolated verification path.
+That developer launcher uses `~/Projects/learnharness` with persistent storage in
+its ignored `data/kitty-extension/`, isolated HOME and no inherited Kitty secrets.
+It runs upstream's dev server; start again after reboot. It is not needed by the
+desktop installer. Kitty demo does not reset a separately running service.
 
-Run these commands from the checkout containing the extension, not an older
-installed binary or another checkout. They need no merge into a dirty checkout.
-`--root "$KITTY_HOME"` can also select a workspace explicitly.
+On NixOS, build the desktop in the native toolchain shell:
+
+```bash
+nix develop 'path:./desktop#host-toolchain' --command bash scripts/build-desktop.sh
+```
+
+Keep the native executable and bundled `kitty-web` sidecar together. The desktop
+uses a single instance per session: verification must use an isolated workspace,
+profile and session, not relaunch or replace an owner's running instance.
 
 
 ### Start here
@@ -315,15 +364,20 @@ saved. These checks describe saved data, not application readiness.
    fills known fields. Check each form and submit it yourself; kitty! never submits.
 
 **Notes** opens today's dated note, reusing the same page on subsequent visits.
-**Map** opens the folder/notebook schema; the library also provides recent pages,
-tags and drag-to-reorder. Persistent tabs keep several pages available.
+The library on the left is the one notebook/page navigator: folders, notebooks,
+recent pages, tags and drag-to-reorder. The header row holds persistent page tabs,
+the save state, **Views** (saved maps, the folder/notebook **Library overview**
+schema, Today) and canvas fullscreen. One editor toolbar holds the
+Writing/Canvas/Mind map switch, page title, Save (Ctrl+S) and Find in page;
+**More** holds outline preview, add block, paper, favorite, reload, delete and the
+keyboard help. Escape closes Views and More.
 Text notes use stable bullet blocks: Enter adds a sibling, Tab/Shift+Tab nests or
 unnests, `[[Title]]` and `#tags` collect topic mentions, and unlinked title mentions
 offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting.
-**Canvas fullscreen** puts only the canvas and compact tools on the laptop screen,
+**Canvas fullscreen** (⛶) puts only the canvas and compact tools on the laptop screen,
 not the whole application. Its exit control and Escape restore the workspace.
 Outside text editing, F fullscreens the focused workspace panel instead.
 
@@ -470,8 +524,10 @@ jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,
 `s` skips, `l` defers, `x` marks ineligible and `n`/`p` move between rows.
 Shift+F opens the reviewed autofill plan for marked, opened or focused jobs.
-Letter shortcuts pause while typing or using dialogs. Native browser print,
-reload and close-tab shortcuts are not intercepted.
+Letter shortcuts pause while typing or using dialogs. Ctrl/⌘W closes the active
+workspace tab using the same unsaved-edit confirmation as its close button; the
+last tab returns to a fresh home tab. Ctrl/⌘T opens a new tab. Native browser
+print and reload shortcuts are not intercepted.
 
 **Panel fullscreen:** press F outside text editing to fill the kitty! window with
 the focused view or graph. Click a graph to focus its panel first. F or Esc
@@ -602,24 +658,50 @@ Replacing/uninstalling the application does not require deleting it.
 
 ### Signed in-app updates
 
-Use **Check for updates** in **Settings → Desktop** or the system-tray menu. The native updater
-checks the public release feed over HTTPS and verifies the installer against the
-public signing key embedded in the app before installation. There are no updater
-permissions exposed to the website. Save your work and approve the native prompts;
-restart when the app asks so its backend and window run the same new version.
+In **Settings → Desktop → App updates**, choose **Check for updates** (also in the
+system-tray menu), then **Download update** and **Install and restart**. No manual
+download, quit, replacement or relaunch is needed for routine signed updates.
+The native updater checks the public release feed over HTTPS and verifies the
+installer and announced version against the signing key embedded in the app.
+The website receives no updater permissions. Downloading leaves your workspace
+available; installation waits for accepted work, saves, and restarts automatically.
 
 Debian-package updates require administrator authentication through your desktop's
 PolicyKit authentication agent, and the new package's dependencies must already be
 satisfiable. If package installation reports missing dependencies, open the new
-`.deb` from the release page in your graphical package manager. AppImage updates
-replace the existing writable AppImage and need free space beside it for the new
-download. A network/signature/install failure must not be treated as a completed
-update; keep the existing app or install the signed release manually.
+`.deb` from the release page in your graphical package manager.
+
+AppImage updates require a writable installation directory and space for both the
+replacement and one prior image. After signature verification, the app stages the
+replacement beside the installed image, syncs and closes it, then renames it into
+place. This avoids cross-mount rename failures inside NixOS `appimage-run`. The
+previous executable remains beside it as `kitty.AppImage.previous` (or the original
+AppImage name plus `.previous`). Failed staging/replacement leaves the installed
+image unchanged. To recover an older application, quit kitty! and restore that
+previous image to the original filename; do not delete or replace the workspace.
+A network/signature/install failure is not a completed update.
 
 Only packaged `.deb` and AppImage installations support native self-installation.
 Loose source-binary installations use the public downloads link instead; rebuild
 and rerun the local installer to replace those binaries. Installing a published
 AppImage with the launcher below retains AppImage self-update support.
+
+**NixOS launcher migration for the next desktop release:** existing launchers need
+the current installer once to enable restart outside the old AppImage/FHS process.
+Use the same installed image; there is no need to hunt for another download:
+
+```bash
+python3 scripts/install-desktop.py \
+  --appimage ~/.local/share/kitty/application/kitty.AppImage
+```
+
+Run this with kitty! closed, after installing a release containing these changes.
+The installer retains the generated launcher's working runtime environment,
+configured `appimage-run` link and selected workspace, even when invoked from a
+different development dependency shell. Explicit `--workspace` or
+`--appimage-runner` options change those selections; ambient `KITTY_HOME` and
+`KITTY_DB` never select the installed workspace. Future updates reuse that launcher
+automatically. Custom launchers are not silently rewritten.
 
 ### Build and install a local launcher (including NixOS)
 
@@ -652,10 +734,14 @@ open terminal. The installer never copies over or deletes workspace files.
 `--binary`, `--sidecar`, `--herdr`, and `--icon` can select explicit build artifacts.
 Alternatively, `--appimage /absolute/path/to/downloaded.AppImage` installs a
 published AppImage rather than loose binaries. Its writable installed location
-remains fixed across signed replacements. The launcher sets
-`APPIMAGE_EXTRACT_AND_RUN=1` to avoid requiring FUSE. NixOS still needs a compatible
-ELF loader and runtime libraries; capture them by running the installer inside the
-dependency shell. Neither a checkout nor that shell is needed for subsequent launches.
+remains fixed across signed replacements, with an adjacent `.previous` recovery
+copy. Reinstalling an AppImage preserves the original generated launcher's runtime
+settings instead of capturing a different build shell's library paths.
+The AppImage launcher sets `APPIMAGE_EXTRACT_AND_RUN=1` to avoid requiring FUSE and
+waits for the app; an update restart returns through the original runner with its
+original environment. NixOS AppImages use `--appimage-runner` for their FHS runtime;
+loose source binaries still need the captured dependency-shell libraries.
+Neither a checkout nor a dependency shell is needed for subsequent launches.
 
 NixOS defaults to a `.deb` build artifact because Tauri's AppImage assembly expects
 GTK in a single library directory, unlike the Nix store. The official downloadable
@@ -696,8 +782,9 @@ public releases repository. A guard downloads the actual uploaded files and
 validates the version/tag, nonempty complete assets, signatures and installer-specific
 `linux-x86_64-deb` / `linux-x86_64-appimage` metadata before publishing as latest.
 A failed guard leaves a draft, not a new public updater feed.
-No source archive, checkout, private workspace or applicant data is uploaded by
-the workflow (GitHub's automatic source archives cover only the releases repository).
+No Kitty source archive, checkout, private workspace or applicant data is uploaded
+by the workflow. Bundles do include LearnHarness's public corresponding source and
+licenses; GitHub's automatic source archives cover only the releases repository.
 
 The signed updater feed is
 [`latest.json`](https://github.com/ZacharySF/kitty-releases/releases/latest/download/latest.json).

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { api, type Bootstrap } from "./api";
   import Icon from "./Icon.svelte";
@@ -11,11 +11,19 @@
     visibleRelations,
     type View,
   } from "./workspace";
+  import {
+    ATLAS_HIDDEN_KEY,
+    ATLAS_NODES_EVENT,
+    SECTION_DRAG_TYPE,
+    atlasGraph,
+    atlasSections,
+    hiddenSections,
+    setSectionHidden,
+  } from "./atlasNodes";
   import { activeModules } from "./modules.svelte";
   import {
     mountGraph,
     type GraphHandle,
-    type GraphLink,
     type GraphNode,
   } from "./graph3d";
   import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
@@ -50,14 +58,10 @@
   const enabled = $derived(activeModules.enabled);
   const applyai = $derived(enabled.includes("applyai"));
   const workspaceTools = $derived(enabled.includes("workspace"));
-  const sections = $derived(
-    visibleGroups(enabled).map((group) => ({
-      label: group.label,
-      items: group.views
-        .filter((id) => id !== "today" && (group.label !== "Job search" || id === "jobs"))
-        .map((id) => navigation.find((item) => item.id === id)!),
-    })),
-  );
+  const sections = $derived(atlasSections(visibleGroups(enabled), navigation));
+  let hidden = $state(hiddenSections());
+  const listed = (view: string): view is View =>
+    sections.some((group) => group.items.some((item) => item.id === view));
 
   let atlas = $state<Atlas | null>(null);
   let atlasError = $state("");
@@ -80,6 +84,13 @@
   let searchField = $state<HTMLInputElement>();
   let handle = $state.raw<GraphHandle | null>(null);
   let pendingGroup: string | null = null;
+  let sectionsBlock = $state<HTMLElement>();
+  let draggedSection = $state<View | null>(null);
+  let nodeDrag: { view: View; label: string } | null = null;
+  let nodeOverList = $state<string | null>(null);
+  let rowMenu = $state<{ view: View; label: string; x: number; y: number } | null>(null);
+  let rowMenuElement = $state<HTMLDivElement>();
+  let rowMenuReturn: HTMLElement | null = null;
 
   const itemCounts = $derived.by(() => {
     const counts = new Map<View, number>();
@@ -88,53 +99,7 @@
         counts.set(item.view, item.count + (counts.get(item.view) || 0));
     return counts;
   });
-  const graph = $derived.by(() => {
-    const nodes: GraphNode[] = [];
-    const links: GraphLink[] = [];
-    const rootViews: Partial<Record<string, View>> = { Study: "study", "Job search": "jobs", Settings: "settings" };
-    for (const group of sections) {
-      nodes.push({
-        id: rootViews[group.label] ? `view:${rootViews[group.label]}` : `group:${group.label}`,
-        label: group.label,
-        group: group.label,
-        kind: "hub",
-        size: 7,
-        detail: `${group.items.length} sections`,
-        href: rootViews[group.label] ? `#${rootViews[group.label]}` : undefined,
-      });
-    }
-    for (const group of sections) {
-      for (const item of group.items) {
-        if (item.id === rootViews[group.label]) continue;
-        const count = itemCounts.get(item.id) ?? 0;
-        nodes.push({
-          id: `view:${item.id}`,
-          label: item.label,
-          group: group.label,
-          kind: "hub",
-          size: 3,
-          detail: count ? `${count} linked item${count === 1 ? "" : "s"}` : "",
-          href: `#${item.id}`,
-        });
-        links.push({
-          source: rootViews[group.label] ? `view:${rootViews[group.label]}` : `group:${group.label}`,
-          target: `view:${item.id}`,
-        });
-      }
-    }
-    const visible = new Set(nodes.map(node => node.id));
-    const existing = new Set(links.map(link => `${link.source}\0${link.target}`));
-    for (const [a, b] of visibleRelations(enabled))
-      if (visible.has(`view:${a}`) && visible.has(`view:${b}`) &&
-          !existing.has(`view:${a}\0view:${b}`) && !existing.has(`view:${b}\0view:${a}`))
-        links.push({
-          source: `view:${a}`,
-          target: `view:${b}`,
-          weight: 0.8,
-          label: "related sections",
-        });
-    return { nodes, links };
-  });
+  const graph = $derived(atlasGraph(sections, hidden, visibleRelations(enabled), itemCounts));
   const matches = $derived.by(() => {
     const text = query.trim().toLowerCase();
     if (!text) return [];
@@ -197,6 +162,93 @@
   }
   export function focusSearch() {
     if (pane.active) searchField?.focus();
+  }
+  /** Screen position of a drawn node, or null when it is not on the atlas. */
+  export function nodePoint(id: string) {
+    return handle?.nodePoint(id) ?? null;
+  }
+
+  /** Q13: a node released over this atlas's Sections list is hidden. */
+  function overList(clientX: number, clientY: number) {
+    const target = document.elementFromPoint(clientX, clientY);
+    return !!target && !!sectionsBlock?.contains(target);
+  }
+  function dropOnList(node: GraphNode, point: { clientX: number; clientY: number }) {
+    if (!pane.active || !node.id.startsWith("view:")) return;
+    const view = node.id.slice(5);
+    if (listed(view) && overList(point.clientX, point.clientY)) setSectionHidden(view, true);
+  }
+  /** Tracks a pointer pressed on a section node so the list can show it accepts the drop. */
+  function stagePointerDown(event: PointerEvent) {
+    const node = mode === "graph" && pane.active && !event.button ? handle?.nodeAt(event.clientX, event.clientY) : null;
+    const view = node?.id.startsWith("view:") ? node.id.slice(5) : "";
+    nodeDrag = listed(view) ? { view, label: node!.label } : null;
+  }
+  function startSectionDrag(event: DragEvent, view: View) {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData(SECTION_DRAG_TYPE, view);
+    event.dataTransfer.effectAllowed = "move";
+    draggedSection = view;
+  }
+  /** Only a hidden section can be dropped onto the graph to show it. */
+  function acceptsSection(event: DragEvent) {
+    return mode === "graph" && !!draggedSection && hidden.has(draggedSection) &&
+      !!event.dataTransfer?.types.includes(SECTION_DRAG_TYPE);
+  }
+  function sectionDragOver(event: DragEvent) {
+    if (!acceptsSection(event)) return;
+    event.preventDefault();
+    event.dataTransfer!.dropEffect = "move";
+  }
+  function sectionDrop(event: DragEvent) {
+    if (!acceptsSection(event)) return;
+    event.preventDefault();
+    const view = event.dataTransfer!.getData(SECTION_DRAG_TYPE);
+    draggedSection = null;
+    if (listed(view)) setSectionHidden(view, false);
+  }
+
+  function openRowMenu(event: MouseEvent, view: View, label: string) {
+    event.preventDefault();
+    const trigger = (event.currentTarget as HTMLElement).closest("li")?.querySelector<HTMLElement>(".row-menu");
+    rowMenuReturn = trigger ?? null;
+    const rect = (trigger ?? (event.currentTarget as HTMLElement)).getBoundingClientRect();
+    rowMenu = {
+      view,
+      label,
+      x: Math.max(8, Math.min(event.clientX || rect.left, window.innerWidth - 200)),
+      y: Math.max(8, Math.min(event.clientY || rect.bottom, window.innerHeight - 100)),
+    };
+    void tick().then(() => rowMenuElement?.querySelector<HTMLButtonElement>("button")?.focus());
+  }
+  function closeRowMenu(restoreFocus = true) {
+    rowMenu = null;
+    if (restoreFocus && rowMenuReturn?.isConnected) rowMenuReturn.focus();
+    rowMenuReturn = null;
+  }
+  function rowMenuKey(event: KeyboardEvent) {
+    const items = [...(rowMenuElement?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? [])];
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number;
+    if (event.key === "ArrowDown") next = (index + 1) % items.length;
+    else if (event.key === "ArrowUp") next = (index + items.length - 1) % items.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = items.length - 1;
+    else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeRowMenu();
+      return;
+    } else {
+      if (event.key === "Tab") closeRowMenu(false);
+      return;
+    }
+    event.preventDefault();
+    items[next]?.focus();
+  }
+  function toggleSection(view: View) {
+    setSectionHidden(view, !hidden.has(view));
+    closeRowMenu();
   }
 
   let atlasRequest = 0;
@@ -288,6 +340,19 @@
       void handle?.setLook(look).catch(cause => { notice = (cause as Error).message; });
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
+    // Every atlas, in this window's tabs or another window, follows the same choice.
+    const syncHidden = () => { hidden = hiddenSections(); };
+    const syncStorage = (event: StorageEvent) => { if (event.key === ATLAS_HIDDEN_KEY || event.key === null) syncHidden(); };
+    window.addEventListener(ATLAS_NODES_EVENT, syncHidden);
+    window.addEventListener("storage", syncStorage);
+    // Capture phase: the renderers own the pointer while a node is dragged.
+    const trackNodeDrag = (event: PointerEvent) => {
+      if (nodeDrag) nodeOverList = overList(event.clientX, event.clientY) ? nodeDrag.label : null;
+    };
+    const endNodeDrag = () => { nodeDrag = null; nodeOverList = null; };
+    window.addEventListener("pointermove", trackNodeDrag, true);
+    window.addEventListener("pointerup", endNodeDrag);
+    window.addEventListener("pointercancel", endNodeDrag);
     void (async () => {
       await loadAtlas();
       if (disposed) return;
@@ -305,6 +370,7 @@
             else selected = node;
           },
           onHover: (node) => { if (pane.active || !node) hovered = node; },
+          onDragEnd: dropOnList,
         });
         if (disposed) {
           mounted.destroy();
@@ -320,6 +386,11 @@
     return () => {
       disposed = true;
       window.removeEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
+      window.removeEventListener(ATLAS_NODES_EVENT, syncHidden);
+      window.removeEventListener("storage", syncStorage);
+      window.removeEventListener("pointermove", trackNodeDrag, true);
+      window.removeEventListener("pointerup", endNodeDrag);
+      window.removeEventListener("pointercancel", endNodeDrag);
       handle?.destroy();
       handle = null;
     };
@@ -374,9 +445,15 @@
         </h3>
         <ul>
           {#each group.items as item}
-            <li>
+            <li
+              class:hidden-section={hidden.has(item.id)}
+              oncontextmenu={(event) => openRowMenu(event, item.id, item.label)}
+            >
               <a
                 href={`#${item.id}`}
+                draggable="true"
+                ondragstart={(event) => startSectionDrag(event, item.id)}
+                ondragend={() => (draggedSection = null)}
                 onclick={(event) => {
                   event.preventDefault();
                   onview(item.id);
@@ -386,7 +463,8 @@
                     aria-label={`${itemCounts.get(item.id)} linked items`}
                     >{itemCounts.get(item.id)}</small
                   >{/if}</a
-              >{#if mode === "graph" && graph.nodes.some(node => node.id === `view:${item.id}`)}<button
+              >{#if hidden.has(item.id)}<span class="sr-only">Hidden from the atlas</span
+                >{/if}{#if mode === "graph" && graph.nodes.some(node => node.id === `view:${item.id}`)}<button
                   class="locate"
                   aria-label={`Show ${item.label} on the map`}
                   title="Show on the map"
@@ -396,7 +474,14 @@
                         (node) => node.id === `view:${item.id}`,
                       )!,
                     )}>◎</button
-                >{/if}
+                >{/if}<button
+                class="row-menu"
+                aria-label={`${item.label} options`}
+                aria-haspopup="menu"
+                aria-expanded={rowMenu?.view === item.id}
+                title="Options"
+                onclick={(event) => openRowMenu(event, item.id, item.label)}>⋯</button
+              >
             </li>
           {/each}
         </ul>
@@ -408,14 +493,18 @@
 <div class="atlas" class:list-mode={mode === "list"}>
   <div
     class="stage"
+    class:drop-target={!!draggedSection && hidden.has(draggedSection) && mode === "graph"}
     role="region"
     data-kitty-panel="graph"
     tabindex="-1"
     aria-label={`${look === "2d" ? "2D" : "3D"} atlas of your workspace`}
     aria-describedby={`${atlasId}-description`}
+    ondragover={sectionDragOver}
+    ondrop={sectionDrop}
+    onpointerdowncapture={stagePointerDown}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      A map of workspace sections. {look === "2d" ? "Drag nodes to move, drag the background to pan" : "Drag to rotate"}, scroll to zoom, select a section to open its map.
+      A map of workspace sections. {look === "2d" ? "Drag nodes to move, drag the background to pan" : "Drag to rotate"}, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.
     </p>
     <div class="canvas" bind:this={container}></div>
     {#if mode === "list"}
@@ -428,7 +517,7 @@
       </div>
     {:else}
       <div class="stage-caption" aria-hidden="true">
-        <span>{look === "2d" ? "Drag a node to move · drag background to pan · scroll or pinch to zoom" : "Drag to rotate · scroll to zoom · Ctrl + ← / → to turn"}</span>
+        <span>{#if draggedSection && hidden.has(draggedSection)}Drop to show {sections.flatMap((group) => group.items).find((item) => item.id === draggedSection)?.label} on the atlas{:else if mode === "graph" && !graph.nodes.length}Every section is hidden · drag one here from Sections to show it{:else}{look === "2d" ? "Drag a node to move · drag background to pan · scroll or pinch to zoom" : "Drag to rotate · scroll to zoom · Ctrl + ← / → to turn"} · drag a node onto Sections to hide it{/if}</span>
       </div>
       {#if mode === "loading"}<p class="stage-loading" role="status">
           Drawing your atlas…
@@ -519,8 +608,13 @@
       </section>
     {/if}
 
-    <details class="block" open={mode === "list" ? undefined : true}>
-      <summary>Sections</summary>
+    <details
+      class="block"
+      class:drop-hide={!!nodeOverList}
+      bind:this={sectionsBlock}
+      open={mode === "list" ? undefined : true}
+    >
+      <summary>Sections{#if nodeOverList}<span class="drop-hint">Drop to hide {nodeOverList}</span>{/if}</summary>
       {#if mode === "list"}<p class="muted small">
           The full list is shown in the main area.
         </p>{:else}{@render sectionList(false)}{/if}
@@ -552,12 +646,39 @@
   </Panel>
 </div>
 
+<svelte:window
+  onpointerdown={(event) => {
+    if (rowMenu && event.button !== 2 && !rowMenuElement?.contains(event.target as Node)) closeRowMenu(false);
+  }}
+/>
+{#if rowMenu}
+  {@const menu = rowMenu}
+  <div
+    bind:this={rowMenuElement}
+    class="row-menu-popup"
+    role="menu"
+    tabindex="-1"
+    aria-label={`${menu.label} options`}
+    style:left={`${menu.x}px`}
+    style:top={`${menu.y}px`}
+    onkeydown={rowMenuKey}
+  >
+    <button role="menuitem" tabindex="-1" onclick={() => { closeRowMenu(false); onview(menu.view); }}>Open</button>
+    <button role="menuitem" tabindex="-1" onclick={() => toggleSection(menu.view)}
+      >{hidden.has(menu.view) ? "Show on the atlas" : "Hide from the atlas"}</button
+    >
+  </div>
+{/if}
+
 <style>
+  /* Fills the room App gives it (zero basis: the sidebar never sizes the row);
+     the sidebar scrolls on its own. The floor keeps a cramped graph usable. */
   .atlas {
-    flex: 1;
-    min-height: 0;
+    flex: 1 1 0px;
+    min-height: 120px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+    grid-template-rows: minmax(0, 1fr);
     border: 1px solid var(--border-fine, var(--border));
     background: var(--canvas);
   }
@@ -784,6 +905,73 @@
     color: var(--violet);
     border-color: var(--border);
   }
+  .row-menu {
+    width: 26px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--subtle);
+  }
+  .row-menu:hover,
+  .row-menu:focus-visible,
+  .row-menu[aria-expanded="true"] {
+    color: var(--ink);
+    border-color: var(--border);
+  }
+  .section-list li.hidden-section {
+    opacity: 0.45;
+  }
+  .section-list li.hidden-section:hover,
+  .section-list li.hidden-section:focus-within {
+    opacity: 0.8;
+  }
+  .section-list a[draggable="true"] {
+    cursor: grab;
+  }
+  .block.drop-hide {
+    outline: 1px dashed var(--accent);
+    outline-offset: 2px;
+    background: var(--surface);
+  }
+  .drop-hint {
+    margin-left: 8px;
+    color: var(--accent);
+    font-size: 11px;
+  }
+  .stage.drop-target {
+    outline: 1px dashed var(--accent);
+    outline-offset: -8px;
+  }
+  .stage.drop-target .stage-caption {
+    color: var(--ink);
+  }
+  .row-menu-popup {
+    position: fixed;
+    z-index: 1000;
+    min-width: 190px;
+    padding: 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface-raised);
+    box-shadow: var(--overlay-shadow);
+  }
+  .row-menu-popup button {
+    display: block;
+    width: 100%;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--ink);
+    padding: 0.6rem 0.7rem;
+    font: inherit;
+    font-size: 0.85rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .row-menu-popup button:hover,
+  .row-menu-popup button:focus-visible {
+    background: var(--wash);
+    outline-color: var(--accent);
+  }
   .section-list.large {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -830,9 +1018,19 @@
   .brief :global(.panel-heading h2) {
     font-size: 16px;
   }
-  @media (max-width: 760px) {
+  /* A short window leaves the graph too little room for the gesture hint. */
+  @media (max-height: 640px) {
+    .stage-caption {
+      display: none;
+    }
+  }
+  /* Phone widths stack. The desktop minimum window (760×500) stays side by side
+     even when display scaling lays it out narrower in CSS pixels. */
+  @media (max-width: 599.98px) {
     .atlas {
+      flex: none;
       grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: none;
     }
     .stage {
       height: 58vh;

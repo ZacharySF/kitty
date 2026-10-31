@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "kitty! Workspace",
   "mainBinaryName": "kitty-workspace",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "identifier": "com.zacharysf.kitty",
   "build": { "frontendDist": "../web/dist" },
   "app": {
@@ -21,7 +21,10 @@
     "shortDescription": "Private local opportunities, learning and planning workspace",
     "icon": ["icons/icon.png"],
     "externalBin": ["binaries/kitty-web", "binaries/kitty-herdr"],
-    "resources": { "third_party/herdr/LICENSE": "licenses/herdr/LICENSE" },
+    "resources": {
+      "third_party/herdr/LICENSE": "licenses/herdr/LICENSE",
+      ".build/learnharness-legal/": "licenses/learnharness/"
+    },
     "linux": {
       "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "xdg-utils", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio", "pkexec"] },
       "appimage": { "bundleMediaFramework": false }

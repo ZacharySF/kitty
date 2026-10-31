@@ -348,6 +348,15 @@ def test_learnharness_unavailable_is_not_a_kitty_failure(website, monkeypatch):
     assert website.request("/api/bootstrap")[0] == 200
 
 
+def test_study_start_reports_missing_packaged_runtime_not_unknown_route(website):
+    website.app.learnharness.bundle = website.static / "missing-runtime"
+    website.app.learnharness.port = 1
+    status, data, _ = website.request("/api/extensions/learnharness/start", {})
+    assert status == 503
+    assert "reinstall" in data["error"]
+    assert website.request("/api/extensions/learnharness/start", {"url": "https://example.invalid"})[0] == 400
+
+
 def test_quick_notes_http_create_autosave_list_and_delete(website):
     status, created, _ = website.request("/api/quick-notes/create", {"body": "", "tint": "mint"})
     assert status == 200 and created["body"] == "" and created["tint"] == "mint"

@@ -10,11 +10,14 @@
   let error = $state("");
   let generation = $state(0);
 
-  async function check() {
+  async function check(action: "status" | "start" = "status") {
     checking = true;
     error = "";
     try {
-      const state = await api<{ available: boolean }>("/extensions/learnharness");
+      const state = await api<{ available: boolean }>(
+        action === "start" ? "/extensions/learnharness/start" : "/extensions/learnharness",
+        action === "start" ? {} : undefined,
+      );
       available = state.available;
       generation += 1;
     } catch (cause) {
@@ -31,7 +34,7 @@
   <header>
     <div><h1>LearnHarness</h1><p>Independent local teaching, practice and knowledge graph.</p></div>
     <div class="actions">
-      <Button size="sm" onclick={check} disabled={checking}>{checking ? "Checking…" : "Reconnect"}</Button>
+      <Button size="sm" onclick={() => check()} disabled={checking}>{checking ? "Checking…" : "Reconnect"}</Button>
       <a href={url} target="_blank" rel="noopener noreferrer">Open in new tab</a>
     </div>
   </header>
@@ -45,30 +48,30 @@
         sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
         onerror={() => { available = false; }}></iframe>
     {/key}
-    <small>If the app stops or the frame cannot load, start the service below and choose Reconnect.
-      This is the full upstream app, also available independently at {url}.</small>
+    <small>The bundled learning server stops when this Kitty instance quits; learning records persist.
+      An independently started LearnHarness server is never stopped by Kitty.</small>
   {:else if !checking}
     <Panel title="LearnHarness is unavailable">
-      <p>Nothing is lost: learning data persists when the server stops. Start LearnHarness on this
-        computer, then choose Reconnect. It must listen at <code>{url}</code>.</p>
+      <p>Start the included learning app on this computer. No source checkout, Git, npm or separate
+        Node.js installation is needed in the desktop app. Existing learning records are preserved.</p>
+      <Button onclick={() => check("start")} disabled={checking}>Start LearnHarness</Button>
     </Panel>
   {/if}
-  <details open={!available && !checking}>
-    <summary>Local setup, start and stop</summary>
-    <p>From the Kitty source checkout, with Git, Node.js and npm installed:</p>
-    <pre><code>./scripts/learnharness.sh setup
-./scripts/learnharness.sh start
-./scripts/learnharness.sh status
-./scripts/learnharness.sh stop</code></pre>
-    <p>Setup installs upstream LearnHarness 0.3.8 in <code>~/Projects/learnharness</code>,
-      with unchanged app source and a reviewed dependency-lock patch (see README for remaining audit risks).
-      Start/stop use a transient systemd user service (no sudo); start again after reboot.
-      Without systemd, use <code>./scripts/learnharness.sh run</code> and stop with Ctrl+C.</p>
-    <p>Learning records and credentials stay in the upstream checkout's ignored
-      <code>data/kitty-extension/</code> directory, not Kitty. No provider is configured automatically.
-      In Kitty demo mode this is still an independent app, not a disposable demo: changes in
-      LearnHarness persist. Do not enter private applicant data.</p>
-    <a href="https://github.com/amosblomqvist/learnharness" target="_blank" rel="noopener noreferrer">Upstream LearnHarness · AGPL-3.0-only · source and instructions</a>
+  <details>
+    <summary>Learning data and provider setup</summary>
+    <p>The bundled app stores learning records and provider connections in this workspace's
+      separate <code>data/learnharness/</code> directory. Kitty does not copy credentials or learning
+      records from an existing upstream checkout. Demo workspace learning records are disposable;
+      an independently started server keeps its own data.</p>
+    <p>No provider is configured automatically. Use LearnHarness settings to connect your provider
+      and choose models before generating lessons. Requests may send learning context to that
+      provider and incur costs. Do not enter private applicant data.</p>
+    <p>Source developers can build the included runtime with
+      <code>uv run python desktop/package_learnharness.py</code>, or run an independent server
+      using <code>./scripts/learnharness.sh setup</code> and <code>./scripts/learnharness.sh start</code>.</p>
+    <p>LearnHarness 0.3.8 · AGPL-3.0-only. The desktop bundle includes its license, corresponding
+      source archive and reviewed dependency-lock patch.</p>
+    <a href="https://github.com/amosblomqvist/learnharness" target="_blank" rel="noopener noreferrer">Upstream LearnHarness · source and instructions</a>
   </details>
 </section>
 
@@ -83,6 +86,5 @@
   details { padding: .8rem; border: 1px solid var(--border); border-radius: .5rem; }
   summary { cursor: pointer; }
   details p { line-height: 1.5; }
-  pre { overflow-x: auto; padding: .8rem; background: var(--surface); }
   code { overflow-wrap: anywhere; }
 </style>

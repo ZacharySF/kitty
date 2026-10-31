@@ -40,8 +40,9 @@ pub fn check(app: &AppHandle) {
 }
 
 async fn run(app: &AppHandle) -> Result<(), String> {
-    if !matches!(tauri::utils::platform::bundle_type(),
-        Some(tauri::utils::config::BundleType::Deb | tauri::utils::config::BundleType::AppImage)) {
+    let appimage = app.env().appimage.map(std::path::PathBuf::from);
+    if appimage.is_none() && !matches!(tauri::utils::platform::bundle_type(),
+        Some(tauri::utils::config::BundleType::Deb)) {
         let open = app.dialog().message("This copy was not installed from a supported Linux .deb or AppImage package, so it cannot replace itself safely. Download the current desktop installer from the public releases page; your existing workspace stays in place.")
             .title("kitty! desktop installers")
             .buttons(MessageDialogButtons::OkCancelCustom("Open downloads".into(), "Cancel".into()))
@@ -52,12 +53,15 @@ async fn run(app: &AppHandle) -> Result<(), String> {
         }
         return Ok(());
     }
-    let updater = app.updater_builder()
+    let mut builder = app.updater_builder()
         .timeout(Duration::from_secs(30))
         // Also reject HTTPS-to-HTTP redirects and insecure artifact URLs, in debug
         // builds too. Trust is the embedded signing key, never a key from the feed.
-        .configure_client(|client| client.https_only(true))
-        .build().map_err(|error| error.to_string())?;
+        .configure_client(|client| client.https_only(true));
+    if let Some(image) = &appimage {
+        builder = builder.target("linux-x86_64-appimage").executable_path(image);
+    }
+    let updater = builder.build().map_err(|error| error.to_string())?;
     let Some(mut update) = updater.check().await.map_err(|error| error.to_string())? else {
         message(app, "kitty! is up to date.", MessageDialogKind::Info);
         return Ok(());
@@ -81,7 +85,7 @@ async fn run(app: &AppHandle) -> Result<(), String> {
         return Err("The application is stopping; the update was not installed.".into());
     }
     status(app, "Signed update verified — ready to install");
-    let install = app.dialog().message(format!("The signed update to kitty! {} has been verified.\n\nInstall and restart now? kitty! will stop accepting new work, wait for accepted operations and active workers to finish, and save your workspace before installation. This can take time; do not force-close the app.\n\nOn Ubuntu, a .deb installation may request administrator authentication. An AppImage must be in a writable location.", update.version))
+    let install = app.dialog().message(format!("The signed update to kitty! {} has been verified.\n\nInstall and restart now? kitty! will stop accepting new work, wait for accepted operations and active workers to finish, and save your workspace before installation. This can take time; do not force-close the app.\n\nOn Ubuntu, a .deb installation may request administrator authentication. An AppImage must be writable; its previous version is kept beside it as .previous for recovery.", update.version))
         .title("kitty! verified update ready")
         .buttons(MessageDialogButtons::OkCancelCustom("Install and restart".into(), "Later".into()))
         .blocking_show();
@@ -99,13 +103,24 @@ async fn run(app: &AppHandle) -> Result<(), String> {
     app.state::<Desktop>().backend.lock().stop();
     app.state::<Desktop>().lifecycle.lock().backend_drained();
     status(app, "Installing verified update…");
-    if let Err(error) = update.install(&bytes) {
+    let installed = match &appimage {
+        Some(image) => crate::appimage_update::install(image, &bytes),
+        None => update.install(&bytes).map_err(|error| error.to_string()),
+    };
+    if let Err(error) = installed {
         // Installation can fail after changing files. Never revive an old sidecar
         // against a partially replaced installation: restart its installed owner.
         message(app, format!("The update could not be installed. Your workspace was saved and its workers stopped safely.\n\n{error}\n\nkitty! will now restart to reopen the installed application. If it does not reopen, launch kitty! from your desktop menu, or download the installer again from https://github.com/ZacharySF/kitty-releases/releases/latest . Your workspace has not been deleted. For .deb updates, administrator authentication and working package dependencies are required; for AppImage updates, check directory permissions and free space."), MessageDialogKind::Error);
     }
     app.state::<Desktop>().lifecycle.lock().restart();
-    app.restart();
+    if appimage.is_some() && std::env::var_os("KITTY_DESKTOP_LAUNCHER").is_some() {
+        // The launcher waits outside appimage-run/bubblewrap. Relaunch there,
+        // not inside the old extracted AppImage with its inherited library paths.
+        app.exit(42);
+        Ok(())
+    } else {
+        app.restart();
+    }
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 RUNTIME_ENVIRONMENT = (
@@ -26,6 +27,45 @@ def desktop_quote(value: str) -> str:
     for character in ("\\", '"', "`", "$"):
         value = value.replace(character, "\\" + character)
     return '"' + value + '"'
+
+
+def atomic_copy(source: Path, destination: Path) -> None:
+    """Keep the installed executable intact if copying the replacement fails."""
+    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=f".{destination.name}-") as temporary:
+        staged = Path(temporary) / destination.name
+        shutil.copy2(source, staged)
+        staged.chmod(0o755)
+        os.replace(staged, destination)
+
+
+def previous_appimage_launcher(launcher: Path, image: Path) -> tuple[list[str], list[str]]:
+    """Read our generated launcher as data; never execute shell to recover settings."""
+    lines = launcher.read_text().splitlines()
+    # v0.2.1/v0.2.2 used exec; managed launchers keep the same command in a loop.
+    command = next((line[5:] for line in lines if line.startswith("exec ")), None)
+    if command is None and "while :; do" in lines:
+        command = lines[lines.index("while :; do") + 1].strip()
+    if command is None or not command.endswith(' "$@"'):
+        raise ValueError("Existing launcher is not a generated kitty! launcher; keep it and install separately.")
+    tokens = shlex.split(command.removesuffix(' "$@"'))
+    index = tokens.index(str(image))
+    if index not in (0, 1) or tokens[index + 1:index + 2] not in ([], ["--workspace"]) or len(tokens[index + 1:]) not in (0, 2):
+        raise ValueError("Existing launcher has custom arguments; keep it and install separately.")
+    runtime = []
+    generated = {
+        "unset KITTY_HOME KITTY_DB", "export APPIMAGE_EXTRACT_AND_RUN=1",
+        "export KITTY_DESKTOP_LAUNCHER=1", "while :; do", "result=$?",
+        '[ "$result" -eq 42 ] || exit "$result"', "done", command, "exec " + command,
+    }
+    for line in lines:
+        if line.startswith("export ") and line[7:].split("=", 1)[0] in RUNTIME_ENVIRONMENT:
+            # Validate quoting without evaluating the shell expression.
+            if len(shlex.split(line[7:])) != 1:
+                raise ValueError("Invalid captured runtime setting in existing launcher.")
+            runtime.append(line)
+        elif line.strip() and not line.startswith("#") and line.strip() not in generated:
+            raise ValueError("Existing launcher contains custom shell settings; keep it and install separately.")
+    return runtime, tokens
 
 
 def main() -> None:
@@ -62,30 +102,40 @@ def main() -> None:
     icon = data / "icons/hicolor/128x128/apps/com.zacharysf.kitty.png"
     for directory in (application, applications, bin_dir, icon.parent):
         directory.mkdir(parents=True, exist_ok=True)
-    for source, name in executables:
-        destination = application / name
-        shutil.copy2(source, destination)
-        destination.chmod(0o755)
-    shutil.copy2(args.icon, icon)
     launcher = bin_dir / "kitty-workspace"
-    lines = ["#!/bin/sh", "# Captured runtime dependencies; no build shell is needed at launch."]
-    for name in RUNTIME_ENVIRONMENT:
-        if name in os.environ:
-            lines.append(f"export {name}={shlex.quote(os.environ[name])}")
-    # The native default remains authoritative unless explicitly selecting an
-    # existing workspace; an ambient developer KITTY_HOME must not leak in.
-    lines.append("unset KITTY_HOME KITTY_DB")
-    if args.appimage is not None:
-        lines.append("export APPIMAGE_EXTRACT_AND_RUN=1")
+    installed_image = application / "kitty.AppImage"
+    runtime = [f"export {name}={shlex.quote(os.environ[name])}"
+               for name in RUNTIME_ENVIRONMENT if name in os.environ]
     command = [str(application / ("kitty.AppImage" if args.appimage is not None else "kitty-workspace"))]
+    if args.appimage is not None and installed_image.is_file() and launcher.is_file():
+        try:
+            runtime, command = previous_appimage_launcher(launcher, installed_image)
+        except ValueError as error:
+            parser.error(str(error))
     if args.appimage_runner is not None:
-        # e.g. NixOS appimage-run: an FHS environment that keeps APPIMAGE pointing
-        # at the installed file, so signed updates still replace it in place.
-        # Keep the given (GC-rooted) link; resolving it would pin a store path.
+        # Keep the GC-rooted link, not a resolved store path.
+        command = command[command.index(str(installed_image)):]
         command.insert(0, str(args.appimage_runner.expanduser().absolute()))
     if args.workspace is not None:
+        if "--workspace" in command:
+            command = command[:command.index("--workspace")]
         command.extend(("--workspace", str(args.workspace.expanduser().resolve())))
-    lines.append("exec " + shlex.join(command) + ' "$@"')
+    for source, name in executables:
+        destination = application / name
+        if destination.is_file():
+            atomic_copy(destination, destination.with_name(name + ".previous"))
+        atomic_copy(source, destination)
+    shutil.copy2(args.icon, icon)
+    lines = ["#!/bin/sh", "# Captured runtime dependencies; no build shell is needed at launch.", *runtime]
+    # Never let an ambient developer workspace leak into a desktop installation.
+    lines.append("unset KITTY_HOME KITTY_DB")
+    if args.appimage is not None:
+        lines.extend(["export APPIMAGE_EXTRACT_AND_RUN=1", "export KITTY_DESKTOP_LAUNCHER=1",
+                      "# Exit 42 requests a restart outside the old AppImage/FHS environment.",
+                      "while :; do", "  " + shlex.join(command) + ' "$@"',
+                      "  result=$?", '  [ "$result" -eq 42 ] || exit "$result"', "done"])
+    else:
+        lines.append("exec " + shlex.join(command) + ' "$@"')
     launcher.write_text("\n".join(lines) + "\n")
     launcher.chmod(0o755)
     entry = applications / "com.zacharysf.kitty.desktop"

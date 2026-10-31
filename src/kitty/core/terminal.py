@@ -24,6 +24,7 @@ import fcntl
 import json
 import os
 import re
+import secrets
 import socket
 import stat
 import struct
@@ -46,6 +47,8 @@ _SESSION_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 #: herdr's ``AgentStatus`` values; anything else is shown as ``unknown``.
 AGENT_STATES = ("idle", "working", "blocked", "done", "unknown")
 ACTIVITY_TIMEOUT = 5.0
+#: Agents with a native startup-instruction option; the executable stays user-installed.
+CODING_AGENTS = ("omp", "claude", "codex")
 
 #: herdr config for kitty!'s session: the Harness palette (web/src/lib/themes.ts) on
 #: herdr's terminal base, with transparent panels so the page's surface shows through.
@@ -86,6 +89,10 @@ manifest_check = false
 
 class TerminalUnavailable(RuntimeError):
     """kitty!'s herdr session cannot be used; the message is safe to show."""
+
+
+class TerminalNotRunning(TerminalUnavailable):
+    """The page must attach its terminal before creating an agent tab."""
 
 
 def validate_session_name(name: str) -> str:
@@ -294,6 +301,83 @@ class HerdrRuntime:
             } for space in workspaces]}
         except (KeyError, TypeError, AttributeError):
             raise TerminalUnavailable("kitty!'s herdr session did not report its agent states") from None
+
+    def _agent_command(self, *arguments: str, skill: bool = False):
+        """A bounded native herdr command; never replay a potentially applied mutation."""
+        try:
+            result = subprocess.run(
+                self._command(*arguments), env=child_environment(self.environ, self.config_path),
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=40, check=False)
+            if result.returncode:
+                try:
+                    code = json.loads(result.stderr)["error"]["code"]
+                except (ValueError, KeyError, TypeError):
+                    code = "herdr_command_failed"
+                if not isinstance(code, str) or not re.fullmatch(r"[a-z_]+", code):
+                    code = "herdr_command_failed"
+                raise TerminalUnavailable(code)
+            if skill:
+                if not result.stdout.strip():
+                    raise ValueError
+                return result.stdout
+            return json.loads(result.stdout)["result"]
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+            raise TerminalUnavailable("herdr_command_failed") from None
+
+    def start_agent(self, kind: str, cwd: Path) -> dict:
+        """Create an Agent tab, then let herdr validate/start its chosen coding agent.
+
+        No arbitrary commands or focused-pane writes: only the pane returned by tab
+        creation is used. A failed start keeps the tab for inspection, never retries.
+        The bundled skill is private; no global agent configuration is installed.
+        """
+        if kind not in CODING_AGENTS:
+            raise ValueError("Unsupported coding agent")
+        with self._lock:
+            folder = self._session_folder()
+            if not _listening(folder / "herdr.sock"):
+                raise TerminalNotRunning("Open the terminal before starting an Agent tab")
+            self._verify_private(folder)
+            self._prepare()
+            spaces = self._read("workspace", "list").get("workspaces", [])
+            space = next((item for item in spaces if item.get("focused") is True), None)
+            if not space:
+                raise TerminalNotRunning("Select a herdr workspace before starting an Agent tab")
+            skill_path = self.private_dir / "SKILL.md"
+            _write_private(skill_path, self._agent_command("--skill", skill=True))
+            # The signed desktop binary is called kitty-herdr, while the skill uses
+            # `herdr`. Only this tab's PATH gets the private alias to the pinned binary.
+            bin_dir = self.private_dir / "bin"
+            _owner_only_directory(bin_dir)
+            alias = bin_dir / "herdr"
+            if alias.is_symlink():
+                alias.unlink()
+            alias.symlink_to(Path(self.binary).resolve())
+            path = str(bin_dir) + os.pathsep + self.environ.get("PATH", os.defpath)
+            created = self._agent_command(
+                "tab", "create", "--workspace", str(space["workspace_id"]),
+                "--label", "Agent", "--cwd", str(cwd), "--env", f"PATH={path}", "--focus")
+            try:
+                tab, pane = created["tab"]["tab_id"], created["root_pane"]["pane_id"]
+            except (KeyError, TypeError):
+                raise TerminalUnavailable("herdr did not identify the new Agent tab; not retried") from None
+            name = f"{kind}-{secrets.token_hex(4)}"
+            if kind == "omp":
+                arguments = ["--append-system-prompt", str(skill_path)]
+            elif kind == "claude":
+                arguments = ["--append-system-prompt-file", str(skill_path)]
+            else:
+                instructions = f"Use herdr to control your panes. Read and follow its skill at {skill_path}."
+                arguments = ["-c", "developer_instructions=" + json.dumps(instructions)]
+            try:
+                self._agent_command("agent", "start", name, "--kind", kind, "--pane", pane,
+                                    "--", *arguments)
+            except TerminalUnavailable as exc:
+                raise TerminalUnavailable(
+                    f"Agent startup reported {exc}. Inspect Agent tab {tab}, pane {pane}; "
+                    "the tab was kept and startup was not retried.") from None
+            self._used = True
+            return {"tab": tab, "pane": pane, "name": name, "kind": kind}
 
     def stop(self) -> None:
         """Quit: stop the session if this process used it; its clients then exit."""

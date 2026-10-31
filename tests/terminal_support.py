@@ -32,6 +32,8 @@ import json, os, select, signal, socket, struct, subprocess, sys, termios, time,
 LOG = {log!r}
 MODE_FILE = {mode_file!r}
 ACTIVITY_FILE = {activity_file!r}
+AGENT_ERROR = {agent_error!r}
+SKILL = {skill!r}
 argv = sys.argv[1:]
 with open(LOG, "a") as handle:
     handle.write(json.dumps({{"argv": argv, "env": dict(os.environ), "cwd": os.getcwd()}}) + "\n")
@@ -83,6 +85,30 @@ elif rest == ["session", "stop", name]:
     stopper.sendall(b"stop")
     stopper.recv(16)
     sys.exit(0)
+elif rest == ["--skill"]:
+    sys.stdout.write(SKILL)
+elif rest[:2] == ["tab", "create"]:
+    def option(key):
+        return rest[rest.index(key) + 1]
+    wid = option("--workspace")
+    activity = json.load(open(ACTIVITY_FILE))
+    number = len(activity.get("agents", [])) + 2
+    tab, pane = wid + ":t" + str(number), wid + ":p" + str(number)
+    print(json.dumps({{"result": {{"tab": {{"tab_id": tab, "label": option("--label")}},
+                                  "root_pane": {{"pane_id": pane}}}}}}))
+elif rest[:2] == ["agent", "start"]:
+    if os.path.exists(AGENT_ERROR):
+        print(json.dumps({{"error": {{"code": open(AGENT_ERROR).read(), "message": "not ready"}}}}), file=sys.stderr)
+        sys.exit(1)
+    kind = rest[rest.index("--kind") + 1]
+    pane = rest[rest.index("--pane") + 1]
+    activity = json.load(open(ACTIVITY_FILE))
+    agent = {{"workspace_id": pane.split(":")[0], "pane_id": pane, "name": rest[2],
+              "agent": kind, "agent_status": "idle"}}
+    activity.setdefault("agents", []).append(agent)
+    with open(ACTIVITY_FILE, "w") as handle:
+        json.dump(activity, handle)
+    print(json.dumps({{"result": {{"agent": agent}}}}))
 elif rest == []:
     if not listening(client):
         subprocess.Popen([sys.executable, __file__, "--session", name, "server"], start_new_session=True,
@@ -133,12 +159,15 @@ class FakeHerdr:
         #: JSON {"workspaces": [...], "agents": [...]} answered by `workspace/agent list`;
         #: text starting with "RAW:" is printed verbatim instead.
         self.activity_file = folder / "activity.json"
+        self.agent_error = folder / "agent-error"
+        self.skill = "---\nname: herdr\n---\n# Synthetic bundled Herdr skill\nUse explicit pane IDs.\n"
         self.binary = folder / "herdr"
         # sun_path is 108 bytes; a short HOME keeps herdr's session sockets addressable.
         self.home = Path(tempfile.mkdtemp(prefix="kt", dir="/tmp"))
         self.binary.write_text(f"#!{sys.executable}\n" + textwrap.dedent(
             FAKE_HERDR.format(log=str(self.log), mode_file=str(self.mode_file),
-                              activity_file=str(self.activity_file))))
+                              activity_file=str(self.activity_file), agent_error=str(self.agent_error),
+                              skill=self.skill)))
         self.binary.chmod(0o755)
 
     def session_dir(self, name: str) -> Path:

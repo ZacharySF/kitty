@@ -93,6 +93,27 @@ for (const look of ["2d", "3d"]) {
       await page.close();
     });
 
+    test("an untouched view refits when its stage resizes; a focused view stays on its node", async () => {
+      const { page, problems } = await harness();
+      await call(page, "mount", look);
+      for (const [width, height] of [[800, 220], [1000, 700], [360, 600], [800, 600]]) {
+        await call(page, "resize", width, height);
+        const rect = await call(page, "stageRect");
+        for (const id of await call(page, "ids")) {
+          const point = await call(page, "point", id);
+          assert.ok(point.x > rect.left + 8 && point.x < rect.right - 8 && point.y > rect.top + 8 && point.y < rect.bottom - 8,
+            `${id} at ${Math.round(point.x)},${Math.round(point.y)} is clipped by the ${width}×${height} stage`);
+        }
+      }
+      await call(page, "focus", "view:queue");
+      await call(page, "settled");
+      await call(page, "resize", 800, 300);
+      const rect = await call(page, "stageRect");
+      assert.ok(near(await call(page, "point", "view:queue"), { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, 40), "resizing reset the focused view");
+      assert.deepEqual(problems, []);
+      await page.close();
+    });
+
     test("right-click on a node opens its context menu; background right-click does not", async () => {
       const { page } = await harness();
       await call(page, "mount", look);

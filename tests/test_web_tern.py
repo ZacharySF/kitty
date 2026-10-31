@@ -1,0 +1,274 @@
+"""Stencil Tern in the Terminal module, against a synthetic ``tern``; never the real one.
+
+Every test runs with PATH, XDG_RUNTIME_DIR and the Tern daemon socket in throwaway
+directories, and with the parent environment pretending kitty! itself runs inside
+the user's own Tern pane (whose daemon must never be touched), herdr and a
+PyInstaller bundle.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import stat
+import time
+from pathlib import Path
+
+import pytest
+
+from tern_support import FakeTern, alive, listening
+from terminal_support import make_root, site
+
+STATUS_KEYS = {"install_url", "installed", "path", "source", "override", "version", "problem",
+               "workspace", "socket", "running", "windows", "sessions"}
+OUTER_TERN = {"TERN_PANE": "5", "TERN_PANE_SOCKET": "", "TERN_WINDOW_KEY": "", "TERN_WINDOW_SOCKET": "",
+              "TERN_EXE": "/somewhere/else/tern", "TERN_IDENTITY": "{}"}
+
+
+@pytest.fixture
+def tern(tmp_path, monkeypatch):
+    fake = FakeTern(tmp_path)
+    owner = fake.runtime / "owner"
+    owner.mkdir(mode=0o700)
+    fake.owner_socket = owner / "daemon.sock"
+    monkeypatch.setenv("PATH", f"{fake.bin}{os.pathsep}/usr/bin{os.pathsep}/bin")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(fake.runtime))
+    # kitty! may run inside the user's own Tern pane: its daemon is someone else's.
+    monkeypatch.setenv("TERN_DAEMON_SOCKET", str(fake.owner_socket))
+    for key, value in OUTER_TERN.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("TERN_CONFIG_DIR", str(tmp_path / "user-tern-config"))
+    monkeypatch.setenv("HERDR_ENV", "1")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEIbundled")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/nix/store/incompatible/lib")
+    try:
+        yield fake
+    finally:
+        fake.cleanup()
+        shutil.rmtree(fake.runtime, ignore_errors=True)
+
+
+def mode(path: Path) -> int:
+    return stat.S_IMODE(path.lstat().st_mode)
+
+
+def wait_for(predicate, timeout: float = 10):
+    deadline = time.monotonic() + timeout
+    while not (value := predicate()):
+        assert time.monotonic() < deadline, "condition not reached"
+        time.sleep(0.05)
+    return value
+
+
+def status(running) -> dict:
+    code, body = running.request("/api/terminal/tern")
+    assert code == 200, body
+    assert set(body) == STATUS_KEYS
+    return body
+
+
+def test_module_off_has_no_tern_route_or_process(tmp_path, tern):
+    settings = make_root(tmp_path, ())
+    with site(settings) as running:
+        for path, body in (("/api/terminal/tern", None), ("/api/terminal/tern/open", {}),
+                           ("/api/terminal/tern/start", {}), ("/api/terminal/tern/settings", {"path": ""})):
+            code, answer = running.request(path, body)
+            assert code == 403 and "module is disabled" in answer["error"]
+    assert tern.calls() == []
+    assert not (tern.runtime / "kitty").exists()
+
+
+def test_absent_tern_reports_the_install_pointer_and_starts_nothing(tmp_path, tern, monkeypatch):
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        body = status(running)
+        assert body["installed"] is False and body["path"] is None and body["source"] is None
+        assert body["version"] is None and body["problem"] is None
+        assert body["install_url"] == "https://stencil.so/tern"
+        assert body["running"] is False and body["windows"] == 0 and body["sessions"] == []
+        for action in ("open", "start"):
+            code, answer = running.request(f"/api/terminal/tern/{action}", {})
+            assert code == 409 and "https://stencil.so/tern" in answer["error"]
+    assert tern.calls() == []
+    assert not (tern.runtime / "kitty").exists()
+
+
+def test_tern_on_path_is_detected_without_starting_anything(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        first, second = status(running), status(running)
+    assert first == second
+    assert first["installed"] is True and first["path"] == str(tern.binary) and first["source"] == "path"
+    assert first["version"] == "0.9.8" and first["override"] is None and first["problem"] is None
+    assert first["workspace"] == str(settings.root) and first["running"] is False
+    assert Path(first["socket"]).is_relative_to(tern.runtime / "kitty") and first["socket"].endswith("/daemon.sock")
+    # Detection asks for the version once; it never starts a daemon or a window.
+    assert tern.calls() == [["--version"]]
+    assert not Path(first["socket"]).parent.exists()
+
+
+def test_settings_override_wins_is_saved_owner_only_and_validated(tmp_path, tern):
+    custom = tmp_path / "beta" / "tern-beta"
+    custom.parent.mkdir()
+    shutil.copy2(tern.binary, custom)
+    settings = make_root(tmp_path, ("terminal",))
+    saved = settings.root / ".private" / "tern" / "settings.json"
+    with site(settings) as running:
+        assert running.request("/api/terminal/tern/settings", {"path": "relative/tern"})[0] == 400
+        assert running.request("/api/terminal/tern/settings", {"path": str(custom), "extra": 1})[0] == 400
+        code, body = running.request("/api/terminal/tern/settings", {"path": str(custom)})
+        assert code == 200 and set(body) == STATUS_KEYS
+        assert body["installed"] is True and body["source"] == "settings" and body["path"] == str(custom)
+        assert body["override"] == str(custom)
+    assert json.loads(saved.read_text()) == {"path": str(custom)}
+    assert mode(saved) == 0o600 and mode(saved.parent) == 0o700
+    with site(settings) as running:
+        assert status(running)["path"] == str(custom)
+        # A broken override is reported, never silently replaced by the one on PATH.
+        custom.chmod(0o644)
+        body = status(running)
+        assert body["installed"] is False and body["source"] == "settings" and body["path"] is None
+        assert str(custom) in body["problem"]
+        assert running.request("/api/terminal/tern/open", {})[0] == 409
+        custom.chmod(0o755)
+        tern.mode("impostor")
+        body = status(running)
+        assert body["installed"] is False and "not Stencil Tern" in body["problem"]
+        tern.mode("")
+        code, body = running.request("/api/terminal/tern/settings", {"path": ""})
+        assert code == 200 and body["source"] == "path" and body["override"] is None
+    assert json.loads(saved.read_text()) == {"path": None}
+    assert not any(call[:1] in (["daemon"], ["--dir"]) for call in tern.calls())
+
+
+def test_open_in_tern_runs_a_window_on_kittys_own_daemon_and_quit_leaves_nothing(tmp_path, tern):
+    owner = tern.start_daemon(tern.owner_socket)
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/open", {})
+        assert code == 200 and set(body) == STATUS_KEYS and body["running"] is True
+        socket_path = Path(body["socket"])
+        assert socket_path != tern.owner_socket and listening(socket_path)
+        assert mode(socket_path.parent) == 0o700 and mode(socket_path) == 0o600
+        body = wait_for(lambda: (state := status(running))["windows"] == 1 and state)
+        [session] = body["sessions"]
+        assert session["name"] == "kitty"
+        [tab] = session["tabs"]
+        [block] = tab["blocks"]
+        assert block["cwd"] == str(settings.root) and block["working"] is True
+        assert set(block) == {"id", "title", "cwd", "program", "cols", "rows", "focused", "live", "exited", "working"}
+        # A second Open only adds a window: one daemon, one kitty session.
+        assert running.request("/api/terminal/tern/open", {})[0] == 200
+        assert wait_for(lambda: status(running)["windows"] == 2)
+        assert len(status(running)["sessions"]) == 1
+    invocations = tern.invocations()
+    calls = [item["argv"] for item in invocations]
+    root = str(settings.root)
+    assert calls.count(["daemon", "--socket", str(socket_path)]) == 1
+    assert calls.count(["new", "session", "kitty", "--cwd", root, "--json"]) == 1
+    assert calls.count(["--dir", root]) == 2
+    for item in invocations:
+        if item["argv"] == ["daemon", "--socket", str(tern.owner_socket)]:
+            continue  # the user's own daemon, started by this test
+        env = item["env"]
+        assert env["TERN_DAEMON_SOCKET"] == str(socket_path), item["argv"]
+        assert not set(OUTER_TERN) & set(env), item["argv"]
+        # (The fake's interpreter may get an empty LD_LIBRARY_PATH from nix-ld; never the bundle's.)
+        assert not env.get("LD_LIBRARY_PATH") and "LD_LIBRARY_PATH_ORIG" not in env and "HERDR_ENV" not in env
+        assert env["TERN_CONFIG_DIR"] == str(tmp_path / "user-tern-config")
+        if item["argv"][:1] in (["--dir"], ["daemon"]):
+            assert item["cwd"] == root
+    # Quit stopped every window and kitty!'s daemon; nothing kitty! started outlives it.
+    assert not listening(socket_path)
+    for item in invocations:
+        if item["argv"] != ["daemon", "--socket", str(tern.owner_socket)]:
+            assert not alive(item["pid"]), item["argv"]
+    # The user's own daemon kept running, untouched.
+    assert owner.poll() is None and listening(tern.owner_socket)
+    assert json.loads(tern.run("inspect", "--json", socket_path=tern.owner_socket).stdout)["sessions"] == []
+
+
+def test_start_makes_one_kitty_session_without_a_window(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        for _ in range(2):
+            code, body = running.request("/api/terminal/tern/start", {})
+            assert code == 200 and body["running"] is True and body["windows"] == 0
+            assert [session["name"] for session in body["sessions"]] == ["kitty"]
+        assert running.request("/api/terminal/tern/start", {"cwd": "/"})[0] == 400
+    calls = tern.calls()
+    assert sum(call[:1] == ["daemon"] for call in calls) == 1
+    assert sum(call[:2] == ["new", "session"] for call in calls) == 1
+    assert not any(call[:1] == ["--dir"] for call in calls)
+    assert not listening(Path(body["socket"]))
+
+
+def test_a_daemon_left_on_kittys_socket_is_adopted_and_stopped_at_quit(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        socket_path = Path(status(running)["socket"])
+        socket_path.parent.mkdir(mode=0o700, parents=True)
+        # A previous kitty! process's daemon, still running on kitty!'s private socket.
+        previous = tern.start_daemon(socket_path)
+        code, body = running.request("/api/terminal/tern/start", {})
+        assert code == 200 and body["running"] is True
+        assert sum(call[:1] == ["daemon"] for call in tern.calls()) == 1  # only the test's
+    assert previous.wait(timeout=10) == 0
+    assert not listening(socket_path)
+
+
+def test_quit_without_using_tern_leaves_kittys_daemon_alone(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        socket_path = Path(status(running)["socket"])
+        socket_path.parent.mkdir(mode=0o700, parents=True)
+        other = tern.start_daemon(socket_path)
+        assert status(running)["running"] is True
+    assert other.poll() is None and listening(socket_path)
+
+
+def test_a_daemon_that_never_listens_is_reported_and_stopped(tmp_path, tern, monkeypatch):
+    monkeypatch.setattr("kitty.core.tern.READY_TIMEOUT", 1.0)
+    tern.mode("hang")
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/open", {})
+        assert code == 503 and "did not start" in body["error"]
+        [daemon] = [item for item in tern.invocations() if item["argv"][:1] == ["daemon"]]
+        assert not alive(daemon["pid"])
+        assert not any(item["argv"][:1] == ["--dir"] for item in tern.invocations())
+
+
+def test_a_daemon_socket_others_can_reach_is_refused_and_stopped(tmp_path, tern):
+    tern.mode("unsafe")
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/start", {})
+        assert code == 503 and "unsafe permissions" in body["error"]
+        socket_path = Path(status(running)["socket"])
+        assert not listening(socket_path)
+        assert all(not alive(item["pid"]) for item in tern.invocations())
+
+
+def test_unreadable_sessions_are_an_error_not_an_empty_session(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        assert running.request("/api/terminal/tern/start", {})[0] == 200
+        tern.mode("garbled")
+        code, body = running.request("/api/terminal/tern")
+        assert code == 503 and "did not report its sessions" in body["error"]
+        tern.mode("")
+
+
+def test_a_socket_path_too_long_for_unix_sockets_is_refused(tmp_path, tern, monkeypatch):
+    deep = tern.runtime / ("d" * 100)
+    deep.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(deep))
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/start", {})
+        assert code == 503 and "longer than 107 bytes" in body["error"]
+    assert not any(call[:1] == ["daemon"] for call in tern.calls())

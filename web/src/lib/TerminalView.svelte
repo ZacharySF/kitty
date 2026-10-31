@@ -6,6 +6,7 @@
   import { api } from "./api";
   import { getTheme } from "./themes";
   import { terminalSocketUrl, terminalTheme } from "./terminal";
+  import TerminalAgents from "./TerminalAgents.svelte";
 
   /**
    * One herdr client for kitty!'s session (Q1, Q12), drawn transparent in the
@@ -79,6 +80,7 @@
 </script>
 
 <section class="terminal-view" data-kitty-terminal data-kitty-panel="terminal" tabindex="-1" aria-label={label}>
+  <TerminalAgents />
   <div class="terminal-host" bind:this={host}></div>
   {#if notice}<p class="terminal-notice" role="status">
       {notice}
@@ -90,6 +92,7 @@
   .terminal-view {
     position: relative;
     display: flex;
+    flex-direction: column;
     min-height: 0;
     height: 100%;
     background: transparent;
