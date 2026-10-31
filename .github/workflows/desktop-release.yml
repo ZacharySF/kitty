@@ -66,6 +66,7 @@ jobs:
             tests/test_release_packaging.py tests/test_desktop_install.py \
             tests/test_desktop_runtime.py tests/test_modules_desktop.py \
             tests/test_application_recovery_runtime.py \
+            tests/test_learnharness_runtime.py \
             tests/test_web_server.py tests/test_web_jobs.py tests/test_web_tasks.py \
             tests/test_web_profile.py tests/test_web_resumes.py tests/test_web_insights.py \
             tests/test_web_terminal.py tests/test_herdr_bundle.py
@@ -93,7 +94,7 @@ jobs:
             Install once, then launch kitty! from your application menu. The native tray menu checks for signed updates.
             Application updates preserve the separate local workspace; do not delete that workspace when replacing the application.
             AppImage users: keep the file in a writable directory and enable its executable permission in your file manager.
-            Only installers, signatures and updater metadata are published here; application source remains private.
+            Only installers, signatures and updater metadata are published here; Kitty source remains private. Bundles include LearnHarness's corresponding source and licenses.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: false
