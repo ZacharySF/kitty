@@ -62,3 +62,23 @@ export type TerminalActivity = {
     agents: { pane: string; name: string; status: AgentState }[];
   }[];
 };
+
+/** GET /api/terminal/tern (kitty/web_tern.py): the installed Tern and kitty!'s own session. */
+export type TernBlock = {
+  id: number; title: string; cwd: string | null; program: string | null; cols: number | null; rows: number | null;
+  focused: boolean; live: boolean; exited: number | null; working: boolean;
+};
+export type TernStatus = {
+  install_url: string;
+  installed: boolean;
+  path: string | null;
+  source: "settings" | "path" | null;
+  override: string | null;
+  version: string | null;
+  problem: string | null;
+  workspace: string;
+  socket: string;
+  running: boolean;
+  windows: number;
+  sessions: { id: number; name: string; shown: boolean; tabs: { id: number; number: number | null; name: string | null; shown: boolean; blocks: TernBlock[] }[] }[];
+};

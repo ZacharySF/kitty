@@ -96,6 +96,10 @@
     {#await import("./TerminalView.svelte")}{@render pending()}{:then { default: TerminalView }}
       <div class="herdr-view"><TerminalView label="herdr session" /></div>
     {/await}
+  {:else if view === "tern"}
+    {#await import("./TernView.svelte")}{@render pending()}{:then { default: TernView }}
+      <TernView />
+    {/await}
   {:else if view === "settings"}
     <WorkspaceSettings bind:this={settings} {onview} {onchange} />
   {:else if view === "ai"}
