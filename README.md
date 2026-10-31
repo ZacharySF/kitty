@@ -114,3 +114,7 @@ their features belongs to their authors.
 - [Tauri](https://tauri.app), [Svelte](https://svelte.dev),
   [Textual](https://textual.textualize.io) and
   [3d-force-graph](https://github.com/vasturiano/3d-force-graph).
+
+## License
+
+[MIT](LICENSE). Bundled third-party components keep their own licences.

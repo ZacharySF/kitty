@@ -3,6 +3,7 @@ name = "kitty"
 version = "0.1.0"
 description = "Personal job-search tracker: discovery, triage, apply queue, outcomes."
 requires-python = ">=3.12"
+license = "MIT"
 dependencies = [
     "textual>=0.80",
     "typer>=0.12",
