@@ -1,6 +1,6 @@
 # kitty
 
-Local job-search discovery, preparation and tracking. See [README.md](README.md)
+Local job-search discovery, preparation and tracking. See [docs/GUIDE.md](docs/GUIDE.md)
 for commands and [docs/SPEC.md](docs/SPEC.md) for behavior; its addendum takes
 precedence over historical stage descriptions.
 

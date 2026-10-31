@@ -36,15 +36,20 @@ def run(*args: str, input: str | None = None):
     return CliRunner().invoke(cli.app, list(args), input=input)
 
 
+def plain(result) -> str:
+    """Output without ANSI styling (Typer forces a styled terminal under GitHub Actions)."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+
+
 def flat(result) -> str:
     """Output with rich's line wrapping collapsed."""
-    return " ".join(result.output.split())
+    return " ".join(plain(result).split())
 
 
 def listed(result) -> set[str]:
     """Command names in the help's command table."""
     return {name for name in (*CAREERS_COMMANDS, *CORE_COMMANDS)
-            if re.search(rf"(?m)^[│| ]*{name}\s", result.output)}
+            if re.search(rf"(?m)^[│| ]*{name}\s", plain(result))}
 
 
 def with_examples(home: Path) -> Path:
