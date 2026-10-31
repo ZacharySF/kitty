@@ -199,34 +199,35 @@ compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
 
-### Optional LearnHarness extension
+### LearnHarness extension
 
-**Study → LearnHarness** embeds the full, independently running
+**Study → LearnHarness → Start LearnHarness** opens the included
 [upstream LearnHarness app](https://github.com/amosblomqvist/learnharness)
-(AGPL-3.0-only), not copied teaching/graph code. Teaching sessions, practice,
-knowledge graph and settings remain upstream features. The standalone app stays
-usable at **http://127.0.0.1:3210** even when Kitty is closed.
+(AGPL-3.0-only). Desktop installations include its production server and Node.js:
+no source checkout, Git, npm, system Node, or manual service setup is required.
+Teaching, practice, knowledge graph and settings remain the independent upstream
+app, contained in a cross-origin frame at **http://127.0.0.1:3210**.
 
-From this Kitty checkout, with Git, Node.js and npm on PATH:
+Start is explicit, not a login/boot service. Kitty stops only the learning server
+it started when that Kitty instance quits. Learning records and provider
+connections persist separately in the selected workspace's `data/learnharness/`
+(`auth.json` and an isolated `home/`); nothing is imported from another checkout.
+The bundled app in `kitty-web --demo` uses disposable demo storage. A healthy
+independently started service on port 3210 is reused without modifying its storage
+or stopping it. **Reconnect** only probes availability and reloads the frame.
 
-```bash
-./scripts/learnharness.sh setup   # pinned public clone + reviewed lock patch + npm install
-./scripts/learnharness.sh start   # transient systemd --user service, no sudo
-./scripts/learnharness.sh status
-./scripts/learnharness.sh stop
-# Alternative without systemd: ./scripts/learnharness.sh run (Ctrl+C to stop)
-```
-
-Start again after reboot; no system-wide unit or automatic login startup is
-installed. `journalctl --user -u kitty-learnharness.service` shows service logs.
-Setup uses `~/Projects/learnharness`, pinned to upstream **0.3.8**
-(`3dc88472eea41eed0d5e5f29c2f16f8d063c415b`). App source and `package.json`
-stay unchanged; `scripts/learnharness-dependencies.patch` reproduces the local
-installation lockfile remediation from `npm audit fix` **without `--force`**.
-It resolves the original four critical audit package findings (including Next.js
-and DOMPurify) using existing manifest ranges: Next.js 16.4.3, DOMPurify 3.4.17,
-Sharp 0.35.5, Zod 4.6.7 and related transitives. Setup refuses an unknown
-upstream revision or conflicting lock edits instead of resetting user work.
+The production payload is built from upstream **0.3.8**
+(`3dc88472eea41eed0d5e5f29c2f16f8d063c415b`) in a fresh public temporary clone,
+never a developer's learning checkout. `scripts/build-desktop.sh` runs
+`desktop/package_learnharness.py`, applies the reviewed dependency-lock patch,
+uses `npm ci`, builds Next's standalone output, and runs upstream's payload
+guard against private data/auth/env files and missing prompt assets.
+The desktop resources under `licenses/learnharness/` include the AGPL license,
+corresponding `source.tar.gz`, exact dependency-lock patch and Node's licenses.
+App source and `package.json` stay unchanged. The dependency patch resolves the
+original critical package findings within upstream's manifest ranges, without
+`--force`: Next.js 16.4.3, DOMPurify 3.4.17, Sharp 0.35.5, Zod 4.6.7 and related
+transitives.
 **Remaining upstream risk:** npm still reports two high package findings:
 `ansi-to-react@6.2.6` pulls `linkify-it@3.0.3` with quadratic text/`mailto:`
 scanning denial-of-service advisories
@@ -234,64 +235,57 @@ scanning denial-of-service advisories
 [GHSA-v245-v573-v5vm](https://github.com/advisories/GHSA-v245-v573-v5vm)).
 The suggested `ansi-to-react@6.1.6` downgrade is breaking and is not applied.
 Loopback and iframe containment do not make upstream content-processing risks
-disappear; avoid untrusted imports and do not expose this developer server on a
-network. No login/boot auto-start is enabled. These audit results describe the
-reviewed installation on 2026-10-27, not a future guarantee.
-The launcher runs `npm run dev -- --hostname 127.0.0.1 --port 3210` in a clean
-environment. The ignored `~/Projects/learnharness/data/kitty-extension/` holds
-persistent learning records/settings, `auth/auth.json` and provider-login files;
-its separate `home/` prevents inherited per-user tool configuration. Setup creates
-directories owner-only. Restarting the server preserves these files.
-No Kitty environment, resumes, applicant records, provider keys or browser profiles
-are passed or copied. Keep any manually added LearnHarness `.env.local` specific
-to LearnHarness; do not link Kitty secrets or data.
+disappear; avoid untrusted imports and do not expose the server on a network.
+These audit results describe the reviewed installation on 2026-10-27, not a
+future guarantee.
 
-Kitty only checks availability with a bounded HEAD request to the fixed loopback
-endpoint: no URL setting, remote server, redirects, data proxy or credential bridge.
-Its content policy allows this frame origin only. The contained frame cannot
-navigate the parent or open provider login popups; use **Open in new tab** for
-provider connections. When stopped, the panel shows setup/start instructions and
-**Reconnect**. On a cold first compilation, wait for the local app to finish loading
-and reconnect. Connection success is availability, not provider readiness.
+Kitty checks availability with a bounded HEAD request to the fixed loopback
+endpoint. An explicit protected `POST /api/extensions/learnharness/start` starts
+only the bundled runtime; it accepts no URL, settings or credentials. There is no
+data proxy or credential bridge. The server binds only IPv4 loopback, runs with
+a clean environment and receives no Kitty provider keys, applicant data, resumes
+or browser profiles. The iframe cannot navigate the parent or open provider-login
+popups; use **Open in new tab** for provider connections.
 
 No provider credentials/models are configured by installation. Generating lessons
 requires your own LearnHarness provider key or supported connection and model
-selection; model/research requests can send learning context externally and may
-cost money. No generated lesson or paid request is part of installation.
-**Kitty demo does not make LearnHarness disposable**: it is a separate persistent
-app. Use only synthetic learning content when verifying the demo.
+selection; requests can send learning context externally and may cost money.
+Availability is not provider readiness. Installation and smoke verification make
+no paid requests. Do not enter private applicant data.
 
-To run this checkout's new UI/backend without adopting changes into another
-checkout:
+Source development:
 
 ```bash
-cd /home/xelo/projects/kitty-worktrees/learnharness-20261027
 npm --prefix web ci
 npm --prefix web run build
-uv run kitty-web --demo --port 8766  # synthetic, no private workspace access
-# Explicit normal use only: reads/migrates the workspace you name.
-KITTY_HOME="/home/xelo/projects/kitty!" uv run kitty-web --port 8765
+uv run python desktop/package_learnharness.py  # build the included learning runtime
+uv run kitty-web --demo --port 8766            # disposable synthetic workspace
 ```
 
-For the native Kitty application, build this same worktree's packaged sidecar
-and UI, without changing another checkout or the currently running app:
+An independent source service remains optional:
 
 ```bash
-nix develop 'path:./desktop#host-toolchain' --offline --max-jobs 0 --command bash scripts/build-desktop.sh
-# Only after explicitly quitting the old Kitty app; normal use, not a test:
-nix develop 'path:./desktop#host-toolchain' --offline --command env \
-  KITTY_HOME="/home/xelo/projects/kitty!" ./desktop/target/release/kitty-workspace
+./scripts/learnharness.sh setup
+./scripts/learnharness.sh start
+./scripts/learnharness.sh status
+./scripts/learnharness.sh stop
+# Without systemd: ./scripts/learnharness.sh run (Ctrl+C to stop)
 ```
 
-The native app enforces a single instance: starting another binary while Kitty
-is already running can just focus the old app, not load this extension.
-Keep the feature binary and its bundled `kitty-web` sidecar together. Building
-does not replace the installed launcher or activate the feature against private
-data; the browser demo command above is the isolated verification path.
+That developer launcher uses `~/Projects/learnharness` with persistent storage in
+its ignored `data/kitty-extension/`, isolated HOME and no inherited Kitty secrets.
+It runs upstream's dev server; start again after reboot. It is not needed by the
+desktop installer. Kitty demo does not reset a separately running service.
 
-Run these commands from the checkout containing the extension, not an older
-installed binary or another checkout. They need no merge into a dirty checkout.
-`--root "$KITTY_HOME"` can also select a workspace explicitly.
+On NixOS, build the desktop in the native toolchain shell:
+
+```bash
+nix develop 'path:./desktop#host-toolchain' --command bash scripts/build-desktop.sh
+```
+
+Keep the native executable and bundled `kitty-web` sidecar together. The desktop
+uses a single instance per session: verification must use an isolated workspace,
+profile and session, not relaunch or replace an owner's running instance.
 
 
 ### Start here
@@ -726,8 +720,9 @@ public releases repository. A guard downloads the actual uploaded files and
 validates the version/tag, nonempty complete assets, signatures and installer-specific
 `linux-x86_64-deb` / `linux-x86_64-appimage` metadata before publishing as latest.
 A failed guard leaves a draft, not a new public updater feed.
-No source archive, checkout, private workspace or applicant data is uploaded by
-the workflow (GitHub's automatic source archives cover only the releases repository).
+No Kitty source archive, checkout, private workspace or applicant data is uploaded
+by the workflow. Bundles do include LearnHarness's public corresponding source and
+licenses; GitHub's automatic source archives cover only the releases repository.
 
 The signed updater feed is
 [`latest.json`](https://github.com/ZacharySF/kitty-releases/releases/latest/download/latest.json).

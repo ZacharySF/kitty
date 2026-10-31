@@ -316,26 +316,35 @@ Stage 1: done.
   are remembered per browser profile, and its first size is the empty area below
   the main panel. The herdr view is an atlas node under Plan that opens the full
   session in a workspace tab. Reading agent states never starts herdr.
-- Optional external learning extension: Study navigation includes LearnHarness,
-  a contained cross-origin frame of the AGPL-3.0-only upstream app (source unchanged)
-  at fixed `http://127.0.0.1:3210`. Kitty retains its existing native Study tools;
-  no LearnHarness internals are copied. Standalone teaching, graph and settings
-  remain available without Kitty. Provider logins use the explicit new-tab link.
-- `/api/extensions/learnharness` reports only fixed URL and availability using a
-  two-second loopback HEAD probe, without redirects, response bodies, credentials,
-  arbitrary URL inputs, data import or proxying. Kitty's CSP permits that frame
-  origin only; private API/Host/Origin protections remain intact. The desktop
-  navigation guard also keeps exactly `http://127.0.0.1:3210` in-app, because
-  WebKitGTK reports subframe loads to it; other origins still open externally.
-- `scripts/learnharness.sh setup|start|stop|status|run` makes installation and the
-  optional transient systemd user service reproducible without sudo. The official
-  npm dev server binds only IPv4 loopback. Learning records, settings and auth
-  persist under upstream's ignored `data/kitty-extension/`, with isolated HOME
-  and no inherited Kitty secrets. No provider is configured or paid call made.
-  Kitty demo isolation does not reset this external app's persistent state.
-  Unavailable UI gives setup/start instructions and manual reconnect; provider
-  readiness and generated teaching remain conditional on separately configured
-  LearnHarness credentials/models.
+- Study includes LearnHarness, a contained cross-origin frame of the independent
+  AGPL-3.0-only upstream app at fixed `http://127.0.0.1:3210`. Native Study tools
+  remain separate; upstream app code is unchanged. Provider logins use the
+  explicit new-tab link.
+- Desktop packages include a production Next standalone server and Node.js.
+  **Start LearnHarness** invokes protected
+  `POST /api/extensions/learnharness/start` with an empty body; it accepts no URL,
+  settings or credentials. Missing/incomplete packages report a reinstall error,
+  not source-only setup commands. **Reconnect** remains a read-only probe.
+- `GET /api/extensions/learnharness` reports only fixed URL and availability using
+  a two-second loopback HEAD probe, without redirects, response bodies,
+  credentials, arbitrary URL inputs, import or data proxying. CSP and the desktop
+  navigation guard keep exactly that frame origin in-app. Private API Host/Origin
+  protections and workspace-module gating remain intact.
+- The bundled server starts only on explicit action, binds IPv4 loopback and uses
+  an isolated HOME and `data/learnharness/` in the selected workspace, including
+  its own `auth.json`. No Kitty keys, applicant data or browser profile is passed.
+  Quit terminates only the owned child; records survive restart. A healthy
+  independently started service is reused, never migrated or stopped. Bundled
+  demo storage is disposable; independent services keep their own persistent data.
+- `desktop/package_learnharness.py` builds in a fresh public temporary clone,
+  uses the pinned lock patch and `npm ci`, and runs upstream's standalone payload
+  guard against leaked data/auth/env files and missing prompts. Desktop resources
+  include corresponding upstream source, patch, AGPL license and Node licenses.
+  `scripts/learnharness.sh setup|start|stop|status|run` remains an optional developer
+  service with its original isolated `data/kitty-extension/` storage.
+- No provider/model is configured and no paid request is made by starting the app.
+  Teaching generation still requires the user's separately configured LearnHarness
+  provider/model. Availability does not establish provider readiness.
 - Installation pins LearnHarness 0.3.8 at upstream commit
   `3dc88472eea41eed0d5e5f29c2f16f8d063c415b`; the committed installation
   lockfile patch reproduces nonbreaking `npm audit fix` changes within upstream
@@ -343,7 +352,8 @@ Stage 1: done.
   upgrades/downgrades are used. The reviewed audit retains two high findings
   (`ansi-to-react` / `linkify-it` quadratic text-scanning DoS), explicitly
   documented; the breaking suggested downgrade is not applied. Setup refuses
-  unknown revisions/conflicting local lockfiles. There is no automatic startup.
+  unknown revisions/conflicting local lockfiles. There is no automatic startup;
+  the installed app instead offers the explicit Start action.
 - 2026-10-27: Quick notes (Study → Quick notes) are plain-text scratch notes in the
   `quick_notes` table (body ≤64 KiB, tint rose/lilac/sky/mint/honey/frost, pinned,
   revision). Autosave sends the last-seen revision; a stale revision gets HTTP 409

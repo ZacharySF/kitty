@@ -24,6 +24,9 @@ def main() -> None:
     package = entrypoint.split(".", 1)[0]
     if not (root / "web/dist/index.html").is_file():
         raise SystemExit("Build the website before packaging the desktop backend")
+    learning = desktop / ".build/learnharness"
+    if not (learning / "server.js").is_file() or not (learning / "node").is_file():
+        raise SystemExit("Build the LearnHarness production payload before packaging")
     build = desktop / ".build"
     build.mkdir(exist_ok=True)
     (build / "backend-package.txt").write_text(package + "\n")
@@ -41,6 +44,8 @@ def main() -> None:
         "--add-data", f"{root / 'web/dist'}:website",
         "--add-data", f"{examples}:examples",
         "--add-data", f"{build / 'backend-package.txt'}:.",
+        "--add-data", f"{learning}:learnharness",
+        "--add-binary", f"{learning / 'node'}:learnharness",
     ]
     # These adapters load data/native libraries dynamically. Optional packages
     # are collected only when present in the project's locked environment.

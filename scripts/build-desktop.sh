@@ -19,6 +19,8 @@ fi
 # is explicit and temporary so the application dependency set stays unchanged.
 npm --prefix web ci
 npm --prefix web run build
+# No source checkout, Git, npm or system Node is required by installed Study.
+uv run --locked python desktop/package_learnharness.py
 uv run --locked --with pyinstaller==6.16.0 python desktop/package_backend.py
 # The Terminal module's runtime: the pinned herdr release, checksum-verified.
 uv run --locked python desktop/fetch_herdr.py
