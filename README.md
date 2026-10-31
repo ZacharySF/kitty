@@ -336,15 +336,20 @@ saved. These checks describe saved data, not application readiness.
    fills known fields. Check each form and submit it yourself; kitty! never submits.
 
 **Notes** opens today's dated note, reusing the same page on subsequent visits.
-**Map** opens the folder/notebook schema; the library also provides recent pages,
-tags and drag-to-reorder. Persistent tabs keep several pages available.
+The library on the left is the one notebook/page navigator: folders, notebooks,
+recent pages, tags and drag-to-reorder. The header row holds persistent page tabs,
+the save state, **Views** (saved maps, the folder/notebook **Library overview**
+schema, Today) and canvas fullscreen. One editor toolbar holds the
+Writing/Canvas/Mind map switch, page title, Save (Ctrl+S) and Find in page;
+**More** holds outline preview, add block, paper, favorite, reload, delete and the
+keyboard help. Escape closes Views and More.
 Text notes use stable bullet blocks: Enter adds a sibling, Tab/Shift+Tab nests or
 unnests, `[[Title]]` and `#tags` collect topic mentions, and unlinked title mentions
 offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting.
-**Canvas fullscreen** puts only the canvas and compact tools on the laptop screen,
+**Canvas fullscreen** (⛶) puts only the canvas and compact tools on the laptop screen,
 not the whole application. Its exit control and Escape restore the workspace.
 Outside text editing, F fullscreens the focused workspace panel instead.
 

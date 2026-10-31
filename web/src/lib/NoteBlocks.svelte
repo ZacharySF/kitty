@@ -9,14 +9,14 @@
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
   let root: HTMLDivElement;
-  let {pageId,blocks,references,counts,pages,onchange,onpage,onopen,focusBlock=""}: {
+  let {pageId,blocks,references,counts,pages,onchange,onpage,onopen,focusBlock="",preview=$bindable(false)}: {
     pageId:number;blocks:NoteBlock[];references:Record<string,string>;counts:Record<string,number>;
     pages:{id:number;title:string}[];onchange:(blocks:NoteBlock[])=>void;onpage:(title:string)=>void;
-    onopen:(id:number,blockId?:string)=>void;focusBlock?:string;
+    onopen:(id:number,blockId?:string)=>void;focusBlock?:string;preview?:boolean;
   }=$props();
   type CitationContext = {id:string;page_id:number|null;title:string;text:string;count:number;contexts:{id:string;page_id:number;title:string;text:string;parent_text?:string}[];next_offset:number|null};
   type TopicContext = {kind:string;topic:string;blocks:{id:string;page_id:number;title:string;text:string}[];count:number;next_offset:number|null};
-  let preview=$state(false), context=$state<CitationContext|null>(null);
+  let context=$state<CitationContext|null>(null);
   let topic=$state<TopicContext|null>(null);
   let error=$state(""),menu=$state<{id:string;x:number;y:number}|null>(null);
   function treeOrder(values: NoteBlock[]): NoteBlock[] {
@@ -36,7 +36,7 @@
   function change(id:string,patch:Partial<NoteBlock>){onchange(blocks.map(block=>block.id===id?{...block,...patch}:block));}
   async function focus(id:string,position=0){await tick();if(!pane.active)return;const field=root?.querySelector<HTMLTextAreaElement>(`#${CSS.escape(`${pane.id}-note-block-${id}`)}`);if(!field?.getClientRects().length)return;field.focus();field.setSelectionRange(position,position);field.scrollIntoView({block:"nearest"});}
   $effect(()=>{if(focusBlock)void focus(focusBlock);});
-  function add(){const id=crypto.randomUUID();onchange([...ordered,{id,parent_id:null,text:"",ordering:ordered.length,collapsed:false}]);void focus(id);}
+  export function add(){const id=crypto.randomUUID();onchange([...ordered,{id,parent_id:null,text:"",ordering:ordered.length,collapsed:false}]);void focus(id);}
   function descendants(id:string):Set<string>{const found=new Set([id]);let changed=true;while(changed){changed=false;for(const b of blocks)if(b.parent_id&&found.has(b.parent_id)&&!found.has(b.id)){found.add(b.id);changed=true;}}return found;}
   function key(event:KeyboardEvent,block:NoteBlock){
     if(!pane.active||event.isComposing)return;
@@ -101,7 +101,6 @@
   {/each}
 {/snippet}
 <div class="text-note" bind:this={root}>
-  <div class="text-toolbar"><span>Outline · Enter new bullet · Tab nest · Shift+Tab unnest</span><button aria-pressed={preview} onclick={()=>preview=!preview}>{preview?"Edit":"Preview"}</button><button onclick={add}>＋ Block</button></div>
   {#if error}<p role="alert">{error}</p>{/if}
   <div class="text-layout">
     <article class="outline" aria-label="Text note outline">{@render branch(null,0)}{#if !blocks.length}<button class="empty" onclick={add}>Start writing a text note</button>{/if}
@@ -130,5 +129,5 @@
 </div>
 {#if menu}<div class="block-menu" role="menu" style:left={`${Math.min(menu.x,window.innerWidth-180)}px`} style:top={`${Math.min(menu.y,window.innerHeight-70)}px`}><button role="menuitem" onclick={()=>menu&&remove(menu.id)}>Delete block…</button></div>{/if}
 <style>
-  .text-note{min-height:500px}.text-toolbar{display:flex;gap:12px;align-items:center;padding:12px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}.text-toolbar span{flex:1}.text-layout{display:flex;min-width:0}.outline{flex:1;min-width:0;max-width:950px;margin:0 auto;padding:32px 24px 80px}.block-row{display:flex;align-items:flex-start;gap:6px;min-height:38px}.block-row.focused{background:color-mix(in srgb,var(--accent) 8%,transparent)}.bullet{width:20px;margin-top:5px;color:var(--muted);flex-shrink:0}.block-body{flex:1;min-width:0}textarea{width:100%;min-height:32px;resize:vertical;border:0;border-radius:0;background:transparent;color:var(--ink);font:inherit;font-size:15px;line-height:1.8;padding:0 4px;field-sizing:content}textarea:focus{outline:1px solid var(--border)}.rendered{white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.8;padding:0 4px}.inline-preview{white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--muted);padding:4px 8px 12px}.block-tools{display:flex;align-items:center;gap:4px;opacity:.35;font-size:10px;padding-top:6px}.block-row:hover .block-tools,.block-row:focus-within .block-tools{opacity:1}button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;border-radius:4px;padding:4px 6px}button:hover{background:var(--surface-raised)}.citations{white-space:nowrap;color:var(--accent)}.contexts{width:280px;flex-shrink:0;border-left:1px solid var(--border);padding:16px;max-height:75vh;overflow:auto;background:var(--chrome)}.contexts h3{font-size:14px}.context{display:flex;flex-direction:column;gap:6px;width:100%;padding:12px 4px;text-align:left;border-bottom:1px solid var(--border);white-space:pre-wrap;overflow-wrap:anywhere}.context span,.original{font-size:12px;line-height:1.6}.context small{color:var(--muted)}.close{float:right;font-size:11px}.mentions{margin-top:50px;border-top:1px solid var(--border);padding-top:15px;font-size:12px;color:var(--muted)}.mentions h3{font-size:12px}.mentions div{display:flex;justify-content:space-between;gap:12px;padding:8px 0}.mentions button{color:var(--accent)}.block-menu{position:fixed;z-index:90;padding:6px;background:var(--surface);border:1px solid var(--border);box-shadow:0 8px 20px #0003}.empty{padding:28px;color:var(--muted)}@media(max-width:900px){.block-tools{flex-direction:column}.contexts{width:220px}.outline{padding:20px 8px}.text-toolbar span{display:none}}@media(max-width:650px){.text-layout{flex-direction:column}.contexts{width:auto;border-left:0;border-top:1px solid var(--border)}}
+  .text-note{min-height:500px}.text-layout{display:flex;min-width:0}.outline{flex:1;min-width:0;max-width:950px;margin:0 auto;padding:16px 24px 80px}.block-row{display:flex;align-items:flex-start;gap:6px;min-height:38px}.block-row.focused{background:color-mix(in srgb,var(--accent) 8%,transparent)}.bullet{width:20px;margin-top:5px;color:var(--muted);flex-shrink:0}.block-body{flex:1;min-width:0}textarea{width:100%;min-height:32px;resize:vertical;border:0;border-radius:0;background:transparent;color:var(--ink);font:inherit;font-size:15px;line-height:1.8;padding:0 4px;field-sizing:content}textarea:focus{outline:1px solid var(--border)}.rendered{white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.8;padding:0 4px}.inline-preview{white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--muted);padding:4px 8px 12px}.block-tools{display:flex;align-items:center;gap:4px;opacity:.35;font-size:10px;padding-top:6px}.block-row:hover .block-tools,.block-row:focus-within .block-tools{opacity:1}button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;border-radius:4px;padding:4px 6px}button:hover{background:var(--surface-raised)}.citations{white-space:nowrap;color:var(--accent)}.contexts{width:280px;flex-shrink:0;border-left:1px solid var(--border);padding:16px;max-height:75vh;overflow:auto;background:var(--chrome)}.contexts h3{font-size:14px}.context{display:flex;flex-direction:column;gap:6px;width:100%;padding:12px 4px;text-align:left;border-bottom:1px solid var(--border);white-space:pre-wrap;overflow-wrap:anywhere}.context span,.original{font-size:12px;line-height:1.6}.context small{color:var(--muted)}.close{float:right;font-size:11px}.mentions{margin-top:50px;border-top:1px solid var(--border);padding-top:15px;font-size:12px;color:var(--muted)}.mentions h3{font-size:12px}.mentions div{display:flex;justify-content:space-between;gap:12px;padding:8px 0}.mentions button{color:var(--accent)}.block-menu{position:fixed;z-index:90;padding:6px;background:var(--surface);border:1px solid var(--border);box-shadow:0 8px 20px #0003}.empty{padding:28px;color:var(--muted)}@media(max-width:900px){.block-tools{flex-direction:column}.contexts{width:220px}.outline{padding:12px 8px}}@media(max-width:650px){.text-layout{flex-direction:column}.contexts{width:auto;border-left:0;border-top:1px solid var(--border)}}
 </style>

@@ -412,3 +412,11 @@ Stage 1: done.
   Checked in the real app against the synthetic backend:
   `node --test web/tests/workbench.browser.test.mjs` (same browser variables as
   above; `KITTY_TEST_PORT` optionally pins the backend port and Vite one above it).
+- 2026-10-31: The Notes editor is one compact hierarchy (audit V5). The library is
+  the only notebook/page navigator (the duplicate notebook strip is gone); one header
+  row carries the page tabs, save state, a labelled **Views** panel and canvas
+  fullscreen; one editor toolbar carries mode, title, Save and Find; infrequent page
+  actions and keyboard help sit in a labelled **More** panel. Writing starts directly
+  under the toolbar at the default (1280×850) and minimum (760×500) native sizes.
+  Checks: `node --test web/tests/notes.browser.test.mjs` (same browser variables as
+  above).
