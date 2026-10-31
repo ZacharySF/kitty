@@ -4,6 +4,7 @@
   import { api, type ModuleId, type ModulesState } from "./api";
   import ThemePicker from "./ThemePicker.svelte";
   import DesktopSettings from "./DesktopSettings.svelte";
+  import AccountSettings from "./AccountSettings.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
   import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
   import GraphLookToggle from "./GraphLookToggle.svelte";
@@ -85,6 +86,8 @@
   <header><h1>Settings</h1></header>
   <Panel title="Appearance"><div class="setting-row"><span>Theme</span><ThemePicker /></div></Panel>
   <DesktopSettings />
+  <AccountSettings />
+  <div data-tutorial="modules">
   <Panel title="Modules">
     <p class="muted">Turn parts of kitty on or off. A saved choice applies the next time kitty starts; your data is never removed.</p>
     {#if modules}
@@ -112,6 +115,7 @@
     {#if moduleNotice}<p class="muted" role="status">{moduleNotice}</p>{/if}
     {#if moduleError}<p role="alert">{moduleError}</p>{/if}
   </Panel>
+  </div>
   <Panel title="Schemas">
     <div class="setting-row"><span>Graph look · remembered for every graph</span><GraphLookToggle /></div>
     <label class="setting-row" title="The layout used when you open Home or a section schema">Default layout<select value={layout} onchange={(event) => { layout = event.currentTarget.value as GraphLayout; save(); }}>{#each GRAPH_LAYOUTS as item}<option value={item.id}>{item.label}</option>{/each}</select></label>

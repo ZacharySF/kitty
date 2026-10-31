@@ -193,6 +193,16 @@ exact loopback Host/Origin. `--port`, `--root` and `--static-dir` override the p
 workspace and built-asset directory. The refresh button and command palette reload
 configuration from disk; saves in My profile reload it automatically.
 
+The first-run welcome offers **Continue locally** or an optional Google identity
+connection, followed by a skippable guided tour of workspace panels, modules,
+Atlas, quick notes and Study (plus the terminal dock when present). Completion is
+remembered per workspace. Reopen either flow in **Settings → Welcome & account**.
+Google is not required for local/offline use and does not secure the local API or
+sync data. For the owner-created Desktop OAuth client, `KITTY_GOOGLE_CLIENT_ID`,
+`KITTY_GOOGLE_CLIENT_SECRET`,
+system-browser/PKCE flow and privacy boundaries, see
+[Google connection and onboarding setup](docs/GOOGLE_ONBOARDING.md).
+
 For safe exploration without touching real jobs, runtime YAML or resumes:
 
 ```bash
