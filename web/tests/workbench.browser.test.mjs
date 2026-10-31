@@ -95,9 +95,15 @@ after(async () => {
   backend?.kill();
 });
 
-/** Opens a fresh profile on `hash`. `modules: []` is a core-only workspace. */
+/** Opens a fresh profile on `hash`. `modules: []` is a core-only workspace. The profile is a
+ *  returning user: the first-run welcome guide (covered by its own tests) is already done. */
 async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme } = {}) {
   const context = await browser.newContext({ viewport });
+  await context.route("**/api/account", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
+      : route.continue(),
+  );
   if (dock === "hidden")
     await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({ mode: "hidden", height: null, shown: "terminal" })));
   if (modules)
