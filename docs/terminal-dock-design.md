@@ -127,6 +127,24 @@ Rejected:
 - **B** removes the working 3D views the user did not ask to lose.
 - **C** would put kitty! under AGPL.
 
+### Q17 — Stencil Tern is an optional second terminal, shown as status and opened natively
+
+**Decision: with the Terminal module on, a Tern node under Plan shows the user's installed [Stencil Tern](https://stencil.so/tern) running kitty!'s own daemon and `kitty` session; Open in Tern opens Tern's native window on it. herdr stays the bundled default.** The owner asked: *"add stencil tern to kitty"*.
+
+| Option | User experience | Technical correctness | Risk | Cost |
+| --- | --- | --- | --- | --- |
+| A. Embed `tern web serve`'s client in a view | good | poor | mixed | mixed |
+| **B. Status panel + native window on kitty!'s daemon** | **mixed** | **good** | **good** | **good** |
+| C. Bundle Tern like herdr | good | mixed | poor | good |
+
+Weakest axis of B is user experience: the terminal opens in Tern's own window, not inside kitty!. The spike (0.9.8) showed why A fails where it matters: the web client requires WebGPU; Chromium with a hardware adapter renders it and takes input, but kitty!'s desktop WebKitGTK 2.54 has no `navigator.gpu` (its WebGPU feature is "unstable" and stays absent even when forced on), so the page only says "this browser has no WebGPU". The view never draws a fake terminal.
+
+Rejected:
+- **A** works only in a Chromium tab, not in the desktop app, and loads its wasm from build.stencil.so.
+- **C** is not allowed: Tern is closed-beta proprietary software; kitty! runs only the user's `tern` (PATH or a saved path) and behaves exactly as before without it.
+
+Lifecycle follows Q7 and Q2: nothing starts until Start or Open; the daemon lives on a private socket (`$XDG_RUNTIME_DIR/kitty/tern-<hash>/daemon.sock`, directory 0700, refused unless owner-only) so the user's own Tern daemon and sessions are never touched; every `tern` kitty! runs gets `TERN_DAEMON_SOCKET` for that socket and none of an outer Tern pane's variables. Quit closes the windows kitty! opened and stops its daemon (by its socket's peer pid); a window would otherwise restart a daemon on its own. Status comes from `tern inspect --json` (sessions, panes, working state, attached windows) polled like the activity strip.
+
 ## Routine choices
 
 - **Q3 — Dock contents:** three states: **terminal**, **agent-activity strip** (herdr's own agent states: working / blocked / done / idle, per workspace), and **hidden** (main view takes the full height; a thin handle brings the dock back). Not arbitrary kitty! views.
@@ -149,6 +167,7 @@ Rejected:
 - The native menu strip shown in the screenshot is `app.set_menu(menu)` in `desktop/src/main.rs`, added with the signed updater; the tray menu uses the same items.
 - One engine, `web/src/lib/graph3d.ts`, is used by GraphNavigator (atlas), SectionGraph, SchemaNetwork, SchemaMaps; graph preferences live in `graphPreferences.ts` and WorkspaceSettings.
 - The desktop backend already has a private owner pipe (stdin `quit`, stdout readiness) between the native shell and the sidecar.
+- Tern 0.9.8 (spike, isolated HOME/XDG/`TERN_CONFIG_DIR`/socket): `tern daemon --socket PATH` makes a 0600 socket and keeps `PATH.state` beside it, restoring panes after a restart; it exits after ~10 s with no sessions and no clients; windows (`tern [--dir] DIR`) and `tern web serve` start one on `TERN_DAEMON_SOCKET` when none runs, and a window on another daemon socket does not take over another daemon's launch. `tern --dir DIR` attaches to the existing session without adding a tab. Scripting (`ls`, `inspect`, `new`, `run`, `capture`, `events` JSON lines) works without signing in; native windows show the closed-beta sign-in gate until a Stencil account is signed in. `tern web serve` needs a token file and WebGPU, serves no frame-blocking headers and fetches its wasm from build.stencil.so.
 
 ## Risks
 
@@ -159,6 +178,7 @@ Rejected:
 - Bare-F shortcut must never fire while typing (text fields, contenteditable, terminal); Ctrl+Shift+F must not collide with herdr's own bindings.
 - Two graph renderers double the interaction surface (focus, drag, context menus, deletion, hide/show by drag); both need the same behavioural tests.
 - Persisted hidden-node choices must tolerate modules being turned off (hidden or disabled sections must not resurrect or crash the atlas).
+- Tern is closed beta: its CLI and `inspect --json` fields may change between the user's updates (kitty! does not pin it); an unreadable report is shown as an error, never as an empty session. Opening Tern from the AppImage environment is unverified.
 
 ## Deferred
 

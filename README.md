@@ -70,7 +70,7 @@ source .venv/bin/activate    # then just `kitty ...`
 | --- | --- |
 | ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports |
 | Workspace (`workspace`) | Notes, documents/PDFs, canvas, mind maps, backlinks, flashcards, study, calendar, tasks and projects/opportunities |
-| Terminal (`terminal`) | kitty!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window |
+| Terminal (`terminal`) | kitty!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window; your installed [Stencil Tern](https://stencil.so/tern), if any, opened on a session of kitty!'s own |
 | Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
@@ -156,6 +156,24 @@ list workspaces, create a separately labelled tab with `tab create --workspace
 Never rely on another client's focused pane or switch to the `default` session.
 Their tabs appear live in the terminal and herdr view, and detected agent states
 appear in **Agents**. Local CLI/socket access grants full shell access as your user.
+
+**Tern (optional).** With the module on, the **Tern** node under Plan shows
+[Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the bundled
+default; kitty! never bundles Tern (closed-beta, proprietary) and only runs the
+`tern` you installed: the one on `PATH`, or the path saved in the view's **Tern
+executable** section (`.private/tern/settings.json`, owner-only). Without it the view
+says so and points to stencil.so/tern; nothing else changes. **Open in Tern** starts
+kitty!'s own Tern daemon on a private socket,
+`$XDG_RUNTIME_DIR/kitty/tern-<workspace hash>/daemon.sock` (directory 0700, a
+socket others can reach is refused), gives it a `kitty` session in the workspace
+and opens a native Tern window on it (`tern --dir <workspace>`); your own Tern
+daemon and sessions are never read or changed. The view is a status panel (version,
+daemon state, sessions, panes and open windows from `tern inspect --json`, which
+never starts anything): Tern's web client needs WebGPU, which the desktop app's
+WebKitGTK view lacks, so kitty! does not embed it. Scripts reach the session with
+`TERN_DAEMON_SOCKET=<socket> tern ls`. Quit closes the Tern windows kitty! opened
+and stops its Tern daemon (Tern restores the layout next time); closing the window
+with **Keep running on close** leaves them running.
 
 
 ## Try it on fake data first
