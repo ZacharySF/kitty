@@ -30,7 +30,11 @@ kitty = "kitty.cli:main"
 kitty-web = "kitty.web_server:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-xdist>=3.8.0",
+]
 
 [build-system]
 requires = ["hatchling"]

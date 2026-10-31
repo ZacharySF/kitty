@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, feat/desktop-releases]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      UV_PYTHON: '3.12'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --group dev
+      - name: Allow Chromium's user-namespace sandbox
+        # Ubuntu 24.04's AppArmor default makes Chrome abort in its zygote; the
+        # resume PDF renderer tests launch the runner's Chrome.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run pytest
+        # Firefox ships on the runner image, so the browser-driving tests run too.
+        run: uv run --locked pytest -q -n auto
+
+  web:
+    name: Frontend check and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: svelte-check
+        run: npm run check
+      - name: Unit tests
+        run: node --experimental-strip-types --test $(ls tests/*.test.mjs | grep -v '\.browser\.')
