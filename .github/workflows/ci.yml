@@ -30,6 +30,10 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --locked --group dev
+      - name: Allow Chromium's user-namespace sandbox
+        # Ubuntu 24.04's AppArmor default makes Chrome abort in its zygote; the
+        # resume PDF renderer tests launch the runner's Chrome.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run pytest
         # Firefox ships on the runner image, so the browser-driving tests run too.
         run: uv run --locked pytest -q -n auto
