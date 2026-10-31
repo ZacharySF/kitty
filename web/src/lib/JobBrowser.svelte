@@ -899,7 +899,6 @@
 
 <style>
   .schema-tabs {display:flex;gap:8px;padding:12px 20px;}
-  .schema-tabs button[aria-pressed="true"] {background:var(--accent);color:var(--canvas);}
   .job-list.dense {
     max-height: min(68vh, 880px);
     overflow-y: auto;

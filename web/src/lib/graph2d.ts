@@ -46,6 +46,8 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
   const physics = { ...DEFAULT_PHYSICS, ...opts.physics };
   let width = 1, height = 1, dpr = 1;
   let transform = zoomIdentity;
+  /** The view still shows the automatic whole-graph fit (no user pan/zoom or node focus since). */
+  let framed = false;
   let selected: string | null = null;
   let hovered: string | null = null;
   let active = opts.active ?? true;
@@ -85,7 +87,7 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       if (event.type === "touchstart" && event.touches.length === 1) return !handle.nodeAt(event.touches[0].clientX, event.touches[0].clientY);
       return !event.button;
     })
-    .on("zoom", event => { transform = event.transform as ZoomTransform; requestDraw(); });
+    .on("zoom", event => { transform = event.transform as ZoomTransform; if (event.sourceEvent) framed = false; requestDraw(); });
   selection.call(behavior);
 
   function requestDraw() {
@@ -158,12 +160,15 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
     requestDraw();
   }
   function fit() {
+    framed = true;
     if (!nodes.length) { selection.call(behavior.transform, zoomIdentity); return; }
     const minX = Math.min(...nodes.map(node => node.x!)) - 65;
     const maxX = Math.max(...nodes.map(node => node.x!)) + 65;
     const minY = Math.min(...nodes.map(node => node.y!)) - 65;
     const maxY = Math.max(...nodes.map(node => node.y!)) + 65;
-    const k = Math.max(0.12, Math.min(2, width / (maxX - minX), height / (maxY - minY)) * 0.9);
+    // Group pills above and labels below keep their pixel size at any zoom; reserve room for them.
+    const pad = 28;
+    const k = Math.max(0.12, Math.min(2, Math.max(1, width - 2 * pad) / (maxX - minX), Math.max(1, height - 2 * pad) / (maxY - minY)) * 0.9);
     selection.call(behavior.transform, zoomIdentity.translate(width / 2, height / 2).scale(k).translate(-(minX + maxX) / 2, -(minY + maxY) / 2));
   }
   function draw() {
@@ -348,7 +353,10 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       const node = id ? byId.get(id) : null;
       selected = node?.id ?? null;
       if (!node) fit();
-      else selection.call(behavior.transform, zoomIdentity.translate(width / 2, height / 2).scale(Math.max(1.2, transform.k)).translate(-node.x!, -node.y!));
+      else {
+        selection.call(behavior.transform, zoomIdentity.translate(width / 2, height / 2).scale(Math.max(1.2, transform.k)).translate(-node.x!, -node.y!));
+        framed = false;
+      }
       requestDraw();
     },
     setActive(next) { active = next; syncVisibility(); },
@@ -357,7 +365,9 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       const oldWidth = width, oldHeight = height;
       width = el.clientWidth || 1; height = el.clientHeight || 1; dpr = Math.min(2, devicePixelRatio || 1);
       canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
-      selection.call(behavior.transform, zoomIdentity.translate(transform.x + (width - oldWidth) / 2, transform.y + (height - oldHeight) / 2).scale(transform.k));
+      // A fitted view refits the new size; a view the user moved keeps its scale, recentred.
+      if (framed) fit();
+      else selection.call(behavior.transform, zoomIdentity.translate(transform.x + (width - oldWidth) / 2, transform.y + (height - oldHeight) / 2).scale(transform.k));
       requestDraw();
     },
     destroy() {

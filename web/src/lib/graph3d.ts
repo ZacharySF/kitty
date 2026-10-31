@@ -645,6 +645,8 @@ async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphR
   let hullTick = 0;
   // cameraPosition() is ignored until the library's first render; fit on first tick.
   let initialFit = true;
+  /** The camera still shows the automatic overview (no user orbit/zoom or node flight since). */
+  let framed = false;
 
 
   // Keep all data and individual picking identities, but batch dense geometry.
@@ -1275,6 +1277,7 @@ async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphR
             z: node.z ?? 0,
           }));
     if (!points.length) return;
+    framed = true;
     const centre =
       layout === "sphere"
         ? { x: 0, y: 0, z: 0 }
@@ -1442,7 +1445,7 @@ async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphR
       }, delay);
     else controls.autoRotate = true;
   }
-  const onControlStart = () => setRotation(false);
+  const onControlStart = () => { framed = false; setRotation(false); };
   const onControlEnd = () => setRotation(true, 7000);
   controls.addEventListener?.("change", scheduleLabels);
   controls.addEventListener?.("start", onControlStart);
@@ -1515,6 +1518,7 @@ async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphR
   page.addEventListener("keydown", rotateFromKeyboard);
 
   function fly(node: SimNode) {
+    framed = false;
     const x = node.x ?? 0;
     const y = node.y ?? 0;
     const z = node.z ?? 0;
@@ -1686,7 +1690,11 @@ async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphR
       if (destroyed) return;
       const width = el.clientWidth;
       const height = el.clientHeight;
-      if (width > 0 && height > 0) graph.width(width).height(height);
+      if (width > 0 && height > 0 && (width !== graph.width() || height !== graph.height())) {
+        graph.width(width).height(height);
+        // A fitted overview refits the new aspect; a view the user moved stays put.
+        if (framed && !initialFit) overview(0);
+      }
       syncVisibility();
     },
     destroy() {

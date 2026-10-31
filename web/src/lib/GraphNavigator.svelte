@@ -671,11 +671,14 @@
 {/if}
 
 <style>
+  /* Fills the room App gives it (zero basis: the sidebar never sizes the row);
+     the sidebar scrolls on its own. The floor keeps a cramped graph usable. */
   .atlas {
-    flex: 1;
-    min-height: 0;
+    flex: 1 1 0px;
+    min-height: 120px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+    grid-template-rows: minmax(0, 1fr);
     border: 1px solid var(--border-fine, var(--border));
     background: var(--canvas);
   }
@@ -1015,9 +1018,19 @@
   .brief :global(.panel-heading h2) {
     font-size: 16px;
   }
-  @media (max-width: 760px) {
+  /* A short window leaves the graph too little room for the gesture hint. */
+  @media (max-height: 640px) {
+    .stage-caption {
+      display: none;
+    }
+  }
+  /* Phone widths stack. The desktop minimum window (760×500) stays side by side
+     even when display scaling lays it out narrower in CSS pixels. */
+  @media (max-width: 599.98px) {
     .atlas {
+      flex: none;
       grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: none;
     }
     .stage {
       height: 58vh;

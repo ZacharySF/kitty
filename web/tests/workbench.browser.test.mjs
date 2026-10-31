@@ -1,0 +1,307 @@
+// The real app in a real browser against the disposable synthetic backend
+// (`kitty-web --demo`); no private workspace is read. Covers the atlas fitting
+// the window above the dock, and selected toggles staying readable.
+// Run from web/ with Node >=22, uv and a matching Playwright Chromium:
+// PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
+// PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/workbench.browser.test.mjs
+import { after, before, describe, test } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createServer as createNetServer } from "node:net";
+import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
+import { chromium } from "playwright-core";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const repository = fileURLToPath(new URL("../..", import.meta.url));
+// The native window's default and minimum inner sizes (desktop/src/main.rs).
+const DEFAULT = { width: 1280, height: 850 };
+const MINIMUM = { width: 760, height: 500 };
+// The minimum window as WebKitGTK lays it out with slight display scaling
+// (measured 730×480 CSS px at devicePixelRatio 1.04 in the native shell).
+const SCALED_MINIMUM = { width: 730, height: 480 };
+// A light palette: the bundled themes are all dark.
+const PAPER = {
+  id: "paper-test",
+  label: "Paper",
+  scheme: "light",
+  roles: {
+    void: "#f4f1f2", panel: "#ffffff", inset: "#ece8ea", raised: "#ffffff", line: "#c9c2c5", lineHot: "#7d7378",
+    ink: "#1f1a1c", mute: "#4f474b", dim: "#6e6569", structure: "#8a3f5f", signal: "#9b3360", go: "#2f6f45",
+    reference: "#285d8f", caution: "#7a5a00", alternate: "#5f4b9b", danger: "#a3352c",
+  },
+  graph: ["#8a3f5f", "#5f4b9b", "#285d8f", "#9b3360", "#2f6f45", "#7a5a00"],
+  shadow: "#000000",
+};
+
+let backend;
+let server;
+let browser;
+let base;
+
+// KITTY_TEST_PORT pins the demo backend (and Vite, one above) for shared machines.
+const pinnedPort = Number(process.env.KITTY_TEST_PORT) || 0;
+
+function freePort() {
+  if (pinnedPort) return Promise.resolve(pinnedPort);
+  return new Promise((resolve, reject) => {
+    const probe = createNetServer().once("error", reject).listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+before(async () => {
+  backend = spawn("uv", ["run", "--quiet", "kitty-web", "--demo", "--port", String(await freePort())], {
+    cwd: repository,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const origin = await new Promise((resolve, reject) => {
+    let output = "";
+    const timer = setTimeout(() => reject(new Error(`demo backend did not start:\n${output}`)), 120_000);
+    const read = (chunk) => {
+      output += chunk;
+      const match = output.match(/website: (http:\/\/\S+)/);
+      if (match) { clearTimeout(timer); resolve(match[1]); }
+    };
+    backend.stdout.on("data", read);
+    backend.stderr.on("data", read);
+    backend.once("exit", (code) => { clearTimeout(timer); reject(new Error(`demo backend exited (${code}):\n${output}`)); });
+  });
+  server = await createServer({
+    root,
+    logLevel: "error",
+    server: {
+      host: "127.0.0.1",
+      port: pinnedPort ? pinnedPort + 1 : 0,
+      strictPort: Boolean(pinnedPort),
+      proxy: {
+        "/api": {
+          target: origin,
+          changeOrigin: true,
+          configure: (proxy) => proxy.on("proxyReq", (request) => request.setHeader("Origin", origin)),
+        },
+      },
+    },
+  });
+  await server.listen();
+  base = server.resolvedUrls.local[0];
+  browser = await chromium.launch();
+});
+after(async () => {
+  await browser?.close();
+  await server?.close();
+  backend?.kill();
+});
+
+/** Opens a fresh profile on `hash`. `modules: []` is a core-only workspace. */
+async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme } = {}) {
+  const context = await browser.newContext({ viewport });
+  if (dock === "hidden")
+    await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({ mode: "hidden", height: null, shown: "terminal" })));
+  if (modules)
+    await context.route("**/api/bootstrap", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      body.modules.enabled = modules;
+      body.modules.configured = modules;
+      await route.fulfill({ response, json: body });
+    });
+  const page = await context.newPage();
+  const problems = [];
+  page.on("pageerror", (error) => problems.push(error.message));
+  await page.goto(new URL(`#${hash}`, base).href);
+  if (theme)
+    await page.evaluate(async (palette) => {
+      const themes = await import("/src/lib/themes.ts");
+      themes.THEMES.push(palette);
+      themes.setTheme(palette.id);
+    }, theme);
+  return { page, problems, context };
+}
+
+/** Viewport bottom not covered by the fixed dock or its handle. */
+const visibleBottom = (page) => page.evaluate(() =>
+  innerHeight - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0));
+const rect = (locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON());
+
+/**
+ * Polls until the 2D atlas canvas fills its stage and nothing is drawn in a
+ * band along its edges: every node, label and region is inside the canvas.
+ */
+async function fitted(page) {
+  await page.waitForFunction(() => {
+    const stage = document.querySelector(".atlas .stage");
+    const canvas = stage?.querySelector("canvas");
+    if (!canvas || !canvas.width || !canvas.height) return false;
+    const box = canvas.getBoundingClientRect(), outer = stage.getBoundingClientRect();
+    if (Math.abs(box.height - outer.height) > 2 || Math.abs(box.width - outer.width) > 2) return false;
+    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    const band = Math.ceil(4 * canvas.width / box.width);
+    let drawn = 0;
+    for (let y = 0; y < canvas.height; y += 1)
+      for (let x = 0; x < canvas.width; x += 1)
+        if ((x < band || y < band || x >= canvas.width - band || y >= canvas.height - band) && pixels[(y * canvas.width + x) * 4 + 3]) drawn += 1;
+    return drawn === 0 && canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data.some((value, index) => index % 4 === 3 && value);
+  }, null, { timeout: 10_000, polling: 200 });
+}
+
+/** The atlas ends above the dock, the page does not scroll and the graph is fitted. */
+async function assertAtlasFits(page, label) {
+  const atlas = page.locator(".atlas");
+  await atlas.waitFor();
+  await fitted(page).catch(() => assert.fail(`${label}: graph is not fitted to its visible canvas`));
+  const bottom = await visibleBottom(page);
+  const box = await rect(atlas);
+  assert.ok(box.top >= 0 && box.bottom <= bottom + 1, `${label}: atlas ${box.top}–${box.bottom} is not within 0–${bottom}`);
+  assert.ok(box.height >= 120, `${label}: atlas collapsed to ${box.height}px`);
+  const overflow = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
+  assert.ok(overflow <= 1, `${label}: page scrolls ${overflow}px below the window`);
+}
+
+/** Every control in the sidebar can be focused and is then visible and hit-testable above the dock. */
+async function assertSidebarReachable(page, label) {
+  const unreachable = await page.locator(".atlas-panel").evaluate((panel) => {
+    const space = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0;
+    const missing = [];
+    for (const control of panel.querySelectorAll("a[href], button, input, summary")) {
+      if (!control.getClientRects().length || control.closest("details:not([open]) > :not(summary)")) continue;
+      control.focus();
+      const box = control.getBoundingClientRect();
+      const x = box.left + box.width / 2, y = box.top + box.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      if (y < 0 || y > innerHeight - space || !hit || !(control === hit || control.contains(hit)))
+        missing.push(control.getAttribute("aria-label") || control.textContent.trim().slice(0, 30));
+    }
+    return missing;
+  });
+  assert.deepEqual(unreachable, [], `${label}: sidebar controls cannot be reached`);
+}
+
+describe("atlas fits the window above the dock", () => {
+  for (const viewport of [DEFAULT, MINIMUM, SCALED_MINIMUM]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    for (const [name, options] of [
+      ["all modules, dock shown", {}],
+      ["all modules, dock hidden", { dock: "hidden" }],
+      ["core only", { modules: [] }],
+    ]) {
+      test(`${size}, ${name}`, async () => {
+        const { page, problems, context } = await open("today", { viewport, ...options });
+        if (!options.modules && options.dock !== "hidden") await page.locator('[data-kitty-panel="dock"]').waitFor();
+        await assertAtlasFits(page, `${size} ${name}`);
+        await assertSidebarReachable(page, `${size} ${name}`);
+        assert.deepEqual(problems, []);
+        await context.close();
+      });
+    }
+
+    test(`${size}, F fullscreens the fitted graph; Escape and the dock toggle refit it`, async () => {
+      const { page, problems, context } = await open("today", { viewport });
+      const dock = page.locator('[data-kitty-panel="dock"]');
+      await dock.waitFor();
+      await assertAtlasFits(page, `${size} initial`);
+      const stage = page.locator('[data-kitty-panel="graph"]');
+      await stage.focus();
+      await page.keyboard.press("f");
+      await page.waitForFunction(() => document.querySelector('[data-kitty-panel="graph"]')?.hasAttribute("data-panel-fullscreen"));
+      await fitted(page);
+      const full = await rect(stage);
+      assert.deepEqual([full.top, full.left, full.width, full.height], [0, 0, viewport.width, viewport.height]);
+      await page.keyboard.press("Escape");
+      await assertAtlasFits(page, `${size} after Escape`);
+      await assertSidebarReachable(page, `${size} after Escape`);
+      await dock.getByRole("button", { name: "Hide dock" }).click();
+      await assertAtlasFits(page, `${size} dock hidden`);
+      assert.ok((await rect(page.locator(".atlas"))).bottom > (await visibleBottom(page)) - 40, `${size}: atlas did not grow into the hidden dock's space`);
+      await page.getByRole("button", { name: "Show dock" }).click();
+      await dock.waitFor();
+      await assertAtlasFits(page, `${size} dock shown again`);
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+});
+
+/** WCAG contrast of two [r, g, b] colors. */
+function contrast(a, b) {
+  const luminance = (rgb) => {
+    const [r, g, b] = rgb.map((value) => { const c = value / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+/**
+ * What is actually painted inside a button (border and focus ring excluded):
+ * its dominant fill and the glyph pixel that stands out most from it.
+ */
+async function painted(page, button) {
+  // Theme transitions and view fade-ins (on the button or an ancestor) must finish first.
+  await button.evaluate(async (node) => {
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const moving = () => document.getAnimations().some((animation) =>
+      animation.playState === "running" && animation.effect?.getComputedTiming().endTime !== Infinity &&
+      animation.effect?.target?.contains(node));
+    for (let quiet = 0; quiet < 3; quiet = moving() ? 0 : quiet + 1) await frame();
+  });
+  const box = await rect(button);
+  const png = await page.screenshot({ clip: { x: box.left + 6, y: box.top + 4, width: box.width - 12, height: box.height - 8 } });
+  const pixels = await page.evaluate(async (data) => {
+    const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${data}`)).blob());
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d");
+    context.drawImage(bitmap, 0, 0);
+    return Array.from(context.getImageData(0, 0, bitmap.width, bitmap.height).data);
+  }, png.toString("base64"));
+  const counts = new Map();
+  const colors = [];
+  for (let index = 0; index < pixels.length; index += 4) {
+    const color = pixels.slice(index, index + 3);
+    colors.push(color);
+    const key = color.join();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const fill = [...counts].sort((a, b) => b[1] - a[1])[0][0].split(",").map(Number);
+  const text = colors.reduce((best, color) => (contrast(color, fill) > contrast(best, fill) ? color : best), fill);
+  return { fill, text, ratio: contrast(fill, text) };
+}
+
+async function assertSelection(page, selected, other, label) {
+  assert.equal(await selected.getAttribute("aria-pressed"), "true", `${label}: wrong selected button`);
+  assert.equal(await other.getAttribute("aria-pressed"), "false", `${label}: wrong unselected button`);
+  const on = await painted(page, selected);
+  const off = await painted(page, other);
+  assert.ok(on.ratio >= 4.5, `${label}: selected text contrast ${on.ratio.toFixed(2)} (${on.text} on ${on.fill})`);
+  assert.ok(off.ratio >= 4.5, `${label}: unselected text contrast ${off.ratio.toFixed(2)} (${off.text} on ${off.fill})`);
+  assert.ok(contrast(on.fill, off.fill) >= 3, `${label}: selection is not distinct (${on.fill} vs ${off.fill})`);
+}
+
+describe("selected job views stay readable", () => {
+  for (const [themeName, theme] of [["Harness", undefined], ["a light theme", PAPER]]) {
+    for (const viewport of [DEFAULT, MINIMUM]) {
+      test(`${themeName} at ${viewport.width}px: Map and List show a readable, distinct selection`, async () => {
+        // The dock's first height depends on how much of Jobs loaded; keep it out of the measured area.
+        const { page, problems, context } = await open("jobs", { viewport, theme, dock: "hidden" });
+        const views = page.getByRole("navigation", { name: "Jobs view" });
+        const map = views.getByRole("button", { name: "Map", exact: true });
+        const list = views.getByRole("button", { name: "List", exact: true });
+        await assertSelection(page, map, list, `${themeName} ${viewport.width} initial`);
+        await list.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForFunction(() => document.querySelector('nav[aria-label="Jobs view"] button:nth-child(2)')?.getAttribute("aria-pressed") === "true");
+        assert.equal(await list.evaluate((node) => node === document.activeElement && node.matches(":focus-visible")), true, "keyboard focus left List");
+        assert.equal(await list.evaluate((node) => getComputedStyle(node).outlineStyle), "solid", "List lost its focus ring");
+        await page.mouse.move(0, 0);
+        await assertSelection(page, list, map, `${themeName} ${viewport.width} after choosing List`);
+        await map.click();
+        await page.mouse.move(0, 0);
+        await assertSelection(page, map, list, `${themeName} ${viewport.width} after choosing Map`);
+        assert.deepEqual(problems, []);
+        await context.close();
+      });
+    }
+  }
+});
