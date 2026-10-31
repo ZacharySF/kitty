@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- Browser fixture for tests/notes.browser.test.mjs: synthetic notebooks and pages only. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Notes harness</title>
+    <style>
+      html, body { margin: 0; }
+      /* kitty!'s global header and workspace tabs occupy this band above a view. */
+      #app-chrome { height: 96px; }
+      #view { padding: 0 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="app-chrome"></div>
+    <main id="view"></main>
+    <script type="module" src="./notesHarness.js"></script>
+  </body>
+</html>
