@@ -130,6 +130,33 @@ atlas, opens the whole session in the workspace tab. In a terminal, bare keys
 (including `f`) go to the shell; **Ctrl+Shift+F** fullscreens the terminal panel and
 **Esc** returns.
 
+**Agents (Q2/Q9).** In either terminal surface, **New Agent tab** starts the chosen
+installed coding agent in a new herdr tab labelled **Agent**, in this kitty!
+workspace's directory. The chooser defaults to **omp**, also supports **claude**
+and **codex**, and remembers the last choice in this browser profile. kitty! does
+not install agents, configure their provider credentials, send them work, or
+bypass their approval prompts. Open the terminal before starting an agent.
+The header-protected `POST /api/terminal/agents` accepts only the selected kind;
+herdr creates the tab and starts the agent in the exact returned pane. Failed or
+blocked startup keeps the tab and reports its IDs rather than retrying or killing it.
+
+The skill comes from the bundled binary's `--skill` output, saved owner-only in
+`.private/herdr/SKILL.md`. omp and Claude receive it through their native appended
+system-instruction file option; Codex receives a developer instruction to read and
+follow that file. Only that tab's `PATH` gets a private `herdr` alias to the bundled
+binary, so the skill's commands work without a separate herdr installation. No
+global skill, agent configuration or existing project instruction file is changed.
+
+**Attach external agent** shows the actual bundled binary, named session and
+workspace directory (`GET /api/terminal/agents`; reading never starts herdr).
+External agents use herdr's own CLI/socket, not a kitty!-specific control API:
+list workspaces, create a separately labelled tab with `tab create --workspace
+<id> --cwd <directory> --label <name> --no-focus`, then target the returned
+`root_pane.pane_id` explicitly. Read herdr's own skill before controlling panes.
+Never rely on another client's focused pane or switch to the `default` session.
+Their tabs appear live in the terminal and herdr view, and detected agent states
+appear in **Agents**. Local CLI/socket access grants full shell access as your user.
+
 
 ## Try it on fake data first
 

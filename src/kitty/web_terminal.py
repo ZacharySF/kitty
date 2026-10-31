@@ -29,7 +29,7 @@ import struct
 import threading
 import time
 
-from kitty.core.terminal import HerdrRuntime, TerminalClient, TerminalUnavailable
+from kitty.core.terminal import CODING_AGENTS, HerdrRuntime, TerminalClient, TerminalNotRunning, TerminalUnavailable
 
 SOCKET_PATH = "/api/terminal/socket"
 TOKEN_TTL = 30.0
@@ -82,6 +82,10 @@ def stop(app) -> None:
 def get(app, conn, path, query):
     if path == SOCKET_PATH:
         raise _error(426, "Open the terminal with a WebSocket upgrade")
+    if path == "/api/terminal/agents":
+        runtime = app.terminal.runtime
+        return {"binary": runtime.binary, "session": runtime.session,
+                "cwd": str(app.settings.root), "default": "omp", "kinds": list(CODING_AGENTS)}
     if path == "/api/terminal/activity":
         try:
             return app.terminal.runtime.activity()
@@ -90,6 +94,16 @@ def get(app, conn, path, query):
 
 
 def post(app, conn, path, body):
+    if path == "/api/terminal/agents":
+        kind = body.get("kind", "omp")
+        if set(body) - {"kind"} or not isinstance(kind, str) or kind not in CODING_AGENTS:
+            raise _error(400, "Choose a supported coding agent")
+        try:
+            return app.terminal.runtime.start_agent(kind, app.settings.root)
+        except TerminalNotRunning as exc:
+            raise _error(409, str(exc)) from None
+        except TerminalUnavailable as exc:
+            raise _error(503, str(exc)) from None
     if path != "/api/terminal/session":
         return None
     if body:
