@@ -178,7 +178,12 @@ kitty!'s own Tern daemon on a private socket,
 `$XDG_RUNTIME_DIR/kitty/tern-<workspace hash>/daemon.sock` (directory 0700, a
 socket others can reach is refused), gives it a `kitty` session in the workspace
 and opens a native Tern window on it (`tern --dir <workspace>`); your own Tern
-daemon and sessions are never read or changed. The view is a status panel (version,
+daemon and sessions are never read or changed. On NixOS the AppImage runs inside
+`appimage-run`'s FHS sandbox, whose `/etc/profile` would hide your programs (git,
+nix, python3, agents) from Tern's login-shell panes, so there kitty! starts the
+daemon and windows outside it as systemd user services (`kitty-tern-<workspace
+hash>`, through `systemd-run --user`) in your session's environment; without
+`systemd-run` they stay kitty!'s children. The view is a status panel (version,
 daemon state, sessions, panes and open windows from `tern inspect --json`, which
 never starts anything): Tern's web client needs WebGPU, which the desktop app's
 WebKitGTK view lacks, so kitty! does not embed it. Scripts reach the session with
