@@ -343,7 +343,7 @@
     {#if view !== "today"}<button class="schema-back" onclick={schemaBack} aria-label={schemaNodes.length ? "Back to parent schema" : "Back to kitty schema"} title="Back to parent schema">←</button>{/if}
     <a class="wordmark" class:current-schema={view === "today"} href="#today" aria-label="kitty home" aria-current={view === "today" ? "page" : undefined} title="Main kitty schema" onclick={(event) => { event.preventDefault(); navigate("today"); }}>
       <span class="brand-mark" aria-hidden="true"><Icon name="kitty" size={22} /></span>
-      <span>kitty<span class="brand-dot">!</span></span>
+      <span class="word">kitty<span class="brand-dot">!</span></span>
     </a>
     <nav class="breadcrumb" aria-label="Schema tabs">
       {#if view !== "today"}
