@@ -664,24 +664,31 @@ Left or middle-button drag rotates; the wheel zooms; right-button drag pans.
 Ctrl + Left/Right rotates the visible 3D schema in ten-degree steps, except while
 editing text, selecting text, or using a dialog.
 The **Brain** on home draws every record and every edit from `GET /api/brain` as one
-point of light inside a sitting cat, over the theme's own backdrop: records form
-the cat's colourful brain (one lobe per section) and cerebellum inside a faint
-skull with two pointed ears and bright whiskers; edits run down its spinal cord
-and out along its curled tail in time order, oldest at the tail tip and newest
-nearest the brain, with sparse nerves down the four legs and a faint halo of
-edits around the records they changed. The cat builds itself from the tail tip
-up. Colours come from the active theme and change with it; inside a group, each
+point of light in a standing cat seen from the side (head up and turned toward you,
+tail stretched out behind), over the theme's own backdrop. The cat has no body, only its
+brain and veins: records form the colourful brain in its skull (one lobe per section)
+with its cerebellum, veined ears, two bright eyes and whiskers; a spinal cord runs from
+the brain along the back into the tail, and vessels branch from it into each region
+(withers, chest, forelegs, paws, back, flank, belly, rump, hind legs, hocks, feet, toes,
+tail base and tail). Each region is one group's vessels, made of that group's edits and a
+few of its records, newest nearest the brain and oldest at the tips; a large group spans
+several neighbouring regions and small groups share one. The vessels branch further as
+the workspace grows, and even a few hundred points still trace the whole cat. The cat
+builds itself from the brain outward along its vessels. Colours come from the active
+theme and change with it; inside a group, each
 record type and each kind of edit (save, create, delete, status, review…) has its
 own shade. The **View** button opens its View panel (closed at first; whether it is
 open is remembered, and while it is open the cat is framed beside it). It sets the
 layout (Anatomy, Spheres, Wheel), grouping
 (section, navigation group or type), labels, turning and speed, edit→record
-lines, the body scaffold, the background (Transparent, or Black for the original
+lines, the faint vein scaffold, the background (Transparent, where the theme's backdrop
+shows through unchanged, or Black for the original
 night sky), point size and colours: pick any group's colour from the theme's
 swatches or a hex value, or Reset colours to follow the theme again (picks are
 remembered per grouping). Reset restores the view; the choices are remembered.
 The legend lists each group's records + edits and, on hover or focus, the kinds
-inside it; click an entry to highlight it. Hovering a sphere, sector or lobe
+inside it; click an entry to highlight it. Hovering a sphere, sector or the cat's
+vessels and lobes
 highlights its group; clicking it opens that group alone, laid out by kind to
 fill the stage, until **← All** or Escape. Labels never overlap; ones without
 room hide. Hovering a point shows its label, section, type and date. Without

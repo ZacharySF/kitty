@@ -1,4 +1,4 @@
-// Brain layouts and view settings: deterministic, one point per node; anatomy is a cat whose spine and tail carry the edits.
+// Brain layouts and view settings: deterministic, one point per node; anatomy is a standing cat drawn only as its brain and vessels.
 // node --experimental-strip-types --test tests/brainLayout.test.mjs
 import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +11,7 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
   clear: () => store.clear(),
 };
-const { brainGroups, layoutBrain, brainStyle, brainScaffold, expandPalette, isolateModel, BRAIN_PALETTE } = await import("../src/lib/brain/brainLayout.ts");
+const { brainGroups, layoutBrain, brainStyle, brainScaffold, catAnatomy, CAT_BRAIN, CAT_REGIONS, expandPalette, isolateModel, BRAIN_PALETTE } = await import("../src/lib/brain/brainLayout.ts");
 const { BRAIN_COLOURS_KEY, BRAIN_VIEW_KEY, DEFAULT_BRAIN_VIEW, loadBrainColours, loadBrainView, saveBrainColours, saveBrainView } = await import("../src/lib/brain/brainSettings.ts");
 
 const data = syntheticBrain({ total: 4000 });
@@ -59,48 +59,143 @@ test("every layout places one finite point per node, deterministically", () => {
   assert.notDeepEqual(at(anatomy, index("notes.page:0")), at(wheel, index("notes.page:0")));
 });
 
-test("anatomy: a sitting cat, brain in the skull, two ears above it", () => {
+/** Finds, for any point, whether one of `points` lies within `radius` of it (a uniform grid). */
+function nearness(points, radius) {
+  const cells = new Map();
+  const key = (x, y, z) => `${Math.floor(x / radius)},${Math.floor(y / radius)},${Math.floor(z / radius)}`;
+  for (const p of points) {
+    const k = key(...p);
+    if (!cells.has(k)) cells.set(k, []);
+    cells.get(k).push(p);
+  }
+  return (q) => {
+    const [cx, cy, cz] = q.map((value) => Math.floor(value / radius));
+    for (let dx = -1; dx <= 1; dx += 1)
+      for (let dy = -1; dy <= 1; dy += 1)
+        for (let dz = -1; dz <= 1; dz += 1)
+          for (const p of cells.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? [])
+            if (Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= radius) return true;
+    return false;
+  };
+}
+const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const REGION_NAMES = ["chest", "withers", "back", "flank", "belly", "rump", "tail base", "tail", "forelegs", "paws", "hindlegs", "hock", "feet", "toes"];
+/** Reach of the brain (cerebrum and cerebellum) and of the whole head (ears, eyes, whiskers) from the brain's centre. */
+const BRAIN = 1.25;
+const HEAD = 2.6;
+
+test("anatomy: every region of the cat is vessels made of one group's nodes, with no body shell", () => {
   const model = brainGroups(data, "section");
+  const cat = catAnatomy(model);
+  assert.deepEqual([...CAT_REGIONS].sort(), [...REGION_NAMES].sort());
+  assert.deepEqual(cat.regions.map((region) => region.name), CAT_REGIONS);
+  cat.regions.forEach((region, index) => {
+    const vessels = cat.vessels.filter((vessel) => vessel.region === index);
+    assert.ok(vessels.length >= 1, `${region.name} has vessels`);
+    assert.ok(region.groups.length >= 1, `${region.name} is a group's`);
+    assert.ok(vessels.every((vessel) => region.groups.includes(vessel.group)), `${region.name}'s vessels belong to its groups`);
+  });
+  model.groups.forEach((group, g) => assert.ok(cat.vessels.some((vessel) => vessel.group === g), `${group.label} owns vessels`));
+  assert.ok(cat.vessels.some((vessel) => vessel.level >= 2), "vessels fork into finer branches");
+  // Each edit glows on one of its own group's vessels.
   const { positions } = layoutBrain(data, model, "anatomy");
-  // Layout axes: x points where the cat faces, y is up, z runs across its body (left/right).
-  const count = data.nodes.length;
-  const ys = Array.from({ length: count }, (_, i) => positions[i * 3 + 1]);
-  const top = Math.max(...ys);
-  const ears = ys.flatMap((y, i) => (y > top - 0.6 ? [i] : []));
-  const side = (sign) => ears.filter((i) => sign * positions[i * 3 + 2] > 0.25).length;
-  const middle = ears.filter((i) => Math.abs(positions[i * 3 + 2]) < 0.12).length;
-  assert.ok(ears.length >= 20, "the ears hold points");
-  assert.ok(side(1) > ears.length * 0.3 && side(-1) > ears.length * 0.3, "one pointed ear on each side of the head");
-  assert.ok(middle < ears.length * 0.1, "a gap between the ears");
-  // The records' brain sits inside the head, under the ears.
-  const records = data.nodes.flatMap((node, i) => (node.kind === "record" ? [i] : []));
-  const brain = records.filter((i) => positions[i * 3 + 1] > top - 2.4 && positions[i * 3 + 1] < top - 0.9);
-  assert.ok(brain.length > records.length * 0.6, "most records cluster in the brain");
+  const onVessels = model.groups.map((_, g) => nearness(cat.vessels.filter((vessel) => vessel.group === g).flatMap((vessel) => vessel.points), 0.22));
+  const edits = data.nodes.flatMap((node, i) => (node.kind === "edit" ? [i] : []));
+  const astray = edits.filter((i) => !onVessels[model.groupOf[i]](at(positions, i)));
+  assert.ok(astray.length < edits.length * 0.01, `${astray.length} edits lie off their group's vessels`);
+  // The faint scaffold traces the same vessels and the brain: no skin, no silhouette.
+  const scaffold = brainScaffold("anatomy", model);
+  const vessels = nearness(cat.vessels.flatMap((vessel) => vessel.points), 0.25);
+  let shell = 0;
+  for (let i = 0; i < scaffold.length; i += 3) {
+    const p = [scaffold[i], scaffold[i + 1], scaffold[i + 2]];
+    if (!vessels(p) && distance(p, CAT_BRAIN) > HEAD) shell += 1;
+  }
+  assert.equal(shell, 0, "every scaffold point is a vessel or part of the head");
 });
 
-test("anatomy: edits run down the spine into a tail behind the cat, newest nearest the brain", () => {
+test("anatomy: the brain is the focal point, the densest cluster, in the head between two ears", () => {
+  const model = brainGroups(data, "section");
+  const { positions } = layoutBrain(data, model, "anatomy");
+  const count = data.nodes.length;
+  const inBrain = Array.from({ length: count }, (_, i) => i).filter((i) => distance(at(positions, i), CAT_BRAIN) < BRAIN);
+  assert.ok(inBrain.length > count * 0.15, `the brain holds ${inBrain.length} of ${count} points`);
+  const records = data.nodes.flatMap((node, i) => (node.kind === "record" ? [i] : []));
+  assert.ok(records.filter((i) => distance(at(positions, i), CAT_BRAIN) < BRAIN).length > records.length * 0.7, "most records form the brain");
+  // No ball of the brain's size anywhere in the body holds nearly as many points: the brain is the densest cluster.
+  const ball = (centre) => Array.from({ length: count }, (_, i) => i).filter((i) => distance(at(positions, i), centre) < BRAIN).length;
+  let body = 0;
+  for (let i = 0; i < count; i += 10) if (distance(at(positions, i), CAT_BRAIN) > 2 * BRAIN) body = Math.max(body, ball(at(positions, i)));
+  assert.ok(inBrain.length > body * 1.25, `the brain's ${inBrain.length} points outshine the densest body cluster's ${body}`);
+  // Two ears rise above the brain, apart (seen from the side the head turns toward the viewer).
+  const head = records.filter((i) => distance(at(positions, i), CAT_BRAIN) < HEAD);
+  const top = Math.max(...head.map((i) => positions[i * 3 + 1]));
+  const tips = head.filter((i) => positions[i * 3 + 1] > top - 0.45).map((i) => positions[i * 3]).sort((a, b) => a - b);
+  assert.ok(tips.length >= 10, "the ears hold points");
+  assert.ok(top > CAT_BRAIN[1] + 0.9, "the ears stand above the brain");
+  const gaps = tips.slice(1).map((x, k) => x - tips[k]);
+  assert.ok(Math.max(...gaps) > 0.5, "a gap between the two ears");
+});
+
+test("anatomy: the reference pose: head up, facing right, tail out behind, four legs down to the floor", () => {
+  const model = brainGroups(data, "section");
+  const cat = catAnatomy(model);
+  const points = (name) => cat.vessels.filter((vessel) => cat.regions[vessel.region].name === name).flatMap((vessel) => vessel.points);
+  const mean = (name, axis) => { const list = points(name); return list.reduce((sum, p) => sum + p[axis], 0) / list.length; };
+  const least = (name, axis) => Math.min(...points(name).map((p) => p[axis]));
+  const most = (name, axis) => Math.max(...points(name).map((p) => p[axis]));
+  assert.ok(CAT_BRAIN[1] > most("withers", 1), "the head is held above the withers");
+  // Like the reference, the head sits over the front of the chest: both lead, then flank, rump and tail.
+  assert.ok(CAT_BRAIN[0] > mean("withers", 0) && mean("chest", 0) > mean("flank", 0) && mean("flank", 0) > mean("rump", 0) && mean("rump", 0) > mean("tail", 0), "head and chest, flank, rump and tail run from right to left: the cat faces right");
+  assert.ok(least("tail", 0) < least("rump", 0) - 2.5, "the tail extends well behind the rump");
+  assert.ok(mean("tail", 1) > mean("belly", 1), "the tail is held out, not dragged on the floor");
+  assert.ok(mean("back", 1) > mean("flank", 1) && mean("flank", 1) > mean("belly", 1), "back over flank over belly");
+  assert.ok(mean("forelegs", 0) > mean("hindlegs", 0), "forelegs in front of the hind legs");
+  for (const low of ["paws", "toes"]) assert.ok(least(low, 1) < 0.2, `${low} reach the floor`);
+  for (const name of CAT_REGIONS.filter((name) => !["paws", "toes", "feet", "hock", "forelegs", "hindlegs"].includes(name)))
+    assert.ok(least(name, 1) > 1.5, `${name} is off the floor`);
+  assert.ok(mean("feet", 1) < mean("hock", 1) && mean("hock", 1) < mean("hindlegs", 1), "hindleg, hock, foot in order down the leg");
+  // Four leg ends on the floor: front and back, near and far.
+  const ends = [...points("paws"), ...points("toes")].filter((p) => p[1] < 0.25);
+  const quarters = new Set(ends.map((p) => `${p[0] > 1 ? "front" : "back"}:${p[2] > 0 ? "near" : "far"}`));
+  assert.equal(quarters.size, 4, `four feet on the floor: ${[...quarters]}`);
+});
+
+test("anatomy: the vessels grow with the data, and a tiny workspace still draws the whole cat", () => {
+  const length = (cat) => cat.vessels.reduce((sum, vessel) => sum + vessel.points.slice(1).reduce((run, p, k) => run + distance(p, vessel.points[k]), 0), 0);
+  const big = catAnatomy(brainGroups(syntheticBrain({ total: 20000 }), "section"));
+  const tiny = catAnatomy(brainGroups(syntheticBrain({ total: 200 }), "section"));
+  assert.ok(length(big) > length(tiny) * 2, `20k nodes branch further (${length(big).toFixed(0)}) than 200 (${length(tiny).toFixed(0)})`);
+  assert.ok(big.vessels.length > tiny.vessels.length * 2, "and into more vessels");
+  tiny.regions.forEach((region, index) => assert.ok(tiny.vessels.some((vessel) => vessel.region === index), `200 nodes still draw the ${region.name}`));
+  // Fewer groups than regions: groups span several regions; more groups than regions: regions are shared.
+  for (const by of ["group", "type"]) {
+    const model = brainGroups(data, by);
+    const cat = catAnatomy(model);
+    cat.regions.forEach((region, index) => assert.ok(region.groups.length >= 1 && cat.vessels.some((vessel) => vessel.region === index), `${by}: ${region.name}`));
+    model.groups.forEach((group, g) => assert.ok(cat.vessels.some((vessel) => vessel.group === g), `${by}: ${group.label} owns vessels`));
+  }
+  const model = brainGroups(data, "section");
+  assert.deepEqual(catAnatomy(model), catAnatomy(model), "deterministic");
+});
+
+test("anatomy: newer edits sit nearer the brain along their vessels; the cat builds from the brain outward", () => {
   const model = brainGroups(data, "section");
   const { positions, births } = layoutBrain(data, model, "anatomy");
-  const records = data.nodes.flatMap((node, i) => (node.kind === "record" ? [i] : []));
-  const lowestRecord = Math.min(...records.map((i) => positions[i * 3 + 1]));
-  const rearmostRecord = Math.min(...records.map((i) => positions[i * 3]));
-  const brain = [0, 1, 2].map((axis) => records.reduce((sum, i) => sum + positions[i * 3 + axis], 0) / records.length);
+  const cat = catAnatomy(model);
+  const tail = cat.regions.find((region) => region.name === "tail").groups[0];
   // The fixture lists edits newest first.
-  const edits = data.nodes.flatMap((node, i) => (node.kind === "edit" ? [i] : []));
-  const below = edits.filter((i) => positions[i * 3 + 1] < lowestRecord);
-  assert.ok(below.length > edits.length * 0.5, "most edits hang below the head, on the spine and tail");
-  const tenth = Math.floor(below.length / 10);
-  const newest = below.slice(0, tenth);
-  const oldest = below.slice(-tenth);
-  const mean = (list, axis) => list.reduce((sum, i) => sum + positions[i * 3 + axis], 0) / list.length;
-  const reach = (list) => list.reduce((sum, i) => sum + Math.hypot(...[0, 1, 2].map((axis) => positions[i * 3 + axis] - brain[axis])), 0) / list.length;
-  assert.ok(reach(newest) < reach(oldest) - 3, "time flows from the brain down the spine to the tail tip");
-  assert.ok(mean(oldest, 0) < rearmostRecord - 3, "the tail extends behind the cat");
-  assert.ok(mean(oldest, 1) < lowestRecord - 1, "and below its head");
-  // Spine-first build-up: the tail tip is born first, the brain last.
-  const birth = (list) => list.reduce((sum, i) => sum + births[i], 0) / list.length;
-  assert.ok(birth(oldest) < birth(newest));
-  assert.ok(birth(newest) < birth(records));
+  const edits = data.nodes.flatMap((node, i) => (node.kind === "edit" && model.groupOf[i] === tail ? [i] : []));
+  const tenth = Math.floor(edits.length / 10);
+  const newest = edits.slice(0, tenth);
+  const oldest = edits.slice(-tenth);
+  const mean = (list, values) => list.reduce((sum, i) => sum + values(i), 0) / list.length;
+  const reach = (i) => distance(at(positions, i), CAT_BRAIN);
+  assert.ok(mean(oldest, reach) > mean(newest, reach) + 1, "time flows out from the brain to the vessel tips");
+  assert.ok(mean(oldest, (i) => births[i]) > mean(newest, (i) => births[i]), "and the newest are born first");
+  const brain = data.nodes.flatMap((_, i) => (distance(at(positions, i), CAT_BRAIN) < BRAIN ? [i] : []));
+  const body = data.nodes.flatMap((_, i) => (distance(at(positions, i), CAT_BRAIN) > 3 ? [i] : []));
+  assert.ok(mean(brain, (i) => births[i]) < 0.3 && mean(body, (i) => births[i]) > 0.45, "the brain lights first, then the vessels outward");
 });
 
 test("style: kinds of things differ in colour; edits are dimmer and warmer", () => {

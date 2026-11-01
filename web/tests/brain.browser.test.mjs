@@ -69,12 +69,13 @@ const legendDot = (page, key) => page.getByRole("list", { name: "Legend" }).loca
 const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
 const near = (a, b, tolerance = 0.02) => a.every((value, c) => Math.abs(value - b[c]) <= tolerance);
 const RECORD_IDS = BRAIN.nodes.filter((node) => node.kind === "record").map((node) => node.id);
-/** Projected bounding box of the cat's head (skull, ears, brain and whiskers: every record above its neck). */
-const headBox = (page) => page.evaluate((ids) => {
+/** Projected bounding box of the cat's head: every record in its brain, ears, eyes and whiskers. */
+const headBox = (page) => page.evaluate(async (ids) => {
+  const { CAT_BRAIN } = await import("/src/lib/brain/brainLayout.ts");
   const box = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
   for (const id of ids) {
     const world = window.brainHarness.worldPoint(id);
-    const point = world && world[1] > 3.7 ? window.brainHarness.screenPoint(id) : null;
+    const point = world && Math.hypot(...world.map((value, axis) => value - CAT_BRAIN[axis])) < 2.6 ? window.brainHarness.screenPoint(id) : null;
     if (!point) continue;
     box.left = Math.min(box.left, point.x);
     box.right = Math.max(box.right, point.x);
@@ -376,6 +377,51 @@ describe("home is the Brain or the 2D atlas", () => {
     assert.deepEqual(problems, []);
     await context.close();
   });
+
+  for (const theme of ["liquid-glass", "kitty"]) {
+    test(`on ${theme}, Transparent shows the page's own backdrop behind the Brain, not a darker panel; Black stays black`, async () => {
+      const { page, problems, context } = await open({ settings: { turning: false } });
+      await page.evaluate((id) => window.brainHarness.setTheme(id), theme);
+      await mount(page, "atlas");
+      await brainReady(page);
+      // Nothing between the Brain and the page paints: no colour, image, blur or shadow.
+      const layers = await stage(page).evaluate((element) => {
+        const found = [];
+        for (let node = element; node && node.id !== "host"; node = node.parentElement) {
+          const css = getComputedStyle(node);
+          found.push({ layer: node.className, background: css.backgroundColor, image: css.backgroundImage, blur: css.backdropFilter, shadow: css.boxShadow });
+        }
+        return found;
+      });
+      assert.ok(layers.some(({ layer }) => /\batlas\b/.test(layer)) && layers.some(({ layer }) => /\bstage\b/.test(layer)), "checks the stage and the atlas");
+      for (const { layer, ...paint } of layers) assert.deepEqual(paint, { background: "rgba(0, 0, 0, 0)", image: "none", blur: "none", shadow: "none" }, layer);
+      // A bright page backdrop shows through the stage's corner unchanged.
+      const backdrop = [40, 170, 230];
+      await page.addStyleTag({ content: `html, body { background: rgb(${backdrop}) !important; } body::before, body::after { display: none !important; }` });
+      const corner = async () => {
+        const box = await stage(page).evaluate((element) => element.getBoundingClientRect().toJSON());
+        const shot = await page.screenshot({ clip: { x: box.left + 16, y: box.top + 16, width: 4, height: 4 } });
+        return page.evaluate(async (png) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${png}`;
+          await image.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const context = canvas.getContext("2d");
+          context.drawImage(image, 0, 0);
+          return Array.from(context.getImageData(1, 1, 1, 1).data.slice(0, 3));
+        }, shot.toString("base64"));
+      };
+      const seen = await corner();
+      assert.ok(seen.every((value, c) => Math.abs(value - backdrop[c]) <= 4), `the stage's corner shows ${seen}, not the backdrop ${backdrop}`);
+      await page.getByRole("group", { name: "Background" }).getByRole("button", { name: "Black" }).click();
+      const black = await corner();
+      assert.ok(black.every((value) => value <= 4), `Black paints the stage black, not ${black}`);
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
 
   for (const [saved, shown] of [["3d", "brain"], ["brain", "brain"], ["2d", "2d"]]) {
     test(`an old shared look of ${saved} opens home as ${shown}`, async () => {

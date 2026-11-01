@@ -18,12 +18,12 @@ plug in as modules.
 | **Workspace** | Block-based notes with stable block IDs, `((block))` references and `[[wiki]]` links, backlinks, canvas, mind maps, documents and PDFs, flashcards, study, calendar, tasks, quick notes in floating windows |
 | **Terminal** | A pinned [herdr](https://github.com/herdrdev/herdr) session in a resizable dock, streamed into the window over a same-origin WebSocket; open omp, Claude or Codex coding agents in labelled tabs with live activity; optionally hand off to a separately installed [Stencil Tern](https://stencil.so/tern) |
 | **ApplyAI** (optional) | Job discovery from public boards, triage, application preparation, a tracker and reports. It fills forms but **never submits an application** and never invents facts about the applicant |
-| **Core** (always on) | A Brain home (every record and edit as a glowing point-cloud cat) or a 2D atlas, tabs, command palette, themes, settings, module selection |
+| **Core** (always on) | A Brain home (every record and edit as a glowing point in a cat drawn as its brain and veins) or a 2D atlas, tabs, command palette, themes, settings, module selection |
 
 Modules can be turned on or off; disabled modules disappear from navigation,
 routes, workers and MCP tools while their data stays intact.
 
-![The Brain home: every record and edit as a glowing point-cloud cat](docs/screenshots/kitty-brain-cat/brain-cat.png)
+![The Brain home: every record and edit as a glowing point in a cat drawn as its brain and veins](docs/screenshots/kitty-brain-cat/brain-cat.png)
 
 ![The 2D knowledge atlas](docs/screenshots/kitty-graph-2d/atlas-2d.png)
 
