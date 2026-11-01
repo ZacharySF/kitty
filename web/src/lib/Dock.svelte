@@ -130,7 +130,7 @@
       {#if mode === "terminal"}
         <TerminalView label="herdr terminal" />
       {:else}
-        <AgentActivity />
+        <AgentActivity onopen={() => choose("terminal")} />
       {/if}
     </div>
   </section>

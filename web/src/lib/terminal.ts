@@ -59,7 +59,8 @@ export type TerminalActivity = {
     label: string;
     status: AgentState;
     focused: boolean;
-    agents: { pane: string; name: string; status: AgentState }[];
+    /** `task` is the pane's terminal title; `since` the epoch ms its state began. */
+    agents: { pane: string; name: string; status: AgentState; task: string; line: string; revision: number; since: number }[];
   }[];
 };
 

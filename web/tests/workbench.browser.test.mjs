@@ -2015,3 +2015,45 @@ describe("pipeline swimlanes", () => {
     await context.close();
   });
 });
+
+describe("agent status cards", () => {
+  test("the dock's Agents view shows one live card per herdr agent; a blocked one offers Open pane", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({ mode: "activity", height: 300, shown: "activity" })));
+    let polls = 0;
+    const started = Date.now() - 75_000;
+    await context.route("**/api/terminal/activity", (route) => {
+      polls += 1;
+      route.fulfill({ json: { running: true, workspaces: [
+        { id: "w1", label: "synthetic", status: "blocked", focused: true, agents: [
+          { pane: "w1:p1", name: "omp", status: "working", task: "Synthetic task: tidy fixtures", line: "run pytest · 4 passed", revision: 10 + polls * 7, since: started },
+          { pane: "w1:p2", name: "codex", status: "blocked", task: "Synthetic review", line: "needs permission: read notes", revision: 3, since: started },
+        ] },
+      ] } });
+    });
+    await context.route("**/api/terminal/session", (route) => route.fulfill({ status: 503, json: { error: "No terminal in this test" } }));
+    const focused = [];
+    await context.route("**/api/terminal/focus", (route) => {
+      focused.push(route.request().postDataJSON());
+      route.fulfill({ json: { ok: true } });
+    });
+    await page.reload();
+    const dock = page.getByRole("region", { name: "Agent activity" });
+    const working = dock.getByRole("article", { name: /^omp/ });
+    const blocked = dock.getByRole("article", { name: /^codex/ });
+    await working.waitFor();
+    assert.match(await working.textContent(), /Synthetic task: tidy fixtures/);
+    assert.match(await working.textContent(), /run pytest · 4 passed/);
+    assert.match(await working.textContent(), /synthetic/i, "workspace label missing");
+    const timer = working.locator("time");
+    assert.match(await timer.textContent(), /^1:1\d$/);
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Agent activity"] svg[role="img"] path.line').length === 2);
+    assert.match(await working.getByRole("img").getAttribute("aria-label"), /output over the last 30 seconds/);
+    assert.equal(await working.getByRole("button", { name: "Open pane" }).count(), 0, "a working agent offers Open pane");
+    await blocked.getByRole("button", { name: "Open pane" }).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Dock contents"] button[aria-pressed="true"]')?.textContent === "Terminal");
+    assert.deepEqual(focused, [{ pane: "w1:p2" }]);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

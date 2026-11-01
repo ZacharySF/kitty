@@ -159,8 +159,11 @@ list workspaces, create a separately labelled tab with `tab create --workspace
 <id> --cwd <directory> --label <name> --no-focus`, then target the returned
 `root_pane.pane_id` explicitly. Read herdr's own skill before controlling panes.
 Never rely on another client's focused pane or switch to the `default` session.
-Their tabs appear live in the terminal and herdr view, and detected agent states
-appear in **Agents**. Local CLI/socket access grants full shell access as your user.
+Their tabs appear live in the terminal and herdr view, and **Agents** in the dock
+shows one card per detected agent: its state, task (the pane's title), last output
+line, a 30-second output sparkline and how long it has been working or blocked. A
+blocked agent's **Open pane** focuses that pane and switches the dock to the
+terminal. Local CLI/socket access grants full shell access as your user.
 
 **Tern (optional).** With the module on, the **Tern** node under Plan shows
 [Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the bundled
