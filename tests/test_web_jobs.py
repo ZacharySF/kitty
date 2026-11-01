@@ -85,6 +85,27 @@ def test_application_history_retains_dates_evidence_and_append_only_undo(app, wo
     assert any(event["undoes_event_id"] for event in after["history"])
 
 
+def test_pipeline_track_moves_leave_status_history_alone(app, workspace):
+    job = posting(workspace, 1)
+    endpoint = f"/api/jobs/{job.id}"
+    first, second = workspace.config.track_names[:2]
+    with pytest.raises(APIError) as refused:
+        app.mutate(workspace.conn, endpoint, {"action": "track", "value": first})
+    assert refused.value.status == 409
+    app.mutate(workspace.conn, endpoint, {"action": "applied", "value": True})
+    app.mutate(workspace.conn, endpoint, {"action": "track", "value": first})
+    history = app.get_json(workspace.conn, endpoint, {})["application"]["history"]
+    app.mutate(workspace.conn, endpoint, {"action": "track", "value": second})
+    lanes = {card["job_id"]: card["track"] for cards in app.get_json(workspace.conn, "/api/pipeline", {})["columns"].values() for card in cards}
+    assert lanes[job.id] == second
+    assert app.get_json(workspace.conn, endpoint, {})["application"]["history"] == history
+    for value in ("not-a-track", 7, ["synthetic"]):
+        with pytest.raises(APIError):
+            app.mutate(workspace.conn, endpoint, {"action": "track", "value": value})
+    app.mutate(workspace.conn, endpoint, {"action": "track", "value": None})
+    assert applications.get_application_for_job(workspace.conn, job.id).track is None
+
+
 def test_applied_job_bulk_state_failure_preserves_every_selected_job(app, workspace):
     first, second = posting(workspace, 1), posting(workspace, 2)
     app.mutate(workspace.conn, f"/api/jobs/{second.id}", {"action": "applied", "value": True})

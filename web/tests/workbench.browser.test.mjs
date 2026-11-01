@@ -1970,3 +1970,48 @@ describe("mind-map split and merge", () => {
     await context.close();
   });
 });
+
+describe("pipeline swimlanes", () => {
+  test("rows are tracks and columns open stages; dragging or Shift+arrows moves a card, and Undo puts it back", async () => {
+    const { page, problems, context } = await open("pipeline", { dock: "hidden" });
+    const board = page.getByRole("grid", { name: "Applications by track and stage" });
+    await board.waitFor();
+    const heads = await board.getByRole("columnheader").allTextContents();
+    assert.deepEqual(heads.map((text) => text.trim()).filter(Boolean), ["Applied", "Assessment", "Interview", "Offer", "Closed"]);
+    const lanes = await board.getByRole("rowheader").allTextContents();
+    assert.ok(lanes.some((text) => text.includes("Quant")) && lanes.some((text) => text.includes("Gpu")), `lanes: ${lanes}`);
+    const cell = (lane, stage) => board.getByRole("gridcell", { name: `${lane} · ${stage}` });
+    const card = page.getByRole("button", { name: /^Tidewater Markets \(demo\)/ });
+    assert.equal(await cell("Quant", "Applied").getByRole("button", { name: /^Tidewater/ }).count(), 1);
+    // Drag into another track's Assessment cell: stage and track change together.
+    const from = await card.boundingBox();
+    const to = await cell("Gpu", "Assessment").boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await cell("Gpu", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    const pill = page.getByRole("status").filter({ hasText: "Tidewater Markets (demo) moved to Assessment · Gpu" });
+    await pill.waitFor();
+    await pill.getByRole("button", { name: "Undo" }).click();
+    await cell("Quant", "Applied").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    // Keyboard: Shift+→ advances the stage, Shift+↓ moves to the next track's lane.
+    await cell("Quant", "Applied").getByRole("button", { name: /^Tidewater/ }).focus();
+    await page.keyboard.press("Shift+ArrowRight");
+    await cell("Quant", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    await page.keyboard.press("Shift+ArrowDown");
+    await cell("Gpu", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")?.startsWith("Tidewater")), true, "focus did not follow the card");
+    await page.getByRole("status").filter({ hasText: "Tidewater Markets (demo) moved to Gpu" }).getByRole("button", { name: "Undo" }).click();
+    await cell("Quant", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    // The status history is append-only: the move and its undo are both recorded.
+    const jobId = await page.evaluate(async () => {
+      const board = await (await fetch("/api/pipeline")).json();
+      return Object.values(board.columns).flat().find((card) => card.company_name.startsWith("Tidewater")).job_id;
+    });
+    const history = await page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()).application.history, jobId);
+    assert.ok(history.some((event) => event.undoes_event_id), "undo did not append a reverting event");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
