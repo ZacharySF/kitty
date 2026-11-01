@@ -1376,8 +1376,9 @@ main > :is(.panel, .br-panel, .br-card) {
 }
 
 /* Toggles that invert when selected keep a complete foreground/background pair
-   that the glass fill above cannot split (it would leave on-accent text on glass). */
-:root body .button[aria-pressed="true"]:not([data-variant="solid"]):not(.primary) {
+   that the glass fill above cannot split (it would leave on-accent text on glass).
+   The doubled class also outranks a theme's own control fill (liquidGlass.css). */
+:root body .button.button[aria-pressed="true"]:not([data-variant="solid"]):not(.primary) {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--on-accent);
