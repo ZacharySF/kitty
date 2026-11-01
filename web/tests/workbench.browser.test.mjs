@@ -754,3 +754,57 @@ describe("flashcard memory stats", () => {
     await context.close();
   });
 });
+
+describe("flashcard card browser", () => {
+  test("split browser: filter the list, flip the preview, read memory meters and last reviews, suspend and bury", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Browser deck", [["Capital of Peru?", "Lima"], ["Capital of Kenya?", "Nairobi"], ["Capital of Japan?", "Tokyo"]]);
+    await page.evaluate(async () => {
+      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) })).json();
+      const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === "Browser deck");
+      const { card } = await post("/flashcards/review", { deck_id: deck.id, search: "", mode: "regular" });
+      await post("/flashcards/reveal", { token: card.token });
+      await post("/flashcards/grade", { token: card.token, rating: 4, duration_ms: 5000 });
+    });
+    await page.reload();
+    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Browser deck" });
+    await views.getByRole("button", { name: "Cards" }).click();
+    const list = page.getByRole("list", { name: "Cards" });
+    await list.getByRole("listitem").nth(2).waitFor();
+    assert.equal(await list.getByRole("listitem").count(), 3);
+    const filter = page.getByRole("searchbox", { name: "Filter cards" });
+    await filter.fill("Kenya");
+    await filter.press("Enter");
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Cards"] li').length === 1);
+    await filter.fill("");
+    await filter.press("Enter");
+    await list.getByRole("listitem").nth(2).waitFor();
+    // The detail pane sits beside the list.
+    const detail = page.getByRole("region", { name: "Card details" });
+    await list.getByRole("button", { name: /Peru/ }).click();
+    const [listBox, detailBox] = [await list.boundingBox(), await detail.boundingBox()];
+    assert.ok(detailBox.x >= listBox.x + listBox.width - 1, "the detail pane is not beside the list");
+    const preview = detail.getByRole("button", { name: "Flip card preview" });
+    await page.waitForFunction(() => document.querySelector('[aria-label="Flip card preview"]')?.textContent.includes("Peru"));
+    await preview.click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Flip card preview"]')?.textContent.includes("Lima"));
+    assert.match(await detail.getByRole("meter", { name: "Stability" }).getAttribute("aria-valuetext"), /^\d+(\.\d)? ?d/);
+    assert.match(await detail.getByRole("meter", { name: "Difficulty" }).getAttribute("aria-valuetext"), /^\d+(\.\d)? of 10$/);
+    assert.match(await detail.getByRole("meter", { name: "Recall now" }).getAttribute("aria-valuetext"), /^\d+%$/);
+    const reviews = detail.getByRole("list", { name: "Last reviews" }).getByRole("listitem");
+    assert.equal(await reviews.count(), 1);
+    assert.match(await reviews.first().getAttribute("aria-label"), /Easy/);
+    await detail.getByRole("button", { name: "Suspend" }).click();
+    await detail.getByRole("button", { name: "Unsuspend" }).waitFor();
+    await detail.getByText("suspended", { exact: true }).waitFor();
+    await detail.getByRole("button", { name: "Bury today" }).click();
+    await detail.getByRole("button", { name: "Unbury" }).waitFor();
+    await list.getByRole("button", { name: /Kenya/ }).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Flip card preview"]')?.textContent.includes("Kenya"));
+    assert.equal(await detail.getByRole("meter", { name: "Recall now" }).getAttribute("aria-valuetext"), "not studied yet");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

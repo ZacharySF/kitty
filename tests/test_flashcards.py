@@ -657,3 +657,24 @@ def test_stats_forecast_retention_maturity_heatmap_and_queue_for_a_scope(cards):
     assert routed["forecast"][0]["day"] == "2026-12-13"
     with pytest.raises(APIError, match="timezone"):
         web_flashcards.get(None, conn, "/api/flashcards/stats", {"timezone": "Mars/Base"})
+
+
+def test_card_detail_reports_rendered_faces_memory_state_and_parking(cards):
+    conn, clock, _ = cards
+    note = add(cards)
+    ident = conn.execute("SELECT id FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone()[0]
+    fresh = web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(ident)})
+    assert fresh["card"]["state"] == "new" and fresh["card"]["memory"] is None
+    assert "synthetic-question" in fresh["card"]["front"] and "answer-only-secret" in fresh["card"]["back"]
+    assert fresh["card"]["deck"] == "Default" and fresh["card"]["note_id"] == note["id"]
+    card, _ = review_once(conn, 4)
+    clock[0] += timedelta(days=3)
+    detail = web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(card["id"])})["card"]
+    memory = detail["memory"]
+    assert detail["state"] == "review" and detail["reviews"] == 1
+    assert memory["stability"] > 3 and 1 <= memory["difficulty"] <= 10 and 0 < memory["retrievability"] < 1
+    f.action(conn, {"action": "bury", "id": card["id"], "revision": detail["revision"]})
+    assert web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(card["id"])})["card"]["buried_until"] > clock[0].isoformat()
+    with pytest.raises(APIError, match="no longer exists") as error:
+        web_flashcards.get(None, conn, "/api/flashcards/card", {"id": "999999"})
+    assert error.value.status == 404

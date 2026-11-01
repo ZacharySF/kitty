@@ -429,6 +429,10 @@ review and new, with suspended, leech and buried cards and a time estimate), a
 medium and strong cards against your target retention with measured recall, a
 maturity donut (new, learning, young under 21 days, mature) and a 26-week daily
 review heatmap with your streak.
+**Cards** is a split browser: a filterable card list (search plus one-click due, new,
+learning, review, leech and suspended filters) beside the selected card's flippable
+preview, its FSRS stability, difficulty and recall now, its last reviews, and
+Suspend, Bury, Edit, Archive and Delete.
 FSRS scheduling, cloze/reversed cards, media and portable imports are supported.
 This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimizer,
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.

@@ -740,6 +740,22 @@ def history(conn, card_id=None):
     return {"reviews": [dict(r) for r in conn.execute("SELECT id,card_id,rating,reviewed_at,local_day,duration_ms,mode,undone FROM flash_reviews " + where + " ORDER BY id DESC LIMIT 200", args)]}
 
 
+def card_detail(conn, ident):
+    """One card for the browser preview: both rendered faces and its FSRS memory state."""
+    card = conn.execute("SELECT c.*,d.name AS deck FROM flash_cards c JOIN flash_notes n ON n.id=c.note_id JOIN flash_decks d ON d.id=n.deck_id WHERE c.id=?", (ident,)).fetchone()
+    if card is None: return None
+    card = dict(card)
+    memory = None
+    if card["state"] != "new" and card["fsrs"]:
+        from fsrs import Scheduler
+        fsrs_card = _fsrs_card(card)
+        if fsrs_card.stability is not None:
+            memory = {"stability": fsrs_card.stability, "difficulty": fsrs_card.difficulty,
+                      "retrievability": Scheduler().get_card_retrievability(fsrs_card, now())}
+    result = {key: card[key] for key in ("id", "note_id", "ordinal", "deck", "state", "due", "suspended", "buried_until", "leech", "lapses", "reviews", "revision")}
+    return result | {"front": render(conn, card), "back": render(conn, card, True), "memory": memory}
+
+
 def import_text(conn, text, deck_id, type_id, delimiter=","):
     if delimiter not in {",", "\t"}: raise ValueError("Use CSV or TSV")
     typ = require(conn, "flash_types", type_id)

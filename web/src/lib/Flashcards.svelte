@@ -9,6 +9,7 @@
   import ReviewStack, { FLY_MS } from "./flashcards/ReviewStack.svelte";
   import DeckTiles from "./flashcards/DeckTiles.svelte";
   import MemoryStats from "./flashcards/stats/MemoryStats.svelte";
+  import CardDetail, { STATE_COLOR, isBuried } from "./flashcards/CardDetail.svelte";
   import type { Crumb } from "./breadcrumb.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
@@ -351,9 +352,28 @@
       );
       notes = r.notes;
       total = r.total;
+      if (!cardRows.some((row) => row.card.id === selectedCard)) selectedCard = cardRows[0]?.card.id || 0;
     } catch (e) {
       failure(e);
     }
+  }
+  /** The browser lists cards, not notes: one row per generated card. */
+  let cardRows = $derived(notes.flatMap((note) => note.cards.map((card) => ({ note, card }))));
+  let selectedCard = $state(0);
+  let selectedRow = $derived(cardRows.find((row) => row.card.id === selectedCard));
+  const plain = (text: string) => text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "(empty)";
+  function dueLabel(iso: string) {
+    const days = (new Date(iso).getTime() - Date.now()) / 86400000;
+    if (days < -0.5) return `${Math.round(-days)}d overdue`;
+    if (days < 1) return "due today";
+    if (days < 2) return "due tomorrow";
+    return `due in ${Math.round(days)}d`;
+  }
+  function toggleFilter(term: string) {
+    const terms = search.split(/\s+/).filter(Boolean);
+    search = (terms.includes(term) ? terms.filter((item) => item !== term) : [...terms, term]).join(" ");
+    offset = 0;
+    void browse();
   }
   async function show(next: string) {
     noteRequest += 1;
@@ -638,7 +658,7 @@
       browse,
     );
   }
-  async function cardAction(card: Card, action: string, value = true) {
+  async function cardAction(card: Pick<Card, "id" | "revision">, action: string, value = true) {
     await operate(
       "/flashcards/action",
       { id: card.id, revision: card.revision, action, value },
@@ -1054,7 +1074,7 @@
       <MemoryStats {deckId} revision={loads} />
     {:else if view === "browser"}
       <form
-        class="toolbar"
+        class="toolbar browser-search"
         onsubmit={(e) => {
           e.preventDefault();
           offset = 0;
@@ -1062,88 +1082,78 @@
         }}
       >
         <input
-          aria-label="Search notes"
+          type="search"
+          aria-label="Filter cards"
           bind:value={search}
-          placeholder="Search cards or tag:name"
-        /><Button type="submit" size="sm">Search</Button>
+          placeholder="Filter cards, tag:name or deck:name"
+        /><Button type="submit" size="sm">Filter</Button>
       </form>
-      <p>{total} notes in {scopeLabel}{search ? ` matching “${search}”` : ""}.</p>
-      <details><summary>Advanced search &amp; scheduling</summary><p>Search with is:due/new/review/learning/suspended/leech/archived or deck:name. Editing retains schedules of unchanged card ordinals; deleted templates/clozes remove their cards.</p></details>
+      <div class="filters" role="group" aria-label="Quick filters">
+        {#each ["due", "new", "learning", "review", "leech", "suspended"] as filter}
+          {@const on = search.split(/\s+/).includes(`is:${filter}`)}
+          <button aria-pressed={on} onclick={() => toggleFilter(`is:${filter}`)}>{filter}</button>
+        {/each}
+        <span>{total} notes in {scopeLabel}{search ? ` matching “${search}”` : ""}</span>
+      </div>
       {#if !total}<Panel><EmptyState title={search ? "No matching cards" : "No cards in this scope yet"}>
         <p>{search ? "Try a broader search, or create a card in the selected deck." : "Write a question on the front and its answer on the back to start studying."}</p>
         {#snippet actions()}
           <Button intent="primary" onclick={() => newNote()} disabled={!overview?.decks.some(deck => !deck.archived)}>New card</Button>
           {#if search}<Button variant="ghost" onclick={() => { search = ""; offset = 0; void browse(); }}>Clear search</Button>{/if}
         {/snippet}
-      </EmptyState></Panel>{/if}
-      {#each notes as note}<article class="note" oncontextmenu={(event) => {
-        if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]') || window.getSelection()?.toString()) return;
-        event.preventDefault(); if (!busy) void noteAction(note, "delete");
-      }}>
-          <div class="note-fields">
-            {#each Object.entries(note.fields) as [name, text]}<p>
-                <strong>{name}</strong>
-                {text.slice(0, 240)}{text.length > 240 ? "…" : ""}
-              </p>{/each}
-          </div>
-          <p>{note.tags.join(" · ")}{note.archived ? " · archived" : ""}</p>
-          <div class="toolbar">
-            <button onclick={() => newNote(note)}>Edit</button><button
-              onclick={() => noteAction(note, "archive", !note.archived)}
-              disabled={busy}>{note.archived ? "Restore" : "Archive"}</button
+      </EmptyState></Panel>{:else}
+      <div class="split-browser">
+        <div class="card-list">
+          <ul aria-label="Cards">
+            {#each cardRows as { note, card } (card.id)}
+              {@const shown = card.suspended ? "suspended" : card.leech ? "leech" : card.state}
+              <li>
+                <button
+                  class:on={card.id === selectedCard}
+                  aria-current={card.id === selectedCard ? "true" : undefined}
+                  onclick={() => (selectedCard = card.id)}
+                  oncontextmenu={(event) => {
+                    if (window.getSelection()?.toString()) return;
+                    event.preventDefault(); if (!busy) void noteAction(note, "delete");
+                  }}
+                >
+                  <span class="dot" style:background={STATE_COLOR[shown]}></span>
+                  <span class="front">{plain(Object.values(note.fields)[0] || "")}{note.cards.length > 1 ? ` · card ${card.ordinal + 1}` : ""}</span>
+                  <span class="meta">{shown}{shown === "new" || card.suspended ? "" : ` · ${dueLabel(card.due)}`}{isBuried(card.buried_until) ? " · buried" : ""}{note.archived ? " · archived" : ""}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+          <div class="pager">
+            <button
+              disabled={offset === 0}
+              onclick={() => {
+                offset = Math.max(0, offset - 50);
+                void browse();
+              }}>Previous</button
+            ><span>{offset + 1}–{Math.min(offset + 50, total)} / {total} notes</span
             ><button
-              class="danger"
-              onclick={() => noteAction(note, "delete")}
-              disabled={busy}>Delete</button
+              disabled={offset + 50 >= total}
+              onclick={() => {
+                offset += 50;
+                void browse();
+              }}>Next</button
             >
           </div>
-          <details><summary>Card schedules &amp; actions ({note.cards.length})</summary>
-          {#each note.cards as card}<div class="card-row">
-              <span
-                >Card {card.ordinal + 1}: {card.state} · {new Date(
-                  card.due,
-                ).toLocaleString()} · {card.reviews} reviews / {card.lapses} lapses{card.leech
-                  ? " · LEECH"
-                  : ""}{card.buried_until &&
-                new Date(card.buried_until) > new Date()
-                  ? " · buried"
-                  : ""}</span
-              ><button
-                onclick={() => cardAction(card, "suspend", !card.suspended)}
-                disabled={busy}
-                >{card.suspended ? "Unsuspend" : "Suspend"}</button
-              ><button
-                onclick={() =>
-                  cardAction(
-                    card,
-                    "bury",
-                    !card.buried_until ||
-                      new Date(card.buried_until) <= new Date(),
-                  )}
-                disabled={busy}
-                >{card.buried_until && new Date(card.buried_until) > new Date()
-                  ? "Unbury"
-                  : "Bury today"}</button
-              >
-            </div>{/each}
-          </details>
-        </article>{/each}
-      <div class="toolbar">
-        <button
-          disabled={offset === 0}
-          onclick={() => {
-            offset = Math.max(0, offset - 50);
-            void browse();
-          }}>Previous</button
-        ><span>{total ? offset + 1 : 0}–{Math.min(offset + 50, total)} / {total}</span
-        ><button
-          disabled={offset + 50 >= total}
-          onclick={() => {
-            offset += 50;
-            void browse();
-          }}>Next</button
-        >
+        </div>
+        {#if selectedRow}
+          {@const note = selectedRow.note}
+          <CardDetail cardId={selectedRow.card.id} revision={loads} {busy} onaction={(card, action, value) => void cardAction(card, action, value)}>
+            {#snippet noteActions()}
+              <button onclick={() => newNote(note)} disabled={busy}>Edit</button>
+              <button onclick={() => noteAction(note, "archive", !note.archived)} disabled={busy}>{note.archived ? "Restore note" : "Archive note"}</button>
+              <button class="danger" onclick={() => noteAction(note, "delete")} disabled={busy}>Delete note</button>
+            {/snippet}
+          </CardDetail>
+        {/if}
       </div>
+      <details><summary>Search syntax &amp; scheduling</summary><p>Filter with is:due/new/review/learning/suspended/leech/archived, tag:name or deck:name. Editing retains schedules of unchanged card ordinals; deleted templates/clozes remove their cards.</p></details>
+      {/if}
     {:else if view === "editor"}
       <h2>{editing ? "Edit card" : "New card"}</h2>
       <p>{editing ? "Changes stay local until you save them." : "Write one question and one answer. You can add cloze, images or other card formats under the optional controls."}</p>
@@ -1484,8 +1494,7 @@
   }
   header,
   .toolbar,
-  .scope,
-  .card-row {
+  .scope {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1626,17 +1635,108 @@
     padding: 1rem;
     margin: 1rem 0;
   }
-  .card-row {
-    border-top: 1px solid var(--border);
-    padding: 0.5rem 0;
+  .browser-search { margin-bottom: 0.5rem; }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 0.8rem;
   }
-  .card-row span {
-    flex: 1;
+  .filters button {
+    padding: 3px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: none;
+    color: var(--muted);
+    font: 500 10.5px var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .filters button[aria-pressed="true"] {
+    border-color: var(--violet);
+    background: color-mix(in srgb, var(--violet) 16%, transparent);
+    color: var(--ink);
+  }
+  .filters span {
+    margin-left: auto;
+    color: var(--muted);
     font-size: 0.85rem;
   }
-  .note-fields p {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+  /* Q42 split browser: the list stays put beside the selected card. */
+  .split-browser {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.3fr);
+    min-height: 420px;
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--solid-panel) 70%, transparent);
+  }
+  .card-list {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    min-width: 0;
+    padding: 10px 8px 10px 10px;
+    border-right: 1px solid var(--hairline);
+  }
+  .card-list ul {
+    max-height: 560px;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+  }
+  .card-list li button {
+    display: grid;
+    grid-template-columns: 7px minmax(0, 1fr);
+    column-gap: 8px;
+    align-items: center;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+  }
+  .card-list li button:hover {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+  }
+  .card-list li button.on {
+    background: color-mix(in srgb, var(--violet) 14%, transparent);
+  }
+  .card-list .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .card-list .front {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-list .meta {
+    grid-column: 2;
+    color: var(--subtle);
+    font: 10px var(--font-mono);
+  }
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding-top: 8px;
+    color: var(--muted);
+    font: 10.5px var(--font-mono);
+  }
+  .pager button {
+    padding: 3px 10px;
+    font-size: 0.8rem;
+  }
+  @media (max-width: 760px) {
+    .split-browser { grid-template-columns: 1fr; }
+    .card-list { border-right: 0; border-bottom: 1px solid var(--hairline); }
+    .card-list ul { max-height: 260px; }
   }
   .danger,
   .error {

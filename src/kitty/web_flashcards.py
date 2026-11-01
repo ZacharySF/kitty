@@ -56,6 +56,11 @@ def get(app, conn, path, query):
         if path == "/api/flashcards/history":
             if set(query) - {"card_id"}: raise ValueError("Unknown history parameter")
             return flash.history(conn, _id(query.get("card_id"), True))
+        if path == "/api/flashcards/card":
+            if set(query) != {"id"}: raise ValueError("An exact card ID is required")
+            card = flash.card_detail(conn, _id(query["id"]))
+            if card is None: raise _error("That card no longer exists", 404)
+            return {"card": card}
         if path == "/api/flashcards/stats":
             if set(query) - {"deck_id", "timezone"}: raise ValueError("Unknown stats parameter")
             zone = query.get("timezone", "UTC")
