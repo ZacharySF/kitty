@@ -839,3 +839,24 @@ describe("appearance settings", () => {
     await context.close();
   });
 });
+
+describe("home agenda empty", () => {
+  test("an empty Today agenda says so and offers the calendar on one line", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: { calendars: [], events: [], tasks: [], activity: [], reminders: [] } }));
+    await page.reload();
+    const agenda = page.getByRole("region", { name: "Today" });
+    await agenda.getByText("Nothing on the calendar today.").waitFor();
+    const link = agenda.getByRole("button", { name: "Open the calendar" });
+    const lines = await link.evaluate((node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return new Set([...range.getClientRects()].map((box) => Math.round(box.top))).size;
+    });
+    assert.equal(lines, 1, `the calendar link wraps onto ${lines} lines`);
+    await link.click();
+    await page.waitForFunction(() => location.hash === "#calendar");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

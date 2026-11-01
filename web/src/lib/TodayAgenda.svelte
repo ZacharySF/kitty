@@ -136,7 +136,7 @@
     display: grid;
     gap: 1px;
   }
-  button {
+  li button {
     width: 100%;
     display: grid;
     grid-template-columns: 38px 3px minmax(0, 1fr) auto;
@@ -151,8 +151,8 @@
     text-align: left;
     cursor: pointer;
   }
-  button:hover,
-  button:focus-visible {
+  li button:hover,
+  li button:focus-visible {
     background: color-mix(in srgb, var(--ink) 5%, transparent);
   }
   time {
@@ -251,7 +251,7 @@
     small {
       display: none;
     }
-    button {
+    li button {
       grid-template-columns: 34px 3px minmax(0, 1fr);
       gap: 7px;
     }
