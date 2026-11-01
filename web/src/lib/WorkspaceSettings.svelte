@@ -7,6 +7,7 @@
   import AccountSettings from "./AccountSettings.svelte";
   import ConnectedApps from "./ConnectedApps.svelte";
   import Keys from "./Keys.svelte";
+  import Devices from "./Devices.svelte";
   import TagSettings from "./TagSettings.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
   import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
@@ -92,6 +93,7 @@
   <AccountSettings />
   <ConnectedApps />
   <Keys />
+  <Devices />
   {#if activeModules.enabled.includes("workspace")}<TagSettings />{/if}
   <div data-tutorial="modules">
   <Panel title="Modules">
