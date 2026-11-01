@@ -1764,3 +1764,44 @@ describe("mind-map free positioning", () => {
     await context.close();
   });
 });
+
+describe("mind-map recolour", () => {
+  test("a swatch row on the selection recolours a node or its whole branch; style copies and pastes; colours survive a reload", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { schema } = await newMindMap(page, "Colour map");
+    const dot = (label) => mapNode(page, label).locator("circle.dot").evaluate((node) => getComputedStyle(node).fill);
+    const colour = (n) => resolveColor(page, `var(--c${n})`);
+    await mapNode(page, "Key ideas").click();
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Alpha");
+    await page.keyboard.press("Escape");
+    const alpha = await dot("Alpha");
+    await mapNode(page, "Key ideas").click();
+    const swatches = schema.getByRole("toolbar", { name: "Node style" });
+    await swatches.getByRole("button", { name: "Colour 4" }).click();
+    assert.equal(await dot("Key ideas"), await colour(4), "the node was not recoloured");
+    assert.equal(await dot("Alpha"), alpha, "node-only recolour changed its child");
+    await swatches.getByRole("button", { name: "Whole branch" }).click();
+    await swatches.getByRole("button", { name: "Colour 5" }).click();
+    assert.equal(await dot("Key ideas"), await colour(5));
+    assert.equal(await dot("Alpha"), await colour(5), "branch recolour skipped the child");
+    // Copy the style from Key ideas and paste it onto Questions (button) and Examples (Alt+V).
+    await swatches.getByRole("button", { name: "Copy style" }).click();
+    await mapNode(page, "Questions").click();
+    await swatches.getByRole("button", { name: "Paste style" }).click();
+    assert.equal(await dot("Questions"), await colour(5));
+    await mapNode(page, "Examples").click();
+    await page.keyboard.press("Alt+v");
+    assert.equal(await dot("Examples"), await colour(5));
+    await schema.getByRole("button", { name: /^Save map/ }).click();
+    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await page.reload();
+    await mapNode(page, "Questions").waitFor();
+    assert.equal(await dot("Questions"), await colour(5), "the colour was not saved");
+    await mapNode(page, "Questions").click();
+    await swatches.getByRole("button", { name: "Automatic colour" }).click();
+    assert.notEqual(await dot("Questions"), await colour(5), "Automatic colour did not clear the colour");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

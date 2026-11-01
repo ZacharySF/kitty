@@ -462,6 +462,9 @@ place; dropping elsewhere snaps it back. Press **D** mid-drag, or **Detach branc
 in the node panel, to break a branch off as a floating piece that keeps its place.
 Alt-drag places a topic anywhere while keeping its parent; its own children are laid
 out beside it, and **Reset position** puts it back into the automatic layout.
+A swatch row floats above the selected topic: pick one of the theme's six colours
+(or automatic) for the topic, or turn on **Whole branch** to paint its descendants
+too; **Copy style** / **Paste style** (Alt+C / Alt+V) carry a colour to other topics.
 Tree/radial layouts, an outline, linked note cards and links between maps help
 organize material. **Quiz me** hides labels for recall; a branch can produce a
 flashcard draft. **Auto-links** also suggests local sources for node labels;

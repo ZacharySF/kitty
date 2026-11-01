@@ -18,6 +18,8 @@ from kitty.db.connection import transaction
 
 MODES = {'study', 'general', 'jobs'}
 KINDS = {'class', 'topic', 'idea', 'task', 'job', 'company', 'skill'}
+#: Theme graph palette slots (--c1..--c6) a node may be painted with; absent means its automatic branch colour.
+COLORS = {'c1', 'c2', 'c3', 'c4', 'c5', 'c6'}
 MAX_MAPS = 100
 MAX_NODES = 300
 MAX_EDGES = 600
@@ -135,7 +137,7 @@ def graph(conn, value, *, portable=False):
     result = {'nodes': [], 'edges': []}
     ids, sources = set(), set()
     for node in nodes:
-        _fields(node, {'id', 'kind', 'label', 'notes', 'x', 'y', 'url', 'source', 'collapsed', 'map_id', 'free'})
+        _fields(node, {'id', 'kind', 'label', 'notes', 'x', 'y', 'url', 'source', 'collapsed', 'map_id', 'free', 'color'})
         key = _key(node.get('id'))
         kind = node.get('kind')
         if not isinstance(kind, str) or kind not in KINDS or key in ids:
@@ -154,6 +156,9 @@ def graph(conn, value, *, portable=False):
         # A free node keeps its own position instead of following the automatic tree layout.
         if not isinstance(node.get('free', False), bool):
             raise ValueError('Free must be true or false')
+        color = node.get('color')
+        if color is not None and (not isinstance(color, str) or color not in COLORS):
+            raise ValueError('Colour must be one of the theme palette slots c1–c6')
         linked_map = node.get('map_id')
         if linked_map is not None:
             if portable:
@@ -166,6 +171,7 @@ def graph(conn, value, *, portable=False):
                                 'url': _url(node.get('url', '')), 'source': source,
                                 **({'collapsed': node['collapsed']} if 'collapsed' in node else {}),
                                 **({'free': True} if node.get('free') else {}),
+                                **({'color': color} if color is not None else {}),
                                 **({'map_id': linked_map} if linked_map is not None else {})})
     edge_ids = set()
     for edge in edges:

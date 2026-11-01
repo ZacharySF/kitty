@@ -273,6 +273,21 @@ def test_detached_free_branch_position_persists_and_round_trips_portably(workspa
         save(conn, schema.load(conn, item['id']), {'nodes': [node('n', free='yes')], 'edges': []})
 
 
+def test_node_palette_colour_persists_and_round_trips_portably(workspace):
+    conn = workspace.conn
+    item = connected(conn)
+    item['graph']['nodes'][0]['color'] = 'c4'
+    save(conn, item)
+    loaded = schema.load(conn, item['id'])
+    assert loaded['graph']['nodes'][0]['color'] == 'c4'
+    assert 'color' not in loaded['graph']['nodes'][1]
+    copy = schema.create(conn, {'title': 'Copy', 'mode': 'study', 'document': schema.export(conn, item['id'])})
+    assert copy['graph']['nodes'][0]['color'] == 'c4'
+    for colour in ('red', '#ff0000', 'c7', 4, ''):
+        with pytest.raises(ValueError, match='Colour'):
+            save(conn, schema.load(conn, item['id']), {'nodes': [node('n', color=colour)], 'edges': []})
+
+
 def test_note_card_source_is_unique_and_live(workspace):
     conn = workspace.conn
     notebook = conn.execute("INSERT INTO note_notebooks(title,created_at,updated_at) VALUES('Synthetic notebook','2026-01-01','2026-01-01')").lastrowid

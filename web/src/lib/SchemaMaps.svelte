@@ -36,6 +36,8 @@
     map_id?: number | null;
     /** Placed by hand (detached or free-positioned); the tree layout lays its branch out around it. */
     free?: boolean;
+    /** Q65 D: a theme palette slot (`c1`–`c6`); absent means the automatic branch colour. */
+    color?: string;
   };
   type Edge = { id: string; from: string; to: string; label: string };
   type Graph = { nodes: Node[]; edges: Edge[] };
@@ -204,6 +206,9 @@
   } | null = null;
   // Q65 B/C: the node being dragged, the pill it would snap into, whether D detached it and whether Alt places it freely.
   let dragging = $state(""), dropTarget = $state(""), detaching = $state(false), placing = $state(false);
+  // Q65 D: the swatch row paints the node or (with Whole branch) its descendants too; copied style pastes onto others.
+  const PALETTE = ["c1", "c2", "c3", "c4", "c5", "c6"];
+  let paintBranch = $state(false), copiedStyle = $state<{color?: string} | null>(null), stageWidth = $state(0);
   let view = $state<View3D>("edit"),
     mapLayout = $state<GraphLayout>("tree"),
     netLayout = $state<GraphLayout>("tree");
@@ -289,6 +294,29 @@
     }
     const index = current?.graph.nodes.findIndex(n => n.id === branch) ?? 0;
     return `var(--c${Math.max(0, index) % 6 + 1}, var(--accent))`;
+  }
+  function nodeColor(n: Node) { return n.color ? `var(--${n.color})` : branchColor(n); }
+  /** The nodes a style action applies to. */
+  function styleTargets() {
+    if (!node) return [];
+    const ids = paintBranch ? descendants(node.id) : new Set([node.id]);
+    return current!.graph.nodes.filter(n => ids.has(n.id));
+  }
+  function paint(color: string | undefined) {
+    if (!editable || !node) return;
+    remember();
+    for (const n of styleTargets()) { if (color) n.color = color; else delete n.color; }
+  }
+  function copyStyle() {
+    if (!node) return;
+    copiedStyle = node.color ? {color: node.color} : {};
+    notice = "Style copied";
+  }
+  function pasteStyle() {
+    if (!editable || !node || !copiedStyle) return;
+    const style = copiedStyle;
+    remember();
+    if (style.color) node.color = style.color; else delete node.color;
   }
   function hiddenLabel(n: Node) {
     return recall && !!current?.graph.edges.some(e => e.to === n.id) && !revealed.includes(n.id);
@@ -795,9 +823,15 @@
     detaching = !detaching; dropTarget = "";
   }
   function nodeKey(e: KeyboardEvent, n: Node) {
-    if (!editable || e.altKey) return;
     // A drag owns the keyboard (see dragKey); keys must not rename the dragged node.
-    if (gesture?.node) return;
+    if (!editable || gesture?.node) return;
+    // Alt+C / Alt+V copy and paste a node's style (Ctrl+Alt is the app's jump-to-Plan chord).
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.code === "KeyC" || e.code === "KeyV")) {
+      e.preventDefault(); e.stopPropagation(); choose(n);
+      if (e.code === "KeyC") copyStyle(); else pasteStyle();
+      return;
+    }
+    if (e.altKey) return;
     if (e.ctrlKey || e.metaKey) {
       if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void editInline(n); }
       else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); choose(n); reorder(n, e.key === "ArrowUp" ? -1 : 1); }
@@ -2117,8 +2151,24 @@
               {/each}
             </div>
           {/if}
-          <div class="stage-wrap">
+          <div class="stage-wrap" bind:clientWidth={stageWidth}>
           {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : placing ? "Placing freely · release to leave it here" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · Alt places it freely · D detaches the branch"}</p>{/if}
+          {#if node && !dragging && !editing && editable && visibleNodes.includes(node)}
+            {@const v = current.viewport}
+            {@const top = node.y * v.zoom + v.y + 8}
+            <!-- Q65 D: the selection's swatch row floats above its pill (below it near the stage top). -->
+            <div class="node-style" class:below={top < 56} role="toolbar" aria-label="Node style"
+              style:left={`${Math.max(8, Math.min(node.x * v.zoom + v.x, stageWidth - 430))}px`}
+              style:top={`${top < 56 ? top + box(node).h * v.zoom + 8 : top - 8}px`}>
+              {#each PALETTE as slot, index (slot)}<button class="swatch" style:--dot={`var(--${slot})`} aria-label={`Colour ${index + 1}`} aria-pressed={node.color === slot} title={`Colour ${index + 1}`} onclick={() => paint(slot)}></button>{/each}
+              <button class="swatch auto" aria-label="Automatic colour" aria-pressed={!node.color} title="Automatic branch colour" onclick={() => paint(undefined)}></button>
+              <span class="rule" aria-hidden="true"></span>
+              <button class="word" aria-pressed={paintBranch} title="Colour the node's whole branch" onclick={() => paintBranch = !paintBranch}>Whole branch</button>
+              <span class="rule" aria-hidden="true"></span>
+              <button class="word" aria-keyshortcuts="Alt+C" title="Copy style (Alt+C)" onclick={copyStyle}>Copy style</button>
+              <button class="word" aria-keyshortcuts="Alt+V" title="Paste style (Alt+V)" disabled={!copiedStyle} onclick={pasteStyle}>Paste style</button>
+            </div>
+          {/if}
           <svg
             bind:this={stage}
             class="stage"
@@ -2166,7 +2216,7 @@
                     class="edge"
                     class:branch={shape.tree}
                     class:active={selectedEdge === e.id}
-                    style:--b={branchColor(current.graph.nodes.find(n => n.id === e.to)!)}
+                    style:--b={nodeColor(current.graph.nodes.find(n => n.id === e.to)!)}
                     marker-end={shape.tree ? undefined : selectedEdge === e.id
                       ? `url(#${pane.id}-schema-arrow-active)`
                       : `url(#${pane.id}-schema-arrow)`}
@@ -2189,8 +2239,9 @@
                   class:drop-target={dropTarget === n.id}
                   class:dragging={dragging === n.id}
                   class:detaching={detaching && dragging === n.id}
+                  class:painted={!!n.color}
                   class="graph-node"
-                  style:--b={branchColor(n)}
+                  style:--b={nodeColor(n)}
                   ondblclick={() => openCard(n)}
                   onpointerdown={(e) => start(e, n.id)}
                   onkeydown={(e) => nodeKey(e, n)}
@@ -2625,6 +2676,56 @@
   .graph-node .fold circle { fill: color-mix(in srgb, var(--b) 40%, var(--solid-panel)); }
   .graph-node.root .fold circle { fill: var(--solid-void); }
   .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-mono); pointer-events: none; }
+  .graph-node.root.painted .pill { fill: var(--b); }
+  /* Q65 D: the selection's floating swatch row. */
+  .node-style {
+    position: absolute;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 6px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--solid-raised) 86%, transparent);
+    backdrop-filter: var(--glass);
+    -webkit-backdrop-filter: var(--glass);
+    box-shadow: 0 10px 26px -16px color-mix(in srgb, var(--shadow-tint) 80%, transparent);
+    transform: translateY(-100%);
+    white-space: nowrap;
+  }
+  .node-style.below { transform: none; }
+  .node-style .swatch {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    background: var(--dot) content-box;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 20%, transparent);
+    cursor: pointer;
+    transition: transform 140ms ease;
+  }
+  .node-style .swatch:hover { transform: scale(1.12); }
+  .node-style .swatch[aria-pressed="true"] { border-color: var(--dot); }
+  .node-style .swatch.auto {
+    --dot: var(--muted);
+    background: conic-gradient(var(--c1), var(--c2), var(--c3), var(--c4), var(--c5), var(--c6), var(--c1)) content-box;
+  }
+  .node-style .rule { width: 1px; height: 16px; margin: 0 3px; background: var(--hairline); }
+  .node-style .word {
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--muted);
+    font: 500 11.5px var(--font-ui);
+    cursor: pointer;
+  }
+  .node-style .word:hover:not(:disabled) { color: var(--ink); }
+  .node-style .word:disabled { opacity: 0.45; cursor: default; }
+  .node-style .word[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
+  @media (prefers-reduced-motion: reduce) { .node-style .swatch { transition: none; } }
   .inline-label {
     width: 100%;
     height: 100%;
