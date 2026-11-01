@@ -324,7 +324,7 @@ and a permission model before they are safe.
 | B. automic-vault only | poor | mixed | poor | good |
 | C. kitty's own encrypted vault with a passphrase | mixed | mixed | mixed | good |
 
-**Decision: A.** A new `src/kitty/secrets.py` holds named secrets (openrouter, anthropic,
+**Decision: A.** `src/kitty/core/keys.py` holds named secrets (openrouter, anthropic,
 usajobs, brave, and user-defined ones).
 - **Storage, in order of preference:**
   1. the OS keyring through Secret Service (KeePassXC or gnome-keyring), via Python `keyring`;
@@ -333,13 +333,19 @@ usajobs, brave, and user-defined ones).
 - **Consumers:** every current consumer (`web_ai._key`, `triage/openrouter._key`, the Anthropic client) reads through it. apply-ai and any AI feature use it.
 - **Keys screen:** shows only whether each key is set and where it is stored, never the value.
 - **Other programs:** `kitty keys run +OPENROUTER -- command` injects the key into that one command's environment, following automic-vault's model.
-- **macOS:** kitty can use automic-vault itself as the store.
+- **macOS:** automic-vault never returns a secret to an app, so it is not a storage backend; it is documented as a launch wrapper whose injected variables reach kitty as environment variables (storage 3). macOS is not implemented or tested.
 
 Verified fact: automic-vault is macOS-only (Keychain, Touch ID, code signing) and deliberately
 never returns a secret to an app.
 
 Why the alternatives lost: B breaks kitty on Linux. C makes kitty own its cryptography and a
 passphrase prompt.
+
+Built (Keys step):
+- `kitty.core.keys` resolves keyring → file → environment. The keyring is the `keyring` package's Secret Service backend, used directly rather than through `keyring`'s backend auto-selection (MIT; its dependencies SecretStorage, jeepney and jaraco.* are BSD/MIT, and `cryptography` was already locked). Entries are filed under the Secret Service attribute `service=kitty`; only those are ever searched. No `secret-tool` binary is needed. `KITTY_KEYRING=none` turns the keyring off (tests always do).
+- Files: OpenRouter keeps `.private/openrouter-key`; other keys use `.private/keys/<NAME>`. Owner-only (600/700), `O_NOFOLLOW`, symbolic links refused. Setting a key in the keyring removes a stale file copy; **Move to keyring** verifies the keyring copy before deleting the file.
+- Consumers: `web_ai`, `triage/openrouter`, `triage/run.make_client` (Anthropic now gets `api_key` explicitly; `Settings.anthropic_key_set` is gone), the USAJOBS and Brave adapters and `kitty doctor` (`key/<NAME>` checks). USAJOBS and Brave error text is redacted with the key value. `USAJOBS_EMAIL` stays an environment setting: it is an identifier sent as the User-Agent, not a secret. `.private/application-credentials.env` is unchanged.
+- Settings → Keys (`web_keys.py`: `GET /api/keys`, `POST /api/keys/set|remove|move`) and `kitty keys list|set|remove|move|run`. `run` replaces itself with the command (`execvpe`), with the named keys added and kitty's other known keys removed from the command's environment. Demo mode uses only its throwaway files.
 
 ### Q11: The website you're on appears in kitty as a live page mirror from your everyday browser
 

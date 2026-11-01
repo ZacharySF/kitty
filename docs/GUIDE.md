@@ -307,6 +307,47 @@ extensions. Make these calls from the extension's side panel, popup or backgroun
 page; content scripts run in the web page and are not supported (Chrome's Local
 Network Access rules). Web page origins are always refused.
 
+### Keys (API keys)
+
+kitty! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:
+`OPENROUTER`, `ANTHROPIC`, `USAJOBS`, `BRAVE`, or your own (`A-Z`, `0-9`, `_`). A key
+is read from, in order:
+
+1. the OS keyring through the freedesktop Secret Service (gnome-keyring, KeePassXC),
+   when one answers on the session bus;
+2. an owner-only file under `.private/` (`.private/openrouter-key` for OpenRouter, as
+   before; `.private/keys/<NAME>` for the others). Files must be mode 600 and not
+   symbolic links;
+3. the environment, so `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `USAJOBS_API_KEY`,
+   `BRAVE_SEARCH_API_KEY` (or a custom `NAME`) in `.env` keep working.
+
+New keys go to the keyring when there is one, otherwise to the owner-only file.
+**Settings → Keys** shows each key as set or unset and where it is stored, never its
+value; it can set, replace and remove keys, and **Move to keyring** moves a file copy
+(such as an existing `.private/openrouter-key`) into the keyring. Without a keyring it
+warns that keys are stored in an owner-only file. The demo uses only its own
+throwaway files.
+
+```bash
+kitty keys list                       # names, set/unset and where; never values
+kitty keys set OPENROUTER             # typed without echo, or piped on stdin
+kitty keys remove BRAVE               # keyring and file copy (.env is yours to edit)
+kitty keys move OPENROUTER            # file copy -> OS keyring
+kitty keys run +OPENROUTER -- apply-ai --help
+```
+
+`kitty keys run` gives keys to another program (apply-ai or any AI tool) without
+exporting them in your shell: it starts the command with the named keys in its
+environment only (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `USAJOBS_API_KEY`,
+`BRAVE_SEARCH_API_KEY`, or a custom key under its own name), removes kitty's other
+keys from that environment, and is replaced by the command, so the exit code is the
+command's. Keys are never written into exports, builds, logs or error messages.
+
+`KITTY_KEYRING=none` turns the keyring off for one process (the test suite does this).
+On macOS, automic-vault deliberately never returns a secret to an app, so it is not a
+storage backend: use it as a launch wrapper around kitty, and the variables it injects
+arrive as environment variables (source 3).
+
 ### LearnHarness extension
 
 **Study → LearnHarness → Start LearnHarness** opens the included
@@ -520,7 +561,7 @@ Top notices and the study timer bar can be dismissed.
 
 **AI settings** provides optional OpenRouter drafts for selected text: summaries,
 outlines, study plans, opportunity explanations, and source-grounded flashcards.
-Add a key locally (owner-only `.private/openrouter-key`, or `OPENROUTER_API_KEY`),
+Add the `OPENROUTER` key (here, in **Settings → Keys** or with `kitty keys set OPENROUTER`),
 refresh the model catalog, choose a model and price/latency/throughput routing,
 and set an output limit and daily budget. Review the exact text, prompt and maximum
 cost before explicitly approving each request. Reviews are single-use, expire
@@ -891,7 +932,7 @@ hiring.cafe (see below), every watchlist board on Greenhouse, Lever, Ashby,
 SmartRecruiters, Workday and Workable (public widget API, one request per board),
 Indeed (via JobSpy),
 the monthly Hacker News "Who is hiring" thread, and USAJOBS student/intern
-announcements (off until `USAJOBS_API_KEY` and `USAJOBS_EMAIL` are in `.env`).
+announcements (off until the `USAJOBS` key and `USAJOBS_EMAIL` in `.env` are set).
 It keeps internship/co-op/student titles, routes each posting by title and additional
 description evidence, runs the rules-only eligibility filter, and stores it. Previously
 seen postings can gain newly matched tracks without resetting hand decisions. It prints
@@ -940,8 +981,8 @@ Additional channels:
   clearance becomes an eligibility note. Malformed postings make a source partial
   (or failed if none are usable), not a healthy empty result.
 
-Brave search is **off even if a key is present**. To opt in, put
-`BRAVE_SEARCH_API_KEY` in the gitignored `.env` and set
+Brave search is **off even if a key is present**. To opt in, set the `BRAVE` key
+(`kitty keys set BRAVE`, or `BRAVE_SEARCH_API_KEY` in the gitignored `.env`) and set
 `websearch.options.enable_search: true`. Defaults cap a run at four API queries,
 five results/query and twenty fetched posting pages; changing these may change
 provider charges. No key is needed for seed-only runs. Public fetching respects
@@ -1414,7 +1455,7 @@ uv run kitty triage --batch         # everything, as one Message Batch (half pri
 uv run kitty triage --collect       # apply finished batches
 ```
 
-Needs `ANTHROPIC_API_KEY` in `.env`. Model, effort, prices and the hard per-run
+Needs the `ANTHROPIC` key (`kitty keys set ANTHROPIC`, or `ANTHROPIC_API_KEY` in `.env`). Model, effort, prices and the hard per-run
 cost cap (`max_cost_usd_per_run`, default $5) are in `config/triage.yaml`. Every
 paid run prints the job count, estimated tokens and dollars first and asks to
 confirm (`--yes` skips it, for the schedule). A run stops before it could pass the
@@ -1432,7 +1473,7 @@ max_cost_usd_per_run: 1.0
 openrouter_daily_budget_usd: 1.0  # optional shared UTC-day reservation ceiling
 ```
 
-Provide `OPENROUTER_API_KEY` or the local `.private/openrouter-key` file.
+Needs the `OPENROUTER` key ([Keys](#keys-api-keys)).
 Jev is a model router, not a job-fetching service: the deterministic DereC4
 importer still fetches and parses the repository, then Jev tiers eligible
 uncached jobs. No applications are submitted. OpenRouter supports `--now` only;
