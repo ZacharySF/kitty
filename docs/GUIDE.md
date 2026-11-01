@@ -511,9 +511,12 @@ A task's **＋ Map** action optionally adds it beneath a chosen map node.
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
 weeks, 30 days or a custom date picker; no date-syntax memorization is required.
 
-**Documents & PDF** authors portable Markdown or rich headings, emphasis, nested
-lists and quotes, with a live preview and real selectable-text PDF export.
-Choose the notes folder/notebook, then import PDF/Markdown/text as new notes or
+**Documents & PDF** authors portable Markdown (numbered source) or rich headings,
+emphasis, nested lists and quotes beside a live preview that scrolls with the
+source; drag or arrow-key the divider to resize the split (remembered per browser).
+A compact bar switches documents, saves, makes a note page and exports a real
+selectable-text PDF; its settings button chooses the format and notes
+folder/notebook. Below the editor, import PDF/Markdown/text as new notes or
 append extracted content to the saved document. Original files remain downloadable.
 Clipboard files/text and relative Markdown-folder structure are supported.
 Topic matching can stay inside the document or the selected folder, locally;

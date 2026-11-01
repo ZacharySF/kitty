@@ -1665,3 +1665,60 @@ describe("notes canvas background", () => {
     await context.close();
   });
 });
+
+describe("documents side-by-side", () => {
+  test("numbered source sits beside the preview; the separator drags, arrow-keys and remembers; source scroll drives the preview", async () => {
+    const { page, problems, context } = await open("documents", { dock: "hidden" });
+    const source = page.getByRole("textbox", { name: "Markdown source" });
+    await source.waitFor();
+    assert.equal(await page.getByRole("button", { name: "Export PDF" }).count(), 1, "no Export PDF in the bar");
+    assert.equal(await page.getByRole("button", { name: "Switch document" }).count(), 1, "no document switcher");
+    const lines = Array.from({ length: 160 }, (_, i) => (i % 16 === 0 ? `## Section ${i / 16 + 1}` : `Line ${i + 1} of the cheat sheet.`));
+    await source.fill(lines.join("\n"));
+    const preview = page.getByRole("region", { name: "Document preview" });
+    await page.waitForFunction(() => document.querySelector('[aria-label="Document preview"]')?.textContent?.includes("Section 10"));
+
+    const [left, right] = [await rect(source), await rect(preview)];
+    assert.ok(right.left >= left.right - 1, `preview (${right.left}) does not sit right of the source (${left.right})`);
+    assert.ok(Math.abs(right.top - left.top) < 40, `source and preview are not side by side (${left.top} vs ${right.top})`);
+    const gutter = page.locator('[data-testid="line-numbers"]');
+    const numbers = await gutter.locator("span").evaluateAll((nodes) => nodes.map((node) => node.textContent).filter(Boolean));
+    assert.equal(numbers.length, 160, "line numbers do not match the source lines");
+    assert.deepEqual([numbers[0], numbers.at(-1)], ["1", "160"]);
+
+    const separator = page.getByRole("separator", { name: "Resize source and preview" });
+    const value = async () => Number(await separator.getAttribute("aria-valuenow"));
+    const start = await value();
+    await separator.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    assert.ok((await value()) > start, "ArrowRight did not widen the source");
+    assert.ok((await rect(source)).width > left.width + 10, "source pane did not grow with the keyboard");
+    const keyed = await value();
+    const handle = await separator.boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x - 220, handle.y + handle.height / 2, { steps: 6 });
+    await page.mouse.up();
+    const dragged = await value();
+    assert.ok(dragged < keyed - 5, `dragging left did not shrink the source (${keyed} → ${dragged})`);
+    assert.ok((await rect(source)).width < left.width, "source pane did not shrink with the drag");
+
+    await source.evaluate((node) => { node.scrollTop = (node.scrollHeight - node.clientHeight) / 2; });
+    await page.waitForFunction(() => {
+      const pane = document.querySelector('[aria-label="Document preview"]');
+      return pane && Math.abs(pane.scrollTop / (pane.scrollHeight - pane.clientHeight) - 0.5) < 0.05;
+    });
+    const offsets = await page.evaluate(() => [
+      document.querySelector('[data-testid="line-numbers"]').scrollTop,
+      document.querySelector('textarea[aria-label="Markdown source"]').scrollTop,
+    ]);
+    assert.ok(Math.abs(offsets[0] - offsets[1]) <= 1, `line numbers drifted from the source (${offsets})`);
+
+    await page.reload();
+    await separator.waitFor();
+    assert.equal(await value(), dragged, "split ratio was not remembered");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
