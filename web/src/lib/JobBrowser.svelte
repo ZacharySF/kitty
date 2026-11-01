@@ -8,6 +8,7 @@
   import type { View } from "./workspace";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import PostingAvailability from "./PostingAvailability.svelte";
+  import EmptyState from "./EmptyState.svelte";
   let {
     view,
     workspace,
@@ -790,16 +791,10 @@
     <div bind:this={results} class="job-list" class:dense={view !== "today"} role="region" aria-label="Job results" aria-busy={loading}>
       {#if loading}<p class="empty-state" role="status">
           Loading opportunities…
-        </p>{:else if jobs.length === 0}<div class="empty-state">
-          <h3>No matches in this view.</h3>
-          <p>
-            Change your filters, add a posting, or discover new jobs from Job
-            sources.
-          </p>
-          <button class="button" onclick={() => onview("sources")}
-            >Open Job sources</button
-          >
-        </div>{:else}
+        </p>{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
+          <p>Change your filters, add a posting, or discover new jobs from Job sources.</p>
+          {#snippet actions()}<button class="button" onclick={() => onview("sources")}>Open Job sources</button>{/snippet}
+        </EmptyState>{:else}
         {#each jobs as job, index (job.id)}
           <div class="selectable-job" class:marked={markedSet.has(job.id)} class:focused={cursor === index}>
             {#if view !== "today"}<input
