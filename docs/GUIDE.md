@@ -423,7 +423,13 @@ This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimiz
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.
 Likewise, Notes implements the workflows above, not the Obsidian plugin ecosystem.
 
-**Study** opens mind maps first. Create Lecture, Chapter or Exam review maps,
+**Study** opens a three-column cockpit: subjects (with this week's minutes in
+their colours), concepts and tasks on the left pick what to study; the session
+timer sits in the centre; the fourteen-step guide, session notes and due spaced
+returns sit on the right. Under 900px wide it stacks into one column, and
+**Focus mode** keeps only the timer and the next tasks. Progress, History,
+Exams & plans, Mind map, Helpers and Timer settings are tabs beside it.
+In **Mind map**, create Lecture, Chapter or Exam review maps,
 or create one from a subject. Click a node, then Tab adds a child, Enter adds a
 sibling, typing renames, arrows navigate and Space collapses a branch.
 Tree/radial layouts, an outline, linked note cards and links between maps help
@@ -437,6 +443,21 @@ and a five-minute priming timer, then repeats 25-minute focus / five-minute brea
 phases. Start unlocks the audible phase-change cue. Only completed focus and
 explicit manual entries count toward weekly/monthly totals; priming, breaks and
 pauses do not. The guide's checklist and reflections stay with the session.
+**Progress** stacks each day of the selected week or month in subject colours
+beside a share ring (hover or click a subject to isolate it), tints a month
+calendar by each day's main subject and deepens it by minutes, with a ✓ for each
+week that met the weekly goal (or had any study when no weekly goal is set), and
+draws goal rings for today, this week and today's flashcard reviews.
+The segmented streak ring counts consecutive days from saved study time toward
+the next milestone. **Log today** opens the manual session editor; saving actual
+time fills the segment, rather than adding a cosmetic check-in.
+**Exams & plans** shows exam countdown/readiness cards, a two-week timeline
+with an exam lane and a spaced-returns lane, and a twelve-day strip. Select a
+block to mark it done or export it explicitly to Calendar. Drag blocks between
+days (or use Alt+Left/Right); days above 90 planned minutes show a load warning.
+Blocks stay before their exam. Make a plan saves dated blocks from your own
+dates and durations. Returns are grouped Due / This week / Later: Recalled
+advances through 1, 3, 7, 16 and 35 days; Shaky restarts at one day.
 **Calendar** opens one week with half-hour slots and a day-plan sidebar.
 Previous/next changes weeks; Month/Day/Agenda remain optional. Click a slot to
 schedule a time, or drag an event/task to another date or time. Drops open the

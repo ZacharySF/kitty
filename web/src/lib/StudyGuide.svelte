@@ -107,7 +107,7 @@
 </section>
 
 <style>
-  .study-guide { display: grid; gap: .85rem; padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--ink); }
+  .study-guide { container-type: inline-size; display: grid; gap: .85rem; padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--ink); }
   .guide-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; }
   .guide-heading > div:first-child { flex: 1 1 280px; }
   h3, h4 { margin: 0; }
@@ -143,5 +143,5 @@
   .dot { width: 10px; height: 10px; margin-left: -1.32rem; border: 2px solid var(--hairline, var(--border)); border-radius: 999px; background: var(--surface); }
   .rail > li.current .dot { border-color: var(--accent); background: var(--accent); }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  @media (max-width: 900px) { .columns { grid-template-columns: 1fr; } }
+  @container (max-width: 640px) { .columns { grid-template-columns: 1fr; } }
 </style>

@@ -626,3 +626,195 @@ describe("Liquid Glass theme", () => {
     await context.close();
   });
 });
+
+describe("study cockpit", () => {
+  test("the Study hub is three columns (subjects & tasks, timer, guide & notes) with every tool tab visible, and one column in a narrow pane", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    page.on("dialog", (dialog) => dialog.accept());
+    const left = page.getByRole("region", { name: "Subjects & tasks" });
+    const centre = page.getByRole("region", { name: "Session timer" });
+    const right = page.getByRole("region", { name: "Guide & notes" });
+    await centre.waitFor();
+    const stop = centre.getByRole("button", { name: /^Stop/ });
+    if (await stop.isEnabled()) {
+      await stop.click();
+      await centre.getByRole("button", { name: /Start session/ }).waitFor();
+    }
+    let [a, b, c] = await Promise.all([rect(left), rect(centre), rect(right)]);
+    assert.ok(a.right <= b.left + 1 && b.right <= c.left + 1, "columns are not side by side");
+    assert.ok(Math.abs(a.top - b.top) < 2 && Math.abs(b.top - c.top) < 2, "columns do not share a row");
+    assert.equal(await page.getByText("Planning & tools").count(), 0, "tools are still behind a disclosure");
+    const tabs = page.getByRole("navigation", { name: "Study tools" });
+    for (const name of ["Study session", "Progress", "History", "Exams & plans", "Mind map", "Helpers", "Timer settings"])
+      assert.ok(await tabs.getByRole("button", { name, exact: true }).isVisible(), `${name} tab is not visible`);
+    assert.ok(await right.getByRole("region", { name: "Fourteen-step study guide" }).isVisible(), "guide is not in the right column");
+    assert.ok(await right.getByRole("textbox", { name: /Session notes/ }).isVisible(), "session notes are not in the right column");
+    const subject = `Cockpit subject ${Date.now()}`;
+    await left.getByRole("button", { name: "Add subject" }).click();
+    const editor = page.getByRole("region", { name: "Edit subjects" });
+    await editor.getByLabel("Name").fill(subject);
+    await editor.getByRole("button", { name: "Save" }).click();
+    const pick = left.getByRole("button", { name: new RegExp(`^${subject}`) });
+    await pick.click();
+    assert.equal(await pick.getAttribute("aria-pressed"), "true");
+    await centre.getByText(subject).waitFor();
+    await page.setViewportSize(MINIMUM);
+    await page.waitForFunction(() => {
+      const [x, y] = ["Subjects & tasks", "Session timer"].map((name) => document.querySelector(`[aria-label="${name}"]`).getBoundingClientRect());
+      return Math.abs(x.left - y.left) < 2;
+    });
+    [a, b, c] = await Promise.all([rect(left), rect(centre), rect(right)]);
+    assert.ok(b.top >= a.bottom - 1 && c.top >= b.bottom - 1, "a narrow pane is not one column");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("study progress", () => {
+  test("Progress stacks each day's study in subject colours beside a share ring, tints a month calendar by each day's main subject with weekly-goal checks, and draws goal rings", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    const stamp = Date.now();
+    // A fixed past Wednesday keeps the week and month deterministic.
+    const [major, minor] = await page.evaluate(async (stamp) => {
+      const post = async (path, body) => {
+        const response = await fetch(`/api/study/${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) });
+        return (await response.json()).item;
+      };
+      const major = await post("subjects", { name: `Major ${stamp}`, color: "#d05080" });
+      const minor = await post("subjects", { name: `Minor ${stamp}`, color: "#3070e0" });
+      for (const [subject, minutes, hour] of [[major, 50, 10], [minor, 20, 14]])
+        await post("sessions", { request_id: crypto.randomUUID(), started_at: `2026-01-14T${hour}:00:00+00:00`, timezone: "UTC", duration_seconds: minutes * 60, subject_id: subject.id });
+      await post("targets", { title: `Daily ${stamp}`, period: "daily", minutes: 30 });
+      window.dispatchEvent(new CustomEvent("kitty-study-changed"));
+      return [major, minor];
+    }, stamp);
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
+    assert.equal(await page.getByLabel("Daily study activity").count(), 0, "the accent-only heatmap is still shown");
+    await page.getByLabel("Jump to date").fill("2026-01-14");
+    await page.getByLabel("Jump to date").dispatchEvent("change");
+
+    const bars = page.getByRole("region", { name: "Study by subject" });
+    const day = bars.getByRole("button").filter({ has: page.locator(`[data-subject="${major.id}"]`) });
+    await day.waitFor();
+    const colours = await day.locator("[data-subject]").evaluateAll((parts) => parts.map((part) => getComputedStyle(part).backgroundColor));
+    assert.deepEqual(colours, ["rgb(208, 80, 128)", "rgb(48, 112, 224)"], "the day is not stacked in subject colours, largest first");
+    assert.match(await day.getAttribute("aria-label"), new RegExp(`70 min, mostly Major ${stamp}`));
+    const legend = bars.getByRole("button", { name: new RegExp(`^Minor ${stamp}`) });
+    assert.match(await legend.textContent(), /20 min/);
+    await legend.hover();
+    await page.waitForFunction((id) => Number(getComputedStyle(document.querySelector(`[aria-label="Study by subject"] [data-subject="${id}"]`)).opacity) < 0.5, major.id);
+
+    const calendar = page.getByRole("region", { name: "Study calendar" });
+    assert.equal(await calendar.getByRole("button", { name: new RegExp(`: 70 min, mostly Major ${stamp}$`) }).count(), 1, "the calendar day is not tinted by its main subject");
+    const checks = calendar.getByRole("img", { name: /^(Week of|This week)/ });
+    assert.ok((await checks.count()) >= 4, "weeks have no goal checks");
+    assert.equal(await calendar.getByRole("img", { name: /^Week of .*: 70 min, studied$/ }).count(), 1, "the studied week is not checked");
+
+    const goals = page.getByRole("region", { name: "Goal rings" });
+    for (const name of ["Today", "This week", "Flashcard reviews"]) await goals.getByText(name, { exact: true }).waitFor();
+    assert.match(await goals.getByRole("listitem").filter({ hasText: "Today" }).textContent(), /\d+ min\s*\/\s*30 min/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("study plans", () => {
+  test("Exams & plans shows countdown cards, a timeline to each exam, a 12-day strip to drag blocks with a load warning, and a returns queue", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    const stamp = Date.now();
+    await page.evaluate(async (stamp) => {
+      const call = async (path, body) => {
+        const response = await fetch(`/api/study${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) } : undefined);
+        const result = await response.json();
+        if (!response.ok) throw new Error(`${path}: ${JSON.stringify(result)}`);
+        return result;
+      };
+      const { stats } = await call("");
+      const day = (offset) => new Date(Date.parse(`${stats.today}T12:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+      let { timer } = await call("/timer");
+      if (timer.status !== "idle") ({ timer } = await call("/timer", { action: "stop", revision: timer.revision, request_id: crypto.randomUUID() }));
+      const subject = (await call("/subjects", { name: `Planner ${stamp}`, color: "#40a080" })).item;
+      const exam = (await call("/exams", { title: `Exam ${stamp}`, subject_id: subject.id, exam_date: day(5), timezone: "UTC" })).item;
+      await call("/generate-plan", { exam_id: exam.id, exam_revision: exam.revision, start_date: day(1), minutes: 120, block_minutes: 60, local_time: "17:00", replace: false });
+      const responses = Array(14).fill(""); responses[4] = `Return ${stamp}`;
+      ({ timer } = await call("/timer"));
+      ({ timer } = await call("/timer", { action: "start", revision: timer.revision, request_id: crypto.randomUUID(), subject_id: subject.id, guide: { checked: Array(14).fill(false), responses, reflection: "", next_review: day(0) } }));
+      await call("/timer", { action: "stop", revision: timer.revision, request_id: crypto.randomUUID() });
+      window.dispatchEvent(new CustomEvent("kitty-study-changed"));
+    }, stamp);
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Exams & plans", exact: true }).click();
+
+    const card = page.getByRole("region", { name: "Exam countdowns" }).getByRole("article").filter({ hasText: `Exam ${stamp}` });
+    await card.waitFor();
+    assert.match(await card.textContent(), /5\s*days/);
+    assert.match(await card.textContent(), /0\/2 blocks/);
+    assert.equal(await card.getByRole("button", { name: "Study now" }).count(), 1, "the countdown card has no single action");
+
+    const timeline = page.getByRole("region", { name: "Timeline to exams" });
+    const blocks = timeline.getByRole("button", { name: new RegExp(`^Study: Exam ${stamp}`) });
+    assert.equal(await blocks.count(), 2);
+    assert.equal(await timeline.getByRole("img", { name: new RegExp(`^Exam ${stamp} in 5 days`) }).count(), 1, "the exam is not a blossom on its lane");
+    assert.equal(await timeline.getByRole("img", { name: new RegExp(`^Spaced return: Return ${stamp}`) }).count(), 1, "the return is not on the returns lane");
+    await blocks.first().click();
+    await timeline.getByRole("button", { name: "Mark done" }).click();
+    await page.waitForFunction((stamp) => /done/.test(document.querySelector(`[aria-label="Timeline to exams"] [aria-label^="Study: Exam ${stamp}"]`)?.getAttribute("aria-label") ?? ""), stamp);
+    await card.getByText("1/2 blocks").waitFor();
+
+    await page.getByRole("radio", { name: "Days" }).click();
+    const strip = page.getByRole("region", { name: "Next 12 days" });
+    const days = strip.getByRole("group");
+    assert.equal(await days.count(), 12);
+    const mine = (index) => days.nth(index).getByRole("button", { name: new RegExp(`^Study: Exam ${stamp}`) });
+    assert.equal(await mine(1).count(), 1);
+    // Keep the whole strip on screen: scrolling mid-drag cancels a native drag.
+    await strip.evaluate((node) => node.scrollIntoView({ block: "start" }));
+    await mine(1).dragTo(days.nth(2), { targetPosition: { x: 20, y: 40 } });
+    await mine(2).waitFor();
+    assert.equal(await mine(1).count(), 0, "the dragged block stayed on its day");
+    await mine(3).dragTo(days.nth(2), { targetPosition: { x: 20, y: 40 } });
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Next 12 days"] [role="group"]')[2]?.getAttribute("aria-label")?.includes("heavy"));
+    assert.equal(await mine(2).count(), 2);
+    await days.nth(2).getByText(/Heavy day/).waitFor();
+
+    const returns = page.getByRole("region", { name: "Spaced returns" });
+    const due = returns.getByRole("region", { name: "Due" }).getByRole("article").filter({ hasText: `Return ${stamp}` });
+    await due.getByRole("button", { name: "Recalled" }).click();
+    const later = returns.getByRole("region", { name: "This week" }).getByRole("article").filter({ hasText: `Return ${stamp}` });
+    await later.waitFor();
+    assert.equal(await later.getByRole("img", { name: /^Rung 2 of 5/ }).count(), 1, "recalling did not climb the ladder");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("study streak", () => {
+  test("manual logging fills persisted streak segments and cancel does not log", async () => {
+    const { page, context, problems } = await open("study", { dock: "hidden" });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
+    const ring = page.getByRole("region", { name: "Study streak" });
+    const before = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
+    await ring.getByRole("button").click();
+    const editor = page.getByRole("region", { name: "Edit completed session" });
+    await editor.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.equal(await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats.session_count), before.session_count);
+    await ring.getByRole("button").click();
+    await editor.getByLabel("Start timestamp with explicit offset").fill(new Date(Date.now() - 20 * 60_000).toISOString());
+    await editor.getByLabel("IANA timezone").fill("UTC");
+    await editor.getByLabel("Duration in minutes").fill("15");
+    await editor.getByRole("button", { name: "Save completed session" }).click();
+    await ring.getByText("Today's study is logged.", { exact: true }).waitFor();
+    const saved = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
+    assert.equal(saved.session_count, before.session_count + 1);
+    assert.ok(saved.daily_streak >= 1);
+    assert.equal(await ring.locator("path.filled").count(), saved.daily_streak);
+    await page.reload();
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
+    assert.match(await ring.getByRole("img").getAttribute("aria-label"), new RegExp(`^${saved.daily_streak} day streak`));
+    await ring.screenshot({ path: "/tmp/kitty-shots/q21-streak.png" });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

@@ -35,6 +35,8 @@ def post(app, conn, path, body):
         return _call(study.timer_command, conn, body)
     if route == 'guide':
         return _call(study.save_guide, conn, body)
+    if route == 'returns':
+        return _call(study.review_return, conn, body)
     if route == 'settings':
         return _call(study.save_settings, conn, body)
     if route == 'sessions':
