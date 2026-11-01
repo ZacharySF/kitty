@@ -135,7 +135,7 @@ def graph(conn, value, *, portable=False):
     result = {'nodes': [], 'edges': []}
     ids, sources = set(), set()
     for node in nodes:
-        _fields(node, {'id', 'kind', 'label', 'notes', 'x', 'y', 'url', 'source', 'collapsed', 'map_id'})
+        _fields(node, {'id', 'kind', 'label', 'notes', 'x', 'y', 'url', 'source', 'collapsed', 'map_id', 'free'})
         key = _key(node.get('id'))
         kind = node.get('kind')
         if not isinstance(kind, str) or kind not in KINDS or key in ids:
@@ -151,6 +151,9 @@ def graph(conn, value, *, portable=False):
             sources.add(identity)
         if not isinstance(node.get('collapsed', False), bool):
             raise ValueError('Collapsed must be true or false')
+        # A free node keeps its own position instead of following the automatic tree layout.
+        if not isinstance(node.get('free', False), bool):
+            raise ValueError('Free must be true or false')
         linked_map = node.get('map_id')
         if linked_map is not None:
             if portable:
@@ -162,6 +165,7 @@ def graph(conn, value, *, portable=False):
                                 'y': _number(node.get('y'), 'Node y', -100000, 100000),
                                 'url': _url(node.get('url', '')), 'source': source,
                                 **({'collapsed': node['collapsed']} if 'collapsed' in node else {}),
+                                **({'free': True} if node.get('free') else {}),
                                 **({'map_id': linked_map} if linked_map is not None else {})})
     edge_ids = set()
     for edge in edges:

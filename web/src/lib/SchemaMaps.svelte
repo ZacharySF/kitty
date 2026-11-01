@@ -34,6 +34,8 @@
     source: Source | null;
     collapsed?: boolean;
     map_id?: number | null;
+    /** Placed by hand (detached or free-positioned); the tree layout lays its branch out around it. */
+    free?: boolean;
   };
   type Edge = { id: string; from: string; to: string; label: string };
   type Graph = { nodes: Node[]; edges: Edge[] };
@@ -198,7 +200,10 @@
     node: string;
     before: Snapshot;
     moved: boolean;
+    branch: string[];
   } | null = null;
+  // Q65 B: the node being dragged, the pill it would snap into, and whether D detached it.
+  let dragging = $state(""), dropTarget = $state(""), detaching = $state(false);
   let view = $state<View3D>("edit"),
     mapLayout = $state<GraphLayout>("tree"),
     netLayout = $state<GraphLayout>("tree");
@@ -785,6 +790,11 @@
   }
   function nodeKey(e: KeyboardEvent, n: Node) {
     if (!editable || e.altKey) return;
+    if (gesture?.node) {
+      // Mid-drag, D breaks the branch off (press again to reattach on drop).
+      if (e.key.toLowerCase() === "d") { e.preventDefault(); e.stopPropagation(); detaching = !detaching; dropTarget = ""; }
+      return;
+    }
     if (e.ctrlKey || e.metaKey) {
       if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void editInline(n); }
       else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); choose(n); reorder(n, e.key === "ArrowUp" ? -1 : 1); }
@@ -823,10 +833,18 @@
       x: e.clientX,
       y: e.clientY,
       node: id,
+      branch: id ? [...descendants(id)] : [],
       before: snapshot(),
       moved: false,
     };
     stage?.setPointerCapture(e.pointerId);
+  }
+  /** The pill under the pointer that a dragged branch may move into (never its own branch). */
+  function dropCandidate(e: PointerEvent, branch: string[]) {
+    if (!current || !stage) return undefined;
+    const rect = stage.getBoundingClientRect(), v = current.viewport;
+    const x = (e.clientX - rect.left - v.x) / v.zoom, y = (e.clientY - rect.top - v.y) / v.zoom;
+    return visibleNodes.find(n => !branch.includes(n.id) && x >= n.x && x <= n.x + box(n).w && y >= n.y && y <= n.y + box(n).h);
   }
   function move(e: PointerEvent) {
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
@@ -835,16 +853,24 @@
     if (Math.abs(dx) + Math.abs(dy) < 2 && !gesture.moved) return;
     gesture.moved = true;
     if (gesture.node) {
-      const n = current.graph.nodes.find((n) => n.id === gesture!.node)!,
-        old = gesture.before.graph.nodes.find((n) => n.id === gesture!.node)!;
-      n.x = Math.max(
-        -100000,
-        Math.min(100000, old.x + dx / current.viewport.zoom),
-      );
-      n.y = Math.max(
-        -100000,
-        Math.min(100000, old.y + dy / current.viewport.zoom),
-      );
+      const branch = gesture.branch, origin = gesture.before.graph.nodes.find((n) => n.id === gesture!.node)!;
+      const target = detaching ? undefined : dropCandidate(e, branch);
+      let ox = dx / current.viewport.zoom, oy = dy / current.viewport.zoom;
+      if (target) {
+        // Preview the drop: the branch snaps to where it would land, after the target's last child.
+        const size = box(target), last = visibleNodes.filter(n => parents.get(n.id) === target.id && !branch.includes(n.id)).reduce((low, n) => Math.max(low, n.y + box(n).h), -Infinity);
+        ox = target.x + size.w + 56 - origin.x;
+        oy = (Number.isFinite(last) ? last + 14 : target.y + size.h / 2 - box(origin).h / 2) - origin.y;
+      }
+      // The whole branch travels with the dragged node.
+      for (const id of branch) {
+        const n = current.graph.nodes.find((n) => n.id === id), old = gesture.before.graph.nodes.find((n) => n.id === id);
+        if (!n || !old) continue;
+        n.x = Math.max(-LIMIT, Math.min(LIMIT, old.x + ox));
+        n.y = Math.max(-LIMIT, Math.min(LIMIT, old.y + oy));
+      }
+      dragging = gesture.node;
+      dropTarget = target?.id ?? "";
     } else {
       current.viewport.x = Math.max(
         -1e7,
@@ -856,29 +882,46 @@
       );
     }
   }
+  /** Breaks a node (and its branch) off its parent as a floating root that keeps its place. */
+  function detachBranch(n: Node) {
+    if (!current) return;
+    current.graph.edges = current.graph.edges.filter(e => !(treeEdges.has(e.id) && e.to === n.id));
+    n.free = true;
+  }
+  function detachSelected() {
+    if (!current || !node || !editable || isRoot(node)) return;
+    remember();
+    detachBranch(node);
+    relayout(false);
+    notice = "Branch detached · save to keep";
+  }
   function end(e: PointerEvent, cancel = false) {
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
+    const target = dropTarget;
     if (cancel) Object.assign(current, clone(gesture.before));
-    else if (gesture.moved) {
-      history = [...history.slice(-29), gesture.before];
-      if (gesture.node) {
-        const dragged = current.graph.nodes.find(n => n.id === gesture!.node)!;
-        const size = box(dragged), centre = {x: dragged.x + size.w / 2, y: dragged.y + size.h / 2};
-        const target = current.graph.nodes.find(n => n.id !== dragged.id && centre.x >= n.x && centre.x <= n.x + box(n).w && centre.y >= n.y && centre.y <= n.y + box(n).h);
-        if (target) {
-          const descendants = new Set([dragged.id]);
-          for (let i = 0; i < current.graph.nodes.length; i++) for (const edge of current.graph.edges) if (descendants.has(edge.from)) descendants.add(edge.to);
-          if (!descendants.has(target.id)) {
-            current.graph.edges = current.graph.edges.filter(e => e.to !== dragged.id);
-            current.graph.edges.push({id: crypto.randomUUID(), from: target.id, to: dragged.id, label: ""});
-            target.collapsed = false;
-          }
+    else if (gesture.moved && gesture.node) {
+      const dragged = current.graph.nodes.find(n => n.id === gesture!.node)!;
+      if (detaching || target || dragged.free) {
+        history = [...history.slice(-29), gesture.before];
+        if (detaching) detachBranch(dragged);
+        else if (target) {
+          current.graph.edges = current.graph.edges.filter(e => !(treeEdges.has(e.id) && e.to === dragged.id));
+          current.graph.edges.push({id: crypto.randomUUID(), from: target, to: dragged.id, label: ""});
+          delete dragged.free;
+          const parent = current.graph.nodes.find(n => n.id === target);
+          if (parent) parent.collapsed = false;
         }
-      }
+        relayout(false);
+        dirty = true;
+        notice = detaching ? "Branch detached · save to keep" : "Unsaved local edits";
+      } else Object.assign(current, clone(gesture.before)); // No target: the branch snaps back into the layout.
+    } else if (gesture.moved) {
+      history = [...history.slice(-29), gesture.before];
       dirty = true;
       notice = "Unsaved local edits";
     }
     gesture = null;
+    dragging = ""; dropTarget = ""; detaching = false;
     if (stage?.hasPointerCapture(e.pointerId))
       stage.releasePointerCapture(e.pointerId);
   }
@@ -929,6 +972,17 @@
   function clampPosition(value: number) {
     return Math.max(-LIMIT, Math.min(LIMIT, Math.round(value)));
   }
+  /** Horizontal branch curve from parent pill `a` to child pill `b`'s facing side. */
+  function branchCurve(a: Node, b: Node) {
+    const as = box(a), bs = box(b);
+    const ca = {x: a.x + as.w / 2, y: a.y + as.h / 2}, cb = {x: b.x + bs.w / 2, y: b.y + bs.h / 2};
+    const side = cb.x >= ca.x ? 1 : -1, sx = ca.x + side * as.w / 2, ex = cb.x - side * bs.w / 2, mx = (sx + ex) / 2;
+    return {d: `M ${sx} ${ca.y} C ${mx} ${ca.y}, ${mx} ${cb.y}, ${ex} ${cb.y}`, lx: mx, ly: (ca.y + cb.y) / 2 - 6};
+  }
+  function snapPath(parent: string, child: string) {
+    const a = current?.graph.nodes.find(n => n.id === parent), b = current?.graph.nodes.find(n => n.id === child);
+    return a && b ? branchCurve(a, b).d : "";
+  }
   /** Point where the ray from a node box's center along (dx, dy) leaves the box. */
   function boundary(c: Point, dx: number, dy: number, size: {w: number; h: number}): Point {
     const t = Math.min(
@@ -950,10 +1004,7 @@
       pairs = new Map<string, Edge[]>();
     for (const e of current.graph.edges) {
       if (treeEdges.has(e.id)) {
-        const a = byId.get(e.from)!, b = byId.get(e.to)!, as = box(a), bs = box(b);
-        const ca = {x: a.x + as.w / 2, y: a.y + as.h / 2}, cb = {x: b.x + bs.w / 2, y: b.y + bs.h / 2};
-        const side = cb.x >= ca.x ? 1 : -1, sx = ca.x + side * as.w / 2, ex = cb.x - side * bs.w / 2, mx = (sx + ex) / 2;
-        shapes.set(e.id, {d: `M ${sx} ${ca.y} C ${mx} ${ca.y}, ${mx} ${cb.y}, ${ex} ${cb.y}`, lx: mx, ly: (ca.y + cb.y) / 2 - 6, tree: true});
+        shapes.set(e.id, {...branchCurve(byId.get(e.from)!, byId.get(e.to)!), tree: true});
         continue;
       }
       const key = e.from < e.to ? `${e.from} ${e.to}` : `${e.to} ${e.from}`;
@@ -1001,12 +1052,12 @@
       });
     return shapes;
   });
-  /** Left-to-right tree: roots are nodes without incoming connections (or, inside cycles, the busiest node); parents center beside their children; folded branches take one row. */
+  /** Left-to-right tree over tree edges: roots are nodes without a parent (or, inside cycles, the busiest node); parents center beside their children; folded branches take one row. */
   function treeLayout(graph: Graph) {
     const out = new Map(graph.nodes.map((n) => [n.id, [] as string[]])),
       incoming = new Map(graph.nodes.map((n) => [n.id, 0]));
     for (const e of graph.edges)
-      if (e.from !== e.to) {
+      if (treeEdges.has(e.id)) {
         out.get(e.from)!.push(e.to);
         incoming.set(e.to, incoming.get(e.to)! + 1);
       }
@@ -1035,19 +1086,31 @@
       if (!depth.has(n.id)) grow(n.id);
     const positions = new Map<string, Point>(),
       byId = new Map(graph.nodes.map((n) => [n.id, n])),
-      row = PILL_H + 14;
+      row = PILL_H + 14,
+      anchors: string[] = [];
     let slot = 0;
     const place = (id: string, x: number): number => {
       const n = byId.get(id)!, size = box(n);
-      const kids = n.collapsed ? [] : children.get(id)!;
+      // Free nodes are anchors: they keep their own place and their branch is laid out around them.
+      const kids: string[] = [];
+      if (!n.collapsed) for (const kid of children.get(id)!) (byId.get(kid)!.free ? anchors : kids).push(kid);
       const ys = kids.map((kid) => place(kid, x + size.w + 56));
       const cy = ys.length ? (ys[0] + ys[ys.length - 1]) / 2 : slot++ * row + row / 2;
       positions.set(id, { x, y: cy - size.h / 2 });
       return cy;
     };
     for (const root of roots) {
-      place(root, 0);
-      slot += 0.8;
+      if (byId.get(root)!.free) anchors.push(root);
+      else {
+        place(root, 0);
+        slot += 0.8;
+      }
+    }
+    for (let i = 0; i < anchors.length; i++) {
+      const anchor = byId.get(anchors[i])!, placed = new Set(positions.keys());
+      slot = 0;
+      const shift = anchor.y + box(anchor).h / 2 - place(anchor.id, anchor.x);
+      for (const [id, point] of positions) if (!placed.has(id)) point.y += shift;
     }
     return positions;
   }
@@ -2040,6 +2103,8 @@
               {/each}
             </div>
           {/if}
+          <div class="stage-wrap">
+          {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · D detaches the branch"}</p>{/if}
           <svg
             bind:this={stage}
             class="stage"
@@ -2080,7 +2145,7 @@
             <g
               transform={`translate(${current.viewport.x},${current.viewport.y}) scale(${current.viewport.zoom})`}
             >
-              {#each current.graph.edges.filter(e => visibleNodes.some(n => n.id === e.from) && visibleNodes.some(n => n.id === e.to)) as e (e.id)}
+              {#each current.graph.edges.filter(e => visibleNodes.some(n => n.id === e.from) && visibleNodes.some(n => n.id === e.to) && !(e.to === dragging && treeEdges.has(e.id) && (detaching || (dropTarget && dropTarget !== e.from)))) as e (e.id)}
                 {@const shape = geometry.get(e.id)}
                 {#if shape}<path
                     d={shape.d}
@@ -2093,6 +2158,7 @@
                       : `url(#${pane.id}-schema-arrow)`}
                   /><path d={shape.d} class="edge-hit" data-edge={e.id} />{/if}
               {/each}
+              {#if dragging && dropTarget}<path class="snap-preview" d={snapPath(dropTarget, dragging)} />{/if}
               {#each visibleNodes as n (n.id)}
                 {@const size = box(n)}
                 {@const root = isRoot(n)}
@@ -2100,11 +2166,15 @@
                 <g
                   transform={`translate(${n.x},${n.y})`}
                   data-node={n.id}
+                  id={`${pane.id}-node-${n.id}`}
                   role="button"
                   tabindex="0"
                   aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}. Tab child, Enter sibling, arrows move, Control arrows reorder, Control Enter or type to rename, Space collapse.`}
                   class:selected={selected === n.id}
                   class:root
+                  class:drop-target={dropTarget === n.id}
+                  class:dragging={dragging === n.id}
+                  class:detaching={detaching && dragging === n.id}
                   class="graph-node"
                   style:--b={branchColor(n)}
                   ondblclick={() => openCard(n)}
@@ -2146,8 +2216,11 @@
                       : e.label}</text
                   >{/if}
               {/each}
+              <!-- The dragged pill is redrawn on top so it stays visible over the pill it snaps into. -->
+              {#if dragging}<use href={`#${pane.id}-node-${dragging}`} class="drag-ghost" />{/if}
             </g>
           </svg>
+          </div>
           <p class="hint">
             Tab child · Enter sibling · arrows move · Ctrl+↑/↓ reorder · Ctrl+Enter or type to rename · Space fold
           </p>
@@ -2236,6 +2309,7 @@
               <Badge label={node.kind} />
               <div class="toolbar">
                 <Button onclick={() => collapse(node)}>{node.collapsed ? "Expand" : "Collapse"}</Button>
+                <Button onclick={detachSelected} disabled={!editable || isRoot(node)} title="Break this branch off as a floating piece (or press D while dragging it)">Detach branch</Button>
                 <Button onclick={() => studyBranch("flashcards")}>Make flashcards</Button>
                 <Button onclick={() => studyBranch("quiz")}>Quiz this branch</Button>
                 <Button onclick={startBranchSession} disabled={!editable}>Start session</Button>
@@ -2546,6 +2620,34 @@
     color: var(--ink);
     background: var(--solid-panel);
     font: 500 12.5px var(--font-ui);
+  }
+  /* Q65 B: the pill a drag would snap into lights up; a detached branch shows a dashed outline. */
+  .graph-node.drop-target .pill {
+    stroke: var(--accent);
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 60%, transparent));
+  }
+  .graph-node.dragging { opacity: 0.88; cursor: grabbing; }
+  .graph-node.detaching .pill { stroke: var(--b); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .graph-node.root.detaching .pill { stroke: var(--accent); }
+  .snap-preview { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 6 5; pointer-events: none; }
+  .drag-ghost { pointer-events: none; opacity: 0.7; }
+  .stage-wrap { position: relative; }
+  .drag-hint {
+    position: absolute;
+    left: 50%;
+    top: 18px;
+    z-index: 1;
+    transform: translateX(-50%);
+    margin: 0;
+    padding: 5px 12px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--solid-raised) 80%, transparent);
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none;
   }
   @media (prefers-reduced-motion: reduce) { .graph-node .pill { transition: none; } }
   .edge {

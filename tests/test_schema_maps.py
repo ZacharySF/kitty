@@ -257,6 +257,22 @@ def test_branch_collapse_reparent_and_map_link_persist(workspace):
     assert not restored['graph']['nodes'][0].get('collapsed', False)
 
 
+def test_detached_free_branch_position_persists_and_round_trips_portably(workspace):
+    conn = workspace.conn
+    item = connected(conn)
+    item['graph']['nodes'][1].update(free=True, x=640, y=-120)
+    item['graph']['edges'] = []
+    save(conn, item)
+    loaded = schema.load(conn, item['id'])
+    assert loaded['graph']['nodes'][1]['free'] is True
+    assert (loaded['graph']['nodes'][1]['x'], loaded['graph']['nodes'][1]['y']) == (640, -120)
+    assert 'free' not in loaded['graph']['nodes'][0]
+    copy = schema.create(conn, {'title': 'Copy', 'mode': 'study', 'document': schema.export(conn, item['id'])})
+    assert copy['graph']['nodes'][1]['free'] is True
+    with pytest.raises(ValueError, match='Free'):
+        save(conn, schema.load(conn, item['id']), {'nodes': [node('n', free='yes')], 'edges': []})
+
+
 def test_note_card_source_is_unique_and_live(workspace):
     conn = workspace.conn
     notebook = conn.execute("INSERT INTO note_notebooks(title,created_at,updated_at) VALUES('Synthetic notebook','2026-01-01','2026-01-01')").lastrowid

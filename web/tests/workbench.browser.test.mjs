@@ -1421,6 +1421,8 @@ const nodeBoxes = (page) => page.evaluate(() => Object.fromEntries([...document.
   const [, x, y] = /translate\(([-\d.e]+),([-\d.e]+)\)/.exec(node.getAttribute("transform"));
   return [node.querySelector("text.label").textContent, { x: Number(x), y: Number(y) }];
 })));
+const mapNode = (page, label) => page.locator("svg.stage [data-node]").filter({ has: page.locator("text.label", { hasText: new RegExp(`^${label}$`) }) });
+const centre = async (locator) => { const box = await locator.boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
 
 describe("mind-map editing", () => {
   test("keyboard building: arrows move, Ctrl+arrows reorder, Tab child, Enter sibling, Ctrl+Enter edits", async () => {
@@ -1460,6 +1462,49 @@ describe("mind-map editing", () => {
     await page.keyboard.type(" core");
     await page.keyboard.press("Escape");
     assert.equal(await focusedNode(page), "Key ideas core");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("dragging lights the drop target and reparents; D mid-drag or Detach breaks a branch off", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { schema } = await newMindMap(page, "Drag map");
+    const pill = (label) => mapNode(page, label).locator("rect.pill");
+    await mapNode(page, "Key ideas").click();
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Leaf");
+    await page.keyboard.press("Escape");
+    // Drag Leaf onto Questions: Questions lights up, and Leaf becomes its child.
+    const from = await centre(pill("Leaf")), to = await centre(pill("Questions"));
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 });
+    await page.mouse.move(to.x, to.y, { steps: 4 });
+    assert.match(await mapNode(page, "Questions").getAttribute("class"), /drop-target/, "the drop target is not highlighted");
+    assert.equal(await page.getByRole("status").filter({ hasText: /Drop on/ }).count(), 1, "no drag hint");
+    await page.mouse.up();
+    assert.doesNotMatch(await mapNode(page, "Questions").getAttribute("class"), /drop-target/);
+    let boxes = await nodeBoxes(page);
+    assert.ok(boxes.Leaf.x > boxes.Questions.x, "Leaf did not move under Questions");
+    assert.ok(Math.abs((await centre(pill("Leaf"))).y - (await centre(pill("Questions"))).y) < 4, "Leaf is not Questions' only child");
+    // Drag Examples to empty space and press D: it breaks off as a floating root where it was dropped.
+    const start = await centre(pill("Examples"));
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 40, start.y + 120, { steps: 5 });
+    await page.keyboard.press("d");
+    await page.getByRole("status").filter({ hasText: /^Detached/ }).waitFor();
+    await page.mouse.move(start.x + 60, start.y + 150, { steps: 3 });
+    await page.mouse.up();
+    assert.match(await mapNode(page, "Examples").getAttribute("class"), /\broot\b/, "Examples was not detached");
+    const dropped = await centre(pill("Examples"));
+    assert.ok(Math.abs(dropped.x - (start.x + 60)) < 6 && Math.abs(dropped.y - (start.y + 150)) < 6, "the detached branch did not stay where it was dropped");
+    // The inspector's Detach breaks Questions (with Leaf) off too.
+    await mapNode(page, "Questions").click();
+    await schema.getByRole("button", { name: "Detach branch" }).click();
+    assert.match(await mapNode(page, "Questions").getAttribute("class"), /\broot\b/);
+    boxes = await nodeBoxes(page);
+    assert.ok(boxes.Leaf.x > boxes.Questions.x, "Leaf did not stay with Questions");
     assert.deepEqual(problems, []);
     await context.close();
   });
