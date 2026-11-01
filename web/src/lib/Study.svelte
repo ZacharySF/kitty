@@ -6,6 +6,7 @@
   import AIReview from "./AIReview.svelte";
   import SchemaMaps from "./SchemaMaps.svelte";
   import StudyGuide from "./StudyGuide.svelte";
+  import TimerRing from "./TimerRing.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import EmptyState from "./EmptyState.svelte";
 
@@ -58,6 +59,7 @@
     phase_id: string | null;
     session_id: string | null;
     remaining_seconds: number;
+    duration_seconds: number;
     deadline_at: string | null;
     subject_id: number | null;
     project_id: number | null;
@@ -215,6 +217,12 @@
         2,
         "0",
       )}:${(Math.ceil(remaining) % 60).toString().padStart(2, "0")}`,
+  );
+  /** Length of the current phase; older timers without `duration_seconds` fall back to settings. */
+  const phaseTotal = $derived(
+    !data ? 0
+      : data.timer.duration_seconds
+        || (data.timer.phase === "priming" ? 300 : data.timer.phase === "focus" ? data.settings.focus_seconds : data.settings.short_break_seconds),
   );
   const daySeries = $derived([
     {
@@ -813,7 +821,9 @@
         <span class="phase-dot"></span>{phaseLabel(data.timer.phase)}
         <span class="muted">· {data.timer.status === "idle" ? "Ready when you are" : data.timer.status === "paused" ? "Paused" : data.timer.phase === "priming" ? "Preview the gist and prepare your plan" : data.timer.phase === "focus" ? "One thing at a time" : "Step away and recharge"}</span>
       </div>
-      <div class="clock" aria-label={`${phaseLabel(data.timer.phase)} remaining ${clockLabel}`}>{clockLabel}</div>
+      <TimerRing {remaining} total={phaseTotal} phase={data.timer.phase} rounds={data.timer.cycle}
+        label={`${phaseLabel(data.timer.phase)}, ${clockLabel.replace(/^0/, "")} left of ${Math.floor(phaseTotal / 60)}:${(phaseTotal % 60).toString().padStart(2, "0")}`}
+      ><div class="clock">{clockLabel}</div></TimerRing>
       <p class="rhythm">5 min priming <span>→</span> {minutesLabel(data.settings.focus_seconds)} focus <span>→</span> {minutesLabel(data.settings.short_break_seconds)} break <span>→</span> repeat focus / break</p>
       <div class="row actions">
         {#if data.timer.status === "running"}<Button
@@ -839,7 +849,6 @@
             onclick={() => timerAction("skip_break")}
             >Skip break <kbd>b</kbd></Button
           >{/if}
-        {#if data.timer.status !== "idle"}<Button onclick={() => window.dispatchEvent(new CustomEvent("kitty-study-restore-bar"))}>Show timer bar</Button>{/if}
       </div>
       <p class="muted timer-help">
         Start with five minutes of priming, then focus and break alternate until you pause or stop. Only completed focus counts; priming, pauses and breaks do not.
@@ -1590,13 +1599,16 @@
     border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
     padding: clamp(1.1rem, 3vw, 2rem);
   }
+  .timer-card :global(.timer-ring) {
+    margin: 0.8rem auto 0.4rem;
+  }
   .clock {
     color: var(--ink);
-    font-size: clamp(4.5rem, 11vw, 8rem);
+    font-size: 3.6rem;
     font-variant-numeric: tabular-nums;
     font-weight: 500;
-    letter-spacing: -0.065em;
-    line-height: 1.15;
+    letter-spacing: -0.05em;
+    line-height: 1;
   }
   .eyebrow {
     color: var(--muted);

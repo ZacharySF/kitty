@@ -477,3 +477,26 @@ describe("loaders", () => {
     await context.close();
   });
 });
+
+describe("study timer", () => {
+  test("a running session shows as a ring in the Study card and in the top bar, whose popover pauses it", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await page.getByRole("button", { name: /Start session/ }).first().click();
+    const card = page.locator(".timer-card .timer-ring");
+    await card.waitFor();
+    assert.match(await card.getAttribute("aria-label"), /Priming, \d+:\d\d left of 5:00/);
+    const offset = await card.locator(".progress").evaluate((node) => Number(getComputedStyle(node).strokeDashoffset.replace("px", "")));
+    assert.ok(offset >= 0, "progress arc has no dash offset");
+    const top = page.locator(".system-bar").getByRole("button", { name: /^Study timer/ });
+    await top.waitFor();
+    assert.equal(await top.locator(".timer-ring").count(), 1, "top bar timer has no ring");
+    assert.match(await top.textContent(), /\d\d:\d\d/);
+    assert.equal(await page.locator("aside.focus-bar").count(), 0, "the full-width focus strip is still shown");
+    await top.click();
+    const pause = page.getByRole("button", { name: "Pause", exact: true });
+    await pause.click();
+    await page.waitForFunction(() => /paused/i.test(document.querySelector('.system-bar [aria-label^="Study timer"]')?.getAttribute("aria-label") ?? ""));
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

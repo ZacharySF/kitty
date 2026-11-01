@@ -367,6 +367,7 @@
         title={`${group.label} · Focus its schema node: ${group.shortcut}`}
         onclick={() => navigate(group.views[0])}>{group.label}</button>{/each}
     </nav>
+    {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
     <ThemePicker />
     <button
       class="system-command"
@@ -387,7 +388,6 @@
   </header>
   <WorkspaceTabs bind:this={tabBar} tabs={tabLabels} {activeId} onselect={selectTab} onclose={closeTab} onnew={newTab} />
   </div>
-  {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
   {#if studyTools && view !== "calendar"}<CalendarReminders />{/if}
   <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">
