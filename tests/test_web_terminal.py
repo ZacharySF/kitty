@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from kitty import web_terminal
+from kitty import web_socket
 from kitty.web_server import LocalHTTPServer
 from terminal_support import FakeHerdr, FrameReader, Site, make_root, send_frame, site
 
@@ -113,7 +113,7 @@ def test_upgrade_is_refused_without_the_same_origin_proof(tmp_path, herdr, monke
         elif fault == "unknown-token":
             token = "f" * 64
         elif fault == "stale-token":
-            monkeypatch.setattr(web_terminal, "TOKEN_TTL", 0.05)
+            monkeypatch.setattr(web_socket, "TOKEN_TTL", 0.05)
             token = running.token()
             time.sleep(0.2)
         elif fault == "foreign-token":
@@ -261,8 +261,8 @@ def test_handshake_must_be_a_websocket_upgrade(tmp_path, herdr):
         status, _headers, connection, _rest = running.connect(running.token())
         connection.close()
         assert status == 101
-    key_check = base64.b64encode(hashlib.sha1(b"x" + web_terminal.WEBSOCKET_GUID).digest())
-    assert web_terminal.accept_key("x") == key_check.decode()
+    key_check = base64.b64encode(hashlib.sha1(b"x" + web_socket.WEBSOCKET_GUID).digest())
+    assert web_socket.accept_key("x") == key_check.decode()
 
 
 def test_unmasked_client_frames_close_the_terminal(tmp_path, herdr):

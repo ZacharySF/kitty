@@ -121,7 +121,8 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "workspace") for prefix in (
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
         "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
-        "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness")),
+        "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness",
+        "/api/blocks")),
     ("/api/terminal", "terminal"),
 ), key=lambda item: -len(item[0])))
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
@@ -132,7 +133,8 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
-    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), (None, "web_desktop"),
+    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
+    (None, "web_desktop"),
     (None, "web_account"),
     ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
@@ -191,6 +193,13 @@ class WebApplication:
         if self.automation is not None:
             self.automation.close()
         self.tasks.close()
+
+    def mutated(self) -> None:
+        """Tell extensions a mutation committed (live push wakes at once instead of polling)."""
+        for extension in self.extensions:
+            hook = getattr(extension, "mutated", None)
+            if hook:
+                hook(self)
 
     def require_module(self, module: str) -> None:
         """403 unless `module` is in this process's active snapshot."""
@@ -539,6 +548,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with self.server.app.mutation_lock:
                     with closing(connect(self.server.app.settings.db_path)) as conn:
                         result = self.server.app.mutate(conn, path, body)
+                self.server.app.mutated()
                 self._json(200, result)
             elif self.command == "GET" and self.headers.get("Upgrade") is not None:
                 self._upgrade(path, query)
