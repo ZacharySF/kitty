@@ -158,7 +158,7 @@ def test_recovery_strategy_migration_preserves_history_and_constraints(tmp_path)
 
 
 def test_calendar_palette_migration_moves_the_fixed_default_onto_theme_slots(tmp_path):
-    """033 drops the #6d5dfc default: local calendars still on it take the palette slot
+    """035 drops the #6d5dfc default: local calendars still on it take the palette slot
     the week view already painted them (name order); chosen and Google hex colours stay."""
     import shutil
     import sqlite3
@@ -166,7 +166,7 @@ def test_calendar_palette_migration_moves_the_fixed_default_onto_theme_slots(tmp
     early = tmp_path / "before-palette"
     early.mkdir()
     for migration in available_migrations():
-        if migration.version < 33:
+        if migration.version < 35:
             shutil.copy(migration.path, early / migration.path.name)
     conn = connect(tmp_path / "calendar.sqlite")
     try:
