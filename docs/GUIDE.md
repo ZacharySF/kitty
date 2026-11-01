@@ -476,6 +476,12 @@ Ctrl+Z undoes every map edit (including drags, viewport changes and recolouring)
 Ctrl+Shift+Z or **Redo** reapplies it. Saving keeps the current editor's history.
 A new edit after undo discards the redo branch. Reloading starts a fresh local
 history; **Undo last save** still restores the durable previous saved snapshot.
+**Split branch into map** moves its descendants into a new map with links in both
+directions. To merge, drag a root onto another map's named drop target above the
+canvas (or use **Merge into map → Merge root**). Merging back replaces the split
+placeholder; other roots stay in the source map. Transfers save both maps
+atomically; undo/redo restores both sides and refuses if either map changed in
+another window. The emptied source map remains available.
 Tree/radial layouts, an outline, linked note cards and links between maps help
 organize material. **Quiz me** hides labels for recall; a branch can produce a
 flashcard draft. **Auto-links** also suggests local sources for node labels;

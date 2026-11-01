@@ -237,8 +237,11 @@ def _live(conn, document):
 def load(conn, item_id):
     row = _row(conn, item_id)
     document = json.loads(row['graph_json'])
+    previous = json.loads(row['previous_json']) if row['previous_json'] else {}
     return {'id': row['id'], 'title': row['title'], 'mode': row['mode'], 'revision': row['revision'],
-            'graph': document, 'viewport': json.loads(row['viewport_json']), 'can_undo': row['previous_json'] is not None,
+            'graph': document, 'viewport': json.loads(row['viewport_json']),
+            'can_undo': bool(previous) and not previous.get('redo', False), 'can_redo': previous.get('redo', False),
+            'paired_history': 'partner' in previous,
             'live': _live(conn, document)}
 
 
@@ -409,6 +412,92 @@ def save(conn, body):
                       graph(conn, body.get('graph')), viewport(body.get('viewport')))
 
 
+def _branch(document, root):
+    if root not in {node['id'] for node in document['nodes']}:
+        raise ValueError('Branch root not found')
+    parents = {}
+    for edge in document['edges']:
+        if edge.get('kind') != 'cross' and edge['from'] != edge['to']:
+            parents.setdefault(edge['to'], edge['from'])
+    picked = {root}
+    while True:
+        added = {key for key, parent in parents.items() if parent in picked} - picked
+        if not added:
+            return picked
+        picked |= added
+
+
+def transfer(conn, body):
+    """Atomically split a branch or move a root into another saved map."""
+    _fields(body, {'id', 'revision', 'node_id', 'target_id', 'target_revision'})
+    with transaction(conn, immediate=True):
+        row = _row(conn, body.get('id'))
+        _revision(row, body.get('revision'))
+        source = json.loads(row['graph_json'])
+        picked = _branch(source, body.get('node_id'))
+        root = next(node for node in source['nodes'] if node['id'] == body['node_id'])
+        splitting = body.get('target_id') is None
+        if splitting:
+            if conn.execute('SELECT count(*) FROM schema_maps').fetchone()[0] >= MAX_MAPS:
+                raise ValueError('At most 100 maps are supported')
+            cursor = conn.execute('INSERT INTO schema_maps(title,mode,graph_json,viewport_json,updated_at) VALUES(?,?,?,?,?)',
+                (root['label'], row['mode'], '{"nodes":[],"edges":[]}', row['viewport_json'], datetime.now(timezone.utc).isoformat()))
+            other = _row(conn, cursor.lastrowid)
+        else:
+            other = _row(conn, body['target_id'])
+            if other['id'] == row['id']:
+                raise ValueError('Choose another map')
+            _revision(other, body.get('target_revision'))
+            if any(edge['to'] == root['id'] and edge['from'] != root['id'] and edge.get('kind') != 'cross' for edge in source['edges']):
+                raise ValueError('Only a root can be dropped into another map')
+        destination = json.loads(other['graph_json'])
+        remap = {key: uuid.uuid4().hex for key in picked}
+        moved = [{**node, 'id': remap[node['id']]} for node in source['nodes'] if node['id'] in picked]
+        for node in moved:
+            if node.get('map_id') == other['id']:
+                node.pop('map_id')
+        if splitting:
+            next(node for node in moved if node['id'] == remap[root['id']])['map_id'] = row['id']
+        existing = list(destination['nodes'])
+        placeholder = next((node for node in existing if node.get('map_id') == row['id']
+                            and node['label'] == root['label']), None) if not splitting else None
+        if placeholder:
+            destination['nodes'].remove(placeholder)
+            existing.remove(placeholder)
+            for edge in destination['edges']:
+                for endpoint in ('from', 'to'):
+                    if edge[endpoint] == placeholder['id']:
+                        edge[endpoint] = remap[root['id']]
+        anchor = placeholder or (existing[0] if existing else None)
+        if anchor:
+            x = anchor['x'] if placeholder else anchor['x'] + 300
+            y = anchor['y'] if placeholder else max(node['y'] for node in existing) + 90
+            for node in moved:
+                node['x'] = max(-100000, min(100000, node['x'] + x - root['x']))
+                node['y'] = max(-100000, min(100000, node['y'] + y - root['y']))
+        destination['nodes'] += moved
+        destination['edges'] += [{**edge, 'id': uuid.uuid4().hex, 'from': remap[edge['from']], 'to': remap[edge['to']]}
+                                 for edge in source['edges'] if edge['from'] in picked and edge['to'] in picked]
+        if not splitting and existing and not placeholder:
+            parent = next((node for node in existing if not any(
+                e['to'] == node['id'] and e.get('kind') != 'cross' for e in destination['edges'])), existing[0])
+            destination['edges'].append({'id': uuid.uuid4().hex, 'from': parent['id'], 'to': remap[root['id']], 'label': ''})
+        source['nodes'] = [node for node in source['nodes'] if node['id'] not in picked or (splitting and node['id'] == root['id'])]
+        if splitting:
+            root['map_id'] = other['id']
+        source['edges'] = [edge for edge in source['edges'] if
+                           (edge['from'] not in picked and edge['to'] not in picked) or
+                           (splitting and edge['to'] == root['id'] and edge['from'] not in picked)]
+        _write(conn, row, row['title'], graph(conn, source), json.loads(row['viewport_json']))
+        _write(conn, other, other['title'], graph(conn, destination), json.loads(other['viewport_json']))
+        for own, partner in ((row, other), (other, row)):
+            previous = json.loads(_snapshot(own))
+            previous['partner'] = {'id': partner['id'], 'revision': partner['revision'] + 1,
+                                   'snapshot': json.loads(_snapshot(partner))}
+            conn.execute('UPDATE schema_maps SET previous_json=? WHERE id=?', (json.dumps(previous), own['id']))
+        return load(conn, other['id'])
+
+
 def add_node(conn, body):
     """Insert a linked or free node without overwriting another editor's work."""
     _fields(body, {'map_id', 'revision', 'label', 'kind', 'parent_id', 'source'})
@@ -443,13 +532,31 @@ def delete(conn, body):
 
 
 def undo(conn, body):
-    _fields(body, {'id', 'revision'})
+    _fields(body, {'id', 'revision', 'redo'})
     with transaction(conn, immediate=True):
         row = _row(conn, body.get('id'))
         _revision(row, body.get('revision'))
         if row['previous_json'] is None:
             raise ValueError('No saved change to undo')
         previous = json.loads(row['previous_json'])
+        if bool(body.get('redo', False)) != previous.get('redo', False):
+            raise ValueError('No saved change to redo' if body.get('redo') else 'No saved change to undo')
+        if 'partner' in previous:
+            partner = _row(conn, previous['partner']['id'])
+            _revision(partner, previous['partner']['revision'])
+            own_before, partner_before = json.loads(_snapshot(row)), json.loads(_snapshot(partner))
+            for own, saved, other, other_before in (
+                (row, previous, partner, partner_before),
+                (partner, previous['partner']['snapshot'], row, own_before),
+            ):
+                reverse = json.loads(_snapshot(own))
+                reverse.update(redo=not previous.get('redo', False), partner={
+                    'id': other['id'], 'revision': other['revision'] + 1, 'snapshot': other_before})
+                conn.execute('''UPDATE schema_maps SET title=?,mode=?,graph_json=?,viewport_json=?,previous_json=?,
+                    revision=revision+1,updated_at=? WHERE id=?''',
+                    (*[saved[key] for key in ('title', 'mode', 'graph_json', 'viewport_json')],
+                     json.dumps(reverse), datetime.now(timezone.utc).isoformat(), own['id']))
+            return load(conn, row['id'])
         # Missing sources can remain visible after undo; they are never rebound.
         conn.execute('''UPDATE schema_maps SET title=?,mode=?,graph_json=?,viewport_json=?,previous_json=NULL,
             revision=revision+1,updated_at=? WHERE id=?''',

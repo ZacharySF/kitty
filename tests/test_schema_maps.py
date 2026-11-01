@@ -428,3 +428,48 @@ def test_network_query_boundaries(workspace):
     assert len(schema.network(conn)['maps']) == schema.MAX_MAPS
     with pytest.raises(ValueError, match='At most'):
         schema.create(conn, {'title': 'Too many', 'mode': 'general'})
+
+
+def test_split_merge_and_paired_undo_redo_are_atomic(workspace):
+    conn = workspace.conn
+    original = save(conn, create(conn), {'nodes': [node('root'), node('branch'), node('leaf')],
+        'edges': [{'id': 'a', 'from': 'root', 'to': 'branch', 'label': ''},
+                  {'id': 'b', 'from': 'branch', 'to': 'leaf', 'label': ''}]})
+    branch = schema.transfer(conn, {'id': original['id'], 'revision': original['revision'], 'node_id': 'branch'})
+    left = schema.load(conn, original['id'])
+    assert [n['label'] for n in branch['graph']['nodes']] == ['branch', 'leaf']
+    assert [n['label'] for n in left['graph']['nodes']] == ['root', 'branch']
+    assert left['graph']['nodes'][1]['map_id'] == branch['id']
+    assert branch['graph']['nodes'][0]['map_id'] == original['id']
+    undone = schema.undo(conn, {'id': branch['id'], 'revision': branch['revision']})
+    assert schema.load(conn, original['id'])['graph'] == original['graph']
+    assert undone['graph']['nodes'] == []
+    assert undone['can_redo'] and not undone['can_undo']
+    redone = schema.undo(conn, {'id': undone['id'], 'revision': undone['revision'], 'redo': True})
+    assert redone['graph'] == branch['graph']
+    left = schema.load(conn, original['id'])
+    merged = schema.transfer(conn, {'id': redone['id'], 'revision': redone['revision'],
+        'node_id': redone['graph']['nodes'][0]['id'], 'target_id': left['id'], 'target_revision': left['revision']})
+    assert sorted(n['label'] for n in merged['graph']['nodes']) == ['branch', 'leaf', 'root']
+    assert len(merged['graph']['edges']) == 2
+    assert all(n.get('map_id') != merged['id'] for n in merged['graph']['nodes'])
+    assert schema.load(conn, branch['id'])['graph']['nodes'] == []
+    restored = schema.undo(conn, {'id': merged['id'], 'revision': merged['revision']})
+    assert restored['graph'] == left['graph']
+    assert schema.load(conn, branch['id'])['graph'] == branch['graph']
+
+
+def test_transfer_conflicts_preserve_both_maps(workspace):
+    conn = workspace.conn
+    source, target = connected(conn), create(conn)
+    with pytest.raises(schema.SchemaConflict):
+        schema.transfer(conn, {'id': source['id'], 'revision': source['revision'], 'node_id': 'physics',
+            'target_id': target['id'], 'target_revision': target['revision'] - 1})
+    assert schema.load(conn, source['id'])['graph'] == source['graph']
+    assert schema.load(conn, target['id'])['graph'] == target['graph']
+    moved = schema.transfer(conn, {'id': source['id'], 'revision': source['revision'], 'node_id': 'physics'})
+    changed = save(conn, schema.load(conn, source['id']), title='Another window')
+    with pytest.raises(schema.SchemaConflict):
+        schema.undo(conn, {'id': moved['id'], 'revision': moved['revision']})
+    assert schema.load(conn, source['id'])['title'] == changed['title']
+    assert schema.load(conn, moved['id'])['graph'] == moved['graph']

@@ -61,6 +61,8 @@
     viewport: View;
     live: Record<string, Live>;
     can_undo: boolean;
+    can_redo?: boolean;
+    paired_history?: boolean;
   };
   type Summary = { id: number; title: string; mode: string; revision: number };
   type Job = {
@@ -698,7 +700,7 @@
     busy = true;
     error = "";
     try {
-      const forward = snapshot();
+      const forward = snapshot(), paired = current.paired_history;
       accepted(
         await api<MapItem>("/schema/undo", {
           id: current.id,
@@ -706,7 +708,7 @@
         }),
       );
       await refresh();
-      future = [forward];
+      if (!paired) future = [forward];
     } catch (e) {
       failure(e);
       blocked = error.includes("changed in another window");
@@ -714,14 +716,42 @@
       busy = false;
     }
   }
-  function redo() {
-    if (!current || !editable || !future.length) return;
+  async function redo() {
+    if (!current || !editable) return;
+    if (!future.length) {
+      if (!current.can_redo || dirty) return;
+      busy = true; error = "";
+      try {
+        accepted(await api<MapItem>("/schema/undo", {id: current.id, revision: current.revision, redo: true}));
+        await refresh();
+      } catch (e) { failure(e); }
+      finally { busy = false; }
+      return;
+    }
     const next = future[future.length - 1];
     history = [...history, snapshot()];
     future = future.slice(0, -1);
     editing = ""; labelling = ""; selected = ""; multi = []; selectedEdge = "";
     Object.assign(current, clone(next));
     dirty = true;
+  }
+  let mergeMap = $state("");
+  async function transferBranch(nodeId: string, targetId?: number) {
+    if (!current || !editable) return;
+    if (dirty) await save();
+    if (dirty || blocked || !current) return;
+    busy = true; error = "";
+    try {
+      const target = maps.find(m => m.id === targetId);
+      accepted(await api<MapItem>("/schema/transfer", {
+        id: current.id, revision: current.revision, node_id: nodeId,
+        ...(target ? {target_id: target.id, target_revision: target.revision} : {}),
+      }));
+      frame();
+      notice = target ? "Root merged into map" : "Branch split into linked map";
+      await refresh();
+    } catch (e) { failure(e); }
+    finally { busy = false; }
   }
   /** Selects `n`; a topic outside the multi-selection replaces it. */
   function choose(n: Node) {
@@ -1045,6 +1075,16 @@
   }
   function end(e: PointerEvent, cancel = false) {
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
+    const mergeTarget = !cancel && gesture.node && gesture.moved
+      ? Number(document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-merge-map]")?.getAttribute("data-merge-map")) : 0;
+    if (mergeTarget && isRoot(current.graph.nodes.find(n => n.id === gesture!.node)!)) {
+      const id = gesture.node;
+      Object.assign(current, clone(gesture.before));
+      gesture = null; dragging = ""; dropTarget = ""; detaching = false; placing = false;
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+      void transferBranch(id, mergeTarget);
+      return;
+    }
     const target = dropTarget;
     // Every picked branch moves when a picked topic is dragged; otherwise just the dragged one.
     const tops = (picked.has(gesture.node) ? pickedTops() : [gesture.node]).map(id => current!.graph.nodes.find(n => n.id === id)!).filter(Boolean);
@@ -1981,13 +2021,23 @@
           (!history.length && (!current.can_undo || dirty))}
         >Undo {history.length ? "local" : "last save"}</Button
       >
-      <Button onclick={redo} disabled={!editable || !future.length}>Redo</Button>
+      <Button onclick={redo} disabled={!editable || (!future.length && (!current.can_redo || dirty))}>Redo</Button>
       <details><summary>Advanced map actions</summary><div class="toolbar">
         <Button onclick={download}>Export {dirty ? "local edits" : "JSON"}</Button>
         <Button onclick={() => current && open(current.id, true)} disabled={busy}>Reload saved map</Button>
         <Button aria-pressed={showLinks} onclick={() => showLinks = !showLinks}>Linked mentions{autoNew ? ` / ${autoNew} new` : ""}</Button>
         <Button onclick={removeMap} disabled={!editable}>Delete map…</Button>
       </div></details>
+      {#if maps.some(m => m.id !== current!.id)}
+        <div class="toolbar" role="group" aria-label="Merge map drop targets">
+          <span class="hint">Drop a root into:</span>
+          {#each maps.filter(m => m.id !== current!.id) as m}
+            <button type="button" data-merge-map={m.id} disabled={!editable}
+              onclick={() => {if (node && isRoot(node)) void transferBranch(node.id, m.id);}}
+              title="Drop a map root here, or select a root and click to merge">{m.title}</button>
+          {/each}
+        </div>
+      {/if}
       <span role="status"
         >{busy
           ? "Working…"
@@ -2532,6 +2582,11 @@
                 <Button onclick={detachSelected} disabled={!editable || isRoot(node)} title="Break this branch off as a floating piece (or press D while dragging it)">Detach branch</Button>
                 <Button onclick={resetPosition} disabled={!editable || !node.free} title="Put a freely placed node back into the automatic layout">Reset position</Button>
                 <Button onclick={() => {linking = node!.id; focusOn(node!.id);}} disabled={!editable} aria-pressed={linking === node.id} title="Draw a labelled connection to any other topic, outside the tree">Connect to…</Button>
+                <Button onclick={() => transferBranch(node!.id)} disabled={!editable}>Split branch into map</Button>
+                {#if isRoot(node) && maps.some(m => m.id !== current!.id)}
+                  <label>Merge into map<select bind:value={mergeMap}><option value="">Choose map</option>{#each maps.filter(m => m.id !== current!.id) as m}<option value={m.id}>{m.title}</option>{/each}</select></label>
+                  <Button onclick={() => transferBranch(node!.id, Number(mergeMap))} disabled={!editable || !mergeMap}>Merge root</Button>
+                {/if}
                 <Button onclick={() => studyBranch("flashcards")}>Make flashcards</Button>
                 <Button onclick={() => studyBranch("quiz")}>Quiz this branch</Button>
                 <Button onclick={startBranchSession} disabled={!editable}>Start session</Button>

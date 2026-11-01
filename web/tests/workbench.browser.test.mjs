@@ -1939,3 +1939,34 @@ describe("mind-map history", () => {
     await context.close();
   });
 });
+
+describe("mind-map split and merge", () => {
+  test("split creates linked maps, paired undo/redo works, and dropping the root merges it back", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { schema } = await newMindMap(page, "Transfer map");
+    await mapNode(page, "Key ideas").click(); await page.keyboard.press("Tab");
+    await page.keyboard.type("Leaf"); await page.keyboard.press("Escape");
+    await mapNode(page, "Key ideas").click();
+    await schema.getByRole("button", { name: "Split branch into map", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('select') && [...document.querySelectorAll('svg.stage text.label')].length === 2);
+    await mapNode(page, "Leaf").waitFor();
+    assert.equal(await mapNode(page, "Transfer map").count(), 0);
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => document.querySelectorAll('svg.stage [data-node]').length === 0);
+    await page.keyboard.press("Control+Shift+z");
+    await mapNode(page, "Key ideas").waitFor();
+    const root = await centre(mapNode(page, "Key ideas").locator("rect.pill"));
+    const target = schema.getByRole("group", { name: "Merge map drop targets" }).getByRole("button", { name: "Transfer map", exact: true });
+    const to = await centre(target);
+    await page.mouse.move(root.x, root.y); await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up();
+    await mapNode(page, "Transfer map").waitFor();
+    await mapNode(page, "Leaf").waitFor();
+    assert.equal(await mapNode(page, "Key ideas").count(), 1);
+    await page.reload();
+    await mapNode(page, "Leaf").waitFor();
+    assert.equal(await mapNode(page, "Key ideas").count(), 1);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
