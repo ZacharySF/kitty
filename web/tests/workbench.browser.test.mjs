@@ -521,3 +521,62 @@ describe("study guide", () => {
     await context.close();
   });
 });
+
+/** Creates deck `name` holding Basic front/back notes through the API (the demo collection starts empty). */
+function seedDeck(page, name, cards) {
+  return page.evaluate(async ({ name, cards }) => {
+    const post = async (path, body) => {
+      const response = await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      return data;
+    };
+    const overview = await (await fetch("/api/flashcards", { cache: "no-store" })).json();
+    const basic = overview.types.find((type) => type.kind === "basic");
+    const { deck } = await post("/flashcards/deck", { name, settings: {} });
+    for (const [front, back] of cards) await post("/flashcards/note", { deck_id: deck.id, type_id: basic.id, fields: { Front: front, Back: back }, tags: [] });
+    return deck.id;
+  }, { name, cards });
+}
+
+/** Opens Flashcards with `deck` seeded and its due review started. */
+async function reviewDeck(name, cards) {
+  const opened = await open("flashcards", { dock: "hidden" });
+  const { page } = opened;
+  await page.getByRole("navigation", { name: "Flashcard views" }).waitFor();
+  await seedDeck(page, name, cards);
+  await page.reload();
+  await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: name });
+  await page.getByRole("button", { name: "Review due" }).first().click();
+  return opened;
+}
+
+describe("flashcard review", () => {
+  test("keyboard strip: keycaps 1–4 and Space with intervals press down when used", async () => {
+    const { page, problems, context } = await reviewDeck("Strip deck", [["Capital of Peru?", "Lima"], ["Capital of Chile?", "Santiago"]]);
+    const strip = page.getByRole("group", { name: "Grade keys" });
+    await strip.waitFor();
+    const keys = strip.getByRole("button");
+    assert.deepEqual((await keys.allTextContents()).map((text) => text.replace(/\s+/g, " ").trim().split(" ").slice(0, 2).join(" ")),
+      ["1 Again", "2 Hard", "3 Good", "4 Easy", "Space Flip"]);
+    for (const index of [0, 1, 2, 3]) assert.equal(await keys.nth(index).isDisabled(), true, "grades are enabled before the answer shows");
+    await page.keyboard.press("Space");
+    await page.waitForFunction(() => document.querySelector('[role="group"][aria-label="Grade keys"] button')?.textContent?.match(/\d+(m|h|d)/));
+    for (const index of [0, 1, 2, 3]) assert.match(await keys.nth(index).textContent(), /\d+(m|h|d)/, `key ${index + 1} shows no interval`);
+    assert.match(await keys.nth(4).textContent(), /Space\s*Good/);
+    // The pressed keycap sinks while the grade is in flight.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    await page.route("**/api/flashcards/grade", async (route) => { await held; await route.continue(); });
+    const cap = keys.nth(1).locator("kbd");
+    const before = (await cap.boundingBox()).y;
+    const remaining = await page.getByText(/eligible cards/).textContent();
+    await page.keyboard.press("2");
+    await page.waitForFunction((y) => document.querySelectorAll('[role="group"][aria-label="Grade keys"] kbd')[1].getBoundingClientRect().y > y, before);
+    release();
+    await page.waitForFunction((text) => !document.body.innerText.includes(text), remaining.trim());
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
