@@ -123,9 +123,9 @@ after 30 seconds and is issued only by the header-protected `POST
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
 **Dock.** With the module on, the bottom of the window holds the dock: herdr's
-client in a transparent terminal drawn in the Harness colours, herdr's own
-agent-activity strip (working / blocked / done / idle per herdr workspace, read
-from `GET /api/terminal/activity`, which never starts herdr), or nothing but a thin
+client in a transparent terminal drawn in the Harness colours, **Agents** (one card
+per detected herdr agent with its working / blocked / done / idle state, read from
+`GET /api/terminal/activity`, which never starts herdr), or nothing but a thin
 handle that brings it back. Drag the divider (or focus it and use the arrow keys) to
 resize it; the state and height are remembered. The first size is the empty area
 below the main panel. **Float** detaches the dock into a glass card in the

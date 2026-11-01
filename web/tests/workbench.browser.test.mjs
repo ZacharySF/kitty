@@ -850,7 +850,8 @@ describe("home rails", () => {
 describe("home widgets", () => {
   const minutes = (offset) => new Date(Date.now() + offset * 60_000).toISOString();
   const day = new Date().toISOString().slice(0, 10);
-  const CALENDAR = {
+  // Built per request, not when the suite loads: the events sit relative to the moment it is read.
+  const calendar = () => ({
     calendars: [{ id: "personal", name: "Personal", color: "#6d5dfc", visible: 1 }],
     events: [
       { id: "e-past", title: "Morning review", start: minutes(-180), end: minutes(-150), all_day: false, calendar_id: "personal", location: "" },
@@ -858,7 +859,7 @@ describe("home widgets", () => {
       { id: "e-next", title: "Seminar", start: minutes(90), end: minutes(150), all_day: false, calendar_id: "personal", location: "Room 4" },
     ],
     tasks: [], activity: [], reminders: [],
-  };
+  });
   const ACTIVITY = {
     running: true,
     workspaces: [
@@ -869,7 +870,7 @@ describe("home widgets", () => {
 
   test("home widgets: hairline Today agenda with now-line, progress and countdown; agents with Approve; Ctrl+Enter quick notes", async () => {
     const { page, problems, context } = await open("today", { dock: "hidden" });
-    await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: CALENDAR }));
+    await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: calendar() }));
     await page.route((url) => url.pathname === "/api/terminal/activity", (route) => route.fulfill({ json: ACTIVITY }));
     await page.reload();
     const left = page.getByRole("complementary", { name: "Home widgets" });
@@ -1353,15 +1354,22 @@ describe("notes tabs and floating outline", () => {
   });
 });
 
+/** Opens the Study hub's Mind map tab (the cockpit opens on the session timer) and waits until
+ *  the editor has loaded the map list and reopened the last map, so later steps are not undone. */
+async function openMindMaps(page) {
+  const listed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/schema");
+  await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Mind map", exact: true }).click();
+  const { maps } = await (await listed).json();
+  const schema = page.getByRole("region", { name: "Mental schema maps" });
+  if (maps.length) await schema.getByRole("button", { name: "New map", exact: true }).waitFor();
+  else await schema.waitFor();
+  return schema;
+}
 /** Opens Study → Mind map and creates a fresh map from `template`; returns its node locator. */
 async function newMindMap(page, title, template = "Lecture") {
-  const schema = page.getByRole("region", { name: "Mental schema maps" });
-  await schema.waitFor();
+  const schema = await openMindMaps(page);
   const fresh = schema.getByRole("button", { name: "New map", exact: true });
   const titleField = schema.getByRole("textbox", { name: "New map title" });
-  await Promise.race([fresh.waitFor(), titleField.waitFor()]);
-  // The editor reopens the last map once the map list loads; let that settle before choosing.
-  await page.waitForLoadState("networkidle");
   if (await fresh.isVisible()) await fresh.click();
   await titleField.fill(title);
   await schema.locator("summary", { hasText: "Advanced options" }).click();
@@ -1425,6 +1433,8 @@ const nodeBoxes = (page) => page.evaluate(() => Object.fromEntries([...document.
 })));
 const mapNode = (page, label) => page.locator("svg.stage [data-node]").filter({ has: page.locator("text.label", { hasText: new RegExp(`^${label}$`) }) });
 const centre = async (locator) => { const box = await locator.boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
+/** Waits until the map editor takes input again: it ignores keys and drags while it saves, splits or undoes. */
+const editable = (page) => page.waitForFunction(() => document.querySelector(".schema .mapbar input")?.disabled === false);
 
 describe("mind-map editing", () => {
   test("keyboard building: arrows move, Ctrl+arrows reorder, Tab child, Enter sibling, Ctrl+Enter edits", async () => {
@@ -1650,7 +1660,12 @@ describe("notes canvas background", () => {
       for (let i = 0; i < data.length; i += 4) seen.add(`#${[data[i], data[i + 1], data[i + 2]].map((c) => c.toString(16).padStart(2, "0")).join("")}`);
       return { colours: [...seen], void: getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim().toLowerCase() };
     });
-    await page.waitForFunction(() => document.querySelector("canvas[aria-label^='Infinite drawing canvas']")?.width > 0);
+    // While the page was in text mode the hidden stage measured nothing and the canvas kept its
+    // 200px minimum; sample once it has been resized to fill the shown stage.
+    await page.waitForFunction(() => {
+      const node = document.querySelector("canvas[aria-label^='Infinite drawing canvas']");
+      return node?.width > 0 && Math.abs(node.getBoundingClientRect().width - node.closest(".canvas-stage").clientWidth) < 1;
+    });
     const kitty = await sample();
     assert.equal(kitty.void, "#1b151a", "the default theme is not Kitty");
     assert.deepEqual(kitty.colours, [kitty.void], "the empty canvas is not one flat void colour (grid, dots or nebula showed)");
@@ -1730,10 +1745,11 @@ describe("mind-map free positioning", () => {
     const { page, problems, context } = await open("study", { dock: "hidden" });
     const { schema } = await newMindMap(page, "Free map");
     const pill = (label) => mapNode(page, label).locator("rect.pill");
-    await schema.locator("svg.stage").evaluate((svg) => svg.scrollIntoView({ block: "end" }));
+    const stage = schema.locator("svg.stage");
+    await stage.evaluate((svg) => svg.scrollIntoView({ block: "end" }));
     const before = await nodeBoxes(page);
     // Alt-drag Examples across Questions (no snap while Alt is held) into empty space.
-    const start = await centre(pill("Examples")), over = await centre(pill("Questions"));
+    const start = await centre(pill("Examples")), over = await centre(pill("Questions")), origin = await rect(stage);
     await page.keyboard.down("Alt");
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
@@ -1743,8 +1759,11 @@ describe("mind-map free positioning", () => {
     await page.mouse.move(start.x + 180, start.y + 140, { steps: 5 });
     await page.mouse.up();
     await page.keyboard.up("Alt");
-    const dropped = await centre(pill("Examples"));
-    assert.ok(Math.abs(dropped.x - (start.x + 180)) < 6 && Math.abs(dropped.y - (start.y + 140)) < 6, "Examples did not stay where it was dropped");
+    // Positions are taken within the stage: the map toolbar above it rewraps when its status
+    // text changes (more so with many merge targets), which moves the whole stage, not the node.
+    const dropped = await centre(pill("Examples")), shifted = await rect(stage);
+    const [dx, dy] = [dropped.x - shifted.left - (start.x - origin.left), dropped.y - shifted.top - (start.y - origin.top)];
+    assert.ok(Math.abs(dx - 180) < 6 && Math.abs(dy - 140) < 6, "Examples did not stay where it was dropped");
     assert.doesNotMatch(await mapNode(page, "Examples").getAttribute("class"), /\broot\b/, "Alt-drag detached the node from its parent");
     assert.match(await mapNode(page, "Examples").getAttribute("aria-label"), /placed freely/);
     // A child added to the free node is laid out beside it, not back in the tree.
@@ -1798,6 +1817,7 @@ describe("mind-map recolour", () => {
     await schema.getByRole("button", { name: /^Save map/ }).click();
     await schema.getByRole("button", { name: "Map saved" }).waitFor();
     await page.reload();
+    await openMindMaps(page);
     await mapNode(page, "Questions").waitFor();
     assert.equal(await dot("Questions"), await colour(5), "the colour was not saved");
     await mapNode(page, "Questions").click();
@@ -1847,6 +1867,7 @@ describe("mind-map cross connections", () => {
     await schema.getByRole("button", { name: /^Save map/ }).click();
     await schema.getByRole("button", { name: "Map saved" }).waitFor();
     await page.reload();
+    await openMindMaps(page);
     await text.waitFor();
     assert.deepEqual(problems, []);
     await context.close();
@@ -1926,6 +1947,7 @@ describe("mind-map history", () => {
     await schema.getByRole("button", { name: "Colour 4", exact: true }).click();
     await schema.getByRole("button", { name: /^Save map/ }).click();
     await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await editable(page);
     await page.keyboard.press("Control+z");
     const dot = () => mapNode(page, "Examples").locator("circle.dot").evaluate(n => getComputedStyle(n).fill);
     assert.notEqual(await dot(), await resolveColor(page, "var(--c4)"));
@@ -1950,11 +1972,14 @@ describe("mind-map split and merge", () => {
     await schema.getByRole("button", { name: "Split branch into map", exact: true }).click();
     await page.waitForFunction(() => document.querySelector('select') && [...document.querySelectorAll('svg.stage text.label')].length === 2);
     await mapNode(page, "Leaf").waitFor();
+    await editable(page);
     assert.equal(await mapNode(page, "Transfer map").count(), 0);
     await page.keyboard.press("Control+z");
     await page.waitForFunction(() => document.querySelectorAll('svg.stage [data-node]').length === 0);
+    await editable(page);
     await page.keyboard.press("Control+Shift+z");
     await mapNode(page, "Key ideas").waitFor();
+    await editable(page);
     const root = await centre(mapNode(page, "Key ideas").locator("rect.pill"));
     const target = schema.getByRole("group", { name: "Merge map drop targets" }).getByRole("button", { name: "Transfer map", exact: true });
     const to = await centre(target);
@@ -1964,6 +1989,7 @@ describe("mind-map split and merge", () => {
     await mapNode(page, "Leaf").waitFor();
     assert.equal(await mapNode(page, "Key ideas").count(), 1);
     await page.reload();
+    await openMindMaps(page);
     await mapNode(page, "Leaf").waitFor();
     assert.equal(await mapNode(page, "Key ideas").count(), 1);
     assert.deepEqual(problems, []);
@@ -2001,7 +2027,9 @@ describe("pipeline swimlanes", () => {
     await cell("Quant", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
     await page.keyboard.press("Shift+ArrowDown");
     await cell("Gpu", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")?.startsWith("Tidewater")), true, "focus did not follow the card");
+    // The board reloads once the queued saves land and then refocuses the card.
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label")?.startsWith("Tidewater"), null, { timeout: 5_000 })
+      .catch(() => assert.fail("focus did not follow the card"));
     await page.getByRole("status").filter({ hasText: "Tidewater Markets (demo) moved to Gpu" }).getByRole("button", { name: "Undo" }).click();
     await cell("Quant", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
     // The status history is append-only: the move and its undo are both recorded.
