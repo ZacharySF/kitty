@@ -36,7 +36,7 @@ MAX_PAGE_BLOCKS = 10_000
 MAX_DEPTH = 64
 MAX_TEXT_BYTES = 1024 * 1024
 MAX_PROPERTY_BYTES = 2 * 1024 * 1024
-_TYPE = re.compile(r"[a-z][a-z_]{0,31}\Z")
+_TYPE = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 
 

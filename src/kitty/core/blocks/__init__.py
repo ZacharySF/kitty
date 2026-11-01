@@ -7,15 +7,15 @@ append-only ``op_log`` and updates the projection tables that readers use.
 
 - ``order``: fractional order keys.
 - ``pagedoc``: the ``PageDoc`` seam and the operation vocabulary.
-- ``store``: ``transact``, ``load_page`` and ``replay``.
+- ``store``: ``transact``, ``load_page``, ``page_state`` (what an editor loads) and ``replay``.
 - ``convert``: legacy canvas / outline / Markdown shapes <-> blocks.
 - ``legacy``: the one-way migration of existing notes, with its JSON export.
 """
 from kitty.core.blocks import order
 from kitty.core.blocks.pagedoc import VIEW_KEYS, Block, BlockError, OrderedPageDoc, PageDoc, block_id
-from kitty.core.blocks.store import REF, TAG, WIKI, device_id, load_page, now, references, replay, transact
+from kitty.core.blocks.store import REF, TAG, WIKI, device_id, load_page, now, page_state, references, replay, transact
 
 __all__ = [
     "Block", "BlockError", "OrderedPageDoc", "PageDoc", "REF", "TAG", "VIEW_KEYS", "WIKI", "block_id",
-    "device_id", "load_page", "now", "order", "references", "replay", "transact",
+    "device_id", "load_page", "now", "order", "page_state", "references", "replay", "transact",
 ]

@@ -1,11 +1,14 @@
 """Revision-checked local outlines served from the block backend.
 
-An outline item is a ``text`` block under its page (or parent item). Saving the whole
-outline sends the smallest block transaction that reaches the saved shape; references
-resolve live blocks, never copies.
+An outline item is a text-flow block (``convert.OUTLINE_TYPES``) under its page (or
+parent item). The block editor writes outlines with transactions over the blocks
+socket; whole-outline saves remain for imports and portable copies and send the
+smallest block transaction that reaches the saved shape. References resolve live
+blocks, never copies.
 """
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from contextlib import nullcontext
@@ -15,6 +18,7 @@ from kitty.core.blocks import REF, WIKI, convert
 from kitty.db.connection import transaction
 
 MAX_BLOCKS = 2000
+_PROP = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,63}\Z')
 
 
 def block_id(value):
@@ -34,7 +38,7 @@ def normalize(value):
         raise notes.NotesError('Outline is limited to 2000 blocks')
     result, ids, total = [], set(), 0
     for item in value:
-        notes.keys(item, {'id', 'page_id', 'parent_id', 'text', 'ordering', 'collapsed'}, {'id', 'parent_id', 'text', 'ordering', 'collapsed'})
+        notes.keys(item, {'id', 'page_id', 'parent_id', 'text', 'ordering', 'collapsed', 'type', 'props'}, {'id', 'parent_id', 'text', 'ordering', 'collapsed'})
         bid = block_id(item['id'])
         if bid in ids:
             raise notes.NotesError('Duplicate block ID')
@@ -45,8 +49,18 @@ def normalize(value):
             raise notes.NotesError('Outline exceeds 2 MiB')
         if type(item['collapsed']) is not bool:
             raise notes.NotesError('Collapsed must be boolean')
+        kind = item.get('type', 'text')
+        if kind not in convert.OUTLINE_TYPES:
+            raise notes.NotesError('Outline blocks are text-flow blocks')
+        props = item.get('props', {})
+        if not isinstance(props, dict) or any(not isinstance(key, str) or not _PROP.fullmatch(key) or key == 'collapsed' for key in props):
+            raise notes.NotesError('Block properties must be an object with simple keys')
+        total += len(json.dumps(props, ensure_ascii=False).encode('utf-8'))
+        if total > notes.MAX_DOCUMENT_BYTES:
+            raise notes.NotesError('Outline exceeds 2 MiB')
         result.append({'id': bid, 'parent_id': block_id(item['parent_id']) if item['parent_id'] is not None else None,
-                       'text': content, 'ordering': notes.integer(item['ordering'], 0, MAX_BLOCKS * 10), 'collapsed': item['collapsed']})
+                       'text': content, 'ordering': notes.integer(item['ordering'], 0, MAX_BLOCKS * 10), 'collapsed': item['collapsed'],
+                       'type': kind, 'props': props})
     parents = {item['id']: item['parent_id'] for item in result}
     for item in result:
         seen, parent = {item['id']}, item['parent_id']
@@ -60,7 +74,7 @@ def normalize(value):
     return result
 
 
-def save_blocks(conn, page_id, revision, blocks, title=None, document=None):
+def save_blocks(conn, page_id, revision, blocks):
     pid, rev = notes.integer(page_id), notes.integer(revision)
     values = normalize(blocks)
     for raw in blocks:
@@ -71,10 +85,6 @@ def save_blocks(conn, page_id, revision, blocks, title=None, document=None):
         root = doc.root
         if root.properties.get('revision') != rev:
             raise notes.NotesError('Page changed in another tab; local outline was not overwritten. Reload or export your draft.', 409)
-        heading = root.text if title is None else notes.text(title, 200)
-        if not heading.strip():
-            raise notes.NotesError('Page title is required')
-        canvas = None if document is None else notes.normalize(document, conn)
         foreign = [item['id'] for item in values if item['id'] not in doc.blocks]
         for start in range(0, len(foreign), 500):
             chunk = foreign[start:start + 500]
@@ -83,10 +93,6 @@ def save_blocks(conn, page_id, revision, blocks, title=None, document=None):
         if any(item['id'] in doc.blocks and doc.blocks[item['id']].type not in convert.OUTLINE_TYPES for item in values):
             raise notes.NotesError('Block ID already belongs to another page', 409)
         ops = convert.sync_tree(doc, root.id, convert.outline_specs(root.id, values), lambda item: item.type in convert.OUTLINE_TYPES)
-        if canvas is not None:
-            ops.extend(notes.canvas_ops(doc, canvas))
-        if heading != root.text:
-            ops.append({'op': 'text', 'id': root.id, 'text': heading})
         notes.apply(conn, [*ops, {'op': 'set', 'id': root.id, 'props': {'revision': rev + 1}}], base={root.id: rev})
     return get_blocks(conn, pid)
 
@@ -118,12 +124,13 @@ def get_blocks(conn, page_id):
     counts = {row['target_id']: row['count'] for row in conn.execute(
         f'''SELECT r.target_id,COUNT(*) AS count FROM block_refs r JOIN blocks t ON t.id=r.target_id
         JOIN blocks s ON s.id=r.source_id {_OUTLINE_SOURCE}
-        WHERE t.page_id=? AND t.type='text' AND t.deleted_at IS NULL AND r.kind='block' GROUP BY r.target_id''', (doc.page_id,))}
+        WHERE t.page_id=? AND t.type IN ({_OUTLINE_SQL}) AND t.deleted_at IS NULL AND r.kind='block' GROUP BY r.target_id''', (doc.page_id,))}
     return {'revision': doc.root.properties['revision'], 'blocks': blocks, 'references': references, 'citation_counts': counts}
 
 
+_OUTLINE_SQL = ",".join(f"'{kind}'" for kind in sorted(convert.OUTLINE_TYPES))
 #: Joins `s` (a citing block) to a live note page: only outline text cites in Notes.
-_OUTLINE_SOURCE = "JOIN blocks sp ON sp.id=s.page_id AND sp.type='page' AND sp.deleted_at IS NULL AND s.type='text' AND s.deleted_at IS NULL"
+_OUTLINE_SOURCE = f"JOIN blocks sp ON sp.id=s.page_id AND sp.type='page' AND sp.deleted_at IS NULL AND s.type IN ({_OUTLINE_SQL}) AND s.deleted_at IS NULL"
 
 
 def contexts(conn, bid, offset=0):

@@ -238,15 +238,15 @@ def page(conn: sqlite3.Connection, page_id: int) -> dict:
 def page_texts(conn: sqlite3.Connection, block_ids: list[str]) -> dict[str, tuple[list[tuple[bool, str]], list[str]]]:
     """Per page root: each canvas element's (is text/sticky, text) in paint order, and outline text in reading order."""
     result: dict[str, tuple[list[tuple[bool, str]], list[str]]] = {bid: ([], []) for bid in block_ids}
-    element_types = ",".join(f"'{kind}'" for kind in sorted(convert.CANVAS_TYPES))
+    element_types = ",".join(f"'{kind}'" for kind in sorted(convert.CANVAS_TYPES | convert.OUTLINE_TYPES))
     for start in range(0, len(block_ids), 500):
         chunk = block_ids[start:start + 500]
         rows = conn.execute(f"SELECT id,page_id,parent_id,type,text,CASE WHEN type='ink' THEN json_array_length(properties,'$.strokes') "
-                            f"END AS strokes FROM blocks WHERE deleted_at IS NULL AND type IN ('text',{element_types}) "
+                            f"END AS strokes FROM blocks WHERE deleted_at IS NULL AND type IN ({element_types}) "
                             f"AND page_id IN ({','.join('?' * len(chunk))}) ORDER BY order_key,id", chunk).fetchall()
         children: dict[str, list[sqlite3.Row]] = {}
         for row in rows:
-            if row["type"] == "text":
+            if row["type"] in convert.OUTLINE_TYPES:
                 children.setdefault(row["parent_id"], []).append(row)
             elif row["type"] == "ink":
                 result[row["page_id"]][0].extend([(False, "")] * row["strokes"])

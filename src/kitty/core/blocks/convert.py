@@ -12,9 +12,11 @@ the page's current blocks into the saved shape (`sync_tree`).
   text. Consecutive pen/highlighter strokes on one layer form one ``ink`` block
   (Q18): the legacy canvas has no stroke timestamps, so a run of adjacent strokes
   stands in for one drawing burst.
-- **Outline:** each item is a ``text`` block under the page (or its parent item)
-  with ``collapsed`` as a property. ``ordering`` is the item's position in reading
-  order, which is what the outline UI always saves.
+- **Outline:** each item is a text-flow block (``OUTLINE_TYPES``: the block editor's
+  text, headings, lists, to-dos, quotes and so on) under the page (or its parent
+  item) with ``collapsed`` as a property. ``ordering`` is the item's position in
+  reading order; items carry their ``type`` and other ``props`` so a whole-outline
+  save (imports, portable copies) keeps them.
 - **Documents:** Markdown splits into one block per paragraph-level chunk
   (heading, code, list, quote, divider, text). Each block keeps the exact
   separator that followed it, so joining the blocks returns the original bytes.
@@ -36,7 +38,10 @@ ELEMENT_TYPES = {"pen": "ink", "highlighter": "ink", "text": "text_box", "sticky
 TEXT_KINDS = frozenset({"text", "sticky"})
 CANVAS_SETTINGS = ("version", "grid", "snap", "background", "layers")
 CANVAS_TYPES = frozenset(ELEMENT_TYPES.values())
-OUTLINE_TYPES = frozenset({"text"})
+#: Text-flow block types: what the block editor writes on a page (Q17), and what
+#: outline readers (backlinks, topics, mentions, search) treat as a page's text.
+OUTLINE_TYPES = frozenset({"text", "heading_1", "heading_2", "heading_3", "to_do", "bulleted_list", "numbered_list",
+                           "quote", "callout", "code", "divider", "toggle", "page_link"})
 INK_STROKES = 64
 INK_POINTS = 20_000
 MAX_DOCUMENT_CHUNKS = 2000
@@ -123,8 +128,8 @@ def outline_specs(page_id: str, items: list[dict]) -> list[dict]:
 
     def walk(parent: str | None) -> None:
         for item in children.get(parent, ()):
-            result.append({"id": item["id"], "parent": item["parent_id"] or page_id, "type": "text",
-                           "props": {"collapsed": item["collapsed"]}, "text": item["text"]})
+            result.append({"id": item["id"], "parent": item["parent_id"] or page_id, "type": item.get("type", "text"),
+                           "props": {**item.get("props", {}), "collapsed": item["collapsed"]}, "text": item["text"]})
             walk(item["id"])
 
     walk(None)
@@ -134,7 +139,8 @@ def outline_specs(page_id: str, items: list[dict]) -> list[dict]:
 def outline_items(doc: OrderedPageDoc, number: int) -> list[dict]:
     """The legacy outline list (reading order, ``ordering`` = position) for a page."""
     return [{"id": item.id, "page_id": number, "parent_id": None if item.parent_id == doc.page_id else item.parent_id,
-             "text": item.text, "ordering": index, "collapsed": bool(item.properties.get("collapsed", False))}
+             "text": item.text, "ordering": index, "collapsed": bool(item.properties.get("collapsed", False)), "type": item.type,
+             "props": {key: value for key, value in item.properties.items() if key != "collapsed"}}
             for index, item in enumerate(doc.preorder(doc.page_id, types=OUTLINE_TYPES))]
 
 

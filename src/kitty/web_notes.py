@@ -1,9 +1,9 @@
 """Local-only notes API; only registered normalized PNGs are downloadable.
 
-GET/POST /api/notes/pages/:id/blocks reads/replaces a bounded UUID outline.
-POST requires the shared page revision; optional title/document save canvas and
-outline atomically. Responses include revision, blocks, live references and
-citation_counts. GET /api/notes/blocks/:uuid/contexts returns direct citations;
+GET /api/notes/pages/:id/blocks reads a page's outline (typed text-flow blocks) with
+revision, live references and citation_counts. The block editor writes outlines as
+transactions over the blocks socket (kitty.web_blocks), so there is no whole-outline
+POST. GET /api/notes/blocks/:uuid/contexts returns direct citations;
 GET /api/notes/topics?kind=page|tag&topic=... aggregates local topic blocks.
 Both endpoints accept offset and return next_offset to page through all contexts.
 GET /api/notes/pages/:id/mentions returns unlinked local title mentions.
@@ -73,10 +73,6 @@ def post(app, conn, path, body):
     if not path.startswith("/api/notes"):
         return None
     try:
-        blocks = re.fullmatch(r"/api/notes/pages/([1-9][0-9]{0,15})/blocks", path)
-        if blocks:
-            notes.keys(body, {"revision", "blocks", "title", "document"}, {"revision", "blocks"})
-            return note_blocks.save_blocks(conn, int(blocks[1]), body["revision"], body["blocks"], body.get("title"), body.get("document"))
         if path == "/api/notes/daily":
             notes.keys(body, {"date"})
             return notes.daily_page(conn, body.get("date"))

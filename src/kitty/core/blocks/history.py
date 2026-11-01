@@ -37,7 +37,11 @@ def _known(conn: sqlite3.Connection, page_id: str) -> None:
 
 
 def page_history(conn: sqlite3.Connection, page_id: str) -> dict:
-    """Editing sessions (per device, split by 10-minute pauses, newest first) and daily snapshots."""
+    """Editing sessions (per device, split by 10-minute pauses, newest first) and daily snapshots.
+
+    Each session lists its transactions as ``moments`` ({seq, at}, oldest first): every one
+    is a point the page can be previewed and restored at.
+    """
     page_id = block_id(page_id)
     _known(conn, page_id)
     sessions: list[dict] = []
@@ -48,9 +52,10 @@ def page_history(conn: sqlite3.Connection, page_id: str) -> dict:
         current = sessions[-1] if sessions else None
         if current is None or current["device_id"] != row["device_id"] or _when(row["at"]) - _when(current["end"]) > SESSION_GAP:
             current = {"device_id": row["device_id"], "start": row["at"], "end": row["at"], "first_seq": row["seq"],
-                       "last_seq": row["seq"], "transactions": 0, "ops": {}}
+                       "last_seq": row["seq"], "transactions": 0, "ops": {}, "moments": []}
             sessions.append(current)
         current.update(end=row["at"], last_seq=row["seq"], transactions=current["transactions"] + 1)
+        current["moments"].append({"seq": row["seq"], "at": row["at"]})
         for kind, count in counts.items():
             current["ops"][kind] = current["ops"].get(kind, 0) + count
     snapshots = [dict(row) for row in conn.execute("SELECT day,seq FROM page_snapshots WHERE page_id=? ORDER BY seq DESC", (page_id,))]

@@ -51,6 +51,36 @@ def load_page(conn: sqlite3.Connection, page_id: str) -> OrderedPageDoc:
     return OrderedPageDoc(page_id, {row["id"]: _block(row) for row in rows})
 
 
+#: Block types whose children belong to another UI (the canvas), not to a page loader.
+OPAQUE_TYPES = frozenset({"canvas"})
+_STATE_FIELDS = ("id", "type", "parent_id", "order_key", "properties", "text", "created_at", "updated_at")
+
+
+def page_state(conn: sqlite3.Connection, page_id: str) -> dict:
+    """One live page for an editor: root, live blocks in reading order, revision and the log sequence it reflects.
+
+    Read in one snapshot, so every change after ``seq`` is one this page does not yet contain.
+    Children of a canvas are left to the canvas UI; the canvas block itself is listed.
+    """
+    with (nullcontext() if conn.in_transaction else transaction(conn)):
+        seq = conn.execute("SELECT COALESCE(MAX(seq),0) FROM op_log").fetchone()[0]
+        doc = load_page(conn, block_id(page_id))
+    root = doc.root
+    if root is None or not root.live:
+        raise BlockError("Page not found", 404)
+    listed: list[dict] = []
+
+    def walk(parent_id: str) -> None:
+        for child in doc.children(parent_id):
+            listed.append({key: getattr(child, key) for key in _STATE_FIELDS})
+            if child.type not in OPAQUE_TYPES:
+                walk(child.id)
+
+    walk(root.id)
+    state = {key: getattr(root, key) for key in _STATE_FIELDS}
+    return {"page_id": root.id, "seq": seq, "revision": root.properties.get("revision", 1), "root": state, "blocks": listed}
+
+
 def replay(conn: sqlite3.Connection, page_id: str, upto: int | None = None) -> OrderedPageDoc:
     """Rebuild one page from its newest snapshot at or before `upto` plus the log after it."""
     limit = upto if upto is not None else 2**63 - 1

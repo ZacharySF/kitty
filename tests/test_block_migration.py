@@ -160,7 +160,8 @@ def test_canvas_pages_round_trip_geometry_layers_ink_and_view_state(migrated):
 def test_outlines_links_tags_backlinks_and_ordering_survive(migrated):
     conn = migrated[0]
     for pid in {row[1] for row in OUTLINE}:
-        expected = [{"id": bid, "page_id": page, "parent_id": parent, "text": text, "ordering": ordering, "collapsed": bool(collapsed)}
+        expected = [{"id": bid, "page_id": page, "parent_id": parent, "text": text, "ordering": ordering, "collapsed": bool(collapsed),
+                     "type": "text", "props": {}}
                     for bid, page, parent, text, ordering, collapsed in OUTLINE if page == pid]
         assert note_blocks.get_blocks(conn, pid)["blocks"] == expected
     cites = note_blocks.get_blocks(conn, 2)

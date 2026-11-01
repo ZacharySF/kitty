@@ -21,9 +21,11 @@ per committed op_log row, whoever wrote it: this socket, the Notes HTTP API, a
 background import or another process. ``root`` is ``{"type", "number"}`` of the
 page the change belongs to, so the existing screens can find their page.
 
-History and Trash (kitty.core.blocks.history); a page is ``page=<block id>`` or
+Pages, history and Trash (kitty.core.blocks.history); a page is ``page=<block id>`` or
 ``type=page|document|quick_note&number=<n>``:
 
+GET  /api/blocks/page?<page>                    what the block editor loads: root, live blocks
+                                                in reading order, revision and the ``seq`` it reflects
 GET  /api/blocks/history?<page>                 editing sessions and daily snapshots
 GET  /api/blocks/history/preview?<page>&seq=<n>  the page as it was after transaction n
 POST /api/blocks/history/restore  {<page>, "seq"}  appends a transaction restoring it
@@ -241,6 +243,10 @@ def get(app, conn, path, query):
     if path == SOCKET_PATH:
         raise _error(426, "Open live blocks with a WebSocket upgrade")
     try:
+        if path == "/api/blocks/page":
+            if set(query) - {"page", "type", "number"}:
+                raise blocks.BlockError("Unexpected page parameters")
+            return blocks.page_state(conn, _page(conn, query))
         if path == "/api/blocks/history":
             if set(query) - {"page", "type", "number"}:
                 raise blocks.BlockError("Unexpected history parameters")

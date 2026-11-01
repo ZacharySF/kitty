@@ -181,3 +181,14 @@ def test_replaying_the_log_rebuilds_the_projection(workspace):
             gone = {victim} | {b.id for b in blocks.load_page(conn, page).descendants(victim)}
             live = [bid for bid in live if bid not in gone]
     assert blocks.replay(conn, page).rows() == blocks.load_page(conn, page).rows()
+
+
+def test_block_types_may_carry_digits_for_editor_types_like_heading_levels(workspace):
+    conn = workspace.conn
+    page, heading = new_id(), new_id()
+    blocks.transact(conn, [*page_ops(page), {"op": "insert", "id": heading, "type": "heading_2", "parent": page, "text": "Level two"}])
+    blocks.transact(conn, [{"op": "set", "id": heading, "type": "heading_3"}])
+    assert projection(conn, page)[heading][0] == "heading_3"
+    for bad in ("2heading", "Heading_1", "heading-1", "h" * 33):
+        with pytest.raises(blocks.BlockError):
+            blocks.transact(conn, [{"op": "set", "id": heading, "type": bad}])
