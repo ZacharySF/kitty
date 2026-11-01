@@ -70,8 +70,15 @@ for (const look of ["2d", "3d"]) {
       await page.mouse.click(point.x, point.y);
       await page.waitForFunction(() => window.graphHarness.events.some(([kind]) => kind === "select"));
       assert.deepEqual((await events(page)).filter(([kind]) => kind === "select"), [["select", "view:notes"]]);
-      const rect = await call(page, "stageRect");
-      await page.mouse.move(rect.left + 3, rect.top + 3, { steps: 4 });
+      // Move to a spot on the stage that no node covers (2D cards are wide, so corners may not be empty).
+      const empty = await page.evaluate(() => {
+        const rect = window.graphHarness.stageRect();
+        for (let y = rect.top + 4; y < rect.bottom; y += 24) for (let x = rect.left + 4; x < rect.right; x += 24)
+          if (window.graphHarness.nodeAt(x, y) === null) return { x, y };
+        return null;
+      });
+      assert.ok(empty, "no empty spot on the stage");
+      await page.mouse.move(empty.x, empty.y, { steps: 4 });
       await page.waitForFunction(() => window.graphHarness.events.at(-1)?.[0] === "hover" && window.graphHarness.events.at(-1)?.[1] === null);
       await page.close();
     });
@@ -268,6 +275,22 @@ describe("3d atmosphere", () => {
     await call(page, "settled");
     const after = await cornerColour(page);
     assert.ok(after[1] - before[1] > 2, `sky did not take the new theme colours (green ${before[1].toFixed(1)} → ${after[1].toFixed(1)})`);
+    assert.deepEqual(problems, []);
+    await page.close();
+  });
+});
+
+describe("2d cards", () => {
+  test("2D nodes are cards: the whole card is the hit area, and the focused card lifts", async () => {
+    const { page, problems } = await harness();
+    await call(page, "mount", "2d");
+    await call(page, "focus", "view:library");
+    await call(page, "settled");
+    const centre = await call(page, "point", "view:library");
+    // A dot is ~10px across; a card is ~110px wide, so 35px right of centre is still on it.
+    assert.equal(await call(page, "nodeAt", centre.x + 35, centre.y), "view:library", "card body is not hit-testable");
+    assert.equal(await call(page, "nodeAt", centre.x - 35, centre.y + 8), "view:library", "card body is not hit-testable");
+    assert.notEqual(await call(page, "nodeAt", centre.x + 120, centre.y), "view:library", "hit area extends past the card");
     assert.deepEqual(problems, []);
     await page.close();
   });
