@@ -252,17 +252,28 @@ fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
     }
 }
 
-fn main() {
-    // WebKitGTK's native Wayland path can produce a negative device scale on
-    // fractional-scale desktops. Prefer XWayland when available; explicit
-    // backend selection and Wayland-only sessions remain untouched.
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("GDK_BACKEND").is_none()
-        && std::env::var_os("WAYLAND_DISPLAY").is_some()
-        && std::env::var_os("DISPLAY").is_some()
-    {
-        std::env::set_var("GDK_BACKEND", "x11");
+/// GTK's DPI setting when it has none: 96 DPI in GTK's 1/1024 units.
+const NEUTRAL_XFT_DPI: i32 = 96 * 1024;
+
+/// The DPI to set, if any. On Wayland GTK has no XSETTINGS, so `gtk-xft-dpi` stays -1 and
+/// WebKitGTK derives a negative device-pixel ratio from it (a blank, compressed page on
+/// fractional-scale outputs). A real value is left alone.
+fn dpi_override(current: i32) -> Option<i32> {
+    (current <= 0).then_some(NEUTRAL_XFT_DPI)
+}
+
+/// Lets the window run natively on Wayland at the output's GTK scale (2× on a 125% screen,
+/// downsampled by the compositor), instead of being upscaled through XWayland, which blurred
+/// all text and every canvas.
+#[cfg(target_os = "linux")]
+fn neutral_xft_dpi() {
+    use gtk::prelude::GtkSettingsExt;
+    if let Some(settings) = gtk::Settings::default() {
+        if let Some(dpi) = dpi_override(settings.gtk_xft_dpi()) { settings.set_gtk_xft_dpi(dpi); }
     }
+}
+
+fn main() {
     // Applies to new private files only; never changes selected existing files.
     unsafe { libc::umask(0o077); }
     let app = tauri::Builder::default()
@@ -272,6 +283,8 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            neutral_xft_dpi();
             let root = workspace().map_err(std::io::Error::other)?;
             fs::create_dir_all(root.join(".private"))?;
             let root = root.canonicalize()?;
@@ -419,6 +432,14 @@ mod tests {
                     "http://user@127.0.0.1:43721/#quick-note", "https://example.com/#quick-note"] {
             assert_eq!(target(bad), None, "{bad}");
         }
+    }
+    #[test]
+    fn a_missing_gtk_dpi_becomes_neutral_and_a_real_one_is_kept() {
+        // Wayland reports -1 (no XSETTINGS); WebKitGTK turns that into a negative pixel ratio.
+        assert_eq!(dpi_override(-1), Some(96 * 1024));
+        assert_eq!(dpi_override(0), Some(96 * 1024));
+        // X11 sessions and users who set a DPI keep theirs (120 DPI here).
+        assert_eq!(dpi_override(120 * 1024), None);
     }
     #[test]
     fn sidecars_come_only_from_the_bundle_or_the_debug_staging_folder() {

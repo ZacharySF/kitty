@@ -824,10 +824,11 @@ For local verification of release/install tooling:
 uv run --locked pytest -q tests/test_release_packaging.py tests/test_desktop_install.py
 ```
 
-On Linux sessions exposing both Wayland and X11, the app defaults to XWayland.
-This avoids a WebKitGTK native-Wayland scaling failure that can produce a
-negative device-pixel ratio and a blank, compressed page on fractional-scale
-desktops. An explicit `GDK_BACKEND` is respected; Wayland-only sessions are unchanged.
+On Wayland the app runs natively, so text and graphs stay sharp on fractional-scale
+(e.g. 125%) screens; it no longer routes through XWayland, which upscaled the whole
+window. Wayland gives GTK no DPI setting, and WebKitGTK turns that into a negative
+device-pixel ratio (a blank, compressed page), so the app sets a neutral 96 DPI when
+none is present; a DPI you set yourself is kept. An explicit `GDK_BACKEND` is respected.
 The window has no native menu strip. **Settings → Desktop** provides **Check for
 updates**, **Keep running on close (monitoring / reminders)**, **New quick note**,
 and **Quit kitty! (save and stop workers)**. All remain in the system-tray menu,
