@@ -153,7 +153,8 @@ const shortcutGroups: ShortcutGroup[] = [
     shortcuts: [
       ["/", "Search the atlas and jump to a node"],
       ["Enter in atlas search", "Focus the first match; Enter again opens it"],
-      ["Drag / scroll / right-drag", "Orbit / zoom / pan the 3D map"],
+      ["Drag / scroll", "Turn / zoom the Brain, or pan / zoom the 2D map"],
+      ["Click a Brain group", "Open that group on its own; Escape returns to all"],
       ["Ctrl + ← / →", "Rotate the visible 3D schema left / right (outside editors and dialogs)"],
       ["Click a node", "Open that section, item, or job"],
     ],

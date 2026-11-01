@@ -1,5 +1,5 @@
 <!-- Browser fixture for tests/brain.browser.test.mjs: one workspace tab holding the Brain stage,
-     the real home atlas, or a section graph, so the Brain look can be checked everywhere it may appear. -->
+     the real home, or a section graph, so home and the graphs beside it can be checked. -->
 <script lang="ts">
   import BrainStage from "../src/lib/brain/BrainStage.svelte";
   import GraphNavigator from "../src/lib/GraphNavigator.svelte";
@@ -27,7 +27,7 @@
 {#if kind === "stage"}
   <div class="stage-host"><BrainStage bind:this={stage} active={true} revision={0} /></div>
 {:else if kind === "atlas"}
-  <GraphNavigator workspace={null} revision={0} onview={() => {}} onopenjob={() => {}} onguide={() => {}} />
+  <GraphNavigator revision={0} onview={() => {}} />
 {:else if kind === "section"}
   <SectionGraph section="notes" listToggle={false} height="480px" />
 {:else}

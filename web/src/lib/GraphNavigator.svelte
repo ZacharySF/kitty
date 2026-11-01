@@ -27,11 +27,11 @@
   import { activeModules } from "./modules.svelte";
   import {
     mountGraph,
+    webglAvailable,
     type GraphHandle,
     type GraphNode,
   } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
-  import GraphLookToggle from "./GraphLookToggle.svelte";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, homeLook, setHomeLook, type HomeLook } from "./graphPreferences";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import Loader from "./Loader.svelte";
   import BrainStage from "./brain/BrainStage.svelte";
@@ -64,8 +64,20 @@
   let atlas = $state<Atlas | null>(null);
   let atlasError = $state("");
   const layout = graphLayout();
-  // "brain" replaces the stage with BrainStage; the 2D/3D atlas then waits, paused, underneath.
-  let look = $state(graphLook());
+  // Home is the Brain or the 2D atlas. The Brain replaces the stage; the 2D atlas then waits,
+  // paused and hidden, underneath. Without WebGL there is only the 2D atlas.
+  const supportsBrain = webglAvailable();
+  let chosen = $state(homeLook());
+  const look = $derived<HomeLook>(supportsBrain ? chosen : "2d");
+  let lookError = $state("");
+  function chooseLook(next: HomeLook) {
+    try {
+      setHomeLook(next);
+      lookError = "";
+    } catch {
+      lookError = "This browser could not save the home look.";
+    }
+  }
   let brain = $state<BrainStage>();
   const physics = graphPhysics();
   let mode = $state<"loading" | "graph" | "list">("loading");
@@ -290,8 +302,7 @@
     const syncSettings = () => {
       handle?.setLayout(graphLayout());
       handle?.setPhysics(graphPhysics());
-      look = graphLook();
-      if (look !== "brain") void handle?.setLook(look).catch(cause => { notice = (cause as Error).message; });
+      chosen = homeLook();
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     // Every atlas, in this window's tabs or another window, follows the same choice.
@@ -315,7 +326,7 @@
           ...graph,
           layout,
           physics,
-          look: look === "brain" ? "2d" : look,
+          look: "2d",
           reducedMotion,
           active: pane.active && look !== "brain",
           onSelect: (node) => {
@@ -419,14 +430,14 @@
     role="region"
     data-kitty-panel="graph"
     tabindex="-1"
-    aria-label={look === "brain" ? "Brain of every record and edit in your workspace" : `${look === "2d" ? "2D" : "3D"} atlas of your workspace`}
+    aria-label={look === "brain" ? "Brain of every record and edit in your workspace" : "2D atlas of your workspace"}
     aria-describedby={`${atlasId}-description`}
     ondragover={sectionDragOver}
     ondrop={sectionDrop}
     onpointerdowncapture={stagePointerDown}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      {#if look === "brain"}Every record and every edit in your workspace as a point of light. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. {look === "2d" ? "Drag nodes to move, drag the background to pan" : "Drag to rotate"}, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.{/if}
+      {#if look === "brain"}Every record and every edit in your workspace as a point of light inside a cat. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.{/if}
     </p>
     <!-- Hidden under the Brain, whose stage is transparent. -->
     <div class="canvas" class:behind={look === "brain"} bind:this={container}></div>
@@ -442,7 +453,7 @@
       </div>
     {:else}
       <div class="stage-caption" aria-hidden="true">
-        <span>{#if draggedSection && hidden.has(draggedSection)}Drop to show {sections.flatMap((group) => group.items).find((item) => item.id === draggedSection)?.label} on the atlas{:else if mode === "graph" && !graph.nodes.length}Every section is hidden · drag one here from Sections to show it{:else}{look === "2d" ? "Drag a node to move · drag background to pan · scroll or pinch to zoom" : "Drag to rotate · scroll to zoom · Ctrl + ← / → to turn"} · drag a node onto Sections to hide it{/if}</span>
+        <span>{#if draggedSection && hidden.has(draggedSection)}Drop to show {sections.flatMap((group) => group.items).find((item) => item.id === draggedSection)?.label} on the atlas{:else if mode === "graph" && !graph.nodes.length}Every section is hidden · drag one here from Sections to show it{:else}Drag a node to move · drag background to pan · scroll or pinch to zoom · drag a node onto Sections to hide it{/if}</span>
       </div>
       {#if mode === "loading"}<div class="stage-loading"><Loader kind="eyes" label="Drawing your atlas…" /></div>{/if}
       {#if hovered}<p class="stage-selection" aria-hidden="true">{hovered.label}</p>{/if}
@@ -452,7 +463,11 @@
   <aside class="rail atlas-panel" aria-label="Workspace">
     {#if terminal}<HomeAgents id={`${atlasId}-agents`} {onview} />{/if}
     <HomeWidget id={`${atlasId}-workspace`} title="Workspace" eyebrow="atlas">
-    <GraphLookToggle brain />
+    <div class="look" role="group" aria-label="Home look">
+      <Button size="sm" variant={look === "brain" ? "soft" : "ghost"} aria-pressed={look === "brain"} disabled={!supportsBrain} title={supportsBrain ? "Every record and edit as a glowing cat" : "The Brain requires WebGL; 2D remains available"} onclick={() => chooseLook("brain")}>Brain</Button>
+      <Button size="sm" variant={look === "2d" ? "soft" : "ghost"} aria-pressed={look === "2d"} title="A 2D map of workspace sections" onclick={() => chooseLook("2d")}>2D</Button>
+      {#if lookError}<span role="alert">{lookError}</span>{/if}
+    </div>
 
     <div class="search">
       <label for={`${atlasId}-search`}>Find a section <kbd>/</kbd></label>
@@ -655,6 +670,15 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--ink);
+  }
+  .look {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .look [role="alert"] {
+    color: var(--danger, var(--ink));
+    font-size: 0.75rem;
   }
   .swatch {
     display: inline-block;

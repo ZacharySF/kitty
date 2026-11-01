@@ -12,10 +12,11 @@ let instance = null;
 
 window.brainHarness = {
   /** Replaces the fixture with a fresh `kind` ("stage" | "atlas" | "section" | "schema"). */
-  mount(kind, { look } = {}) {
+  mount(kind, { look, home } = {}) {
     if (instance) unmount(instance);
     host.replaceChildren();
     if (look) localStorage.setItem("kitty.graph.look", look);
+    if (home) localStorage.setItem("kitty.home.look", home);
     setActiveModules(["workspace"]);
     instance = mount(BrainHarness, { target: host, props: { kind } });
     flushSync();

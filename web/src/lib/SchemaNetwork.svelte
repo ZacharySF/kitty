@@ -9,7 +9,7 @@
     type GraphNode,
     type GraphPhysics,
   } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, rendererLook } from "./graphPreferences";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
   import { prefersReducedMotion } from "./appearance";
   import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -39,7 +39,7 @@
     ["sphere", "Sphere"],
   ];
   const PAGE = 60;
-  let look = $state(rendererLook());
+  let look = $state(graphLook());
   let host = $state<HTMLDivElement>(),
     handle = $state.raw<GraphHandle | null>(null),
     problem = $state(""),
@@ -105,7 +105,7 @@
       layout = graphLayout();
       physics = graphPhysics();
       handle?.setPhysics(physics);
-      look = rendererLook();
+      look = graphLook();
       void handle?.setLook(look).then(() => { problem = ""; }).catch(cause => { problem = (cause as Error).message; });
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
@@ -118,7 +118,7 @@
       mountGraph(host!, {
         ...data,
         layout,
-        look: rendererLook(),
+        look: graphLook(),
         physics: { ...physics },
         active: pane.active,
         onSelect: (n) => { if (pane.active) onSelect(n.id); },

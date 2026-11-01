@@ -1,20 +1,32 @@
-import { DEFAULT_PHYSICS, PHYSICS_LIMITS, webglAvailable, type GraphLayout, type GraphLook, type GraphPhysics } from "./graph3d";
+import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphLayout, type GraphLook, type GraphPhysics } from "./graph3d";
 
-/** The remembered look. "brain" is home-only; every other graph draws it as its own 3D. */
-export type AtlasLook = GraphLook | "brain";
+/** The remembered look of section graphs and schemas. Home has its own (below). */
 export const GRAPH_LOOK_KEY = "kitty.graph.look";
-export function graphLook(): AtlasLook {
+export function graphLook(): GraphLook {
   try {
-    const value = localStorage.getItem(GRAPH_LOOK_KEY);
-    return value === "3d" || value === "brain" ? value : "2d";
+    return localStorage.getItem(GRAPH_LOOK_KEY) === "3d" ? "3d" : "2d";
   } catch { return "2d"; }
 }
-/** The look a 2D/3D graph renderer draws: the Brain clamps to 3D (2D without WebGL). */
-export function rendererLook(look: AtlasLook = graphLook()): GraphLook {
-  return look === "brain" ? (webglAvailable() ? "3d" : "2d") : look;
-}
-export function setGraphLook(look: AtlasLook): void {
+export function setGraphLook(look: GraphLook): void {
   localStorage.setItem(GRAPH_LOOK_KEY, look);
+  window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
+}
+
+/** Home's look: the Brain (default) or the 2D atlas. */
+export type HomeLook = "brain" | "2d";
+export const HOME_LOOK_KEY = "kitty.home.look";
+export function homeLook(): HomeLook {
+  try {
+    const saved = localStorage.getItem(HOME_LOOK_KEY);
+    if (saved === "brain" || saved === "2d") return saved;
+    // Home's choice used to share the graph look: an old "2d" stays 2D, "3d" and "brain" become the Brain.
+    const look: HomeLook = localStorage.getItem(GRAPH_LOOK_KEY) === "2d" ? "2d" : "brain";
+    localStorage.setItem(HOME_LOOK_KEY, look);
+    return look;
+  } catch { return "brain"; }
+}
+export function setHomeLook(look: HomeLook): void {
+  localStorage.setItem(HOME_LOOK_KEY, look);
   window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
 }
 

@@ -488,7 +488,8 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
       }
       controls.target.set(0, 0, 0);
       fitted = true;
-      if (reduced) {
+      // Nothing to build (or no motion wanted): the cloud is complete at once.
+      if (reduced || !count) {
         material.uniforms.uBirth.value = 2;
         birthDone = true;
       }

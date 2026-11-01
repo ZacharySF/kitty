@@ -308,33 +308,60 @@ describe("brain stage", () => {
   });
 });
 
-describe("brain is a home-only look", () => {
-  test("home shows the brain and returns to the 2D atlas", async () => {
+describe("home is the Brain or the 2D atlas", () => {
+  test("home opens on the Brain; its switch offers only Brain and 2D, and remembers the choice", async () => {
     const { page, problems, context } = await open();
-    await mount(page, "atlas", { look: "brain" });
+    await mount(page, "atlas");
     await brainReady(page);
-    const looks = page.getByRole("group", { name: "Graph look" });
+    const looks = page.getByRole("group", { name: "Home look" });
+    assert.deepEqual(await looks.getByRole("button").allInnerTexts(), ["Brain", "2D"], "home offers no 3D");
     assert.equal(await looks.getByRole("button", { name: "Brain" }).getAttribute("aria-pressed"), "true");
-    assert.equal(await page.locator(".atlas .stage > .canvas").evaluate((element) => getComputedStyle(element).visibility), "hidden", "the paused atlas never shows through the transparent brain");
+    assert.equal(await page.locator(".atlas .stage > .canvas").evaluate((element) => getComputedStyle(element).visibility), "hidden", "the paused 2D atlas never shows through the transparent brain");
+    // Finding a section highlights it in the Brain.
+    const search = page.getByRole("searchbox", { name: /Find a section/ });
+    await search.fill("Notes");
+    await search.press("Enter");
+    await page.waitForFunction(() => document.querySelector('.legend [data-key="notes"]')?.getAttribute("aria-pressed") === "true");
     await looks.getByRole("button", { name: "2D" }).click();
     await page.waitForFunction(() => !document.querySelector("[data-brain-stage]"));
     await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "2d");
+    assert.equal(await page.locator(".atlas .stage > .canvas").evaluate((element) => getComputedStyle(element).visibility), "visible");
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "2d");
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), null, "home's choice leaves section graphs alone");
+    await mount(page, "atlas");
+    await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
+    assert.equal(await page.locator("[data-brain-stage]").count(), 0, "the 2D choice is remembered");
     await looks.getByRole("button", { name: "Brain" }).click();
     await brainReady(page);
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  for (const kind of ["section", "schema"]) {
-    test(`a ${kind} graph clamps the brain preference to its own 3D graph`, async () => {
+  for (const [saved, shown] of [["3d", "brain"], ["brain", "brain"], ["2d", "2d"]]) {
+    test(`an old shared look of ${saved} opens home as ${shown}`, async () => {
       const { page, problems, context } = await open();
-      await mount(page, kind, { look: "brain" });
+      await mount(page, "atlas", { look: saved });
+      if (shown === "brain") await brainReady(page);
+      else await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
+      assert.equal(await page.getByRole("group", { name: "Home look" }).getByRole("button", { name: shown === "brain" ? "Brain" : "2D" }).getAttribute("aria-pressed"), "true");
+      assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), shown);
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+
+  for (const kind of ["section", "schema"]) {
+    test(`a ${kind} graph keeps its own 2D/3D switch, with no Brain`, async () => {
+      const { page, problems, context } = await open();
+      await mount(page, kind, { look: "3d" });
       await page.locator('canvas[data-graph-look="3d"]').waitFor({ timeout: 30_000 });
       assert.equal(await page.locator("[data-brain-stage]").count(), 0);
       const looks = page.getByRole("group", { name: "Graph look" });
       assert.equal(await looks.getByRole("button", { name: "Brain" }).count(), 0);
       assert.equal(await looks.getByRole("button", { name: "3D" }).getAttribute("aria-pressed"), "true");
+      await looks.getByRole("button", { name: "2D" }).click();
+      await page.locator('canvas[data-graph-look="2d"]').waitFor({ timeout: 30_000 });
+      assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "2d");
       assert.deepEqual(problems, []);
       await context.close();
     });

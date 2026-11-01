@@ -8,6 +8,7 @@
   import { brainGroups, brainLines, brainScaffold, brainStyle, BRAIN_PALETTE, expandPalette, isolateModel, layoutBrain, mixColours, type BrainPalette } from "./brainLayout";
   import { BRAIN_GROUPINGS, DEFAULT_BRAIN_VIEW, loadBrainColours, loadBrainView, saveBrainColours, saveBrainView, type BrainView } from "./brainSettings";
   import BrainControls from "./BrainControls.svelte";
+  import Loader from "../Loader.svelte";
 
   let { active = true, revision = 0 }: { active?: boolean; revision?: number } = $props();
 
@@ -381,7 +382,7 @@
   {:else if status === "missing"}
     <div class="state" role="status">
       <p class="title">The brain needs the newer backend</p>
-      <p>Update kitty to see every record and edit as a point of light. 2D and 3D still map your workspace.</p>
+      <p>Update kitty to see every record and edit as a point of light. 2D still maps your workspace.</p>
     </div>
   {:else if status === "error"}
     <div class="state" role="alert">
@@ -390,7 +391,7 @@
       <button type="button" onclick={() => { status = "loading"; void load(); }}>Retry</button>
     </div>
   {:else if status === "loading"}
-    <div class="state" role="status"><p>Waking the brain…</p></div>
+    <div class="state"><Loader kind="eyes" label="Waking the brain…" /></div>
   {:else if data && !data.nodes.length}
     <div class="state" role="status">
       <p class="title">Nothing to draw yet</p>

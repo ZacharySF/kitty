@@ -1,11 +1,11 @@
 import type { ThemeId } from "./themeCatalog";
-import type { AtlasLook } from "./graphPreferences";
+import type { GraphLook } from "./graph3d";
 
 /**
  * Q59 Settings → Appearance. The look choices without a home of their own,
  * saved together in localStorage (`kitty.appearance`) and mirrored onto
- * <html data-*> so CSS applies them. The theme (`kitty.theme`) and the atlas
- * look (`kitty.graph.look`) keep their own keys; presets set those too.
+ * <html data-*> so CSS applies them. The theme (`kitty.theme`) and the section
+ * graph look (`kitty.graph.look`) keep their own keys; presets set those too.
  */
 export type Appearance = {
   /** Fraunces page titles, or plain Space Grotesk. */
@@ -30,12 +30,12 @@ export const DEFAULT_APPEARANCE: Appearance = {
   background: "nebula",
 };
 
-export type Preset = { id: "cozy" | "focused" | "minimal"; name: string; blurb: string; theme: ThemeId; look: AtlasLook; appearance: Appearance };
+export type Preset = { id: "cozy" | "focused" | "minimal"; name: string; blurb: string; theme: ThemeId; look: GraphLook; appearance: Appearance };
 export const PRESETS: readonly Preset[] = [
   {
     id: "cozy",
     name: "Cozy",
-    blurb: "Blossoms and drifting petals, Fraunces titles, roomier text, 3D atlas.",
+    blurb: "Blossoms and drifting petals, Fraunces titles, roomier text, 3D section graphs.",
     theme: "kitty",
     look: "3d",
     appearance: { titleFont: "fraunces", density: "comfortable", motion: "full", motif: true, background: "petals" },
@@ -43,7 +43,7 @@ export const PRESETS: readonly Preset[] = [
   {
     id: "focused",
     name: "Focused",
-    blurb: "Dense text, reduced motion, a flat 2D map and no decoration.",
+    blurb: "Dense text, reduced motion, flat 2D section graphs and no decoration.",
     theme: "kitty",
     look: "2d",
     appearance: { titleFont: "fraunces", density: "compact", motion: "reduced", motif: false, background: "nebula" },
@@ -51,7 +51,7 @@ export const PRESETS: readonly Preset[] = [
   {
     id: "minimal",
     name: "Minimal",
-    blurb: "Neutral Harness chrome, plain titles, still frames, 2D map.",
+    blurb: "Neutral Harness chrome, plain titles, still frames, 2D section graphs.",
     theme: "harness",
     look: "2d",
     appearance: { titleFont: "plain", density: "compact", motion: "reduced", motif: false, background: "nebula" },
