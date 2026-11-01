@@ -581,8 +581,26 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
   - Every committed `op_log` row is pushed to every window as a `change`. This includes rows written by the HTTP adapters, background imports and other processes: one thread follows the log and starts with the first window.
   - A reconnecting window sends `resume` with its last sequence and receives what it missed, or `reset` if that history was compacted.
   - Notes, Documents, Quick notes and pop-out quick-note windows refresh on a push; the 4-second Notes poll is gone. Unsaved local edits are never overwritten.
+- **History, compaction and Trash** (`src/kitty/core/blocks/history.py`; routes in `web_blocks.py`):
+  - `GET /api/blocks/history` lists a page's editing sessions (per device, split by 10-minute pauses) and its daily snapshots. A page is named by `page=<block id>` or by `type` and `number`.
+  - `GET /api/blocks/history/preview?seq=` rebuilds the page as it was after any transaction still in the window, or from the daily snapshot for older moments (410 when no snapshot covers it).
+  - `POST /api/blocks/history/restore` appends one transaction that turns the current page into that version; the past is never rewritten.
+  - `GET /api/blocks/trash` lists the top-most deleted blocks with their page, newest first; `POST /api/blocks/trash/restore` brings one back.
+  - `compact` runs a minute after start and every six hours:
+    - it purges Trash older than 30 days;
+    - it folds `op_log` rows older than 30 days into one `page_snapshots` row per page per UTC day;
+    - it advances the `block_history` horizon, below which the trigger lets those rows be deleted;
+    - a purged page's snapshots go with it.
 
-**Extending it for step 2 (block editor):** the editor sends `txn` messages over the socket in `live.ts`, using the IDs, order keys and `base` revisions it already holds. It echoes keystrokes locally until the `ack` arrives and renders other windows' `change` messages. The legacy adapters in `notes.py`, `note_blocks.py`, `documents.py` and `quick_notes.py` can then be removed screen by screen. New block types need no schema change: a type is a name plus properties.
+    The window is `history.RETENTION_DAYS` until builds (Q8) make it a setting. A socket that resumes from before the horizon gets `reset`; step 3's peers use the same horizon to fall back to a snapshot transfer.
+
+**Extending it for step 2 (block editor):**
+
+- The editor adds a `transact()` beside `onBlockChange` in `live.ts` and sends `txn` messages over the same socket, using the IDs, order keys and `base` revisions it already holds.
+- It echoes keystrokes locally until the `ack` arrives and renders other windows' `change` messages.
+- History and Trash need only screens: the APIs above are complete.
+- The legacy adapters in `notes.py`, `note_blocks.py`, `documents.py` and `quick_notes.py` can then be removed screen by screen.
+- New block types need no schema change: a type is a name plus properties.
 
 ## Verified facts
 
