@@ -106,8 +106,10 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
-  if (dock === "hidden")
-    await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({ mode: "hidden", shown: "terminal", size: null, offset: { right: 16, bottom: 16 } })));
+  if (dock === "hidden" || dock === "floating")
+    await context.addInitScript((float) => localStorage.setItem("kitty.dock", JSON.stringify({
+      mode: float ? "terminal" : "hidden", shown: "terminal", float, step: "m", size: null, offset: { right: 16, bottom: 16 },
+    })), dock === "floating");
   if (modules)
     await context.route("**/api/bootstrap", async (route) => {
       const response = await route.fetch();
@@ -133,6 +135,9 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
 }
 
 const rect = (locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON());
+/** Viewport bottom not covered by the docked dock or its handle (a floating card reserves nothing). */
+const visibleBottom = (page) => page.evaluate(() =>
+  innerHeight - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0));
 
 /**
  * Polls until the Brain's WebGL canvas has drawn the workspace and fills its stage,
@@ -149,12 +154,12 @@ async function fitted(page) {
   }, null, { timeout: 20_000, polling: 200 });
 }
 
-/** The atlas fills the window (the floating dock takes no page space), the page does not scroll and the graph is fitted. */
+/** The atlas ends above the docked dock, the page does not scroll and the graph is fitted. */
 async function assertAtlasFits(page, label) {
   const atlas = page.locator(".atlas");
   await atlas.waitFor();
   await fitted(page).catch(() => assert.fail(`${label}: the Brain is not fitted to its visible stage`));
-  const bottom = await page.evaluate(() => innerHeight);
+  const bottom = await visibleBottom(page);
   const box = await rect(atlas);
   assert.ok(box.top >= 0 && box.bottom <= bottom + 1, `${label}: atlas ${box.top}–${box.bottom} is not within 0–${bottom}`);
   assert.ok(box.height >= 120, `${label}: atlas collapsed to ${box.height}px`);
@@ -163,12 +168,13 @@ async function assertAtlasFits(page, label) {
 }
 
 /**
- * Every control in the sidebar can be focused and is then inside the window and
- * hit-testable; only the floating dock card, which the user can move or hide, may cover it.
+ * Every control in the sidebar can be focused and is then above the docked dock and
+ * hit-testable; only a floating dock card, which the user can move or hide, may cover it.
  */
 async function assertSidebarReachable(page, label) {
   const unreachable = await page.locator(".atlas-panel").evaluate((panel) => {
-    const dock = document.querySelector('[data-kitty-panel="dock"], .dock-pill');
+    const space = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0;
+    const dock = document.querySelector('[data-kitty-panel="dock"][data-float="true"], .dock-pill');
     const missing = [];
     for (const control of panel.querySelectorAll("a[href], button, input, summary")) {
       if (!control.getClientRects().length || control.closest("details:not([open]) > :not(summary)")) continue;
@@ -176,7 +182,7 @@ async function assertSidebarReachable(page, label) {
       const box = control.getBoundingClientRect();
       const x = box.left + box.width / 2, y = box.top + box.height / 2;
       const hit = document.elementFromPoint(x, y);
-      if (y < 0 || y > innerHeight || !hit || !(control === hit || control.contains(hit) || dock?.contains(hit)))
+      if (y < 0 || y > innerHeight - space || !hit || !(control === hit || control.contains(hit) || dock?.contains(hit)))
         missing.push(control.getAttribute("aria-label") || control.textContent.trim().slice(0, 30));
     }
     return missing;
@@ -184,17 +190,19 @@ async function assertSidebarReachable(page, label) {
   assert.deepEqual(unreachable, [], `${label}: sidebar controls cannot be reached`);
 }
 
-describe("the Brain home fills the window under the floating dock", () => {
+describe("the Brain home fills the window above the dock", () => {
   for (const viewport of [DEFAULT, MINIMUM, SCALED_MINIMUM]) {
     const size = `${viewport.width}×${viewport.height}`;
     for (const [name, options] of [
       ["all modules, dock shown", {}],
       ["all modules, dock hidden", { dock: "hidden" }],
+      ["all modules, dock floating", { dock: "floating" }],
       ["core only", { modules: [] }],
     ]) {
       test(`${size}, ${name}`, async () => {
         const { page, problems, context } = await open("today", { viewport, ...options });
         if (!options.modules && options.dock !== "hidden") await page.locator('[data-kitty-panel="dock"]').waitFor();
+        if (options.dock === "floating") assert.equal(await visibleBottom(page), viewport.height, `${size}: the floating card reserves page space`);
         await assertAtlasFits(page, `${size} ${name}`);
         await assertSidebarReachable(page, `${size} ${name}`);
         assert.deepEqual(problems, []);
@@ -202,11 +210,14 @@ describe("the Brain home fills the window under the floating dock", () => {
       });
     }
 
-    test(`${size}, F fullscreens the fitted Brain and Escape refits it; hiding, showing or dragging the dock never re-lays out home`, async () => {
+    test(`${size}, F fullscreens the fitted Brain and Escape refits it; the docked dock is reserved, hiding or floating it frees the page`, async () => {
       const { page, problems, context } = await open("today", { viewport });
       const dock = page.locator('[data-kitty-panel="dock"]');
       await dock.waitFor();
       await assertAtlasFits(page, `${size} initial`);
+      const docked = await rect(dock);
+      assert.deepEqual([docked.left, docked.width, Math.round(docked.bottom)], [0, viewport.width, viewport.height], `${size}: the dock is not docked at the bottom`);
+      assert.ok((await rect(page.locator(".atlas"))).bottom <= docked.top + 1, `${size}: the atlas runs under the docked dock`);
       const stage = page.locator('[data-kitty-panel="graph"]');
       await stage.focus();
       await page.keyboard.press("f");
@@ -217,17 +228,20 @@ describe("the Brain home fills the window under the floating dock", () => {
       await page.keyboard.press("Escape");
       await assertAtlasFits(page, `${size} after Escape`);
       await assertSidebarReachable(page, `${size} after Escape`);
+      await dock.getByRole("button", { name: "Hide dock" }).click();
+      await page.getByRole("button", { name: "Show dock" }).waitFor();
+      await assertAtlasFits(page, `${size} dock hidden`);
+      assert.ok((await rect(page.locator(".atlas"))).bottom > (await visibleBottom(page)) - 40, `${size}: atlas did not grow into the hidden dock's space`);
+      await page.getByRole("button", { name: "Show dock" }).click();
+      await dock.waitFor();
+      await assertAtlasFits(page, `${size} dock shown again`);
+      await dock.getByRole("button", { name: "Float dock" }).click();
+      await page.waitForFunction(() => document.querySelector('[data-kitty-panel="dock"]')?.dataset.float === "true");
+      assert.equal(await visibleBottom(page), viewport.height, `${size}: the floating card reserves page space`);
+      await assertAtlasFits(page, `${size} dock floating`);
       const atlas = await rect(page.locator(".atlas"));
       const brain = page.locator("[data-brain-stage]");
       const stageBox = await rect(brain);
-      await dock.getByRole("button", { name: "Hide dock" }).click();
-      await page.getByRole("button", { name: "Show dock" }).waitFor();
-      assert.deepEqual(await rect(page.locator(".atlas")), atlas, `${size}: hiding the dock re-laid out the atlas`);
-      assert.deepEqual(await rect(brain), stageBox, `${size}: hiding the dock changed the Brain stage`);
-      await page.getByRole("button", { name: "Show dock" }).click();
-      await dock.waitFor();
-      assert.deepEqual(await rect(page.locator(".atlas")), atlas, `${size}: showing the dock re-laid out the atlas`);
-      assert.deepEqual(await rect(brain), stageBox, `${size}: showing the dock changed the Brain stage`);
       // Moving the card by its header and resizing it by its grip leave the page alone mid-drag and after.
       await page.evaluate(() => {
         const atlas = document.querySelector(".atlas");
@@ -2667,7 +2681,7 @@ describe("notifications", () => {
     await context.close();
   });
 
-  test("toasts stack above the floating dock card, not over it, and follow it when it moves", async () => {
+  test("toasts stack above the docked dock and the floating card, not over them, and follow the card when it moves", async () => {
     const { page, problems, context } = await open("settings", { setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }) });
     const card = page.locator('[data-kitty-panel="dock"]');
     await card.waitFor();
@@ -2678,7 +2692,10 @@ describe("notifications", () => {
       assert.ok(toasts.y + toasts.height <= dock.y - 8 && dock.y - (toasts.y + toasts.height) < 24,
         `${label}: toasts ${JSON.stringify(toasts)} are not just above the card ${JSON.stringify(dock)}`);
     };
-    await above("initial");
+    await above("docked");
+    await card.getByRole("button", { name: "Float dock" }).click();
+    await page.waitForFunction(() => document.querySelector('[data-kitty-panel="dock"]')?.dataset.float === "true");
+    await above("floating");
     const tabs = await card.getByRole("group", { name: "Dock contents" }).boundingBox();
     await page.mouse.move(tabs.x + tabs.width + 12, tabs.y + tabs.height / 2);
     await page.mouse.down();
