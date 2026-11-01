@@ -19,6 +19,9 @@
   export function worldPoint(id: string) {
     return stage?.worldPoint(id) ?? null;
   }
+  export function pointColour(id: string) {
+    return stage?.pointColour(id) ?? null;
+  }
 </script>
 
 {#if kind === "stage"}

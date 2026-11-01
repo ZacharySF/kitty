@@ -604,16 +604,28 @@ Ctrl + Left/Right rotates the visible 3D schema in ten-degree steps, except whil
 editing text, selecting text, or using a dialog.
 **Brain** is a third home look beside 2D and 3D (Workspace panel or Settings →
 Workspace). It draws every record and every edit from `GET /api/brain` as one
-point of light on black: records form a colourful cerebrum (one lobe per section)
-and cerebellum, edits run down a glowing spinal cord with the newest nearest the
-brain, and a faint halo of edits surrounds the records they changed. Its View
-panel sets the layout (Anatomy, Spheres, Wheel), grouping (section, navigation
-group or type), labels, turning and speed, edit→record lines, the body scaffold
-and point size; Reset restores the defaults and the choices are remembered. The
-legend lists each group's records + edits; click one, or a point, to highlight
-it. Hovering a point shows its label, section, type and date. Section schemas
-have no Brain and draw it as 3D. A backend without `/api/brain` gets a notice,
-never invented data. Reduced motion skips the build-up, twinkle and turning.
+point of light inside a sitting cat, over the theme's own backdrop: records form
+the cat's colourful brain (one lobe per section) and cerebellum inside a faint
+skull with two pointed ears and bright whiskers; edits run down its spinal cord
+and out along its curled tail in time order, oldest at the tail tip and newest
+nearest the brain, with sparse nerves down the four legs and a faint halo of
+edits around the records they changed. The cat builds itself from the tail tip
+up. Colours come from the active theme and change with it; inside a group, each
+record type and each kind of edit (save, create, delete, status, review…) has its
+own shade. Its View panel sets the layout (Anatomy, Spheres, Wheel), grouping
+(section, navigation group or type), labels, turning and speed, edit→record
+lines, the body scaffold, the background (Transparent, or Black for the original
+night sky), point size and colours: pick any group's colour from the theme's
+swatches or a hex value, or Reset colours to follow the theme again (picks are
+remembered per grouping). Reset restores the view; the choices are remembered.
+The legend lists each group's records + edits and, on hover or focus, the kinds
+inside it; click an entry to highlight it. Hovering a sphere, sector or lobe
+highlights its group; clicking it opens that group alone, laid out by kind to
+fill the stage, until **← All** or Escape. Labels never overlap; ones without
+room hide. Hovering a point shows its label, section, type and date. Section
+schemas have no Brain and draw it as 3D. A backend without `/api/brain` gets a
+notice, never invented data. Reduced motion skips the build-up, twinkle and
+turning.
 Theme presets include dark cherry-pink **Cherry cat**, with blossom ASCII,
 and a Scythe palette. Scythe illustration requires the actual supplied artwork;
 no unrelated image is substituted. Motion respects reduced-motion preferences,

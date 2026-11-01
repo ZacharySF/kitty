@@ -428,7 +428,8 @@
     <p id={`${atlasId}-description`} class="sr-only">
       {#if look === "brain"}Every record and every edit in your workspace as a point of light. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. {look === "2d" ? "Drag nodes to move, drag the background to pan" : "Drag to rotate"}, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.{/if}
     </p>
-    <div class="canvas" bind:this={container}></div>
+    <!-- Hidden under the Brain, whose stage is transparent. -->
+    <div class="canvas" class:behind={look === "brain"} bind:this={container}></div>
     {#if look === "brain"}
       <BrainStage bind:this={brain} active={pane.active} {revision} />
     {:else if mode === "list"}
@@ -619,6 +620,9 @@
   .canvas {
     position: absolute;
     inset: 0;
+  }
+  .canvas.behind {
+    visibility: hidden;
   }
   .list-mode .canvas {
     display: none;

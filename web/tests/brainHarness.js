@@ -4,6 +4,7 @@ import { mount, unmount, flushSync } from "svelte";
 import "@nunera/bracket/styles.css";
 import "/src/styles.css";
 import { setActiveModules } from "/src/lib/modules.svelte.ts";
+import { setTheme } from "/src/lib/themes.ts";
 import BrainHarness from "./BrainHarness.svelte";
 
 const host = document.getElementById("host");
@@ -25,5 +26,7 @@ window.brainHarness = {
   },
   screenPoint: (id) => instance?.screenPoint(id) ?? null,
   worldPoint: (id) => instance?.worldPoint(id) ?? null,
+  pointColour: (id) => instance?.pointColour(id) ?? null,
+  setTheme: (id) => setTheme(id),
 };
 window.dispatchEvent(new Event("brain-harness-ready"));

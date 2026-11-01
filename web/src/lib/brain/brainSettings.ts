@@ -1,6 +1,8 @@
 import type { BrainGroupBy, BrainLayout } from "./brainLayout";
 
 export type BrainLabels = "off" | "sections" | "hover";
+/** Transparent lets the theme's backdrop show through; Black is the original night-sky stage. */
+export type BrainBackground = "transparent" | "black";
 /** The Brain's View panel, remembered across sessions in localStorage. */
 export type BrainView = {
   layout: BrainLayout;
@@ -13,6 +15,7 @@ export type BrainView = {
   scaffold: boolean;
   /** Point size multiplier, 0.25–3. */
   pointSize: number;
+  background: BrainBackground;
   panel: boolean;
 };
 
@@ -26,6 +29,9 @@ export const BRAIN_GROUPINGS: { id: BrainGroupBy; label: string }[] = [
 export const BRAIN_LABELS: { id: BrainLabels; label: string }[] = [
   { id: "off", label: "Off" }, { id: "sections", label: "Sections" }, { id: "hover", label: "Hover" },
 ];
+export const BRAIN_BACKGROUNDS: { id: BrainBackground; label: string }[] = [
+  { id: "transparent", label: "Transparent" }, { id: "black", label: "Black" },
+];
 export const BRAIN_SPEED = { min: 0, max: 3, step: 0.05 };
 export const BRAIN_POINT_SIZE = { min: 0.25, max: 3, step: 0.05 };
 export const DEFAULT_BRAIN_VIEW: BrainView = {
@@ -37,6 +43,7 @@ export const DEFAULT_BRAIN_VIEW: BrainView = {
   lines: false,
   scaffold: true,
   pointSize: 1,
+  background: "transparent",
   panel: true,
 };
 
@@ -63,8 +70,28 @@ export function loadBrainView(): BrainView {
     lines: flag(saved.lines, fallback.lines),
     scaffold: flag(saved.scaffold, fallback.scaffold),
     pointSize: range(saved.pointSize, BRAIN_POINT_SIZE, fallback.pointSize),
+    background: oneOf(BRAIN_BACKGROUNDS, saved.background, fallback.background),
     panel: flag(saved.panel, fallback.panel),
   };
+}
+
+/** Colours the user picked, per grouping and group key; anything absent follows the theme. */
+export type BrainColours = Record<BrainGroupBy, Record<string, string>>;
+export const BRAIN_COLOURS_KEY = "kitty.brain.colors";
+const HEX = /^#[0-9a-f]{6}$/i;
+export function loadBrainColours(): BrainColours {
+  const colours: BrainColours = { section: {}, group: {}, type: {} };
+  try {
+    const parsed = JSON.parse(localStorage.getItem(BRAIN_COLOURS_KEY) || "{}");
+    for (const by of BRAIN_GROUPINGS)
+      for (const [key, hex] of Object.entries(parsed?.[by.id] ?? {}))
+        if (typeof hex === "string" && HEX.test(hex)) colours[by.id][key] = hex.toLowerCase();
+  } catch { /* Damaged colours fall back to the theme's. */ }
+  return colours;
+}
+export function saveBrainColours(colours: BrainColours): void {
+  try { localStorage.setItem(BRAIN_COLOURS_KEY, JSON.stringify(colours)); }
+  catch { /* Private browsing: the colours still apply for this session. */ }
 }
 
 export function saveBrainView(view: BrainView): void {
