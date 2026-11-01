@@ -192,8 +192,10 @@ not named `demo.db`, so it cannot wipe real applications.
 ## Local website
 
 The Svelte website uses the same Python core and SQLite database as the CLI/TUI.
-The workbench uses `@nunera/bracket` with self-hosted Inter UI text, Inter Tight
-headings and JetBrains Mono for code. The Theme menu persists one of nine dark
+The workbench uses `@nunera/bracket` with a compact 13px type scale: Fraunces page
+titles, Space Grotesk panel and card headings, Inter UI text and numbers, pastel
+Newsreader italic labels, a Fredoka wordmark and JetBrains Mono for code and data
+chrome. The Theme menu persists one of nine dark
 themes locally: **Kitty** (the default: plum, pastel pink and a cherry-blossom
 motif), Harness, Dracula, Catppuccin Mocha, Tokyo Night, Nord, Gruvbox, One Dark
 and Scythe. Graph nodes and their edges use the active theme's graph palette.

@@ -352,3 +352,22 @@ describe("type system", () => {
     await context.close();
   });
 });
+
+describe("flashcard view switcher", () => {
+  test("the current flashcard view stays readable and distinct on the default theme", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    const current = views.locator('button[aria-current="page"]');
+    await current.waitFor();
+    const other = views.locator("button:not([aria-current])").first();
+    const on = await painted(page, current);
+    const off = await painted(page, other);
+    assert.ok(on.ratio >= 4.5, `current view text contrast ${on.ratio.toFixed(2)} (${on.text} on ${on.fill})`);
+    assert.ok(off.ratio >= 4.5, `other view text contrast ${off.ratio.toFixed(2)} (${off.text} on ${off.fill})`);
+    assert.ok(contrast(on.fill, off.fill) >= 3, `current view is not distinct (${on.fill} vs ${off.fill})`);
+    const heights = await views.locator("button").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height));
+    assert.ok(Math.max(...heights) <= 40, `view buttons are stretched to ${Math.max(...heights)}px`);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

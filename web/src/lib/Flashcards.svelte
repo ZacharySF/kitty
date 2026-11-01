@@ -1545,6 +1545,7 @@
   }
   nav {
     display: flex;
+    align-items: center;
     gap: 0.4rem;
     flex-wrap: wrap;
   }
@@ -1562,9 +1563,11 @@
     padding: 0.55rem 0.8rem;
     cursor: pointer;
   }
-  nav :global(button[aria-current="page"]) {
+  /* The app's pressed-toggle look (styles.css): solid accent with its contrasting text. */
+  :global(:root body) nav :global(button.br-btn[aria-current="page"]) {
     background: var(--accent);
-    color: var(--surface);
+    border-color: var(--accent);
+    color: var(--on-accent);
   }
   button:disabled {
     opacity: 0.5;
