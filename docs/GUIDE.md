@@ -200,9 +200,9 @@ Newsreader italic labels, a Fredoka wordmark and JetBrains Mono for code and dat
 chrome. The Theme menu persists one of ten dark
 themes locally: **Kitty** (the default: plum, pastel pink and a cherry-blossom
 motif), Harness, Dracula, Catppuccin Mocha, Tokyo Night, Nord, Gruvbox, One Dark,
-Scythe and **Liquid Glass** (frosted, lit glass panels over a slowly drifting aurora;
-in the desktop window your wallpaper shows through; the aurora stops under reduced
-motion and panels turn opaque under reduced transparency). Graph nodes and their
+Scythe and **Liquid Glass** (clear, neutral glass like macOS/iOS: heavy blur and a
+white rim lit from the top-left, no tint; in the desktop window your wallpaper shows
+through; panels turn opaque under reduced transparency). Graph nodes and their
 edges use the active theme's graph palette.
 No Rust service is needed: the Python core
 owns application behavior.

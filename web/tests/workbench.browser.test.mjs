@@ -584,7 +584,7 @@ describe("flashcard review", () => {
 });
 
 describe("Liquid Glass theme", () => {
-  test("panels are frosted, lit glass over a moving aurora, and their text stays readable", async () => {
+  test("panels are clear, neutral, lit glass like macOS/iOS, never rainbow-tinted, and their text stays readable", async () => {
     const { page, problems, context } = await open("settings", { dock: "hidden" });
     await page.locator(".br-panel").first().waitFor();
     await page.evaluate(async () => (await import("/src/lib/themes.ts")).setTheme("liquid-glass"));
@@ -594,22 +594,30 @@ describe("Liquid Glass theme", () => {
       const style = getComputedStyle(panel);
       const filter = style.backdropFilter || style.webkitBackdropFilter || "";
       const blur = Number(/blur\(([\d.]+)px\)/.exec(filter)?.[1] ?? 0);
-      const saturate = Number(/saturate\(([\d.]+)%?\)/.exec(filter)?.[1] ?? 0);
       const rim = getComputedStyle(panel, "::after");
-      const aurora = getComputedStyle(document.body, "::before");
+      // Every colour painted for the glass and the backdrop behind it.
+      const colors = (text) => [...text.matchAll(/rgba?\(([^)]+)\)|color\(srgb ([^)]+)\)/g)].map((match) => {
+        const parts = (match[1] ?? match[2]).split(/[\s,/]+/).filter(Boolean).map(Number);
+        return match[1] ? parts.slice(0, 3) : parts.slice(0, 3).map((v) => v * 255);
+      });
+      const painted = [
+        rim.backgroundImage, style.backgroundImage, style.boxShadow,
+        getComputedStyle(document.body).backgroundImage,
+        getComputedStyle(document.body, "::before").backgroundImage,
+      ].join(" ");
+      const chroma = Math.max(0, ...colors(painted).map(([r, g, b]) => Math.max(r, g, b) - Math.min(r, g, b)));
       return {
         blur,
-        saturate: saturate > 10 ? saturate / 100 : saturate,
         specular: /inset/.test(style.boxShadow) && /rgba\(255, 255, 255/.test(style.boxShadow),
         rim: rim.content !== "none" && rim.backgroundImage.includes("gradient"),
-        aurora: aurora.content !== "none" && aurora.backgroundImage.includes("gradient") && aurora.animationName !== "none",
+        chroma,
       };
     });
     assert.ok(glass.blur >= 20, `panel blur ${glass.blur}px`);
-    assert.ok(glass.saturate >= 1.6, `panel saturation ${glass.saturate}`);
     assert.ok(glass.specular, "panel has no inner specular highlight");
     assert.ok(glass.rim, "panel has no light-catching rim");
-    assert.ok(glass.aurora, "no moving aurora behind the glass");
+    // Apple's glass is clear: no rainbow dispersion or coloured aurora, only near-neutral light.
+    assert.ok(glass.chroma <= 40, `glass and backdrop are tinted (max channel spread ${glass.chroma.toFixed(0)})`);
     // Readability over the busiest part of the backdrop: panel heading text vs the composited panel.
     const heading = page.locator(".br-panel__header").first();
     const on = await painted(page, heading);
