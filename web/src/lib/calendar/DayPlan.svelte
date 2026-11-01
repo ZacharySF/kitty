@@ -96,7 +96,7 @@
   }
   h3 {
     margin: 0;
-    font: 700 1.2rem var(--font-title);
+    font: 700 1.2rem var(--font-ui);
   }
   .ring {
     display: grid;

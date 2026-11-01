@@ -142,7 +142,7 @@
   // Q44: nodes are rounded pills sized to their label; parentless nodes are inverted ink root pills.
   const PILL_H = 34, ROOT_H = 38, LABEL_MAX = 30;
   const pillWidths = new Map<string, number>();
-  let measurer: CanvasRenderingContext2D | null = null, uiFont = "Inter, sans-serif", headingFont = "Inter, sans-serif";
+  let measurer: CanvasRenderingContext2D | null = null, uiFont = "Inter, sans-serif";
   let fontsReady = $state(0);
   function textWidth(text: string, font: string) {
     void fontsReady;
@@ -165,7 +165,7 @@
   function hiddenCount(n: Node) { return n.collapsed ? descendants(n.id).size - 1 : 0; }
   function box(n: Node) {
     const root = isRoot(n), fold = hiddenCount(n);
-    const text = textWidth(pillText(n), root ? `600 13px ${headingFont}` : `500 12.5px ${uiFont}`);
+    const text = textWidth(pillText(n), root ? `600 13px ${uiFont}` : `500 12.5px ${uiFont}`);
     return {w: Math.round(Math.min(320, Math.max(root ? 72 : 64, text + (root ? 36 : 44) + (fold ? 26 : 0)))), h: root ? ROOT_H : PILL_H};
   }
   let maps = $state<Summary[]>([]),
@@ -1877,7 +1877,6 @@
   onMount(() => {
     const fonts = getComputedStyle(document.documentElement);
     uiFont = fonts.getPropertyValue("--font-ui").trim() || uiFont;
-    headingFont = fonts.getPropertyValue("--heading").trim() || headingFont;
     void document.fonts?.ready.then(() => { pillWidths.clear(); fontsReady += 1; });
     void refresh()
       .then(() => {
@@ -3013,7 +3012,7 @@
   .graph-node.root:hover .pill { fill: color-mix(in srgb, var(--ink) 88%, var(--solid-void)); }
   .graph-node.root.selected .pill,
   .graph-node.root:focus-visible .pill { stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 45%, transparent)); }
-  .graph-node.root .label { fill: var(--solid-void); font: 600 13px var(--heading); }
+  .graph-node.root .label { fill: var(--solid-void); font: 600 13px var(--font-ui); }
   .graph-node .fold circle { fill: color-mix(in srgb, var(--b) 40%, var(--solid-panel)); }
   .graph-node.root .fold circle { fill: var(--solid-void); }
   .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-mono); pointer-events: none; }

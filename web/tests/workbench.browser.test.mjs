@@ -350,7 +350,7 @@ describe("selected job views stay readable", () => {
 });
 
 describe("type system", () => {
-  test("titles, headings, labels and the wordmark render in their bundled faces at the compact scale", async () => {
+  test("the page title is Fraunces; headings and labels are Inter, never italic; the wordmark is Fredoka", async () => {
     const { page, problems, context } = await open("settings", { dock: "hidden" });
     await page.locator("h1").first().waitFor();
     const type = await page.evaluate(async () => {
@@ -378,13 +378,15 @@ describe("type system", () => {
     });
     assert.equal(type.body, "13px");
     assert.equal(type.title?.family, "Fraunces Variable");
-    assert.equal(type.heading?.family, "Space Grotesk Variable");
-    assert.equal(type.panel?.family, "Space Grotesk Variable");
-    assert.equal(type.label?.family, "Newsreader Variable");
-    assert.equal(type.label?.style, "italic");
+    assert.equal(type.heading?.family, "Inter Variable");
+    assert.equal(type.panel?.family, "Inter Variable");
+    assert.equal(type.label?.family, "Inter Variable");
+    assert.equal(type.label?.style, "normal");
     assert.equal(type.wordmark?.family, "Fredoka Variable");
-    for (const family of ["Fraunces Variable", "Space Grotesk Variable", "Newsreader Variable", "Fredoka Variable", "Inter Variable"])
+    for (const family of ["Fraunces Variable", "Fredoka Variable", "Inter Variable"])
       assert.ok(type.loadedFamilies.includes(family), `${family} was not downloaded and applied (loaded: ${type.loadedFamilies.join(", ")})`);
+    for (const family of ["Space Grotesk Variable", "Newsreader Variable"])
+      assert.ok(!type.loadedFamilies.includes(family), `${family} is still bundled`);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -966,7 +968,7 @@ describe("home widgets", () => {
     const agents = page.getByRole("complementary", { name: "Workspace" }).getByRole("region", { name: "Agents" });
     await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
 
-    // Q19 hairline minimal: no fill or box, a rule above, a small Space Grotesk title, the eyebrow on the right.
+    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, the eyebrow on the right.
     for (const widget of [agenda, note, agents]) {
       const frame = await widget.evaluate((node) => {
         const style = getComputedStyle(node);
@@ -981,7 +983,7 @@ describe("home widgets", () => {
       assert.equal(frame.fill, "rgba(0, 0, 0, 0)", "widget has a fill");
       assert.equal(frame.top, "1px");
       assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
-      assert.match(frame.font, /Space Grotesk/);
+      assert.match(frame.font, /Inter/);
       assert.ok(frame.size <= 14, `title is ${frame.size}px`);
       assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
     }
@@ -2439,7 +2441,7 @@ describe("adding flashcards", () => {
     const popover = page.getByRole("dialog", { name: "Quick add card" });
     await popover.waitFor();
     await popover.getByRole("combobox", { name: "Deck" }).waitFor();
-    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] select')?.selectedOptions[0]?.textContent === "Quick deck");
+    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] [role="combobox"]')?.textContent.trim() === "Quick deck");
     const front = popover.getByRole("textbox", { name: "Front" });
     const back = popover.getByRole("textbox", { name: "Back" });
     assert.equal(await focused(front), true, "the front is not focused");
@@ -2473,7 +2475,7 @@ describe("adding flashcards", () => {
     await page.keyboard.press("Enter");
     await popover.waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#calendar", "quick add left the current page");
-    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] select')?.selectedOptions[0]?.textContent === "Quick deck");
+    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] [role="combobox"]')?.textContent.trim() === "Quick deck");
     await page.keyboard.type("Capital of Spain?");
     await popover.getByText(/already in this deck/).waitFor();
     await front.fill("Capital of Italy?");

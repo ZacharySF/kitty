@@ -128,7 +128,7 @@
   h3 {
     margin: 0;
     color: var(--ink);
-    font: 700 23px/1.2 var(--font-title);
+    font: 700 23px/1.2 var(--font-ui);
   }
   p {
     margin: 0;

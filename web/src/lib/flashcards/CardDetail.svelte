@@ -204,7 +204,7 @@
     overflow-wrap: anywhere;
   }
   .text.question {
-    font: 600 17px/1.3 var(--heading);
+    font: 600 17px/1.3 var(--font-ui);
   }
   .text :global(img) {
     max-width: 100%;

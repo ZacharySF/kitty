@@ -75,7 +75,7 @@
     padding: 10px 14px 2px;
   }
   header strong {
-    font: 700 1.2rem var(--font-title);
+    font: 700 1.2rem var(--font-ui);
   }
   .legend {
     display: inline-flex;

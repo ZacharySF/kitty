@@ -89,7 +89,7 @@
     min-width: 150px;
     padding: 4px 10px;
     border-radius: 999px;
-    font: 700 0.95rem var(--font-title);
+    font: 700 0.95rem var(--font-ui);
   }
   .picker {
     position: absolute;

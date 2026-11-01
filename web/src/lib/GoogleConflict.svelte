@@ -214,7 +214,7 @@
   h4 {
     margin: 0;
     color: var(--ink);
-    font: 600 15px var(--heading);
+    font: 600 15px var(--font-ui);
   }
   .changes {
     display: grid;

@@ -12,6 +12,8 @@
     trail,
     setTrail: () => {},
     clearTrail: () => {},
+    status: null,
+    setStatus: () => {},
   });
   export function nodePoint(node: string) {
     return atlas?.nodePoint(node) ?? null;

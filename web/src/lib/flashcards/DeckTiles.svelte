@@ -145,7 +145,7 @@
   }
   .number {
     fill: var(--ink);
-    font: 700 19px var(--font-title);
+    font: 700 19px var(--font-ui);
     text-anchor: middle;
   }
   .unit {
@@ -171,7 +171,7 @@
     text-overflow: ellipsis;
   }
   .name {
-    font: 600 15px/1.25 var(--heading);
+    font: 600 15px/1.25 var(--font-ui);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

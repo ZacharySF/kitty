@@ -2,9 +2,12 @@
   import { tick } from "svelte";
   import { Button } from "@nunera/bracket";
   import Icon from "./Icon.svelte";
-  /** `tone` is the tab's group colour (navigationGroups); it tints the icon and the active underline. */
+  import StatusDot from "./ui/StatusDot.svelte";
+  import type { SaveStatus } from "./workspaceContext.svelte";
+  /** `tone` is the tab's group colour (navigationGroups); it tints the icon and the active underline.
+   *  `status` is the view's save state (Q3), drawn as a dot on the tab. */
   let { tabs, activeId, onselect, onclose, onnew }: {
-    tabs: { id: string; label: string; icon: string; tone: string }[];
+    tabs: { id: string; label: string; icon: string; tone: string; status: SaveStatus | null }[];
     activeId: string;
     onselect: (id: string) => void;
     onclose: (id: string) => void;
@@ -61,7 +64,7 @@
           tabindex={tab.id === activeId ? 0 : -1}
           onclick={() => onselect(tab.id)} onkeydown={event => void tabKey(event, index)}
           title={tab.label}
-        ><span class="tab-icon" aria-hidden="true"><Icon name={tab.icon} size={14} /></span><span class="tab-name">{tab.label}</span></button>
+        ><span class="tab-icon" aria-hidden="true"><Icon name={tab.icon} size={14} /></span><span class="tab-name">{tab.label}</span>{#if tab.status}<StatusDot state={tab.status.state} detail={tab.status.detail} />{/if}</button>
         <button class="close-tab" aria-label={`Close ${tab.label} tab`} title="Close tab · Ctrl+W" onclick={() => onclose(tab.id)}>×</button>
       </div>
     {/each}
@@ -85,7 +88,7 @@
     background: var(--tone); box-shadow: 0 0 10px color-mix(in srgb, var(--tone) 60%, transparent);
   }
   .tab > button { appearance: none; border: 0; background: none; color: inherit; cursor: pointer; }
-  .tab > button[role="tab"] { display: inline-flex; align-items: center; gap: 7px; max-width: 14rem; padding: 8px 4px 9px 10px; font: 500 12.5px var(--heading); }
+  .tab > button[role="tab"] { display: inline-flex; align-items: center; gap: 7px; max-width: 14rem; padding: 8px 4px 9px 10px; font: 500 var(--fs-control) var(--font-ui); }
   .tab-icon { display: inline-grid; place-items: center; color: var(--tone); opacity: .8; }
   .tab.active .tab-icon { opacity: 1; }
   .tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

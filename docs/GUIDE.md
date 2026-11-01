@@ -205,10 +205,12 @@ not named `demo.db`, so it cannot wipe real applications.
 ## Local website
 
 The Svelte website uses the same Python core and SQLite database as the CLI/TUI.
-The workbench uses `@nunera/bracket` with a compact 13px type scale: Fraunces page
-titles, Space Grotesk panel and card headings, Inter UI text and numbers, pastel
-Newsreader italic labels, a Fredoka wordmark and JetBrains Mono for code and data
-chrome. The Theme menu persists one of ten dark
+The workbench uses `@nunera/bracket` with a compact 13px type scale and three
+typefaces, each with one job: Fraunces for the page title only, Inter for the rest
+of the interface (headings, labels, buttons, body) and JetBrains Mono for the
+navigation chrome, key caps, code and tabular figures; Fredoka sets only the
+wordmark. Labels, eyebrows and fold-out labels are Inter semibold in sentence case,
+never italic. The Theme menu persists one of ten dark
 themes locally: **Kitty** (the default: plum, pastel pink and a cherry-blossom
 motif), Harness, Dracula, Catppuccin Mocha, Tokyo Night, Nord, Gruvbox, One Dark,
 Scythe and **Liquid Glass** (clear, neutral glass like macOS/iOS: heavy blur and a
@@ -263,6 +265,47 @@ from public examples; edits disappear when the process exits. External discovery
 browser filling, Gmail, notifications and paid operations are disabled. Synthetic
 text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
 be registered inside the disposable workspace.
+
+### Controls and surfaces
+
+- **One control height.** Buttons, fields, dropdowns, segments, menu rows and tabs
+  are 28px tall (32px at the comfortable density); the one or two primary actions
+  of a page are a step taller. Buttons, toggles and segments are pills; fields and
+  dropdowns have softly rounded corners.
+- **One surface per region.** A page's main column, a side rail or a drawer is a
+  single panel; groups inside it are split by a hairline and a label, never by a
+  box inside a box.
+- **Status as a dot.** A view that saves (Notes today) shows a small dot on its
+  workspace tab instead of "Saved" text: neutral when saved, amber with unsaved
+  changes, red when saving failed. Hover it for the detail and the shortcut.
+- **⋯ menus and popovers.** Rarely used actions sit in a ⋯ menu, always the last
+  control of its header; small forms open in a popover anchored to the control.
+  Arrow keys, Home/End and the first letter move through a menu, Enter runs an item
+  and Esc closes it and returns focus.
+- **Dropdowns.** Four or fewer choices are a segmented control. Longer lists open
+  a themed list with a check on the current item (arrow keys, type-ahead, Enter,
+  Esc); decks, notebooks and time zones open with a search field. Section graphs'
+  **Browse** list is such a popover over the graph.
+- **Adding and editing.** New things open a small quick-add popover from their +
+  button: one phrase field and at most two chips; Enter saves, Esc keeps the
+  phrase, **More** opens the full editor. Opening an existing item shows the side
+  drawer with every field (the calendar's event drawer is the first).
+
+### Interface copy rules
+
+Text in the interface earns its place:
+
+1. Helper text appears only in an empty state or directly before a consequential
+   or irreversible action (deleting, sending data off this device, spending
+   money), and is at most 12 words.
+2. Every other explanation is deleted if it restates the label or the obvious, or
+   only says where something came from; otherwise it becomes a tooltip on the
+   control it explains.
+3. No implementation detail (IANA, UTC, seconds, file limits, provider names) and
+   no defensive negations ("never", "no … are guessed").
+4. Normal state is silent: status shows only when something is unsaved, failed or
+   offline, and then as a dot with a tooltip. Counts go in badges; zero is hidden.
+5. Sentence case, verb first, second person, no em-dash asides.
 
 ### Quick notes
 
@@ -1048,9 +1091,9 @@ shell's private owner pipe; it receives no Tauri IPC permissions.
 The main window and quick-note windows are transparent: the default **Kitty**
 theme (plum near-black with pastel pink accents) and every other theme
 draw translucent glass panels over a soft glow, so the desktop shows through.
-Browser tabs keep an opaque background. All typefaces (Fraunces, Space Grotesk,
-Inter, Newsreader, Fredoka, JetBrains Mono) are SIL OFL fonts bundled from
-their `@fontsource` packages, so no font is fetched from the network.
+Browser tabs keep an opaque background. All typefaces (Fraunces, Inter, Fredoka,
+JetBrains Mono) are SIL OFL fonts bundled from their `@fontsource` packages, so
+no font is fetched from the network.
 
 
 ## Finding jobs (Stage 2)

@@ -34,7 +34,7 @@
   path { fill: none; stroke: color-mix(in srgb, var(--ink) 10%, transparent); stroke-width: 9; transition: stroke 300ms; }
   path.filled { stroke: var(--c1); }
   text { fill: var(--ink); text-anchor: middle; }
-  .number { font: 700 34px var(--font-title); }
+  .number { font: 700 34px var(--font-ui); }
   .unit { fill: var(--muted); font: 500 8.5px var(--font-mono); letter-spacing: .16em; }
   .streak div { display: grid; gap: 4px; }
   strong { font-size: 14px; }
