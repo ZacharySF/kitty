@@ -20,12 +20,25 @@ Every window receives ``{"type": "hello", "seq", "device_id"}`` on connect, then
 per committed op_log row, whoever wrote it: this socket, the Notes HTTP API, a
 background import or another process. ``root`` is ``{"type", "number"}`` of the
 page the change belongs to, so the existing screens can find their page.
+
+History and Trash (kitty.core.blocks.history); a page is ``page=<block id>`` or
+``type=page|document|quick_note&number=<n>``:
+
+GET  /api/blocks/history?<page>                 editing sessions and daily snapshots
+GET  /api/blocks/history/preview?<page>&seq=<n>  the page as it was after transaction n
+POST /api/blocks/history/restore  {<page>, "seq"}  appends a transaction restoring it
+GET  /api/blocks/trash                           blocks in Trash, newest first
+POST /api/blocks/trash/restore    {"id"}         brings one back
+
+Compaction (30-day window, then daily snapshots; expired Trash purged) runs a minute
+after start and every six hours.
 """
 from __future__ import annotations
 
 import json
 import os
 import queue
+import re
 import select
 import socket
 import sqlite3
@@ -34,12 +47,16 @@ import uuid
 from contextlib import closing
 
 from kitty.core import blocks
+from kitty.core.blocks import history
 from kitty.db import connect
 from kitty.web_socket import Closed, Reader, Tokens, accept, close_code, frame, handshake_key, send_close
 
 SOCKET_PATH = "/api/blocks/socket"
 POLL_SECONDS = 0.1
 BATCH = 200
+COMPACT_DELAY_SECONDS = 60
+COMPACT_EVERY_SECONDS = 6 * 3600
+ROOT_TYPES = frozenset({"page", "document", "quick_note"})
 
 
 def _error(status: int, message: str):
@@ -169,6 +186,7 @@ class Live:
 
 def start(app) -> None:
     app.blocks_live = Live(app)
+    threading.Thread(target=_compact_forever, args=(app,), name="kitty-blocks-compaction", daemon=True).start()
 
 
 def stop(app) -> None:
@@ -180,18 +198,83 @@ def mutated(app) -> None:
     app.blocks_live.nudge()
 
 
+def _compact_forever(app) -> None:
+    """Fold history older than the retention window and purge expired Trash, now and then."""
+    if app.streams_closed.wait(COMPACT_DELAY_SECONDS):
+        return
+    while True:
+        try:
+            with app.mutation_lock, closing(connect(app.settings.db_path)) as conn:
+                history.compact(conn)
+            app.blocks_live.nudge()
+        except sqlite3.OperationalError:
+            pass  # Busy or locked: the next run retries.
+        if app.streams_closed.wait(COMPACT_EVERY_SECONDS):
+            return
+
+
+def _page(conn, values: dict) -> str:
+    """The page root named by ``page=<block id>`` or ``type`` plus ``number`` (Trash included)."""
+    if "page" in values:
+        return blocks.block_id(values["page"])
+    kind, number = values.get("type"), values.get("number")
+    if isinstance(number, str) and re.fullmatch(r"[1-9][0-9]{0,15}", number):
+        number = int(number)
+    if kind not in ROOT_TYPES or type(number) is not int:
+        raise blocks.BlockError("Name the page as page=<block id> or type=page|document|quick_note with its number")
+    row = conn.execute("SELECT id FROM blocks WHERE type=? AND parent_id IS NULL AND json_extract(properties,'$.number')=?",
+                       (kind, number)).fetchone()
+    if row is None:
+        raise blocks.BlockError("Page not found", 404)
+    return row["id"]
+
+
+def _sequence(value) -> int:
+    if isinstance(value, str) and re.fullmatch(r"[0-9]{1,18}", value):
+        value = int(value)
+    if type(value) is not int:
+        raise blocks.BlockError("Choose a sequence number from the page's history")
+    return value
+
+
 def get(app, conn, path, query):
     if path == SOCKET_PATH:
         raise _error(426, "Open live blocks with a WebSocket upgrade")
+    try:
+        if path == "/api/blocks/history":
+            if set(query) - {"page", "type", "number"}:
+                raise blocks.BlockError("Unexpected history parameters")
+            return history.page_history(conn, _page(conn, query))
+        if path == "/api/blocks/history/preview":
+            if set(query) - {"page", "type", "number", "seq"}:
+                raise blocks.BlockError("Unexpected preview parameters")
+            return history.preview(conn, _page(conn, query), _sequence(query.get("seq")))
+        if path == "/api/blocks/trash":
+            if query:
+                raise blocks.BlockError("Trash takes no parameters")
+            return history.trash(conn)
+    except blocks.BlockError as exc:
+        raise _error(exc.status, str(exc)) from None
     return None
 
 
 def post(app, conn, path, body):
-    if path != "/api/blocks/session":
+    try:
+        if path == "/api/blocks/session":
+            if body:
+                raise blocks.BlockError("A blocks session request expects an empty object")
+            return {"token": app.blocks_live.tokens.issue(), "socket": SOCKET_PATH}
+        if path == "/api/blocks/history/restore":
+            if set(body) - {"page", "type", "number", "seq"}:
+                raise blocks.BlockError("Unexpected restore fields")
+            return history.restore(conn, _page(conn, body), _sequence(body.get("seq")))
+        if path == "/api/blocks/trash/restore":
+            if set(body) != {"id"}:
+                raise blocks.BlockError("Restore needs the block id from Trash")
+            return history.restore_from_trash(conn, body["id"])
         return None
-    if body:
-        raise _error(400, "A blocks session request expects an empty object")
-    return {"token": app.blocks_live.tokens.issue(), "socket": SOCKET_PATH}
+    except blocks.BlockError as exc:
+        raise _error(exc.status, str(exc)) from None
 
 
 def upgrade(app, handler, path, query) -> bool:

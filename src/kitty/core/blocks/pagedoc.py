@@ -324,7 +324,9 @@ class OrderedPageDoc:
                 self.changed.add(target.id)
 
     def _op_purge(self, op: dict, at: str) -> None:
-        self._detach(self.get(block_id(op.get("id"))).id)
+        bid = block_id(op.get("id"))
+        if bid in self.blocks:  # Replaying after compaction may find it already gone.
+            self._detach(bid)
 
     def _op_release(self, op: dict, at: str) -> None:
         item = self.get(block_id(op.get("id")))
