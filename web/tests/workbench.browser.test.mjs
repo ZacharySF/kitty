@@ -581,6 +581,55 @@ describe("flashcard review", () => {
     assert.deepEqual(problems, []);
     await context.close();
   });
+
+  test("stacked deck: flip the top card, then a swipe or 1–4 sends it off in the grade's direction", async () => {
+    const { page, problems, context } = await reviewDeck("Stack deck", [["Capital of Peru?", "Lima"], ["Capital of Chile?", "Santiago"], ["Capital of Bolivia?", "Sucre"], ["Capital of Ecuador?", "Quito"]]);
+    const stack = page.getByRole("region", { name: /Card stack/ });
+    await stack.waitFor();
+    const top = stack.getByRole("button");
+    // A pile: cards wait underneath and peek out below the top card.
+    const pile = await stack.evaluate((node) => {
+      const cards = [...node.querySelectorAll(":scope > *")].map((card) => card.getBoundingClientRect());
+      return { count: cards.length, peeking: cards.slice(0, -1).every((card) => card.bottom > cards.at(-1).bottom) };
+    });
+    assert.ok(pile.count >= 3, `only ${pile.count} cards in the pile`);
+    assert.ok(pile.peeking, "cards underneath do not peek out below the top card");
+    assert.equal(await top.getAttribute("aria-label"), "Flip card");
+    await top.click();
+    await stack.getByText(/Lima|Santiago|Sucre|Quito/).waitFor();
+    const latest = () => page.evaluate(async () => (await (await fetch("/api/flashcards/history", { cache: "no-store" })).json()).reviews[0] ?? null);
+    /** The grade of the next recorded review, once the following card is on the pile. */
+    const gradedAfter = async (before, count) => {
+      await page.waitForFunction((text) => !document.body.innerText.includes(text), count);
+      const review = await latest();
+      assert.notEqual(review?.id, before?.id, "no review was recorded");
+      return review.rating;
+    };
+    const eligible = async () => (await page.getByText(/eligible cards/).textContent()).trim();
+    // Dragging right past the threshold grades Good and the card leaves to the right.
+    let before = await latest(), count = await eligible();
+    const box = await top.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 220, box.y + box.height / 2 + 10, { steps: 8 });
+    await page.mouse.up();
+    assert.equal(await gradedAfter(before, count), 3, "a right swipe did not grade Good");
+    // Key 1 sends the next card off to the left as Again.
+    await top.click();
+    await stack.getByText(/Lima|Santiago|Sucre|Quito/).waitFor();
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    await page.route("**/api/flashcards/grade", async (route) => { await held; await route.continue(); });
+    before = await latest();
+    count = await eligible();
+    const start = (await top.boundingBox()).x;
+    await page.keyboard.press("1");
+    await page.waitForFunction(([x]) => document.querySelector('[role="region"][aria-label^="Card stack"] [role="button"]').getBoundingClientRect().x < x - 100, [start]);
+    release();
+    assert.equal(await gradedAfter(before, count), 1, "key 1 did not grade Again");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
 });
 
 describe("Liquid Glass theme", () => {
@@ -1028,6 +1077,42 @@ describe("appearance settings", () => {
     assert.equal(atMount.density, cozy.density);
     assert.equal(atMount.titleFont, cozy.titleFont);
     assert.equal(await panel.getByRole("button", { name: /^Cozy/ }).getAttribute("aria-pressed"), "true");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("flashcard decks", () => {
+  test("deck tiles: one due ring with the name and today's count, details on hover, and a remembered Graph look", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Tile deck", [["One?", "1"], ["Two?", "2"], ["Three?", "3"]]);
+    await page.reload();
+    assert.equal(await views.getByRole("button", { name: "Map" }).count(), 0, "the graph is still a separate Map view");
+    assert.equal(await views.getByRole("button", { name: "Decks" }).getAttribute("aria-current"), "page");
+    const looks = page.getByRole("radiogroup", { name: "Deck overview look" });
+    assert.equal(await looks.getByRole("radio", { name: "Tiles" }).getAttribute("aria-checked"), "true");
+    const tile = page.getByRole("button", { name: "Tile deck, 3 due today" });
+    await tile.waitFor();
+    assert.equal(await tile.locator("svg").count(), 1, "a tile draws more than its one ring");
+    assert.match((await tile.textContent()).replace(/\s+/g, " "), /3.*Tile deck|Tile deck.*3/);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const details = page.getByRole("group", { name: "Tile deck details" });
+    assert.match(await details.textContent(), /3 new/);
+    assert.match(await details.textContent(), /no recall yet/i);
+    const opacity = () => details.evaluate((node) => getComputedStyle(node).opacity);
+    assert.equal(await opacity(), "0", "details show before hover");
+    await tile.hover();
+    assert.equal(await opacity(), "1", "details stay hidden on hover");
+    await tile.click();
+    await page.getByRole("heading", { name: "Tile deck", level: 2 }).waitFor();
+    await looks.getByRole("radio", { name: "Graph" }).click();
+    await page.getByRole("region", { name: "Flashcards", exact: true }).first().waitFor();
+    assert.equal(await tile.count(), 0, "tiles stay beside the graph");
+    await page.reload();
+    await page.getByRole("region", { name: "Flashcards", exact: true }).first().waitFor();
+    assert.equal(await looks.getByRole("radio", { name: "Graph" }).getAttribute("aria-checked"), "true", "the Graph look is not remembered");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -2086,6 +2171,49 @@ describe("agent status cards", () => {
   });
 });
 
+describe("flashcard memory stats", () => {
+  test("Stats shows today's queue, a 30-day forecast, retention curves, maturity and a 26-week heatmap for the scope", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Stats deck", [["Sun?", "Star"], ["Moon?", "Satellite"], ["Mars?", "Planet"], ["Io?", "Moon"]]);
+    // One card graduates straight to review (Easy), one stays in learning (Again).
+    await page.evaluate(async () => {
+      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) })).json();
+      const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === "Stats deck");
+      for (const rating of [4, 1]) {
+        const { card } = await post("/flashcards/review", { deck_id: deck.id, search: "", mode: "regular" });
+        await post("/flashcards/reveal", { token: card.token });
+        await post("/flashcards/grade", { token: card.token, rating, duration_ms: 6000 });
+      }
+    });
+    await page.reload();
+    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Stats deck" });
+    await views.getByRole("button", { name: "Stats" }).click();
+    const panel = (name) => page.getByRole("region", { name });
+    const queue = panel("Today's queue");
+    await queue.waitFor();
+    assert.match((await queue.textContent()).replace(/\s+/g, " "), /2 cards today/);
+    for (const [count, label] of [["0", "Learning"], ["0", "Review"], ["2", "New"]])
+      assert.equal(await queue.getByRole("listitem").filter({ hasText: label }).locator("b").textContent(), count, `${label} count`);
+    for (const chip of ["0 suspended", "0 leeches", "0 buried"]) await queue.getByText(chip).waitFor();
+    const forecast = panel("Due forecast · 30 days");
+    assert.equal(await forecast.locator("svg title").count(), 30, "forecast does not cover 30 days");
+    assert.match(await forecast.locator("svg title").first().textContent(), /today · 1 due \(1 learning\)/);
+    const retention = panel("Retention curve");
+    assert.match(await retention.getByRole("img").getAttribute("aria-label"), /weak.*medium.*strong.*90% target/);
+    const maturity = panel("Maturity");
+    for (const [label, count] of [["New", "2"], ["Learning", "1"], ["Young", "1"], ["Mature", "0"]])
+      assert.equal(await maturity.getByRole("listitem").filter({ hasText: label }).locator("b").textContent(), count, `${label} maturity`);
+    const heatmap = panel("Reviews per day · 26 weeks");
+    assert.equal(await heatmap.locator("[title$='reviews'], [title$='review']").count(), 182, "heatmap does not show 182 days");
+    assert.match(await heatmap.textContent(), /1-day streak/);
+    assert.equal(await page.getByText(/last 90 active days/).count(), 0, "the 90-day bar chart is still shown");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
 describe("reminder actions", () => {
   test("hover reveals edit, snooze and delete; swiping right snoozes and left deletes, each with Undo", async () => {
     const { page, problems, context } = await open("reminders", { dock: "hidden" });
@@ -2135,6 +2263,60 @@ describe("reminder actions", () => {
     await edited.waitFor({ state: "detached" });
     await deleted.getByRole("button", { name: "Undo" }).click();
     await edited.waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("flashcard card browser", () => {
+  test("split browser: filter the list, flip the preview, read memory meters and last reviews, suspend and bury", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Browser deck", [["Capital of Peru?", "Lima"], ["Capital of Kenya?", "Nairobi"], ["Capital of Japan?", "Tokyo"]]);
+    await page.evaluate(async () => {
+      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) })).json();
+      const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === "Browser deck");
+      const { card } = await post("/flashcards/review", { deck_id: deck.id, search: "", mode: "regular" });
+      await post("/flashcards/reveal", { token: card.token });
+      await post("/flashcards/grade", { token: card.token, rating: 4, duration_ms: 5000 });
+    });
+    await page.reload();
+    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Browser deck" });
+    await views.getByRole("button", { name: "Cards" }).click();
+    const list = page.getByRole("list", { name: "Cards" });
+    await list.getByRole("listitem").nth(2).waitFor();
+    assert.equal(await list.getByRole("listitem").count(), 3);
+    const filter = page.getByRole("searchbox", { name: "Filter cards" });
+    await filter.fill("Kenya");
+    await filter.press("Enter");
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Cards"] li').length === 1);
+    await filter.fill("");
+    await filter.press("Enter");
+    await list.getByRole("listitem").nth(2).waitFor();
+    // The detail pane sits beside the list.
+    const detail = page.getByRole("region", { name: "Card details" });
+    await list.getByRole("button", { name: /Peru/ }).click();
+    const [listBox, detailBox] = [await list.boundingBox(), await detail.boundingBox()];
+    assert.ok(detailBox.x >= listBox.x + listBox.width - 1, "the detail pane is not beside the list");
+    const preview = detail.getByRole("button", { name: "Flip card preview" });
+    await page.waitForFunction(() => document.querySelector('[aria-label="Flip card preview"]')?.textContent.includes("Peru"));
+    await preview.click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Flip card preview"]')?.textContent.includes("Lima"));
+    assert.match(await detail.getByRole("meter", { name: "Stability" }).getAttribute("aria-valuetext"), /^\d+(\.\d)? ?d/);
+    assert.match(await detail.getByRole("meter", { name: "Difficulty" }).getAttribute("aria-valuetext"), /^\d+(\.\d)? of 10$/);
+    assert.match(await detail.getByRole("meter", { name: "Recall now" }).getAttribute("aria-valuetext"), /^\d+%$/);
+    const reviews = detail.getByRole("list", { name: "Last reviews" }).getByRole("listitem");
+    assert.equal(await reviews.count(), 1);
+    assert.match(await reviews.first().getAttribute("aria-label"), /Easy/);
+    await detail.getByRole("button", { name: "Suspend" }).click();
+    await detail.getByRole("button", { name: "Unsuspend" }).waitFor();
+    await detail.getByText("suspended", { exact: true }).waitFor();
+    await detail.getByRole("button", { name: "Bury today" }).click();
+    await detail.getByRole("button", { name: "Unbury" }).waitFor();
+    await list.getByRole("button", { name: /Kenya/ }).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Flip card preview"]')?.textContent.includes("Kenya"));
+    assert.equal(await detail.getByRole("meter", { name: "Recall now" }).getAttribute("aria-valuetext"), "not studied yet");
     assert.deepEqual(problems, []);
     await context.close();
   });
