@@ -9,6 +9,7 @@
   import { getTheme } from "./themeCatalog";
   import { blockText, paletteSlot } from "./calendar/palette";
   import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";
+  import RangePill, { VIEWS, type CalendarView } from "./calendar/RangePill.svelte";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -137,7 +138,7 @@
     conflicts: [],
     free: [],
   });
-  let view = $state("week");
+  let view = $state<CalendarView>("week");
   let section = $state("calendar");
   const initialDate = new Date();
   const initialDay = `${initialDate.getFullYear()}-${String(initialDate.getMonth() + 1).padStart(2, "0")}-${String(initialDate.getDate()).padStart(2, "0")}`;
@@ -532,6 +533,34 @@
         step * (view === "week" ? 7 : view === "agenda" ? 31 : 1),
       );
     selectedDate = anchor;
+  }
+  function setView(next: CalendarView) {
+    view = next;
+    anchor = selectedDate;
+  }
+  let shortcutFlash = $state("");
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  let calendarLayout = $state<HTMLDivElement>();
+  /** Single-key shortcuts while focus is inside the calendar: D/W/M/A views, J/K step, T today. */
+  function calendarKey(event: KeyboardEvent) {
+    const target = event.target as HTMLElement;
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.defaultPrevented ||
+        target.isContentEditable || target.closest("input, textarea, select")) return;
+    const key = event.key.toLowerCase();
+    const hit = VIEWS.find((v) => v.key.toLowerCase() === key);
+    if (hit) setView(hit.id);
+    else if (key === "j") navigate(-1);
+    else if (key === "k") navigate(1);
+    else if (key === "t") chooseDate(today);
+    else return;
+    event.preventDefault();
+    shortcutFlash = key.toUpperCase();
+    // The focused cell may vanish with the old view; keep focus in the calendar so keys keep working.
+    void tick().then(() => {
+      if (calendarLayout && !calendarLayout.contains(document.activeElement)) calendarLayout.focus({ preventScroll: true });
+    });
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => (shortcutFlash = ""), 700);
   }
   function newEvent(start: string, end?: string, allDay = false) {
     if (!isActive) return;
@@ -1485,6 +1514,7 @@
       window.removeEventListener(THEME_EVENT, syncTheme);
       clearInterval(timer);
       clearInterval(clockTimer);
+      clearTimeout(flashTimer);
       pane.clearTrail("calendar");
     };
   });
@@ -1552,25 +1582,6 @@
       >
     </div>{/if}
   {#if notice}<p role="status" class="notice">{notice}</p>{/if}
-  <div class="range-toolbar">
-    <div class="period-navigation" role="group" aria-label="Date navigation">
-      <Button size="sm" aria-label={`Previous ${view === "week" ? "week" : view === "month" ? "month" : view === "day" ? "day" : "period"}`} onclick={() => navigate(-1)}>←</Button>
-      <Button size="sm" onclick={() => chooseDate(parts(new Date().toISOString()).date)}>Today</Button>
-      <Button size="sm" aria-label={`Next ${view === "week" ? "week" : view === "month" ? "month" : view === "day" ? "day" : "period"}`} onclick={() => navigate(1)}>→</Button>
-    </div>
-    <h2 class="range-heading" aria-live="polite">{rangeHeading}</h2>
-    <label class="date-jump">Go to date<input type="date" aria-label="Go to date"
-      value={anchor} onchange={(e) => chooseDate(e.currentTarget.value)} /></label>
-    <label class="view-switch">View
-      <select aria-label="Calendar view" bind:value={view}
-        onchange={() => { section = "calendar"; anchor = selectedDate; }}>
-        <option value="week">Week</option>
-        <option value="month">Month</option>
-        <option value="day">Day</option>
-        <option value="agenda">Agenda</option>
-      </select>
-    </label>
-  </div>
   <div class="search-toolbar">
     <label class="calendar-search"><span>Search</span><input type="search" bind:value={search}
       placeholder="Search events, tasks or tags" /></label>
@@ -1624,8 +1635,10 @@
     <details class="interaction-help">
       <summary>Shortcuts</summary>
       <p class="hint">Select a date for its day plan. Click or press Enter on a time slot for a short event. Arrow keys move between slots; Home/End jump within a day. Drag or Shift+Enter selects a range. Drag an event to move it, ↔ to resize; changes open for review.</p>
+      <p class="hint">While the calendar has focus: <kbd>D</kbd>/<kbd>W</kbd>/<kbd>M</kbd>/<kbd>A</kbd> switch to day, week, month or agenda; <kbd>J</kbd>/<kbd>K</kbd> step back or forward; <kbd>T</kbd> jumps to today.</p>
     </details>
-    <div class="calendar-layout">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="calendar-layout" bind:this={calendarLayout} tabindex="-1" onkeydown={calendarKey}>
     <div class="calendar-main">
     {#if view === "month"}
       <div class="month-layout">
@@ -1809,7 +1822,7 @@
         </div>
       </div>
     {:else}
-      <div class="agenda">
+      <div class="agenda" role="region" aria-label="Agenda">
         {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}<section
             >
               <h2><button class="agenda-date" onclick={() => (selectedDate = day)}>{dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}</button></h2>
@@ -1835,6 +1848,8 @@
           </p>{/if}
       </div>
     {/if}
+    <RangePill heading={rangeHeading} {view} date={anchor} flash={shortcutFlash}
+      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate} />
     </div>
     <aside class="selected-plan" aria-label="Selected date plan">
       <Button size="sm" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
@@ -3001,9 +3016,6 @@
     padding-bottom: 0.6rem;
   }
   .header-actions,
-  .period-navigation,
-  .view-switch,
-  .range-toolbar,
   .search-toolbar,
   .selected-actions {
     display: flex;
@@ -3013,25 +3025,6 @@
   }
   .header-actions {
     margin-left: auto;
-  }
-  .range-toolbar {
-    padding: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 0.8rem;
-    background: var(--surface);
-    gap: 0.8rem;
-  }
-  .range-heading {
-    font-size: 1.25rem;
-    letter-spacing: -0.025em;
-    margin: 0 auto 0 0;
-  }
-  .date-jump {
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-  .view-switch {
-    gap: 0.25rem;
   }
   .calendar-search {
     flex: 1;
@@ -3078,7 +3071,6 @@
     min-width: 0;
   }
   .calendar-main {
-    overflow: auto;
     border-radius: 0.7rem;
     border: 1px solid var(--border);
   }
@@ -3827,19 +3819,9 @@
     .toolbar {
       align-items: start;
     }
-    .range-heading {
-      order: -1;
-      flex-basis: 100%;
-    }
-    .view-switch {
-      width: 100%;
-    }
     .load-status {
       flex-basis: 100%;
       margin-left: 0;
-    }
-    .date-jump {
-      margin-left: auto;
     }
     .header-actions {
       margin-left: 0;

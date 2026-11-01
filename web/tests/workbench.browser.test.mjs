@@ -1156,7 +1156,7 @@ describe("calendar redesign", () => {
     for (const hour of [8, 10, 12, 14, 16])
       await addEvent(page, { title: `Dot ${hour}`, start: on20(hour), end: on20(hour + 1), location: hour === 12 ? "Room 5" : "" });
     await page.reload();
-    await page.getByRole("combobox", { name: "Calendar view" }).selectOption("month");
+    await page.getByRole("toolbar", { name: "Calendar range" }).getByRole("button", { name: "Month", exact: true }).click();
     const grid = page.getByRole("grid", { name: "Month calendar" });
     const cell = grid.getByRole("gridcell", { name: / 20, 5 events$/ }).first();
     await cell.waitFor();
@@ -1169,6 +1169,48 @@ describe("calendar redesign", () => {
     const items = agenda.getByRole("button", { name: /Dot \d+/ });
     assert.equal(await items.count(), 5);
     assert.match(await items.nth(2).textContent(), /12:00[\s\S]*Dot 12[\s\S]*Room 5/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("a floating range pill switches views and D/W/M/A, J/K and T work while the calendar has focus", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const week = page.getByRole("region", { name: "Week calendar" });
+    await week.waitFor();
+    assert.equal(await page.getByRole("combobox", { name: "Calendar view" }).count(), 0, "native view select is still shown");
+    const pill = page.getByRole("toolbar", { name: "Calendar range" });
+    await page.locator(".calendar-main").evaluate((node) => node.scrollIntoView());
+    const box = await pill.boundingBox();
+    const main = await page.locator(".calendar-main").boundingBox();
+    const floor = Math.min(main.y + main.height, 850);
+    assert.ok(box.y + box.height <= floor && box.y >= floor - 70,
+      `range pill (${box.y}) does not float over the visible bottom of the calendar (${floor})`);
+    assert.ok(Math.abs(box.x + box.width / 2 - (main.x + main.width / 2)) < 4, "range pill is not centred over the calendar");
+    const views = ["Day", "Week", "Month", "Agenda"];
+    for (const name of views) assert.equal(await pill.getByRole("button", { name, exact: true }).getAttribute("aria-keyshortcuts"), name[0]);
+    await pill.getByRole("button", { name: "Month", exact: true }).click();
+    await page.getByRole("grid", { name: "Month calendar" }).waitFor();
+    assert.equal(await pill.getByRole("button", { name: "Month", exact: true }).getAttribute("aria-pressed"), "true");
+    const range = pill.getByRole("button", { name: /Back to today/ });
+    await page.getByRole("button", { name: /^Select \d{4}-/ }).first().focus();
+    await page.keyboard.press("w");
+    await week.waitFor();
+    const thisWeek = await range.textContent();
+    await page.keyboard.press("k");
+    await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent !== old, thisWeek);
+    assert.notEqual(await range.textContent(), thisWeek, "K did not step forward");
+    await page.keyboard.press("j");
+    await page.keyboard.press("k");
+    await page.keyboard.press("t");
+    await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent === old, thisWeek);
+    await page.keyboard.press("d");
+    await page.getByRole("region", { name: "Day calendar" }).waitFor();
+    await page.keyboard.press("a");
+    await page.getByRole("region", { name: "Agenda" }).waitFor();
+    await page.getByRole("searchbox").fill("dwm");
+    assert.equal(await page.getByRole("region", { name: "Agenda" }).count(), 1, "typing in search switched views");
+    await page.getByText("Shortcuts", { exact: true }).click();
+    assert.match(await page.locator(".interaction-help").textContent(), /D\/W\/M\/A[\s\S]*J\/K[\s\S]*T/);
     assert.deepEqual(problems, []);
     await context.close();
   });
