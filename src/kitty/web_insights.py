@@ -126,6 +126,7 @@ def get(app, conn, path, query):
         return {"sections": {name: [asdict(rate) | {"response_rate": rate.response_rate,
                 "advance_rate": rate.advance_rate} for rate in rates]
                 for name, rates in stats.response_report(conn).items()},
+                "summary": stats.report_summary(conn),
                 "datasets": list(export.QUERIES)}
     if path == "/api/mail":
         _keys(query, {})

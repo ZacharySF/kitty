@@ -701,8 +701,13 @@ The website supports:
 - Read-only Gmail authorization/checking and explicit status-proposal decisions.
 - Rules-only triage, fresh cost estimates, capped paid immediate/batch runs and
   collection of existing batch results. Paid operations require explicit approval.
-- Outcome reports and formula-safe CSV/ZIP or JSON exports of jobs, applications
-  and status history.
+- Reports open on a summary card that tells this week or this month (toggle) in
+  sentences: applications sent against the weekly target, the streak, an inline
+  sparkline of the last eight weeks, replies, assessments/interviews and offers
+  from confirmed status changes, the track that hears back most, and a next step.
+  Every figure comes from recorded applications and status history. **Show
+  tables** reveals the outcome-rate tables; formula-safe CSV/ZIP or JSON exports
+  of jobs, applications and status history stay below the card.
 
 **Job selection:** Ctrl+F (⌘F on macOS) searches; Space marks focused rows,
 Ctrl-click toggles and Shift-click selects a range. **Save selected** favorites

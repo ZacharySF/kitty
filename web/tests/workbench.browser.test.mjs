@@ -2701,3 +2701,36 @@ describe("notifications", () => {
     await context.close();
   });
 });
+
+describe("job-search report", () => {
+  test("a narrative card tells the week or month from recorded data; the tables stay one click away", async () => {
+    const { page, problems, context } = await open("reports", { dock: "hidden" });
+    const card = page.getByRole("article", { name: "Job-search summary" });
+    await card.waitFor();
+    const { summary, sections } = await page.evaluate(async () => (await fetch("/api/reports")).json());
+    const text = async () => (await card.textContent()).replace(/\s+/g, " ");
+    // Week: the weekly total against the target, the streak, an inline sparkline and a next step.
+    assert.equal(await card.getByRole("radio", { name: "Week" }).getAttribute("aria-checked"), "true");
+    const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    assert.ok((await text()).includes(`You sent ${plural(summary.week.applied, "application")} this week`), await text());
+    if (summary.weekly_target) assert.ok((await text()).includes(`against a target of ${summary.weekly_target}`), await text());
+    if (summary.streak_days) assert.ok((await text()).includes(`${plural(summary.streak_days, "day")} in a row`), await text());
+    const spark = card.getByRole("img", { name: /^Applications per week/ });
+    assert.equal(await spark.locator("i").count(), summary.weeks.length);
+    assert.ok((await spark.getAttribute("aria-label")).endsWith(summary.weeks.map((week) => week.applied).join(", ")));
+    assert.match(await card.getByText(/^Next:/).textContent(), /^Next: \S/);
+    // Month: totals for the calendar month so far.
+    await card.getByRole("radio", { name: "Month" }).click();
+    const month = new Date(`${summary.month.start}T12:00:00`).toLocaleString("en", { month: "long" });
+    assert.ok((await text()).includes(`${plural(summary.month.applied, "application")} in ${month} so far`), await text());
+    // The tables are hidden until asked for.
+    const tables = page.getByRole("region", { name: /^Response rates by/ });
+    assert.equal(await tables.count(), 0);
+    const toggle = page.getByRole("button", { name: "Show tables" });
+    await toggle.click();
+    assert.equal(await tables.count(), Object.keys(sections).length);
+    assert.equal(await page.getByRole("button", { name: "Hide tables" }).getAttribute("aria-expanded"), "true");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
