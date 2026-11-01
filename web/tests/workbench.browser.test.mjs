@@ -500,3 +500,24 @@ describe("study timer", () => {
     await context.close();
   });
 });
+
+describe("study guide", () => {
+  test("the 14 steps sit in three phase columns; the rail view is one click away and remembered", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await page.getByRole("button", { name: "Study session", exact: true }).click();
+    const guide = page.getByRole("region", { name: "Fourteen-step study guide" });
+    await guide.waitFor();
+    const columns = guide.locator('[data-guide-view="columns"] > section');
+    assert.equal(await columns.count(), 3, "guide is not three phase columns");
+    assert.deepEqual(await columns.locator("h4").allTextContents(), ["Prepare & prime", "During the session", "Test, review & return"]);
+    assert.equal(await guide.getByRole("checkbox").count(), 14);
+    await guide.getByRole("checkbox").first().check();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Fourteen-step study guide"] [role="status"]')?.textContent?.startsWith("1/14"));
+    await guide.getByRole("radio", { name: "Rail" }).click();
+    await guide.locator('[data-guide-view="rail"]').waitFor();
+    assert.equal(await guide.locator('[data-guide-view="columns"]').count(), 0);
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.study.guide-view")), "rail");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
