@@ -1072,14 +1072,14 @@ describe("appearance settings", () => {
     assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "2d");
     await radio("Brain").check();
     assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "brain");
-    assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), true);
+    assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), true);
     assert.match(await titleFont(), /Fraunces/);
     assert.equal(await bodySize(), "13px");
 
     // A preset sets every control at once, the app and the preview follow.
     await panel.getByRole("button", { name: /^Minimal/ }).click();
     for (const name of ["Harness", "Plain", "Compact · 13px", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
-    assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), false);
+    assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), false);
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "true");
     assert.equal(await root("theme"), "harness");
     assert.doesNotMatch(await titleFont(), /Fraunces/);

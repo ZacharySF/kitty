@@ -27,18 +27,21 @@
   }
 
   onMount(() => {
-    const syncTheme = () => (focusStyle = document.documentElement.dataset.themeFocus ?? "ring");
+    const syncTheme = () => queueMicrotask(() => (focusStyle = document.documentElement.dataset.themeFocus ?? "ring"));
+    // Focus events also fire synchronously while Svelte updates the DOM (a focused node is
+    // removed, a template focuses a field); state changes wait until that update is done.
     const focusIn = (event: FocusEvent) => {
       const element = event.target;
       // Top-layer dialogs and popovers paint above any page layer; their ring stays plain.
-      if (!(element instanceof HTMLElement) || !element.matches(":focus-visible") || element.closest("dialog, [popover]")) {
-        target = null;
-        return;
-      }
-      target = element;
-      place();
+      const shown = element instanceof HTMLElement && element.matches(":focus-visible") && !element.closest("dialog, [popover]");
+      queueMicrotask(() => {
+        target = shown ? element : null;
+        if (shown) place();
+      });
     };
-    const focusOut = () => (target = null);
+    const focusOut = () => queueMicrotask(() => {
+      if (!document.activeElement || document.activeElement === document.body) target = null;
+    });
     let frame = 0;
     const follow = () => {
       if (!target || frame) return;
