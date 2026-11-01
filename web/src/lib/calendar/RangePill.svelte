@@ -1,17 +1,19 @@
 <script module lang="ts">
-  export type CalendarView = "day" | "week" | "month" | "agenda";
+  export type CalendarView = "day" | "week" | "month" | "agenda" | "year" | "plan";
   export const VIEWS: { id: CalendarView; label: string; key: string }[] = [
     { id: "day", label: "Day", key: "D" },
     { id: "week", label: "Week", key: "W" },
     { id: "month", label: "Month", key: "M" },
     { id: "agenda", label: "Agenda", key: "A" },
+    { id: "year", label: "Year", key: "Y" },
+    { id: "plan", label: "Plan", key: "P" },
   ];
 </script>
 
 <script lang="ts">
   import Icon from "../Icon.svelte";
 
-  /** Glass capsule floating over the bottom of the calendar: range, step, go-to-date and D W M A views. */
+  /** Glass capsule floating over the bottom of the calendar: range, step, go-to-date and the D W M A Y P views. */
   let { heading, view, date, flash = "", onview, onstep, ontoday, ondate }: {
     heading: string;
     view: string;
@@ -23,7 +25,7 @@
     ontoday: () => void;
     ondate: (date: string) => void;
   } = $props();
-  const unit = $derived(view === "week" || view === "month" || view === "day" ? view : "period");
+  const unit = $derived(view === "plan" ? "day" : view === "agenda" ? "period" : view);
   let picker = $state<HTMLInputElement>();
 </script>
 

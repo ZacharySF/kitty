@@ -10,6 +10,10 @@
   import { blockText, paletteSlot } from "./calendar/palette";
   import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";
   import RangePill, { VIEWS, type CalendarView } from "./calendar/RangePill.svelte";
+  import YearHeatmap from "./calendar/YearHeatmap.svelte";
+  import MiniMonth from "./calendar/MiniMonth.svelte";
+  import DayPlan from "./calendar/DayPlan.svelte";
+  import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START, type DayLoad } from "./calendar/plan";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -314,31 +318,28 @@
       ? weekStart(anchor.slice(0, 8) + "01")
       : view === "week"
         ? weekStart(anchor)
-        : anchor,
+        : view === "year"
+          ? anchor.slice(0, 4) + "-01-01"
+          : anchor,
   );
-  let days = $derived(
-    Array.from(
-      {
-        length:
-          view === "month"
-            ? 42
-            : view === "week"
-              ? 7
-              : view === "agenda"
-                ? 31
-                : 1,
-      },
-      (_, i) => addDays(firstDay, i),
-    ),
+  const dayCount = $derived(
+    view === "month" ? 42
+      : view === "week" ? 7
+      : view === "agenda" ? 31
+      : view === "year" ? (Number(anchor.slice(0, 4)) % 4 === 0 && (Number(anchor.slice(0, 4)) % 100 !== 0 || Number(anchor.slice(0, 4)) % 400 === 0) ? 366 : 365)
+      : 1,
   );
+  let days = $derived(Array.from({ length: dayCount }, (_, i) => addDays(firstDay, i)));
   const dateTitle = (day: string, options: Intl.DateTimeFormatOptions) =>
     new Intl.DateTimeFormat(undefined, { ...options, timeZone: "UTC" }).format(dateAt(day));
   const rangeHeading = $derived(
     view === "month"
       ? dateTitle(anchor, { month: "long", year: "numeric" })
-      : view === "day"
-        ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-        : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
+      : view === "year"
+        ? anchor.slice(0, 4)
+        : view === "day" || view === "plan"
+          ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+          : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
   );
   function chooseDate(day: string) {
     if (!day) return;
@@ -491,12 +492,77 @@
       const result = await api<Snapshot>(
         `/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&timezone=${encodeURIComponent(tz)}&search=${encodeURIComponent(search)}`,
       );
-      if (serial === loadCounter) data = result;
+      if (serial === loadCounter) {
+        data = result;
+        loadVersion += 1;
+      }
     } catch (e) {
       if (serial === loadCounter) error = String(e);
     } finally {
       if (serial === loadCounter) loading = false;
     }
+  }
+  let loadVersion = $state(0);
+  /** Event counts and booked minutes per local date; timed events split across midnight, all-day ones book no time. */
+  function dayLoad(events: Event[]): DayLoad {
+    const result: DayLoad = {};
+    const add = (day: string, minutes: number, count: number) => {
+      const entry = (result[day] ??= { minutes: 0, events: 0 });
+      entry.minutes += minutes;
+      entry.events += count;
+    };
+    for (const event of events) {
+      if (event.all_day) { add(event.start, 0, 1); continue; }
+      const start = parts(event.start);
+      const end = parts(event.end);
+      const startMinute = start.hour * 60 + start.minute;
+      const endMinute = end.hour * 60 + end.minute;
+      if (start.date === end.date) { add(start.date, endMinute - startMinute, 1); continue; }
+      add(start.date, 1440 - startMinute, 1);
+      for (let day = addDays(start.date, 1); day < end.date; day = addDays(day, 1)) add(day, 1440, 0);
+      if (endMinute) add(end.date, endMinute, 0);
+    }
+    return result;
+  }
+  const yearMinutes = $derived(view === "year"
+    ? Object.fromEntries(Object.entries(dayLoad(data.events)).map(([day, load]) => [day, load.minutes]))
+    : {});
+  async function loadBusy(from: string, to: string) {
+    const start = await resolveTime(from + "T00:00");
+    const end = await resolveTime(to + "T00:00");
+    const result = await api<Snapshot>(
+      `/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&timezone=${encodeURIComponent(tz)}`,
+    );
+    return dayLoad(result.events);
+  }
+  /** Open tasks on the plan day (undated, dated that day, or timed that day), with planned start minute. */
+  const planTasks = $derived(view === "plan"
+    ? data.tasks
+        .filter((t) => t.id && t.status !== "cancelled" &&
+          (!t.due || (t.due.length === 10 ? t.due : parts(t.due).date) === anchor) &&
+          (t.status !== "done" || !!t.due))
+        .map((t) => ({ task: t, at: t.due.length > 10 ? parts(t.due).hour * 60 + parts(t.due).minute : null }))
+    : []);
+  async function planTask(id: string) {
+    const entry = planTasks.find((item) => item.task.id === id);
+    if (!entry) return;
+    const busy: [number, number][] = [
+      ...timedEvents(anchor).map((p): [number, number] => [p.start, p.end]),
+      ...planTasks.filter((item) => item.at !== null).map((item): [number, number] => [item.at!, item.at! + PLAN_LENGTH]),
+    ];
+    const from = Math.max(PLAN_START, anchor === today ? currentMinute : 0);
+    const start = nextFreeGap(busy, from, PLAN_LENGTH);
+    if (start === null) {
+      notice = `No free ${PLAN_LENGTH}-minute gap left before ${String(PLAN_END / 60)}:00.`;
+      return;
+    }
+    const wall = `${anchor}T${String(Math.floor(start / 60)).padStart(2, "0")}:${String(start % 60).padStart(2, "0")}`;
+    await changed(async () =>
+      api<Task>("/calendar/tasks", { id, revision: entry.task.revision, due: await resolveTime(wall, tz) }));
+  }
+  async function unplanTask(id: string) {
+    const entry = planTasks.find((item) => item.task.id === id);
+    if (entry) await changed(() => api<Task>("/calendar/tasks", { id, revision: entry.task.revision, due: anchor }));
   }
   async function run(work: () => Promise<unknown>) {
     error = "";
@@ -523,9 +589,10 @@
     });
   }
   function navigate(step: number) {
-    if (view === "month") {
+    if (view === "month" || view === "year") {
       const d = dateAt(anchor);
-      d.setUTCMonth(d.getUTCMonth() + step, 1);
+      if (view === "year") d.setUTCFullYear(d.getUTCFullYear() + step, d.getUTCMonth(), 1);
+      else d.setUTCMonth(d.getUTCMonth() + step, 1);
       anchor = d.toISOString().slice(0, 10);
     } else
       anchor = addDays(
@@ -541,7 +608,7 @@
   let shortcutFlash = $state("");
   let flashTimer: ReturnType<typeof setTimeout> | undefined;
   let calendarLayout = $state<HTMLDivElement>();
-  /** Single-key shortcuts while focus is inside the calendar: D/W/M/A views, J/K step, T today. */
+  /** Single-key shortcuts while focus is inside the calendar: D/W/M/A/Y/P views, J/K step, T today. */
   function calendarKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.defaultPrevented ||
@@ -1635,7 +1702,7 @@
     <details class="interaction-help">
       <summary>Shortcuts</summary>
       <p class="hint">Select a date for its day plan. Click or press Enter on a time slot for a short event. Arrow keys move between slots; Home/End jump within a day. Drag or Shift+Enter selects a range. Drag an event to move it, ↔ to resize; changes open for review.</p>
-      <p class="hint">While the calendar has focus: <kbd>D</kbd>/<kbd>W</kbd>/<kbd>M</kbd>/<kbd>A</kbd> switch to day, week, month or agenda; <kbd>J</kbd>/<kbd>K</kbd> step back or forward; <kbd>T</kbd> jumps to today.</p>
+      <p class="hint">While the calendar has focus: <kbd>D</kbd>/<kbd>W</kbd>/<kbd>M</kbd>/<kbd>A</kbd>/<kbd>Y</kbd>/<kbd>P</kbd> switch to day, week, month, agenda, year or the day plan; <kbd>J</kbd>/<kbd>K</kbd> step back or forward; <kbd>T</kbd> jumps to today.</p>
     </details>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="calendar-layout" bind:this={calendarLayout} tabindex="-1" onkeydown={calendarKey}>
@@ -1821,6 +1888,21 @@
           {/each}
         </div>
       </div>
+    {:else if view === "year"}
+      <YearHeatmap year={Number(anchor.slice(0, 4))} busy={yearMinutes} {today}
+        onopen={(day) => { chooseDate(day); view = "day"; }} />
+    {:else if view === "plan"}
+      <DayPlan
+        eyebrow={`${anchor === today ? "Today · " : ""}${dateTitle(anchor, { weekday: "short", month: "short", day: "numeric" })}`}
+        now={anchor === today ? currentMinute : null}
+        busy={pending > 0}
+        events={timedEvents(anchor).map((p) => ({ key: `${p.event.id}:${p.event.occurrence}`, title: p.event.title,
+          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event.calendar_id), open: () => openEvent(p.event) }))}
+        tasks={planTasks.map(({ task, at }) => ({ id: task.id!, title: task.title, priority: task.priority,
+          done: task.status === "done", at, open: () => (taskEditor = { ...task }) }))}
+        onplan={(id) => void planTask(id)}
+        onunplan={(id) => void unplanTask(id)}
+        ontoggle={(id) => { const task = data.tasks.find((t) => t.id === id); if (task) void taskStatus(task, task.status === "done" ? "todo" : "done"); }} />
     {:else}
       <div class="agenda" role="region" aria-label="Agenda">
         {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}<section
@@ -1852,6 +1934,7 @@
       onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate} />
     </div>
     <aside class="selected-plan" aria-label="Selected date plan">
+      <MiniMonth selected={selectedDate} {today} refresh={loadVersion} {loadBusy} onpick={chooseDate} />
       <Button size="sm" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
         onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide task tray" : "Open task tray"} · {trayTasks.length}</Button>
       {#if taskTrayOpen}

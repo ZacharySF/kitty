@@ -1214,4 +1214,53 @@ describe("calendar redesign", () => {
     assert.deepEqual(problems, []);
     await context.close();
   });
+
+  test("year heatmap, mini-month navigator and a today plan that drops a task into the next free gap", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    await addEvent(page, { title: "Plan busy 1", start: at(1, 8), end: at(1, 9) });
+    await addEvent(page, { title: "Plan busy 2", start: at(1, 9), end: at(1, 10, 30) });
+    await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" },
+      body: JSON.stringify({ title: "Plan me", priority: "normal", status: "todo" }) }));
+    await page.reload();
+    const pill = page.getByRole("toolbar", { name: "Calendar range" });
+    const tomorrow = new Date(at(1, 12));
+    const iso = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+
+    // Mini-month navigator: ISO week numbers, a hover preview and click-to-jump.
+    const mini = page.getByRole("grid", { name: /^Mini month/ });
+    await mini.waitFor();
+    assert.ok(await mini.getByText(/^W\d{1,2}$/).count() >= 4, "no ISO week numbers");
+    await mini.getByRole("row").nth(2).hover();
+    await page.getByRole("status", { name: "Week preview" }).getByText(/^week \d+ · \d+ events/).waitFor();
+    await mini.getByRole("gridcell").filter({ hasText: /^15$/ }).first().click();
+    await page.getByRole("region", { name: "Week calendar" }).getByRole("button", { name: /^Select \w+, \w+ 15$/ }).waitFor();
+    assert.equal(await mini.getByRole("gridcell", { selected: true }).textContent(), "15");
+
+    // Year overview: twelve months; a day reads out its booked time on hover and pins on click.
+    await pill.getByRole("button", { name: "Year", exact: true }).click();
+    const year = page.getByRole("region", { name: "Year overview" });
+    await year.waitFor();
+    assert.equal(await year.getByRole("group").count(), 12);
+    const day = year.getByRole("button", { name: `${iso}: 2h 30m booked` });
+    await day.hover();
+    await year.getByRole("status").getByText("2h 30m booked").waitFor();
+    await day.click();
+    assert.equal(await day.getAttribute("aria-pressed"), "true");
+
+    // Today plan: Plan drops the task into the first free half hour after the busy morning.
+    await pill.getByRole("button", { name: "Plan", exact: true }).click();
+    await page.getByRole("region", { name: "Day plan" }).waitFor();
+    await pill.getByRole("button", { name: /Back to today/ }).click();
+    await pill.getByRole("button", { name: "Next day" }).click();
+    const plan = page.getByRole("region", { name: "Day plan" });
+    await plan.getByText("Plan busy 2").waitFor();
+    await plan.getByRole("button", { name: "Plan Plan me" }).click();
+    await plan.getByRole("button", { name: "Unplan Plan me (10:30)" }).waitFor();
+    const block = plan.getByRole("listitem").filter({ hasText: "Plan me" });
+    assert.ok(await block.count() >= 1);
+    assert.equal(await plan.locator(".timeline").getByText("Plan me").count(), 1, "planned task is not drawn on the timeline");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
 });

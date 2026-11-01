@@ -470,9 +470,14 @@ advances through 1, 3, 7, 16 and 35 days; Shaky restarts at one day.
 **Calendar** opens one week with half-hour slots and a day-plan sidebar; events
 are filled blocks in the theme palette. A floating range pill at the bottom of
 the calendar steps back/forward, returns to today, jumps to a date and switches
-**D**ay, **W**eek, **M**onth and **A**genda. While the calendar has focus the
-same letters switch views, **J**/**K** step and **T** goes to today. Month shows
-up to four calendar dots per date; clicking a date fills a side day agenda.
+**D**ay, **W**eek, **M**onth, **A**genda, **Y**ear and day **P**lan. While the
+calendar has focus the same letters switch views, **J**/**K** step and **T** goes
+to today. Month shows up to four calendar dots per date; clicking a date fills a
+side day agenda. Year tints every day by booked hours (hover to read, click to
+pin, **Open day** to jump). Plan splits the day's timeline from its open tasks;
+**Plan** drops a task into the next free 30-minute gap (08:00–21:00) as a dashed
+block. The sidebar's mini month shows ISO weeks; hover a week to preview its
+load and click a date to jump there.
 Click a slot to schedule a time, or drag an event/task to another date or time. Drops open the
 editor for review before saving; moving an event preserves its duration.
 All-day items can be moved across the all-day row. Reminder **When** offers
