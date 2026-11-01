@@ -818,3 +818,237 @@ describe("study streak", () => {
     await context.close();
   });
 });
+
+describe("home rails", () => {
+  for (const viewport of [DEFAULT, SCALED_MINIMUM]) {
+    test(`home at ${viewport.width}×${viewport.height}: the atlas sits centre between two scrolling widget rails; find and sections stay in reach`, async () => {
+      const { page, problems, context } = await open("today", { viewport, dock: "hidden" });
+      const left = page.getByRole("complementary", { name: "Home widgets" });
+      const right = page.getByRole("complementary", { name: "Workspace" });
+      const stage = page.locator('[data-kitty-panel="graph"]');
+      await Promise.all([left.waitFor(), right.waitFor(), stage.waitFor()]);
+      const [l, s, r] = await Promise.all([rect(left), rect(stage), rect(right)]);
+      assert.ok(l.right <= s.left && s.right <= r.left, `rails do not flank the atlas: ${l.left}-${l.right} | ${s.left}-${s.right} | ${r.left}-${r.right}`);
+      assert.ok(s.width > l.width && s.width > r.width, `the atlas (${s.width}px) is not the widest column`);
+      for (const [name, box] of [["left", l], ["right", r]])
+        assert.ok(Math.abs(box.top - s.top) <= 1 && Math.abs(box.bottom - s.bottom) <= 1, `${name} rail is not as tall as the atlas`);
+      // Each rail scrolls on its own; the page never does.
+      const scrolled = await right.evaluate((rail) => { rail.scrollTop = 200; return rail.scrollTop; });
+      assert.ok(scrolled > 0, "the Workspace rail does not scroll");
+      assert.ok(["auto", "scroll"].includes(await left.evaluate((rail) => getComputedStyle(rail).overflowY)), "the widget rail does not scroll");
+      assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
+      await right.getByRole("searchbox", { name: /Find a section/ }).fill("Flash");
+      await right.getByRole("list", { name: "Matching nodes" }).getByRole("button", { name: /Flashcards/ }).waitFor();
+      assert.ok(await right.getByRole("navigation", { name: "Workspace sections" }).getByRole("link", { name: "Calendar" }).isVisible());
+      await assertAtlasFits(page, `${viewport.width} rails`);
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+});
+
+describe("home widgets", () => {
+  const minutes = (offset) => new Date(Date.now() + offset * 60_000).toISOString();
+  const day = new Date().toISOString().slice(0, 10);
+  const CALENDAR = {
+    calendars: [{ id: "personal", name: "Personal", color: "#6d5dfc", visible: 1 }],
+    events: [
+      { id: "e-past", title: "Morning review", start: minutes(-180), end: minutes(-150), all_day: false, calendar_id: "personal", location: "" },
+      { id: "e-live", title: "Thesis writing", start: minutes(-30), end: minutes(30), all_day: false, calendar_id: "personal", location: "Library" },
+      { id: "e-next", title: "Seminar", start: minutes(90), end: minutes(150), all_day: false, calendar_id: "personal", location: "Room 4" },
+    ],
+    tasks: [], activity: [], reminders: [],
+  };
+  const ACTIVITY = {
+    running: true,
+    workspaces: [
+      { id: "w1", label: "thesis", status: "working", focused: true, agents: [{ pane: "p1", name: "omp", status: "working" }] },
+      { id: "w2", label: "export", status: "blocked", focused: false, agents: [{ pane: "p2", name: "claude", status: "blocked" }] },
+    ],
+  };
+
+  test("home widgets: hairline Today agenda with now-line, progress and countdown; agents with Approve; Ctrl+Enter quick notes", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: CALENDAR }));
+    await page.route((url) => url.pathname === "/api/terminal/activity", (route) => route.fulfill({ json: ACTIVITY }));
+    await page.reload();
+    const left = page.getByRole("complementary", { name: "Home widgets" });
+    const agenda = left.getByRole("region", { name: "Today" });
+    const note = left.getByRole("region", { name: "Quick note" });
+    const agents = page.getByRole("complementary", { name: "Workspace" }).getByRole("region", { name: "Agents" });
+    await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
+
+    // Q19 hairline minimal: no fill or box, a rule above, a small Space Grotesk title, the eyebrow on the right.
+    for (const widget of [agenda, note, agents]) {
+      const frame = await widget.evaluate((node) => {
+        const style = getComputedStyle(node);
+        const title = node.querySelector("h3"), eyebrow = node.querySelector("header .eyebrow");
+        return {
+          fill: style.backgroundColor, top: style.borderTopWidth, sides: [style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+          font: getComputedStyle(title).fontFamily, size: parseFloat(getComputedStyle(title).fontSize),
+          titleRight: title.getBoundingClientRect().right, eyebrowLeft: eyebrow?.getBoundingClientRect().left ?? -1,
+          sameRow: eyebrow ? Math.abs(eyebrow.getBoundingClientRect().bottom - title.getBoundingClientRect().bottom) < 6 : false,
+        };
+      });
+      assert.equal(frame.fill, "rgba(0, 0, 0, 0)", "widget has a fill");
+      assert.equal(frame.top, "1px");
+      assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
+      assert.match(frame.font, /Space Grotesk/);
+      assert.ok(frame.size <= 14, `title is ${frame.size}px`);
+      assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
+    }
+
+    // Today agenda: past, live with progress, now-line, then the next event with a countdown.
+    const rows = agenda.getByRole("listitem");
+    await agenda.getByText("Seminar").waitFor();
+    const labels = await rows.evaluateAll((items) => items.map((item) => item.getAttribute("aria-label") || item.textContent.trim()));
+    const live = labels.findIndex((label) => /Thesis writing/.test(label));
+    const line = labels.findIndex((label) => /^Now/.test(label));
+    assert.ok(labels.findIndex((label) => /Morning review/.test(label)) < live && live < line && line < labels.findIndex((label) => /Seminar/.test(label)), `agenda order: ${labels}`);
+    const progress = agenda.getByRole("progressbar", { name: /Thesis writing/ });
+    const value = Number(await progress.getAttribute("aria-valuenow"));
+    assert.ok(value >= 45 && value <= 55, `live progress ${value}`);
+    assert.match(await agenda.getByRole("listitem").filter({ hasText: "Seminar" }).textContent(), /in 1h (29|30)m/);
+
+    // Agent activity: per-workspace state, Approve opens herdr for the blocked one.
+    assert.match(await agents.textContent(), /1 working · 1 needs you/);
+    assert.match(await agents.getByRole("listitem").filter({ hasText: "thesis" }).textContent(), /omp/);
+    assert.equal(await agents.getByRole("button", { name: /Approve/ }).count(), 1);
+
+    // Quick note: Ctrl+Enter captures; the last three stay visible.
+    const box = note.getByRole("textbox", { name: "Quick note" });
+    for (const text of ["first thought", "second thought", "third thought", "fourth thought"]) {
+      await box.fill(text);
+      await box.press("Control+Enter");
+      await note.getByRole("listitem").filter({ hasText: text }).waitFor();
+      assert.equal(await box.inputValue(), "");
+    }
+    const notes = await note.getByRole("listitem").allTextContents();
+    assert.equal(notes.length, 3);
+    assert.match(notes[0], /fourth thought/);
+    const saved = await page.evaluate(() => fetch("/api/quick-notes").then((r) => r.json()));
+    assert.ok(saved.notes.some((item) => item.body === "first thought"), "quick note was not saved");
+
+    // Job-search and study readouts no longer sit on home.
+    assert.equal(await page.getByRole("button", { name: /Jobs to explore|Cards due/ }).count(), 0);
+    assert.equal(await page.getByRole("heading", { name: "Reminders & deadlines" }).count(), 0);
+
+    await agents.getByRole("button", { name: /Approve/ }).click();
+    await page.waitForFunction(() => location.hash === "#herdr");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Find jobs holds the reminders brief and How to apply in one collapsible section that remembers it is open", async () => {
+    const { page, problems, context } = await open("jobs", { dock: "hidden" });
+    const brief = page.locator("details").filter({ has: page.locator("summary", { hasText: "Reminders, deadlines & goals" }) });
+    await brief.waitFor();
+    assert.equal(await brief.evaluate((node) => node.open), false, "brief starts open");
+    await brief.locator("summary").click();
+    await brief.getByRole("heading", { name: "Reminders & deadlines" }).waitFor();
+    assert.ok(await brief.getByRole("button", { name: "How to apply" }).isVisible());
+    await page.reload();
+    await brief.getByRole("heading", { name: "Reminders & deadlines" }).waitFor();
+    assert.equal(await brief.evaluate((node) => node.open), true, "brief forgot it was open");
+    await page.evaluate(() => (location.hash = "inbox"));
+    await page.getByRole("heading", { name: /New jobs/ }).first().waitFor();
+    assert.equal(await page.locator("summary", { hasText: "Reminders, deadlines & goals" }).count(), 0, "brief shows outside Find jobs");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("appearance settings", () => {
+  test("Settings → Appearance: one panel with a live preview, presets that set everything, single changes after, saved and applied before mount", async () => {
+    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    await context.addInitScript(() => {
+      new MutationObserver((_, observer) => {
+        if (!document.getElementById("app")?.firstElementChild) return;
+        window.__atMount = { ...document.documentElement.dataset };
+        observer.disconnect();
+      }).observe(document, { childList: true, subtree: true });
+    });
+    const panel = page.getByRole("region", { name: "Appearance" });
+    await panel.waitFor();
+    const preview = panel.getByRole("img", { name: /preview/i });
+    const radio = (name) => panel.getByRole("radio", { name, exact: true });
+    const root = (key) => page.evaluate((key) => document.documentElement.dataset[key], key);
+    const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem("kitty.appearance") ?? "null"));
+    const titleFont = () => page.getByRole("heading", { level: 1, name: "Settings" }).evaluate((node) => getComputedStyle(node).fontFamily);
+    const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
+
+    // Defaults: Kitty, Fraunces titles, compact 13px, full motion, 2D, blossoms, nebula.
+    for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
+    assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), true);
+    assert.match(await titleFont(), /Fraunces/);
+    assert.equal(await bodySize(), "13px");
+
+    // A preset sets every control at once, the app and the preview follow.
+    await panel.getByRole("button", { name: /^Minimal/ }).click();
+    for (const name of ["Harness", "Plain", "Compact · 13px", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
+    assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), false);
+    assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "true");
+    assert.equal(await root("theme"), "harness");
+    assert.doesNotMatch(await titleFont(), /Fraunces/);
+    assert.equal(await root("motion"), "reduced");
+    assert.equal(await preview.getAttribute("data-title-font"), "plain");
+    assert.deepEqual(await saved(), { titleFont: "plain", density: "compact", motion: "reduced", motif: false, background: "nebula" });
+
+    // Any single setting still changes afterwards; the preset no longer matches.
+    await radio("Comfortable · 14px").check();
+    assert.equal(await bodySize(), "14px");
+    assert.equal(await preview.getAttribute("data-density"), "comfortable");
+    assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "false");
+    assert.equal((await saved()).density, "comfortable");
+    assert.equal((await saved()).titleFont, "plain", "changing density reset another setting");
+
+    // Cozy: petal drift behind the app and a 3D atlas; reduced motion pauses the petals.
+    await panel.getByRole("button", { name: /^Cozy/ }).click();
+    assert.equal(await radio("3D").isChecked(), true);
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "3d");
+    const petals = page.locator(".petal-drift");
+    await petals.waitFor({ state: "attached" });
+    assert.ok((await petals.locator("svg").count()) >= 8, "too few petals");
+    const falling = () => petals.locator(".lane").first().evaluate((node) => getComputedStyle(node).animationName);
+    assert.notEqual(await falling(), "none", "petals do not drift");
+    await radio("Reduced").check();
+    assert.equal(await falling(), "none", "petals still drift under reduced motion");
+    await radio("Full").check();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    assert.equal(await falling(), "none", "petals drift although the system asks for reduced motion");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+
+    // Saved choices are applied before the app mounts.
+    const cozy = await saved();
+    await page.reload();
+    await panel.waitFor();
+    const atMount = await page.evaluate(() => window.__atMount);
+    assert.equal(atMount.background, "petals");
+    assert.equal(atMount.density, cozy.density);
+    assert.equal(atMount.titleFont, cozy.titleFont);
+    assert.equal(await panel.getByRole("button", { name: /^Cozy/ }).getAttribute("aria-pressed"), "true");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("home agenda empty", () => {
+  test("an empty Today agenda says so and offers the calendar on one line", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: { calendars: [], events: [], tasks: [], activity: [], reminders: [] } }));
+    await page.reload();
+    const agenda = page.getByRole("region", { name: "Today" });
+    await agenda.getByText("Nothing on the calendar today.").waitFor();
+    const link = agenda.getByRole("button", { name: "Open the calendar" });
+    const lines = await link.evaluate((node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return new Set([...range.getClientRects()].map((box) => Math.round(box.top))).size;
+    });
+    assert.equal(lines, 1, `the calendar link wraps onto ${lines} lines`);
+    await link.click();
+    await page.waitForFunction(() => location.hash === "#calendar");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

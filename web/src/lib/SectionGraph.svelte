@@ -13,6 +13,7 @@
   import { api } from "./api";
   import { mountGraph, type GraphHandle, type GraphLayout, type GraphLink } from "./graph3d";
   import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, rendererLook } from "./graphPreferences";
+  import { prefersReducedMotion } from "./appearance";
   import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
@@ -137,7 +138,7 @@
       layout: initialLayout,
       look: rendererLook(),
       physics: graphPhysics(),
-      reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      reducedMotion: prefersReducedMotion(),
       active: untrack(() => pane.active),
       onSelect: (node) => {
         if (!pane.active) return;

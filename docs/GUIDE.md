@@ -204,6 +204,14 @@ Scythe and **Liquid Glass** (clear, neutral glass like macOS/iOS: heavy blur and
 white rim lit from the top-left, no tint; in the desktop window your wallpaper shows
 through; panels turn opaque under reduced transparency). Graph nodes and their
 edges use the active theme's graph palette.
+**Settings → Appearance** sets the whole look in one panel beside a live
+preview: theme, title font (Fraunces or plain), density (compact 13px or
+comfortable 14px), motion (full or reduced), atlas look (2D, 3D or Brain), the blossom
+motif and the background (the nebula, or the nebula with drifting petals, which
+rest under reduced motion). **Cozy**, **Focused** and **Minimal** set all of them
+at once; any single control still changes afterwards. Choices are saved in this
+browser (`kitty.appearance`, plus `kitty.theme` and `kitty.graph.look`) and
+applied before the app draws.
 No Rust service is needed: the Python core
 owns application behavior.
 
@@ -371,7 +379,8 @@ profile and session, not relaunch or replace an owner's running instance.
 
 ### Start here
 
-**How to apply** in the atlas Today panel opens a three-step guide and checks
+**How to apply** under **Find jobs → Reminders, deadlines & goals** (a section
+that stays closed until you open it, and remembers that) opens a three-step guide and checks
 whether your name/email and a usable resume PDF are
 saved. These checks describe saved data, not application readiness.
 
@@ -495,7 +504,15 @@ options. **More filters** exposes ranking, source and other filters; selected-jo
 actions and job details have their own expandable advanced controls.
 
 Home is the **atlas**, containing workspace sections rather than individual jobs
-or note pages. Every schema starts in Tree; an explicit layout preference can
+or note pages. It sits in the centre between two narrow rails that scroll on
+their own. The left rail holds **Today** (today's events with a live now-line,
+the current event's progress and a countdown to the next) and **Quick note**
+(Ctrl+Enter saves; the last three stay visible). The right rail holds **Agents**
+(what each herdr workspace agent is doing; **Approve** opens herdr on a blocked
+one) and **Workspace** with the 2D/3D switch, **Find a section** (`/`) and the
+Sections list. Job-search reminders, deadlines and weekly goals live in **Find
+jobs**, not on home. Every schema
+starts in Tree; an explicit layout preference can
 then be changed in **Settings → Workspace**. Home has one Study entry and only
 the Jobs section entry, not separate job-action nodes.
 The kitty logo returns home. Clickable schema tabs show section →
@@ -523,7 +540,8 @@ have no Brain and draw it as 3D. A backend without `/api/brain` gets a notice,
 never invented data. Reduced motion skips the build-up, twinkle and turning.
 Theme presets include dark cherry-pink **Cherry cat**, with blossom ASCII,
 and a Scythe palette. Scythe illustration requires the actual supplied artwork;
-no unrelated image is substituted. Motion respects reduced-motion preferences.
+no unrelated image is substituted. Motion respects reduced-motion preferences,
+both the system's and the Appearance setting.
 Top notices and the study timer bar can be dismissed.
 
 **AI settings** provides optional OpenRouter drafts for selected text: summaries,
