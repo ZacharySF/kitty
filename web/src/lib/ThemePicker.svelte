@@ -1,7 +1,8 @@
 <script lang="ts">
   import { Button, Popover } from "@nunera/bracket";
   import { onMount, tick } from "svelte";
-  import { currentTheme, getTheme, setTheme, THEMES, THEME_EVENT, KITTY_BLOSSOM } from "./themes";
+  import { currentTheme, setTheme, THEME_EVENT } from "./themes";
+  import { getTheme, THEMES, KITTY_BLOSSOM } from "./themeCatalog";
 
   let open = $state(false);
   let selected = $state(currentTheme());

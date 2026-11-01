@@ -4,7 +4,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { api } from "./api";
-  import { getTheme } from "./themes";
+  import { getTheme } from "./themeCatalog";
   import { terminalSocketUrl, terminalTheme } from "./terminal";
   import TerminalAgents from "./TerminalAgents.svelte";
 
