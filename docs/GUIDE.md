@@ -267,6 +267,46 @@ compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
 
+### Connected apps (pairing)
+
+Outside programs, such as the planned kitty Tern plugin and the browser extension,
+reach kitty! only after you approve them. They never use the page API: its
+Origin/`X-Kitty-Request` guard stops web pages, but any local program can forge it.
+
+1. While kitty! runs (desktop app or `kitty-web`), it writes its current address to
+   the owner-only `.private/endpoint.json` (0600, in a 0700 `.private`), e.g.
+   `{"origin": "http://127.0.0.1:41234", "pairing": "/api/ingress/pair"}`. It never
+   holds a token, and it is removed when kitty! stops.
+2. The app sends `POST /api/ingress/pair` with JSON
+   `{"name", "kind": "tern-plugin" | "browser-extension", "scopes": ["capture", "read"]}`
+   and shows the returned `code` (e.g. `CWQ-7QT`). kitty! shows the request in a
+   non-blocking bar and in **Settings → Connected apps**; approve only when both
+   codes match. Requests expire after five minutes; at most three wait at once and
+   ten are accepted per ten minutes (429 with `Retry-After`).
+3. The app polls `POST /api/ingress/pair/status` with `{"request": <secret>}` until it
+   gets `approved` with its token (handed out once), `denied` or `expired`.
+4. Every later call sends `Authorization: Bearer <token>`:
+   - `capture`: `POST /api/ingress/notes` `{text, tint?}` (a quick note),
+     `POST /api/ingress/inbox` `{blocks: [{type?, text}]}` (appended to the **Inbox**
+     page in the Inbox notebook, created on first use), and `POST /api/ingress/mirror`
+     `{url, title, text?, selection?}` (a snapshot of the page you are reading:
+     a linked callout with the selection quoted and the readable text in a collapsed
+     toggle);
+   - `read`: `GET /api/ingress/recent?limit=1-50` (recent page titles, open task titles
+     and the Inbox page number);
+   - any scope: `GET /api/ingress/client` (the client's own name and scopes).
+
+   A token reaches nothing else: other API routes refuse any `Authorization` header.
+   Captures are block transactions, so they enter the version history and appear at
+   once in open windows. **Revoke** in Settings ends a token immediately.
+
+A browser extension pairs and calls from its own extension origin
+(`chrome-extension://<id>` or `moz-extension://<uuid>`); its token then works only
+from that origin, and CORS (including preflight) answers only origins of live paired
+extensions. Make these calls from the extension's side panel, popup or background
+page; content scripts run in the web page and are not supported (Chrome's Local
+Network Access rules). Web page origins are always refused.
+
 ### LearnHarness extension
 
 **Study → LearnHarness → Start LearnHarness** opens the included

@@ -155,7 +155,7 @@ Why the alternatives lost:
 - **D:** cannot run at all. Tern's web client requires WebGPU, and `navigator.gpu` was missing in kitty's WebKitGTK 2.54.1 window even with the flag forced. It also downloads a 68 MB wasm from build.stencil.so.
 - **Bundling Tern in any form:** Tern is proprietary and its terms forbid providing it to third parties.
 
-**Status: the bridge is built and merged** (#21, #33; see [Verified facts](#verified-facts)). The plugin waits for pairing (Q7).
+**Status: the bridge is built and merged** (#21, #33; see [Verified facts](#verified-facts)). Pairing (Q7) is built (see [Pairing (Q7): what was built](#pairing-q7-what-was-built)); the plugin itself is next.
 
 ### Q2: Sync is offline-first and peer-to-peer between one person's devices
 
@@ -259,6 +259,8 @@ bring back multiple writers.
 - Extensions call it only from background or side-panel pages, never from content scripts (Chrome Local Network Access rules).
 
 The same mechanism pairs devices for sync (Q16).
+
+**Status: client pairing is built** (see [Pairing (Q7): what was built](#pairing-q7-what-was-built)); device pairing waits for peer sync.
 
 Why the alternatives lost:
 - **B:** any local program could impersonate any client.
@@ -614,6 +616,15 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
 - **Server additions:** `GET /api/blocks/page` (what the editor loads, with the `seq` it reflects); history sessions list every transaction as a `moment`; outline readers (citations, topics, mentions, search, `note_outline` via migration 035) treat every text-flow type as page text. The whole-outline `POST /api/notes/pages/:id/blocks` is gone; imports and portable copies still use `note_blocks.save_blocks`, which now keeps types and properties.
 - **Notes:** `NoteOutline.svelte` (editor plus citations, topics and unlinked mentions) replaces the textarea outline. Blocks drag onto a page in the sidebar or a page tab to move there. History (`BlockHistory.svelte`: sessions, a slider over every moment, read-only preview, Restore) and Trash (`BlockTrash.svelte`) open from the page's More menu.
 - **Not moved:** Documents keep their Markdown editor. A document is stored as exact-byte Markdown chunks (`convert.split_document`) for lossless export; moving it onto typed blocks needs a conversion of that format first. Quick notes keep their own editor.
+
+## Pairing (Q7): what was built
+
+- **Endpoint file** (`src/kitty/core/endpoint.py`): the desktop sidecar (`desktop/backend.py`) and `kitty-web` write `{"origin", "pairing": "/api/ingress/pair"}` to `.private/endpoint.json` before announcing readiness, and remove it when serving stops (`kitty-web` now stops on SIGTERM as on Ctrl+C). The file is written through a temporary name and renamed, with every step relative to the `.private` descriptor: 0600 file, 0700 directory, a symlinked `.private` is refused and a symlinked file is replaced, never followed. Shutdown leaves a file another server has rewritten since.
+- **Pairing** (`src/kitty/core/clients.py`): requests live in memory for 5 minutes; at most 3 wait at once and 10 are accepted per 10 minutes (429 with `Retry-After`). Each has a public ID (kitty's UI), a 256-bit poll secret (the client's) and a 6-character code both sides show. On approval the client's next poll creates the client row and returns a `kitty_`-prefixed 256-bit token once; only its SHA-256 is stored (migration `036_clients.sql`: `clients` with `kind`, `scopes`, `origin`, `created_at`, `last_used_at`, `revoked_at`) and compared with `hmac.compare_digest`. `last_used_at` is written at most once a minute.
+- **Ingress** (`src/kitty/web_clients.py`, captures in `src/kitty/core/ingress.py`): `/api/ingress/*` skips the page guard but requires the exact loopback Host; an `Origin`, when present, must be an extension origin. Every route except pairing needs `Authorization: Bearer`, and each route needs one scope (`capture`: notes, inbox, mirror; `read`: recent titles). Every other API route refuses any `Authorization` header, so a token reaches nothing else. Captures run as one `blocks.transact` each and wake the live push. The Inbox is a note page flagged `inbox` in an "Inbox" notebook; a page mirror snapshot is a callout linked to the URL (`source_url`, `captured_at`), the selection as a quote and the readable text as a collapsed "Page text" toggle. Screenshots (Q11) are not accepted yet.
+- **CORS:** an extension pairs from its own `Origin`, which is recorded; its token is refused from any other origin (or none), and a non-extension client's token is refused from any origin. Preflight answers pairing for any extension origin and the token routes only for origins of live paired extensions (also `Access-Control-Allow-Private-Network`). Web page origins never pass. Extensions call from extension pages or the background, not content scripts.
+- **UI:** Settings → Connected apps (`ConnectedApps.svelte`) lists waiting requests with their codes (Approve/Deny) and paired clients (kind, scopes, origin, connected, last used, Revoke). `PairingPrompt.svelte` shows a waiting request as a non-blocking bar above every other view. Both poll `GET /api/clients` every 4 seconds while visible.
+- **Limits:** pending requests do not survive a restart. A crash (SIGKILL) leaves a stale endpoint file until the next start rewrites it; a client that finds no server there should treat the file as stale. Clients cannot yet verify that the server at the published origin is kitty!.
 
 ## Verified facts
 
