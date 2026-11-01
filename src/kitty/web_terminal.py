@@ -2,8 +2,11 @@
 
 GET  /api/terminal/activity  ->  {"running", "workspaces": [{id, label, status, focused, agents}]}
     herdr's own agent states (idle/working/blocked/done/unknown) per workspace,
-    read with herdr's CLI. Never starts the session: ``running`` is false while
-    kitty!'s session is not running.
+    read with herdr's CLI; each agent also carries its task (terminal title), last
+    output line, output revision and ``since`` (epoch ms its state began). Never
+    starts the session: ``running`` is false while kitty!'s session is not running.
+POST /api/terminal/focus  {"pane"}  ->  {"ok"}
+    Focuses one agent pane herdr currently lists (the dock's Open pane).
 POST /api/terminal/session  {}  ->  {"token", "socket"}
     Header-protected like every mutation (exact Host/Origin, X-Kitty-Request,
     application/json), so only kitty!'s own page can obtain a token.
@@ -104,6 +107,19 @@ def post(app, conn, path, body):
             raise _error(409, str(exc)) from None
         except TerminalUnavailable as exc:
             raise _error(503, str(exc)) from None
+    if path == "/api/terminal/focus":
+        pane = body.get("pane")
+        if set(body) != {"pane"} or not isinstance(pane, str):
+            raise _error(400, "Name the agent pane to open")
+        try:
+            app.terminal.runtime.focus_agent(pane)
+        except ValueError as exc:
+            raise _error(400, str(exc)) from None
+        except TerminalNotRunning as exc:
+            raise _error(409, str(exc)) from None
+        except TerminalUnavailable as exc:
+            raise _error(503, str(exc)) from None
+        return {"ok": True}
     if path != "/api/terminal/session":
         return None
     if body:

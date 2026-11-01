@@ -66,7 +66,11 @@ def test_agent_has_its_own_labelled_tab_and_the_bundled_skill(tmp_path, herdr, k
             # The activity strip shows herdr's agent name, so it names the coding agent.
             assert launched["name"].startswith(f"{kind}-")
             activity = running.request("/api/terminal/activity")[1]
-            assert activity["workspaces"][0]["agents"] == [{"pane": "w7:p2", "name": launched["name"], "status": "idle"}]
+            [agent] = activity["workspaces"][0]["agents"]
+            assert {key: agent[key] for key in ("pane", "name", "status")} == {"pane": "w7:p2", "name": launched["name"], "status": "idle"}
+            # A new agent has no task or output yet; the dock card times it from `since`.
+            assert (agent["task"], agent["line"], agent["revision"]) == ("", "", 0)
+            assert isinstance(agent["since"], int)
         finally:
             connection.close()
     creates = [call for call in herdr.invocations() if call["argv"][2:4] == ["tab", "create"]]

@@ -222,7 +222,7 @@ const shortcutGroups: ShortcutGroup[] = [
     shortcuts: [
       ["↑ ↓ ← →", "Move between application cards"],
       ["Enter / s / u / n / o", "Open / status / undo / next action / posting"],
-      ["t", "Cycle track filter"],
+      ["Shift + ← → / ↑ ↓", "Move the card to the next stage / track"],
       ["v / Shift + G", "Review mail proposals"],
       ["r", "Refresh pipeline"],
     ],

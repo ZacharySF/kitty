@@ -177,12 +177,29 @@ def test_midnight_timezone_split_and_completion_day_streak(workspace):
     start = datetime(2026, 10, 14, 3, 50, tzinfo=UTC)
     manual(conn, start, 1200)
     local = study.statistics(conn, timezone_name='America/New_York', now=BASE)
-    assert local['days'] == [{'date': '2026-10-13', 'seconds': 600}, {'date': '2026-10-14', 'seconds': 600}]
+    assert local['days'] == [{'date': '2026-10-13', 'seconds': 600, 'subjects': [{'id': None, 'seconds': 600}]},
+                             {'date': '2026-10-14', 'seconds': 600, 'subjects': [{'id': None, 'seconds': 600}]}]
     assert local['daily_streak'] == 1
     utc = study.statistics(conn, timezone_name='UTC', now=BASE)
-    assert utc['days'] == [{'date': '2026-10-14', 'seconds': 1200}]
+    assert utc['days'] == [{'date': '2026-10-14', 'seconds': 1200, 'subjects': [{'id': None, 'seconds': 1200}]}]
     assert utc['daily_streak'] == 1
     assert study.statistics(conn, timezone_name='Pacific/Honolulu', now=BASE)['today'] == '2026-10-13'
+
+
+def test_days_split_study_time_by_subject_largest_first(workspace):
+    conn = workspace.conn
+    chem = study.save_entity(conn, 'subjects', {'name': 'Chemistry', 'color': '#e06c75'})['item']
+    math = study.save_entity(conn, 'subjects', {'name': 'Maths', 'color': '#61afef'})['item']
+    day_start = datetime(2026, 10, 13, 14, 0, tzinfo=UTC)
+    manual(conn, day_start, 600, subject_id=chem['id'])
+    manual(conn, day_start + timedelta(hours=1), 1500, subject_id=math['id'])
+    manual(conn, day_start + timedelta(hours=2), 300)
+    stats = study.statistics(conn, timezone_name='America/New_York', now=BASE)
+    expected = [{'id': math['id'], 'seconds': 1500}, {'id': chem['id'], 'seconds': 600}, {'id': None, 'seconds': 300}]
+    assert stats['days'] == [{'date': '2026-10-13', 'seconds': 2400, 'subjects': expected}]
+    tuesday = next(item for item in stats['history']['days'] if item['date'] == '2026-10-13')
+    assert tuesday['subjects'] == expected
+    assert next(item for item in stats['history']['days'] if item['date'] == '2026-10-12')['subjects'] == []
 
 
 def test_spring_dst_actual_duration_and_login_never_create_streak(workspace):
@@ -190,7 +207,7 @@ def test_spring_dst_actual_duration_and_login_never_create_streak(workspace):
     start = datetime(2026, 3, 8, 6, 30, tzinfo=UTC)
     manual(conn, start, 7200)
     stats = study.statistics(conn, timezone_name='America/New_York', now=start + timedelta(hours=4))
-    assert stats['days'] == [{'date': '2026-03-08', 'seconds': 7200}]
+    assert stats['days'] == [{'date': '2026-03-08', 'seconds': 7200, 'subjects': [{'id': None, 'seconds': 7200}]}]
     assert stats['daily_streak'] == 1
     empty_day = study.workspace(conn, now=BASE)
     assert empty_day['stats']['daily_streak'] == 0
@@ -456,3 +473,50 @@ def test_guided_checklist_reflection_and_return_survive_stop_and_new_session(wor
     with pytest.raises(ValueError):
         study.save_guide(conn, {'session_id': second['session_id'], 'revision': 1,
                                 'state': {**state, 'checked': [True]}})
+
+
+def test_spaced_returns_climb_the_ladder_when_recalled_and_reset_when_shaky(workspace):
+    conn = workspace.conn
+    chem = study.save_entity(conn, 'subjects', {'name': 'Chemistry', 'color': '#e06c75'})['item']
+    state = {'checked': [False] * 14, 'responses': [''] * 4 + ['Carbocations'] + [''] * 9,
+             'reflection': 'Mostly there.', 'next_review': '2026-10-14'}
+    started = command(conn, 'start', prepared=False, subject_id=chem['id'], guide=state)['timer']
+    command(conn, 'stop', now=BASE + timedelta(minutes=1))
+    guide = study.workspace(conn, now=BASE)['guide']
+    assert guide['subject_id'] == chem['id'] and guide['return_step'] == 0
+    assert guide['state'] == state
+
+    def grade(result, revision):
+        return study.review_return(conn, {'session_id': started['session_id'], 'revision': revision, 'result': result},
+                                   now=BASE)['guide']
+
+    # Study settings default to UTC: today is 2026-10-14.
+    first = grade('recalled', guide['revision'])
+    assert (first['return_step'], first['state']['next_review']) == (1, '2026-10-17')
+    second = grade('recalled', first['revision'])
+    assert (second['return_step'], second['state']['next_review']) == (2, '2026-10-21')
+    with pytest.raises(study.StudyConflict):
+        grade('recalled', first['revision'])
+    shaky = grade('shaky', second['revision'])
+    assert (shaky['return_step'], shaky['state']['next_review']) == (0, '2026-10-15')
+    revision = shaky['revision']
+    for _ in range(6):
+        top = grade('recalled', revision)
+        revision = top['revision']
+    assert (top['return_step'], top['state']['next_review']) == (4, '2026-11-18')
+    assert top['state']['reflection'] == 'Mostly there.'
+    # Saving the guide keeps the subject and the ladder position.
+    saved = study.save_guide(conn, {'session_id': started['session_id'], 'revision': revision,
+                                    'state': {**top['state'], 'reflection': 'Solid now.'}})['guide']
+    assert (saved['subject_id'], saved['return_step'], saved['state']['reflection']) == (chem['id'], 4, 'Solid now.')
+    with pytest.raises(ValueError):
+        grade('maybe', saved['revision'])
+    blank = command(conn, 'start', now=BASE + timedelta(minutes=2), prepared=False, subject_id=None)['timer']
+    unscheduled = study.workspace(conn, now=BASE + timedelta(minutes=2))['guide']
+    assert unscheduled['subject_id'] is None
+    with pytest.raises(ValueError):
+        study.review_return(conn, {'session_id': blank['session_id'], 'revision': unscheduled['revision'], 'result': 'recalled'}, now=BASE)
+    app = SimpleNamespace(_no_query=lambda query: None)
+    routed = web_study.post(app, conn, '/api/study/returns',
+                            {'session_id': started['session_id'], 'revision': saved['revision'], 'result': 'shaky'})
+    assert routed['guide']['return_step'] == 0

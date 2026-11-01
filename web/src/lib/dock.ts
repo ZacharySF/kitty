@@ -1,6 +1,6 @@
 /**
  * The dock (docs/terminal-dock-design.md Q3, Q8): the bottom panel of the window
- * holding kitty!'s terminal, herdr's agent-activity strip, or nothing but a thin
+ * holding kitty!'s terminal, herdr's agent cards (Q56), or nothing but a thin
  * handle. Its state and height are remembered per browser profile.
  */
 export type DockMode = "terminal" | "activity" | "hidden";

@@ -6,14 +6,18 @@ import { applySavedTheme } from "/src/lib/themes.ts";
 import { installPanelFullscreen } from "/src/lib/panelFullscreen.ts";
 import Dock from "/src/lib/Dock.svelte";
 
+const since = Date.now() - 90_000;
 const ACTIVITY = {
   running: true,
   workspaces: [
     { id: "w1", label: "api", status: "working", focused: true, agents: [
-      { pane: "w1:p1", name: "omp", status: "working" },
-      { pane: "w1:p2", name: "Codex", status: "blocked" },
+      { pane: "w1:p1", name: "omp", status: "working", task: "Fix the failing tests", line: "running pytest", revision: 12, since },
+      { pane: "w1:p2", name: "Codex", status: "blocked", task: "Review the diff", line: "needs permission", revision: 4, since },
     ] },
-    { id: "w2", label: "docs", status: "idle", focused: false, agents: [] },
+    { id: "w2", label: "docs", status: "idle", focused: false, agents: [
+      { pane: "w2:p1", name: "claude", status: "idle", task: "", line: "", revision: 0, since },
+    ] },
+    { id: "w3", label: "scratch", status: "idle", focused: false, agents: [] },
   ],
 };
 

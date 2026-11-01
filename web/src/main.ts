@@ -2,6 +2,7 @@ import { mount } from "svelte";
 import App from "./App.svelte";
 import QuickNoteWindow from "./QuickNoteWindow.svelte";
 import { applySavedTheme } from "./lib/themes";
+import { applySavedAppearance } from "./lib/appearance";
 import "@nunera/bracket/styles.css";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/fraunces/full.css";
@@ -13,6 +14,7 @@ import "./styles.css";
 import "./liquidGlass.css";
 
 applySavedTheme();
+applySavedAppearance();
 
 // `#quick-note[/<id>]` is a standalone floating note, not a workspace view.
 const quickNote = /^#quick-note(\/|$)/.test(window.location.hash);

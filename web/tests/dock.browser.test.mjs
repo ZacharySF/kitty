@@ -41,6 +41,8 @@ const dock = (page) => page.locator('[data-kitty-panel="dock"]');
 const height = async (locator) => Math.round((await locator.boundingBox()).height);
 const saved = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("kitty.dock")));
 const dockSpace = (page) => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--dock-space").trim());
+/** Q56: the Agents view shows one live card per herdr agent. */
+const agentCards = (page) => page.getByRole("region", { name: "Agent activity" }).getByRole("article");
 
 test("opens on herdr's terminal, sized to the empty area below the main panel", async () => {
   const { page, problems, context } = await harness();
@@ -123,23 +125,27 @@ test("bare f reaches the shell; Ctrl+Shift+F fullscreens the terminal; Escape ex
   await context.close();
 });
 
-test("the agent-activity strip shows herdr's states per workspace and detaches the terminal", async () => {
+test("the agent-activity cards show herdr's states with each agent's workspace and detach the terminal", async () => {
   const { page, problems, context } = await harness();
   await page.waitForFunction(() => window.dockHarness.sockets.length === 1);
   await page.getByRole("button", { name: "Agents" }).click();
   await page.waitForFunction(() => window.dockHarness.sockets[0].readyState === 3);
   assert.equal(await dock(page).locator("[data-kitty-terminal]").count(), 0);
-  const strip = page.getByRole("list", { name: "herdr agent activity" });
-  await strip.waitFor();
-  const api = strip.getByRole("listitem").filter({ hasText: "api" });
-  assert.match(await api.innerText(), /working/i);
-  assert.match(await api.getByText("Codex").locator("..").innerText(), /blocked/i);
-  assert.match(await strip.getByRole("listitem").filter({ hasText: "docs" }).innerText(), /idle/i);
+  const cards = agentCards(page);
+  await cards.first().waitFor();
+  assert.equal(await cards.count(), 3, "not one card per agent (a workspace without agents has none)");
+  const card = (name) => cards.filter({ has: page.locator("header strong", { hasText: new RegExp(`^${name}$`) }) });
+  assert.match(await card("omp").innerText(), /working/i);
+  assert.match(await card("omp").innerText(), /\bapi\b/i);
+  assert.match(await card("Codex").innerText(), /blocked/i);
+  assert.match(await card("Codex").innerText(), /\bapi\b/i);
+  assert.match(await card("claude").innerText(), /idle/i);
+  assert.match(await card("claude").innerText(), /\bdocs\b/i);
   assert.equal(await page.getByRole("button", { name: "Agents" }).getAttribute("aria-pressed"), "true");
   assert.equal((await saved(page)).mode, "activity");
   await open(page);
-  await page.getByRole("list", { name: "herdr agent activity" }).waitFor();
-  assert.equal(await page.evaluate(() => window.dockHarness.sockets.length), 0, "the strip must not attach a terminal");
+  await agentCards(page).first().waitFor();
+  assert.equal(await page.evaluate(() => window.dockHarness.sockets.length), 0, "the agent cards must not attach a terminal");
   assert.deepEqual(problems, []);
   await context.close();
 });
@@ -158,7 +164,7 @@ test("hiding leaves only a thin handle that brings the dock back", async () => {
   await dock(page).waitFor();
   assert.equal(await height(dock(page)), 300);
   // The handle brings back what was shown before hiding, even after a reload.
-  await page.getByRole("list", { name: "herdr agent activity" }).waitFor();
+  await agentCards(page).first().waitFor();
   assert.equal((await saved(page)).mode, "activity");
   assert.deepEqual(problems, []);
   await context.close();

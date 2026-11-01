@@ -34,8 +34,13 @@
     source: Source | null;
     collapsed?: boolean;
     map_id?: number | null;
+    /** Placed by hand (detached or free-positioned); the tree layout lays its branch out around it. */
+    free?: boolean;
+    /** Q65 D: a theme palette slot (`c1`–`c6`); absent means the automatic branch colour. */
+    color?: string;
   };
-  type Edge = { id: string; from: string; to: string; label: string };
+  /** Q65 E: `cross` marks a labelled connection outside the tree; other edges may shape the tree. */
+  type Edge = { id: string; from: string; to: string; label: string; kind?: "cross" };
   type Graph = { nodes: Node[]; edges: Edge[] };
   type View = { x: number; y: number; zoom: number };
   type Live = {
@@ -56,6 +61,8 @@
     viewport: View;
     live: Record<string, Live>;
     can_undo: boolean;
+    can_redo?: boolean;
+    paired_history?: boolean;
   };
   type Summary = { id: number; title: string; mode: string; revision: number };
   type Job = {
@@ -128,15 +135,46 @@
     job: "Job",
     flashcard_deck: "Flashcard deck",
   };
-  const NODE_W = 200,
-    NODE_H = 64,
-    LIMIT = 100000;
+  const LIMIT = 100000;
+  // Q44: nodes are rounded pills sized to their label; parentless nodes are inverted ink root pills.
+  const PILL_H = 34, ROOT_H = 38, LABEL_MAX = 30;
+  const pillWidths = new Map<string, number>();
+  let measurer: CanvasRenderingContext2D | null = null, uiFont = "Inter, sans-serif", headingFont = "Inter, sans-serif";
+  let fontsReady = $state(0);
+  function textWidth(text: string, font: string) {
+    void fontsReady;
+    const key = `${font}\u0000${text}`;
+    let width = pillWidths.get(key);
+    if (width === undefined) {
+      measurer ??= document.createElement("canvas").getContext("2d");
+      if (measurer) measurer.font = font;
+      width = measurer ? measurer.measureText(text).width : text.length * 7;
+      pillWidths.set(key, width);
+    }
+    return width;
+  }
+  function isRoot(n: Node) { return !parents.has(n.id); }
+  function pillText(n: Node) {
+    if (hiddenLabel(n)) return "?";
+    const text = name(n);
+    return `${n.source?.kind === "note_page" ? "▤ " : ""}${text.length > LABEL_MAX ? `${text.slice(0, LABEL_MAX - 1)}…` : text}`;
+  }
+  function hiddenCount(n: Node) { return n.collapsed ? descendants(n.id).size - 1 : 0; }
+  function box(n: Node) {
+    const root = isRoot(n), fold = hiddenCount(n);
+    const text = textWidth(pillText(n), root ? `600 13px ${headingFont}` : `500 12.5px ${uiFont}`);
+    return {w: Math.round(Math.min(320, Math.max(root ? 72 : 64, text + (root ? 36 : 44) + (fold ? 26 : 0)))), h: root ? ROOT_H : PILL_H};
+  }
   let maps = $state<Summary[]>([]),
     subjects = $state<{ id: number; name: string }[]>([]);
   let current = $state<MapItem | null>(null),
     busy = $state(false),
     dirty = $state(false),
     blocked = $state(false);
+  /** The first non-loop, non-cross edge into each node is its tree edge; any other edge is drawn as a connection. */
+  const treeLinks = $derived([...(current?.graph.edges ?? [])].reverse().filter(e => e.from !== e.to && e.kind !== "cross"));
+  const parents = $derived(new Map(treeLinks.map(e => [e.to, e.from])));
+  const treeEdges = $derived(new Set([...new Map(treeLinks.map(e => [e.to, e.id])).values()]));
   let error = $state(""),
     notice = $state(""),
     newTitle = $state(""),
@@ -154,6 +192,7 @@
     draftNotes = $state(""),
     draftUrl = $state("");
   let history = $state<Snapshot[]>([]),
+    future = $state<Snapshot[]>([]),
     stage = $state<SVGSVGElement>();
   let showJobs = $state(false),
     jobSearch = $state(""),
@@ -168,7 +207,28 @@
     node: string;
     before: Snapshot;
     moved: boolean;
+    branch: string[];
+    /** Shift-drag on empty space draws a selection box instead of panning. */
+    box?: boolean;
   } | null = null;
+  // Q65 F: further selected topics (with `selected` among them) and the selection box in map units.
+  let multi = $state<string[]>([]), marquee = $state<{x0: number; y0: number; x1: number; y1: number} | null>(null);
+  const picked = $derived(new Set(multi.includes(selected) ? multi : selected ? [selected] : []));
+  /** Picked topics whose ancestors are not picked: what moves, reparents or detaches as a whole. */
+  function pickedTops() {
+    return [...picked].filter(id => {
+      for (let p = parents.get(id), seen = new Set<string>(); p !== undefined && !seen.has(p); seen.add(p), p = parents.get(p))
+        if (picked.has(p)) return false;
+      return true;
+    });
+  }
+  // Q65 B/C: the node being dragged, the pill it would snap into, whether D detached it and whether Alt places it freely.
+  let dragging = $state(""), dropTarget = $state(""), detaching = $state(false), placing = $state(false);
+  // Q65 D: the swatch row paints the node or (with Whole branch) its descendants too; copied style pastes onto others.
+  const PALETTE = ["c1", "c2", "c3", "c4", "c5", "c6"];
+  let paintBranch = $state(false), copiedStyle = $state<{color?: string} | null>(null), stageWidth = $state(0), styleWidth = $state(0);
+  // Q65 E: the topic a "Connect to…" starts from, and the cross connection whose label is being typed.
+  let linking = $state(""), labelling = $state(""), edgeDraft = $state("");
   let view = $state<View3D>("edit"),
     mapLayout = $state<GraphLayout>("tree"),
     netLayout = $state<GraphLayout>("tree");
@@ -191,23 +251,28 @@
   let noteSearch = $state(""), notePages = $state<{id: number; title: string}[]>([]);
   let template = $state("Blank");
   const draftKey = (id: number) => `kitty.schema.draft.${id}`;
+  /** Tree children of each node in edge order; cross connections never make a branch. */
+  const childIds = $derived.by(() => {
+    const map = new Map<string, string[]>();
+    for (const e of current?.graph.edges ?? []) if (treeEdges.has(e.id)) map.set(e.from, [...(map.get(e.from) ?? []), e.to]);
+    return map;
+  });
   function descendants(id: string) {
     const ids = new Set([id]);
-    for (let i = 0; i < (current?.graph.nodes.length ?? 0); i++)
-      for (const edge of current?.graph.edges ?? []) if (ids.has(edge.from)) ids.add(edge.to);
+    for (const item of ids) for (const child of childIds.get(item) ?? []) ids.add(child);
     return ids;
   }
   function reparent(parent: string) {
     if (!current || !node || !editable) return;
     if (parent && descendants(node.id).has(parent)) { error = "A topic cannot be moved inside its own branch."; return; }
     remember();
-    current.graph.edges = current.graph.edges.filter(edge => edge.to !== node.id);
+    current.graph.edges = current.graph.edges.filter(edge => !(treeEdges.has(edge.id) && edge.to === node.id));
     if (parent) {
       current.graph.edges.push({id: crypto.randomUUID(), from: parent, to: node.id, label: ""});
       const target = current.graph.nodes.find(item => item.id === parent);
       if (target) target.collapsed = false;
     }
-    arrange("tree");
+    relayout();
   }
   const visibleNodes = $derived.by(() => {
     if (!current) return [];
@@ -215,31 +280,37 @@
     const visit = (id: string, seen = new Set<string>()) => {
       if (seen.has(id)) return;
       seen.add(id);
-      for (const e of current!.graph.edges.filter(e => e.from === id)) {
-        if (!seen.has(e.to)) {hidden.add(e.to); visit(e.to, seen);}
+      for (const child of childIds.get(id) ?? []) {
+        if (!seen.has(child)) {hidden.add(child); visit(child, seen);}
       }
     };
     for (const n of current.graph.nodes) if (n.collapsed) visit(n.id);
     const result: Node[] = [], seen = new Set<string>();
+    const byId = new Map(current.graph.nodes.map(n => [n.id, n]));
     const append = (n: Node) => {
       if (seen.has(n.id) || hidden.has(n.id)) return;
       seen.add(n.id); result.push(n);
-      for (const edge of current!.graph.edges.filter(e => e.from === n.id)) {
-        const child = current!.graph.nodes.find(n => n.id === edge.to);
+      for (const id of childIds.get(n.id) ?? []) {
+        const child = byId.get(id);
         if (child) append(child);
       }
     };
-    for (const n of current.graph.nodes.filter(n => !current!.graph.edges.some(e => e.to === n.id))) append(n);
+    for (const n of current.graph.nodes.filter(isRoot)) append(n);
     for (const n of current.graph.nodes) append(n);
     return result;
+  });
+  /** Edges whose two ends are shown, so connections fold away with either end. */
+  const shownEdges = $derived.by(() => {
+    const shown = new Set(visibleNodes.map(n => n.id));
+    return current?.graph.edges.filter(e => shown.has(e.from) && shown.has(e.to)) ?? [];
   });
   function depth(id: string) {
     const seen = new Set<string>();
     while (!seen.has(id)) {
       seen.add(id);
-      const parent = current?.graph.edges.find(e => e.to === id);
-      if (!parent) break;
-      id = parent.from;
+      const parent = parents.get(id);
+      if (parent === undefined) break;
+      id = parent;
     }
     return seen.size - 1;
   }
@@ -248,15 +319,38 @@
     const seen = new Set<string>();
     while (!seen.has(branch)) {
       seen.add(branch);
-      const parent = current?.graph.edges.find(e => e.to === branch)?.from;
-      if (!parent || !current?.graph.edges.some(e => e.to === parent)) break;
+      const parent = parents.get(branch);
+      if (parent === undefined || !parents.has(parent)) break;
       branch = parent;
     }
     const index = current?.graph.nodes.findIndex(n => n.id === branch) ?? 0;
     return `var(--c${Math.max(0, index) % 6 + 1}, var(--accent))`;
   }
+  function nodeColor(n: Node) { return n.color ? `var(--${n.color})` : branchColor(n); }
+  /** The nodes a style action applies to: every picked topic, with their branches under Whole branch. */
+  function styleTargets(branches = paintBranch) {
+    const ids = new Set<string>();
+    for (const id of picked) for (const item of branches ? descendants(id) : [id]) ids.add(item);
+    return current?.graph.nodes.filter(n => ids.has(n.id)) ?? [];
+  }
+  function paint(color: string | undefined) {
+    if (!editable || !picked.size) return;
+    remember();
+    for (const n of styleTargets()) { if (color) n.color = color; else delete n.color; }
+  }
+  function copyStyle() {
+    if (!node) return;
+    copiedStyle = node.color ? {color: node.color} : {};
+    notice = "Style copied";
+  }
+  function pasteStyle() {
+    if (!editable || !picked.size || !copiedStyle) return;
+    const style = copiedStyle;
+    remember();
+    for (const n of styleTargets(false)) { if (style.color) n.color = style.color; else delete n.color; }
+  }
   function hiddenLabel(n: Node) {
-    return recall && !!current?.graph.edges.some(e => e.to === n.id) && !revealed.includes(n.id);
+    return recall && parents.has(n.id) && !revealed.includes(n.id);
   }
   function collapse(n: Node) { remember(); n.collapsed = !n.collapsed; }
   async function editInline(n: Node, initial = name(n)) {
@@ -279,19 +373,36 @@
       if (selected === target.id) draftLabel = target.label;
     }
     editing = "";
-    if (focus) void tick().then(() => { if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${CSS.escape(selected)}"]`)?.focus(); });
+    if (focus) focusOn(selected);
   }
-  function quickAdd(parent = selected) {
+  /** Adds a topic under `parent` (a root when empty), directly after the sibling `after` when given. */
+  function quickAdd(parent = selected, after = "") {
     if (!current || !editable || current.graph.nodes.length >= 300) return;
     remember();
     const n: Node = {id: crypto.randomUUID(), kind: "topic", label: "Topic", notes: "", url: "", source: null, x: 0, y: 0};
-    current.graph.nodes.push(n);
     if (parent) {
-      current.graph.edges.push({id: crypto.randomUUID(), from: parent, to: n.id, label: ""});
+      const edge = {id: crypto.randomUUID(), from: parent, to: n.id, label: ""};
+      const index = after ? current.graph.edges.findIndex(e => treeEdges.has(e.id) && e.to === after) : -1;
+      if (index < 0) current.graph.edges.push(edge); else current.graph.edges.splice(index + 1, 0, edge);
       const p = current.graph.nodes.find(n => n.id === parent);
       if (p) p.collapsed = false;
+      current.graph.nodes.push(n);
+    } else {
+      const index = after ? current.graph.nodes.findIndex(item => item.id === after) : -1;
+      if (index < 0) current.graph.nodes.push(n); else current.graph.nodes.splice(index + 1, 0, n);
     }
-    arrange("tree"); void editInline(n, "");
+    relayout(); void editInline(n, "");
+  }
+  /** Lays the tree out again without a separate history step (the caller already remembered). */
+  function relayout(fit = true) {
+    if (!current) return;
+    const positions = treeLayout(current.graph);
+    for (const n of current.graph.nodes) {
+      const point = positions.get(n.id)!;
+      n.x = clampPosition(point.x);
+      n.y = clampPosition(point.y);
+    }
+    if (fit) frame();
   }
   async function findNoteCards() {
     try { const result = await api<{pages: {id: number; title: string}[]}>(`/notes?search=${encodeURIComponent(noteSearch)}`); notePages = result.pages; }
@@ -419,14 +530,15 @@
   }
   function remember() {
     history = [...history.slice(-29), snapshot()];
+    future = [];
     dirty = true;
     notice = "Unsaved local edits";
   }
-  function accepted(item: MapItem, restoreDraft = false) {
+  function accepted(item: MapItem, restoreDraft = false, keepHistory = false) {
     current = item;
     dirty = false;
     blocked = false;
-    history = [];
+    if (!keepHistory) { history = []; future = []; }
     selected = "";
     selectedEdge = "";
     editing = "";
@@ -529,7 +641,7 @@
           title: current.title,
           graph: current.graph,
           viewport: current.viewport,
-        }),
+        }), false, true,
       );
       try { localStorage.removeItem(draftKey(current.id)); } catch { /* Saved on server. */ }
       const activeNode = current.graph.nodes.find(n => n.id === selectedId);
@@ -575,10 +687,12 @@
     if (!current || !editable) return;
     if (history.length) {
       const previous = history[history.length - 1];
+      future = [...future, snapshot()];
       history = history.slice(0, -1);
       Object.assign(current, clone(previous));
       dirty = true;
       selected = "";
+      multi = []; editing = ""; labelling = "";
       selectedEdge = "";
       return;
     }
@@ -586,6 +700,7 @@
     busy = true;
     error = "";
     try {
+      const forward = snapshot(), paired = current.paired_history;
       accepted(
         await api<MapItem>("/schema/undo", {
           id: current.id,
@@ -593,6 +708,7 @@
         }),
       );
       await refresh();
+      if (!paired) future = [forward];
     } catch (e) {
       failure(e);
       blocked = error.includes("changed in another window");
@@ -600,7 +716,46 @@
       busy = false;
     }
   }
+  async function redo() {
+    if (!current || !editable) return;
+    if (!future.length) {
+      if (!current.can_redo || dirty) return;
+      busy = true; error = "";
+      try {
+        accepted(await api<MapItem>("/schema/undo", {id: current.id, revision: current.revision, redo: true}));
+        await refresh();
+      } catch (e) { failure(e); }
+      finally { busy = false; }
+      return;
+    }
+    const next = future[future.length - 1];
+    history = [...history, snapshot()];
+    future = future.slice(0, -1);
+    editing = ""; labelling = ""; selected = ""; multi = []; selectedEdge = "";
+    Object.assign(current, clone(next));
+    dirty = true;
+  }
+  let mergeMap = $state("");
+  async function transferBranch(nodeId: string, targetId?: number) {
+    if (!current || !editable) return;
+    if (dirty) await save();
+    if (dirty || blocked || !current) return;
+    busy = true; error = "";
+    try {
+      const target = maps.find(m => m.id === targetId);
+      accepted(await api<MapItem>("/schema/transfer", {
+        id: current.id, revision: current.revision, node_id: nodeId,
+        ...(target ? {target_id: target.id, target_revision: target.revision} : {}),
+      }));
+      frame();
+      notice = target ? "Root merged into map" : "Branch split into linked map";
+      await refresh();
+    } catch (e) { failure(e); }
+    finally { busy = false; }
+  }
+  /** Selects `n`; a topic outside the multi-selection replaces it. */
   function choose(n: Node) {
+    if (!multi.includes(n.id)) multi = [];
     selected = n.id;
     selectedEdge = "";
     draftLabel = n.label;
@@ -637,11 +792,11 @@
       source: kind === "class" ? { kind: "subject", id: subject!.id } : null,
       x: Math.max(
         -100000,
-        Math.min(100000, ((rect?.width ?? 700) / 2 - view.x) / view.zoom - 100),
+        Math.min(100000, ((rect?.width ?? 700) / 2 - view.x) / view.zoom - 60),
       ),
       y: Math.max(
         -100000,
-        Math.min(100000, ((rect?.height ?? 500) / 2 - view.y) / view.zoom - 32),
+        Math.min(100000, ((rect?.height ?? 500) / 2 - view.y) / view.zoom - PILL_H / 2),
       ),
     };
     current.graph.nodes.push(n);
@@ -655,21 +810,23 @@
     node.notes = draftNotes;
     node.url = draftUrl.trim();
   }
+  /** Deletes every picked topic and its connections. */
   function deleteNode() {
     if (!current || !node || !editable) return;
+    const gone = new Set(picked);
     remember();
-    current.graph.nodes = current.graph.nodes.filter((n) => n.id !== selected);
-    current.graph.edges = current.graph.edges.filter(
-      (e) => e.from !== selected && e.to !== selected,
-    );
-    if (edgeFrom === selected) edgeFrom = "";
-    if (edgeTo === selected) edgeTo = "";
+    current.graph.nodes = current.graph.nodes.filter((n) => !gone.has(n.id));
+    current.graph.edges = current.graph.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to));
+    if (gone.has(edgeFrom)) edgeFrom = "";
+    if (gone.has(edgeTo)) edgeTo = "";
     selected = "";
+    multi = [];
   }
   function deleteAtPointer(event: MouseEvent, target: Node) {
     if ((event.target as Element).closest('input,textarea,[contenteditable="true"]') || window.getSelection()?.toString()) return;
     event.preventDefault();
     if (!editable || !confirm(`Remove “${name(target)}” from this map? Linked notes, cards and jobs stay unchanged.`)) return;
+    multi = [];
     choose(target);
     deleteNode();
   }
@@ -681,23 +838,40 @@
     node.source = null;
     choose(node);
   }
-  function connect() {
-    if (
-      !current ||
-      !editable ||
-      !current.graph.nodes.some((n) => n.id === edgeFrom) ||
-      !current.graph.nodes.some((n) => n.id === edgeTo) ||
-      current.graph.edges.length >= 600
-    )
-      return;
+  /** Q65 E: adds a labelled cross connection, which never changes the tree or its layout. */
+  function link(from: string, to: string, text: string) {
+    if (!current || !editable || current.graph.edges.length >= 600 ||
+      !current.graph.nodes.some(n => n.id === from) || !current.graph.nodes.some(n => n.id === to)) return "";
     remember();
-    current.graph.edges.push({
-      id: crypto.randomUUID(),
-      from: edgeFrom,
-      to: edgeTo,
-      label: edgeLabel,
-    });
-    arrange("tree");
+    const id = crypto.randomUUID();
+    current.graph.edges.push({id, from, to, label: text, kind: "cross"});
+    return id;
+  }
+  function connect() {
+    link(edgeFrom, edgeTo, edgeLabel);
+  }
+  /** Finishes "Connect to…" on `target`, then asks for the connection's label in place. */
+  async function linkTo(target: string) {
+    const from = linking;
+    linking = "";
+    const id = target === from ? "" : link(from, target, "");
+    if (!id) return;
+    labelling = id; edgeDraft = "";
+    await tick();
+    if (pane.active) container?.querySelector<HTMLInputElement>(`#${CSS.escape(`${pane.id}-edge-label`)}`)?.focus();
+  }
+  async function relabel(id: string) {
+    const e = current?.graph.edges.find(e => e.id === id);
+    if (!e || !editable) return;
+    labelling = id; edgeDraft = e.label;
+    await tick();
+    if (pane.active) container?.querySelector<HTMLInputElement>(`#${CSS.escape(`${pane.id}-edge-label`)}`)?.focus();
+  }
+  function finishLabel(keep = true, focus = false) {
+    const e = current?.graph.edges.find(e => e.id === labelling);
+    labelling = "";
+    if (e && keep && e.label !== edgeDraft.trim()) { remember(); e.label = edgeDraft.trim(); }
+    if (e && focus) focusOn(e.to);
   }
   function removeEdge(id: string) {
     if (!current || !editable) return;
@@ -712,43 +886,132 @@
     remember();
     e[field] = value;
   }
+  /** Siblings in display order: the children of the same parent, or the parentless roots. */
+  function siblingIds(id: string) {
+    if (!current) return [];
+    const parent = parents.get(id);
+    return parent === undefined
+      ? current.graph.nodes.filter(isRoot).map(n => n.id)
+      : current.graph.edges.filter(e => treeEdges.has(e.id) && e.from === parent).map(e => e.to);
+  }
+  function focusOn(id: string) {
+    void tick().then(() => { if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${CSS.escape(id)}"]`)?.focus(); });
+  }
+  /** Ctrl+↑/↓: swap a node with its previous/next sibling, then lay the tree out again. */
+  function reorder(n: Node, direction: -1 | 1) {
+    if (!current || !editable) return;
+    const sibs = siblingIds(n.id), other = sibs[sibs.indexOf(n.id) + direction];
+    if (!other) return;
+    remember();
+    const list: {id: string}[] = parents.has(n.id) ? current.graph.edges : current.graph.nodes;
+    const at = (id: string) => parents.has(n.id) ? current!.graph.edges.findIndex(e => treeEdges.has(e.id) && e.to === id) : current!.graph.nodes.findIndex(item => item.id === id);
+    const a = at(n.id), b = at(other);
+    [list[a], list[b]] = [list[b], list[a]];
+    relayout(false);
+    focusOn(n.id);
+  }
+  /** Window keys: Escape leaves "Connect to…"; mid-drag, D breaks the branch off (press again to reattach on drop), wherever focus is. */
+  function dragKey(e: KeyboardEvent) {
+    if (pane.active && current && editable && !gesture && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
+      e.preventDefault(); e.stopPropagation();
+      if (e.shiftKey) redo(); else void undo();
+      return;
+    }
+    if (pane.active && linking && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); linking = ""; return; }
+    if (!pane.active || !gesture?.node || e.key.toLowerCase() !== "d" || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault(); e.stopPropagation();
+    detaching = !detaching; dropTarget = "";
+  }
   function nodeKey(e: KeyboardEvent, n: Node) {
-    if (!editable || e.ctrlKey || e.metaKey || e.altKey) return;
-    choose(n);
+    // A drag owns the keyboard (see dragKey); keys must not rename the dragged node.
+    if (!editable || gesture?.node) return;
+    // Alt+C / Alt+V copy and paste a node's style (Ctrl+Alt is the app's jump-to-Plan chord).
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.code === "KeyC" || e.code === "KeyV")) {
+      e.preventDefault(); e.stopPropagation(); choose(n);
+      if (e.code === "KeyC") copyStyle(); else pasteStyle();
+      return;
+    }
+    if (e.altKey) return;
+    // "Connect to…": move to the other topic and press Enter (Escape cancels, see dragKey).
+    if (linking && e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void linkTo(n.id); return; }
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void editInline(n); }
+      else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); choose(n); reorder(n, e.key === "ArrowUp" ? -1 : 1); }
+      return;
+    }
+    if (e.key === "Escape" && multi.length) { e.preventDefault(); e.stopPropagation(); multi = []; return; }
+    // Shift+arrows extend the selection to the topic the arrow moves to.
+    const extend = e.shiftKey && e.key.startsWith("Arrow");
+    if (!extend) choose(n);
     if (["Tab", "Enter", " ", "Delete", "Backspace", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
       e.preventDefault(); e.stopPropagation();
     }
     if (e.key === "Tab") quickAdd(n.id);
-    else if (e.key === "Enter") quickAdd(current?.graph.edges.find(edge => edge.to === n.id)?.from ?? "");
+    else if (e.key === "Enter") quickAdd(parents.get(n.id) ?? "", n.id);
     else if (e.key === " ") { if (recall) revealed = [...revealed, n.id]; else collapse(n); }
     else if (e.key === "Delete" || e.key === "Backspace") deleteNode();
     else if (e.key.startsWith("Arrow")) {
-      const parent = current?.graph.edges.find(edge => edge.to === n.id)?.from;
-      const child = current?.graph.edges.find(edge => edge.from === n.id)?.to;
-      const index = visibleNodes.findIndex(item => item.id === n.id);
-      const id = e.key === "ArrowLeft" ? parent : e.key === "ArrowRight" ? child : visibleNodes[index + (e.key === "ArrowUp" ? -1 : 1)]?.id;
+      const visible = new Set(visibleNodes.map(item => item.id));
+      const sibs = siblingIds(n.id).filter(id => visible.has(id)), index = visibleNodes.findIndex(item => item.id === n.id);
+      const step = e.key === "ArrowUp" ? -1 : 1;
+      const id = e.key === "ArrowLeft" ? parents.get(n.id)
+        : e.key === "ArrowRight" ? current?.graph.edges.find(edge => treeEdges.has(edge.id) && edge.from === n.id && visible.has(edge.to))?.to
+        : sibs[sibs.indexOf(n.id) + step] ?? visibleNodes[index + step]?.id;
       const target = visibleNodes.find(item => item.id === id);
-      if (target) {choose(target); void tick().then(() => { if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${target.id}"]`)?.focus(); });}
+      if (target && extend) {
+        multi = [...new Set([...picked, n.id, target.id])];
+        choose(target);
+        focusOn(target.id);
+      } else if (target) { choose(target); focusOn(target.id); }
     } else if (e.key.length === 1) { e.preventDefault(); e.stopPropagation(); void editInline(n, e.key); }
   }
   function start(e: PointerEvent, id = "") {
     if (!current || !editable || gesture || e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    if (linking) {
+      if (id) void linkTo(id); else linking = "";
+      return;
+    }
+    if (id && e.shiftKey) {
+      // Shift-click adds a topic to (or takes it out of) the selection.
+      (e.currentTarget as SVGGElement).focus();
+      const ids = new Set(picked);
+      if (ids.has(id) && ids.size > 1) ids.delete(id); else ids.add(id);
+      multi = [...ids];
+      const n = current.graph.nodes.find((n) => n.id === (ids.has(id) ? id : multi[0]))!;
+      choose(n);
+      return;
+    }
     if (id) {
       (e.currentTarget as SVGGElement).focus();
       const n = current.graph.nodes.find((n) => n.id === id)!;
       choose(n);
     }
+    const branch = new Set<string>();
+    if (id) for (const top of picked.has(id) ? pickedTops() : [id]) for (const item of descendants(top)) branch.add(item);
     gesture = {
       pointer: e.pointerId,
       x: e.clientX,
       y: e.clientY,
       node: id,
+      branch: [...branch],
       before: snapshot(),
       moved: false,
+      box: !id && e.shiftKey,
     };
     stage?.setPointerCapture(e.pointerId);
+  }
+  /** Map coordinates of a pointer position. */
+  function worldPoint(e: PointerEvent) {
+    const rect = stage!.getBoundingClientRect(), v = current!.viewport;
+    return {x: (e.clientX - rect.left - v.x) / v.zoom, y: (e.clientY - rect.top - v.y) / v.zoom};
+  }
+  /** The pill under the pointer that a dragged branch may move into (never its own branch). */
+  function dropCandidate(e: PointerEvent, branch: string[]) {
+    if (!current || !stage) return undefined;
+    const {x, y} = worldPoint(e);
+    return visibleNodes.find(n => !branch.includes(n.id) && x >= n.x && x <= n.x + box(n).w && y >= n.y && y <= n.y + box(n).h);
   }
   function move(e: PointerEvent) {
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
@@ -757,16 +1020,28 @@
     if (Math.abs(dx) + Math.abs(dy) < 2 && !gesture.moved) return;
     gesture.moved = true;
     if (gesture.node) {
-      const n = current.graph.nodes.find((n) => n.id === gesture!.node)!,
-        old = gesture.before.graph.nodes.find((n) => n.id === gesture!.node)!;
-      n.x = Math.max(
-        -100000,
-        Math.min(100000, old.x + dx / current.viewport.zoom),
-      );
-      n.y = Math.max(
-        -100000,
-        Math.min(100000, old.y + dy / current.viewport.zoom),
-      );
+      const branch = gesture.branch, origin = gesture.before.graph.nodes.find((n) => n.id === gesture!.node)!;
+      placing = e.altKey && !detaching;
+      const target = detaching || placing ? undefined : dropCandidate(e, branch);
+      let ox = dx / current.viewport.zoom, oy = dy / current.viewport.zoom;
+      if (target) {
+        // Preview the drop: the branch snaps to where it would land, after the target's last child.
+        const size = box(target), last = visibleNodes.filter(n => parents.get(n.id) === target.id && !branch.includes(n.id)).reduce((low, n) => Math.max(low, n.y + box(n).h), -Infinity);
+        ox = target.x + size.w + 56 - origin.x;
+        oy = (Number.isFinite(last) ? last + 14 : target.y + size.h / 2 - box(origin).h / 2) - origin.y;
+      }
+      // The whole branch travels with the dragged node.
+      for (const id of branch) {
+        const n = current.graph.nodes.find((n) => n.id === id), old = gesture.before.graph.nodes.find((n) => n.id === id);
+        if (!n || !old) continue;
+        n.x = Math.max(-LIMIT, Math.min(LIMIT, old.x + ox));
+        n.y = Math.max(-LIMIT, Math.min(LIMIT, old.y + oy));
+      }
+      dragging = gesture.node;
+      dropTarget = target?.id ?? "";
+    } else if (gesture.box) {
+      const a = worldPoint({clientX: gesture.x, clientY: gesture.y} as PointerEvent), b = worldPoint(e);
+      marquee = {x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y)};
     } else {
       current.viewport.x = Math.max(
         -1e7,
@@ -778,28 +1053,76 @@
       );
     }
   }
+  /** Breaks a node (and its branch) off its parent as a floating root that keeps its place. */
+  function detachBranch(n: Node) {
+    if (!current) return;
+    current.graph.edges = current.graph.edges.filter(e => !(treeEdges.has(e.id) && e.to === n.id));
+    n.free = true;
+  }
+  function detachSelected() {
+    if (!current || !node || !editable || isRoot(node)) return;
+    remember();
+    detachBranch(node);
+    relayout(false);
+    notice = "Branch detached · save to keep";
+  }
+  /** Q65 C: a freely placed node rejoins the automatic layout. */
+  function resetPosition() {
+    if (!current || !node?.free || !editable) return;
+    remember();
+    delete node.free;
+    relayout(false);
+  }
   function end(e: PointerEvent, cancel = false) {
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
+    const mergeTarget = !cancel && gesture.node && gesture.moved
+      ? Number(document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-merge-map]")?.getAttribute("data-merge-map")) : 0;
+    if (mergeTarget && isRoot(current.graph.nodes.find(n => n.id === gesture!.node)!)) {
+      const id = gesture.node;
+      Object.assign(current, clone(gesture.before));
+      gesture = null; dragging = ""; dropTarget = ""; detaching = false; placing = false;
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+      void transferBranch(id, mergeTarget);
+      return;
+    }
+    const target = dropTarget;
+    // Every picked branch moves when a picked topic is dragged; otherwise just the dragged one.
+    const tops = (picked.has(gesture.node) ? pickedTops() : [gesture.node]).map(id => current!.graph.nodes.find(n => n.id === id)!).filter(Boolean);
     if (cancel) Object.assign(current, clone(gesture.before));
-    else if (gesture.moved) {
-      history = [...history.slice(-29), gesture.before];
-      if (gesture.node) {
-        const dragged = current.graph.nodes.find(n => n.id === gesture!.node)!;
-        const target = current.graph.nodes.find(n => n.id !== dragged.id && dragged.x + NODE_W / 2 >= n.x && dragged.x + NODE_W / 2 <= n.x + NODE_W && dragged.y + NODE_H / 2 >= n.y && dragged.y + NODE_H / 2 <= n.y + NODE_H);
-        if (target) {
-          const descendants = new Set([dragged.id]);
-          for (let i = 0; i < current.graph.nodes.length; i++) for (const edge of current.graph.edges) if (descendants.has(edge.from)) descendants.add(edge.to);
-          if (!descendants.has(target.id)) {
-            current.graph.edges = current.graph.edges.filter(e => e.to !== dragged.id);
-            current.graph.edges.push({id: crypto.randomUUID(), from: target.id, to: dragged.id, label: ""});
-            target.collapsed = false;
+    else if (gesture.box) {
+      const area = marquee, hits = area ? visibleNodes.filter(n => n.x < area.x1 && n.x + box(n).w > area.x0 && n.y < area.y1 && n.y + box(n).h > area.y0) : [];
+      if (hits.length) { multi = hits.map(n => n.id); choose(hits[0]); focusOn(hits[0].id); }
+    } else if (gesture.moved && gesture.node) {
+      const dragged = current.graph.nodes.find(n => n.id === gesture!.node)!;
+      const free = !detaching && e.altKey;
+      if (detaching || target || free || dragged.free) {
+        history = [...history.slice(-29), gesture.before];
+        future = [];
+        for (const top of tops) {
+          if (detaching) { if (!isRoot(top)) detachBranch(top); }
+          else if (free) top.free = true; // Alt-drag: it keeps its parent but leaves the automatic layout.
+          else if (target) {
+            current.graph.edges = current.graph.edges.filter(e => !(treeEdges.has(e.id) && e.to === top.id));
+            current.graph.edges.push({id: crypto.randomUUID(), from: target, to: top.id, label: ""});
+            delete top.free;
           }
         }
-      }
+        const parent = target ? current.graph.nodes.find(n => n.id === target) : undefined;
+        if (parent) parent.collapsed = false;
+        relayout(false);
+        dirty = true;
+        notice = detaching ? "Branch detached · save to keep" : "Unsaved local edits";
+      } else Object.assign(current, clone(gesture.before)); // No target: the branch snaps back into the layout.
+    } else if (gesture.node && !gesture.moved) {
+      if (multi.length) multi = []; // A plain click picks just that topic.
+    } else if (gesture.moved) {
+      history = [...history.slice(-29), gesture.before];
+      future = [];
       dirty = true;
       notice = "Unsaved local edits";
     }
     gesture = null;
+    dragging = ""; dropTarget = ""; detaching = false; placing = false; marquee = null;
     if (stage?.hasPointerCapture(e.pointerId))
       stage.releasePointerCapture(e.pointerId);
   }
@@ -836,11 +1159,11 @@
     }
     const left = Math.min(...ns.map((n) => n.x)),
       top = Math.min(...ns.map((n) => n.y)),
-      width = Math.max(...ns.map((n) => n.x + NODE_W)) - left,
-      height = Math.max(...ns.map((n) => n.y + NODE_H)) - top;
+      width = Math.max(...ns.map((n) => n.x + box(n).w)) - left,
+      height = Math.max(...ns.map((n) => n.y + box(n).h)) - top;
     const w = rect?.width ?? 700,
       h = rect?.height ?? 500,
-      z = Math.max(0.1, Math.min(2, (w - 60) / width, (h - 60) / height));
+      z = Math.max(0.1, Math.min(1.25, (w - 60) / width, (h - 60) / height));
     current.viewport = {
       x: (w - width * z) / 2 - left * z,
       y: (h - height * z) / 2 - top * z,
@@ -850,25 +1173,42 @@
   function clampPosition(value: number) {
     return Math.max(-LIMIT, Math.min(LIMIT, Math.round(value)));
   }
+  /** Horizontal branch curve from parent pill `a` to child pill `b`'s facing side. */
+  function branchCurve(a: Node, b: Node) {
+    const as = box(a), bs = box(b);
+    const ca = {x: a.x + as.w / 2, y: a.y + as.h / 2}, cb = {x: b.x + bs.w / 2, y: b.y + bs.h / 2};
+    const side = cb.x >= ca.x ? 1 : -1, sx = ca.x + side * as.w / 2, ex = cb.x - side * bs.w / 2, mx = (sx + ex) / 2;
+    return {d: `M ${sx} ${ca.y} C ${mx} ${ca.y}, ${mx} ${cb.y}, ${ex} ${cb.y}`, lx: mx, ly: (ca.y + cb.y) / 2 - 6};
+  }
+  function snapPath(parent: string, child: string) {
+    const a = current?.graph.nodes.find(n => n.id === parent), b = current?.graph.nodes.find(n => n.id === child);
+    return a && b ? branchCurve(a, b).d : "";
+  }
   /** Point where the ray from a node box's center along (dx, dy) leaves the box. */
-  function boundary(c: Point, dx: number, dy: number): Point {
+  function boundary(c: Point, dx: number, dy: number, size: {w: number; h: number}): Point {
     const t = Math.min(
-      dx === 0 ? Infinity : NODE_W / 2 / Math.abs(dx),
-      dy === 0 ? Infinity : NODE_H / 2 / Math.abs(dy),
+      dx === 0 ? Infinity : size.w / 2 / Math.abs(dx),
+      dy === 0 ? Infinity : size.h / 2 / Math.abs(dy),
     );
     return Number.isFinite(t) ? { x: c.x + dx * t, y: c.y + dy * t } : c;
   }
   /**
-   * Edge paths: straight when a pair has one connection, mirrored arcs for
-   * bidirectional or parallel connections, stacked loops for self-connections.
-   * Endpoints stop at box borders so arrowheads stay visible.
+   * Edge paths. A node's tree edge is a horizontal branch curve from the parent's side to the
+   * child's facing side. Other connections (Q65 E) are arcs bent off the chord (brackets round the
+   * right side when both pills share a column), fanned apart for bidirectional or parallel
+   * connections, and stacked loops for self-connections, with endpoints on the pill borders so
+   * arrowheads stay visible.
    */
   const geometry = $derived.by(() => {
-    const shapes = new Map<string, { d: string; lx: number; ly: number }>();
+    const shapes = new Map<string, { d: string; lx: number; ly: number; tree: boolean }>();
     if (!current) return shapes;
     const byId = new Map(current.graph.nodes.map((n) => [n.id, n])),
       pairs = new Map<string, Edge[]>();
     for (const e of current.graph.edges) {
+      if (treeEdges.has(e.id)) {
+        shapes.set(e.id, {...branchCurve(byId.get(e.from)!, byId.get(e.to)!), tree: true});
+        continue;
+      }
       const key = e.from < e.to ? `${e.from} ${e.to}` : `${e.to} ${e.from}`;
       const list = pairs.get(key);
       if (list) list.push(e);
@@ -877,45 +1217,64 @@
     for (const list of pairs.values())
       list.forEach((e, index) => {
         const a = byId.get(e.from)!,
-          b = byId.get(e.to)!;
+          b = byId.get(e.to)!,
+          as = box(a),
+          bs = box(b);
         if (a.id === b.id) {
-          const r = 30 + index * 18,
-            sx = a.x + NODE_W - 78,
-            ex = a.x + NODE_W - 22;
+          const r = 18 + index * 12,
+            sx = a.x + as.w - 44,
+            ex = a.x + as.w - 14;
           shapes.set(e.id, {
-            d: `M ${sx} ${a.y} C ${sx - 12} ${a.y - 2.2 * r}, ${ex + 12} ${a.y - 2.2 * r}, ${ex} ${a.y}`,
+            d: `M ${sx} ${a.y} C ${sx - 10} ${a.y - 2.2 * r}, ${ex + 10} ${a.y - 2.2 * r}, ${ex} ${a.y}`,
             lx: (sx + ex) / 2,
             ly: a.y - 1.65 * r - 6,
+            tree: false,
           });
           return;
         }
-        const ca = { x: a.x + NODE_W / 2, y: a.y + NODE_H / 2 },
-          cb = { x: b.x + NODE_W / 2, y: b.y + NODE_H / 2 },
+        // Pills sharing a column: bracket around their right side instead of cutting through the column.
+        if (Math.abs(a.x + as.w / 2 - (b.x + bs.w / 2)) < (as.w + bs.w) / 2) {
+          const sx = a.x + as.w, ex = b.x + bs.w, ay = a.y + as.h / 2, by = b.y + bs.h / 2,
+            // The bracket's apex clears every shown pill in the column between its two ends.
+            right = visibleNodes.reduce((edge, n) => n.y + box(n).h / 2 > Math.min(ay, by) && n.y + box(n).h / 2 < Math.max(ay, by) && n.x <= Math.max(sx, ex)
+              ? Math.max(edge, n.x + box(n).w) : edge, Math.max(sx, ex)),
+            rx = (right + 28 + index * 24 - 0.125 * (sx + ex)) / 0.75;
+          shapes.set(e.id, {
+            d: `M ${sx} ${ay} C ${rx} ${ay}, ${rx} ${by}, ${ex} ${by}`,
+            lx: 0.125 * (sx + ex) + 0.75 * rx,
+            ly: (ay + by) / 2 + 4,
+            tree: false,
+          });
+          return;
+        }
+        const ca = { x: a.x + as.w / 2, y: a.y + as.h / 2 },
+          cb = { x: b.x + bs.w / 2, y: b.y + bs.h / 2 },
           sign = e.from < e.to ? 1 : -1,
           dx = (cb.x - ca.x) * sign,
           dy = (cb.y - ca.y) * sign,
           length = Math.hypot(dx, dy) || 1,
-          offset = list.length === 1 ? 0 : (index - (list.length - 1) / 2) * 64,
+          offset = Math.min(110, Math.max(30, length * 0.25)) + (index - (list.length - 1) / 2) * 48,
           control = {
             x: (ca.x + cb.x) / 2 - (dy / length) * offset,
             y: (ca.y + cb.y) / 2 + (dx / length) * offset,
           },
-          s = boundary(ca, control.x - ca.x, control.y - ca.y),
-          t = boundary(cb, control.x - cb.x, control.y - cb.y);
+          s = boundary(ca, control.x - ca.x, control.y - ca.y, as),
+          t = boundary(cb, control.x - cb.x, control.y - cb.y, bs);
         shapes.set(e.id, {
           d: `M ${s.x} ${s.y} Q ${control.x} ${control.y} ${t.x} ${t.y}`,
           lx: 0.25 * s.x + 0.5 * control.x + 0.25 * t.x,
           ly: 0.25 * s.y + 0.5 * control.y + 0.25 * t.y + 4,
+          tree: false,
         });
       });
     return shapes;
   });
-  /** Layered tree: roots are nodes without incoming connections (or, inside cycles, the busiest node); parents center over children. */
+  /** Left-to-right tree over tree edges: roots are nodes without a parent (or, inside cycles, the busiest node); parents center beside their children; folded branches take one row. */
   function treeLayout(graph: Graph) {
     const out = new Map(graph.nodes.map((n) => [n.id, [] as string[]])),
       incoming = new Map(graph.nodes.map((n) => [n.id, 0]));
     for (const e of graph.edges)
-      if (e.from !== e.to) {
+      if (treeEdges.has(e.id)) {
         out.get(e.from)!.push(e.to);
         incoming.set(e.to, incoming.get(e.to)! + 1);
       }
@@ -942,33 +1301,45 @@
       (a, b) => out.get(b.id)!.length - out.get(a.id)!.length,
     ))
       if (!depth.has(n.id)) grow(n.id);
-    const positions = new Map<string, Point>();
+    const positions = new Map<string, Point>(),
+      byId = new Map(graph.nodes.map((n) => [n.id, n])),
+      row = PILL_H + 14,
+      anchors: string[] = [];
     let slot = 0;
-    const place = (id: string): number => {
-      const kids = children.get(id)!;
-      const x = kids.length
-        ? (() => {
-            const xs = kids.map(place);
-            return (xs[0] + xs[xs.length - 1]) / 2;
-          })()
-        : slot++ * (NODE_W + 40);
-      positions.set(id, { x, y: depth.get(id)! * (NODE_H + 90) });
-      return x;
+    const place = (id: string, x: number): number => {
+      const n = byId.get(id)!, size = box(n);
+      // Free nodes are anchors: they keep their own place and their branch is laid out around them.
+      const kids: string[] = [];
+      if (!n.collapsed) for (const kid of children.get(id)!) (byId.get(kid)!.free ? anchors : kids).push(kid);
+      const ys = kids.map((kid) => place(kid, x + size.w + 56));
+      const cy = ys.length ? (ys[0] + ys[ys.length - 1]) / 2 : slot++ * row + row / 2;
+      positions.set(id, { x, y: cy - size.h / 2 });
+      return cy;
     };
     for (const root of roots) {
-      place(root);
-      slot += 0.5;
+      if (byId.get(root)!.free) anchors.push(root);
+      else {
+        place(root, 0);
+        slot += 0.8;
+      }
+    }
+    for (let i = 0; i < anchors.length; i++) {
+      const anchor = byId.get(anchors[i])!, placed = new Set(positions.keys());
+      slot = 0;
+      const shift = anchor.y + box(anchor).h / 2 - place(anchor.id, anchor.x);
+      for (const [id, point] of positions) if (!placed.has(id)) point.y += shift;
     }
     return positions;
   }
   /** Deterministic Fruchterman–Reingold from current positions, then box-overlap removal. */
   function forceLayout(graph: Graph) {
     const ns = graph.nodes,
+      sizes = ns.map((n) => box(n)),
       count = ns.length,
       spread = new Set(ns.map((n) => `${n.x},${n.y}`)).size === count,
       p = ns.map((n, i) =>
         spread
-          ? { x: n.x + NODE_W / 2, y: n.y + NODE_H / 2 }
+          ? { x: n.x + sizes[i].w / 2, y: n.y + sizes[i].h / 2 }
           : {
               x: Math.cos((2 * Math.PI * i) / count) * 60 * Math.sqrt(count),
               y: Math.sin((2 * Math.PI * i) / count) * 60 * Math.sqrt(count),
@@ -1026,11 +1397,13 @@
       let moved = false;
       for (let i = 0; i < count; i++)
         for (let j = i + 1; j < count; j++) {
-          const ox = NODE_W + 70 - Math.abs(p[i].x - p[j].x),
-            oy = NODE_H + 50 - Math.abs(p[i].y - p[j].y);
+          const needX = (sizes[i].w + sizes[j].w) / 2 + 40,
+            needY = (sizes[i].h + sizes[j].h) / 2 + 24,
+            ox = needX - Math.abs(p[i].x - p[j].x),
+            oy = needY - Math.abs(p[i].y - p[j].y);
           if (ox <= 0 || oy <= 0) continue;
           moved = true;
-          if (ox / (NODE_W + 70) < oy / (NODE_H + 50)) {
+          if (ox / needX < oy / needY) {
             const shift = (p[i].x <= p[j].x ? -ox : ox) / 2;
             p[i].x += shift;
             p[j].x -= shift;
@@ -1045,7 +1418,7 @@
     return new Map(
       ns.map((n, i) => [
         n.id,
-        { x: p[i].x - NODE_W / 2, y: p[i].y - NODE_H / 2 },
+        { x: p[i].x - sizes[i].w / 2, y: p[i].y - sizes[i].h / 2 },
       ]),
     );
   }
@@ -1063,7 +1436,8 @@
       for (const [level, nodes] of levels) nodes.forEach((n, i) => {
         const angle = 2 * Math.PI * i / nodes.length;
         const radius = level === 0 && nodes.length === 1 ? 0 : (level + 1) * Math.max(220, nodes.length * 42);
-        positions.set(n.id, {x: Math.cos(angle) * radius, y: Math.sin(angle) * radius});
+        const size = box(n);
+        positions.set(n.id, {x: Math.cos(angle) * radius - size.w / 2, y: Math.sin(angle) * radius - size.h / 2});
       });
     } else positions = kind === "tree" ? treeLayout(current.graph) : forceLayout(current.graph);
     for (const n of current.graph.nodes) {
@@ -1191,21 +1565,22 @@
     const rect = stage?.getBoundingClientRect(),
       v = current!.viewport;
     if (rect) {
-      const sx = n.x * v.zoom + v.x,
+      const size = box(n),
+        sx = n.x * v.zoom + v.x,
         sy = n.y * v.zoom + v.y;
       if (
         sx < 0 ||
         sy < 0 ||
-        sx + NODE_W * v.zoom > rect.width ||
-        sy + NODE_H * v.zoom > rect.height
+        sx + size.w * v.zoom > rect.width ||
+        sy + size.h * v.zoom > rect.height
       ) {
         v.x = Math.max(
           -1e7,
-          Math.min(1e7, rect.width / 2 - (n.x + NODE_W / 2) * v.zoom),
+          Math.min(1e7, rect.width / 2 - (n.x + size.w / 2) * v.zoom),
         );
         v.y = Math.max(
           -1e7,
-          Math.min(1e7, rect.height / 2 - (n.y + NODE_H / 2) * v.zoom),
+          Math.min(1e7, rect.height / 2 - (n.y + size.h / 2) * v.zoom),
         );
       }
     }
@@ -1215,7 +1590,7 @@
   }
   function pick(e: PointerEvent) {
     const edge = (e.target as Element | null)?.getAttribute?.("data-edge");
-    if (edge) {
+    if (edge && !e.shiftKey) {
       selectedEdge = edge;
       selected = "";
       return;
@@ -1385,6 +1760,10 @@
     catch { error = "Local draft backup is unavailable. Save map before leaving."; }
   });
   onMount(() => {
+    const fonts = getComputedStyle(document.documentElement);
+    uiFont = fonts.getPropertyValue("--font-ui").trim() || uiFont;
+    headingFont = fonts.getPropertyValue("--heading").trim() || headingFont;
+    void document.fonts?.ready.then(() => { pillWidths.clear(); fontsReady += 1; });
     void refresh()
       .then(() => {
         let lastMap = 0;
@@ -1414,6 +1793,7 @@
   });
 </script>
 
+<svelte:window onkeydowncapture={dragKey} />
 <section class="schema" aria-label="Mental schema maps" bind:this={container}>
   {#snippet mapControls()}
     <div class="toolbar">
@@ -1641,12 +2021,23 @@
           (!history.length && (!current.can_undo || dirty))}
         >Undo {history.length ? "local" : "last save"}</Button
       >
+      <Button onclick={redo} disabled={!editable || (!future.length && (!current.can_redo || dirty))}>Redo</Button>
       <details><summary>Advanced map actions</summary><div class="toolbar">
         <Button onclick={download}>Export {dirty ? "local edits" : "JSON"}</Button>
         <Button onclick={() => current && open(current.id, true)} disabled={busy}>Reload saved map</Button>
         <Button aria-pressed={showLinks} onclick={() => showLinks = !showLinks}>Linked mentions{autoNew ? ` / ${autoNew} new` : ""}</Button>
         <Button onclick={removeMap} disabled={!editable}>Delete map…</Button>
       </div></details>
+      {#if maps.some(m => m.id !== current!.id)}
+        <div class="toolbar" role="group" aria-label="Merge map drop targets">
+          <span class="hint">Drop a root into:</span>
+          {#each maps.filter(m => m.id !== current!.id) as m}
+            <button type="button" data-merge-map={m.id} disabled={!editable}
+              onclick={() => {if (node && isRoot(node)) void transferBranch(node.id, m.id);}}
+              title="Drop a map root here, or select a root and click to merge">{m.title}</button>
+          {/each}
+        </div>
+      {/if}
       <span role="status"
         >{busy
           ? "Working…"
@@ -1915,7 +2306,7 @@
           <div class="toolbar">
             <Button onclick={() => arrange("tree")} disabled={!editable}>Tree layout</Button>
             <Button onclick={() => quickAdd()} disabled={!editable}>{node ? "+ Child" : "+ Topic"}</Button>
-            <Button onclick={() => quickAdd(current?.graph.edges.find(edge => edge.to === selected)?.from ?? "")} disabled={!editable || !node}>+ Sibling</Button>
+            <Button onclick={() => quickAdd(parents.get(selected) ?? "")} disabled={!editable || !node}>+ Sibling</Button>
             <Button onclick={() => node && editInline(node)} disabled={!editable || !node}>Rename</Button>
             <Button onclick={() => outline = !outline} aria-pressed={outline}>Outline</Button>
             <Button onclick={() => {recall = !recall; revealed = [];}} aria-pressed={recall}>{recall ? "End recall" : "Quiz me"}</Button>
@@ -1930,7 +2321,7 @@
               <Button onclick={() => arrange("force")} disabled={!editable}>Force</Button>
             </div></details><span>{Math.round(current.viewport.zoom * 100)}%</span>
           </div>
-          <p class="hint">Click a topic and type to rename. Tab adds a child; Enter adds a sibling, including while typing. Save map keeps changes in your workspace; draft backup is device-only.</p>
+          <p class="hint">Click a topic and type (or Ctrl+Enter) to rename. Tab adds a child; Enter adds a sibling, including while typing. Save map keeps changes in your workspace; draft backup is device-only.</p>
           {#if outline}
             <div class="map-outline" role="tree" aria-label="Mind map outline">
               {#each visibleNodes as n (n.id)}
@@ -1941,12 +2332,37 @@
               {/each}
             </div>
           {/if}
+          <div class="stage-wrap" bind:clientWidth={stageWidth}>
+          {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : placing ? "Placing freely · release to leave it here" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · Alt places it freely · D detaches the branch"}</p>
+          {:else if linking}<p class="drag-hint" role="status">Click a topic to connect “{name(current.graph.nodes.find(n => n.id === linking)!)}” to it · Esc cancels</p>{/if}
+          {#if node && !dragging && !editing && !linking && !labelling && editable && visibleNodes.includes(node)}
+            {@const v = current.viewport}
+            {@const top = node.y * v.zoom + v.y + 8}
+            <!-- Q65 D: the selection's swatch row floats above its pill (below it near the stage top). -->
+            <div class="node-style" class:below={top < 56} role="toolbar" aria-label="Node style" bind:offsetWidth={styleWidth}
+              style:left={`${Math.max(8, Math.min(node.x * v.zoom + v.x, stageWidth - styleWidth - 8))}px`}
+              style:top={`${top < 56 ? top + box(node).h * v.zoom + 8 : top - 8}px`}>
+              {#if picked.size > 1}<span class="count">{picked.size} selected</span><span class="rule" aria-hidden="true"></span>{/if}
+              {#each PALETTE as slot, index (slot)}<button class="swatch" style:--dot={`var(--${slot})`} aria-label={`Colour ${index + 1}`} aria-pressed={node.color === slot} title={`Colour ${index + 1}`} onclick={() => paint(slot)}></button>{/each}
+              <button class="swatch auto" aria-label="Automatic colour" aria-pressed={!node.color} title="Automatic branch colour" onclick={() => paint(undefined)}></button>
+              <span class="rule" aria-hidden="true"></span>
+              <button class="word" aria-pressed={paintBranch} title="Colour the node's whole branch" onclick={() => paintBranch = !paintBranch}>Whole branch</button>
+              <span class="rule" aria-hidden="true"></span>
+              <button class="word" aria-keyshortcuts="Alt+C" title="Copy style (Alt+C)" onclick={copyStyle}>Copy style</button>
+              <button class="word" aria-keyshortcuts="Alt+V" title="Paste style (Alt+V)" disabled={!copiedStyle} onclick={pasteStyle}>Paste style</button>
+              {#if picked.size > 1}<span class="rule" aria-hidden="true"></span><button class="word" aria-keyshortcuts="Delete" title="Delete the selected topics (Delete)" onclick={deleteNode}>Delete {picked.size}</button>{/if}
+            </div>
+          {/if}
           <svg
             bind:this={stage}
             class="stage"
-            aria-label="Schema graph. Drag nodes to position; drag empty space to pan. Use node list and inspector for keyboard editing."
+            aria-label="Schema graph. Drag nodes to reparent, Alt-drag to place freely; drag empty space to pan. Use node list and inspector for keyboard editing."
             role="group"
-            ondblclick={(e) => {if (!(e.target as Element).closest("[data-node]")) quickAdd("");}}
+            ondblclick={(e) => {
+              const edge = (e.target as Element).getAttribute("data-edge");
+              if (edge) void relabel(edge);
+              else if (!(e.target as Element).closest("[data-node]")) quickAdd("");
+            }}
             onpointerdown={pick}
             onpointermove={move}
             onpointerup={(e) => end(e)}
@@ -1981,58 +2397,25 @@
             <g
               transform={`translate(${current.viewport.x},${current.viewport.y}) scale(${current.viewport.zoom})`}
             >
-              {#each current.graph.edges.filter(e => visibleNodes.some(n => n.id === e.from) && visibleNodes.some(n => n.id === e.to)) as e (e.id)}
+              {#each shownEdges.filter(e => !(e.to === dragging && treeEdges.has(e.id) && (detaching || (dropTarget && dropTarget !== e.from)))) as e (e.id)}
                 {@const shape = geometry.get(e.id)}
                 {#if shape}<path
                     d={shape.d}
                     class="edge"
+                    class:branch={shape.tree}
+                    class:cross={!shape.tree}
                     class:active={selectedEdge === e.id}
-                    marker-end={selectedEdge === e.id
+                    style:--b={nodeColor(current.graph.nodes.find(n => n.id === e.to)!)}
+                    marker-end={shape.tree ? undefined : selectedEdge === e.id
                       ? `url(#${pane.id}-schema-arrow-active)`
                       : `url(#${pane.id}-schema-arrow)`}
                   /><path d={shape.d} class="edge-hit" data-edge={e.id} />{/if}
               {/each}
-              {#each visibleNodes as n (n.id)}
-                <g
-                  transform={`translate(${n.x},${n.y})`}
-                  data-node={n.id}
-                  role="button"
-                  tabindex="0"
-                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}. Tab child, Enter sibling, type to rename, Space collapse, arrows select.`}
-                  class:selected={selected === n.id}
-                  class="graph-node"
-                  style={`--branch-color: ${branchColor(n)}`}
-                  ondblclick={() => openCard(n)}
-                  onpointerdown={(e) => start(e, n.id)}
-                  onkeydown={(e) => nodeKey(e, n)}
-                  onclick={() => choose(n)}
-                  oncontextmenu={(event) => deleteAtPointer(event, n)}
-                >
-                  <rect width="200" height="64" rx="10" style="stroke: var(--branch-color); fill: color-mix(in srgb, var(--branch-color) 15%, var(--surface));" />
-                  <text x="10" y="20" class="node-kind"
-                    >{n.source?.kind === "note_page" ? "▤ NOTE" : n.kind.toUpperCase()} {n.collapsed ? "▸" : ""}</text
-                  >
-                  <text x="10" y="43"
-                    >{hiddenLabel(n) ? "?" : name(n).length > 24 ? name(n).slice(0, 23) + "…" : name(n)}</text
-                  >
-                  {#if editing === n.id}
-                    <foreignObject x="6" y="25" width="188" height="34">
-                      <input id={`${pane.id}-map-inline-label`} aria-label="Node label" style="width: 100%; box-sizing: border-box; color: var(--ink); background: var(--surface); border: 1px solid var(--accent);" bind:value={inlineLabel} maxlength="200"
-                        onpointerdown={e => e.stopPropagation()}
-                        oninput={e => updateInline(e.currentTarget.value)}
-                        onkeydown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === "Escape") {e.preventDefault(); editing = "";}
-                          else if (e.key === "Tab") {e.preventDefault(); finishInline(false); quickAdd(selected);}
-                          else if (e.key === "Enter") {e.preventDefault(); finishInline(false); quickAdd(current?.graph.edges.find(edge => edge.to === selected)?.from ?? "");}
-                        }} onblur={() => {if (editing === n.id) finishInline(false);}} />
-                    </foreignObject>
-                  {/if}
-                </g>
-              {/each}
-              {#each current.graph.edges as e (e.id)}
+              {#if dragging && dropTarget}<path class="snap-preview" d={snapPath(dropTarget, dragging)} />{/if}
+              <!-- Labels sit under the pills so a label never blocks a topic. -->
+              {#each shownEdges as e (e.id)}
                 {@const shape = geometry.get(e.id)}
-                {#if shape && e.label}<text
+                {#if shape && e.label && labelling !== e.id}<text
                     x={shape.lx}
                     y={shape.ly}
                     class="edge-label"
@@ -2044,10 +2427,72 @@
                       : e.label}</text
                   >{/if}
               {/each}
+              {#each visibleNodes as n (n.id)}
+                {@const size = box(n)}
+                {@const root = isRoot(n)}
+                {@const folded = hiddenCount(n)}
+                <g
+                  transform={`translate(${n.x},${n.y})`}
+                  data-node={n.id}
+                  id={`${pane.id}-node-${n.id}`}
+                  role="button"
+                  tabindex="0"
+                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}${n.free && !root ? ", placed freely" : ""}. Tab child, Enter sibling, arrows move, Control arrows reorder, Control Enter or type to rename, Space collapse.`}
+                  class:selected={picked.has(n.id)}
+                  class:root
+                  class:drop-target={dropTarget === n.id}
+                  class:dragging={dragging === n.id}
+                  class:detaching={detaching && dragging === n.id}
+                  class:painted={!!n.color}
+                  class="graph-node"
+                  style:--b={nodeColor(n)}
+                  ondblclick={() => openCard(n)}
+                  onpointerdown={(e) => start(e, n.id)}
+                  onkeydown={(e) => nodeKey(e, n)}
+                  onclick={() => choose(n)}
+                  oncontextmenu={(event) => deleteAtPointer(event, n)}
+                >
+                  <rect class="pill" width={size.w} height={size.h} rx={size.h / 2} />
+                  {#if !root}<circle class="dot" cx="16" cy={size.h / 2} r="4" />{/if}
+                  <text class="label" x={root ? (size.w - (folded ? 26 : 0)) / 2 : 28} y={size.h / 2 + 4.5} text-anchor={root ? "middle" : "start"}>{pillText(n)}</text>
+                  {#if folded}<g class="fold" transform={`translate(${size.w - 17},${size.h / 2})`}><circle r="9" /><text y="3.5" text-anchor="middle">{folded > 99 ? "99+" : folded}</text></g>{/if}
+                  {#if editing === n.id}
+                    <foreignObject x="0" y="0" width={Math.max(size.w, 180)} height={size.h}>
+                      <input id={`${pane.id}-map-inline-label`} class="inline-label" aria-label="Node label" bind:value={inlineLabel} maxlength="200"
+                        onpointerdown={e => e.stopPropagation()}
+                        oninput={e => updateInline(e.currentTarget.value)}
+                        onkeydown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === "Escape") {e.preventDefault(); finishInline();}
+                          else if (e.key === "Tab") {e.preventDefault(); finishInline(false); quickAdd(selected);}
+                          else if (e.key === "Enter") {e.preventDefault(); finishInline(false); quickAdd(parents.get(selected) ?? "", selected);}
+                        }} onblur={() => {if (editing === n.id) finishInline(false);}} />
+                    </foreignObject>
+                  {/if}
+                </g>
+              {/each}
+              {#if labelling}
+                {@const e = shownEdges.find(e => e.id === labelling)}
+                {@const shape = e && geometry.get(e.id)}
+                {#if e && shape}
+                  <foreignObject x={shape.lx - 80} y={shape.ly - 17} width="160" height="26">
+                    <input id={`${pane.id}-edge-label`} class="inline-label edge-input" aria-label="Connection label" placeholder="relationship" bind:value={edgeDraft} maxlength="200"
+                      onpointerdown={event => event.stopPropagation()}
+                      onkeydown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Enter" || event.key === "Escape") {event.preventDefault(); finishLabel(event.key === "Enter", true);}
+                      }} onblur={() => {if (labelling) finishLabel();}} />
+                  </foreignObject>
+                {/if}
+              {/if}
+              {#if marquee}<rect class="marquee" x={marquee.x0} y={marquee.y0} width={marquee.x1 - marquee.x0} height={marquee.y1 - marquee.y0} rx="6" />{/if}
+              <!-- The dragged pill is redrawn on top so it stays visible over the pill it snaps into. -->
+              {#if dragging}<use href={`#${pane.id}-node-${dragging}`} class="drag-ghost" />{/if}
             </g>
           </svg>
+          </div>
           <p class="hint">
-            Tab child · Enter sibling · type to rename · Space collapse · arrows select
+            Tab child · Enter sibling · arrows move · Shift+arrows or Shift-drag select several · Ctrl+↑/↓ reorder · Ctrl+Enter or type to rename · Space fold · Alt-drag places freely
           </p>
           <details><summary>Connections</summary>
           <Panel title="[02] Directional connections">
@@ -2134,12 +2579,20 @@
               <Badge label={node.kind} />
               <div class="toolbar">
                 <Button onclick={() => collapse(node)}>{node.collapsed ? "Expand" : "Collapse"}</Button>
+                <Button onclick={detachSelected} disabled={!editable || isRoot(node)} title="Break this branch off as a floating piece (or press D while dragging it)">Detach branch</Button>
+                <Button onclick={resetPosition} disabled={!editable || !node.free} title="Put a freely placed node back into the automatic layout">Reset position</Button>
+                <Button onclick={() => {linking = node!.id; focusOn(node!.id);}} disabled={!editable} aria-pressed={linking === node.id} title="Draw a labelled connection to any other topic, outside the tree">Connect to…</Button>
+                <Button onclick={() => transferBranch(node!.id)} disabled={!editable}>Split branch into map</Button>
+                {#if isRoot(node) && maps.some(m => m.id !== current!.id)}
+                  <label>Merge into map<select bind:value={mergeMap}><option value="">Choose map</option>{#each maps.filter(m => m.id !== current!.id) as m}<option value={m.id}>{m.title}</option>{/each}</select></label>
+                  <Button onclick={() => transferBranch(node!.id, Number(mergeMap))} disabled={!editable || !mergeMap}>Merge root</Button>
+                {/if}
                 <Button onclick={() => studyBranch("flashcards")}>Make flashcards</Button>
                 <Button onclick={() => studyBranch("quiz")}>Quiz this branch</Button>
                 <Button onclick={startBranchSession} disabled={!editable}>Start session</Button>
                 {#if node.source?.kind === "note_page" || node.map_id}<Button onclick={() => openCard(node)}>Open ↗</Button>{/if}
               </div>
-              <label>Move under<select value={current.graph.edges.find(edge => edge.to === node.id)?.from ?? ""} disabled={!editable} onchange={e => reparent(e.currentTarget.value)}>
+              <label>Move under<select value={parents.get(node.id) ?? ""} disabled={!editable} onchange={e => reparent(e.currentTarget.value)}>
                 <option value="">No parent (root topic)</option>
                 {#each current.graph.nodes.filter(item => !descendants(node.id).has(item.id)) as parent}<option value={parent.id}>{name(parent)}</option>{/each}
               </select></label>
@@ -2215,7 +2668,7 @@
                 >
               </div>
               <Button onclick={deleteNode} disabled={!editable}
-                >Delete node + its connections</Button
+                >{picked.size > 1 ? `Delete ${picked.size} nodes + their connections` : "Delete node + its connections"}</Button
               >
             {:else}<p>
                 Select a node in the graph or searchable list. Full labels,
@@ -2402,36 +2855,155 @@
     user-select: none;
     cursor: grab;
   }
+  /* Q44: rounded pills with a branch-coloured dot; parentless nodes are inverted ink roots. */
   .graph-node {
     cursor: move;
-  }
-  .graph-node rect {
-    fill: var(--surface);
-    stroke: var(--border);
-    stroke-width: 2;
-  }
-  .graph-node.selected rect,
-  .graph-node:focus rect {
-    stroke: var(--accent);
-    stroke-width: 3;
-  }
-  .graph-node:focus {
     outline: none;
   }
-  .graph-node text {
+  .graph-node .pill {
+    fill: color-mix(in srgb, var(--b) 14%, var(--solid-panel));
+    stroke: color-mix(in srgb, var(--b) 55%, transparent);
+    stroke-width: 1.2;
+    transition: fill 160ms;
+  }
+  .graph-node:hover .pill { fill: color-mix(in srgb, var(--b) 26%, var(--solid-panel)); }
+  .graph-node.selected .pill,
+  .graph-node:focus-visible .pill {
+    stroke: var(--b);
+    stroke-width: 2;
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--b) 45%, transparent));
+  }
+  .graph-node .dot { fill: var(--b); }
+  .graph-node .label {
     fill: var(--ink);
-    font: 12px var(--br-font-ui, monospace);
+    font: 500 12.5px var(--font-ui);
     pointer-events: none;
   }
-  .graph-node .node-kind {
-    fill: var(--violet);
-    font-size: 9px;
+  .graph-node.root .pill { fill: var(--ink); stroke: none; }
+  .graph-node.root:hover .pill { fill: color-mix(in srgb, var(--ink) 88%, var(--solid-void)); }
+  .graph-node.root.selected .pill,
+  .graph-node.root:focus-visible .pill { stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 45%, transparent)); }
+  .graph-node.root .label { fill: var(--solid-void); font: 600 13px var(--heading); }
+  .graph-node .fold circle { fill: color-mix(in srgb, var(--b) 40%, var(--solid-panel)); }
+  .graph-node.root .fold circle { fill: var(--solid-void); }
+  .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-mono); pointer-events: none; }
+  .graph-node.root.painted .pill { fill: var(--b); }
+  /* Q65 D: the selection's floating swatch row. */
+  .node-style {
+    position: absolute;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 6px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--solid-raised) 86%, transparent);
+    backdrop-filter: var(--glass);
+    -webkit-backdrop-filter: var(--glass);
+    box-shadow: 0 10px 26px -16px color-mix(in srgb, var(--shadow-tint) 80%, transparent);
+    transform: translateY(-100%);
+    white-space: nowrap;
   }
+  .node-style.below { transform: none; }
+  .node-style .swatch {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    background: var(--dot) content-box;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 20%, transparent);
+    cursor: pointer;
+    transition: transform 140ms ease;
+  }
+  .node-style .swatch:hover { transform: scale(1.12); }
+  .node-style .swatch[aria-pressed="true"] { border-color: var(--dot); }
+  .node-style .swatch.auto {
+    --dot: var(--muted);
+    background: conic-gradient(var(--c1), var(--c2), var(--c3), var(--c4), var(--c5), var(--c6), var(--c1)) content-box;
+  }
+  .node-style .rule { width: 1px; height: 16px; margin: 0 3px; background: var(--hairline); }
+  .node-style .word {
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--muted);
+    font: 500 11.5px var(--font-ui);
+    cursor: pointer;
+  }
+  .node-style .word:hover:not(:disabled) { color: var(--ink); }
+  .node-style .word:disabled { opacity: 0.45; cursor: default; }
+  .node-style .word[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
+  .node-style .count { padding: 0 6px; color: var(--ink); font: 600 11.5px var(--font-ui); }
+  /* Q65 F: the Shift-drag selection box. */
+  .marquee {
+    fill: color-mix(in srgb, var(--accent) 10%, transparent);
+    stroke: var(--accent);
+    stroke-width: 1;
+    stroke-dasharray: 4 3;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: reduce) { .node-style .swatch { transition: none; } }
+  .inline-label {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border: 1.5px solid var(--accent);
+    border-radius: 999px;
+    color: var(--ink);
+    background: var(--solid-panel);
+    font: 500 12.5px var(--font-ui);
+  }
+  /* Q65 B: the pill a drag would snap into lights up; a detached branch shows a dashed outline. */
+  .graph-node.drop-target .pill {
+    stroke: var(--accent);
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 60%, transparent));
+  }
+  .graph-node.dragging { opacity: 0.88; cursor: grabbing; }
+  .graph-node.detaching .pill { stroke: var(--b); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .graph-node.root.detaching .pill { stroke: var(--accent); }
+  .snap-preview { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 6 5; pointer-events: none; }
+  .drag-ghost { pointer-events: none; opacity: 0.7; }
+  .stage-wrap { position: relative; }
+  .drag-hint {
+    position: absolute;
+    left: 50%;
+    top: 18px;
+    z-index: 1;
+    transform: translateX(-50%);
+    margin: 0;
+    padding: 5px 12px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--solid-raised) 80%, transparent);
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: reduce) { .graph-node .pill { transition: none; } }
   .edge {
     fill: none;
     stroke: var(--violet);
     stroke-width: 2;
     pointer-events: none;
+  }
+  /* Q65 E: cross connections are dashed violet arcs outside the tree. */
+  .edge.cross {
+    stroke-width: 1.6;
+    stroke-dasharray: 6 5;
+    stroke-linecap: round;
+  }
+  .edge-input { padding: 0 10px; border-color: var(--violet); font-size: 11.5px; }
+  .edge.branch {
+    stroke: var(--b);
+    stroke-width: 1.6;
+    stroke-opacity: 0.6;
   }
   .edge.active {
     stroke: var(--accent);

@@ -5,7 +5,7 @@
   import { DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, clampDockHeight, firstDockHeight, readDock, writeDock, type DockMode } from "./dock";
 
   /**
-   * The dock (Q3, Q8): kitty!'s herdr terminal, herdr's agent-activity strip, or
+   * The dock (Q3, Q8, Q56): kitty!'s herdr terminal, herdr's agent cards, or
    * only a thin handle. It is fixed to the bottom of the window and publishes the
    * space it takes as --dock-space so the page above never sits underneath it.
    */
@@ -130,7 +130,7 @@
       {#if mode === "terminal"}
         <TerminalView label="herdr terminal" />
       {:else}
-        <AgentActivity />
+        <AgentActivity onopen={() => choose("terminal")} />
       {/if}
     </div>
   </section>

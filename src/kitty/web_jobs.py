@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import sqlite3
 from urllib.parse import urlsplit
 
 from kitty.core import applications, favorites, jobs, pipeline, reminders, sources, today
@@ -332,13 +333,45 @@ def post(app, conn, path, body):
         reminder = reminders.create_reminder(conn, kind='custom', due_at=_date(body.get('date')),
                                               note=_text(body.get('note', ''), 'Note'), job_id=job_id)
         return {'ok': True, 'id': reminder.id}
-    match = re.fullmatch(r'/api/reminders/([1-9][0-9]{0,17})/complete', path)
+    if path == '/api/reminders/restore':
+        row = body.get('reminder')
+        fields = {'id', 'job_id', 'application_id', 'kind', 'due_at', 'note', 'done_at', 'created_at'}
+        if set(body) != {'reminder'} or not isinstance(row, dict) or set(row) != fields:
+            raise APIError(400, 'Expected the deleted reminder to restore')
+        ids_ok = all(row[key] is None or type(row[key]) is int and 1 <= row[key] <= 2**63 - 1
+                     for key in ('job_id', 'application_id')) and type(row['id']) is int and 1 <= row['id'] <= 2**63 - 1
+        texts_ok = all(isinstance(row[key], str) and len(row[key]) <= 100 for key in ('due_at', 'created_at')) \
+            and all(row[key] is None or isinstance(row[key], str) for key in ('note', 'done_at'))
+        if not ids_ok or not texts_ok or row['kind'] not in {'followup', 'deadline', 'opens', 'custom'}:
+            raise APIError(400, 'Expected the deleted reminder to restore')
+        if row['note'] is not None:
+            _text(row['note'], 'Note')
+        if conn.execute('SELECT id FROM reminders WHERE id=?', (row['id'],)).fetchone():
+            raise APIError(409, 'That reminder already exists')
+        try:
+            reminders.restore_reminder(conn, row)
+        except sqlite3.IntegrityError:
+            raise APIError(409, 'Its job or application no longer exists') from None
+        return {'ok': True}
+    match = re.fullmatch(r'/api/reminders/([1-9][0-9]{0,17})(?:/(complete|snooze|delete))?', path)
     if match:
-        if body:
+        ident, action = int(match[1]), match[2]
+        if action and body:
             raise APIError(400, 'Expected empty object')
-        if not conn.execute('SELECT id FROM reminders WHERE id=?', (int(match[1]),)).fetchone():
+        if not action and (not body or set(body) - {'date', 'note'}):
+            raise APIError(400, 'Change the reminder date or note')
+        if not conn.execute('SELECT id FROM reminders WHERE id=?', (ident,)).fetchone():
             raise APIError(404, 'Reminder not found')
-        reminders.complete_reminder(conn, int(match[1]))
+        if action == 'complete':
+            reminders.complete_reminder(conn, ident)
+        elif action == 'snooze':
+            previous, due_at = reminders.snooze_reminder(conn, ident)
+            return {'ok': True, 'previous': previous, 'due_at': due_at}
+        elif action == 'delete':
+            return {'ok': True, 'reminder': reminders.delete_reminder(conn, ident)}
+        else:
+            reminders.update_reminder(conn, ident, due_at=_date(body['date']) if 'date' in body else None,
+                                      note=_text(body['note'], 'Note') if 'note' in body else None)
         return {'ok': True}
     match = re.fullmatch(r'/api/job-tools/([1-9][0-9]{0,17})', path)
     if not match:

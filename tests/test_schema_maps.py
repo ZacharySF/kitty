@@ -257,6 +257,55 @@ def test_branch_collapse_reparent_and_map_link_persist(workspace):
     assert not restored['graph']['nodes'][0].get('collapsed', False)
 
 
+def test_detached_free_branch_position_persists_and_round_trips_portably(workspace):
+    conn = workspace.conn
+    item = connected(conn)
+    item['graph']['nodes'][1].update(free=True, x=640, y=-120)
+    item['graph']['edges'] = []
+    save(conn, item)
+    loaded = schema.load(conn, item['id'])
+    assert loaded['graph']['nodes'][1]['free'] is True
+    assert (loaded['graph']['nodes'][1]['x'], loaded['graph']['nodes'][1]['y']) == (640, -120)
+    assert 'free' not in loaded['graph']['nodes'][0]
+    copy = schema.create(conn, {'title': 'Copy', 'mode': 'study', 'document': schema.export(conn, item['id'])})
+    assert copy['graph']['nodes'][1]['free'] is True
+    with pytest.raises(ValueError, match='Free'):
+        save(conn, schema.load(conn, item['id']), {'nodes': [node('n', free='yes')], 'edges': []})
+
+
+def test_node_palette_colour_persists_and_round_trips_portably(workspace):
+    conn = workspace.conn
+    item = connected(conn)
+    item['graph']['nodes'][0]['color'] = 'c4'
+    save(conn, item)
+    loaded = schema.load(conn, item['id'])
+    assert loaded['graph']['nodes'][0]['color'] == 'c4'
+    assert 'color' not in loaded['graph']['nodes'][1]
+    copy = schema.create(conn, {'title': 'Copy', 'mode': 'study', 'document': schema.export(conn, item['id'])})
+    assert copy['graph']['nodes'][0]['color'] == 'c4'
+    for colour in ('red', '#ff0000', 'c7', 4, ''):
+        with pytest.raises(ValueError, match='Colour'):
+            save(conn, schema.load(conn, item['id']), {'nodes': [node('n', color=colour)], 'edges': []})
+
+
+def test_cross_connection_kind_persists_and_round_trips_portably(workspace):
+    conn = workspace.conn
+    item = connected(conn)
+    item['graph']['nodes'].append(node('optics'))
+    item['graph']['edges'] += [{'id': 'link', 'from': 'optics', 'to': 'calculus', 'label': 'needs', 'kind': 'cross'},
+                               {'id': 'branch', 'from': 'physics', 'to': 'optics', 'label': '', 'kind': 'tree'}]
+    save(conn, item)
+    edges = {edge['id']: edge for edge in schema.load(conn, item['id'])['graph']['edges']}
+    assert edges['link'] == {'id': 'link', 'from': 'optics', 'to': 'calculus', 'label': 'needs', 'kind': 'cross'}
+    assert 'kind' not in edges['branch'] and 'kind' not in edges['uses']
+    copy = schema.create(conn, {'title': 'Copy', 'mode': 'study', 'document': schema.export(conn, item['id'])})
+    assert {edge['id']: edge.get('kind') for edge in copy['graph']['edges']}['link'] == 'cross'
+    for kind in ('bogus', 1, None):
+        with pytest.raises(ValueError, match='Connection kind'):
+            save(conn, schema.load(conn, item['id']), {'nodes': [node('a'), node('b')],
+                                                       'edges': [{'id': 'x', 'from': 'a', 'to': 'b', 'label': '', 'kind': kind}]})
+
+
 def test_note_card_source_is_unique_and_live(workspace):
     conn = workspace.conn
     notebook = conn.execute("INSERT INTO note_notebooks(title,created_at,updated_at) VALUES('Synthetic notebook','2026-01-01','2026-01-01')").lastrowid
@@ -379,3 +428,48 @@ def test_network_query_boundaries(workspace):
     assert len(schema.network(conn)['maps']) == schema.MAX_MAPS
     with pytest.raises(ValueError, match='At most'):
         schema.create(conn, {'title': 'Too many', 'mode': 'general'})
+
+
+def test_split_merge_and_paired_undo_redo_are_atomic(workspace):
+    conn = workspace.conn
+    original = save(conn, create(conn), {'nodes': [node('root'), node('branch'), node('leaf')],
+        'edges': [{'id': 'a', 'from': 'root', 'to': 'branch', 'label': ''},
+                  {'id': 'b', 'from': 'branch', 'to': 'leaf', 'label': ''}]})
+    branch = schema.transfer(conn, {'id': original['id'], 'revision': original['revision'], 'node_id': 'branch'})
+    left = schema.load(conn, original['id'])
+    assert [n['label'] for n in branch['graph']['nodes']] == ['branch', 'leaf']
+    assert [n['label'] for n in left['graph']['nodes']] == ['root', 'branch']
+    assert left['graph']['nodes'][1]['map_id'] == branch['id']
+    assert branch['graph']['nodes'][0]['map_id'] == original['id']
+    undone = schema.undo(conn, {'id': branch['id'], 'revision': branch['revision']})
+    assert schema.load(conn, original['id'])['graph'] == original['graph']
+    assert undone['graph']['nodes'] == []
+    assert undone['can_redo'] and not undone['can_undo']
+    redone = schema.undo(conn, {'id': undone['id'], 'revision': undone['revision'], 'redo': True})
+    assert redone['graph'] == branch['graph']
+    left = schema.load(conn, original['id'])
+    merged = schema.transfer(conn, {'id': redone['id'], 'revision': redone['revision'],
+        'node_id': redone['graph']['nodes'][0]['id'], 'target_id': left['id'], 'target_revision': left['revision']})
+    assert sorted(n['label'] for n in merged['graph']['nodes']) == ['branch', 'leaf', 'root']
+    assert len(merged['graph']['edges']) == 2
+    assert all(n.get('map_id') != merged['id'] for n in merged['graph']['nodes'])
+    assert schema.load(conn, branch['id'])['graph']['nodes'] == []
+    restored = schema.undo(conn, {'id': merged['id'], 'revision': merged['revision']})
+    assert restored['graph'] == left['graph']
+    assert schema.load(conn, branch['id'])['graph'] == branch['graph']
+
+
+def test_transfer_conflicts_preserve_both_maps(workspace):
+    conn = workspace.conn
+    source, target = connected(conn), create(conn)
+    with pytest.raises(schema.SchemaConflict):
+        schema.transfer(conn, {'id': source['id'], 'revision': source['revision'], 'node_id': 'physics',
+            'target_id': target['id'], 'target_revision': target['revision'] - 1})
+    assert schema.load(conn, source['id'])['graph'] == source['graph']
+    assert schema.load(conn, target['id'])['graph'] == target['graph']
+    moved = schema.transfer(conn, {'id': source['id'], 'revision': source['revision'], 'node_id': 'physics'})
+    changed = save(conn, schema.load(conn, source['id']), title='Another window')
+    with pytest.raises(schema.SchemaConflict):
+        schema.undo(conn, {'id': moved['id'], 'revision': moved['revision']})
+    assert schema.load(conn, source['id'])['title'] == changed['title']
+    assert schema.load(conn, moved['id'])['graph'] == moved['graph']

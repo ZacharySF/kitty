@@ -5,6 +5,18 @@
   import TaskMapAction from "./TaskMapAction.svelte";
   import CalendarDateTime from "./CalendarDateTime.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import { currentTheme, THEME_EVENT } from "./themes";
+  import { getTheme } from "./themeCatalog";
+  import { blockText, paletteSlot } from "./calendar/palette";
+  import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";
+  import RangePill, { VIEWS, type CalendarView } from "./calendar/RangePill.svelte";
+  import YearHeatmap from "./calendar/YearHeatmap.svelte";
+  import MiniMonth from "./calendar/MiniMonth.svelte";
+  import DayPlan from "./calendar/DayPlan.svelte";
+  import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START, type DayLoad } from "./calendar/plan";
+  import EventDrawer from "./calendar/EventDrawer.svelte";
+  import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
+  import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -133,7 +145,7 @@
     conflicts: [],
     free: [],
   });
-  let view = $state("week");
+  let view = $state<CalendarView>("week");
   let section = $state("calendar");
   const initialDate = new Date();
   const initialDay = `${initialDate.getFullYear()}-${String(initialDate.getMonth() + 1).padStart(2, "0")}-${String(initialDate.getDate()).padStart(2, "0")}`;
@@ -159,13 +171,18 @@
   let attendeesText = $state("");
   let attachmentsText = $state("");
   let remindersText = $state("10");
-  let reminderPreset = $state("10");
-  const reminderPresets = [
-    ["", "No reminder"], ["0", "At start"], ["5", "5 minutes before"],
-    ["10", "10 minutes before"], ["15", "15 minutes before"],
-    ["30", "30 minutes before"], ["60", "1 hour before"],
-    ["1440", "1 day before"], ["10080", "1 week before"],
+  const reminderChips: [number, string][] = [
+    [5, "5 minutes before"], [10, "10 minutes before"], [60, "1 hour before"], [1440, "1 day before"],
   ];
+  const reminderList = $derived(remindersText.split(",").filter((v) => v.trim()).map(Number));
+  function toggleReminder(minutes: number) {
+    remindersText = (reminderList.includes(minutes)
+      ? reminderList.filter((m) => m !== minutes)
+      : [...reminderList, minutes].sort((a, b) => a - b)).join(",");
+  }
+  /** Raw title text as typed; `editor.title` holds what remains after natural-language parsing. */
+  let titleDraft = $state("");
+  let quick = $state<QuickEvent | null>(null);
   let exdatesText = $state("");
   let calendarEditor = $state<Partial<Cal> | null>(null);
   let rangeStart = $state<string | null>(null);
@@ -309,31 +326,28 @@
       ? weekStart(anchor.slice(0, 8) + "01")
       : view === "week"
         ? weekStart(anchor)
-        : anchor,
+        : view === "year"
+          ? anchor.slice(0, 4) + "-01-01"
+          : anchor,
   );
-  let days = $derived(
-    Array.from(
-      {
-        length:
-          view === "month"
-            ? 42
-            : view === "week"
-              ? 7
-              : view === "agenda"
-                ? 31
-                : 1,
-      },
-      (_, i) => addDays(firstDay, i),
-    ),
+  const dayCount = $derived(
+    view === "month" ? 42
+      : view === "week" ? 7
+      : view === "agenda" ? 31
+      : view === "year" ? (Number(anchor.slice(0, 4)) % 4 === 0 && (Number(anchor.slice(0, 4)) % 100 !== 0 || Number(anchor.slice(0, 4)) % 400 === 0) ? 366 : 365)
+      : 1,
   );
+  let days = $derived(Array.from({ length: dayCount }, (_, i) => addDays(firstDay, i)));
   const dateTitle = (day: string, options: Intl.DateTimeFormatOptions) =>
     new Intl.DateTimeFormat(undefined, { ...options, timeZone: "UTC" }).format(dateAt(day));
   const rangeHeading = $derived(
     view === "month"
       ? dateTitle(anchor, { month: "long", year: "numeric" })
-      : view === "day"
-        ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-        : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
+      : view === "year"
+        ? anchor.slice(0, 4)
+        : view === "day" || view === "plan"
+          ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+          : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
   );
   function chooseDate(day: string) {
     if (!day) return;
@@ -387,13 +401,54 @@
         }).format(new Date(value));
   }
   function eventsOn(day: string) {
-    return data.events.filter((e) =>
+    return shownEvents.filter((e) =>
       e.all_day
         ? e.start <= day && e.end > day
         : parts(e.start).date <= day &&
           parts(e.end).date >= day &&
           !(parts(e.end).date === day && parts(e.end).time === "00:00"),
     );
+  }
+  /** Wall time "YYYY-MM-DDTHH:MM" moved by `minutes`. */
+  const shiftWall = (wall: string, minutes: number) =>
+    new Date(Date.parse(`${wall}:00Z`) + minutes * 60000).toISOString().slice(0, 16);
+  /** Events as drawn: the one open in the drawer shows its unsaved title, calendar, place and times. */
+  const shownEvents = $derived.by(() => {
+    const open = editor;
+    const base = originalEditor;
+    if (!open?.id || !base || open.all_day || base.all_day || !startInput || !endInput) return data.events;
+    // Same zone as the saved event, so its UTC offset carries over to the edited wall times.
+    const offset = Date.parse(base.start) - Date.parse(`${localInput(base.start, false, base.timezone)}:00Z`);
+    const start = new Date(Date.parse(`${startInput}:00Z`) + offset).toISOString();
+    const end = new Date(Date.parse(`${endInput}:00Z`) + offset).toISOString();
+    return data.events.map((e) => e.id === open.id && e.occurrence === open.occurrence
+      ? { ...e, title: open.title, calendar_id: open.calendar_id, location: open.location, start, end } : e);
+  });
+  function shiftTime(minutes: number, which: "start" | "end") {
+    if (which === "start") {
+      startInput = shiftWall(startInput, minutes);
+      endInput = shiftWall(endInput, minutes);
+    } else if (Date.parse(`${shiftWall(endInput, minutes)}:00Z`) - Date.parse(`${startInput}:00Z`) >= 15 * 60000)
+      endInput = shiftWall(endInput, minutes);
+  }
+  /** Title typing: recognised day, time, length, place and repeat fill the fields; the rest is the title. */
+  function typeTitle(raw: string) {
+    titleDraft = raw;
+    if (!editor) return;
+    const parsed = parseQuickEvent(raw, today);
+    quick = parsed.spans.length ? parsed : null;
+    editor.title = quick ? parsed.title : raw;
+    if (!quick) return;
+    if (parsed.date !== null || parsed.start !== null) {
+      const length = editor.all_day ? 60 : (Date.parse(`${endInput}:00Z`) - Date.parse(`${startInput}:00Z`)) / 60000 || 60;
+      const start = parsed.start ?? (editor.all_day ? 9 * 60 : Number(startInput.slice(11, 13)) * 60 + Number(startInput.slice(14, 16)));
+      const day = parsed.date ?? startInput.slice(0, 10);
+      editor.all_day = false;
+      startInput = shiftWall(`${day}T00:00`, start);
+      endInput = shiftWall(startInput, parsed.end !== null ? parsed.end - start : parsed.minutes ?? length);
+    } else if (parsed.minutes !== null && !editor.all_day) endInput = shiftWall(startInput, parsed.minutes);
+    if (parsed.where) editor.location = parsed.where;
+    if (parsed.rrule) editor.rrule = parsed.rrule;
   }
   function tasksOn(day: string) {
     return data.tasks.filter(
@@ -467,6 +522,14 @@
   function color(id: string) {
     return data.calendars.find((c) => c.id === id)?.color || "var(--accent)";
   }
+  let theme = $state(getTheme(currentTheme()));
+  /** Theme palette slot (1..6) of a calendar. */
+  const calendarSlot = (id: string) => paletteSlot(data.calendars.findIndex((c) => c.id === id));
+  const paletteColor = (id: string) => `var(--c${calendarSlot(id)})`;
+  /** Filled-block colours for a calendar: a theme palette slot and the text that reads on it. */
+  function blockStyle(id: string) {
+    return `--block:${paletteColor(id)};--block-ink:${blockText(theme, calendarSlot(id))}`;
+  }
   async function load() {
     const serial = ++loadCounter;
     loading = true;
@@ -478,12 +541,77 @@
       const result = await api<Snapshot>(
         `/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&timezone=${encodeURIComponent(tz)}&search=${encodeURIComponent(search)}`,
       );
-      if (serial === loadCounter) data = result;
+      if (serial === loadCounter) {
+        data = result;
+        loadVersion += 1;
+      }
     } catch (e) {
       if (serial === loadCounter) error = String(e);
     } finally {
       if (serial === loadCounter) loading = false;
     }
+  }
+  let loadVersion = $state(0);
+  /** Event counts and booked minutes per local date; timed events split across midnight, all-day ones book no time. */
+  function dayLoad(events: Event[]): DayLoad {
+    const result: DayLoad = {};
+    const add = (day: string, minutes: number, count: number) => {
+      const entry = (result[day] ??= { minutes: 0, events: 0 });
+      entry.minutes += minutes;
+      entry.events += count;
+    };
+    for (const event of events) {
+      if (event.all_day) { add(event.start, 0, 1); continue; }
+      const start = parts(event.start);
+      const end = parts(event.end);
+      const startMinute = start.hour * 60 + start.minute;
+      const endMinute = end.hour * 60 + end.minute;
+      if (start.date === end.date) { add(start.date, endMinute - startMinute, 1); continue; }
+      add(start.date, 1440 - startMinute, 1);
+      for (let day = addDays(start.date, 1); day < end.date; day = addDays(day, 1)) add(day, 1440, 0);
+      if (endMinute) add(end.date, endMinute, 0);
+    }
+    return result;
+  }
+  const yearMinutes = $derived(view === "year"
+    ? Object.fromEntries(Object.entries(dayLoad(data.events)).map(([day, load]) => [day, load.minutes]))
+    : {});
+  async function loadBusy(from: string, to: string) {
+    const start = await resolveTime(from + "T00:00");
+    const end = await resolveTime(to + "T00:00");
+    const result = await api<Snapshot>(
+      `/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&timezone=${encodeURIComponent(tz)}`,
+    );
+    return dayLoad(result.events);
+  }
+  /** Open tasks on the plan day (undated, dated that day, or timed that day), with planned start minute. */
+  const planTasks = $derived(view === "plan"
+    ? data.tasks
+        .filter((t) => t.id && t.status !== "cancelled" &&
+          (!t.due || (t.due.length === 10 ? t.due : parts(t.due).date) === anchor) &&
+          (t.status !== "done" || !!t.due))
+        .map((t) => ({ task: t, at: t.due.length > 10 ? parts(t.due).hour * 60 + parts(t.due).minute : null }))
+    : []);
+  async function planTask(id: string) {
+    const entry = planTasks.find((item) => item.task.id === id);
+    if (!entry) return;
+    const busy: [number, number][] = [
+      ...timedEvents(anchor).map((p): [number, number] => [p.start, p.end]),
+      ...planTasks.filter((item) => item.at !== null).map((item): [number, number] => [item.at!, item.at! + PLAN_LENGTH]),
+    ];
+    const from = Math.max(PLAN_START, anchor === today ? currentMinute : 0);
+    const start = nextFreeGap(busy, from, PLAN_LENGTH);
+    if (start === null) {
+      notice = `No free ${PLAN_LENGTH}-minute gap left before ${String(PLAN_END / 60)}:00.`;
+      return;
+    }
+    const wall = `${anchor}T${String(Math.floor(start / 60)).padStart(2, "0")}:${String(start % 60).padStart(2, "0")}`;
+    await changed(async () =>
+      api<Task>("/calendar/tasks", { id, revision: entry.task.revision, due: await resolveTime(wall, tz) }));
+  }
+  async function unplanTask(id: string) {
+    const entry = planTasks.find((item) => item.task.id === id);
+    if (entry) await changed(() => api<Task>("/calendar/tasks", { id, revision: entry.task.revision, due: anchor }));
   }
   async function run(work: () => Promise<unknown>) {
     error = "";
@@ -510,9 +638,10 @@
     });
   }
   function navigate(step: number) {
-    if (view === "month") {
+    if (view === "month" || view === "year") {
       const d = dateAt(anchor);
-      d.setUTCMonth(d.getUTCMonth() + step, 1);
+      if (view === "year") d.setUTCFullYear(d.getUTCFullYear() + step, d.getUTCMonth(), 1);
+      else d.setUTCMonth(d.getUTCMonth() + step, 1);
       anchor = d.toISOString().slice(0, 10);
     } else
       anchor = addDays(
@@ -520,6 +649,34 @@
         step * (view === "week" ? 7 : view === "agenda" ? 31 : 1),
       );
     selectedDate = anchor;
+  }
+  function setView(next: CalendarView) {
+    view = next;
+    anchor = selectedDate;
+  }
+  let shortcutFlash = $state("");
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  let calendarLayout = $state<HTMLDivElement>();
+  /** Single-key shortcuts while focus is inside the calendar: D/W/M/A/Y/P views, J/K step, T today. */
+  function calendarKey(event: KeyboardEvent) {
+    const target = event.target as HTMLElement;
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.defaultPrevented ||
+        target.isContentEditable || target.closest("input, textarea, select")) return;
+    const key = event.key.toLowerCase();
+    const hit = VIEWS.find((v) => v.key.toLowerCase() === key);
+    if (hit) setView(hit.id);
+    else if (key === "j") navigate(-1);
+    else if (key === "k") navigate(1);
+    else if (key === "t") chooseDate(today);
+    else return;
+    event.preventDefault();
+    shortcutFlash = key.toUpperCase();
+    // The focused cell may vanish with the old view; keep focus in the calendar so keys keep working.
+    void tick().then(() => {
+      if (calendarLayout && !calendarLayout.contains(document.activeElement)) calendarLayout.focus({ preventScroll: true });
+    });
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => (shortcutFlash = ""), 700);
   }
   function newEvent(start: string, end?: string, allDay = false) {
     if (!isActive) return;
@@ -562,7 +719,8 @@
     attachmentsText = "";
     exdatesText = "";
     remindersText = "10";
-    reminderPreset = "10";
+    titleDraft = "";
+    quick = null;
     fold = 0;
     foldChanged = false;
     googleOptionsText = "{}";
@@ -578,8 +736,8 @@
       .join("\n");
     exdatesText = e.exdates.join("\n");
     remindersText = e.reminders.join(",");
-    reminderPreset = reminderPresets.some(([value]) => value === remindersText)
-      ? remindersText : "custom";
+    titleDraft = e.title;
+    quick = null;
     foldChanged = false;
     googleOptionsText = JSON.stringify(e.google_options, null, 2);
   }
@@ -1458,6 +1616,8 @@
   });
   onMount(() => {
     window.addEventListener("click", blockDragClick, true);
+    const syncTheme = () => (theme = getTheme(currentTheme()));
+    window.addEventListener(THEME_EVENT, syncTheme);
     void loadGoogle();
     void loadTaskMaps();
     notifications =
@@ -1468,8 +1628,10 @@
     const clockTimer = setInterval(() => (clock = new Date().toISOString()), 60000);
     return () => {
       window.removeEventListener("click", blockDragClick, true);
+      window.removeEventListener(THEME_EVENT, syncTheme);
       clearInterval(timer);
       clearInterval(clockTimer);
+      clearTimeout(flashTimer);
       pane.clearTrail("calendar");
     };
   });
@@ -1506,7 +1668,7 @@
   }}
 />
 
-<section class="calendar-workspace" aria-label="Calendar workspace">
+<section class="calendar-workspace" class:drawer-open={!!editor} aria-label="Calendar workspace">
   <header class="toolbar">
     <div>
       <h1>Calendar</h1>
@@ -1537,25 +1699,6 @@
       >
     </div>{/if}
   {#if notice}<p role="status" class="notice">{notice}</p>{/if}
-  <div class="range-toolbar">
-    <div class="period-navigation" role="group" aria-label="Date navigation">
-      <Button size="sm" aria-label={`Previous ${view === "week" ? "week" : view === "month" ? "month" : view === "day" ? "day" : "period"}`} onclick={() => navigate(-1)}>←</Button>
-      <Button size="sm" onclick={() => chooseDate(parts(new Date().toISOString()).date)}>Today</Button>
-      <Button size="sm" aria-label={`Next ${view === "week" ? "week" : view === "month" ? "month" : view === "day" ? "day" : "period"}`} onclick={() => navigate(1)}>→</Button>
-    </div>
-    <h2 class="range-heading" aria-live="polite">{rangeHeading}</h2>
-    <label class="date-jump">Go to date<input type="date" aria-label="Go to date"
-      value={anchor} onchange={(e) => chooseDate(e.currentTarget.value)} /></label>
-    <label class="view-switch">View
-      <select aria-label="Calendar view" bind:value={view}
-        onchange={() => { section = "calendar"; anchor = selectedDate; }}>
-        <option value="week">Week</option>
-        <option value="month">Month</option>
-        <option value="day">Day</option>
-        <option value="agenda">Agenda</option>
-      </select>
-    </label>
-  </div>
   <div class="search-toolbar">
     <label class="calendar-search"><span>Search</span><input type="search" bind:value={search}
       placeholder="Search events, tasks or tags" /></label>
@@ -1609,19 +1752,22 @@
     <details class="interaction-help">
       <summary>Shortcuts</summary>
       <p class="hint">Select a date for its day plan. Click or press Enter on a time slot for a short event. Arrow keys move between slots; Home/End jump within a day. Drag or Shift+Enter selects a range. Drag an event to move it, ↔ to resize; changes open for review.</p>
+      <p class="hint">While the calendar has focus: <kbd>D</kbd>/<kbd>W</kbd>/<kbd>M</kbd>/<kbd>A</kbd>/<kbd>Y</kbd>/<kbd>P</kbd> switch to day, week, month, agenda, year or the day plan; <kbd>J</kbd>/<kbd>K</kbd> step back or forward; <kbd>T</kbd> jumps to today.</p>
     </details>
-    <div class="calendar-layout">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="calendar-layout" bind:this={calendarLayout} tabindex="-1" onkeydown={calendarKey}>
     <div class="calendar-main">
     {#if view === "month"}
+      <div class="month-layout">
       <div class="month-grid" role="grid" aria-label="Month calendar">
         {#each days.slice(0, 7) as day}
           <div class="weekday-label" role="columnheader">{dateTitle(day, { weekday: "short" })}</div>
         {/each}
-        {#each days as day}<div
+        {#each days as day}{@const dayEvents = eventsOn(day)}<div
             class="day-cell"
             class:selected={day === selectedDate}
             class:today={day === today}
-            aria-label={dateTitle(day, { weekday: "long", month: "long", day: "numeric" })}
+            aria-label={`${dateTitle(day, { weekday: "long", month: "long", day: "numeric" })}, ${dayEvents.length === 1 ? "1 event" : `${dayEvents.length} events`}`}
             aria-selected={day === selectedDate}
             class:outside={day.slice(0, 7) !== anchor.slice(0, 7)}
             class:selecting={!!rangeStart &&
@@ -1641,47 +1787,40 @@
             ondragover={(e) => allowDrop(day, true, e)}
             ondrop={(e) => dropOn(day, true, e)}
           >
-            <div class="day-cell-heading">
-              <button class="day-head" onclick={() => (selectedDate = day)}
-                aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>
-                <strong>{dateTitle(day, { day: "numeric" })}</strong>
-              </button>
-              <button class="day-add" aria-label={`Add event on ${day}`}
-                onclick={() => newEvent(day + "T09:00", day + "T10:00")}>＋</button>
-            </div>
-            {#each eventsOn(day) as e}<div
-                class="event-chip"
-                style={`--calendar-color:${color(e.calendar_id)}`}
-                draggable="true"
-                ondragstart={(event) => drag(e, event)}
-                ondragend={finishDrag}
-                role="group"
-                aria-label={e.title}
-              >
-                <button onclick={() => openEvent(e)}
-                  oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
-                  >{!e.all_day
-                    ? parts(e.start).time + " "
-                    : ""}{e.title}{e.rrule ? " ↻" : ""}</button
-                ><button
-                  class="resize"
-                  draggable="true"
-                  ondragstart={(event) => {
-                    event.stopPropagation();
-                    drag(e, event, "resize");
-                  }}
-                  aria-label={`Resize ${e.title}`}>↔</button
-                >
-              </div>{/each}{#each tasksOn(day) as t}<button
-                class="task-chip"
-                draggable="true"
-                ondragstart={(event) => dragTask(t, event)}
-                ondragend={finishDrag}
-                oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
-                class:completed={t.status === "done"}
-                onclick={() => (taskEditor = { ...t })}>{t.status === "done" ? "✓" : "☐"} {t.title}</button
-              >{/each}
+            <button class="day-head" onclick={() => (selectedDate = day)}
+              aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
+            <span class="dots" aria-hidden="true">{#each dayEvents.slice(0, 4) as e (e.id + e.occurrence)}<i style:background={paletteColor(e.calendar_id)}></i>{/each}</span>
+            <button class="day-add" aria-label={`Add event on ${day}`}
+              onclick={() => newEvent(day + "T09:00", day + "T10:00")}>＋</button>
           </div>{/each}
+      </div>
+      <DayAgenda
+        eyebrow={`${selectedDate === today ? "Today · " : ""}${dateTitle(selectedDate, { weekday: "short", month: "short", day: "numeric" })}`}
+        items={[
+          ...eventsOn(selectedDate).map((e): AgendaItem => ({
+            key: `event:${e.id}:${e.occurrence}`,
+            start: e.all_day ? "All day" : parts(e.start).time,
+            end: e.all_day ? "" : parts(e.end).time,
+            title: e.title + (e.rrule ? " ↻" : ""),
+            place: e.location || data.calendars.find((c) => c.id === e.calendar_id)?.name || "",
+            color: paletteColor(e.calendar_id),
+            open: () => openEvent(e),
+            drag: (event) => drag(e, event),
+            dragend: finishDrag,
+          })),
+          ...tasksOn(selectedDate).map((t): AgendaItem => ({
+            key: `task:${t.id}`,
+            start: t.due.length > 10 ? parts(t.due).time : "Task",
+            end: "",
+            title: t.title,
+            place: t.status === "done" ? "Completed" : t.priority,
+            color: "var(--muted)",
+            task: true,
+            open: () => (taskEditor = { ...t }),
+            drag: (event) => dragTask(t, event),
+            dragend: finishDrag,
+          })),
+        ]} />
       </div>
     {:else if view === "week" || view === "day"}
       <div class="time-scroll" use:scrollToMorning role="region" aria-label={view === "week" ? "Week calendar" : "Day calendar"}>
@@ -1775,12 +1914,13 @@
                 </div>
               {/each}
               {#if day === today}
-                <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} aria-hidden="true"></div>
+                <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} role="img"
+                  aria-label={`Now ${parts(clock).time}`}><span class="bloom" aria-hidden="true">✿</span></div>
               {/if}
               {#each weekEvents[day] as placement}
                 {@const e = placement.event}
                 <div class="event-chip timed" draggable="true" role="group" aria-label={e.title}
-                  style={`--calendar-color:${color(e.calendar_id)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
+                  style={`${blockStyle(e.calendar_id)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
                   ondragstart={(event) => drag(e, event)} ondragend={finishDrag}>
                   <button class="timed-content" title={`${e.title} · ${label(e.start)} – ${label(e.end)}`}
                     oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
@@ -1798,8 +1938,23 @@
           {/each}
         </div>
       </div>
+    {:else if view === "year"}
+      <YearHeatmap year={Number(anchor.slice(0, 4))} busy={yearMinutes} {today}
+        onopen={(day) => { chooseDate(day); view = "day"; }} />
+    {:else if view === "plan"}
+      <DayPlan
+        eyebrow={`${anchor === today ? "Today · " : ""}${dateTitle(anchor, { weekday: "short", month: "short", day: "numeric" })}`}
+        now={anchor === today ? currentMinute : null}
+        busy={pending > 0}
+        events={timedEvents(anchor).map((p) => ({ key: `${p.event.id}:${p.event.occurrence}`, title: p.event.title,
+          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event.calendar_id), open: () => openEvent(p.event) }))}
+        tasks={planTasks.map(({ task, at }) => ({ id: task.id!, title: task.title, priority: task.priority,
+          done: task.status === "done", at, open: () => (taskEditor = { ...task }) }))}
+        onplan={(id) => void planTask(id)}
+        onunplan={(id) => void unplanTask(id)}
+        ontoggle={(id) => { const task = data.tasks.find((t) => t.id === id); if (task) void taskStatus(task, task.status === "done" ? "todo" : "done"); }} />
     {:else}
-      <div class="agenda">
+      <div class="agenda" role="region" aria-label="Agenda">
         {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}<section
             >
               <h2><button class="agenda-date" onclick={() => (selectedDate = day)}>{dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}</button></h2>
@@ -1825,8 +1980,11 @@
           </p>{/if}
       </div>
     {/if}
+    <RangePill heading={rangeHeading} {view} date={anchor} flash={shortcutFlash}
+      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate} />
     </div>
     <aside class="selected-plan" aria-label="Selected date plan">
+      <MiniMonth selected={selectedDate} {today} refresh={loadVersion} {loadBusy} onpick={chooseDate} />
       <Button size="sm" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
         onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide task tray" : "Open task tray"} · {trayTasks.length}</Button>
       {#if taskTrayOpen}
@@ -1853,6 +2011,7 @@
           <Button size="sm" intent="primary" onclick={newTask}>Add task</Button>
           <Button size="sm" onclick={() => newEvent(selectedDate + "T09:00", selectedDate + "T10:00")}>Add event</Button>
         </div>
+        {#if view !== "month"}
         {#each eventsOn(selectedDate) as e}
           <button class="plan-event" style={`--calendar-color:${color(e.calendar_id)}`} onclick={() => openEvent(e)}
             oncontextmenu={(event) => void deleteEventAtPointer(event, e)}>
@@ -1875,6 +2034,7 @@
         {/each}
         {#if !eventsOn(selectedDate).length && !tasksOn(selectedDate).length}
           <div class="day-empty"><p class="hint">Nothing planned.</p></div>
+        {/if}
         {/if}
       </Panel>
     </aside>
@@ -2520,38 +2680,24 @@
   {/if}
 </section>
 
-{#if editor && isActive}<div class="modal-backdrop" role="presentation">
-    <dialog
-      use:modal
-      oncancel={() => (editor = null)}
-      class="dialog"
-      aria-modal="true"
-      aria-labelledby={`${pane.id}-event-editor-title`}
-      tabindex="-1"
-    >
-      <header>
-        <h2 id={`${pane.id}-event-editor-title`}>
-          {editor.id ? "Event details" : "New event"}
-        </h2>
-        <button type="button" onclick={() => (editor = null)} aria-label="Close event editor"
-          >×</button
-        >
-      </header>
-      <p class="hint">Saved locally. Google updates are always reviewed separately.</p>
+{#if editor && isActive}
+  <EventDrawer title={editor.id ? "Event details" : "New event"} accent={paletteColor(editor.calendar_id)}
+    eyebrow={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
+    onclose={() => (editor = null)}>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <form
+      <form class="drawer-form"
         onsubmit={(e) => {
           e.preventDefault();
           void saveEvent();
         }}
       >
-        <label
-          >Title<input
-            required
-            bind:value={editor.title}
-            maxlength="500"
-          /></label
-        >
+        <input class="drawer-title" aria-label="Title" required maxlength="500" value={titleDraft}
+          placeholder="lunch with Mira fri 12:30" spellcheck="false" oninput={(e) => typeTitle(e.currentTarget.value)} />
+        {#if quick}
+          <QuickUnderstood text={titleDraft} spans={quick.spans} title={editor.title}
+            when={`${dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" })}${editor.all_day ? " · all day" : ` · ${startInput.slice(11, 16)}–${endInput.slice(11, 16)}`}`}
+            where={quick.where} repeat={quick.repeat} />
+        {/if}
         {#if editor.id && editor.rrule}
           <label>Edit recurrence scope<select bind:value={editScope} onchange={changeScope}>
             <option value="this">This occurrence only</option>
@@ -2560,12 +2706,17 @@
           </select></label>
           <p class="hint">Choose the scope before editing; changing it reloads saved values.</p>
         {/if}
-        <div class="form-grid">
-          <label>Calendar<select bind:value={editor.calendar_id}
-            disabled={!!editor.id && !!editor.rrule && editScope === "this"}>
-            {#each data.calendars as c}<option value={c.id}>{c.name}</option>{/each}
-          </select></label>
-          <label><input type="checkbox" bind:checked={editor.all_day}
+        {#if !editor.all_day}
+          <div class="steppers" role="group" aria-label="Time">
+            <span class="stepper"><button type="button" aria-label="Earlier start" onclick={() => shiftTime(-15, "start")}>−</button><b>{startInput.slice(11, 16)}</b><button type="button" aria-label="Later start" onclick={() => shiftTime(15, "start")}>+</button></span>
+            <span class="arrow" aria-hidden="true">→</span>
+            <span class="stepper"><button type="button" aria-label="Earlier end" onclick={() => shiftTime(-15, "end")}>−</button><b>{endInput.slice(11, 16)}</b><button type="button" aria-label="Later end" onclick={() => shiftTime(15, "end")}>+</button></span>
+          </div>
+        {/if}
+        <div class="drawer-dates">
+          <CalendarDateTime label="Start" timed={!editor.all_day} bind:value={startInput} required />
+          <CalendarDateTime label={editor.all_day ? "End (following)" : "End"} timed={!editor.all_day} bind:value={endInput} required />
+          <label class="inline"><input type="checkbox" bind:checked={editor.all_day}
             onchange={() => {
               if (editor) {
                 startInput = editor.all_day ? startInput.slice(0, 10) : startInput + "T09:00";
@@ -2575,10 +2726,27 @@
                   : addDays(endDay, -1) + "T10:00";
               }
             }} />All-day / multi-day</label>
-          <CalendarDateTime label="Start" timed={!editor.all_day} bind:value={startInput} required />
-          <CalendarDateTime label={editor.all_day ? "End (following)" : "End"} timed={!editor.all_day} bind:value={endInput} required />
         </div>
-        <p class="hint">{editor.timezone}{editor.all_day ? " · All-day end is the date after the last included day." : ""}</p>
+        <fieldset class="drawer-field" disabled={!!editor.id && !!editor.rrule && editScope === "this"}>
+          <legend class="eyebrow">calendar</legend>
+          <div class="swatches">
+            {#each data.calendars as c (c.id)}
+              <button type="button" class="swatch" style:--sw={paletteColor(c.id)} title={c.name} aria-label={c.name}
+                aria-pressed={editor.calendar_id === c.id} onclick={() => editor && (editor.calendar_id = c.id)}></button>
+            {/each}
+          </div>
+        </fieldset>
+        <label class="drawer-field"><span class="eyebrow">place</span><input bind:value={editor.location} placeholder="Add a place" /></label>
+        <div class="drawer-field" role="group" aria-label="Remind me">
+          <span class="eyebrow">remind me</span>
+          <div class="chips">
+            {#each reminderChips as [minutes, text] (minutes)}
+              <button type="button" aria-pressed={reminderList.includes(minutes)} aria-label={text}
+                onclick={() => toggleReminder(minutes)}>{text.replace(" minutes", "m").replace(" hour", "h").replace(" day", "d")}</button>
+            {/each}
+          </div>
+        </div>
+        <p class="hint">{editor.timezone}{editor.all_day ? " · All-day end is the date after the last included day." : ""} · Saved locally; Google updates are reviewed separately.</p>
         <details class="editor-options">
           <summary>Repeat & time settings{editor.rrule ? " · Repeating event" : ""}</summary>
           <div class="form-grid">
@@ -2595,27 +2763,17 @@
             disabled={!!editor.id && editScope === "this"}></textarea></label>
         </details>
         <details class="editor-options">
-          <summary>Location, notes & reminders</summary>
+          <summary>Notes, privacy & custom reminders</summary>
           <label>Notes<textarea rows="3" bind:value={editor.description}></textarea></label>
           <div class="form-grid">
-            <label>Location<input bind:value={editor.location} /></label>
             <label>URL<input type="url" bind:value={editor.url} /></label>
             <label>Privacy<select bind:value={editor.privacy}>
               {#each ["default", "public", "private", "confidential"] as p}<option>{p}</option>{/each}
             </select></label>
             <label><input type="checkbox" bind:checked={editor.busy} />Blocks availability (busy)</label>
           </div>
-          <label>When<select value={reminderPreset} onchange={(event) => {
-            reminderPreset = event.currentTarget.value;
-            if (reminderPreset !== "custom") remindersText = reminderPreset;
-          }}>
-            {#each reminderPresets as [value, title]}<option {value}>{title}</option>{/each}
-            <option value="custom">Custom timings…</option>
-          </select></label>
-          {#if reminderPreset === "custom"}
-            <label>Minutes before start<input bind:value={remindersText} placeholder="10,60,1440" /></label>
-            <p class="hint">Separate multiple reminders with commas.</p>
-          {/if}
+          <label>Reminder minutes before start<input bind:value={remindersText} placeholder="10,60,1440" /></label>
+          <p class="hint">Separate multiple reminders with commas; leave empty for none.</p>
         </details>
         <details class="editor-options">
           <summary>Attendees, attachments & Google properties</summary>
@@ -2699,8 +2857,7 @@
           }}>Delete selected scope</Button>{/if}
         </footer>
       </form>
-    </dialog>
-  </div>{/if}
+  </EventDrawer>{/if}
 {#if taskEditor && isActive}<div class="modal-backdrop" role="presentation">
     <dialog
       use:modal
@@ -2989,9 +3146,6 @@
     padding-bottom: 0.6rem;
   }
   .header-actions,
-  .period-navigation,
-  .view-switch,
-  .range-toolbar,
   .search-toolbar,
   .selected-actions {
     display: flex;
@@ -3001,25 +3155,6 @@
   }
   .header-actions {
     margin-left: auto;
-  }
-  .range-toolbar {
-    padding: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 0.8rem;
-    background: var(--surface);
-    gap: 0.8rem;
-  }
-  .range-heading {
-    font-size: 1.25rem;
-    letter-spacing: -0.025em;
-    margin: 0 auto 0 0;
-  }
-  .date-jump {
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-  .view-switch {
-    gap: 0.25rem;
   }
   .calendar-search {
     flex: 1;
@@ -3066,7 +3201,6 @@
     min-width: 0;
   }
   .calendar-main {
-    overflow: auto;
     border-radius: 0.7rem;
     border: 1px solid var(--border);
   }
@@ -3170,65 +3304,92 @@
   .reminders button {
     margin-left: auto;
   }
+  .month-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(220px, 1fr);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
   .month-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    min-width: 560px;
+    align-content: start;
+    gap: 2px;
+    padding: 4px 8px 8px;
   }
   .day-cell {
-    min-height: 132px;
-    padding: 0.35rem;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 56px;
     min-width: 0;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .day-cell:hover {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
   }
   .day-cell.selected {
-    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-    box-shadow: inset 0 0 0 1px var(--accent);
+    background: var(--ink);
   }
-  .day-cell.today .day-head strong {
+  .day-cell.selected .day-head {
+    color: var(--solid-void);
+  }
+  .day-cell.today .day-head {
     color: var(--accent);
+    font-weight: 700;
   }
-  .day-cell-heading {
+  .day-cell.selected.today .day-head {
+    color: var(--solid-void);
+  }
+  .day-head {
+    padding: 0.15rem 0.4rem;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font: 500 0.82rem var(--font-ui);
+  }
+  .dots {
     display: flex;
-    align-items: center;
-    gap: 0.2rem;
-    margin-bottom: 0.45rem;
+    gap: 3px;
+    height: 5px;
+    pointer-events: none;
+  }
+  .dots i {
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
   }
   .day-add {
-    padding: 0.1rem 0.3rem;
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    padding: 0 0.25rem;
     border-color: transparent;
     background: transparent;
     color: var(--muted);
+    font-size: 0.7rem;
+    opacity: 0;
+  }
+  .day-cell:hover .day-add,
+  .day-add:focus-visible {
+    opacity: 1;
+  }
+  .day-cell.selected .day-add {
+    color: var(--solid-void);
   }
   .outside {
-    opacity: 0.55;
-  }
-  .day-head {
-    display: flex;
-    flex: 1;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.2rem;
-    min-width: 0;
-    padding: 0.3rem;
-    border: 0;
-    background: transparent;
-    text-align: left;
-    font-size: 0.8rem;
+    opacity: 0.45;
   }
   .weekday-label {
-    padding: 0.65rem 0.4rem;
+    padding: 0.55rem 0.4rem 0.3rem;
     text-align: center;
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--muted);
-    background: var(--surface-raised);
-    border-bottom: 1px solid var(--border);
-  }
-  .day-head strong {
-    font-size: 0.9rem;
+    font: 600 0.7rem var(--font-mono);
+    color: var(--subtle);
   }
   .selecting {
     background: color-mix(
@@ -3454,9 +3615,11 @@
     z-index: 1;
     margin: 0;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--calendar-color) 50%, var(--border));
-    border-left: 3px solid var(--calendar-color);
-    background: color-mix(in srgb, var(--calendar-color) 22%, var(--surface));
+    border: 0;
+    border-radius: 9px;
+    background: var(--block);
+    color: var(--block-ink);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 25%, transparent) inset;
     overflow: hidden;
     align-items: stretch;
   }
@@ -3469,7 +3632,7 @@
     padding: 0.15rem 0.25rem;
     line-height: 1.15;
     overflow: hidden;
-    color: var(--ink);
+    color: inherit;
   }
   .timed-content strong,
   .timed-content span {
@@ -3483,29 +3646,33 @@
   .timed-content span {
     font-size: 0.65rem;
     margin-top: 0.1rem;
+    opacity: 0.72;
   }
   .timed .resize {
     align-self: flex-end;
     font-size: 0.6rem;
     padding: 0.1rem;
+    color: inherit;
+  }
+  .timed:hover {
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--block) 35%, transparent);
   }
   .now-line {
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 2px solid var(--accent);
+    border-top: 1.5px dashed var(--c1);
     z-index: 3;
     pointer-events: none;
   }
-  .now-line::before {
-    content: "";
+  .now-line .bloom {
     position: absolute;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    left: -3px;
-    top: -4px;
+    left: -6px;
+    top: -9px;
+    color: var(--c1);
+    font-size: 13px;
+    line-height: 1;
+    text-shadow: 0 0 6px var(--c1);
   }
   .agenda section {
     padding: 0.8rem 0;
@@ -3755,6 +3922,130 @@
   .danger {
     color: var(--warning);
   }
+  @media (min-width: 900px) {
+    .calendar-workspace.drawer-open {
+      padding-right: calc(min(400px, 100vw - 1.5rem) + 0.75rem);
+    }
+    /* The drawer stands in for the side rail while it is open. */
+    .drawer-open .calendar-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .drawer-open .selected-plan {
+      display: none;
+    }
+  }
+  .drawer-form {
+    display: grid;
+    gap: 10px;
+  }
+  .drawer-form .editor-options {
+    margin: 0;
+  }
+  .drawer-form footer {
+    position: sticky;
+    bottom: -16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.7rem 0 0.2rem;
+    border-top: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--solid-raised) 92%, transparent);
+  }
+  .drawer-title {
+    padding: 0 0 4px;
+    border: 0;
+    border-bottom: 1px solid var(--hairline);
+    border-radius: 0;
+    background: transparent;
+    color: var(--ink);
+    font: 700 1.2rem var(--font-title);
+  }
+  .drawer-title:focus-visible {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+  .steppers {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+  }
+  .stepper button {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+  }
+  .stepper button:hover {
+    color: var(--ink);
+  }
+  .stepper b {
+    font: 600 0.8rem var(--font-mono);
+  }
+  .steppers .arrow {
+    color: var(--subtle);
+  }
+  .drawer-dates {
+    display: grid;
+    gap: 6px;
+    font-size: 0.8rem;
+  }
+  .drawer-dates .inline {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .drawer-field {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .drawer-field .eyebrow {
+    color: var(--muted);
+    padding: 0;
+  }
+  .swatches,
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .swatch {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: var(--sw);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--solid-void) 30%, transparent);
+  }
+  .swatch[aria-pressed="true"] {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+  .chips button {
+    padding: 2px 9px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .chips button[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--ink);
+  }
   a {
     color: var(--accent);
   }
@@ -3764,8 +4055,8 @@
     }
   }
   @media (max-width: 760px) {
-    .month-grid {
-      grid-template-columns: repeat(7, minmax(80px, 1fr));
+    .month-layout {
+      grid-template-columns: minmax(0, 1fr);
     }
     .form-grid,
     .comparison {
@@ -3782,25 +4073,15 @@
     .toolbar {
       align-items: start;
     }
-    .range-heading {
-      order: -1;
-      flex-basis: 100%;
-    }
-    .view-switch {
-      width: 100%;
-    }
     .load-status {
       flex-basis: 100%;
       margin-left: 0;
-    }
-    .date-jump {
-      margin-left: auto;
     }
     .header-actions {
       margin-left: 0;
     }
     .day-cell {
-      min-height: 110px;
+      min-height: 44px;
     }
     .modal-backdrop {
       padding: 0.3rem;

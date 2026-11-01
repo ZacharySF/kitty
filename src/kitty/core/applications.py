@@ -261,6 +261,14 @@ def set_next_action(
     )
 
 
+def set_track(conn: sqlite3.Connection, application_id: int, track: str | None) -> None:
+    """Move an application to another track's swimlane (None: no track); its status history is untouched."""
+    conn.execute(
+        "UPDATE applications SET track = ?, updated_at = ? WHERE id = ?",
+        (track, now_iso(), application_id),
+    )
+
+
 def set_notes(conn: sqlite3.Connection, application_id: int, notes: str | None) -> None:
     """Replace my notes on an application."""
     conn.execute(

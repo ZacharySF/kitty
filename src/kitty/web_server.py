@@ -399,6 +399,9 @@ class WebApplication:
         elif action == "status":
             if not isinstance(value, str) or value not in LATER_STATUSES:
                 raise APIError(400, "Choose a later application status")
+        elif action == "track":
+            if value is not None and (not isinstance(value, str) or value not in self.config.track_names):
+                raise APIError(400, "Choose a configured track or null for none")
         elif action == "resume":
             if value is not None and (type(value) is not int or not 1 <= value <= 2**63 - 1):
                 raise APIError(400, "Resume value must be a registered resume ID or null for the track default")
@@ -415,11 +418,13 @@ class WebApplication:
             with transaction(conn):
                 if action == "notes":
                     jobs.set_notes(conn, job.id, value)
+                elif action in {"status", "track"} and job.application_id is None:
+                    raise APIError(409, "Record your submission before changing application status")
                 elif action == "status":
-                    if job.application_id is None:
-                        raise APIError(409, "Record your submission before changing application status")
                     applications.set_status(conn, job.application_id, value, source="manual",
                                             occurred_at=occurred_at, evidence=note)
+                elif action == "track":
+                    applications.set_track(conn, job.application_id, value)
                 elif action == "resume":
                     if job.application_id is not None:
                         raise APIError(409, "Historical application resume is pinned")
