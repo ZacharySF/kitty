@@ -265,6 +265,21 @@ compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
 
+### Brain data (`/api/brain`)
+
+`GET /api/brain?limit=<n>` (default 20,000, at most 50,000) returns the whole
+workspace as one point cloud for the Brain view: every **record** (notebooks,
+pages and their blocks, decks and card notes, calendar events and tasks, study
+subjects, projects, tasks, exams and sessions, quick notes, mind maps, documents,
+opportunities, jobs, applications and reminders) and every **edit** as a node with
+a `parent` link. Edits are the website changes captured in `record_events` plus the
+histories the database already keeps (flashcard reviews, application status
+changes, study sessions, calendar changes made before capture began and, with the
+block backend, its `op_log`). Labels are titles only, never note bodies, paths or
+URLs; a change to something since deleted reads e.g. *Deleted page*. Sections of
+disabled modules are left out. When the limit is reached, records are kept and the
+newest edits fill the rest (`truncated: true`; `total` counts everything).
+
 ### LearnHarness extension
 
 **Study → LearnHarness → Start LearnHarness** opens the included
@@ -1678,6 +1693,13 @@ Two design points worth knowing:
 * `jobs.queue_state` (new / queued / later / skipped / not_eligible / applied) is
   separate from `applications.status`. Skipping a job never creates an
   application row.
+* `record_events` is **append-only** too: every successful content change made in
+  the website (saving a page, creating a quick note or calendar event, editing a
+  deck…) appends one row with only its section, entity, entity id, action and
+  route, never a title or body. Settings, previews, timer and practice controls,
+  background imports and changes already logged elsewhere (`flash_reviews`,
+  `status_events`, `study_sessions`) are not captured; the route lists live in
+  `kitty.core.record_events`.
 
 ## Tests
 
