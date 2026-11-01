@@ -310,11 +310,13 @@ Stage 1: done.
   Disabled modules have no UI entries, commands, MCP tools, routes, workers or
   processes, but their data and configuration remain. Existing global migrations
   stay in place.
-- Terminal dock (`docs/terminal-dock-design.md` Q1, Q3, Q8, Q10): a floating
-  bottom-right glass card that takes no page space shows herdr's real client
-  (transparent, Harness colours) or herdr's own per-workspace agent states; hidden,
-  it is a small pill. Its view, size and position (header drag, corner-grip resize,
-  committed on release) are remembered per browser profile. The herdr view is an
+- Terminal dock (`docs/terminal-dock-design.md` Q1, Q3, Q8, Q10): a window-bottom
+  dock shows herdr's real client (transparent, Harness colours) or herdr's own
+  per-workspace agent states at a fixed S/M/L height the page ends above (no
+  dragged height); hidden, only a thin handle. Float turns it into a bottom-right
+  glass card that takes no page space (header drag, corner-grip resize, committed
+  on release; hidden, a small pill). Its view, height step, float choice, card
+  size and position are remembered per browser profile. The herdr view is an
   atlas node under Plan that opens the full
   session in a workspace tab. Reading agent states never starts herdr.
 - Agents in kitty! (`docs/terminal-dock-design.md` Q2, Q9): either terminal surface

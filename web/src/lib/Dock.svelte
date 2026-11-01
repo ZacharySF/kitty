@@ -2,15 +2,18 @@
   import { onMount } from "svelte";
   import AgentActivity from "./AgentActivity.svelte";
   import TerminalView from "./TerminalView.svelte";
-  import { clampDockOffset, clampDockSize, defaultDockSize, readDock, writeDock, type DockMode, type DockOffset, type DockSize } from "./dock";
+  import { DOCK_STEPS, clampDockOffset, clampDockSize, defaultDockSize, dockedHeight, readDock, writeDock, type DockMode, type DockOffset, type DockSize, type DockStep } from "./dock";
 
   /**
-   * The dock (Q3, Q8, Q56): kitty!'s herdr terminal or herdr's agent cards in a
-   * glass card floating in the bottom-right corner; hidden, only a small pill. It
-   * never takes page space. Moving and resizing preview with a transform or an
-   * outline and commit on release, so neither the page nor the terminal re-lays out
-   * while dragging. It publishes how far its top edge is above the window bottom as
-   * --dock-clearance so overlays (toasts, undo bars) can sit above it.
+   * The dock (Q3, Q8, Q56): kitty!'s herdr terminal or herdr's agent cards. Docked
+   * (the default) it spans the bottom of the window at a fixed height step chosen
+   * with S/M/L, never dragged, and publishes the space it takes as --dock-space so
+   * the page ends above it; hidden, a thin handle brings it back. Floated, it is a
+   * glass card in the bottom-right corner that takes no page space; moving and
+   * resizing preview with a transform or an outline and commit on release, and
+   * hidden it is a small pill. Either way it publishes how far its top edge is
+   * above the window bottom as --dock-clearance so overlays (toasts, undo bars)
+   * sit above it.
    */
   let { onherdr }: {
     /** Open the full herdr session as a view in the workspace tab. */
@@ -18,22 +21,35 @@
   } = $props();
 
   const KEY_STEP = 16;
+  const STEP_LABEL: Record<DockStep, string> = { s: "Small", m: "Medium", l: "Large" };
   const saved = readDock(localStorage);
   let mode = $state<DockMode>(saved.mode);
-  /** The view the pill brings back after hiding. */
+  /** The view the handle or pill brings back after hiding. */
   let shown = $state(saved.shown);
+  let float = $state(saved.float);
+  let step = $state<DockStep>(saved.step);
   /** Null until resized: the card follows the default for the window. */
   let size = $state<DockSize | null>(saved.size);
   let offset = $state<DockOffset>(saved.offset);
   let viewport = $state({ width: window.innerWidth, height: window.innerHeight });
+  const docked = $derived(dockedHeight(step, viewport.height));
   const box = $derived(clampDockSize(size ?? defaultDockSize(viewport.width, viewport.height), viewport.width, viewport.height));
   const place = $derived(clampDockOffset(offset, box, viewport.width, viewport.height));
   let card = $state<HTMLElement>();
   let pill = $state<HTMLButtonElement>();
+  let handle = $state<HTMLButtonElement>();
   let ghost = $state<HTMLElement>();
 
   function remember() {
-    writeDock(localStorage, { mode, shown, size, offset });
+    writeDock(localStorage, { mode, shown, float, step, size, offset });
+  }
+  function setFloat(next: boolean) {
+    float = next;
+    remember();
+  }
+  function setStep(next: DockStep) {
+    step = next;
+    remember();
   }
   function choose(next: DockMode) {
     if (next !== "hidden") shown = next;
@@ -118,7 +134,12 @@
   }
 
   $effect(() => {
-    const clearance = mode === "hidden" ? (pill ? window.innerHeight - pill.getBoundingClientRect().top : 0) : place.bottom + box.height;
+    // Docked: the page ends above the panel or its handle. Floating: nothing is reserved.
+    const space = float ? 0 : mode === "hidden" ? (handle?.offsetHeight ?? 0) : docked;
+    const clearance = float
+      ? mode === "hidden" ? (pill ? window.innerHeight - pill.getBoundingClientRect().top : 0) : place.bottom + box.height
+      : space;
+    document.documentElement.style.setProperty("--dock-space", `${space}px`);
     document.documentElement.style.setProperty("--dock-clearance", `${Math.round(clearance)}px`);
   });
   onMount(() => {
@@ -126,52 +147,67 @@
     window.addEventListener("resize", onresize);
     return () => {
       window.removeEventListener("resize", onresize);
+      document.documentElement.style.removeProperty("--dock-space");
       document.documentElement.style.removeProperty("--dock-clearance");
     };
   });
 </script>
 
-{#if mode === "hidden"}
+{#if mode === "hidden" && float}
   <button bind:this={pill} class="dock-pill" aria-label="Show dock" title="Show dock" onclick={() => choose(shown)}>
     <span class="pill-dot" aria-hidden="true"></span>{shown === "terminal" ? "Terminal" : "Agents"}
   </button>
+{:else if mode === "hidden"}
+  <button bind:this={handle} class="dock-handle" aria-label="Show dock" title="Show dock" onclick={() => choose(shown)}><span aria-hidden="true"></span></button>
 {:else}
   <section
     bind:this={card}
     class="dock"
+    class:floating={float}
     class:moving={dragging === "move"}
     data-kitty-panel="dock"
+    data-float={float}
     tabindex="-1"
     aria-label="Dock"
-    style:width={`${box.width}px`}
-    style:height={`${box.height}px`}
-    style:right={`${place.right}px`}
-    style:bottom={`${place.bottom}px`}
+    style:width={float ? `${box.width}px` : null}
+    style:height={`${float ? box.height : docked}px`}
+    style:right={float ? `${place.right}px` : null}
+    style:bottom={float ? `${place.bottom}px` : null}
   >
-    <button
-      class="dock-grip"
-      aria-label="Resize dock"
-      title="Drag to resize · arrow keys work too"
-      onpointerdown={(event) => gestureStart("resize", event)}
-      onpointermove={gestureMove}
-      onpointerup={gestureEnd}
-      onpointercancel={gestureEnd}
-      onkeydown={gripKey}
-    ></button>
-    <!-- The header is the card's drag handle; its buttons keep their own clicks. -->
+    {#if float}
+      <button
+        class="dock-grip"
+        aria-label="Resize dock"
+        title="Drag to resize · arrow keys work too"
+        onpointerdown={(event) => gestureStart("resize", event)}
+        onpointermove={gestureMove}
+        onpointerup={gestureEnd}
+        onpointercancel={gestureEnd}
+        onkeydown={gripKey}
+      ></button>
+    {/if}
+    <!-- Floating, the header is the card's drag handle; its buttons keep their own clicks. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <header
       class="dock-bar"
-      onpointerdown={(event) => gestureStart("move", event)}
-      onpointermove={gestureMove}
-      onpointerup={gestureEnd}
-      onpointercancel={gestureEnd}
+      onpointerdown={float ? (event) => gestureStart("move", event) : undefined}
+      onpointermove={float ? gestureMove : undefined}
+      onpointerup={float ? gestureEnd : undefined}
+      onpointercancel={float ? gestureEnd : undefined}
     >
       <div class="dock-modes" role="group" aria-label="Dock contents">
         <button aria-pressed={mode === "terminal"} onclick={() => choose("terminal")}>Terminal</button>
         <button aria-pressed={mode === "activity"} onclick={() => choose("activity")}>Agents</button>
       </div>
       {#if mode === "terminal"}<button class="dock-action" onclick={onherdr}>Open herdr view</button>{/if}
+      {#if !float}
+        <div class="dock-modes dock-steps" role="group" aria-label="Dock height">
+          {#each DOCK_STEPS as option (option)}
+            <button aria-pressed={step === option} aria-label={`${STEP_LABEL[option]} dock`} title={`${STEP_LABEL[option]} dock`} onclick={() => setStep(option)}>{option.toUpperCase()}</button>
+          {/each}
+        </div>
+      {/if}
+      <button class="dock-action" aria-label={float ? "Dock to bottom" : "Float dock"} title={float ? "Dock to the bottom of the window" : "Float as a card in the corner"} onclick={() => setFloat(!float)}>{float ? "Dock" : "Float"}</button>
       <button class="dock-action" aria-label="Hide dock" title="Hide dock" onclick={() => choose("hidden")}>Hide</button>
     </header>
     <div class="dock-body">
@@ -186,21 +222,51 @@
 {/if}
 
 <style>
-  /* A glass card inset in the bottom-right corner; it never takes page space. */
-  .dock {
+  /* Docked: a full-width glass panel fixed to the bottom of the window at a fixed
+     height; the page reserves that space through --dock-space. */
+  .dock,
+  .dock-handle {
     position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
     z-index: 30;
     box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    padding: 8px 16px 8px;
-    border: 1px solid var(--hairline);
-    border-radius: 16px;
     background: color-mix(in srgb, var(--solid-void, #141414) 78%, transparent);
     backdrop-filter: blur(20px) saturate(140%);
     -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+  .dock {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 16px 8px;
+    border-top: 1px solid var(--hairline);
+  }
+  /* Floating: a glass card inset in the bottom-right corner; it never takes page space. */
+  .dock.floating {
+    left: auto;
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
     box-shadow: var(--overlay-shadow);
   }
+  .dock-handle {
+    height: 10px;
+    padding: 0;
+    border: 0;
+    border-top: 1px solid var(--hairline);
+    cursor: pointer;
+  }
+  .dock-handle span {
+    display: block;
+    width: 48px;
+    height: 3px;
+    margin: 0 auto;
+    border-radius: 999px;
+    background: var(--muted);
+    opacity: 0.6;
+  }
+  .dock-handle:hover span,
+  .dock-handle:focus-visible span { opacity: 1; background: var(--br-structure, #deb2c3); }
   /* The dock's stacking context would trap a fullscreen terminal below the pinned
      top bar, whose blur would then paint over it. */
   .dock:has(:global([data-panel-fullscreen])) {
@@ -274,9 +340,11 @@
     align-items: center;
     gap: 8px;
     padding: 2px 0 6px;
+    user-select: none;
+  }
+  .dock.floating .dock-bar {
     cursor: grab;
     touch-action: none;
-    user-select: none;
   }
   .dock.moving .dock-bar {
     cursor: grabbing;
@@ -302,6 +370,7 @@
     background: color-mix(in srgb, var(--ink) 12%, transparent);
     color: var(--ink);
   }
+  .dock-steps button { padding: 4px 9px; }
   .dock-action { border-color: var(--hairline) !important; }
   .dock-action:first-of-type { margin-left: auto; }
   .dock-body {
@@ -309,7 +378,7 @@
     min-height: 0;
   }
   /* Same glass as the pinned top bar: lighter when the window itself is transparent. */
-  :global(:root[data-window="transparent"]) :is(.dock, .dock-pill) {
+  :global(:root[data-window="transparent"]) :is(.dock, .dock-pill, .dock-handle) {
     background: color-mix(in srgb, var(--solid-void, #141414) 62%, transparent);
   }
 </style>

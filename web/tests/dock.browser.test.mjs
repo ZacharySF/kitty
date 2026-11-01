@@ -1,4 +1,4 @@
-// Floating dock behaviour (docs/terminal-dock-design.md Q1, Q3, Q4, Q8) in a real browser
+// Dock behaviour (docs/terminal-dock-design.md Q1, Q3, Q4, Q8) in a real browser
 // against a stand-in API and WebSocket; no herdr session is involved.
 // Run with Node >=22 and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
@@ -25,14 +25,23 @@ after(async () => {
   await server?.close();
 });
 
-async function harness() {
+/** Opens the harness; `seed` is saved dock state written once before the first load. */
+async function harness(seed) {
   const context = await browser.newContext({ viewport: { width: 1000, height: 800 } });
+  if (seed)
+    await context.addInitScript((value) => {
+      if (!sessionStorage.getItem("seeded")) {
+        localStorage.setItem("kitty.dock", JSON.stringify(value));
+        sessionStorage.setItem("seeded", "1");
+      }
+    }, seed);
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
   await open(page);
   return { page, problems, context };
 }
+const FLOATING = { mode: "terminal", shown: "terminal", float: true, step: "m", size: null, offset: { right: 16, bottom: 16 } };
 async function open(page) {
   await page.goto(new URL("tests/dock-harness.html", base).href);
   await page.waitForFunction(() => !!window.dockHarness);
@@ -50,13 +59,30 @@ const DEFAULT_CARD = { x: 1000 - 16 - 720, y: 800 - 16 - 440, width: 720, height
 /** Q56: the Agents view shows one live card per herdr agent. */
 const agentCards = (page) => page.getByRole("region", { name: "Agent activity" }).getByRole("article");
 
+/** The docked panel: medium is 40% of the 800px window, full width at the bottom. */
+const DOCKED = { x: 0, y: 800 - 320, width: 1000, height: 320 };
+const dockSpace = (page) => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--dock-space").trim());
+
 /** The card floats over the page: the page keeps the whole window and reserves nothing. */
 async function assertFloating(page) {
   assert.deepEqual(await box(page.locator("#view")), { x: 0, y: 0, width: 1000, height: 800 });
-  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--dock-space")), "");
+  assert.equal(await dockSpace(page), "0px");
   assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('[data-kitty-panel="dock"]')).position), "fixed");
   assert.equal(await page.getByRole("separator", { name: "Resize dock" }).count(), 0, "the docked height divider is back");
-  assert.equal(await page.getByRole("button", { name: /Float dock|Dock to bottom/ }).count(), 0, "a docked mode is offered");
+  assert.equal(await page.getByRole("button", { name: "Dock to bottom" }).count(), 1);
+}
+
+/** Docked at the bottom: the page ends above the panel, and nothing drags its height. */
+async function assertDocked(page, height) {
+  assert.deepEqual(await box(dock(page)), { x: 0, y: 800 - height, width: 1000, height });
+  assert.equal(await dockSpace(page), `${height}px`);
+  assert.deepEqual(await box(page.locator("#view")), { x: 0, y: 0, width: 1000, height: 800 - height });
+  assert.equal(await page.getByRole("separator").count(), 0, "a height divider is offered");
+  assert.equal(await page.getByRole("button", { name: "Resize dock" }).count(), 0, "a resize grip is offered while docked");
+  assert.equal(await page.getByRole("button", { name: "Float dock" }).count(), 1);
+  const resizable = await dock(page).evaluate((node) =>
+    [node, ...node.querySelectorAll("*")].filter((el) => /resize/.test(getComputedStyle(el).cursor)).length);
+  assert.equal(resizable, 0, "something in the docked panel shows a resize cursor");
 }
 
 /**
@@ -96,11 +122,10 @@ async function watchedDrag(page, from, by) {
   return { ...watched, midDrag };
 }
 
-test("opens on herdr's terminal as a floating bottom-right card that takes no page space", async () => {
+test("opens on herdr's terminal docked at the bottom at a fixed height; the page ends above it", async () => {
   const { page, problems, context } = await harness();
   await dock(page).waitFor();
-  assert.deepEqual(await box(dock(page)), DEFAULT_CARD);
-  await assertFloating(page);
+  await assertDocked(page, DOCKED.height);
   assert.deepEqual(await saved(page), null, "a fresh dock writes nothing until it changes");
   const terminal = dock(page).locator("[data-kitty-terminal]");
   await terminal.waitFor();
@@ -122,29 +147,57 @@ test("opens on herdr's terminal as a floating bottom-right card that takes no pa
   await context.close();
 });
 
-test("a dock saved by the docked-panel build loads as the floating card", async () => {
-  const context = await browser.newContext({ viewport: { width: 1000, height: 800 } });
-  await context.addInitScript(() => {
-    if (!sessionStorage.getItem("seeded")) {
-      localStorage.setItem("kitty.dock", JSON.stringify({ mode: "activity", height: 300, shown: "activity", float: false }));
-      sessionStorage.setItem("seeded", "1");
-    }
-  });
-  const page = await context.newPage();
-  const problems = [];
-  page.on("pageerror", (error) => problems.push(error.message));
+test("the docked height has no drag: pointer drags on its top edge change nothing; S/M/L set it in one step", async () => {
+  const { page, problems, context } = await harness();
+  await dock(page).waitFor();
+  const top = await dock(page).boundingBox();
+  const watched = await watchedDrag(page, { x: 500, y: top.y + 2 }, { x: 0, y: -200 });
+  assert.equal(watched.midDrag, 0);
+  await assertDocked(page, DOCKED.height);
+  const steps = dock(page).getByRole("group", { name: "Dock height" });
+  assert.equal(await steps.getByRole("button", { name: "Medium dock" }).getAttribute("aria-pressed"), "true");
+  await steps.getByRole("button", { name: "Large dock" }).click();
+  await assertDocked(page, 480);
+  assert.equal((await saved(page)).step, "l");
+  await steps.getByRole("button", { name: "Small dock" }).click();
+  await assertDocked(page, 200);
   await open(page);
-  await page.getByRole("region", { name: "Agent activity" }).getByRole("article").first().waitFor();
+  await dock(page).waitFor();
+  await assertDocked(page, 200);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("Float turns the panel into the corner card that frees the page; Dock to bottom puts it back", async () => {
+  const { page, problems, context } = await harness();
+  await dock(page).waitFor();
+  await page.getByRole("button", { name: "Float dock" }).click();
   assert.deepEqual(await box(dock(page)), DEFAULT_CARD);
   await assertFloating(page);
-  await page.getByRole("button", { name: "Terminal" }).click();
-  assert.deepEqual(await saved(page), { mode: "terminal", shown: "terminal", size: null, offset: CORNER });
+  assert.equal((await saved(page)).float, true);
+  await open(page);
+  await dock(page).waitFor();
+  await assertFloating(page);
+  await page.getByRole("button", { name: "Dock to bottom" }).click();
+  await assertDocked(page, DOCKED.height);
+  assert.equal((await saved(page)).float, false);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a v0.3.22 floating-only dock loads docked and keeps its card size and position for Float", async () => {
+  const { page, problems, context } = await harness({ mode: "activity", shown: "activity", size: { width: 600, height: 380 }, offset: { right: 40, bottom: 90 } });
+  await agentCards(page).first().waitFor();
+  await assertDocked(page, DOCKED.height);
+  await page.getByRole("button", { name: "Float dock" }).click();
+  assert.deepEqual(await box(dock(page)), { x: 1000 - 40 - 600, y: 800 - 90 - 380, width: 600, height: 380 });
+  await assertFloating(page);
   assert.deepEqual(problems, []);
   await context.close();
 });
 
 test("the corner grip resizes the card on release without re-laying out the page; the size is remembered", async () => {
-  const { page, problems, context } = await harness();
+  const { page, problems, context } = await harness(FLOATING);
   await page.waitForFunction(() => window.dockHarness.sockets[0]?.readyState === 1);
   const rows = Number(new URL(await page.evaluate(() => window.dockHarness.sockets[0].url)).searchParams.get("rows"));
   const grip = page.getByRole("button", { name: "Resize dock" });
@@ -178,7 +231,7 @@ test("the corner grip resizes the card on release without re-laying out the page
 });
 
 test("dragging the header moves the card without re-laying out the page; it stays on screen and is remembered", async () => {
-  const { page, problems, context } = await harness();
+  const { page, problems, context } = await harness(FLOATING);
   await dock(page).waitFor();
   const bar = dock(page).locator(".dock-bar");
   const tabs = await dock(page).getByRole("group", { name: "Dock contents" }).boundingBox();
@@ -247,8 +300,30 @@ test("the agent-activity cards show herdr's states with each agent's workspace a
   await context.close();
 });
 
-test("Hide collapses the card to a small bottom-right pill that brings back what was shown", async () => {
+test("hiding the docked panel leaves a thin bottom handle that brings back what was shown", async () => {
   const { page, problems, context } = await harness();
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("button", { name: "Hide dock" }).click();
+  assert.equal(await dock(page).count(), 0);
+  const handle = page.getByRole("button", { name: "Show dock" });
+  const strip = await box(handle);
+  assert.ok(strip.height <= 12 && strip.width === 1000 && strip.y + strip.height === 800, `handle ${JSON.stringify(strip)} is not a thin bottom strip`);
+  assert.equal(await dockSpace(page), `${strip.height}px`);
+  assert.deepEqual(await box(page.locator("#view")), { x: 0, y: 0, width: 1000, height: 800 - strip.height });
+  assert.equal((await saved(page)).mode, "hidden");
+  await open(page);
+  await handle.click();
+  await dock(page).waitFor();
+  // The handle brings back what was shown before hiding, even after a reload.
+  await agentCards(page).first().waitFor();
+  assert.equal((await saved(page)).mode, "activity");
+  await assertDocked(page, DOCKED.height);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("hiding the floating card collapses it to a small bottom-right pill that brings it back", async () => {
+  const { page, problems, context } = await harness(FLOATING);
   await page.getByRole("button", { name: "Agents" }).click();
   await page.getByRole("button", { name: "Hide dock" }).click();
   assert.equal(await dock(page).count(), 0);
@@ -257,14 +332,11 @@ test("Hide collapses the card to a small bottom-right pill that brings back what
   assert.ok(pillBox.width < 220 && pillBox.height < 48 && pillBox.x > 700 && pillBox.y > 700, `pill at ${JSON.stringify(pillBox)} is not a small bottom-right pill`);
   assert.match(await pill.innerText(), /Agents/);
   assert.deepEqual(await box(page.locator("#view")), { x: 0, y: 0, width: 1000, height: 800 });
-  assert.equal((await saved(page)).mode, "hidden");
   await open(page);
   await pill.click();
   await dock(page).waitFor();
   assert.deepEqual(await box(dock(page)), DEFAULT_CARD);
-  // The pill brings back what was shown before hiding, even after a reload.
   await agentCards(page).first().waitFor();
-  assert.equal((await saved(page)).mode, "activity");
   await assertFloating(page);
   assert.deepEqual(problems, []);
   await context.close();
