@@ -1549,7 +1549,11 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
 }
 
 /* The dock (Dock.svelte), docked to the bottom of the window, publishes the room it
-   takes as --dock-space; the page always ends above it. Floating, it is 0px. */
+   takes as --dock-space; the page always ends above it, and scrolling a control into
+   view stops above it too. Floating, it is 0px. */
+:root {
+  scroll-padding-bottom: var(--dock-space, 0px);
+}
 :root body .workbench {
   padding-bottom: calc(10px + var(--dock-space, 0px));
 }
