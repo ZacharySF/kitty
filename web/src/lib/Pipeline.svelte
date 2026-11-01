@@ -3,6 +3,7 @@
   import { api, dateLabel, type Bootstrap } from "./api";
   import JobDetail from "./JobDetail.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import Loader from "./Loader.svelte";
   const pane = useWorkspaceContext();
   let {
     workspace,
@@ -139,9 +140,7 @@
     </div>
   </div>
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
-  {#if loading}<p class="empty-state" role="status">
-      Loading pipeline…
-    </p>{:else}<div class="columns">
+  {#if loading}<Loader label="Loading pipeline…" />{:else}<div class="columns">
       {#each Object.entries(board) as [status, cards], ci}<section
           class="column"
           aria-label={status}

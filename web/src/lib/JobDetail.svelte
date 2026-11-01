@@ -6,6 +6,7 @@
   import JobTools from "./JobTools.svelte";
   import PostingAvailability from "./PostingAvailability.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import Loader from "./Loader.svelte";
 
   let {
     id,
@@ -193,9 +194,7 @@
     >
   </div>
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
-  {#if !job && !error}<p class="empty-state" role="status">
-      Opening opportunity…
-    </p>{/if}
+  {#if !job && !error}<Loader kind="eyes" label="Opening opportunity…" />{/if}
   {#if job}
     <div class="detail-body">
       <div class="detail-company">

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, dateLabel } from "./api";
+  import Loader from "./Loader.svelte";
   let {
     onopenjob,
     onchange,
@@ -107,9 +108,7 @@
         /></label
       ><button class="button primary" disabled={busy}>Add reminder</button>
     </form>
-    {#if loading}<p role="status" class="empty-state">
-        Loading reminders…
-      </p>{:else}{#each [{ title: "Due now", items: data.due }, { title: "Coming up", items: data.upcoming }] as group}<section
+    {#if loading}<Loader label="Loading reminders…" />{:else}{#each [{ title: "Due now", items: data.due }, { title: "Coming up", items: data.upcoming }] as group}<section
           class="reminder-group"
         >
           <h3>{group.title}<span class="badge">{group.items.length}</span></h3>
