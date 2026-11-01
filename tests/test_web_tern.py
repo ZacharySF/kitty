@@ -23,6 +23,11 @@ STATUS_KEYS = {"install_url", "installed", "path", "source", "override", "versio
                "workspace", "socket", "running", "windows", "sessions"}
 OUTER_TERN = {"TERN_PANE": "5", "TERN_PANE_SOCKET": "", "TERN_WINDOW_KEY": "", "TERN_WINDOW_SOCKET": "",
               "TERN_EXE": "/somewhere/else/tern", "TERN_IDENTITY": "{}"}
+#: What the AppImage runtime adds to kitty!'s environment, and a secret from the user's shell.
+#: (Not PYTHONHOME: the fake tern is Python, the real one is not.)
+APPIMAGE = {"APPDIR": "/tmp/.mount_kitty", "APPIMAGE": "/apps/kitty.AppImage",
+            "GIO_MODULE_DIR": "/tmp/.mount_kitty/usr/lib/gio/modules", "GTK_PATH": "/tmp/.mount_kitty/usr/lib/gtk-3.0",
+            "KITTY_TEST_SECRET": "s3cret-value"}
 
 
 @pytest.fixture
@@ -33,6 +38,8 @@ def tern(tmp_path, monkeypatch):
     fake.owner_socket = owner / "daemon.sock"
     monkeypatch.setenv("PATH", f"{fake.bin}{os.pathsep}/usr/bin{os.pathsep}/bin")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(fake.runtime))
+    # Not inside an FHS sandbox unless a test says so, whatever runs the tests.
+    monkeypatch.setattr("kitty.core.tern.FHS_HOST_ETC", tmp_path / "no-host-etc")
     # kitty! may run inside the user's own Tern pane: its daemon is someone else's.
     monkeypatch.setenv("TERN_DAEMON_SOCKET", str(fake.owner_socket))
     for key, value in OUTER_TERN.items():
@@ -46,6 +53,20 @@ def tern(tmp_path, monkeypatch):
     finally:
         fake.cleanup()
         shutil.rmtree(fake.runtime, ignore_errors=True)
+
+
+@pytest.fixture
+def sandbox(tmp_path, tern, monkeypatch):
+    """kitty! inside appimage-run's FHS sandbox, as NixOS runs its AppImage."""
+    host_etc = tmp_path / "host-etc"
+    host_etc.mkdir()
+    monkeypatch.setattr("kitty.core.tern.FHS_HOST_ETC", host_etc)
+    for key, value in APPIMAGE.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-kitty-test")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("XAUTHORITY", raising=False)
+    return tern
 
 
 def mode(path: Path) -> int:
@@ -170,6 +191,8 @@ def test_open_in_tern_runs_a_window_on_kittys_own_daemon_and_quit_leaves_nothing
     assert calls.count(["daemon", "--socket", str(socket_path)]) == 1
     assert calls.count(["new", "session", "kitty", "--cwd", root, "--json"]) == 1
     assert calls.count(["--dir", root]) == 2
+    # Outside a sandbox Tern runs as kitty!'s child, never through systemd.
+    assert not any(item["argv"][0] in ("systemd-run", "systemctl") for item in invocations)
     for item in invocations:
         if item["argv"] == ["daemon", "--socket", str(tern.owner_socket)]:
             continue  # the user's own daemon, started by this test
@@ -189,6 +212,86 @@ def test_open_in_tern_runs_a_window_on_kittys_own_daemon_and_quit_leaves_nothing
     # The user's own daemon kept running, untouched.
     assert owner.poll() is None and listening(tern.owner_socket)
     assert json.loads(tern.run("inspect", "--json", socket_path=tern.owner_socket).stdout)["sessions"] == []
+
+
+def test_in_an_fhs_sandbox_tern_runs_outside_it_as_user_services_and_quit_stops_them(tmp_path, sandbox):
+    """appimage-run's /etc/profile hides the user's programs from Tern's login-shell panes."""
+    owner = sandbox.start_daemon(sandbox.owner_socket)
+    settings = make_root(tmp_path, ("terminal",))
+    root = str(settings.root)
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/open", {})
+        assert code == 200 and body["running"] is True
+        socket_path = Path(body["socket"])
+        assert mode(socket_path.parent) == 0o700 and mode(socket_path) == 0o600
+        body = wait_for(lambda: (state := status(running))["windows"] == 1 and state)
+        assert [session["name"] for session in body["sessions"]] == ["kitty"]
+        assert len(list(sandbox.units.iterdir())) == 2
+    invocations = sandbox.invocations()
+    unit = f"kitty-{socket_path.parent.name}"
+    launches = {}
+    for item in invocations:
+        if item["argv"][0] == "systemd-run":
+            split = item["argv"].index("--")
+            launches[tuple(item["argv"][split + 1:])] = item["argv"][1:split]
+            assert item["cwd"] == root
+    daemon = (str(sandbox.binary), "daemon", "--socket", str(socket_path))
+    window = (str(sandbox.binary), "--dir", root)
+    assert set(launches) == {daemon, window}
+    for command, options in launches.items():
+        assert options[:5] == ["--user", "--wait", "--quiet", "--collect", "--service-type=exec"]
+        assert f"--working-directory={root}" in options
+        [name] = [option.removeprefix("--unit=") for option in options if option.startswith("--unit=")]
+        assert name == unit if command == daemon else name.startswith(f"{unit}-window-")
+        # Names only: systemd-run reads the values from its own environment, off the command line.
+        assert sorted(option for option in options if option.startswith("--setenv=")) == [
+            "--setenv=TERN_CONFIG_DIR", "--setenv=TERN_DAEMON_SOCKET", "--setenv=WAYLAND_DISPLAY"]
+    assert "s3cret-value" not in json.dumps([item["argv"] for item in invocations])
+    # The daemon and the window run in the user's session environment, aimed at kitty!'s daemon.
+    outside = [item for item in invocations if (str(sandbox.binary), *item["argv"]) in (daemon, window)]
+    assert len(outside) == 2
+    for item in outside:
+        env = item["env"]
+        assert env["SYSTEMD_MANAGER_ENV"] == "1" and env["TERN_DAEMON_SOCKET"] == str(socket_path)
+        assert env["TERN_CONFIG_DIR"] == str(tmp_path / "user-tern-config")
+        assert env["WAYLAND_DISPLAY"] == "wayland-kitty-test"
+        assert not (set(APPIMAGE) | set(OUTER_TERN) | {"LD_LIBRARY_PATH_ORIG", "HERDR_ENV"}) & set(env)
+        assert item["cwd"] == root
+    # Status and session commands are clients of the socket; they run as kitty!'s children.
+    assert [item["argv"] for item in invocations].count(["new", "session", "kitty", "--cwd", root, "--json"]) == 1
+    # Quit stopped the window's and the daemon's services; nothing kitty! started outlives it.
+    assert any(item["argv"][:3] == ["systemctl", "--user", "stop"] for item in invocations)
+    assert not listening(socket_path) and not list(sandbox.units.iterdir())
+    for item in sandbox.invocations():
+        if item["argv"][:1] != ["systemctl"] and item["argv"] != ["daemon", "--socket", str(sandbox.owner_socket)]:
+            assert not alive(item["pid"]), item["argv"]
+    assert owner.poll() is None and listening(sandbox.owner_socket)
+
+
+def test_in_an_fhs_sandbox_a_daemon_that_never_listens_has_its_service_stopped(tmp_path, sandbox, monkeypatch):
+    monkeypatch.setattr("kitty.core.tern.READY_TIMEOUT", 1.0)
+    sandbox.mode("hang")
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/open", {})
+        assert code == 503 and "did not start" in body["error"]
+        [daemon] = [item for item in sandbox.invocations() if item["argv"][:1] == ["daemon"]]
+        assert not alive(daemon["pid"]) and not list(sandbox.units.iterdir())
+        assert not any(item["argv"][:1] == ["--dir"] for item in sandbox.invocations())
+
+
+def test_in_an_fhs_sandbox_without_systemd_tern_still_runs_as_kittys_child(tmp_path, sandbox, monkeypatch):
+    alone = tmp_path / "tern-alone"
+    alone.mkdir()
+    shutil.copy2(sandbox.binary, alone / "tern")
+    monkeypatch.setenv("PATH", str(alone))
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/start", {})
+        assert code == 200 and body["running"] is True
+    [daemon] = [item for item in sandbox.invocations() if item["argv"][:1] == ["daemon"]]
+    assert daemon["env"]["TERN_DAEMON_SOCKET"] == body["socket"] and "SYSTEMD_MANAGER_ENV" not in daemon["env"]
+    assert not listening(Path(body["socket"])) and not alive(daemon["pid"])
 
 
 def test_start_makes_one_kitty_session_without_a_window(tmp_path, tern):

@@ -15,6 +15,15 @@ public commands are used, always with ``TERN_DAEMON_SOCKET`` set to that socket:
 * ``tern --dir WORKSPACE`` opens a native Tern window on that daemon; it shows
   kitty!'s session and only starts a fresh session in the workspace when none exists.
 
+On NixOS kitty!'s AppImage runs inside appimage-run's FHS sandbox (bubblewrap), whose
+own ``/etc/profile`` and ``/usr`` stand in for the system's. Tern starts every pane as
+a login shell, which there finds none of the user's programs (no git, nix or python3).
+So inside such a sandbox the daemon and the windows run outside it, as transient
+systemd user services (``systemd-run --user --wait``) in the user's session
+environment plus kitty!'s socket, Tern and display variables (by name, never values
+on a command line); without ``systemd-run`` they run as kitty!'s children, as
+elsewhere. Status and session commands are socket clients and stay kitty!'s children.
+
 Tern's web client (``tern web serve``) needs WebGPU, which kitty!'s WebKitGTK view
 does not provide, so kitty! shows status and opens native windows instead of
 embedding a terminal. Quit stops the windows kitty! opened and kitty!'s daemon
@@ -52,6 +61,11 @@ _USER_TERN = ("TERN_CONFIG_DIR", "TERN_AUTH_URL", "TERN_BUILD_URL")
 #: kitty.core.apply.browser._start) that break a separately installed program.
 _OUTER = ("TMUX", "TMUX_PANE", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
           "LD_LIBRARY_PATH", "LD_LIBRARY_PATH_ORIG")
+#: nixpkgs' FHS sandbox (buildFHSEnv, which appimage-run uses) binds the real /etc here.
+FHS_HOST_ETC = Path("/.host-etc")
+#: kitty!'s display a Tern started outside that sandbox keeps; the rest of its
+#: environment is the user's session (the systemd user manager's), not kitty!'s.
+_DISPLAY = ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY")
 
 
 class TernUnavailable(RuntimeError):
@@ -69,6 +83,35 @@ def child_environment(environ: Mapping[str, str], daemon_socket: Path) -> dict[s
               and (not key.startswith("TERN_") or key in _USER_TERN)}
     result["TERN_DAEMON_SOCKET"] = str(daemon_socket)
     return result
+
+
+def _host_launcher(environ: Mapping[str, str]) -> str | None:
+    """``systemd-run``, when kitty! runs in an FHS sandbox that Tern has to run outside."""
+    if not FHS_HOST_ETC.is_dir():
+        return None
+    return shutil.which("systemd-run", path=environ.get("PATH", ""))
+
+
+class _Child:
+    """A detached Tern process: kitty!'s own child, or a transient systemd user service
+    whose `process` is the ``systemd-run --wait`` that lasts exactly as long as it."""
+
+    def __init__(self, process: subprocess.Popen, stop_service: list[str] | None):
+        self.process = process
+        self._stop_service = stop_service
+
+    def running(self) -> bool:
+        return self.process.poll() is None
+
+    def stop_service(self) -> None:
+        """``systemctl --user stop`` the service; killing ``systemd-run`` would leave it running."""
+        if self._stop_service is None:
+            return
+        try:
+            subprocess.run(self._stop_service, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=STOP_TIMEOUT, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
 
 def _write_private(path: Path, text: str) -> None:
@@ -160,8 +203,8 @@ class TernRuntime:
         self.environ = os.environ if environ is None else environ
         self._lock = threading.Lock()
         self._used = False
-        self._daemon: subprocess.Popen | None = None
-        self._windows: list[subprocess.Popen] = []
+        self._daemon: _Child | None = None
+        self._windows: list[_Child] = []
         self._versions: dict[tuple, str | None] = {}
 
     # Detection and settings -------------------------------------------------
@@ -242,6 +285,27 @@ class TernRuntime:
     def _environment(self) -> dict[str, str]:
         return child_environment(self.environ, self.socket_path)
 
+    def _spawn(self, binary: str, *arguments: str, unit: str) -> _Child:
+        """Start `binary` detached in the workspace; inside an FHS sandbox, outside it as
+        the systemd user service `unit` (see the module docstring)."""
+        environment = self._environment()
+        command, stop_service = [binary, *arguments], None
+        launcher = _host_launcher(environment)
+        if launcher:
+            names = ["TERN_DAEMON_SOCKET", *(key for key in (*_USER_TERN, *_DISPLAY) if key in environment)]
+            command = [launcher, "--user", "--wait", "--quiet", "--collect", "--service-type=exec",
+                       f"--unit={unit}", f"--working-directory={self.workspace}",
+                       *(f"--setenv={key}" for key in names), "--", *command]
+            stop_service = [str(Path(launcher).with_name("systemctl")), "--user", "stop", unit]
+        process = subprocess.Popen(command, env=environment, cwd=self.workspace, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return _Child(process, stop_service)
+
+    @property
+    def _unit(self) -> str:
+        """The daemon's systemd unit name, ``kitty-tern-<workspace hash>``; windows add to it."""
+        return f"kitty-{self.socket_path.parent.name}"
+
     def _run(self, binary: str, *arguments: str) -> str:
         try:
             result = subprocess.run([binary, *arguments], env=self._environment(), cwd=self.workspace,
@@ -276,15 +340,12 @@ class TernRuntime:
         _owner_only_directory(path.parent)
         self._used = True
         if not _listening(path):
-            if self._daemon is not None and self._daemon.poll() is None:
+            if self._daemon is not None and self._daemon.running():
                 self._stop_daemon()
-            self._daemon = subprocess.Popen(
-                [binary, "daemon", "--socket", str(path)], env=self._environment(), cwd=self.workspace,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True)
+            self._daemon = self._spawn(binary, "daemon", "--socket", str(path), unit=self._unit)
             deadline = time.monotonic() + READY_TIMEOUT
             while not _listening(path):
-                if self._daemon.poll() is not None or time.monotonic() > deadline:
+                if not self._daemon.running() or time.monotonic() > deadline:
                     self._stop_daemon()
                     raise TernUnavailable("kitty!'s Tern daemon did not start")
                 time.sleep(0.05)
@@ -309,12 +370,10 @@ class TernRuntime:
         """A native Tern window on kitty!'s daemon, showing kitty!'s session."""
         with self._lock:
             binary = self._start_locked()
-            self._windows = [window for window in self._windows if window.poll() is None]
+            self._windows = [window for window in self._windows if window.running()]
             try:
-                self._windows.append(subprocess.Popen(
-                    [binary, "--dir", str(self.workspace)], env=self._environment(), cwd=self.workspace,
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    start_new_session=True))
+                self._windows.append(self._spawn(binary, "--dir", str(self.workspace),
+                                                 unit=f"{self._unit}-window-{os.urandom(4).hex()}"))
             except OSError:
                 raise TernUnavailable("Tern's window could not start") from None
 
@@ -345,14 +404,16 @@ class TernRuntime:
     def _stop_daemon(self) -> None:
         """Stop the daemon on kitty!'s private socket (and the one this process spawned)."""
         spawned, self._daemon = self._daemon, None
-        targets = {spawned.pid} if spawned is not None and spawned.poll() is None else set()
+        if spawned is not None:
+            spawned.stop_service()
+        targets = {spawned.process.pid} if spawned is not None and spawned.running() else set()
         owner = _socket_owner(self.socket_path)
         if owner is not None:
             targets.add(owner)
 
         def remaining() -> set[int]:
             if spawned is not None:
-                spawned.poll()  # reap it, so it stops counting as running
+                spawned.process.poll()  # reap it, so it stops counting as running
             return {pid for pid in targets if _running(pid)}
 
         for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -365,7 +426,7 @@ class TernRuntime:
             while remaining() and time.monotonic() < deadline:
                 time.sleep(0.05)
         if spawned is not None:
-            spawned.wait()
+            spawned.process.wait()
 
     def stop(self) -> None:
         """Quit: close kitty!'s Tern windows, then its daemon, if this process used Tern."""
@@ -375,5 +436,6 @@ class TernRuntime:
             if not used:
                 return
             for window in windows:
-                _terminate_group(window)
+                window.stop_service()
+                _terminate_group(window.process)
             self._stop_daemon()
