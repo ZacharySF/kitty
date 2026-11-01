@@ -68,12 +68,25 @@ mod tests {
         fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
     }
 
+    /// Runs a fixture executable and returns its exit code. A test thread that forks
+    /// while this one still holds the freshly written file open makes `exec` fail with
+    /// ETXTBSY until that child execs; that is a test-harness race, so retry briefly.
+    fn exit_code(path: &std::path::Path) -> Option<i32> {
+        for _ in 0..100 {
+            match Command::new(path).status() {
+                Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => std::thread::sleep(std::time::Duration::from_millis(10)),
+                result => return result.unwrap().code(),
+            }
+        }
+        panic!("{} stayed busy", path.display());
+    }
+
     #[test]
     fn successful_replacement_keeps_a_launchable_prior_installation_and_workspace() {
         let fixture = Installation::new();
         install(&fixture.image(), b"#!/bin/sh\nexit 23\n").unwrap();
-        assert_eq!(Command::new(fixture.image()).status().unwrap().code(), Some(23));
-        assert_eq!(Command::new(fixture.0.join("kitty.AppImage.previous")).status().unwrap().code(), Some(17));
+        assert_eq!(exit_code(&fixture.image()), Some(23));
+        assert_eq!(exit_code(&fixture.0.join("kitty.AppImage.previous")), Some(17));
         assert_eq!(fs::read_to_string(fixture.0.join("profile.yaml")).unwrap(), "name: Synthetic update person\n");
     }
 
@@ -85,7 +98,7 @@ mod tests {
             Err(io::Error::other("simulated disk failure"))
         }).unwrap_err();
         assert!(error.to_string().contains("simulated disk failure"));
-        assert_eq!(Command::new(fixture.image()).status().unwrap().code(), Some(17));
+        assert_eq!(exit_code(&fixture.image()), Some(17));
         assert_eq!(fs::read(fixture.0.join("kitty.AppImage.previous")).unwrap(), fs::read(fixture.image()).unwrap());
         assert_eq!(fs::read_to_string(fixture.0.join("profile.yaml")).unwrap(), "name: Synthetic update person\n");
     }
@@ -98,6 +111,6 @@ mod tests {
         let result = replace(&fixture.image(), |_output| { replaced = true; Ok(()) });
         assert!(result.is_err());
         assert!(!replaced);
-        assert_eq!(Command::new(fixture.image()).status().unwrap().code(), Some(17));
+        assert_eq!(exit_code(&fixture.image()), Some(17));
     }
 }
