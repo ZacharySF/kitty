@@ -5,7 +5,7 @@ import re
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
-from kitty.core import calendar, calendar_google as google
+from kitty.core import calendar, calendar_google as google, study
 from kitty.db import connect
 
 
@@ -25,8 +25,8 @@ def get(app, conn, path, query):
         # Do not expose sync tokens or provider ETags in the local collection.
         cals = [{k: v for k, v in c.items() if k not in {'sync_token', 'google_etag'}} for c in calendar.calendars(conn)]
         return {'calendars': cals, 'events': events, 'tasks': calendar.tasks(conn, search),
-                'activity': calendar.activity(conn, start, end, tz, applyai=applyai),
-                'reminders': calendar.due_reminders(conn, applyai=applyai), **available}
+                'subjects': study.subject_colors(conn),
+                'activity': calendar.activity(conn, start, end, tz, applyai=applyai), **available}
     match = re.fullmatch(r'/api/calendar/events/([a-zA-Z0-9_-]{1,100})', path)
     if match:
         app._no_query(query)

@@ -3,6 +3,7 @@
   import { api, safeUrl, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
   import Loader from "./Loader.svelte";
+  import ReportSummary, { type Summary } from "./ReportSummary.svelte";
 
   let {
     section,
@@ -88,6 +89,8 @@
   let selected = $state(0);
   let cap = $state(15);
   let rates = $state<Record<string, Rate[]>>({});
+  let summary = $state<Summary | null>(null);
+  let showTables = $state(false);
   let mail = $state<Mail | null>(null);
   let days = $state(30);
   let model = $state("");
@@ -128,8 +131,9 @@
         lastFinderRun = data.last_run;
         selected = Math.min(selected, Math.max(0, candidates.length - 1));
       } else if (section === "reports") {
-        rates = (await api<{ sections: Record<string, Rate[]> }>("/reports"))
-          .sections;
+        const report = await api<{ sections: Record<string, Rate[]>; summary: Summary }>("/reports");
+        rates = report.sections;
+        summary = report.summary;
       } else if (section === "mail") {
         mail = await api<Mail>("/mail");
       } else {
@@ -454,11 +458,7 @@
         <p class="muted">Manage company configuration in Profile.</p>
       </details>
     {:else if section === "reports"}
-      <p class="muted">
-        Outcome rates reflect recorded application history. Exports contain all
-        stored jobs, applications and status changes, not just the current view.
-        CSV exports escape formula-leading cells.
-      </p>
+      {#if summary}<ReportSummary {summary} {rates} tables={showTables} ontables={() => (showTables = !showTables)} />{/if}
       <div class="controls">
         <a
           class="button primary"
@@ -481,6 +481,12 @@
             download>{dataset.replaceAll("_", " ")} JSON</a
           >{/each}
       </div>
+      <div id="report-tables" hidden={!showTables}>
+      <p class="muted">
+        Outcome rates reflect recorded application history. Exports contain all
+        stored jobs, applications and status changes, not just the current view.
+        CSV exports escape formula-leading cells.
+      </p>
       {#each Object.entries(rates) as [name, rows]}
         <section aria-label={`Response rates by ${name}`}>
           <h3>By {name}</h3>
@@ -511,6 +517,7 @@
             </div>{/if}
         </section>
       {/each}
+      </div>
     {:else if section === "mail"}
       <p class="muted">
         Gmail uses only <strong>gmail.readonly</strong>: no sending, deleting or
@@ -811,8 +818,12 @@
     display: grid;
     gap: 1.2rem;
   }
-  .body > section {
+  #report-tables > section {
     min-width: 0;
+  }
+  #report-tables:not([hidden]) {
+    display: grid;
+    gap: 1.2rem;
   }
   h2,
   h3,

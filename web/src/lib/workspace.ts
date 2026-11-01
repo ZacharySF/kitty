@@ -170,6 +170,15 @@ const shortcutGroups: ShortcutGroup[] = [
     ],
   },
   {
+    title: "Flashcards",
+    module: "workspace",
+    shortcuts: [
+      ["n", "Quick-add a card to the deck in view; Ctrl / ⌘ + K → New card does it from any page"],
+      ["Tab / Enter in the add row", "Move to the back / save and start the next card"],
+      ["Enter / Ctrl + Enter · Esc", "Save the quick-add card · close it"],
+    ],
+  },
+  {
     title: "Browse & select",
     module: "applyai",
     shortcuts: [

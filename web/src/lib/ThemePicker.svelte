@@ -134,6 +134,8 @@
   .blossom { position: absolute; right: 4px; bottom: 3px; margin: 0; font: 5px/1 var(--font-mono); opacity: 0.45; white-space: pre; }
   .choice-label { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; line-height: 1.3; }
   .selected-mark { color: var(--violet); min-width: 12px; }
-  @media (max-width: 480px) { .trigger-label { display: none; } .choice-label { min-height: 2.6em; } }
+  /* The notification bell shares the narrow top bar; the swatch alone still names the theme (aria-label). */
+  @media (max-width: 760px) { .trigger-label { display: none; } }
+  @media (max-width: 480px) { .choice-label { min-height: 2.6em; } }
   @media (prefers-reduced-motion: reduce) { .theme-options :global(.br-btn) { transition: none; } .theme-options :global(.br-btn:hover) { transform: none; } }
 </style>

@@ -1,7 +1,8 @@
 <script module lang="ts">
-  /** `style` sets `--block` / `--block-ink`, the filled palette colours of the event's calendar. */
+  /** `style` sets `--block` / `--block-ink`, the filled colours of the event (subject, palette slot or calendar). */
   export type PlanEvent = { key: string; title: string; start: number; end: number; column: number; columns: number; style: string; open: () => void };
-  export type PlanTask = { id: string; title: string; priority: string; done: boolean; at: number | null; open: () => void };
+  /** `color` is the task's study subject colour; unlinked tasks use the accent. */
+  export type PlanTask = { id: string; title: string; priority: string; done: boolean; at: number | null; color?: string; open: () => void };
 </script>
 
 <script lang="ts">
@@ -48,7 +49,7 @@
         {/if}
       {/each}
       {#each tasks.filter((t) => t.at !== null) as t (t.id)}
-        <button class="blk task" style:top={`${top(t.at ?? 0)}px`} style:height={`${(PLAN_LENGTH / 60) * HOUR - 1}px`}
+        <button class="blk task" style:--task={t.color} style:top={`${top(t.at ?? 0)}px`} style:height={`${(PLAN_LENGTH / 60) * HOUR - 1}px`}
           onclick={t.open}>☐ {t.title}</button>
       {/each}
       {#if now !== null && now >= PLAN_START && now <= PLAN_END}
@@ -149,8 +150,8 @@
     opacity: 0.55;
   }
   .blk.task {
-    border: 1.5px dashed var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1.5px dashed var(--task, var(--accent));
+    background: color-mix(in srgb, var(--task, var(--accent)) 12%, transparent);
     color: var(--ink);
     animation: drop 240ms ease-out;
   }

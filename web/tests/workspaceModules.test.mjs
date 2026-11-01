@@ -54,6 +54,7 @@ test('keyboard help lists only reachable shortcuts',()=>{
   const titles=(enabled)=>shortcutsFor(enabled).map(group=>group.title);
   assert.deepEqual(titles([]),['Navigate','Atlas home']);
   assert.ok(titles(['workspace']).includes('Study'));
+  assert.ok(titles(['workspace']).includes('Flashcards'));
   assert.ok(!titles(['workspace']).includes('Job decisions'));
   assert.ok(titles(['applyai']).includes('Job decisions'));
   assert.ok(!titles(['applyai']).includes('Study'));

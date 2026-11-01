@@ -122,15 +122,18 @@ after 30 seconds and is issued only by the header-protected `POST
 /api/terminal/session`. A development `kitty-web` uses `KITTY_HERDR=<herdr 0.9.5
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
-**Dock.** With the module on, the bottom of the window holds the dock: herdr's
-client in a transparent terminal drawn in the Harness colours, **Agents** (one card
-per detected herdr agent with its working / blocked / done / idle state, read from
-`GET /api/terminal/activity`, which never starts herdr), or nothing but a thin
-handle that brings it back. Drag the divider (or focus it and use the arrow keys) to
-resize it; the state and height are remembered. The first size is the empty area
-below the main panel. **Float** detaches the dock into a glass card in the
-bottom-right corner that leaves the page its full height; hiding it there leaves a
-small pill, and **Dock** returns it to the bottom. **Open herdr view**, or the **herdr** node under Plan in the
+**Dock.** With the module on, the dock floats as a glass card in the bottom-right
+corner of the window, over the page: it never takes page space, so views keep the
+whole window. It holds herdr's client in a transparent terminal drawn in the
+Harness colours (**Terminal**) or **Agents** (one card per detected herdr agent with its
+working / blocked / done / idle state, read from `GET /api/terminal/activity`,
+which never starts herdr). Drag the card's header to
+move it and its top-left corner grip to resize it (or focus the grip and use the
+arrow keys); the card previews the move or new outline while you drag and settles
+on release, so nothing re-lays out mid-drag. It always stays on screen. **Hide**
+collapses it to a small pill in the corner that brings back what was shown.
+The view, size and position are remembered per browser profile; notification
+toasts stack above the card or pill. **Open herdr view**, or the **herdr** node under Plan in the
 atlas, opens the whole session in the workspace tab. In a terminal, bare keys
 (including `f`) go to the shell; **Ctrl+Shift+F** fullscreens the terminal panel and
 **Esc** returns.
@@ -459,7 +462,14 @@ review heatmap with your streak.
 **Cards** is a split browser: a filterable card list (search plus one-click due, new,
 learning, review, leech and suspended filters) beside the selected card's flippable
 preview, its FSRS stability, difficulty and recall now, its last reviews, and
-Suspend, Bury, Edit, Archive and Delete.
+Suspend, Bury, Edit, Archive and Delete. Its top row adds cards inline: type the
+front, Tab, the back, and Enter saves it into the deck in scope (with All decks in
+scope the row has its own deck picker) and leaves the front ready for the next card.
+**Quick add** works from any page: press N on Flashcards (outside a text field) or
+choose **New card** in Ctrl K to open a small front/back popover over the current
+page with the deck in view, or the last one you used, preselected. Enter or
+Ctrl+Enter saves and readies the next card; Esc closes it. Both refuse an empty
+front or back and flag a front already in that deck; Enter again adds it anyway.
 FSRS scheduling, cloze/reversed cards, media and portable imports are supported.
 This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimizer,
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.
@@ -501,6 +511,17 @@ canvas (or use **Merge into map → Merge root**). Merging back replaces the spl
 placeholder; other roots stay in the source map. Transfers save both maps
 atomically; undo/redo restores both sides and refuses if either map changed in
 another window. The emptied source map remains available.
+Mouse, touch and pen share one pointer path: tap selects, drag moves or reparents,
+and a double tap (or double-click) edits a topic (or opens its linked note or map),
+adds a topic on empty space or relabels a connection. With a pen, **Ink** in the
+map toolbar draws pressure-sensitive strokes (a mouse draws too; fingers keep
+panning). Each stroke is smoothed when you lift the pen and sticks to the nearest
+topic, so it moves with that topic, hides when its branch is folded, follows a
+split or merge, and is saved with the map. Hold the pen's barrel button and draw a
+loop to select every topic inside it; flip the pen to its eraser end to rub out
+ink (topics are never erased).
+While the pen hovers or has just been used, touches are treated as a resting palm
+and ignored, and the pen's barrel button never opens the delete prompt.
 Tree/radial layouts, an outline, linked note cards and links between maps help
 organize material. **Quiz me** hides labels for recall; a branch can produce a
 flashcard draft. **Auto-links** also suggests local sources for node labels;
@@ -528,7 +549,12 @@ Blocks stay before their exam. Make a plan saves dated blocks from your own
 dates and durations. Returns are grouped Due / This week / Later: Recalled
 advances through 1, 3, 7, 16 and 35 days; Shaky restarts at one day.
 **Calendar** opens one week with half-hour slots and a day-plan sidebar; events
-are filled blocks in the theme palette. A floating range pill at the bottom of
+are filled blocks in the theme palette. An event or calendar linked to a study
+subject takes that subject's Study colour, shown in the editor as a locked
+**Auto · Subject** chip; unlinked ones pick one of the theme's six palette
+colours (new calendars start on the next one), which recolour with the theme.
+Colours picked before keep their hex, and tasks linked to a subject carry its
+colour too. A floating range pill at the bottom of
 the calendar steps back/forward, returns to today, jumps to a date and switches
 **D**ay, **W**eek, **M**onth, **A**genda, **Y**ear and day **P**lan. While the
 calendar has focus the same letters switch views, **J**/**K** step and **T** goes
@@ -548,9 +574,34 @@ the date, time, place and repeat and shows what it understood before you save.
 Repeat rules, time zone, custom reminder offsets and Google properties stay in
 the drawer's expandable sections.
 A task's **＋ Map** action optionally adds it beneath a chosen map node.
+When an event changed both in kitty and in Google Calendar, **Imports & Google**
+draws both versions on a small day grid in the event's colour: kitty's as a solid
+block, Google's as a dashed ghost (a deleted side shows as an empty dashed block).
+Click the block to keep; the list beside it shows each field that differs and
+strikes out the values you would lose.
+**Keep kitty's** waits for a separately confirmed push, **Use Google's** applies
+Google's version, and **Keep both** saves kitty's as a copy. Calendar settings
+conflicts list the differing name, timezone and colour.
 
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
 weeks, 30 days or a custom date picker; no date-syntax memorization is required.
+
+**Notifications.** Due calendar reminders and job-search reminders arrive as one
+stack of glass toasts in the bottom-right corner. Hovering (or tabbing into) the
+stack fans it out and pauses every countdown. **Snooze** brings a calendar
+reminder back in ten minutes and moves a job-search reminder a day; **Open**
+jumps to the calendar, the job or Reminders. A toast that times out is not lost:
+the bell in the top bar counts unread notifications and opens the notification
+center, with All/Unread tabs, a source filter, **Mark all read**, and
+**Dismiss**/**Done** on each item. Its footer switches system alerts on or off.
+**Settings → Quiet hours** sets a window on a 24-hour dial (drag either end, or
+use the arrow keys for 15-minute steps). Inside it nothing toasts; reminders are
+held (shown as Held in the center), calendar events can be let through, and when
+the window ends the held items arrive together as one **Morning digest**.
+kitty checks reminders only while it runs: in the desktop app, **Keep running on
+close** keeps it checking from the system tray; when kitty is fully closed,
+reminders that fell due meanwhile arrive the next time it opens. Read, held and
+snoozed state is remembered per browser profile.
 
 **Documents & PDF** authors portable Markdown (numbered source) or rich headings,
 emphasis, nested lists and quotes beside a live preview that scrolls with the
@@ -679,8 +730,13 @@ The website supports:
 - Read-only Gmail authorization/checking and explicit status-proposal decisions.
 - Rules-only triage, fresh cost estimates, capped paid immediate/batch runs and
   collection of existing batch results. Paid operations require explicit approval.
-- Outcome reports and formula-safe CSV/ZIP or JSON exports of jobs, applications
-  and status history.
+- Reports open on a summary card that tells this week or this month (toggle) in
+  sentences: applications sent against the weekly target, the streak, an inline
+  sparkline of the last eight weeks, replies, assessments/interviews and offers
+  from confirmed status changes, the track that hears back most, and a next step.
+  Every figure comes from recorded applications and status history. **Show
+  tables** reveals the outcome-rate tables; formula-safe CSV/ZIP or JSON exports
+  of jobs, applications and status history stay below the card.
 
 **Job selection:** Ctrl+F (⌘F on macOS) searches; Space marks focused rows,
 Ctrl-click toggles and Shift-click selects a range. **Save selected** favorites

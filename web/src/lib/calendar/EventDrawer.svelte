@@ -38,7 +38,7 @@
     position: fixed;
     top: calc(var(--workbench-top, 0px) + 0.75rem);
     right: 0.75rem;
-    bottom: calc(var(--dock-space, 0px) + 0.75rem);
+    bottom: 0.75rem;
     z-index: 90;
     display: flex;
     flex-direction: column;

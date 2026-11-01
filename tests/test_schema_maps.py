@@ -473,3 +473,62 @@ def test_transfer_conflicts_preserve_both_maps(workspace):
         schema.undo(conn, {'id': moved['id'], 'revision': moved['revision']})
     assert schema.load(conn, source['id'])['title'] == changed['title']
     assert schema.load(conn, moved['id'])['graph'] == moved['graph']
+
+
+def ink(key, node_id, points=((0, 0, 0.4), (12.5, -3, 0.9))):
+    return {'id': key, 'node': node_id, 'points': [list(point) for point in points]}
+
+
+def test_ink_strokes_attach_to_nodes_and_survive_reload_undo_and_export(workspace):
+    conn = workspace.conn
+    item = connected(conn)
+    document = deepcopy(item['graph'])
+    document['strokes'] = [ink('tick', 'calculus'), ink('note', 'physics', ((-4, 50.25, 0), (3, 2, 1), (9, 9, 0.5)))]
+    saved = save(conn, item, document)
+    loaded = schema.load(conn, item['id'])
+    assert loaded['graph']['strokes'] == document['strokes'] == saved['graph']['strokes']
+    assert schema.export(conn, item['id'])['graph']['strokes'] == document['strokes']
+    # Erasing every stroke stores no ink at all, and undo brings the strokes back.
+    erased = save(conn, saved, {**saved['graph'], 'strokes': []})
+    assert 'strokes' not in erased['graph']
+    restored = schema.undo(conn, {'id': erased['id'], 'revision': erased['revision']})
+    assert restored['graph']['strokes'] == document['strokes']
+
+
+@pytest.mark.parametrize('stroke, message', [
+    (ink('lost', 'missing'), 'Ink'),
+    ({'id': 'bad', 'node': 'calculus', 'points': []}, 'Ink'),
+    ({'id': 'bad', 'node': 'calculus', 'points': [[0, 0]]}, 'Ink'),
+    ({'id': 'bad', 'node': 'calculus', 'points': [[0, 0, 1.5]]}, 'Pressure'),
+    ({'id': 'bad', 'node': 'calculus', 'points': [[0, 'x', 0.5]]}, 'Ink'),
+    ({'id': 'bad', 'node': 'calculus', 'points': [[0, 0, 0.5]] * (schema.MAX_STROKE_POINTS + 1)}, 'Ink'),
+    ({**ink('bad', 'calculus'), 'colour': 'red'}, 'Unknown'),
+])
+def test_invalid_ink_is_rejected_atomically(workspace, stroke, message):
+    conn = workspace.conn
+    item = connected(conn)
+    with pytest.raises(ValueError, match=message):
+        save(conn, item, {**item['graph'], 'strokes': [stroke]})
+    with pytest.raises(ValueError, match='unique'):
+        save(conn, item, {**item['graph'], 'strokes': [ink('twice', 'calculus'), ink('twice', 'physics')]})
+    with pytest.raises(ValueError, match='at most'):
+        save(conn, item, {**item['graph'], 'strokes': [ink(f's{i}', 'calculus') for i in range(schema.MAX_STROKES + 1)]})
+    assert schema.load(conn, item['id'])['revision'] == item['revision']
+
+
+def test_ink_travels_with_a_split_branch_and_back_on_merge(workspace):
+    conn = workspace.conn
+    original = save(conn, create(conn), {'nodes': [node('root'), node('branch'), node('leaf')],
+        'edges': [{'id': 'a', 'from': 'root', 'to': 'branch', 'label': ''},
+                  {'id': 'b', 'from': 'branch', 'to': 'leaf', 'label': ''}],
+        'strokes': [ink('on-root', 'root'), ink('on-leaf', 'leaf'), ink('on-branch', 'branch')]})
+    split = schema.transfer(conn, {'id': original['id'], 'revision': original['revision'], 'node_id': 'branch'})
+    left = schema.load(conn, original['id'])
+    assert [s['id'] for s in left['graph']['strokes']] == ['on-root']
+    labels = {n['id']: n['label'] for n in split['graph']['nodes']}
+    assert sorted(labels[s['node']] for s in split['graph']['strokes']) == ['branch', 'leaf']
+    merged = schema.transfer(conn, {'id': split['id'], 'revision': split['revision'],
+        'node_id': split['graph']['nodes'][0]['id'], 'target_id': left['id'], 'target_revision': left['revision']})
+    labels = {n['id']: n['label'] for n in merged['graph']['nodes']}
+    assert sorted(labels[s['node']] for s in merged['graph']['strokes']) == ['branch', 'leaf', 'root']
+    assert 'strokes' not in schema.load(conn, split['id'])['graph']

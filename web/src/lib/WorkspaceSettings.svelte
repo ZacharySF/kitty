@@ -4,6 +4,7 @@
   import { api, type ModuleId, type ModulesState } from "./api";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import DesktopSettings from "./DesktopSettings.svelte";
+  import QuietHours from "./QuietHours.svelte";
   import AccountSettings from "./AccountSettings.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
   import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
@@ -85,6 +86,7 @@
   <header><h1>Settings</h1></header>
   <AppearanceSettings />
   <DesktopSettings />
+  {#if activeModules.enabled.includes("workspace") || activeModules.enabled.includes("applyai")}<QuietHours />{/if}
   <AccountSettings />
   <div data-tutorial="modules">
   <Panel title="Modules">
