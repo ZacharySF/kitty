@@ -22,6 +22,12 @@ os.environ["KITTY_KEYRING"] = "none"
 
 
 @pytest.fixture(autouse=True)
+def _no_peer_sync(monkeypatch):
+    """Web servers built by tests open no sync port and announce nothing on the LAN."""
+    monkeypatch.setenv("KITTY_SYNC", "off")
+
+
+@pytest.fixture(autouse=True)
 def _no_real_keyring(monkeypatch):
     """Even a test that clears KITTY_KEYRING cannot reach the real Secret Service."""
     from kitty.core import keys

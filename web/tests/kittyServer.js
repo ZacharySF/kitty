@@ -26,7 +26,7 @@ function freePort() {
 export async function startKitty() {
   const port = await freePort();
   const child = spawn("uv", ["run", "--project", repo, "kitty-web", "--demo", "--port", String(port)], {
-    cwd: repo, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KITTY_KEYRING: "none" },
+    cwd: repo, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KITTY_KEYRING: "none", KITTY_SYNC: "off" },
   });
   let output = "";
   const origin = await new Promise((resolve, reject) => {
