@@ -10,6 +10,10 @@
   import DeckTiles from "./flashcards/DeckTiles.svelte";
   import MemoryStats from "./flashcards/stats/MemoryStats.svelte";
   import CardDetail, { STATE_COLOR, isBuried } from "./flashcards/CardDetail.svelte";
+  import {
+    DUPLICATE_WARNING, addCard, checkCard, loadFronts, normalizeFront, preselectDeck, rememberDeck, rememberedDeck,
+  } from "./flashcards/newCard";
+  import { focusContext } from "./panelFullscreen";
   import type { Crumb } from "./breadcrumb.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
@@ -374,6 +378,71 @@
     search = (terms.includes(term) ? terms.filter((item) => item !== term) : [...terms, term]).join(" ");
     offset = 0;
     void browse();
+  }
+  /** Inline add row (Q66): front, Tab, back, Enter saves and readies the next card. */
+  let addFront = $state(""),
+    addBack = $state(""),
+    addPick = $state(0),
+    addFronts = $state<string[]>([]),
+    addProblem = $state(""),
+    addAdded = $state(""),
+    addConfirmed = $state(""),
+    adding = $state(false);
+  let addFrontField = $state<HTMLInputElement>(),
+    addBackField = $state<HTMLInputElement>();
+  /** The scope's deck, or the row's own pick while All decks is in scope. */
+  let addDeck = $derived(deckId || addPick);
+  let addCheck = $derived(checkCard({ front: addFront, back: addBack }, addFronts));
+  $effect(() => {
+    if (overview && !overview.decks.some((deck) => deck.id === addPick && !deck.archived))
+      addPick = preselectDeck(overview.decks, null, rememberedDeck());
+  });
+  $effect(() => {
+    if (pane.active && deckId) rememberDeck(deckId);
+  });
+  $effect(() => {
+    const id = view === "browser" ? addDeck : 0;
+    loads;
+    let current = true;
+    loadFronts(api, id).then((items) => { if (current) addFronts = items; }, (e) => { if (current) failure(e); });
+    return () => { current = false; };
+  });
+  async function addInline() {
+    if (!pane.active || adding || !overview) return;
+    adding = true;
+    addProblem = "";
+    try {
+      const draft = { front: addFront, back: addBack }, deck = addDeck;
+      const result = await addCard(api, { deckId: deck, types: overview.types, draft, fronts: addFronts, allowDuplicate: addConfirmed === normalizeFront(addFront) });
+      if (!result.saved) {
+        if (result.check.problem) {
+          addProblem = result.check.problem;
+          (result.check.field === "back" ? addBackField : addFrontField)?.focus();
+        } else addConfirmed = normalizeFront(addFront);
+        return;
+      }
+      addFronts = [...addFronts, draft.front];
+      addAdded = `Added to ${overview.decks.find((item) => item.id === deck)?.name ?? "the deck"}.`;
+      addFront = addBack = addConfirmed = "";
+      addFrontField?.focus();
+      await load();
+      await browse();
+      const card = notes.find((note) => note.id === result.saved?.id)?.cards[0];
+      if (card) selectedCard = card.id;
+    } catch (e) {
+      addProblem = e instanceof Error ? e.message : String(e);
+    } finally {
+      adding = false;
+    }
+  }
+  function addEdited() {
+    addProblem = "";
+    addAdded = "";
+  }
+  /** A card saved from the quick-add popover shows up here straight away. */
+  async function cardsChanged() {
+    await load();
+    if (view === "browser") await browse();
   }
   async function show(next: string) {
     noteRequest += 1;
@@ -872,6 +941,7 @@
   }
   onMount(() => {
     window.addEventListener("kitty-study-text", selectedText);
+    window.addEventListener("kitty-flashcards-changed", cardsChanged);
     void consumePendingNavigation();
     try {
       const saved = JSON.parse(
@@ -888,7 +958,10 @@
     } catch {
       /* No resumable browser state. */
     }
-    return () => window.removeEventListener("kitty-study-text", selectedText);
+    return () => {
+      window.removeEventListener("kitty-study-text", selectedText);
+      window.removeEventListener("kitty-flashcards-changed", cardsChanged);
+    };
   });
   /** Sinks `key` on the keyboard strip until `action` settles (at least briefly, so a tap is visible). */
   async function press(key: HeldKey, action: () => Promise<void>) {
@@ -915,17 +988,14 @@
     void press("space", () => (revealed ? sendOff(3) : reveal()));
   }
   function keydown(event: KeyboardEvent) {
-    if (
-      !pane.active ||
-      view !== "review" ||
-      busy ||
-      event.ctrlKey ||
-      event.altKey ||
-      event.metaKey ||
-      event.repeat ||
-      event.defaultPrevented
-    )
+    if (!pane.active || event.ctrlKey || event.altKey || event.metaKey || event.repeat || event.defaultPrevented) return;
+    // N opens the quick-add popover for the deck in view, outside text fields and dialogs.
+    if (event.key.toLowerCase() === "n" && focusContext(event.target) === "other" && !document.querySelector("dialog[open]")) {
+      event.preventDefault();
+      window.dispatchEvent(new CustomEvent("kitty-quick-card", { detail: { deck_id: deckId || null } }));
       return;
+    }
+    if (view !== "review" || busy) return;
     const target = event.target as HTMLElement;
     // The focused top card of the stack still takes Space and 1–4.
     if (
@@ -1095,6 +1165,47 @@
         {/each}
         <span>{total} notes in {scopeLabel}{search ? ` matching “${search}”` : ""}</span>
       </div>
+      {#if overview.decks.some((deck) => !deck.archived)}<form
+        class="add-row"
+        aria-label="Add a card"
+        onsubmit={(event) => {
+          event.preventDefault();
+          void addInline();
+        }}
+      >
+        <span class="plus" aria-hidden="true">＋</span>
+        {#if deckId}<span class="add-deck" title="New cards go to the deck in scope">{selectedDeck?.name}</span>
+        {:else}<select class="add-deck" aria-label="Deck for the new card" bind:value={addPick}>
+          {#each overview.decks as deck (deck.id)}{#if !deck.archived}<option value={deck.id}>{deck.name}</option>{/if}{/each}
+        </select>{/if}
+        <input
+          bind:this={addFrontField}
+          bind:value={addFront}
+          aria-label="New card front"
+          placeholder="Front — a question or cue"
+          autocomplete="off"
+          oninput={() => { addConfirmed = ""; addEdited(); }}
+          onkeydown={(event) => {
+            // Enter with the back still empty moves on to it, like Tab.
+            if (event.key === "Enter" && !event.isComposing && addFront.trim() && !addBack.trim()) {
+              event.preventDefault();
+              addBackField?.focus();
+            }
+          }}
+        />
+        <input
+          bind:this={addBackField}
+          bind:value={addBack}
+          aria-label="New card back"
+          placeholder="Back — the answer"
+          autocomplete="off"
+          oninput={addEdited}
+        />
+        <Button type="submit" size="sm" disabled={adding}>Add</Button>
+        <p class="add-note" class:problem={addProblem} class:warning={!addProblem && addCheck.duplicate} class:added={!addProblem && !addCheck.duplicate && addAdded} role="status">
+          {addProblem || (addCheck.duplicate ? DUPLICATE_WARNING : addAdded) || "Tab moves to the back · Enter saves and starts the next card"}
+        </p>
+      </form>{/if}
       {#if !total}<Panel><EmptyState title={search ? "No matching cards" : "No cards in this scope yet"}>
         <p>{search ? "Try a broader search, or create a card in the selected deck." : "Write a question on the front and its answer on the back to start studying."}</p>
         {#snippet actions()}
@@ -1662,6 +1773,69 @@
     margin-left: auto;
     color: var(--muted);
     font-size: 0.85rem;
+  }
+  /* Q66 inline add row: one line of front, back and Add above the list. */
+  .add-row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0.8rem;
+    padding: 8px 10px 6px;
+    border: 1px dashed color-mix(in srgb, var(--violet) 45%, var(--hairline));
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--violet) 6%, transparent);
+  }
+  .add-row:focus-within {
+    border-style: solid;
+    border-color: var(--violet);
+  }
+  .add-row .plus {
+    color: var(--violet);
+    font-size: 15px;
+  }
+  .add-row .add-deck {
+    max-width: 180px;
+    min-height: 0;
+    margin: 0;
+    padding: 4px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    color: var(--muted);
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+    font: 500 11.5px/1.3 var(--font-ui);
+  }
+  span.add-deck {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .add-row input {
+    min-width: 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  /* Beats the frame's glass field rule (styles.css) so the focused face lights up. */
+  :global(:root body) .add-row input:focus-visible {
+    border-color: var(--violet);
+    outline: none;
+  }
+  .add-note {
+    grid-column: 3 / -1;
+    max-width: none;
+    margin: 0;
+    color: var(--subtle);
+    font: 10.5px var(--font-mono);
+  }
+  .add-note.problem { color: var(--error); }
+  .add-note.warning { color: var(--warning); }
+  .add-note.added { color: var(--success); }
+  @media (max-width: 760px) {
+    .add-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .add-row .add-deck { grid-column: 2 / -1; justify-self: start; }
+    .add-row input:first-of-type, .add-note { grid-column: 2 / -1; }
+    .add-row input:last-of-type { grid-column: 2; }
   }
   /* Q42 split browser: the list stays put beside the selected card. */
   .split-browser {

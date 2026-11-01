@@ -458,7 +458,14 @@ review heatmap with your streak.
 **Cards** is a split browser: a filterable card list (search plus one-click due, new,
 learning, review, leech and suspended filters) beside the selected card's flippable
 preview, its FSRS stability, difficulty and recall now, its last reviews, and
-Suspend, Bury, Edit, Archive and Delete.
+Suspend, Bury, Edit, Archive and Delete. Its top row adds cards inline: type the
+front, Tab, the back, and Enter saves it into the deck in scope (with All decks in
+scope the row has its own deck picker) and leaves the front ready for the next card.
+**Quick add** works from any page: press N on Flashcards (outside a text field) or
+choose **New card** in Ctrl K to open a small front/back popover over the current
+page with the deck in view, or the last one you used, preselected. Enter or
+Ctrl+Enter saves and readies the next card; Esc closes it. Both refuse an empty
+front or back and flag a front already in that deck; Enter again adds it anyway.
 FSRS scheduling, cloze/reversed cards, media and portable imports are supported.
 This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimizer,
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.

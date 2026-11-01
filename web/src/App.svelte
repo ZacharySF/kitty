@@ -20,6 +20,7 @@
   import Onboarding from "./lib/Onboarding.svelte";
   import PetalDrift from "./lib/PetalDrift.svelte";
   import { APPEARANCE_EVENT, savedAppearance, type Appearance } from "./lib/appearance";
+  import QuickCard from "./lib/flashcards/QuickCard.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -58,6 +59,8 @@
   let demoHidden = $state(false);
   let guide = $state(false);
   let addJob = $state(false);
+  /** The quick-add card popover (Q66), opened by N on Flashcards or Ctrl K "New card". */
+  let quickCard = $state<{ deck: number | null } | null>(null);
   let revision = $state(0);
   let guideDialog = $state<HTMLDialogElement>();
   let tabBar: { openMenu: (event: MouseEvent) => void; closeMenu: (restore?: boolean) => void } | undefined = $state();
@@ -183,6 +186,9 @@
     if (view === "study" || detail?.routed || !navigate("study")) return;
     void tick().then(() => window.dispatchEvent(new CustomEvent("kitty-study-focus", { detail: { ...detail, routed: true } })));
   }
+  function quickAddCard(event: Event) {
+    if (studyTools) quickCard = { deck: (event as CustomEvent<{ deck_id?: number }>).detail?.deck_id || null };
+  }
   function showGuide() { if (applyai) guide = true; }
   /** Bottom edge of the active view's content: the dock first fills the space below it (Q8). */
   function panelBottom() {
@@ -267,6 +273,7 @@
     panelFullscreen = fullscreen.panels;
     window.addEventListener("kitty-study-text", studyText);
     window.addEventListener("kitty-study-focus", studyFocus);
+    window.addEventListener("kitty-quick-card", quickAddCard);
     // Capture before terminal/editor handlers consume Ctrl+W as word deletion.
     window.addEventListener("keydown", closeTabShortcut, true);
     window.addEventListener(APPEARANCE_EVENT, appearanceChanged);
@@ -279,6 +286,7 @@
       measure.disconnect();
       window.removeEventListener("kitty-study-text", studyText);
       window.removeEventListener("kitty-study-focus", studyFocus);
+      window.removeEventListener("kitty-quick-card", quickAddCard);
       window.removeEventListener("keydown", closeTabShortcut, true);
       window.removeEventListener(APPEARANCE_EVENT, appearanceChanged);
     };
@@ -471,9 +479,11 @@
     onopenjob={openJob}
     onadd={() => { if (applyai) addJob = true; }}
     onhelp={() => (help = true)}
+    onnewcard={studyTools ? () => (quickCard = { deck: null }) : undefined}
     onreload={() => void reload()}
   />{/if}
 {#if help}<KeyboardHelp {enabled} onclose={() => (help = false)} />{/if}
+{#if quickCard && studyTools}<QuickCard deck={quickCard.deck} onclose={() => (quickCard = null)} />{/if}
 {#if addJob && applyai}<AddJob
     {workspace}
     onclose={() => (addJob = false)}

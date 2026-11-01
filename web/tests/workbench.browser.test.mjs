@@ -2321,3 +2321,126 @@ describe("flashcard card browser", () => {
     await context.close();
   });
 });
+
+/** The fronts saved in deck `name`, read back through the API. */
+const deckFronts = (page, name) => page.evaluate(async (name) => {
+  const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === name);
+  return (await (await fetch(`/api/flashcards/fronts?deck_id=${deck.id}`, { cache: "no-store" })).json()).fronts;
+}, name);
+const focused = (locator) => locator.evaluate((node) => node === document.activeElement);
+
+describe("adding flashcards", () => {
+  test("inline add row: type the front, Tab, the back, Enter saves and the next row is ready", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Inline deck", [["Capital of Peru?", "Lima"]]);
+    await page.reload();
+    await views.getByRole("button", { name: "Cards" }).click();
+    const row = page.getByRole("form", { name: "Add a card" });
+    // With All decks in scope the row asks which deck to save into.
+    await row.getByRole("combobox", { name: "Deck for the new card" }).waitFor();
+    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Inline deck" });
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Deck for the new card"]'));
+    const list = page.getByRole("list", { name: "Cards" });
+    await list.getByRole("listitem").first().waitFor();
+    const front = row.getByRole("textbox", { name: "New card front" });
+    const back = row.getByRole("textbox", { name: "New card back" });
+    await front.click();
+    await page.keyboard.type("Capital of Chile?");
+    await page.keyboard.press("Tab");
+    assert.equal(await focused(back), true, "Tab does not move to the back");
+    await page.keyboard.type("Santiago");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Cards"] li').length === 2);
+    assert.equal(await front.inputValue(), "");
+    assert.equal(await back.inputValue(), "");
+    assert.equal(await focused(front), true, "the next row is not ready in the front field");
+    await row.getByText(/Added to Inline deck/).waitFor();
+    // The next card straight away; Enter in the front with no back moves to the back.
+    await page.keyboard.type("Capital of Japan?");
+    await page.keyboard.press("Enter");
+    assert.equal(await focused(back), true, "Enter with an empty back does not move to the back");
+    await page.keyboard.type("Tokyo");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Cards"] li').length === 3);
+    // A front already in the deck is flagged and needs a second Enter.
+    await page.keyboard.type("capital of  PERU?");
+    await row.getByText(/already in this deck/).waitFor();
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Lima again");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(400);
+    assert.equal(await list.getByRole("listitem").count(), 3, "a duplicate was saved without confirmation");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Cards"] li').length === 4);
+    assert.deepEqual((await deckFronts(page, "Inline deck")).sort(),
+      ["Capital of Chile?", "Capital of Japan?", "Capital of Peru?", "capital of  PERU?"].sort());
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("quick add: N on Flashcards and Ctrl K 'New card' open a front/back popover with the deck preselected", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Other deck", [["Unrelated", "x"]]);
+    await seedDeck(page, "Quick deck", [["Capital of Peru?", "Lima"]]);
+    await page.reload();
+    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Quick deck" });
+    await page.locator("h1").click();
+    await page.keyboard.press("n");
+    const popover = page.getByRole("dialog", { name: "Quick add card" });
+    await popover.waitFor();
+    await popover.getByRole("combobox", { name: "Deck" }).waitFor();
+    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] select')?.selectedOptions[0]?.textContent === "Quick deck");
+    const front = popover.getByRole("textbox", { name: "Front" });
+    const back = popover.getByRole("textbox", { name: "Back" });
+    assert.equal(await focused(front), true, "the front is not focused");
+    await page.keyboard.type("Capital of Peru?");
+    await popover.getByText(/already in this deck/).waitFor();
+    await front.fill("Capital of Spain?");
+    await page.waitForFunction(() => !document.querySelector('dialog[aria-label="Quick add card"]')?.textContent.includes("already in this deck"));
+    await page.keyboard.press("Tab");
+    assert.equal(await focused(back), true, "Tab does not move to the back");
+    await page.keyboard.type("Madrid");
+    await page.keyboard.press("Enter");
+    await popover.getByText(/Added to Quick deck/).waitFor();
+    assert.equal(await front.inputValue(), "");
+    assert.equal(await focused(front), true);
+    await page.keyboard.press("Escape");
+    await popover.waitFor({ state: "detached" });
+    // N while typing in a field is just a letter.
+    await views.getByRole("button", { name: "Cards" }).click();
+    const filter = page.getByRole("searchbox", { name: "Filter cards" });
+    await filter.click();
+    await page.keyboard.press("n");
+    assert.equal(await filter.inputValue(), "n");
+    assert.equal(await popover.count(), 0, "N opened the popover while typing");
+    // Ctrl K 'New card' works from another page, preselecting the last-used deck.
+    await page.evaluate(() => { location.hash = "#calendar"; });
+    await page.waitForFunction(() => location.hash === "#calendar");
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    await palette.getByRole("combobox").fill("new card");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("New card"));
+    await page.keyboard.press("Enter");
+    await popover.waitFor();
+    assert.equal(await page.evaluate(() => location.hash), "#calendar", "quick add left the current page");
+    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] select')?.selectedOptions[0]?.textContent === "Quick deck");
+    await page.keyboard.type("Capital of Spain?");
+    await popover.getByText(/already in this deck/).waitFor();
+    await front.fill("Capital of Italy?");
+    await back.fill("Rome");
+    await page.keyboard.press("Control+Enter");
+    await popover.getByText(/Added to Quick deck/).waitFor();
+    // Empty faces are refused by the same check.
+    await page.keyboard.press("Control+Enter");
+    await popover.getByText("Write the front (question) first.").waitFor();
+    await page.keyboard.press("Escape");
+    await popover.waitFor({ state: "detached" });
+    assert.deepEqual((await deckFronts(page, "Quick deck")).sort(), ["Capital of Italy?", "Capital of Peru?", "Capital of Spain?"]);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

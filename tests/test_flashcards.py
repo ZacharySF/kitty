@@ -678,3 +678,19 @@ def test_card_detail_reports_rendered_faces_memory_state_and_parking(cards):
     with pytest.raises(APIError, match="no longer exists") as error:
         web_flashcards.get(None, conn, "/api/flashcards/card", {"id": "999999"})
     assert error.value.status == 404
+
+
+def test_fronts_lists_each_note_first_field_in_exactly_that_deck(cards):
+    conn, _, state = cards
+    default = state["decks"][0]["id"]
+    child = f.save_deck(conn, {"name": "Default::Child", "settings": {}})["id"]
+    add(cards, fields={"Front": "Capital of <b>Peru</b>?", "Back": "Lima"})
+    add(cards, kind="cloze")
+    add(cards, fields={"Front": "In the subdeck", "Back": "only"}, deck=child)
+    fronts = web_flashcards.get(None, conn, "/api/flashcards/fronts", {"deck_id": str(default)})["fronts"]
+    assert sorted(fronts) == sorted(["Capital of <b>Peru</b>?", "{{c1::hidden-one::hint}} + {{c2::hidden-two}} + {{c1::second-one}}"])
+    assert web_flashcards.get(None, conn, "/api/flashcards/fronts", {"deck_id": str(child)})["fronts"] == ["In the subdeck"]
+    with pytest.raises(APIError, match="deck"):
+        web_flashcards.get(None, conn, "/api/flashcards/fronts", {})
+    with pytest.raises(APIError):
+        web_flashcards.get(None, conn, "/api/flashcards/fronts", {"deck_id": "999999"})

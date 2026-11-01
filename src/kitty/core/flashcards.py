@@ -740,6 +740,13 @@ def history(conn, card_id=None):
     return {"reviews": [dict(r) for r in conn.execute("SELECT id,card_id,rating,reviewed_at,local_day,duration_ms,mode,undone FROM flash_reviews " + where + " ORDER BY id DESC LIMIT 200", args)]}
 
 
+def fronts(conn, deck_id):
+    """Each note's first field in exactly this deck (not its subdecks), for the add-card duplicate check."""
+    require(conn, "flash_decks", deck_id)
+    rows = conn.execute("SELECT n.fields,t.fields AS names FROM flash_notes n JOIN flash_types t ON t.id=n.type_id WHERE n.deck_id=? ORDER BY n.id", (deck_id,))
+    return [json.loads(row["fields"]).get(json.loads(row["names"])[0], "") for row in rows]
+
+
 def card_detail(conn, ident):
     """One card for the browser preview: both rendered faces and its FSRS memory state."""
     card = conn.execute("SELECT c.*,d.name AS deck FROM flash_cards c JOIN flash_notes n ON n.id=c.note_id JOIN flash_decks d ON d.id=n.deck_id WHERE c.id=?", (ident,)).fetchone()
