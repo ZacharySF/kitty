@@ -14,6 +14,9 @@
   import MiniMonth from "./calendar/MiniMonth.svelte";
   import DayPlan from "./calendar/DayPlan.svelte";
   import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START, type DayLoad } from "./calendar/plan";
+  import EventDrawer from "./calendar/EventDrawer.svelte";
+  import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
+  import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -168,13 +171,18 @@
   let attendeesText = $state("");
   let attachmentsText = $state("");
   let remindersText = $state("10");
-  let reminderPreset = $state("10");
-  const reminderPresets = [
-    ["", "No reminder"], ["0", "At start"], ["5", "5 minutes before"],
-    ["10", "10 minutes before"], ["15", "15 minutes before"],
-    ["30", "30 minutes before"], ["60", "1 hour before"],
-    ["1440", "1 day before"], ["10080", "1 week before"],
+  const reminderChips: [number, string][] = [
+    [5, "5 minutes before"], [10, "10 minutes before"], [60, "1 hour before"], [1440, "1 day before"],
   ];
+  const reminderList = $derived(remindersText.split(",").filter((v) => v.trim()).map(Number));
+  function toggleReminder(minutes: number) {
+    remindersText = (reminderList.includes(minutes)
+      ? reminderList.filter((m) => m !== minutes)
+      : [...reminderList, minutes].sort((a, b) => a - b)).join(",");
+  }
+  /** Raw title text as typed; `editor.title` holds what remains after natural-language parsing. */
+  let titleDraft = $state("");
+  let quick = $state<QuickEvent | null>(null);
   let exdatesText = $state("");
   let calendarEditor = $state<Partial<Cal> | null>(null);
   let rangeStart = $state<string | null>(null);
@@ -393,13 +401,54 @@
         }).format(new Date(value));
   }
   function eventsOn(day: string) {
-    return data.events.filter((e) =>
+    return shownEvents.filter((e) =>
       e.all_day
         ? e.start <= day && e.end > day
         : parts(e.start).date <= day &&
           parts(e.end).date >= day &&
           !(parts(e.end).date === day && parts(e.end).time === "00:00"),
     );
+  }
+  /** Wall time "YYYY-MM-DDTHH:MM" moved by `minutes`. */
+  const shiftWall = (wall: string, minutes: number) =>
+    new Date(Date.parse(`${wall}:00Z`) + minutes * 60000).toISOString().slice(0, 16);
+  /** Events as drawn: the one open in the drawer shows its unsaved title, calendar, place and times. */
+  const shownEvents = $derived.by(() => {
+    const open = editor;
+    const base = originalEditor;
+    if (!open?.id || !base || open.all_day || base.all_day || !startInput || !endInput) return data.events;
+    // Same zone as the saved event, so its UTC offset carries over to the edited wall times.
+    const offset = Date.parse(base.start) - Date.parse(`${localInput(base.start, false, base.timezone)}:00Z`);
+    const start = new Date(Date.parse(`${startInput}:00Z`) + offset).toISOString();
+    const end = new Date(Date.parse(`${endInput}:00Z`) + offset).toISOString();
+    return data.events.map((e) => e.id === open.id && e.occurrence === open.occurrence
+      ? { ...e, title: open.title, calendar_id: open.calendar_id, location: open.location, start, end } : e);
+  });
+  function shiftTime(minutes: number, which: "start" | "end") {
+    if (which === "start") {
+      startInput = shiftWall(startInput, minutes);
+      endInput = shiftWall(endInput, minutes);
+    } else if (Date.parse(`${shiftWall(endInput, minutes)}:00Z`) - Date.parse(`${startInput}:00Z`) >= 15 * 60000)
+      endInput = shiftWall(endInput, minutes);
+  }
+  /** Title typing: recognised day, time, length, place and repeat fill the fields; the rest is the title. */
+  function typeTitle(raw: string) {
+    titleDraft = raw;
+    if (!editor) return;
+    const parsed = parseQuickEvent(raw, today);
+    quick = parsed.spans.length ? parsed : null;
+    editor.title = quick ? parsed.title : raw;
+    if (!quick) return;
+    if (parsed.date !== null || parsed.start !== null) {
+      const length = editor.all_day ? 60 : (Date.parse(`${endInput}:00Z`) - Date.parse(`${startInput}:00Z`)) / 60000 || 60;
+      const start = parsed.start ?? (editor.all_day ? 9 * 60 : Number(startInput.slice(11, 13)) * 60 + Number(startInput.slice(14, 16)));
+      const day = parsed.date ?? startInput.slice(0, 10);
+      editor.all_day = false;
+      startInput = shiftWall(`${day}T00:00`, start);
+      endInput = shiftWall(startInput, parsed.end !== null ? parsed.end - start : parsed.minutes ?? length);
+    } else if (parsed.minutes !== null && !editor.all_day) endInput = shiftWall(startInput, parsed.minutes);
+    if (parsed.where) editor.location = parsed.where;
+    if (parsed.rrule) editor.rrule = parsed.rrule;
   }
   function tasksOn(day: string) {
     return data.tasks.filter(
@@ -670,7 +719,8 @@
     attachmentsText = "";
     exdatesText = "";
     remindersText = "10";
-    reminderPreset = "10";
+    titleDraft = "";
+    quick = null;
     fold = 0;
     foldChanged = false;
     googleOptionsText = "{}";
@@ -686,8 +736,8 @@
       .join("\n");
     exdatesText = e.exdates.join("\n");
     remindersText = e.reminders.join(",");
-    reminderPreset = reminderPresets.some(([value]) => value === remindersText)
-      ? remindersText : "custom";
+    titleDraft = e.title;
+    quick = null;
     foldChanged = false;
     googleOptionsText = JSON.stringify(e.google_options, null, 2);
   }
@@ -1618,7 +1668,7 @@
   }}
 />
 
-<section class="calendar-workspace" aria-label="Calendar workspace">
+<section class="calendar-workspace" class:drawer-open={!!editor} aria-label="Calendar workspace">
   <header class="toolbar">
     <div>
       <h1>Calendar</h1>
@@ -2630,38 +2680,24 @@
   {/if}
 </section>
 
-{#if editor && isActive}<div class="modal-backdrop" role="presentation">
-    <dialog
-      use:modal
-      oncancel={() => (editor = null)}
-      class="dialog"
-      aria-modal="true"
-      aria-labelledby={`${pane.id}-event-editor-title`}
-      tabindex="-1"
-    >
-      <header>
-        <h2 id={`${pane.id}-event-editor-title`}>
-          {editor.id ? "Event details" : "New event"}
-        </h2>
-        <button type="button" onclick={() => (editor = null)} aria-label="Close event editor"
-          >×</button
-        >
-      </header>
-      <p class="hint">Saved locally. Google updates are always reviewed separately.</p>
+{#if editor && isActive}
+  <EventDrawer title={editor.id ? "Event details" : "New event"} accent={paletteColor(editor.calendar_id)}
+    eyebrow={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
+    onclose={() => (editor = null)}>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <form
+      <form class="drawer-form"
         onsubmit={(e) => {
           e.preventDefault();
           void saveEvent();
         }}
       >
-        <label
-          >Title<input
-            required
-            bind:value={editor.title}
-            maxlength="500"
-          /></label
-        >
+        <input class="drawer-title" aria-label="Title" required maxlength="500" value={titleDraft}
+          placeholder="lunch with Mira fri 12:30" spellcheck="false" oninput={(e) => typeTitle(e.currentTarget.value)} />
+        {#if quick}
+          <QuickUnderstood text={titleDraft} spans={quick.spans} title={editor.title}
+            when={`${dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" })}${editor.all_day ? " · all day" : ` · ${startInput.slice(11, 16)}–${endInput.slice(11, 16)}`}`}
+            where={quick.where} repeat={quick.repeat} />
+        {/if}
         {#if editor.id && editor.rrule}
           <label>Edit recurrence scope<select bind:value={editScope} onchange={changeScope}>
             <option value="this">This occurrence only</option>
@@ -2670,12 +2706,17 @@
           </select></label>
           <p class="hint">Choose the scope before editing; changing it reloads saved values.</p>
         {/if}
-        <div class="form-grid">
-          <label>Calendar<select bind:value={editor.calendar_id}
-            disabled={!!editor.id && !!editor.rrule && editScope === "this"}>
-            {#each data.calendars as c}<option value={c.id}>{c.name}</option>{/each}
-          </select></label>
-          <label><input type="checkbox" bind:checked={editor.all_day}
+        {#if !editor.all_day}
+          <div class="steppers" role="group" aria-label="Time">
+            <span class="stepper"><button type="button" aria-label="Earlier start" onclick={() => shiftTime(-15, "start")}>−</button><b>{startInput.slice(11, 16)}</b><button type="button" aria-label="Later start" onclick={() => shiftTime(15, "start")}>+</button></span>
+            <span class="arrow" aria-hidden="true">→</span>
+            <span class="stepper"><button type="button" aria-label="Earlier end" onclick={() => shiftTime(-15, "end")}>−</button><b>{endInput.slice(11, 16)}</b><button type="button" aria-label="Later end" onclick={() => shiftTime(15, "end")}>+</button></span>
+          </div>
+        {/if}
+        <div class="drawer-dates">
+          <CalendarDateTime label="Start" timed={!editor.all_day} bind:value={startInput} required />
+          <CalendarDateTime label={editor.all_day ? "End (following)" : "End"} timed={!editor.all_day} bind:value={endInput} required />
+          <label class="inline"><input type="checkbox" bind:checked={editor.all_day}
             onchange={() => {
               if (editor) {
                 startInput = editor.all_day ? startInput.slice(0, 10) : startInput + "T09:00";
@@ -2685,10 +2726,27 @@
                   : addDays(endDay, -1) + "T10:00";
               }
             }} />All-day / multi-day</label>
-          <CalendarDateTime label="Start" timed={!editor.all_day} bind:value={startInput} required />
-          <CalendarDateTime label={editor.all_day ? "End (following)" : "End"} timed={!editor.all_day} bind:value={endInput} required />
         </div>
-        <p class="hint">{editor.timezone}{editor.all_day ? " · All-day end is the date after the last included day." : ""}</p>
+        <fieldset class="drawer-field" disabled={!!editor.id && !!editor.rrule && editScope === "this"}>
+          <legend class="eyebrow">calendar</legend>
+          <div class="swatches">
+            {#each data.calendars as c (c.id)}
+              <button type="button" class="swatch" style:--sw={paletteColor(c.id)} title={c.name} aria-label={c.name}
+                aria-pressed={editor.calendar_id === c.id} onclick={() => editor && (editor.calendar_id = c.id)}></button>
+            {/each}
+          </div>
+        </fieldset>
+        <label class="drawer-field"><span class="eyebrow">place</span><input bind:value={editor.location} placeholder="Add a place" /></label>
+        <div class="drawer-field" role="group" aria-label="Remind me">
+          <span class="eyebrow">remind me</span>
+          <div class="chips">
+            {#each reminderChips as [minutes, text] (minutes)}
+              <button type="button" aria-pressed={reminderList.includes(minutes)} aria-label={text}
+                onclick={() => toggleReminder(minutes)}>{text.replace(" minutes", "m").replace(" hour", "h").replace(" day", "d")}</button>
+            {/each}
+          </div>
+        </div>
+        <p class="hint">{editor.timezone}{editor.all_day ? " · All-day end is the date after the last included day." : ""} · Saved locally; Google updates are reviewed separately.</p>
         <details class="editor-options">
           <summary>Repeat & time settings{editor.rrule ? " · Repeating event" : ""}</summary>
           <div class="form-grid">
@@ -2705,27 +2763,17 @@
             disabled={!!editor.id && editScope === "this"}></textarea></label>
         </details>
         <details class="editor-options">
-          <summary>Location, notes & reminders</summary>
+          <summary>Notes, privacy & custom reminders</summary>
           <label>Notes<textarea rows="3" bind:value={editor.description}></textarea></label>
           <div class="form-grid">
-            <label>Location<input bind:value={editor.location} /></label>
             <label>URL<input type="url" bind:value={editor.url} /></label>
             <label>Privacy<select bind:value={editor.privacy}>
               {#each ["default", "public", "private", "confidential"] as p}<option>{p}</option>{/each}
             </select></label>
             <label><input type="checkbox" bind:checked={editor.busy} />Blocks availability (busy)</label>
           </div>
-          <label>When<select value={reminderPreset} onchange={(event) => {
-            reminderPreset = event.currentTarget.value;
-            if (reminderPreset !== "custom") remindersText = reminderPreset;
-          }}>
-            {#each reminderPresets as [value, title]}<option {value}>{title}</option>{/each}
-            <option value="custom">Custom timings…</option>
-          </select></label>
-          {#if reminderPreset === "custom"}
-            <label>Minutes before start<input bind:value={remindersText} placeholder="10,60,1440" /></label>
-            <p class="hint">Separate multiple reminders with commas.</p>
-          {/if}
+          <label>Reminder minutes before start<input bind:value={remindersText} placeholder="10,60,1440" /></label>
+          <p class="hint">Separate multiple reminders with commas; leave empty for none.</p>
         </details>
         <details class="editor-options">
           <summary>Attendees, attachments & Google properties</summary>
@@ -2809,8 +2857,7 @@
           }}>Delete selected scope</Button>{/if}
         </footer>
       </form>
-    </dialog>
-  </div>{/if}
+  </EventDrawer>{/if}
 {#if taskEditor && isActive}<div class="modal-backdrop" role="presentation">
     <dialog
       use:modal
@@ -3874,6 +3921,130 @@
   }
   .danger {
     color: var(--warning);
+  }
+  @media (min-width: 900px) {
+    .calendar-workspace.drawer-open {
+      padding-right: calc(min(400px, 100vw - 1.5rem) + 0.75rem);
+    }
+    /* The drawer stands in for the side rail while it is open. */
+    .drawer-open .calendar-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .drawer-open .selected-plan {
+      display: none;
+    }
+  }
+  .drawer-form {
+    display: grid;
+    gap: 10px;
+  }
+  .drawer-form .editor-options {
+    margin: 0;
+  }
+  .drawer-form footer {
+    position: sticky;
+    bottom: -16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.7rem 0 0.2rem;
+    border-top: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--solid-raised) 92%, transparent);
+  }
+  .drawer-title {
+    padding: 0 0 4px;
+    border: 0;
+    border-bottom: 1px solid var(--hairline);
+    border-radius: 0;
+    background: transparent;
+    color: var(--ink);
+    font: 700 1.2rem var(--font-title);
+  }
+  .drawer-title:focus-visible {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+  .steppers {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+  }
+  .stepper button {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+  }
+  .stepper button:hover {
+    color: var(--ink);
+  }
+  .stepper b {
+    font: 600 0.8rem var(--font-mono);
+  }
+  .steppers .arrow {
+    color: var(--subtle);
+  }
+  .drawer-dates {
+    display: grid;
+    gap: 6px;
+    font-size: 0.8rem;
+  }
+  .drawer-dates .inline {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .drawer-field {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .drawer-field .eyebrow {
+    color: var(--muted);
+    padding: 0;
+  }
+  .swatches,
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .swatch {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: var(--sw);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--solid-void) 30%, transparent);
+  }
+  .swatch[aria-pressed="true"] {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+  .chips button {
+    padding: 2px 9px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .chips button[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--ink);
   }
   a {
     color: var(--accent);

@@ -1134,15 +1134,17 @@ describe("calendar redesign", () => {
     await page.keyboard.press("Escape");
     await editor.waitFor({ state: "detached" });
     const block = page.getByRole("group", { name: "Move me" });
-    await block.dragTo(slotButton("12:00"));
+    // Native automated drags are flaky in Chromium (and cancel on the tiny ↔ handle); dispatch the same DOM events.
+    const dragOnto = async (source, target) => {
+      const transfer = await page.evaluateHandle(() => new DataTransfer());
+      await source.dispatchEvent("dragstart", { dataTransfer: transfer });
+      await target.dispatchEvent("dragover", { dataTransfer: transfer });
+      await target.dispatchEvent("drop", { dataTransfer: transfer });
+      await source.dispatchEvent("dragend", { dataTransfer: transfer });
+    };
+    await dragOnto(block, slotButton("12:00"));
     await block.getByText("12:00–13:00").waitFor();
-    // Chromium cancels a native drag that starts on the tiny ↔ handle under automation; dispatch the same events.
-    const transfer = await page.evaluateHandle(() => new DataTransfer());
-    const handle = block.getByRole("button", { name: "Resize Move me" });
-    await handle.dispatchEvent("dragstart", { dataTransfer: transfer });
-    await slotButton("14:30").dispatchEvent("dragover", { dataTransfer: transfer });
-    await slotButton("14:30").dispatchEvent("drop", { dataTransfer: transfer });
-    await handle.dispatchEvent("dragend", { dataTransfer: transfer });
+    await dragOnto(block.getByRole("button", { name: "Resize Move me" }), slotButton("14:30"));
     await block.getByText("12:00–14:30").waitFor();
     assert.deepEqual(problems, []);
     await context.close();
@@ -1260,6 +1262,50 @@ describe("calendar redesign", () => {
     const block = plan.getByRole("listitem").filter({ hasText: "Plan me" });
     assert.ok(await block.count() >= 1);
     assert.equal(await plan.locator(".timeline").getByText("Plan me").count(), 1, "planned task is not drawn on the timeline");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("a side drawer edits events live and its title understands 'lunch with Mira fri 12:30'", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    await page.getByRole("button", { name: "Add event", exact: true }).first().click();
+    const drawer = page.getByRole("dialog", { name: "New event" });
+    await drawer.waitFor();
+    assert.notEqual(await drawer.getAttribute("aria-modal"), "true", "the drawer should leave the calendar usable");
+    const box = await drawer.boundingBox();
+    assert.ok(box.x + box.width >= 1280 - 24 && box.width <= 440 && box.height >= 400, `drawer is not a right-hand side drawer: ${JSON.stringify(box)}`);
+    await drawer.getByRole("textbox", { name: "Title" }).fill("lunch with Mira fri 12:30 at Café Rose");
+    const understood = drawer.getByRole("status", { name: "Understood" });
+    await understood.getByText("Lunch with Mira", { exact: true }).waitFor();
+    assert.match(await understood.textContent(), /Fri[\s\S]*12:30–13:30[\s\S]*Café Rose/);
+    for (const section of ["Repeat & time settings", "Notes, privacy & custom reminders", "Attendees, attachments & Google properties"])
+      assert.equal(await drawer.getByText(section, { exact: false }).count() >= 1, true, `${section} is not reachable`);
+    assert.equal(await drawer.getByRole("button", { name: "10 minutes before" }).getAttribute("aria-pressed"), "true");
+    await drawer.getByRole("button", { name: "Add event" }).click();
+    await drawer.waitFor({ state: "detached" });
+    const saved = await page.evaluate(async () => {
+      const from = new Date(Date.now() - 864e5).toISOString(), to = new Date(Date.now() + 9 * 864e5).toISOString();
+      const snap = await fetch(`/api/calendar?start=${from}&end=${to}&timezone=UTC`).then((r) => r.json());
+      const event = snap.events.find((e) => e.title === "Lunch with Mira" && e.location === "Café Rose");
+      if (!event) return null;
+      const start = new Date(event.start);
+      return { day: start.getDay(), time: `${start.getHours()}:${start.getMinutes()}` };
+    });
+    assert.deepEqual(saved, { day: 5, time: "12:30" });
+
+    await addEvent(page, { title: "Live edit", start: at(0, 10), end: at(0, 11) });
+    await page.reload();
+    const block = page.getByRole("group", { name: "Live edit" });
+    await block.getByRole("button", { name: /^Edit Live edit/ }).click();
+    const details = page.getByRole("dialog", { name: "Event details" });
+    await details.getByRole("button", { name: "Later start" }).click();
+    await block.getByText("10:15–11:15").waitFor();
+    await details.getByRole("textbox", { name: "Title" }).fill("Live edit");
+    assert.equal(await details.getByRole("status", { name: "Understood" }).count(), 0, "a plain title should not show a parse");
+    await page.keyboard.press("Escape");
+    await details.waitFor({ state: "detached" });
+    await block.getByText("10:00–11:00").waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });

@@ -480,8 +480,13 @@ block. The sidebar's mini month shows ISO weeks; hover a week to preview its
 load and click a date to jump there.
 Click a slot to schedule a time, or drag an event/task to another date or time. Drops open the
 editor for review before saving; moving an event preserves its duration.
-All-day items can be moved across the all-day row. Reminder **When** offers
-no reminder, at start, minutes/hours/day/week before, and custom multiple offsets.
+All-day items can be moved across the all-day row. Clicking an event opens a side
+drawer whose time steppers, calendar, place and reminder chips (5m/10m/1h/1d
+before) update the block live until you save or press Escape. Its title field
+reads natural language: `lunch with Mira fri 12:30 at Café Rose every week` fills
+the date, time, place and repeat and shows what it understood before you save.
+Repeat rules, time zone, custom reminder offsets and Google properties stay in
+the drawer's expandable sections.
 A task's **＋ Map** action optionally adds it beneath a chosen map node.
 
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
