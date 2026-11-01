@@ -1905,3 +1905,37 @@ describe("mind-map multi-select", () => {
     await context.close();
   });
 });
+
+describe("mind-map history", () => {
+  test("undo and redo restore drags and colours across saving, and a new edit clears redo", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { schema } = await newMindMap(page, "History map");
+    await mapNode(page, "Examples").click();
+    const before = await nodeBoxes(page);
+    const p = await centre(mapNode(page, "Examples").locator("rect.pill"));
+    await page.keyboard.down("Alt");
+    await page.mouse.move(p.x, p.y); await page.mouse.down();
+    await page.mouse.move(p.x + 100, p.y + 70, { steps: 4 }); await page.mouse.up();
+    await page.keyboard.up("Alt");
+    const moved = await nodeBoxes(page);
+    await page.keyboard.press("Control+z");
+    assert.deepEqual((await nodeBoxes(page)).Examples, before.Examples);
+    await page.keyboard.press("Control+Shift+z");
+    assert.deepEqual((await nodeBoxes(page)).Examples, moved.Examples);
+    await mapNode(page, "Examples").click();
+    await schema.getByRole("button", { name: "Colour 4", exact: true }).click();
+    await schema.getByRole("button", { name: /^Save map/ }).click();
+    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await page.keyboard.press("Control+z");
+    const dot = () => mapNode(page, "Examples").locator("circle.dot").evaluate(n => getComputedStyle(n).fill);
+    assert.notEqual(await dot(), await resolveColor(page, "var(--c4)"));
+    await page.keyboard.press("Control+Shift+z");
+    assert.equal(await dot(), await resolveColor(page, "var(--c4)"));
+    await page.keyboard.press("Control+z");
+    await mapNode(page, "Questions").click();
+    await schema.getByRole("button", { name: "Colour 5", exact: true }).click();
+    assert.equal(await schema.getByRole("button", { name: "Redo", exact: true }).isDisabled(), true);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

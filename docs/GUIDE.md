@@ -472,6 +472,10 @@ end is folded away, and double-clicking one edits its label.
 Shift+arrows, Shift-click or a Shift-drag box on empty space select several topics:
 the swatch row then recolours them all, dragging one moves every selected branch
 (onto a topic, freely with Alt, or detached with D), and Delete removes them together.
+Ctrl+Z undoes every map edit (including drags, viewport changes and recolouring);
+Ctrl+Shift+Z or **Redo** reapplies it. Saving keeps the current editor's history.
+A new edit after undo discards the redo branch. Reloading starts a fresh local
+history; **Undo last save** still restores the durable previous saved snapshot.
 Tree/radial layouts, an outline, linked note cards and links between maps help
 organize material. **Quiz me** hides labels for recall; a branch can produce a
 flashcard draft. **Auto-links** also suggests local sources for node labels;

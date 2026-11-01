@@ -190,6 +190,7 @@
     draftNotes = $state(""),
     draftUrl = $state("");
   let history = $state<Snapshot[]>([]),
+    future = $state<Snapshot[]>([]),
     stage = $state<SVGSVGElement>();
   let showJobs = $state(false),
     jobSearch = $state(""),
@@ -527,14 +528,15 @@
   }
   function remember() {
     history = [...history.slice(-29), snapshot()];
+    future = [];
     dirty = true;
     notice = "Unsaved local edits";
   }
-  function accepted(item: MapItem, restoreDraft = false) {
+  function accepted(item: MapItem, restoreDraft = false, keepHistory = false) {
     current = item;
     dirty = false;
     blocked = false;
-    history = [];
+    if (!keepHistory) { history = []; future = []; }
     selected = "";
     selectedEdge = "";
     editing = "";
@@ -637,7 +639,7 @@
           title: current.title,
           graph: current.graph,
           viewport: current.viewport,
-        }),
+        }), false, true,
       );
       try { localStorage.removeItem(draftKey(current.id)); } catch { /* Saved on server. */ }
       const activeNode = current.graph.nodes.find(n => n.id === selectedId);
@@ -683,10 +685,12 @@
     if (!current || !editable) return;
     if (history.length) {
       const previous = history[history.length - 1];
+      future = [...future, snapshot()];
       history = history.slice(0, -1);
       Object.assign(current, clone(previous));
       dirty = true;
       selected = "";
+      multi = []; editing = ""; labelling = "";
       selectedEdge = "";
       return;
     }
@@ -694,6 +698,7 @@
     busy = true;
     error = "";
     try {
+      const forward = snapshot();
       accepted(
         await api<MapItem>("/schema/undo", {
           id: current.id,
@@ -701,12 +706,22 @@
         }),
       );
       await refresh();
+      future = [forward];
     } catch (e) {
       failure(e);
       blocked = error.includes("changed in another window");
     } finally {
       busy = false;
     }
+  }
+  function redo() {
+    if (!current || !editable || !future.length) return;
+    const next = future[future.length - 1];
+    history = [...history, snapshot()];
+    future = future.slice(0, -1);
+    editing = ""; labelling = ""; selected = ""; multi = []; selectedEdge = "";
+    Object.assign(current, clone(next));
+    dirty = true;
   }
   /** Selects `n`; a topic outside the multi-selection replaces it. */
   function choose(n: Node) {
@@ -867,6 +882,11 @@
   }
   /** Window keys: Escape leaves "Connect to…"; mid-drag, D breaks the branch off (press again to reattach on drop), wherever focus is. */
   function dragKey(e: KeyboardEvent) {
+    if (pane.active && current && editable && !gesture && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
+      e.preventDefault(); e.stopPropagation();
+      if (e.shiftKey) redo(); else void undo();
+      return;
+    }
     if (pane.active && linking && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); linking = ""; return; }
     if (!pane.active || !gesture?.node || e.key.toLowerCase() !== "d" || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault(); e.stopPropagation();
@@ -1037,6 +1057,7 @@
       const free = !detaching && e.altKey;
       if (detaching || target || free || dragged.free) {
         history = [...history.slice(-29), gesture.before];
+        future = [];
         for (const top of tops) {
           if (detaching) { if (!isRoot(top)) detachBranch(top); }
           else if (free) top.free = true; // Alt-drag: it keeps its parent but leaves the automatic layout.
@@ -1056,6 +1077,7 @@
       if (multi.length) multi = []; // A plain click picks just that topic.
     } else if (gesture.moved) {
       history = [...history.slice(-29), gesture.before];
+      future = [];
       dirty = true;
       notice = "Unsaved local edits";
     }
@@ -1959,6 +1981,7 @@
           (!history.length && (!current.can_undo || dirty))}
         >Undo {history.length ? "local" : "last save"}</Button
       >
+      <Button onclick={redo} disabled={!editable || !future.length}>Redo</Button>
       <details><summary>Advanced map actions</summary><div class="toolbar">
         <Button onclick={download}>Export {dirty ? "local edits" : "JSON"}</Button>
         <Button onclick={() => current && open(current.id, true)} disabled={busy}>Reload saved map</Button>
