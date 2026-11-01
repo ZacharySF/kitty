@@ -348,6 +348,38 @@ On macOS, automic-vault deliberately never returns a secret to an app, so it is 
 storage backend: use it as a launch wrapper around kitty, and the variables it injects
 arrive as environment variables (source 3).
 
+### Tags and auto-tagging
+
+A tag is a record with a name, optional **aliases** (other names: `#alias` tags too)
+and **keywords**. When a block on a note page mentions a tag's name, an alias or a
+keyword as a whole word (any case; no stemming), kitty! notices it as you write.
+Code (inline, fenced, code blocks), URLs, e-mail addresses and existing `#tag`,
+`[[page]]` and `((reference))` tokens never count, and terms shorter than three
+characters are ignored unless the tag allows them.
+
+**Settings → Tags** chooses what happens:
+
+- **Suggest** (the default): the word gets a faint dotted underline. With the caret
+  on it, `Tab` (or **Tag #name** in the small pop-up) attaches the tag; `Esc` (or
+  **Ignore**) declines it for that block for good.
+- **Always attach**: the tag is attached as soon as the edit is saved and shown as a
+  dashed chip (automatic). Removing it (`×` on the chip) is remembered, so later edits
+  never attach it to that block again. An automatic tag whose word you delete goes too.
+
+Each tag can override the setting either way (tag → **Keywords & mode**, or the tag's
+row in Settings). Tags appear as chips under the block; a chip opens the tag's page in
+the side panel: the blocks it is attached to (by hand, from a suggestion, or
+automatically) and the remaining **unlinked mentions**, with **Link all**. Clicking a
+`#name` in a note opens its tag page; a `#name` without a record offers **Make #name a
+tag with keywords**. Every existing `#name` became a tag record when you updated, so
+nothing written before is lost; `#name` in text keeps working as before.
+
+Tags and attachments are blocks and block properties, so they are in the version
+history, undoable from History and Trash, and appear live in every window. The mode
+lives in the database for now (`tag_settings`); it moves into the build file once
+builds exist. Adding a keyword does not rescan old notes: their mentions are on the
+tag page, ready for **Link all**.
+
 ### LearnHarness extension
 
 **Study → LearnHarness → Start LearnHarness** opens the included
