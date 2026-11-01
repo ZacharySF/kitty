@@ -2504,6 +2504,8 @@ describe("mind-map pen", () => {
     await schema.getByRole("button", { name: /^Save map/ }).click();
     await schema.getByRole("button", { name: "Map saved" }).waitFor();
     await page.reload();
+    // The study cockpit reopens on its session section; the map stays the last one opened.
+    await openMindMaps(page);
     await strokes.waitFor();
     assert.equal(await strokes.getAttribute("data-ink-node"), examplesId);
     const saved = await page.evaluate(async () => {
