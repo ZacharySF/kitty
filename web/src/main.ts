@@ -4,7 +4,10 @@ import QuickNoteWindow from "./QuickNoteWindow.svelte";
 import { applySavedTheme } from "./lib/themes";
 import "@nunera/bracket/styles.css";
 import "@fontsource-variable/inter";
-import "@fontsource-variable/inter-tight";
+import "@fontsource-variable/fraunces/full.css";
+import "@fontsource-variable/space-grotesk";
+import "@fontsource-variable/newsreader/opsz-italic.css";
+import "@fontsource-variable/fredoka";
 import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
 

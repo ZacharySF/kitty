@@ -22,14 +22,19 @@
   --violet: var(--br-structure);
   --font-ui: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
-  --heading: "Inter Tight Variable", var(--font-ui);
+  /* Type roles: Fraunces page titles (--font-title, below), Space Grotesk mid-level
+     headings, Inter UI/body/numbers, Newsreader italic labels, JetBrains Mono code. */
+  --heading: "Space Grotesk Variable", var(--font-ui);
+  --font-label: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
+  --font-wordmark: "Fredoka Variable", var(--font-ui);
   --br-font-ui: var(--font-ui);
   --br-font-display: var(--heading);
   --br-text-xs: 11px;
   --br-text-sm: 12px;
-  --br-control-h: 40px;
-  --br-panel-p: 18px;
-  --br-gap: 12px;
+  /* Compact scale: 13px body, shorter controls and tighter panels. */
+  --br-control-h: 34px;
+  --br-panel-p: 14px;
+  --br-gap: 9px;
   --br-radius-sm: 6px;
   --br-radius-md: 8px;
   --br-radius-lg: 12px;
@@ -45,8 +50,8 @@ body {
   margin: 0;
   min-width: 320px;
   font-family: var(--font-ui);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.42;
   background: var(--canvas);
 }
 main:focus {
@@ -115,8 +120,8 @@ textarea {
   background: var(--chrome);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 11px 12px;
-  font-size: 14px;
+  padding: 8px 10px;
+  font-size: 13px;
 }
 /* Native select menus follow the active theme's color scheme. */
 select {
@@ -1190,18 +1195,7 @@ main > :is(.panel, .br-panel, .br-card) {
   select option:hover,
   select option:focus-visible { background: var(--wash); }
 }
-:root[data-theme="kitty"] .wordmark::after {
-  content: " .- .-. -.\A(   .'.   )\A '-.( * ).-'\A    '-' " / "";
-  pointer-events: none;
-  color: var(--violet);
-  opacity: 0.45;
-  white-space: pre;
-  font: 6px/1.1 var(--font-mono);
-}
-/* The blossom is decoration; in narrow windows its width would wrap the top bar onto a second row. */
-@media (forced-colors: active), (max-width: 1100px) {
-  :root[data-theme="kitty"] .wordmark::after { display: none; }
-}
+
 .workspace-groups { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 7px; }
 .workspace-groups button { border: 1px solid transparent; background: transparent; color: var(--muted); padding: 5px 8px; font: 500 11px var(--br-font-body); white-space: nowrap; }
 .workspace-groups button[aria-current="page"] { color: var(--ink); border-color: color-mix(in srgb, var(--violet) 35%, var(--border)); background: var(--wash); }
@@ -1219,19 +1213,12 @@ main > :is(.panel, .br-panel, .br-card) {
 }
 
 /* ── LearnHarness look ─────────────────────────────────────────────────────
-   Mono uppercase chrome, CMU serif titles, hairlines, pills and glass panels
+   Fraunces titles, Newsreader italic labels, hairlines, pills and glass panels
    over a soft nebula drawn from the active theme's graph colors. Surfaces are
    translucent (see GLASS in themes.ts); the desktop window itself is
    transparent when the shell marks <html data-window="transparent">. */
-@font-face {
-  font-family: "lh-cmu";
-  src: url("/fonts/cmunbx.ttf") format("truetype");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
 :root {
-  --font-title: "lh-cmu", "Iowan Old Style", Georgia, serif;
+  --font-title: "Fraunces Variable", "Iowan Old Style", Georgia, serif;
   --hairline: color-mix(in srgb, var(--br-line) 62%, transparent);
   --glass: blur(18px) saturate(140%);
   --nebula:
@@ -1261,36 +1248,51 @@ main > :is(.panel, .br-panel, .br-card) {
   background: color-mix(in srgb, var(--br-structure) 34%, transparent);
 }
 
-/* Titles: CMU serif, like LearnHarness lesson headings. */
+/* Titles: Fraunces with its soft, rounded terminals. */
 :root body :is(h1, h2, .br-dialog__title),
 :root body :is(dialog, [role="dialog"]) > header :is(h2, h3) {
   font-family: var(--font-title);
-  font-weight: 700;
-  letter-spacing: 0;
+  font-weight: 600;
+  font-variation-settings: "SOFT" 100, "WONK" 1;
+  letter-spacing: -0.01em;
 }
 :root body h1 {
-  font-size: clamp(28px, 2.8vw, 38px);
+  font-size: clamp(24px, 2.4vw, 32px);
   line-height: 1.15;
 }
 
-/* Chrome text: small tracked monospace capitals. */
-:root body :is(.eyebrow, .br-panel__header, .br-section-title, .br-card__title, .br-field__label, .count-pill, .demo-notice .badge, kbd) {
+/* Mid-level headings: panel, card and widget titles. */
+:root body :is(.br-panel__header, .br-card__title) {
+  font-family: var(--heading);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+/* Labels: pastel Newsreader italic for eyebrows, section titles, field labels and disclosures. */
+:root body :is(.eyebrow, .br-section-title, .br-field__label, summary) {
+  font-family: var(--font-label);
+  font-size: 14px;
+  font-style: italic;
+  font-weight: 450;
+  letter-spacing: 0.005em;
+  text-transform: none;
+}
+:root body :is(.eyebrow, .br-section-title) {
+  color: var(--violet);
+}
+/* Data chrome stays mono: counts, badges and key caps. */
+:root body :is(.count-pill, .demo-notice .badge, kbd) {
   font-family: var(--font-mono);
   font-size: 10.5px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 :root body :is(.br-btn:not([data-variant="link"]), .button, .pill, .text-button, .br-tab) {
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-:root body summary {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 /* Pills with hairlines; primary is LearnHarness's light-on-dark inversion. */
@@ -1350,14 +1352,17 @@ main > :is(.panel, .br-panel, .br-card) {
   background: transparent;
   padding: 2px 4px 10px;
 }
+/* Wordmark: rounded lowercase beside the cat in a filled pastel squircle. */
 :root body .wordmark {
-  font: 700 20px var(--font-title);
-  letter-spacing: 0;
+  gap: 8px;
+  font: 600 22px/1 var(--font-wordmark);
+  letter-spacing: 0.005em;
 }
 :root body .brand-mark {
-  border-radius: 999px;
-  border-color: var(--hairline);
-  background: color-mix(in srgb, var(--br-structure) 10%, transparent);
+  border: 0;
+  border-radius: 9px;
+  background: var(--c1);
+  color: var(--solid-void, var(--br-void));
 }
 :root body .workspace-groups {
   border-color: var(--hairline);

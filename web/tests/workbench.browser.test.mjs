@@ -311,3 +311,63 @@ describe("selected job views stay readable", () => {
     }
   }
 });
+
+describe("type system", () => {
+  test("titles, headings, labels and the wordmark render in their bundled faces at the compact scale", async () => {
+    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    await page.locator("h1").first().waitFor();
+    const type = await page.evaluate(async () => {
+      // Probes for elements Settings does not render; global type rules apply to them as anywhere else.
+      document.body.insertAdjacentHTML("beforeend", '<div id="type-probe"><h3>Heading</h3><span class="eyebrow">Label</span></div>');
+      void document.body.offsetHeight;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await document.fonts.ready;
+      const face = (selector) => {
+        const node = document.querySelector(selector);
+        if (!node) return null;
+        const style = getComputedStyle(node);
+        const family = style.fontFamily.split(",")[0].replace(/["']/g, "").trim();
+        return { family, loaded: document.fonts.check(`${style.fontStyle} ${style.fontWeight} 16px "${family}"`), style: style.fontStyle };
+      };
+      return {
+        body: getComputedStyle(document.body).fontSize,
+        title: face("h1"),
+        heading: face("#type-probe h3"),
+        panel: face(".br-panel__header"),
+        label: face("#type-probe .eyebrow"),
+        wordmark: face(".wordmark .word"),
+        loadedFamilies: [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family.replace(/["']/g, "")),
+      };
+    });
+    assert.equal(type.body, "13px");
+    assert.equal(type.title?.family, "Fraunces Variable");
+    assert.equal(type.heading?.family, "Space Grotesk Variable");
+    assert.equal(type.panel?.family, "Space Grotesk Variable");
+    assert.equal(type.label?.family, "Newsreader Variable");
+    assert.equal(type.label?.style, "italic");
+    assert.equal(type.wordmark?.family, "Fredoka Variable");
+    for (const family of ["Fraunces Variable", "Space Grotesk Variable", "Newsreader Variable", "Fredoka Variable", "Inter Variable"])
+      assert.ok(type.loadedFamilies.includes(family), `${family} was not downloaded and applied (loaded: ${type.loadedFamilies.join(", ")})`);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("flashcard view switcher", () => {
+  test("the current flashcard view stays readable and distinct on the default theme", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    const current = views.locator('button[aria-current="page"]');
+    await current.waitFor();
+    const other = views.locator("button:not([aria-current])").first();
+    const on = await painted(page, current);
+    const off = await painted(page, other);
+    assert.ok(on.ratio >= 4.5, `current view text contrast ${on.ratio.toFixed(2)} (${on.text} on ${on.fill})`);
+    assert.ok(off.ratio >= 4.5, `other view text contrast ${off.ratio.toFixed(2)} (${off.text} on ${off.fill})`);
+    assert.ok(contrast(on.fill, off.fill) >= 3, `current view is not distinct (${on.fill} vs ${off.fill})`);
+    const heights = await views.locator("button").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height));
+    assert.ok(Math.max(...heights) <= 40, `view buttons are stretched to ${Math.max(...heights)}px`);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
