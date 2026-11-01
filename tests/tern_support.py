@@ -17,7 +17,8 @@ The fake mirrors only the Tern 0.9.8 surface kitty! uses:
   starting with the daemon's earlier ones (unlike Tern) so tests need not race the
   follower's subscription;
 * ``tern --dir DIR`` is a native window: it attaches to that daemon as a window
-  client until it is terminated.
+  client until it is terminated. Like Tern's, when a window is already attached it
+  hands over to that window (Tern raises it) and exits 0 instead.
 
 Every invocation is appended to a JSON-lines log (argv, environment, cwd, pid) so
 tests can prove what ran, against which daemon, and that nothing outlived Quit.
@@ -199,7 +200,14 @@ def daemon(path):
         message = json.loads(line)
         if message["op"] == "window":
             with lock:
-                windows.append(message["pid"])
+                handover = bool(windows)
+                if not handover:
+                    windows.append(message["pid"])
+            if handover:
+                connection.sendall(b"raised\n")
+                connection.close()
+                return
+            connection.sendall(b"attached\n")
             reader.read()  # until the window goes away
             with lock:
                 windows.remove(message["pid"])
@@ -252,8 +260,10 @@ elif argv == ["events", "--filter", "pane_spawned,pane_exited"]:
         sys.stdout.buffer.flush()
 elif argv[:1] == ["--dir"] and len(argv) == 2:
     client = connect()
-    client.sendall((json.dumps({{"op": "window", "pid": os.getpid()}}) + "\n").encode())
     signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+    client.sendall((json.dumps({{"op": "window", "pid": os.getpid()}}) + "\n").encode())
+    if client.makefile("rb").readline() == b"raised\n":
+        sys.exit(0)
     while True:
         time.sleep(3600)
 else:

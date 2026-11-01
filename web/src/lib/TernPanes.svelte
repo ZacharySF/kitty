@@ -199,7 +199,7 @@
     color: var(--ink);
     font: 11px var(--font-mono);
   }
-  .run select { flex: 0 1 220px; }
+  .run select { flex: 0 1 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .run input { flex: 1; }
   button {
     border: 1px solid var(--hairline);

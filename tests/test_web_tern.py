@@ -165,9 +165,11 @@ def test_open_in_tern_runs_a_window_on_kittys_own_daemon_and_quit_leaves_nothing
         [block] = tab["blocks"]
         assert block["cwd"] == str(settings.root) and block["working"] is True
         assert set(block) == {"id", "title", "cwd", "program", "cols", "rows", "focused", "live", "exited", "working"}
-        # A second Open only adds a window: one daemon, one kitty session.
+        # A second Open hands over to the open window, which Tern raises: one window, daemon and session.
         assert running.request("/api/terminal/tern/open", {})[0] == 200
-        assert wait_for(lambda: status(running)["windows"] == 2)
+        assert wait_for(lambda: len(windows := [item for item in tern.invocations() if item["argv"][:1] == ["--dir"]]) == 2
+                        and not alive(windows[1]["pid"]))
+        assert status(running)["windows"] == 1
         assert len(status(running)["sessions"]) == 1
     invocations = tern.invocations()
     calls = [item["argv"] for item in invocations]
@@ -387,8 +389,9 @@ def test_pane_actions_need_kittys_session_running(tmp_path, tern):
     assert tern.calls() == [["--version"]]
 
 
-def test_focus_shows_the_pane_in_a_kitty_tern_window_opening_one_only_when_none_is_open(tmp_path, tern):
+def test_focus_raises_kittys_tern_window_on_the_pane_opening_one_when_none_is_open(tmp_path, tern):
     settings = make_root(tmp_path, ("terminal",))
+    root = str(settings.root)
     with site(settings) as running:
         running.request("/api/terminal/tern/new", {})
         code, body = running.request("/api/terminal/tern/new", {})
@@ -398,12 +401,15 @@ def test_focus_shows_the_pane_in_a_kitty_tern_window_opening_one_only_when_none_
         assert code == 200
         assert [block["focused"] for block in kitty_blocks(body)] == [True, False]
         assert wait_for(lambda: status(running)["windows"] == 1)
+        # With kitty!'s window open, `tern --dir` hands over to it (Tern raises it): no second window.
         assert running.request("/api/terminal/tern/focus", {"block": second["id"]})[0] == 200
         assert [block["focused"] for block in kitty_blocks(status(running))] == [False, True]
-        assert status(running)["windows"] == 1
+        windows = wait_for(lambda: len(found := [item for item in tern.invocations() if item["argv"] == ["--dir", root]]) == 2
+                           and not alive(found[1]["pid"]) and found)
+        assert status(running)["windows"] == 1 and alive(windows[0]["pid"])
     calls = tern.calls()
-    assert calls.count(["--dir", str(settings.root)]) == 1
-    assert ["focus", f"kitty/{first['id']}"] in calls and ["focus", f"kitty/{second['id']}"] in calls
+    assert calls.index(["focus", f"kitty/{first['id']}"]) < calls.index(["--dir", root])
+    assert ["focus", f"kitty/{second['id']}"] in calls
     assert all(not alive(item["pid"]) for item in tern.invocations())
 
 

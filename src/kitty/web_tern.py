@@ -12,7 +12,7 @@ POST /api/terminal/tern/start     {}  ->  status   (kitty!'s daemon and session)
 POST /api/terminal/tern/open      {}  ->  status   (plus a native Tern window on it)
 POST /api/terminal/tern/new       {}  ->  status   (a new pane in kitty!'s session)
 POST /api/terminal/tern/run       {"block": ID, "text": "one line"}  ->  status
-POST /api/terminal/tern/focus     {"block": ID}  ->  status   (opens a window when none is)
+POST /api/terminal/tern/focus     {"block": ID}  ->  status   (raises kitty!'s Tern window, or opens one)
 POST /api/terminal/tern/capture   {"block": ID}  ->  {note_id, block, truncated}
     Saves the pane's plain text (newest 60 KiB) as a quick note; needs the
     Workspace module (409 otherwise).

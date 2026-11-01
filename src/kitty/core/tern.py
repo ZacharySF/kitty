@@ -13,7 +13,9 @@ public commands are used, always with ``TERN_DAEMON_SOCKET`` set to that socket:
 * ``tern new session kitty --cwd WORKSPACE`` gives it kitty!'s session;
 * ``tern inspect --json`` reads sessions, panes and attached clients for status;
 * ``tern --dir WORKSPACE`` opens a native Tern window on that daemon; it shows
-  kitty!'s session and only starts a fresh session in the workspace when none exists;
+  kitty!'s session and only starts a fresh session in the workspace when none exists.
+  With a window already open on that daemon Tern raises it instead (the new process
+  exits), so focusing a pane runs ``tern focus`` and then ``tern --dir``;
 * ``tern new tab kitty --cwd WORKSPACE --json`` adds a pane to kitty!'s session;
 * ``tern run kitty/ID -- LINE``, ``tern focus kitty/ID`` and
   ``tern capture kitty/ID --scrollback`` act on one pane of kitty!'s session (the
@@ -423,8 +425,8 @@ class TernRuntime:
             if not created:
                 self._run(binary, "new", "tab", SESSION, "--cwd", str(self.workspace), "--json")
 
-    def _pane_locked(self, block: int) -> tuple[str, dict]:
-        """The binary and kitty!'s daemon's report, once `block` is a pane of kitty!'s session."""
+    def _pane_locked(self, block: int) -> str:
+        """The binary, once `block` is a pane of kitty!'s session on kitty!'s running daemon."""
         binary = self._binary()
         if not _listening(self.socket_path):
             raise TernNotRunning("kitty!'s Tern session is not running; open a Tern pane first")
@@ -438,7 +440,7 @@ class TernRuntime:
             raise TernUnavailable("kitty!'s Tern daemon did not report its sessions") from None
         if not listed:
             raise TernNoPane(f"kitty!'s Tern session has no pane {block}")
-        return binary, report
+        return binary
 
     def _pane_command(self, binary: str, verb: str, block: int, *arguments: str) -> str:
         try:
@@ -452,24 +454,24 @@ class TernRuntime:
         """Type one command line (and Enter) into a pane of kitty!'s session."""
         block, line = pane_id(block), command_line(text)
         with self._lock:
-            binary, _report = self._pane_locked(block)
+            binary = self._pane_locked(block)
             self._pane_command(binary, "run", block, "--", line)
 
     def focus(self, block: object) -> None:
-        """Show a pane of kitty!'s session in its Tern window, opening one when none is."""
+        """Show a pane of kitty!'s session in kitty!'s Tern window, raising it or opening one."""
         block = pane_id(block)
         with self._lock:
-            binary, report = self._pane_locked(block)
+            binary = self._pane_locked(block)
             self._pane_command(binary, "focus", block)
-            shown = any(client.get("kind") == "window" for client in report.get("clients") or [])
-            if not shown and not any(window.poll() is None for window in self._windows):
-                self._open_window_locked(binary)
+            # `tern focus` only changes what the window shows; `tern --dir` hands over to a window
+            # already on kitty!'s daemon (Tern raises it and the new process exits), else opens one.
+            self._open_window_locked(binary)
 
     def capture(self, block: object) -> tuple[str, bool]:
         """A pane's text with its scrollback, as plain text; the newest output when it is long."""
         block = pane_id(block)
         with self._lock:
-            binary, _report = self._pane_locked(block)
+            binary = self._pane_locked(block)
             raw = self._pane_command(binary, "capture", block, "--scrollback")
         return newest(plain_text(raw))
 
