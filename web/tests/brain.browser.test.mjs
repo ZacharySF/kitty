@@ -37,7 +37,11 @@ after(async () => {
 });
 
 /** A fresh profile whose `/api/brain` answers with `brain` (or `status`), and every other API with synthetic data. */
-async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, settings } = {}) {
+/**
+ * A fresh profile whose `/api/brain` answers with `brain` (or `status`), and every other API with synthetic data.
+ * The View panel is opened (most tests use its controls) unless `fresh` keeps the first-run view.
+ */
+async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, settings = {}, fresh = false } = {}) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 760 }, reducedMotion });
   await context.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -46,7 +50,7 @@ async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, set
     if (path.startsWith("/api/atlas/sections/")) return route.fulfill({ json: SECTION_GRAPH });
     return route.fulfill({ status: 503, json: { error: "synthetic harness" } });
   });
-  if (settings) await context.addInitScript((value) => localStorage.setItem("kitty.brain.view", value), JSON.stringify(settings));
+  if (!fresh) await context.addInitScript((value) => localStorage.setItem("kitty.brain.view", value), JSON.stringify({ panel: true, ...settings }));
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -64,6 +68,22 @@ const stage = (page) => page.locator("[data-brain-stage]");
 const legendDot = (page, key) => page.getByRole("list", { name: "Legend" }).locator(`[data-key="${key}"] i`).evaluate((element) => getComputedStyle(element).backgroundColor);
 const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
 const near = (a, b, tolerance = 0.02) => a.every((value, c) => Math.abs(value - b[c]) <= tolerance);
+const RECORD_IDS = BRAIN.nodes.filter((node) => node.kind === "record").map((node) => node.id);
+/** Projected bounding box of the cat's head (skull, ears, brain and whiskers: every record above its neck). */
+const headBox = (page) => page.evaluate((ids) => {
+  const box = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+  for (const id of ids) {
+    const world = window.brainHarness.worldPoint(id);
+    const point = world && world[1] > 3.7 ? window.brainHarness.screenPoint(id) : null;
+    if (!point) continue;
+    box.left = Math.min(box.left, point.x);
+    box.right = Math.max(box.right, point.x);
+    box.top = Math.min(box.top, point.y);
+    box.bottom = Math.max(box.bottom, point.y);
+  }
+  return box;
+}, RECORD_IDS);
+const within = (box, area) => box.left >= area.left && box.right <= area.right && box.top >= area.top && box.bottom <= area.bottom;
 
 async function brainReady(page) {
   await drawn(page).waitFor({ timeout: 30_000 });
@@ -270,16 +290,36 @@ describe("brain stage", () => {
     await context.close();
   });
 
-  test("the view panel collapses and remembers it", async () => {
-    const { page, context } = await open();
+  test("the View panel starts closed with the cat's head in view; open, it reframes the cat beside it and is remembered", async () => {
+    const { page, problems, context } = await open({ fresh: true });
     await mount(page, "stage");
     await brainReady(page);
     const toggle = page.getByRole("button", { name: "View", exact: true });
-    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
-    await toggle.click();
     assert.equal(await toggle.getAttribute("aria-expanded"), "false");
     assert.equal(await page.getByRole("group", { name: "Layout" }).count(), 0);
+    const area = await stage(page).evaluate((element) => element.getBoundingClientRect().toJSON());
+    const closed = await headBox(page);
+    assert.ok(within(closed, area), `the head ${JSON.stringify(closed)} leaves the stage ${JSON.stringify(area)}`);
+
+    await toggle.click();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+    assert.equal((await stored(page)).panel, true);
+    const panel = await page.locator(".panel").evaluate((element) => element.getBoundingClientRect().toJSON());
+    let beside = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      beside = await headBox(page);
+      if (beside.right <= panel.left - 4) break;
+      await page.waitForTimeout(100);
+    }
+    assert.ok(beside.right <= panel.left - 4, `the panel (from x ${panel.left}) covers the head (to x ${beside.right})`);
+    assert.ok(within(beside, { ...area, right: panel.left }), "the head stays inside the stage beside the panel");
+
+    await mount(page, "stage");
+    await brainReady(page);
+    assert.equal(await page.getByRole("button", { name: "View", exact: true }).getAttribute("aria-expanded"), "true", "the open panel is remembered");
+    await page.getByRole("button", { name: "View", exact: true }).click();
     assert.equal((await stored(page)).panel, false);
+    assert.deepEqual(problems, []);
     await context.close();
   });
 

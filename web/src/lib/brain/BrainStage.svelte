@@ -1,6 +1,6 @@
 <!-- The Brain look on home: every record and every edit in the workspace as one glowing point. -->
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { api, type BrainData, type BrainNode } from "../api";
   import { webglAvailable } from "../graph3d";
   import { THEME_EVENT } from "../themes";
@@ -249,10 +249,19 @@
     }
   }
 
+  /** The open View panel covers the stage's right edge: the scene frames the cat left of it. */
+  function measureInset() {
+    if (!scene || !root) return;
+    const panel = view.panel ? root.querySelector(".controls .panel") : null;
+    scene.setInset(panel ? root.getBoundingClientRect().right - panel.getBoundingClientRect().left + 8 : 0);
+  }
+
   onMount(() => {
     let disposed = false;
     let created: BrainScene | null = null;
     void load();
+    const stageSize = new ResizeObserver(() => measureInset());
+    if (root) stageSize.observe(root);
     if (!renderProblem)
       void import("./brainScene").then(({ createBrainScene }) => {
         if (disposed || !host) return;
@@ -285,6 +294,7 @@
     window.addEventListener(THEME_EVENT, onTheme);
     return () => {
       disposed = true;
+      stageSize.disconnect();
       window.removeEventListener(THEME_EVENT, onTheme);
       created?.destroy();
       scene = null;
@@ -335,6 +345,10 @@
   });
   $effect(() => { scene?.setMotion(view.turning && !reducedMotion, view.speed); });
   $effect(() => { scene?.setPointSize(view.pointSize); });
+  $effect(() => {
+    void view.panel;
+    if (scene) void tick().then(measureInset);
+  });
   $effect(() => { scene?.setActive(active); });
   $effect(() => {
     if (focusKey !== null && model && !model.groups.some((group) => group.key === focusKey)) focusKey = null;

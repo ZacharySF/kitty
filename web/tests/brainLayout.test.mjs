@@ -204,6 +204,7 @@ test("view settings persist, coerce junk and reset to defaults", () => {
   saveBrainView({ ...DEFAULT_BRAIN_VIEW, background: "black" });
   assert.equal(loadBrainView().background, "black");
   assert.equal(DEFAULT_BRAIN_VIEW.background, "transparent");
+  assert.equal(DEFAULT_BRAIN_VIEW.panel, false, "the View panel starts closed");
   localStorage.setItem(BRAIN_VIEW_KEY, JSON.stringify({ layout: "donut", groupBy: "type", speed: 99, pointSize: "big", lines: "yes", background: "plaid" }));
   assert.deepEqual(loadBrainView(), { ...DEFAULT_BRAIN_VIEW, groupBy: "type", speed: 3 });
   localStorage.setItem(BRAIN_VIEW_KEY, "{not json");

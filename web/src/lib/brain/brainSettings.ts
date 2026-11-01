@@ -44,7 +44,7 @@ export const DEFAULT_BRAIN_VIEW: BrainView = {
   scaffold: true,
   pointSize: 1,
   background: "transparent",
-  panel: true,
+  panel: false,
 };
 
 const oneOf = <T extends string>(options: { id: T }[], value: unknown, fallback: T): T =>

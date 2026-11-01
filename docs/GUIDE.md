@@ -616,7 +616,9 @@ nearest the brain, with sparse nerves down the four legs and a faint halo of
 edits around the records they changed. The cat builds itself from the tail tip
 up. Colours come from the active theme and change with it; inside a group, each
 record type and each kind of edit (save, create, delete, status, review…) has its
-own shade. Its View panel sets the layout (Anatomy, Spheres, Wheel), grouping
+own shade. The **View** button opens its View panel (closed at first; whether it is
+open is remembered, and while it is open the cat is framed beside it). It sets the
+layout (Anatomy, Spheres, Wheel), grouping
 (section, navigation group or type), labels, turning and speed, edit→record
 lines, the body scaffold, the background (Transparent, or Black for the original
 night sky), point size and colours: pick any group's colour from the theme's

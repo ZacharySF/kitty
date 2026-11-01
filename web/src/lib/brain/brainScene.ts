@@ -51,6 +51,8 @@ export interface BrainScene {
   setBackdrop(backdrop: BrainBackdrop): void;
   setMotion(turning: boolean, speed: number): void;
   setPointSize(scale: number): void;
+  /** Pixels covered on the right (the open View panel): the figure is framed in the stage left of them. */
+  setInset(right: number): void;
   setActive(active: boolean): void;
   /** Viewport position of node `index`, or null when it is behind the camera. */
   screenPoint(index: number): { x: number; y: number } | null;
@@ -194,6 +196,9 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
   let cameraTo = new THREE.Vector3();
   let fitted = false;
   let relayout = false;
+  let inset = 0;
+  let viewWidth = 1;
+  let viewHeight = 1;
 
   let active = true;
   let intersecting = true;
@@ -209,7 +214,8 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
 
   function fitDistance() {
     const vertical = THREE.MathUtils.degToRad(camera.fov) / 2;
-    const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
+    // Fit the width left of the inset, not the whole canvas.
+    const horizontal = Math.atan(Math.tan(vertical) * Math.max(0.2, (viewWidth - Math.min(inset, viewWidth * 0.6)) / viewHeight));
     return (frame.radius / Math.sin(Math.min(vertical, horizontal))) * 1.02;
   }
   function homePosition() {
@@ -229,8 +235,15 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
   function resize() {
     const width = Math.max(1, host.clientWidth);
     const height = Math.max(1, host.clientHeight);
+    viewWidth = width;
+    viewHeight = height;
     renderer.setSize(width, height, false);
-    camera.aspect = width / height;
+    // With an inset, the canvas shows the right part of a wider frame whose centre is the middle
+    // of the uncovered area, so the figure sits there instead of under the panel.
+    const shift = Math.min(inset, width * 0.6);
+    camera.aspect = (width + shift) / height;
+    if (shift > 0) camera.setViewOffset(width + shift, height, shift, 0, width, height);
+    else camera.clearViewOffset();
     camera.updateProjectionMatrix();
     const scale = renderer.getDrawingBufferSize(new THREE.Vector2()).y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     material.uniforms.uScale.value = scale;
@@ -577,6 +590,17 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
     setMotion(on, nextSpeed) {
       turning = on;
       speed = nextSpeed;
+      invalidate();
+    },
+    setInset(right) {
+      const next = Math.max(0, Math.round(right));
+      if (next === inset) return;
+      inset = next;
+      resize();
+      if (fitted) {
+        cameraFrom = null;
+        camera.position.setLength(fitDistance());
+      }
       invalidate();
     },
     setPointSize(scale) {

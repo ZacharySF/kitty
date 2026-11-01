@@ -644,8 +644,8 @@ function anatomy(data: BrainData, model: BrainModel, parents: Int32Array, times:
     const c = along(SPINE, 0.06 + (0.88 * (k + 0.5)) / cordOnly.length);
     anchors.set([c[0], c[1] + 0.22, c[2] + 0.3], g * 3);
   });
-  // Framed a little left of centre, so the face clears the View panel, and low, so the cat sits above the legend.
-  return { anchors, regions: null, whiskers: Int32Array.from(whiskers), center: [0.2, 3.1, 0] as Vec, radius: 4.4 };
+  // Framed low, so the cat sits above the legend; the open View panel reframes it (scene inset).
+  return { anchors, regions: null, whiskers: Int32Array.from(whiskers), center: [-0.2, 3.1, 0] as Vec, radius: 4.4 };
 }
 
 // ── Spheres ────────────────────────────────────────────────────────────────
