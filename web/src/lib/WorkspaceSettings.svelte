@@ -5,6 +5,7 @@
   import ThemePicker from "./ThemePicker.svelte";
   import DesktopSettings from "./DesktopSettings.svelte";
   import AccountSettings from "./AccountSettings.svelte";
+  import ConnectedApps from "./ConnectedApps.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
   import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
   import GraphLookToggle from "./GraphLookToggle.svelte";
@@ -87,6 +88,7 @@
   <Panel title="Appearance"><div class="setting-row"><span>Theme</span><ThemePicker /></div></Panel>
   <DesktopSettings />
   <AccountSettings />
+  <ConnectedApps />
   <div data-tutorial="modules">
   <Panel title="Modules">
     <p class="muted">Turn parts of kitty on or off. A saved choice applies the next time kitty starts; your data is never removed.</p>

@@ -18,6 +18,7 @@
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
+  import PairingPrompt from "./lib/PairingPrompt.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -387,6 +388,7 @@
   {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
   {#if studyTools && view !== "calendar"}<CalendarReminders />{/if}
   <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
+    {#if workspace && view !== "settings"}<PairingPrompt onsettings={() => navigate("settings")} />{/if}
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">
         <Badge label="DEMO" intent="warning" size="sm" />Synthetic workspace.
         Local changes work; external actions are disabled.
