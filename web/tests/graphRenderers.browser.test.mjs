@@ -226,3 +226,49 @@ describe("look switching and preference", () => {
     await page.close();
   });
 });
+
+/** Mean colour of four 40px patches in the stage corners, decoded in the page from a screenshot. */
+async function cornerColour(page) {
+  const rect = await call(page, "stageRect");
+  const shot = await page.screenshot({ clip: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } });
+  return page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height });
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const size = 40;
+    const sums = [0, 0, 0];
+    let count = 0;
+    for (const [x, y] of [[0, 0], [image.width - size, 0], [0, image.height - size], [image.width - size, image.height - size]]) {
+      const data = context.getImageData(x, y, size, size).data;
+      for (let index = 0; index < data.length; index += 4) {
+        sums[0] += data[index]; sums[1] += data[index + 1]; sums[2] += data[index + 2]; count += 1;
+      }
+    }
+    return sums.map((sum) => sum / count);
+  }, shot.toString("base64"));
+}
+
+describe("3d atmosphere", () => {
+  test("the 3D graph sits in a pastel nebula sky that follows theme changes", async () => {
+    const { page, problems } = await harness();
+    await call(page, "mount", "3d");
+    // The page behind the stage is #14111b; a transparent 3D background would show exactly that.
+    const before = await cornerColour(page);
+    const page_bg = [0x14, 0x11, 0x1b];
+    assert.ok(before.some((value, index) => Math.abs(value - page_bg[index]) > 2), `corners show the bare page (${before.map(Math.round)})`);
+    await page.evaluate(() => {
+      const stage = document.getElementById("stage");
+      stage.style.setProperty("--c1", "#40ff40");
+      stage.style.setProperty("--c4", "#40ff40");
+      window.dispatchEvent(new CustomEvent("kitty:theme", { detail: "test" }));
+    });
+    await call(page, "settled");
+    const after = await cornerColour(page);
+    assert.ok(after[1] - before[1] > 2, `sky did not take the new theme colours (green ${before[1].toFixed(1)} → ${after[1].toFixed(1)})`);
+    assert.deepEqual(problems, []);
+    await page.close();
+  });
+});
