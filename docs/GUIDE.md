@@ -423,7 +423,13 @@ This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimiz
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.
 Likewise, Notes implements the workflows above, not the Obsidian plugin ecosystem.
 
-**Study** opens mind maps first. Create Lecture, Chapter or Exam review maps,
+**Study** opens a three-column cockpit: subjects (with this week's minutes in
+their colours), concepts and tasks on the left pick what to study; the session
+timer sits in the centre; the fourteen-step guide, session notes and due spaced
+returns sit on the right. Under 900px wide it stacks into one column, and
+**Focus mode** keeps only the timer and the next tasks. Progress, History,
+Exams & plans, Mind map, Helpers and Timer settings are tabs beside it.
+In **Mind map**, create Lecture, Chapter or Exam review maps,
 or create one from a subject. Click a node, then Tab adds a child, Enter adds a
 sibling, typing renames, arrows navigate and Space collapses a branch.
 Tree/radial layouts, an outline, linked note cards and links between maps help

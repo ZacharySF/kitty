@@ -177,12 +177,29 @@ def test_midnight_timezone_split_and_completion_day_streak(workspace):
     start = datetime(2026, 10, 14, 3, 50, tzinfo=UTC)
     manual(conn, start, 1200)
     local = study.statistics(conn, timezone_name='America/New_York', now=BASE)
-    assert local['days'] == [{'date': '2026-10-13', 'seconds': 600}, {'date': '2026-10-14', 'seconds': 600}]
+    assert local['days'] == [{'date': '2026-10-13', 'seconds': 600, 'subjects': [{'id': None, 'seconds': 600}]},
+                             {'date': '2026-10-14', 'seconds': 600, 'subjects': [{'id': None, 'seconds': 600}]}]
     assert local['daily_streak'] == 1
     utc = study.statistics(conn, timezone_name='UTC', now=BASE)
-    assert utc['days'] == [{'date': '2026-10-14', 'seconds': 1200}]
+    assert utc['days'] == [{'date': '2026-10-14', 'seconds': 1200, 'subjects': [{'id': None, 'seconds': 1200}]}]
     assert utc['daily_streak'] == 1
     assert study.statistics(conn, timezone_name='Pacific/Honolulu', now=BASE)['today'] == '2026-10-13'
+
+
+def test_days_split_study_time_by_subject_largest_first(workspace):
+    conn = workspace.conn
+    chem = study.save_entity(conn, 'subjects', {'name': 'Chemistry', 'color': '#e06c75'})['item']
+    math = study.save_entity(conn, 'subjects', {'name': 'Maths', 'color': '#61afef'})['item']
+    day_start = datetime(2026, 10, 13, 14, 0, tzinfo=UTC)
+    manual(conn, day_start, 600, subject_id=chem['id'])
+    manual(conn, day_start + timedelta(hours=1), 1500, subject_id=math['id'])
+    manual(conn, day_start + timedelta(hours=2), 300)
+    stats = study.statistics(conn, timezone_name='America/New_York', now=BASE)
+    expected = [{'id': math['id'], 'seconds': 1500}, {'id': chem['id'], 'seconds': 600}, {'id': None, 'seconds': 300}]
+    assert stats['days'] == [{'date': '2026-10-13', 'seconds': 2400, 'subjects': expected}]
+    tuesday = next(item for item in stats['history']['days'] if item['date'] == '2026-10-13')
+    assert tuesday['subjects'] == expected
+    assert next(item for item in stats['history']['days'] if item['date'] == '2026-10-12')['subjects'] == []
 
 
 def test_spring_dst_actual_duration_and_login_never_create_streak(workspace):
@@ -190,7 +207,7 @@ def test_spring_dst_actual_duration_and_login_never_create_streak(workspace):
     start = datetime(2026, 3, 8, 6, 30, tzinfo=UTC)
     manual(conn, start, 7200)
     stats = study.statistics(conn, timezone_name='America/New_York', now=start + timedelta(hours=4))
-    assert stats['days'] == [{'date': '2026-03-08', 'seconds': 7200}]
+    assert stats['days'] == [{'date': '2026-03-08', 'seconds': 7200, 'subjects': [{'id': None, 'seconds': 7200}]}]
     assert stats['daily_streak'] == 1
     empty_day = study.workspace(conn, now=BASE)
     assert empty_day['stats']['daily_streak'] == 0

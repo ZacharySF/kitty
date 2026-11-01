@@ -517,7 +517,7 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
     start, end, previous, following = _history_range(today, history_period, history_date)
     start_key, end_key = start.isoformat(), end.isoformat()
     history_subjects, history_sessions = {}, []
-    daily, subjects, scopes = {}, {}, {}
+    daily, subjects, scopes, daily_subjects = {}, {}, {}, {}
     completed_days, completed_weeks = set(), set()
     total = 0
     sessions = conn.execute("SELECT * FROM study_sessions ORDER BY ended_at,id").fetchall()
@@ -531,6 +531,8 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
         for raw_start, raw_end in json.loads(row["segments_json"]):
             for local_day, seconds in _split_segment(timestamp(raw_start), timestamp(raw_end), tz):
                 daily[local_day] = daily.get(local_day, 0) + seconds
+                by_subject = daily_subjects.setdefault(local_day, {})
+                by_subject[row["subject_id"]] = by_subject.get(row["subject_id"], 0) + seconds
                 scope = (row["subject_id"], row["project_id"], local_day)
                 scopes[scope] = scopes.get(scope, 0) + seconds
                 if start_key <= local_day < end_key:
@@ -553,9 +555,15 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
     colors = {row["id"]: row["color"] for row in conn.execute("SELECT id,color FROM study_subjects")}
     heatmap = [{"date": (today - timedelta(days=83 - i)).isoformat(),
                 "seconds": daily.get((today - timedelta(days=83 - i)).isoformat(), 0)} for i in range(84)]
-    history_days = [{"date": (start + timedelta(days=i)).isoformat(),
-                     "seconds": daily.get((start + timedelta(days=i)).isoformat(), 0)}
-                    for i in range((end - start).days)]
+
+    def day_entry(key):
+        # Each day's study split by subject, largest first, so views can tint a
+        # day by its main subject or stack it in subject colours.
+        split = sorted(daily_subjects.get(key, {}).items(), key=lambda item: (-item[1], item[0] is None, item[0] or 0))
+        return {"date": key, "seconds": daily.get(key, 0),
+                "subjects": [{"id": subject_id, "seconds": seconds} for subject_id, seconds in split]}
+
+    history_days = [day_entry((start + timedelta(days=i)).isoformat()) for i in range((end - start).days)]
     history = {"period": history_period, "start": start_key, "end": end_key,
                "previous": previous.isoformat(), "next": following.isoformat(),
                "seconds": sum(item["seconds"] for item in history_days), "days": history_days,
@@ -568,7 +576,7 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
             "daily_streak": _streak(completed_days, today, timedelta(days=1)),
             "weekly_streak": _streak(completed_weeks, monday, timedelta(days=7)),
             "session_count": len(sessions), "heatmap": heatmap, "history": history,
-            "days": [{"date": key, "seconds": value} for key, value in sorted(daily.items())],
+            "days": [day_entry(key) for key in sorted(daily)],
             "subjects": [{"id": key, "name": subject_names.get(key, "Unassigned"), "color": colors.get(key, "#7c6fdb"), "seconds": value} for key, value in subjects.items()],
             "goals": goals}
 

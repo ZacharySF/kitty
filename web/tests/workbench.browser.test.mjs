@@ -626,3 +626,46 @@ describe("Liquid Glass theme", () => {
     await context.close();
   });
 });
+
+describe("study cockpit", () => {
+  test("the Study hub is three columns (subjects & tasks, timer, guide & notes) with every tool tab visible, and one column in a narrow pane", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    page.on("dialog", (dialog) => dialog.accept());
+    const left = page.getByRole("region", { name: "Subjects & tasks" });
+    const centre = page.getByRole("region", { name: "Session timer" });
+    const right = page.getByRole("region", { name: "Guide & notes" });
+    await centre.waitFor();
+    const stop = centre.getByRole("button", { name: /^Stop/ });
+    if (await stop.isEnabled()) {
+      await stop.click();
+      await centre.getByRole("button", { name: /Start session/ }).waitFor();
+    }
+    let [a, b, c] = await Promise.all([rect(left), rect(centre), rect(right)]);
+    assert.ok(a.right <= b.left + 1 && b.right <= c.left + 1, "columns are not side by side");
+    assert.ok(Math.abs(a.top - b.top) < 2 && Math.abs(b.top - c.top) < 2, "columns do not share a row");
+    assert.equal(await page.getByText("Planning & tools").count(), 0, "tools are still behind a disclosure");
+    const tabs = page.getByRole("navigation", { name: "Study tools" });
+    for (const name of ["Study session", "Progress", "History", "Exams & plans", "Mind map", "Helpers", "Timer settings"])
+      assert.ok(await tabs.getByRole("button", { name, exact: true }).isVisible(), `${name} tab is not visible`);
+    assert.ok(await right.getByRole("region", { name: "Fourteen-step study guide" }).isVisible(), "guide is not in the right column");
+    assert.ok(await right.getByRole("textbox", { name: /Session notes/ }).isVisible(), "session notes are not in the right column");
+    const subject = `Cockpit subject ${Date.now()}`;
+    await left.getByRole("button", { name: "Add subject" }).click();
+    const editor = page.getByRole("region", { name: "Edit subjects" });
+    await editor.getByLabel("Name").fill(subject);
+    await editor.getByRole("button", { name: "Save" }).click();
+    const pick = left.getByRole("button", { name: new RegExp(`^${subject}`) });
+    await pick.click();
+    assert.equal(await pick.getAttribute("aria-pressed"), "true");
+    await centre.getByText(subject).waitFor();
+    await page.setViewportSize(MINIMUM);
+    await page.waitForFunction(() => {
+      const [x, y] = ["Subjects & tasks", "Session timer"].map((name) => document.querySelector(`[aria-label="${name}"]`).getBoundingClientRect());
+      return Math.abs(x.left - y.left) < 2;
+    });
+    [a, b, c] = await Promise.all([rect(left), rect(centre), rect(right)]);
+    assert.ok(b.top >= a.bottom - 1 && c.top >= b.bottom - 1, "a narrow pane is not one column");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
