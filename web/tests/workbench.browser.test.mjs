@@ -788,3 +788,33 @@ describe("study plans", () => {
     await context.close();
   });
 });
+
+describe("study streak", () => {
+  test("manual logging fills persisted streak segments and cancel does not log", async () => {
+    const { page, context, problems } = await open("study", { dock: "hidden" });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
+    const ring = page.getByRole("region", { name: "Study streak" });
+    const before = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
+    await ring.getByRole("button").click();
+    const editor = page.getByRole("region", { name: "Edit completed session" });
+    await editor.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.equal(await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats.session_count), before.session_count);
+    await ring.getByRole("button").click();
+    await editor.getByLabel("Start timestamp with explicit offset").fill(new Date(Date.now() - 20 * 60_000).toISOString());
+    await editor.getByLabel("IANA timezone").fill("UTC");
+    await editor.getByLabel("Duration in minutes").fill("15");
+    await editor.getByRole("button", { name: "Save completed session" }).click();
+    await ring.getByText("Today's study is logged.", { exact: true }).waitFor();
+    const saved = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
+    assert.equal(saved.session_count, before.session_count + 1);
+    assert.ok(saved.daily_streak >= 1);
+    assert.equal(await ring.locator("path.filled").count(), saved.daily_streak);
+    await page.reload();
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
+    assert.match(await ring.getByRole("img").getAttribute("aria-label"), new RegExp(`^${saved.daily_streak} day streak`));
+    await ring.screenshot({ path: "/tmp/kitty-shots/q21-streak.png" });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../api";
+  import StreakRing from "./StreakRing.svelte";
   import { minutesLabel, type Collection, type Item, type StudyDay, type Workspace } from "./types";
 
   /**
@@ -8,10 +9,11 @@
    * share ring, a month calendar tinted by each day's main subject with
    * weekly-goal checks, and goal rings for today, this week and flashcard reviews.
    */
-  let { data, period, onedit }: {
+  let { data, period, onedit, onlog }: {
     data: Workspace;
     period: "week" | "month";
     onedit: (kind: Collection, item?: Item, defaults?: Partial<Item>) => void;
+    onlog: () => void;
   } = $props();
 
   const subject = (id: number | null) => data.subjects.find((item) => item.id === id);
@@ -98,6 +100,7 @@
 </script>
 
 <div class="progress">
+  <StreakRing streak={data.stats.daily_streak} logged={data.stats.today_seconds > 0} {onlog} />
   <section class="panel stacked" aria-label="Study by subject">
     <div class="bars">
       <header>
