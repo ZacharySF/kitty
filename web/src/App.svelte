@@ -18,6 +18,8 @@
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
+  import PetalDrift from "./lib/PetalDrift.svelte";
+  import { APPEARANCE_EVENT, savedAppearance, type Appearance } from "./lib/appearance";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -256,6 +258,8 @@
     });
   });
   let topBar = $state<HTMLElement>();
+  let background = $state(savedAppearance().background);
+  const appearanceChanged = (event: Event) => (background = (event as CustomEvent<Appearance>).detail.background);
   let panelFullscreen: PanelFullscreen | undefined;
   onMount(() => {
     readRoute();
@@ -265,6 +269,7 @@
     window.addEventListener("kitty-study-focus", studyFocus);
     // Capture before terminal/editor handlers consume Ctrl+W as word deletion.
     window.addEventListener("keydown", closeTabShortcut, true);
+    window.addEventListener(APPEARANCE_EVENT, appearanceChanged);
     // Page-level sticky panels sit below the pinned bar, whose height wraps responsively.
     const measure = new ResizeObserver(([entry]) =>
       document.documentElement.style.setProperty("--workbench-top", `${Math.ceil(entry.borderBoxSize[0].blockSize)}px`));
@@ -275,6 +280,7 @@
       window.removeEventListener("kitty-study-text", studyText);
       window.removeEventListener("kitty-study-focus", studyFocus);
       window.removeEventListener("keydown", closeTabShortcut, true);
+      window.removeEventListener(APPEARANCE_EVENT, appearanceChanged);
     };
   });
   function closeTabShortcut(event: KeyboardEvent) {
@@ -338,6 +344,7 @@
 </script>
 
 <svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} />
+{#if background === "petals"}<PetalDrift />{/if}
 <svelte:head><title>{title} · kitty!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>
 <div class="workbench" class:atlas-home={view === "today"}>

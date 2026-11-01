@@ -1202,6 +1202,7 @@ main > :is(.panel, .br-panel, .br-card) {
 .workspace-groups button:hover { color: var(--ink); background: var(--surface-raised); }
 @media (max-width: 760px) { .workspace-groups { order: 9; overflow-x: auto; } }
 
+/* Settings → Appearance (lib/appearance.ts) mirrors its choices onto <html data-*>. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1210,6 +1211,32 @@ main > :is(.panel, .br-panel, .br-card) {
     transition: none !important;
     animation: none !important;
   }
+}
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+  scroll-behavior: auto !important;
+  transition: none !important;
+  animation: none !important;
+}
+:root[data-density="comfortable"] {
+  --br-text-xs: 12px;
+  --br-text-sm: 13px;
+  --br-control-h: 38px;
+  --br-panel-p: 16px;
+  --br-gap: 11px;
+}
+:root[data-density="comfortable"] body {
+  font-size: 14px;
+}
+/* Without the motif an icon's blossom shrinks back to its plain centre dot,
+   and the theme picker's ASCII blossom goes. */
+:root[data-motif="off"] svg .blossom path,
+:root[data-motif="off"] span.blossom {
+  display: none;
+}
+:root[data-motif="off"] svg .blossom circle {
+  fill: currentColor;
 }
 
 /* ── LearnHarness look ─────────────────────────────────────────────────────
@@ -1228,6 +1255,10 @@ main > :is(.panel, .br-panel, .br-card) {
     radial-gradient(45vmax 40vmax at 16% 94%, color-mix(in srgb, var(--c4) 8%, transparent), transparent 70%);
   background: var(--solid-void, var(--br-void));
 }
+/* Appearance → Titles: Plain sets page titles in the heading face. */
+:root[data-title-font="plain"] {
+  --font-title: var(--heading);
+}
 :root body {
   background: var(--nebula), var(--solid-void, var(--br-void));
   background-attachment: fixed;
@@ -1243,6 +1274,18 @@ main > :is(.panel, .br-panel, .br-card) {
 }
 :root[data-surface="quick-note"] body {
   overflow: hidden;
+}
+/* Petal drift (lib/PetalDrift.svelte) sits at z-index -1, which paints above the
+   root's background but below the body's: the backdrop moves up to the root. */
+:root[data-background="petals"]:not([data-surface="quick-note"]) {
+  background: var(--nebula), var(--solid-void, var(--br-void));
+  background-attachment: fixed;
+}
+:root[data-background="petals"][data-window="transparent"]:not([data-surface="quick-note"]) {
+  background: var(--nebula), color-mix(in srgb, var(--solid-void, #141414) 74%, transparent);
+}
+:root[data-background="petals"]:not([data-surface="quick-note"]) body {
+  background: transparent;
 }
 ::selection {
   background: color-mix(in srgb, var(--br-structure) 34%, transparent);

@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { Button } from "@nunera/bracket";
   import { api } from "./api";
+  import { prefersReducedMotion } from "./appearance";
   import Icon from "./Icon.svelte";
   import HomeAgents from "./HomeAgents.svelte";
   import HomeQuickNote from "./HomeQuickNote.svelte";
@@ -50,9 +51,7 @@
   } = $props();
 
   const atlasId = `atlas-${pane.id}`;
-  const reducedMotion =
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reducedMotion = prefersReducedMotion();
 
   const enabled = $derived(activeModules.enabled);
   const workspaceTools = $derived(enabled.includes("workspace"));

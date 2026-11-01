@@ -765,3 +765,77 @@ describe("home widgets", () => {
     await context.close();
   });
 });
+
+describe("appearance settings", () => {
+  test("Settings → Appearance: one panel with a live preview, presets that set everything, single changes after, saved and applied before mount", async () => {
+    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    await context.addInitScript(() => {
+      new MutationObserver((_, observer) => {
+        if (!document.getElementById("app")?.firstElementChild) return;
+        window.__atMount = { ...document.documentElement.dataset };
+        observer.disconnect();
+      }).observe(document, { childList: true, subtree: true });
+    });
+    const panel = page.getByRole("region", { name: "Appearance" });
+    await panel.waitFor();
+    const preview = panel.getByRole("img", { name: /preview/i });
+    const radio = (name) => panel.getByRole("radio", { name, exact: true });
+    const root = (key) => page.evaluate((key) => document.documentElement.dataset[key], key);
+    const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem("kitty.appearance") ?? "null"));
+    const titleFont = () => page.getByRole("heading", { level: 1, name: "Settings" }).evaluate((node) => getComputedStyle(node).fontFamily);
+    const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
+
+    // Defaults: Kitty, Fraunces titles, compact 13px, full motion, 2D, blossoms, nebula.
+    for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
+    assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), true);
+    assert.match(await titleFont(), /Fraunces/);
+    assert.equal(await bodySize(), "13px");
+
+    // A preset sets every control at once, the app and the preview follow.
+    await panel.getByRole("button", { name: /^Minimal/ }).click();
+    for (const name of ["Harness", "Plain", "Compact · 13px", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
+    assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), false);
+    assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "true");
+    assert.equal(await root("theme"), "harness");
+    assert.doesNotMatch(await titleFont(), /Fraunces/);
+    assert.equal(await root("motion"), "reduced");
+    assert.equal(await preview.getAttribute("data-title-font"), "plain");
+    assert.deepEqual(await saved(), { titleFont: "plain", density: "compact", motion: "reduced", motif: false, background: "nebula" });
+
+    // Any single setting still changes afterwards; the preset no longer matches.
+    await radio("Comfortable · 14px").check();
+    assert.equal(await bodySize(), "14px");
+    assert.equal(await preview.getAttribute("data-density"), "comfortable");
+    assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "false");
+    assert.equal((await saved()).density, "comfortable");
+    assert.equal((await saved()).titleFont, "plain", "changing density reset another setting");
+
+    // Cozy: petal drift behind the app and a 3D atlas; reduced motion pauses the petals.
+    await panel.getByRole("button", { name: /^Cozy/ }).click();
+    assert.equal(await radio("3D").isChecked(), true);
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "3d");
+    const petals = page.locator(".petal-drift");
+    await petals.waitFor({ state: "attached" });
+    assert.ok((await petals.locator("svg").count()) >= 8, "too few petals");
+    const falling = () => petals.locator(".lane").first().evaluate((node) => getComputedStyle(node).animationName);
+    assert.notEqual(await falling(), "none", "petals do not drift");
+    await radio("Reduced").check();
+    assert.equal(await falling(), "none", "petals still drift under reduced motion");
+    await radio("Full").check();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    assert.equal(await falling(), "none", "petals drift although the system asks for reduced motion");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+
+    // Saved choices are applied before the app mounts.
+    const cozy = await saved();
+    await page.reload();
+    await panel.waitFor();
+    const atMount = await page.evaluate(() => window.__atMount);
+    assert.equal(atMount.background, "petals");
+    assert.equal(atMount.density, cozy.density);
+    assert.equal(atMount.titleFont, cozy.titleFont);
+    assert.equal(await panel.getByRole("button", { name: /^Cozy/ }).getAttribute("aria-pressed"), "true");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

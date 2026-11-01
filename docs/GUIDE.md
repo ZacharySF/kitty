@@ -204,6 +204,14 @@ Scythe and **Liquid Glass** (clear, neutral glass like macOS/iOS: heavy blur and
 white rim lit from the top-left, no tint; in the desktop window your wallpaper shows
 through; panels turn opaque under reduced transparency). Graph nodes and their
 edges use the active theme's graph palette.
+**Settings → Appearance** sets the whole look in one panel beside a live
+preview: theme, title font (Fraunces or plain), density (compact 13px or
+comfortable 14px), motion (full or reduced), atlas look (2D, 3D or Brain), the blossom
+motif and the background (the nebula, or the nebula with drifting petals, which
+rest under reduced motion). **Cozy**, **Focused** and **Minimal** set all of them
+at once; any single control still changes afterwards. Choices are saved in this
+browser (`kitty.appearance`, plus `kitty.theme` and `kitty.graph.look`) and
+applied before the app draws.
 No Rust service is needed: the Python core
 owns application behavior.
 
@@ -511,7 +519,8 @@ have no Brain and draw it as 3D. A backend without `/api/brain` gets a notice,
 never invented data. Reduced motion skips the build-up, twinkle and turning.
 Theme presets include dark cherry-pink **Cherry cat**, with blossom ASCII,
 and a Scythe palette. Scythe illustration requires the actual supplied artwork;
-no unrelated image is substituted. Motion respects reduced-motion preferences.
+no unrelated image is substituted. Motion respects reduced-motion preferences,
+both the system's and the Appearance setting.
 Top notices and the study timer bar can be dismissed.
 
 **AI settings** provides optional OpenRouter drafts for selected text: summaries,
