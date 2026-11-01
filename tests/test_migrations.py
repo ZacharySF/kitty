@@ -155,3 +155,38 @@ def test_recovery_strategy_migration_preserves_history_and_constraints(tmp_path)
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_calendar_palette_migration_moves_the_fixed_default_onto_theme_slots(tmp_path):
+    """035 drops the #6d5dfc default: local calendars still on it take the palette slot
+    the week view already painted them (name order); chosen and Google hex colours stay."""
+    import shutil
+    import sqlite3
+
+    early = tmp_path / "before-palette"
+    early.mkdir()
+    for migration in available_migrations():
+        if migration.version < 35:
+            shutil.copy(migration.path, early / migration.path.name)
+    conn = connect(tmp_path / "calendar.sqlite")
+    try:
+        migrate(conn, early)
+        conn.executescript(
+            "INSERT INTO calendar_calendars(id,name,color,updated_at) VALUES"
+            " ('school','School','#6d5dfc','t'),('work','Work','#123abc','t'),('alpha','Alpha','#6D5DFC','t');"
+            "INSERT INTO calendar_calendars(id,name,color,google_id,updated_at) VALUES ('g','Google','#6d5dfc','remote','t');"
+            "INSERT INTO calendar_events(id,calendar_id,title,start,end,timezone,data,updated_at)"
+            " VALUES ('e','school','Seminar','2026-10-26','2026-10-27','UTC','{}','t');"
+        )
+        migrate(conn)
+        colors = dict(conn.execute("SELECT id,color FROM calendar_calendars").fetchall())
+        assert colors == {"alpha": "c1", "g": "#6d5dfc", "personal": "c3", "school": "c4", "work": "#123abc"}
+        assert conn.execute("SELECT calendar_id FROM calendar_events WHERE id='e'").fetchone()[0] == "school"
+        assert "6d5dfc" not in conn.execute("SELECT sql FROM sqlite_master WHERE name='calendar_calendars'").fetchone()[0]
+        subject = conn.execute("INSERT INTO study_subjects(name) VALUES('Physics')").lastrowid
+        conn.execute("UPDATE calendar_calendars SET subject_id=? WHERE id='school'", (subject,))
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE calendar_calendars SET subject_id=999 WHERE id='work'")
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    finally:
+        conn.close()

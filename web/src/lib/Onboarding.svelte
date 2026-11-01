@@ -59,10 +59,11 @@
     const target = document.querySelector(step.selector);
     if (!target) { rect = null; return; }
     // Keep the spotlight on the part of the target that is actually visible between the
-    // workspace header and the dock.
-    const dock = document.querySelector('[data-kitty-panel="dock"]');
-    const floor = dock && !dock.contains(target) ? Math.min(window.innerHeight, dock.getBoundingClientRect().top) : window.innerHeight;
+    // workspace header and the floating dock, where the dock's card covers its column.
     let bounds = target.getBoundingClientRect();
+    const dock = document.querySelector('[data-kitty-panel="dock"]');
+    const card = dock && !dock.contains(target) ? dock.getBoundingClientRect() : null;
+    const floor = card && card.left < bounds.right && card.right > bounds.left ? Math.min(window.innerHeight, card.top) : window.innerHeight;
     // Views render after the step changes, so retry a few times until the target is in sight.
     if (reveals < 3) {
       const header = document.querySelector(".workbench-top");

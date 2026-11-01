@@ -5,11 +5,12 @@ import io
 import json
 import zipfile
 from dataclasses import replace
+from datetime import date
 
 import pytest
 
 from kitty import web_insights as web
-from kitty.core import applications, jobs
+from kitty.core import applications, jobs, stats, tracks
 from kitty.core.finder import store
 from kitty.core.triage.run import RunResult, TriagePlan
 from kitty.web_server import APIError, WebApplication
@@ -230,3 +231,32 @@ def test_batch_and_collect_reuse_core_without_new_requests_on_collect(app, works
     assert app.tasks.work()["mode"] == "batch"
     web.post(app, workspace.conn, "/api/triage/run", {"confirm": True, "mode": "collect"})
     assert app.tasks.work() == {"batches": []}
+
+
+def test_report_summary_tells_the_week_and_month_from_recorded_history(app, workspace):
+    """Q61: the narrative card reads only recorded applications and confirmed status changes."""
+    def apply(n, applied_at):
+        job, _ = jobs.upsert_job(workspace.conn, company=f"Synthetic {n}", title="Intern", url=f"https://example.invalid/{n}",
+                                 source="manual", source_job_id=f"summary-{n}")
+        return applications.record_application(workspace.conn, job.id, applied_at=applied_at)
+
+    for n, day in enumerate(["2026-11-04T10:00:00Z", "2026-11-03T10:00:00Z", "2026-11-02T10:00:00Z"]):
+        apply(n, day)
+    replied = apply(3, "2026-10-20T10:00:00Z")
+    applications.set_status(workspace.conn, replied.id, "oa", occurred_at="2026-11-03T12:00:00Z")
+    applications.set_status(workspace.conn, replied.id, "offer", occurred_at="2026-11-03T13:00:00Z")
+    applications.undo_last_status(workspace.conn, replied.id)
+    rejected = apply(4, "2026-10-07T10:00:00Z")
+    applications.set_status(workspace.conn, rejected.id, "rejected", occurred_at="2026-10-28T09:00:00Z")
+
+    summary = stats.report_summary(workspace.conn, today=date(2026, 11, 4))
+    assert [week["start"] for week in summary["weeks"]] == [
+        "2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02"]
+    assert [week["applied"] for week in summary["weeks"]] == [0, 0, 0, 1, 0, 1, 0, 3]
+    assert summary["weekly_total"] == 3
+    assert summary["weekly_target"] == sum(tracks.weekly_targets(workspace.conn).values())
+    assert summary["streak_days"] == 3
+    # The undone offer is not counted; the OA is the week's one reply.
+    assert summary["week"] == {"start": "2026-11-02", "applied": 3, "replies": 1, "advanced": 1, "offers": 0}
+    assert summary["month"] == {"start": "2026-11-01", "applied": 3, "replies": 1, "advanced": 1, "offers": 0, "previous_applied": 2}
+    assert "summary" in web.get(app, workspace.conn, "/api/reports", {})

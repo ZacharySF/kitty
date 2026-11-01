@@ -23,9 +23,15 @@ from kitty.db.connection import transaction
 UTC = timezone.utc
 EVENT_FIELDS = {'title', 'start', 'end', 'timezone', 'all_day', 'description', 'location', 'url',
                 'rrule', 'exdates', 'attendees', 'privacy', 'busy', 'reminders', 'calendar_id',
-                'source_key', 'source_url', 'attachments', 'event_type', 'google_options'}
+                'source_key', 'source_url', 'attachments', 'event_type', 'google_options', 'subject_id', 'color'}
 TASK_FIELDS = {'title', 'description', 'due', 'timezone', 'priority', 'status', 'tags', 'project', 'calendar_id',
-               'repeat_frequency', 'repeat_interval', 'repeat_until'}
+               'repeat_frequency', 'repeat_interval', 'repeat_until', 'subject_id'}
+#: Local-only event display fields: Google never sees them, so a pull keeps them.
+LOCAL_DISPLAY = ('subject_id', 'color')
+#: A theme palette slot (`--c1`..`--c6`, recoloured with the theme) or a fixed hex
+#: colour (chosen before palette slots, or a Google calendar's colour).
+COLOR = re.compile(r'c[1-6]|#[0-9a-fA-F]{6}')
+HEX = re.compile(r'#[0-9a-fA-F]{6}')
 #: Source-key prefixes of calendar copies imported from ApplyAI data. Without that
 #: module they are hidden (and never retired or synced); the rows are kept.
 APPLYAI_SOURCES = frozenset({'job', 'application', 'status', 'reminder'})
@@ -123,15 +129,35 @@ def calendars(conn):
     return [dict(row) for row in conn.execute('SELECT * FROM calendar_calendars WHERE deleted=0 ORDER BY name')]
 
 
+def color(value):
+    if not isinstance(value, str) or not COLOR.fullmatch(value):
+        fail('Color must be a theme palette slot (c1–c6) or a six-digit hex color')
+    return value
+
+
+def next_color(conn):
+    """The palette slot after the existing calendars, so new calendars differ."""
+    count = conn.execute('SELECT COUNT(*) FROM calendar_calendars WHERE deleted=0').fetchone()[0]
+    return f'c{count % 6 + 1}'
+
+
+def subject(conn, value):
+    """A study subject id (its colour is Study's) or None."""
+    if value is None:
+        return None
+    if type(value) is not int or not conn.execute('SELECT 1 FROM study_subjects WHERE id=?', (value,)).fetchone():
+        fail('Study subject not found')
+    return value
+
+
 def save_calendar(conn, body):
     ident = body.get('id') or uuid4().hex
     old = _get_calendar(conn, ident) if body.get('id') else None
     name = text(body.get('name', old['name'] if old else ''), 'Calendar name', 200)
     if not name:
         fail('Calendar name is required')
-    color = body.get('color', old['color'] if old else '#6d5dfc')
-    if not isinstance(color, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
-        fail('Color must be a six-digit hex color')
+    shade = color(body['color'] if 'color' in body else old['color'] if old else next_color(conn))
+    linked = subject(conn, body['subject_id'] if 'subject_id' in body else old['subject_id'] if old else None)
     tz = body.get('timezone', old['timezone'] if old else 'UTC')
     zone(tz)
     visible = body.get('visible', bool(old['visible']) if old else True)
@@ -141,11 +167,11 @@ def save_calendar(conn, body):
         if old:
             if body.get('revision') != old['revision']:
                 fail('Calendar changed; reload before editing', 409)
-            conn.execute('UPDATE calendar_calendars SET name=?,color=?,timezone=?,visible=?,revision=revision+1,updated_at=? WHERE id=?',
-                         (name, color, tz, int(visible), now(), ident))
+            conn.execute('UPDATE calendar_calendars SET name=?,color=?,subject_id=?,timezone=?,visible=?,revision=revision+1,updated_at=? WHERE id=?',
+                         (name, shade, linked, tz, int(visible), now(), ident))
         else:
-            conn.execute('INSERT INTO calendar_calendars(id,name,color,timezone,visible,updated_at) VALUES(?,?,?,?,?,?)',
-                         (ident, name, color, tz, int(visible), now()))
+            conn.execute('INSERT INTO calendar_calendars(id,name,color,subject_id,timezone,visible,updated_at) VALUES(?,?,?,?,?,?,?)',
+                         (ident, name, shade, linked, tz, int(visible), now()))
     return _get_calendar(conn, ident)
 
 
@@ -184,6 +210,8 @@ def normalize_event(conn, body):
     if end - start > timedelta(days=3660):
         fail('An event must span less than ten years')
     out['start'], out['end'] = stamp(start, out['all_day']), stamp(end, out['all_day'])
+    out['subject_id'] = subject(conn, out.get('subject_id'))
+    out['color'] = None if out.get('color') is None else color(out['color'])
     for key in ('description', 'location'):
         out[key] = text(out.get(key, ''), key)
     for key in ('url', 'source_url'):
@@ -563,7 +591,7 @@ def undo(conn, history_id):
 
 
 def _task_output(row):
-    return {'repeat_frequency': '', 'repeat_interval': 1, 'repeat_until': '',
+    return {'repeat_frequency': '', 'repeat_interval': 1, 'repeat_until': '', 'subject_id': None,
             **json.loads(row['data']), 'id': row['id'], 'revision': row['revision'], 'updated_at': row['updated_at']}
 
 
@@ -609,6 +637,7 @@ def _normalize_task(conn, body, previous, completed_at):
         fail('Invalid priority or status')
     data['completed_at'] = (previous.get('completed_at') or completed_at) if data['status'] == 'done' else None
     data['project'] = text(data.get('project', ''), 'Project', 200)
+    data['subject_id'] = subject(conn, data.get('subject_id'))
     tags = data.get('tags', [])
     if not isinstance(tags, list) or len(tags) > 50:
         fail('Tags must be an array of at most 50 values')

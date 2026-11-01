@@ -61,6 +61,9 @@ def get(app, conn, path, query):
             card = flash.card_detail(conn, _id(query["id"]))
             if card is None: raise _error("That card no longer exists", 404)
             return {"card": card}
+        if path == "/api/flashcards/fronts":
+            if set(query) != {"deck_id"}: raise ValueError("A deck ID is required")
+            return {"fronts": flash.fronts(conn, _id(query["deck_id"]))}
         if path == "/api/flashcards/stats":
             if set(query) - {"deck_id", "timezone"}: raise ValueError("Unknown stats parameter")
             zone = query.get("timezone", "UTC")

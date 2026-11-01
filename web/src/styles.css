@@ -266,7 +266,7 @@ details[open] > summary {
   flex-direction: column;
   gap: 12px;
 }
-/* The atlas home fills the window above the dock (padding-bottom, below). Each
+/* The atlas home fills the window; the floating dock takes no page space. Each
    level passes the height down; the atlas's own floor (GraphNavigator) is the
    only content that can grow the page, so cramped windows scroll, never clip. */
 .workbench.atlas-home {
@@ -1548,13 +1548,8 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
   visibility: hidden !important;
 }
 
-/* The dock (Dock.svelte) is fixed to the bottom of the window and publishes the
-   room it takes as --dock-space; the page always ends above it. */
-:root body .workbench {
-  padding-bottom: calc(10px + var(--dock-space, 0px));
-}
-/* The herdr view fills its workspace tab above the dock. */
+/* The herdr view fills its workspace tab; the floating dock takes no page space. */
 .herdr-view {
-  height: calc(100dvh - var(--workbench-top, 0px) - var(--dock-space, 0px) - 34px);
+  height: calc(100dvh - var(--workbench-top, 0px) - 34px);
   min-height: 240px;
 }

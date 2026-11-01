@@ -15,6 +15,7 @@
     onopenjob,
     onadd,
     onhelp,
+    onnewcard,
     onreload,
   }: {
     enabled: readonly string[];
@@ -23,6 +24,8 @@
     onopenjob: (id: number) => void;
     onadd: () => void;
     onhelp: () => void;
+    /** Opens the quick-add flashcard popover; absent when Flashcards is off. */
+    onnewcard?: () => void;
     onreload: () => void;
   } = $props();
 
@@ -39,6 +42,7 @@
   type Choice = { label: string; meta: string; icon: string; run: () => void };
   const actions = $derived<Choice[]>([
     ...(applyai ? [{ label: "Add job", meta: "Action", icon: "jobs", run: () => onadd() }] : []),
+    ...(onnewcard ? [{ label: "New card", meta: "Flashcards", icon: "flashcards", run: () => onnewcard() }] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
   ]);

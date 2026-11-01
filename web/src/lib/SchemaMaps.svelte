@@ -7,6 +7,7 @@
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import MindMapFeedback from "./MindMapFeedback.svelte";
   import { activeModules } from "./modules.svelte";
+  import { inkOutline, lassoed, nearestBox, penAction, simplify, strokeHit, type InkPoint } from "./mapInk";
   let { revision = 0, demo = false, section = "schema", embedded = false }: { revision?: number; demo?: boolean; section?: "schema" | "study"; embedded?: boolean } =
     $props();
   const pane = useWorkspaceContext();
@@ -41,7 +42,9 @@
   };
   /** Q65 E: `cross` marks a labelled connection outside the tree; other edges may shape the tree. */
   type Edge = { id: string; from: string; to: string; label: string; kind?: "cross" };
-  type Graph = { nodes: Node[]; edges: Edge[] };
+  /** Q69: pen ink attached to a node; points are [x, y, pressure] relative to the node's top-left corner. */
+  type Stroke = { id: string; node: string; points: InkPoint[] };
+  type Graph = { nodes: Node[]; edges: Edge[]; strokes?: Stroke[] };
   type View = { x: number; y: number; zoom: number };
   type Live = {
     label?: string;
@@ -229,6 +232,15 @@
   let paintBranch = $state(false), copiedStyle = $state<{color?: string} | null>(null), stageWidth = $state(0), styleWidth = $state(0);
   // Q65 E: the topic a "Connect to…" starts from, and the cross connection whose label is being typed.
   let linking = $state(""), labelling = $state(""), edgeDraft = $state("");
+  // Q69: ink mode (pen or mouse draws), the stroke or barrel-button lasso being drawn (map units), the eraser
+  // pass (with whether it has erased yet), and pen proximity: touches are palms while a pen hovers or was just used.
+  const INK_WIDTH = 3.2, PALM_MS = 600, MAX_INK_POINTS = 1000;
+  let inkMode = $state(false),
+    inking = $state<{pointer: number; points: InkPoint[]} | null>(null),
+    lassoLoop = $state<{pointer: number; points: [number, number][]} | null>(null);
+  let erasing: {pointer: number; erased: boolean} | null = null, penHover = false, penSeen = -Infinity;
+  /** The last tap (node id, `edge:` id or `stage`), so a second tap on the same spot is a double tap. */
+  let lastTap = {key: "", time: 0, x: 0, y: 0};
   let view = $state<View3D>("edit"),
     mapLayout = $state<GraphLayout>("tree"),
     netLayout = $state<GraphLayout>("tree");
@@ -304,6 +316,8 @@
     const shown = new Set(visibleNodes.map(n => n.id));
     return current?.graph.edges.filter(e => shown.has(e.from) && shown.has(e.to)) ?? [];
   });
+  /** Shown nodes by id: ink is drawn only on these, so it folds away with its node. */
+  const shownById = $derived(new Map(visibleNodes.map(n => [n.id, n])));
   function depth(id: string) {
     const seen = new Set<string>();
     while (!seen.has(id)) {
@@ -817,6 +831,7 @@
     remember();
     current.graph.nodes = current.graph.nodes.filter((n) => !gone.has(n.id));
     current.graph.edges = current.graph.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to));
+    if (current.graph.strokes) current.graph.strokes = current.graph.strokes.filter((s) => !gone.has(s.node));
     if (gone.has(edgeFrom)) edgeFrom = "";
     if (gone.has(edgeTo)) edgeTo = "";
     selected = "";
@@ -825,6 +840,8 @@
   function deleteAtPointer(event: MouseEvent, target: Node) {
     if ((event.target as Element).closest('input,textarea,[contenteditable="true"]') || window.getSelection()?.toString()) return;
     event.preventDefault();
+    // A pen's barrel button or a resting palm also raises this menu; with a pen near, it never deletes.
+    if (penNear()) return;
     if (!editable || !confirm(`Remove “${name(target)}” from this map? Linked notes, cards and jobs stay unchanged.`)) return;
     multi = [];
     choose(target);
@@ -912,6 +929,7 @@
   }
   /** Window keys: Escape leaves "Connect to…"; mid-drag, D breaks the branch off (press again to reattach on drop), wherever focus is. */
   function dragKey(e: KeyboardEvent) {
+    lastTap.key = ""; // A key between two taps makes them two single taps.
     if (pane.active && current && editable && !gesture && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
       e.preventDefault(); e.stopPropagation();
       if (e.shiftKey) redo(); else void undo();
@@ -965,8 +983,85 @@
       } else if (target) { choose(target); focusOn(target.id); }
     } else if (e.key.length === 1) { e.preventDefault(); e.stopPropagation(); void editInline(n, e.key); }
   }
+  /** Q69: whether a pen hovers over the map or was used within PALM_MS; touches are then resting palms. */
+  function penNear() {
+    return penHover || performance.now() - penSeen < PALM_MS;
+  }
+  function notePen(e: PointerEvent) {
+    if (e.pointerType !== "pen") return;
+    penHover = e.type !== "pointerleave";
+    penSeen = performance.now();
+  }
+  /** A second tap on the same spot within 450 ms is a double tap, for pen, touch and mouse alike. */
+  function doubleTap(key: string, e: PointerEvent) {
+    const now = performance.now(), again = key === lastTap.key && now - lastTap.time < 450 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 16;
+    lastTap = again ? {key: "", time: 0, x: 0, y: 0} : {key, time: now, x: e.clientX, y: e.clientY};
+    return again;
+  }
+  /** Every press on the map (pen, mouse or touch) starts here: palms are dropped, pen ends and ink mode draw, the rest selects, drags and pans. */
+  function down(e: PointerEvent, id = "") {
+    notePen(e);
+    const action = penAction(e, inkMode, penNear());
+    if (action === "point") { if (id) start(e, id); else pick(e); return; }
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === "ignore" || !current || !editable || gesture || inking || lassoLoop || erasing) return;
+    stage?.setPointerCapture(e.pointerId);
+    const p = worldPoint(e);
+    if (action === "ink") inking = {pointer: e.pointerId, points: [[p.x, p.y, pressure(e)]]};
+    else if (action === "lasso") lassoLoop = {pointer: e.pointerId, points: [[p.x, p.y]]};
+    else { erasing = {pointer: e.pointerId, erased: false}; erase(e); }
+  }
+  /** Pen pressure; a mouse (or a pen reporting none) draws at half pressure. */
+  function pressure(e: PointerEvent) {
+    return Math.round(Math.min(1, e.pressure || 0.5) * 100) / 100;
+  }
+  /** One pen sample: extends the stroke or lasso, or erases ink under the eraser. */
+  function penMove(e: PointerEvent) {
+    const p = worldPoint(e);
+    if (inking) inking.points.push([p.x, p.y, pressure(e)]);
+    else if (lassoLoop) lassoLoop.points.push([p.x, p.y]);
+    else erase(e);
+  }
+  /** Removes every shown stroke under the eraser; topics are never touched. */
+  function erase(e: PointerEvent) {
+    if (!current?.graph.strokes?.length || !erasing) return;
+    const p = worldPoint(e), reach = 10 / current.viewport.zoom + INK_WIDTH / 2;
+    const hit = new Set(current.graph.strokes.filter(s => {
+      const owner = shownById.get(s.node);
+      return owner && strokeHit(s.points, [p.x - owner.x, p.y - owner.y], reach);
+    }).map(s => s.id));
+    if (!hit.size) return;
+    if (!erasing.erased) { remember(); erasing.erased = true; }
+    current.graph.strokes = current.graph.strokes.filter(s => !hit.has(s.id));
+  }
+  /** Simplifies the lifted stroke and attaches it to the nearest shown topic, relative to that topic. */
+  function finishInk(drawn: InkPoint[]) {
+    if (!current) return;
+    const owner = shownById.get(nearestBox(visibleNodes.map(n => ({id: n.id, x: n.x, y: n.y, ...box(n)})), drawn) ?? "");
+    if (!owner) { notice = "Add a topic first: ink sticks to the nearest topic."; return; }
+    if ((current.graph.strokes?.length ?? 0) >= 400) { error = "A map holds at most 400 ink strokes; erase some first."; return; }
+    // Ramer–Douglas–Peucker within about a screen pixel, coarser only if the stroke is still too long.
+    let tolerance = 0.6 / current.viewport.zoom, points = simplify(drawn, tolerance);
+    while (points.length > MAX_INK_POINTS) points = simplify(drawn, tolerance *= 2);
+    const local = (value: number) => Math.max(-LIMIT, Math.min(LIMIT, Math.round(value * 10) / 10));
+    remember();
+    current.graph.strokes = [...current.graph.strokes ?? [], {id: crypto.randomUUID(), node: owner.id, points: points.map(([x, y, p]): InkPoint => [local(x - owner.x), local(y - owner.y), p])}];
+  }
+  /** Selects every shown topic whose centre lies inside the barrel-button loop (the Q65 multi-selection). */
+  function finishLasso(loop: [number, number][]) {
+    const ids = new Set(lassoed(visibleNodes.map(n => ({id: n.id, x: n.x, y: n.y, ...box(n)})), loop));
+    const hits = visibleNodes.filter(n => ids.has(n.id));
+    if (hits.length) { multi = hits.map(n => n.id); choose(hits[0]); focusOn(hits[0].id); }
+  }
   function start(e: PointerEvent, id = "") {
-    if (!current || !editable || gesture || e.button !== 0) return;
+    if (!current || gesture || e.button !== 0) return;
+    if (!editable) {
+      // While saving, a tap still selects so the inspector can show the topic.
+      const n = id && current.graph.nodes.find(n => n.id === id);
+      if (n) choose(n);
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     if (linking) {
@@ -1014,6 +1109,13 @@
     return visibleNodes.find(n => !branch.includes(n.id) && x >= n.x && x <= n.x + box(n).w && y >= n.y && y <= n.y + box(n).h);
   }
   function move(e: PointerEvent) {
+    notePen(e);
+    if ((inking ?? lassoLoop ?? erasing)?.pointer === e.pointerId) {
+      // Coalesced samples keep fast pen strokes smooth.
+      const samples = e.getCoalescedEvents?.() ?? [];
+      for (const sample of samples.length ? samples : [e]) penMove(sample);
+      return;
+    }
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
     const dx = e.clientX - gesture.x,
       dy = e.clientY - gesture.y;
@@ -1074,7 +1176,17 @@
     relayout(false);
   }
   function end(e: PointerEvent, cancel = false) {
+    notePen(e);
+    if ((inking ?? lassoLoop ?? erasing)?.pointer === e.pointerId) {
+      const drawn = inking?.points, loop = lassoLoop?.points;
+      inking = null; lassoLoop = null; erasing = null;
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+      if (cancel) return; // A cancelled stroke or lasso leaves nothing; erased ink stays erased (Undo restores it).
+      if (drawn) finishInk(drawn); else if (loop) finishLasso(loop);
+      return;
+    }
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
+    if (gesture.moved) lastTap.key = "";
     const mergeTarget = !cancel && gesture.node && gesture.moved
       ? Number(document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-merge-map]")?.getAttribute("data-merge-map")) : 0;
     if (mergeTarget && isRoot(current.graph.nodes.find(n => n.id === gesture!.node)!)) {
@@ -1115,12 +1227,14 @@
       } else Object.assign(current, clone(gesture.before)); // No target: the branch snaps back into the layout.
     } else if (gesture.node && !gesture.moved) {
       if (multi.length) multi = []; // A plain click picks just that topic.
+      const tapped = current.graph.nodes.find(n => n.id === gesture!.node);
+      if (tapped && doubleTap(tapped.id, e)) openCard(tapped);
     } else if (gesture.moved) {
       history = [...history.slice(-29), gesture.before];
       future = [];
       dirty = true;
       notice = "Unsaved local edits";
-    }
+    } else if (!gesture.box && doubleTap("stage", e)) quickAdd("");
     gesture = null;
     dragging = ""; dropTarget = ""; detaching = false; placing = false; marquee = null;
     if (stage?.hasPointerCapture(e.pointerId))
@@ -1593,6 +1707,7 @@
     if (edge && !e.shiftKey) {
       selectedEdge = edge;
       selected = "";
+      if (doubleTap(`edge:${edge}`, e)) void relabel(edge);
       return;
     }
     start(e);
@@ -1793,7 +1908,7 @@
   });
 </script>
 
-<svelte:window onkeydowncapture={dragKey} />
+<svelte:window onkeydowncapture={dragKey} onpointerdowncapture={(e) => { if (!(e.target as Element).closest?.("svg.stage, .map-outline")) lastTap.key = ""; }} />
 <section class="schema" aria-label="Mental schema maps" bind:this={container}>
   {#snippet mapControls()}
     <div class="toolbar">
@@ -2309,6 +2424,7 @@
             <Button onclick={() => quickAdd(parents.get(selected) ?? "")} disabled={!editable || !node}>+ Sibling</Button>
             <Button onclick={() => node && editInline(node)} disabled={!editable || !node}>Rename</Button>
             <Button onclick={() => outline = !outline} aria-pressed={outline}>Outline</Button>
+            <Button onclick={() => inkMode = !inkMode} aria-pressed={inkMode} disabled={!editable} title="Draw pressure-sensitive ink with a pen or mouse; each stroke sticks to the nearest topic">Ink</Button>
             <Button onclick={() => {recall = !recall; revealed = [];}} aria-pressed={recall}>{recall ? "End recall" : "Quiz me"}</Button>
             {#if recall}<Button disabled={!node} onclick={() => revealed = [...revealed, selected]}>Reveal selected answer</Button><Button onclick={() => revealed = current!.graph.nodes.map(n => n.id)}>Reveal all</Button>{/if}
             <Button onclick={() => zoom(1.2)} disabled={!editable}
@@ -2327,14 +2443,15 @@
               {#each visibleNodes as n (n.id)}
                 <div style={`padding-left: ${depth(n.id) * 20}px`} role="treeitem" aria-level={depth(n.id) + 1} aria-selected={selected === n.id}>
                   <Button onclick={() => collapse(n)} title="Collapse branch">{n.collapsed ? "▸" : "▾"}</Button>
-                  <button class:active={selected === n.id} oncontextmenu={event => deleteAtPointer(event, n)} onkeydown={e => nodeKey(e, n)} onclick={() => choose(n)} ondblclick={() => openCard(n)}>{hiddenLabel(n) ? "?" : name(n)}</button>
+                  <button class:active={selected === n.id} oncontextmenu={event => deleteAtPointer(event, n)} onkeydown={e => nodeKey(e, n)} onclick={() => choose(n)} onpointerup={e => { if (doubleTap(`outline:${n.id}`, e)) openCard(n); }}>{hiddenLabel(n) ? "?" : name(n)}</button>
                 </div>
               {/each}
             </div>
           {/if}
           <div class="stage-wrap" bind:clientWidth={stageWidth}>
           {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : placing ? "Placing freely · release to leave it here" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · Alt places it freely · D detaches the branch"}</p>
-          {:else if linking}<p class="drag-hint" role="status">Click a topic to connect “{name(current.graph.nodes.find(n => n.id === linking)!)}” to it · Esc cancels</p>{/if}
+          {:else if linking}<p class="drag-hint" role="status">Click a topic to connect “{name(current.graph.nodes.find(n => n.id === linking)!)}” to it · Esc cancels</p>
+          {:else if inkMode}<p class="drag-hint" role="status">Ink · each stroke sticks to the nearest topic · flip the pen to erase · fingers still pan</p>{/if}
           {#if node && !dragging && !editing && !linking && !labelling && editable && visibleNodes.includes(node)}
             {@const v = current.viewport}
             {@const top = node.y * v.zoom + v.y + 8}
@@ -2356,14 +2473,12 @@
           <svg
             bind:this={stage}
             class="stage"
-            aria-label="Schema graph. Drag nodes to reparent, Alt-drag to place freely; drag empty space to pan. Use node list and inspector for keyboard editing."
+            class:ink-mode={inkMode}
+            aria-label="Schema graph. Drag nodes to reparent, Alt-drag to place freely; drag empty space to pan; double-tap a node to edit it. With a pen: Ink draws, the barrel button lassoes topics, the eraser end erases ink. Use node list and inspector for keyboard editing."
             role="group"
-            ondblclick={(e) => {
-              const edge = (e.target as Element).getAttribute("data-edge");
-              if (edge) void relabel(edge);
-              else if (!(e.target as Element).closest("[data-node]")) quickAdd("");
-            }}
-            onpointerdown={pick}
+            onpointerdown={(e) => down(e)}
+            onpointerover={notePen}
+            onpointerleave={notePen}
             onpointermove={move}
             onpointerup={(e) => end(e)}
             onpointercancel={(e) => end(e, true)}
@@ -2446,10 +2561,8 @@
                   class:painted={!!n.color}
                   class="graph-node"
                   style:--b={nodeColor(n)}
-                  ondblclick={() => openCard(n)}
-                  onpointerdown={(e) => start(e, n.id)}
+                  onpointerdown={(e) => down(e, n.id)}
                   onkeydown={(e) => nodeKey(e, n)}
-                  onclick={() => choose(n)}
                   oncontextmenu={(event) => deleteAtPointer(event, n)}
                 >
                   <rect class="pill" width={size.w} height={size.h} rx={size.h / 2} />
@@ -2485,6 +2598,17 @@
                   </foreignObject>
                 {/if}
               {/if}
+              {#if current.graph.strokes?.length || inking}
+                <!-- Q69: ink sits over the pills, each stroke placed at its topic so it moves and folds with it. -->
+                <g class="ink" aria-hidden="true">
+                  {#each current.graph.strokes ?? [] as s (s.id)}
+                    {@const owner = shownById.get(s.node)}
+                    {#if owner}<path transform={`translate(${owner.x},${owner.y})`} d={inkOutline(s.points, INK_WIDTH)} data-stroke={s.id} data-ink-node={s.node} />{/if}
+                  {/each}
+                  {#if inking}<path class="live" d={inkOutline(inking.points, INK_WIDTH)} />{/if}
+                </g>
+              {/if}
+              {#if lassoLoop}<path class="lasso" d={`M${lassoLoop.points.map(p => p.join(",")).join(" L")} Z`} />{/if}
               {#if marquee}<rect class="marquee" x={marquee.x0} y={marquee.y0} width={marquee.x1 - marquee.x0} height={marquee.y1 - marquee.y0} rx="6" />{/if}
               <!-- The dragged pill is redrawn on top so it stays visible over the pill it snaps into. -->
               {#if dragging}<use href={`#${pane.id}-node-${dragging}`} class="drag-ghost" />{/if}
@@ -2492,7 +2616,7 @@
           </svg>
           </div>
           <p class="hint">
-            Tab child · Enter sibling · arrows move · Shift+arrows or Shift-drag select several · Ctrl+↑/↓ reorder · Ctrl+Enter or type to rename · Space fold · Alt-drag places freely
+            Tab child · Enter sibling · arrows move · Shift+arrows or Shift-drag select several · Ctrl+↑/↓ reorder · Ctrl+Enter, type or double-tap to rename · Space fold · Alt-drag places freely · Pen: Ink draws, barrel-button loop selects, eraser end erases ink
           </p>
           <details><summary>Connections</summary>
           <Panel title="[02] Directional connections">
@@ -2842,6 +2966,12 @@
   .graph-pane {
     min-width: 0;
   }
+  /* Map toolbar toggles (Outline, Ink, Quiz me) invert while on, like the app's other pressed toggles. */
+  .graph-pane > .toolbar :global(.br-btn[aria-pressed="true"]) {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+  }
   .stage {
     display: block;
     width: 100%;
@@ -2938,7 +3068,7 @@
   .node-style .word[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
   .node-style .count { padding: 0 6px; color: var(--ink); font: 600 11.5px var(--font-ui); }
   /* Q65 F: the Shift-drag selection box. */
-  .marquee {
+  .marquee, .lasso {
     fill: color-mix(in srgb, var(--accent) 10%, transparent);
     stroke: var(--accent);
     stroke-width: 1;
@@ -2946,6 +3076,10 @@
     vector-effect: non-scaling-stroke;
     pointer-events: none;
   }
+  /* Q69: pen ink is filled outlines whose width follows pressure; it never takes pointer hits from the pills. */
+  .ink { fill: var(--ink); opacity: 0.88; pointer-events: none; }
+  .ink .live { opacity: 0.75; }
+  .stage.ink-mode { cursor: crosshair; }
   @media (prefers-reduced-motion: reduce) { .node-style .swatch { transition: none; } }
   .inline-label {
     width: 100%;
