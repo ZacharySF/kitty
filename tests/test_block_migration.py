@@ -233,9 +233,13 @@ def test_migrated_pages_keep_their_revision_guards(migrated):
 
 def test_one_log_transaction_per_migrated_root(migrated):
     conn = migrated[0]
-    roots = conn.execute("SELECT COUNT(*) FROM blocks WHERE parent_id IS NULL").fetchone()[0]
+    roots = conn.execute("SELECT COUNT(*) FROM blocks WHERE parent_id IS NULL AND type != 'tag'").fetchone()[0]
     assert roots == len(PAGES) + len(DOCUMENTS) + len(QUICK)
-    assert conn.execute("SELECT COUNT(DISTINCT page_id) FROM op_log").fetchone()[0] == roots
+    # Migration 037 then made each #tag a tag record, one transaction for all of them.
+    tag_names = {row[0] for row in conn.execute("SELECT text FROM blocks WHERE parent_id IS NULL AND type = 'tag'")}
+    assert tag_names == {"biology", "exam", "Bio/Energy"}
+    tag_roots = len(tag_names)
+    assert conn.execute("SELECT COUNT(DISTINCT page_id) FROM op_log").fetchone()[0] == roots + tag_roots
     for page_id in [row[0] for row in conn.execute("SELECT id FROM blocks WHERE parent_id IS NULL")]:
         assert blocks.replay(conn, page_id).rows() == blocks.load_page(conn, page_id).rows()
 

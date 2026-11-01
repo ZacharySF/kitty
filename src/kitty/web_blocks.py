@@ -9,8 +9,12 @@ Text messages are JSON objects. A window sends:
 
 - ``{"type": "txn", "txn_id"?, "ops": [...], "base"?: {page_id: revision}}``. The
   server applies it (kitty.core.blocks.transact) and answers the sender with
-  ``{"type": "ack", "txn_id", "seq": {page_id: seq}, "revisions": {...}}`` or
-  ``{"type": "reject", "txn_id", "status", "error"}``.
+  ``{"type": "ack", "txn_id", "seq": {page_id: seq}, "revisions": {...}, "suggestions",
+  "tagged"?, "tags"?}`` or ``{"type": "reject", "txn_id", "status", "error"}``. Auto-tags
+  (Q13): ``suggestions`` maps each changed text block to ``{text, items: [{tag, name,
+  start, end}]}`` (UTF-16 offsets into that text); ``tagged`` lists the operations the
+  server added to the transaction ({page_id: [ops]}: *always attach* tags) and ``tags``
+  names the tags involved.
 - ``{"type": "resume", "after": seq}``: replays the changes it missed while away,
   or ``{"type": "reset", "horizon"}`` when history before the horizon was compacted.
 - ``{"type": "subscribe", "pages": [page_id, ...] | null}``: limits live changes.
@@ -25,7 +29,8 @@ Pages, history and Trash (kitty.core.blocks.history); a page is ``page=<block id
 ``type=page|document|quick_note&number=<n>``:
 
 GET  /api/blocks/page?<page>                    what the block editor loads: root, live blocks
-                                                in reading order, revision and the ``seq`` it reflects
+                                                in reading order, revision, the ``seq`` it reflects,
+                                                and tag ``suggestions``/``tags`` (names) for its blocks
 GET  /api/blocks/history?<page>                 editing sessions and daily snapshots
 GET  /api/blocks/history/preview?<page>&seq=<n>  the page as it was after transaction n
 POST /api/blocks/history/restore  {<page>, "seq"}  appends a transaction restoring it
@@ -49,8 +54,9 @@ import uuid
 from contextlib import closing
 
 from kitty.core import blocks
-from kitty.core.blocks import history
+from kitty.core.blocks import history, tagging
 from kitty.db import connect
+from kitty.db.connection import transaction
 from kitty.web_socket import Closed, Reader, Tokens, accept, close_code, frame, handshake_key, send_close
 
 SOCKET_PATH = "/api/blocks/socket"
@@ -164,7 +170,7 @@ class Live:
             if set(message) - {"type", "txn_id", "ops", "base"}:
                 raise blocks.BlockError("Unexpected transaction fields")
             with self.app.mutation_lock, closing(connect(self.app.settings.db_path)) as conn:
-                result = blocks.transact(conn, message.get("ops"), base=message.get("base"), txn_id=txn_id)
+                result = blocks.transact(conn, message.get("ops"), base=message.get("base"), txn_id=txn_id, suggest=True)
         except blocks.BlockError as exc:
             return {"type": "reject", "txn_id": txn_id, "status": exc.status, "error": str(exc)}
         except sqlite3.OperationalError:
@@ -246,7 +252,10 @@ def get(app, conn, path, query):
         if path == "/api/blocks/page":
             if set(query) - {"page", "type", "number"}:
                 raise blocks.BlockError("Unexpected page parameters")
-            return blocks.page_state(conn, _page(conn, query))
+            with transaction(conn):
+                state = blocks.page_state(conn, _page(conn, query))
+                state.update(tagging.page_suggestions(conn, state))
+            return state
         if path == "/api/blocks/history":
             if set(query) - {"page", "type", "number"}:
                 raise blocks.BlockError("Unexpected history parameters")

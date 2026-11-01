@@ -10,6 +10,9 @@ append-only ``op_log`` and updates the projection tables that readers use.
 - ``store``: ``transact``, ``load_page``, ``page_state`` (what an editor loads) and ``replay``.
 - ``convert``: legacy canvas / outline / Markdown shapes <-> blocks.
 - ``legacy``: the one-way migration of existing notes, with its JSON export.
+- ``tokens``: ``((ref))``, ``[[page]]`` and ``#tag`` tokens in block text.
+- ``autotag`` (pure keyword matcher), ``tagging`` (auto-tags on the transaction path) and
+  ``tags`` (tag records, the Tags setting, tag pages): platform design Q13.
 """
 from kitty.core.blocks import order
 from kitty.core.blocks.pagedoc import VIEW_KEYS, Block, BlockError, OrderedPageDoc, PageDoc, block_id

@@ -7,6 +7,8 @@ A script whose first line is `-- python: package.module:function` also converts 
 the runner calls ``function(conn)`` and then runs the script's statements, all in the
 same transaction as the schema_version record (the function lives in an importable
 module, so frozen builds that bundle only data files under migrations/ still run it).
+`-- python after: package.module:function` runs the function after the statements
+instead, for a conversion that fills the tables the script creates.
 """
 
 from __future__ import annotations
@@ -94,12 +96,12 @@ def _wants_foreign_keys_off(migration: Migration) -> bool:
 
 
 def _python_step(migration: Migration):
-    """The data-conversion function named by a `-- python: module:function` first line."""
+    """``(function, after)`` named by a `-- python[ after]: module:function` first line, or None."""
     first = migration.sql.lstrip().split("\n", 1)[0].strip()
-    match = re.fullmatch(r"-- python: ([a-z_][a-z0-9_.]*):([a-z_][a-z0-9_]*)", first)
+    match = re.fullmatch(r"-- python( after)?: ([a-z_][a-z0-9_.]*):([a-z_][a-z0-9_]*)", first)
     if match is None:
         return None
-    return getattr(importlib.import_module(match[1]), match[2])
+    return getattr(importlib.import_module(match[2]), match[3]), bool(match[1])
 
 
 def _statements(sql: str):
@@ -146,10 +148,14 @@ def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[Mig
             if step is None:
                 conn.executescript(f"BEGIN;\n{migration.sql}\n{record}")
             else:
+                convert, after = step
                 conn.execute("BEGIN IMMEDIATE")
-                step(conn)
+                if not after:
+                    convert(conn)
                 for statement in _statements(migration.sql):
                     conn.execute(statement)
+                if after:
+                    convert(conn)
                 conn.execute(record)
             broken = conn.execute("PRAGMA foreign_key_check").fetchall()
             if broken:

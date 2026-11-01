@@ -1,6 +1,7 @@
 """Server-applied transactions: page documents -> append-only op log -> projection.
 
-`transact` is the only writer of `blocks`, `op_log`, `block_refs` and `block_topics`.
+`transact` is the only writer of `blocks`, `op_log`, `block_refs`, `block_topics`,
+`block_tags` and `tag_rejections` (the last two through kitty.core.blocks.tagging).
 Inside one SQLite transaction it loads each touched page document, applies every
 operation (so cycles, limits and stale revisions are refused before anything is
 written), appends one `op_log` row per touched page, and rewrites only the
@@ -10,7 +11,6 @@ rebuild a page from the log with `replay`.
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 import uuid
 from contextlib import nullcontext
@@ -18,17 +18,14 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from kitty.core.blocks import tagging
 from kitty.core.blocks.order import key_between
-from kitty.core.blocks.pagedoc import VIEW_KEYS, Block, BlockError, OrderedPageDoc, block_id
+from kitty.core.blocks.pagedoc import Block, BlockError, OrderedPageDoc, block_id, is_edit_key
+from kitty.core.blocks.tokens import REF, TAG, WIKI
 from kitty.db.connection import transaction
 
 MAX_OPS = 20_000
 LOG_FORMAT = 1
-#: ((uuid)) block references and {{embed:uuid}} embeds.
-REF = re.compile(r'\(\(([0-9a-fA-F-]{36})\)\)|\{\{embed:([0-9a-fA-F-]{36})\}\}')
-#: [[Page title]] and [[Page title|label]] links.
-WIKI = re.compile(r'\[\[([^\[\]\n|]{1,200})(?:\|[^\[\]\n]{0,200})?\]\]')
-TAG = re.compile(r'(?<![\w#])#([\w][\w/-]{0,99})', re.UNICODE)
 
 
 def now() -> str:
@@ -105,7 +102,7 @@ def references(text: str) -> tuple[set[str], set[tuple[str, str]]]:
 
 
 def _is_edit(op: dict) -> bool:
-    return not (op["op"] == "set" and "type" not in op and op.get("props", {}).keys() <= VIEW_KEYS)
+    return not (op["op"] == "set" and "type" not in op and not any(is_edit_key(key) for key in op.get("props", {})))
 
 
 class _Transaction:
@@ -226,6 +223,7 @@ class _Transaction:
 
     def write(self, device: str, txn_id: str) -> dict[str, int]:
         conn, seqs = self.conn, {}
+        projected: list[Block] = []
         for page_id in self.logged:
             self.docs[page_id].check()
         for page_id, ops in self.logged.items():
@@ -236,6 +234,7 @@ class _Transaction:
             if doc.removed:
                 conn.executemany("DELETE FROM blocks WHERE id=?", [(bid,) for bid in doc.removed])
             changed = [doc.blocks[bid] for bid in doc.changed]
+            projected.extend(changed)
             conn.executemany(
                 "INSERT INTO blocks(id,type,parent_id,page_id,order_key,properties,text,created_at,updated_at,deleted_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,parent_id=excluded.parent_id,"
@@ -252,16 +251,22 @@ class _Transaction:
                 refs, topics = references(item.text)
                 conn.executemany("INSERT INTO block_refs(source_id,target_id,kind) VALUES (?,?,'block')", [(item.id, ref) for ref in refs])
                 conn.executemany("INSERT INTO block_topics(block_id,kind,topic) VALUES (?,?,?)", [(item.id, kind, topic) for kind, topic in topics])
+        tagging.project(conn, projected, self.at)
         return seqs
 
 
 def transact(conn: sqlite3.Connection, ops: Iterable[Any], *, base: Any = None, txn_id: str | None = None,
-             at: str | None = None) -> dict:
+             at: str | None = None, suggest: bool = False) -> dict:
     """Apply one transaction atomically and return ``{txn_id, seq, revisions}`` keyed by page.
 
     ``base`` maps page IDs to the revision the caller last saw; a mismatch is a 409
     and nothing is written. Every content edit bumps the touched page's ``revision``
-    (view-state properties in VIEW_KEYS do not).
+    (view-state properties in VIEW_KEYS and tag states do not).
+
+    Auto-tags (Q13) ride along: *always attach* tags join the transaction's own
+    operations, listed under ``tagged`` ({page_id: [ops]}) with their names under
+    ``tags``; ``suggest`` also returns ``suggestions`` for every changed text block
+    (kitty.core.blocks.tagging).
     """
     ops = list(ops) if not isinstance(ops, (str, bytes, dict)) else None
     if not ops or len(ops) > MAX_OPS:
@@ -274,6 +279,7 @@ def transact(conn: sqlite3.Connection, ops: Iterable[Any], *, base: Any = None, 
         work.check_base(base)
         for op in ops:
             work.apply(op)
+        tags = tagging.annotate(conn, work.docs, work.record, suggest=suggest)
         revisions = work.bump()
         seqs = work.write(device_id(conn), txn_id)
-    return {"txn_id": txn_id, "seq": seqs, "revisions": revisions}
+    return {"txn_id": txn_id, "seq": seqs, "revisions": revisions, **tags}

@@ -127,7 +127,7 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
         "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
         "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness",
-        "/api/blocks")),
+        "/api/blocks", "/api/tags")),
     ("/api/terminal", "terminal"),
 ), key=lambda item: -len(item[0])))
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
@@ -139,7 +139,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
-    (None, "web_desktop"), (None, "web_clients"), (None, "web_keys"),
+    ("workspace", "web_tags"), (None, "web_desktop"), (None, "web_clients"), (None, "web_keys"),
     (None, "web_account"),
     ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )

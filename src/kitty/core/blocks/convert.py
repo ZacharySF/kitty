@@ -29,7 +29,7 @@ import uuid
 from typing import Callable, Iterable
 
 from kitty.core.blocks.order import keys_between
-from kitty.core.blocks.pagedoc import Block, OrderedPageDoc
+from kitty.core.blocks.pagedoc import TAG_KEY, Block, OrderedPageDoc
 
 #: Fixed namespace so a canvas element always maps to the same block ID.
 NAMESPACE = uuid.UUID("5d2b9c1e-4a7f-4e4b-9b39-0c7f0c3b6a11")
@@ -270,7 +270,7 @@ def sync_tree(doc: OrderedPageDoc, root_id: str, desired: list[dict], scope: Cal
     `desired` lists ``{id, parent, type, props, text}`` parents before children and
     siblings in order. Unchanged blocks produce no operation; reordering keeps the
     longest run of already-ordered siblings and only re-keys the others; blocks no
-    longer wanted go to Trash. Properties are replaced as a whole.
+    longer wanted go to Trash. Properties are replaced as a whole, except ``tag_*`` states.
     """
     existing = {item.id: item for item in doc.descendants(root_id) if item.live and scope(item)}
     groups: dict[str, list[str]] = {}
@@ -313,8 +313,10 @@ def sync_tree(doc: OrderedPageDoc, root_id: str, desired: list[dict], scope: Cal
                             if child.deleted_at == item.deleted_at and scope(child))
         if item.parent_id != spec["parent"] or item.order_key != keys[bid]:
             ops.append({"op": "move", "id": bid, "parent": spec["parent"], "key": keys[bid]})
-        if item.type != spec["type"] or item.properties != spec["props"]:
-            ops.append({"op": "set", "id": bid, "props": props_diff(item.properties, spec["props"]),
+        # Properties are replaced as a whole, except tag states (Q13): they belong to tagging, not to the shape.
+        props = {**{key: value for key, value in item.properties.items() if TAG_KEY.match(key)}, **spec["props"]}
+        if item.type != spec["type"] or item.properties != props:
+            ops.append({"op": "set", "id": bid, "props": props_diff(item.properties, props),
                         **({"type": spec["type"]} if item.type != spec["type"] else {})})
         if item.text != spec["text"]:
             ops.append({"op": "text", "id": bid, "text": spec["text"]})

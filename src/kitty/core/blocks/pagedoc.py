@@ -32,12 +32,22 @@ from kitty.core.blocks import order
 #: Property keys that record how a page is viewed, not what it contains: changing
 #: only these is not an edit (no revision bump, no ``updated_at`` change).
 VIEW_KEYS = frozenset({"viewport", "viewport_revision", "favorite", "last_opened", "position"})
+#: A block's state for one tag (Q13): ``tag_<tag id without dashes>`` is ``manual``,
+#: ``auto`` or ``accepted`` (attached) or ``rejected``. Tagging is not an edit either:
+#: attaching a tag while someone types must not move the page revision under them.
+TAG_KEY = re.compile(r"tag_[0-9a-f]{32}\Z")
+TAG_STATES = frozenset({"manual", "auto", "accepted", "rejected"})
 MAX_PAGE_BLOCKS = 10_000
 MAX_DEPTH = 64
 MAX_TEXT_BYTES = 1024 * 1024
 MAX_PROPERTY_BYTES = 2 * 1024 * 1024
 _TYPE = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
+
+
+def is_edit_key(key: str) -> bool:
+    """Whether changing property `key` edits the block (rather than its view state or tags)."""
+    return key not in VIEW_KEYS and not TAG_KEY.match(key)
 
 
 class BlockError(ValueError):
@@ -98,6 +108,9 @@ def _type(value: Any) -> str:
 def _props(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or any(not isinstance(key, str) or not _KEY.fullmatch(key) for key in value):
         raise BlockError("Block properties must be an object with simple keys")
+    if any(TAG_KEY.match(key) and item is not None and (not isinstance(item, str) or item not in TAG_STATES)
+           for key, item in value.items()):
+        raise BlockError("A tag state is manual, auto, accepted or rejected")
     return value
 
 
@@ -270,7 +283,7 @@ class OrderedPageDoc:
                 item.properties.pop(key, None)
             else:
                 item.properties[key] = value
-        if "type" in op or not props.keys() <= VIEW_KEYS:
+        if "type" in op or any(is_edit_key(key) for key in props):
             item.updated_at = at
         self.changed.add(item.id)
 
