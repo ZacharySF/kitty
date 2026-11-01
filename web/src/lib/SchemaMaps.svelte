@@ -128,15 +128,45 @@
     job: "Job",
     flashcard_deck: "Flashcard deck",
   };
-  const NODE_W = 200,
-    NODE_H = 64,
-    LIMIT = 100000;
+  const LIMIT = 100000;
+  // Q44: nodes are rounded pills sized to their label; parentless nodes are inverted ink root pills.
+  const PILL_H = 34, ROOT_H = 38, LABEL_MAX = 30;
+  const pillWidths = new Map<string, number>();
+  let measurer: CanvasRenderingContext2D | null = null, uiFont = "Inter, sans-serif", headingFont = "Inter, sans-serif";
+  let fontsReady = $state(0);
+  function textWidth(text: string, font: string) {
+    void fontsReady;
+    const key = `${font}\u0000${text}`;
+    let width = pillWidths.get(key);
+    if (width === undefined) {
+      measurer ??= document.createElement("canvas").getContext("2d");
+      if (measurer) measurer.font = font;
+      width = measurer ? measurer.measureText(text).width : text.length * 7;
+      pillWidths.set(key, width);
+    }
+    return width;
+  }
+  function isRoot(n: Node) { return !parents.has(n.id); }
+  function pillText(n: Node) {
+    if (hiddenLabel(n)) return "?";
+    const text = name(n);
+    return `${n.source?.kind === "note_page" ? "▤ " : ""}${text.length > LABEL_MAX ? `${text.slice(0, LABEL_MAX - 1)}…` : text}`;
+  }
+  function hiddenCount(n: Node) { return n.collapsed ? descendants(n.id).size - 1 : 0; }
+  function box(n: Node) {
+    const root = isRoot(n), fold = hiddenCount(n);
+    const text = textWidth(pillText(n), root ? `600 13px ${headingFont}` : `500 12.5px ${uiFont}`);
+    return {w: Math.round(Math.min(320, Math.max(root ? 72 : 64, text + (root ? 36 : 44) + (fold ? 26 : 0)))), h: root ? ROOT_H : PILL_H};
+  }
   let maps = $state<Summary[]>([]),
     subjects = $state<{ id: number; name: string }[]>([]);
   let current = $state<MapItem | null>(null),
     busy = $state(false),
     dirty = $state(false),
     blocked = $state(false);
+  const parents = $derived(new Map([...(current?.graph.edges ?? [])].reverse().filter(e => e.from !== e.to).map(e => [e.to, e.from])));
+  /** The first non-loop edge into each node is its tree edge; any other edge is drawn as a free connection. */
+  const treeEdges = $derived(new Set([...new Map([...(current?.graph.edges ?? [])].reverse().filter(e => e.from !== e.to).map(e => [e.to, e.id])).values()]));
   let error = $state(""),
     notice = $state(""),
     newTitle = $state(""),
@@ -637,11 +667,11 @@
       source: kind === "class" ? { kind: "subject", id: subject!.id } : null,
       x: Math.max(
         -100000,
-        Math.min(100000, ((rect?.width ?? 700) / 2 - view.x) / view.zoom - 100),
+        Math.min(100000, ((rect?.width ?? 700) / 2 - view.x) / view.zoom - 60),
       ),
       y: Math.max(
         -100000,
-        Math.min(100000, ((rect?.height ?? 500) / 2 - view.y) / view.zoom - 32),
+        Math.min(100000, ((rect?.height ?? 500) / 2 - view.y) / view.zoom - PILL_H / 2),
       ),
     };
     current.graph.nodes.push(n);
@@ -785,7 +815,8 @@
       history = [...history.slice(-29), gesture.before];
       if (gesture.node) {
         const dragged = current.graph.nodes.find(n => n.id === gesture!.node)!;
-        const target = current.graph.nodes.find(n => n.id !== dragged.id && dragged.x + NODE_W / 2 >= n.x && dragged.x + NODE_W / 2 <= n.x + NODE_W && dragged.y + NODE_H / 2 >= n.y && dragged.y + NODE_H / 2 <= n.y + NODE_H);
+        const size = box(dragged), centre = {x: dragged.x + size.w / 2, y: dragged.y + size.h / 2};
+        const target = current.graph.nodes.find(n => n.id !== dragged.id && centre.x >= n.x && centre.x <= n.x + box(n).w && centre.y >= n.y && centre.y <= n.y + box(n).h);
         if (target) {
           const descendants = new Set([dragged.id]);
           for (let i = 0; i < current.graph.nodes.length; i++) for (const edge of current.graph.edges) if (descendants.has(edge.from)) descendants.add(edge.to);
@@ -836,11 +867,11 @@
     }
     const left = Math.min(...ns.map((n) => n.x)),
       top = Math.min(...ns.map((n) => n.y)),
-      width = Math.max(...ns.map((n) => n.x + NODE_W)) - left,
-      height = Math.max(...ns.map((n) => n.y + NODE_H)) - top;
+      width = Math.max(...ns.map((n) => n.x + box(n).w)) - left,
+      height = Math.max(...ns.map((n) => n.y + box(n).h)) - top;
     const w = rect?.width ?? 700,
       h = rect?.height ?? 500,
-      z = Math.max(0.1, Math.min(2, (w - 60) / width, (h - 60) / height));
+      z = Math.max(0.1, Math.min(1.25, (w - 60) / width, (h - 60) / height));
     current.viewport = {
       x: (w - width * z) / 2 - left * z,
       y: (h - height * z) / 2 - top * z,
@@ -851,24 +882,32 @@
     return Math.max(-LIMIT, Math.min(LIMIT, Math.round(value)));
   }
   /** Point where the ray from a node box's center along (dx, dy) leaves the box. */
-  function boundary(c: Point, dx: number, dy: number): Point {
+  function boundary(c: Point, dx: number, dy: number, size: {w: number; h: number}): Point {
     const t = Math.min(
-      dx === 0 ? Infinity : NODE_W / 2 / Math.abs(dx),
-      dy === 0 ? Infinity : NODE_H / 2 / Math.abs(dy),
+      dx === 0 ? Infinity : size.w / 2 / Math.abs(dx),
+      dy === 0 ? Infinity : size.h / 2 / Math.abs(dy),
     );
     return Number.isFinite(t) ? { x: c.x + dx * t, y: c.y + dy * t } : c;
   }
   /**
-   * Edge paths: straight when a pair has one connection, mirrored arcs for
-   * bidirectional or parallel connections, stacked loops for self-connections.
-   * Endpoints stop at box borders so arrowheads stay visible.
+   * Edge paths. A node's tree edge is a horizontal branch curve from the parent's side to the
+   * child's facing side. Other connections are straight when a pair has one connection, mirrored
+   * arcs for bidirectional or parallel connections and stacked loops for self-connections, with
+   * endpoints on the pill borders so arrowheads stay visible.
    */
   const geometry = $derived.by(() => {
-    const shapes = new Map<string, { d: string; lx: number; ly: number }>();
+    const shapes = new Map<string, { d: string; lx: number; ly: number; tree: boolean }>();
     if (!current) return shapes;
     const byId = new Map(current.graph.nodes.map((n) => [n.id, n])),
       pairs = new Map<string, Edge[]>();
     for (const e of current.graph.edges) {
+      if (treeEdges.has(e.id)) {
+        const a = byId.get(e.from)!, b = byId.get(e.to)!, as = box(a), bs = box(b);
+        const ca = {x: a.x + as.w / 2, y: a.y + as.h / 2}, cb = {x: b.x + bs.w / 2, y: b.y + bs.h / 2};
+        const side = cb.x >= ca.x ? 1 : -1, sx = ca.x + side * as.w / 2, ex = cb.x - side * bs.w / 2, mx = (sx + ex) / 2;
+        shapes.set(e.id, {d: `M ${sx} ${ca.y} C ${mx} ${ca.y}, ${mx} ${cb.y}, ${ex} ${cb.y}`, lx: mx, ly: (ca.y + cb.y) / 2 - 6, tree: true});
+        continue;
+      }
       const key = e.from < e.to ? `${e.from} ${e.to}` : `${e.to} ${e.from}`;
       const list = pairs.get(key);
       if (list) list.push(e);
@@ -877,40 +916,44 @@
     for (const list of pairs.values())
       list.forEach((e, index) => {
         const a = byId.get(e.from)!,
-          b = byId.get(e.to)!;
+          b = byId.get(e.to)!,
+          as = box(a),
+          bs = box(b);
         if (a.id === b.id) {
-          const r = 30 + index * 18,
-            sx = a.x + NODE_W - 78,
-            ex = a.x + NODE_W - 22;
+          const r = 18 + index * 12,
+            sx = a.x + as.w - 44,
+            ex = a.x + as.w - 14;
           shapes.set(e.id, {
-            d: `M ${sx} ${a.y} C ${sx - 12} ${a.y - 2.2 * r}, ${ex + 12} ${a.y - 2.2 * r}, ${ex} ${a.y}`,
+            d: `M ${sx} ${a.y} C ${sx - 10} ${a.y - 2.2 * r}, ${ex + 10} ${a.y - 2.2 * r}, ${ex} ${a.y}`,
             lx: (sx + ex) / 2,
             ly: a.y - 1.65 * r - 6,
+            tree: false,
           });
           return;
         }
-        const ca = { x: a.x + NODE_W / 2, y: a.y + NODE_H / 2 },
-          cb = { x: b.x + NODE_W / 2, y: b.y + NODE_H / 2 },
+        const ca = { x: a.x + as.w / 2, y: a.y + as.h / 2 },
+          cb = { x: b.x + bs.w / 2, y: b.y + bs.h / 2 },
           sign = e.from < e.to ? 1 : -1,
           dx = (cb.x - ca.x) * sign,
           dy = (cb.y - ca.y) * sign,
           length = Math.hypot(dx, dy) || 1,
-          offset = list.length === 1 ? 0 : (index - (list.length - 1) / 2) * 64,
+          offset = list.length === 1 ? 0 : (index - (list.length - 1) / 2) * 48,
           control = {
             x: (ca.x + cb.x) / 2 - (dy / length) * offset,
             y: (ca.y + cb.y) / 2 + (dx / length) * offset,
           },
-          s = boundary(ca, control.x - ca.x, control.y - ca.y),
-          t = boundary(cb, control.x - cb.x, control.y - cb.y);
+          s = boundary(ca, control.x - ca.x, control.y - ca.y, as),
+          t = boundary(cb, control.x - cb.x, control.y - cb.y, bs);
         shapes.set(e.id, {
           d: `M ${s.x} ${s.y} Q ${control.x} ${control.y} ${t.x} ${t.y}`,
           lx: 0.25 * s.x + 0.5 * control.x + 0.25 * t.x,
           ly: 0.25 * s.y + 0.5 * control.y + 0.25 * t.y + 4,
+          tree: false,
         });
       });
     return shapes;
   });
-  /** Layered tree: roots are nodes without incoming connections (or, inside cycles, the busiest node); parents center over children. */
+  /** Left-to-right tree: roots are nodes without incoming connections (or, inside cycles, the busiest node); parents center beside their children; folded branches take one row. */
   function treeLayout(graph: Graph) {
     const out = new Map(graph.nodes.map((n) => [n.id, [] as string[]])),
       incoming = new Map(graph.nodes.map((n) => [n.id, 0]));
@@ -942,33 +985,33 @@
       (a, b) => out.get(b.id)!.length - out.get(a.id)!.length,
     ))
       if (!depth.has(n.id)) grow(n.id);
-    const positions = new Map<string, Point>();
+    const positions = new Map<string, Point>(),
+      byId = new Map(graph.nodes.map((n) => [n.id, n])),
+      row = PILL_H + 14;
     let slot = 0;
-    const place = (id: string): number => {
-      const kids = children.get(id)!;
-      const x = kids.length
-        ? (() => {
-            const xs = kids.map(place);
-            return (xs[0] + xs[xs.length - 1]) / 2;
-          })()
-        : slot++ * (NODE_W + 40);
-      positions.set(id, { x, y: depth.get(id)! * (NODE_H + 90) });
-      return x;
+    const place = (id: string, x: number): number => {
+      const n = byId.get(id)!, size = box(n);
+      const kids = n.collapsed ? [] : children.get(id)!;
+      const ys = kids.map((kid) => place(kid, x + size.w + 56));
+      const cy = ys.length ? (ys[0] + ys[ys.length - 1]) / 2 : slot++ * row + row / 2;
+      positions.set(id, { x, y: cy - size.h / 2 });
+      return cy;
     };
     for (const root of roots) {
-      place(root);
-      slot += 0.5;
+      place(root, 0);
+      slot += 0.8;
     }
     return positions;
   }
   /** Deterministic Fruchterman–Reingold from current positions, then box-overlap removal. */
   function forceLayout(graph: Graph) {
     const ns = graph.nodes,
+      sizes = ns.map((n) => box(n)),
       count = ns.length,
       spread = new Set(ns.map((n) => `${n.x},${n.y}`)).size === count,
       p = ns.map((n, i) =>
         spread
-          ? { x: n.x + NODE_W / 2, y: n.y + NODE_H / 2 }
+          ? { x: n.x + sizes[i].w / 2, y: n.y + sizes[i].h / 2 }
           : {
               x: Math.cos((2 * Math.PI * i) / count) * 60 * Math.sqrt(count),
               y: Math.sin((2 * Math.PI * i) / count) * 60 * Math.sqrt(count),
@@ -1026,11 +1069,13 @@
       let moved = false;
       for (let i = 0; i < count; i++)
         for (let j = i + 1; j < count; j++) {
-          const ox = NODE_W + 70 - Math.abs(p[i].x - p[j].x),
-            oy = NODE_H + 50 - Math.abs(p[i].y - p[j].y);
+          const needX = (sizes[i].w + sizes[j].w) / 2 + 40,
+            needY = (sizes[i].h + sizes[j].h) / 2 + 24,
+            ox = needX - Math.abs(p[i].x - p[j].x),
+            oy = needY - Math.abs(p[i].y - p[j].y);
           if (ox <= 0 || oy <= 0) continue;
           moved = true;
-          if (ox / (NODE_W + 70) < oy / (NODE_H + 50)) {
+          if (ox / needX < oy / needY) {
             const shift = (p[i].x <= p[j].x ? -ox : ox) / 2;
             p[i].x += shift;
             p[j].x -= shift;
@@ -1045,7 +1090,7 @@
     return new Map(
       ns.map((n, i) => [
         n.id,
-        { x: p[i].x - NODE_W / 2, y: p[i].y - NODE_H / 2 },
+        { x: p[i].x - sizes[i].w / 2, y: p[i].y - sizes[i].h / 2 },
       ]),
     );
   }
@@ -1063,7 +1108,8 @@
       for (const [level, nodes] of levels) nodes.forEach((n, i) => {
         const angle = 2 * Math.PI * i / nodes.length;
         const radius = level === 0 && nodes.length === 1 ? 0 : (level + 1) * Math.max(220, nodes.length * 42);
-        positions.set(n.id, {x: Math.cos(angle) * radius, y: Math.sin(angle) * radius});
+        const size = box(n);
+        positions.set(n.id, {x: Math.cos(angle) * radius - size.w / 2, y: Math.sin(angle) * radius - size.h / 2});
       });
     } else positions = kind === "tree" ? treeLayout(current.graph) : forceLayout(current.graph);
     for (const n of current.graph.nodes) {
@@ -1191,21 +1237,22 @@
     const rect = stage?.getBoundingClientRect(),
       v = current!.viewport;
     if (rect) {
-      const sx = n.x * v.zoom + v.x,
+      const size = box(n),
+        sx = n.x * v.zoom + v.x,
         sy = n.y * v.zoom + v.y;
       if (
         sx < 0 ||
         sy < 0 ||
-        sx + NODE_W * v.zoom > rect.width ||
-        sy + NODE_H * v.zoom > rect.height
+        sx + size.w * v.zoom > rect.width ||
+        sy + size.h * v.zoom > rect.height
       ) {
         v.x = Math.max(
           -1e7,
-          Math.min(1e7, rect.width / 2 - (n.x + NODE_W / 2) * v.zoom),
+          Math.min(1e7, rect.width / 2 - (n.x + size.w / 2) * v.zoom),
         );
         v.y = Math.max(
           -1e7,
-          Math.min(1e7, rect.height / 2 - (n.y + NODE_H / 2) * v.zoom),
+          Math.min(1e7, rect.height / 2 - (n.y + size.h / 2) * v.zoom),
         );
       }
     }
@@ -1385,6 +1432,10 @@
     catch { error = "Local draft backup is unavailable. Save map before leaving."; }
   });
   onMount(() => {
+    const fonts = getComputedStyle(document.documentElement);
+    uiFont = fonts.getPropertyValue("--font-ui").trim() || uiFont;
+    headingFont = fonts.getPropertyValue("--heading").trim() || headingFont;
+    void document.fonts?.ready.then(() => { pillWidths.clear(); fontsReady += 1; });
     void refresh()
       .then(() => {
         let lastMap = 0;
@@ -1986,38 +2037,41 @@
                 {#if shape}<path
                     d={shape.d}
                     class="edge"
+                    class:branch={shape.tree}
                     class:active={selectedEdge === e.id}
-                    marker-end={selectedEdge === e.id
+                    style:--b={branchColor(current.graph.nodes.find(n => n.id === e.to)!)}
+                    marker-end={shape.tree ? undefined : selectedEdge === e.id
                       ? `url(#${pane.id}-schema-arrow-active)`
                       : `url(#${pane.id}-schema-arrow)`}
                   /><path d={shape.d} class="edge-hit" data-edge={e.id} />{/if}
               {/each}
               {#each visibleNodes as n (n.id)}
+                {@const size = box(n)}
+                {@const root = isRoot(n)}
+                {@const folded = hiddenCount(n)}
                 <g
                   transform={`translate(${n.x},${n.y})`}
                   data-node={n.id}
                   role="button"
                   tabindex="0"
-                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}. Tab child, Enter sibling, type to rename, Space collapse, arrows select.`}
+                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}. Tab child, Enter sibling, type to rename, Space collapse, arrows select.`}
                   class:selected={selected === n.id}
+                  class:root
                   class="graph-node"
-                  style={`--branch-color: ${branchColor(n)}`}
+                  style:--b={branchColor(n)}
                   ondblclick={() => openCard(n)}
                   onpointerdown={(e) => start(e, n.id)}
                   onkeydown={(e) => nodeKey(e, n)}
                   onclick={() => choose(n)}
                   oncontextmenu={(event) => deleteAtPointer(event, n)}
                 >
-                  <rect width="200" height="64" rx="10" style="stroke: var(--branch-color); fill: color-mix(in srgb, var(--branch-color) 15%, var(--surface));" />
-                  <text x="10" y="20" class="node-kind"
-                    >{n.source?.kind === "note_page" ? "▤ NOTE" : n.kind.toUpperCase()} {n.collapsed ? "▸" : ""}</text
-                  >
-                  <text x="10" y="43"
-                    >{hiddenLabel(n) ? "?" : name(n).length > 24 ? name(n).slice(0, 23) + "…" : name(n)}</text
-                  >
+                  <rect class="pill" width={size.w} height={size.h} rx={size.h / 2} />
+                  {#if !root}<circle class="dot" cx="16" cy={size.h / 2} r="4" />{/if}
+                  <text class="label" x={root ? (size.w - (folded ? 26 : 0)) / 2 : 28} y={size.h / 2 + 4.5} text-anchor={root ? "middle" : "start"}>{pillText(n)}</text>
+                  {#if folded}<g class="fold" transform={`translate(${size.w - 17},${size.h / 2})`}><circle r="9" /><text y="3.5" text-anchor="middle">{folded > 99 ? "99+" : folded}</text></g>{/if}
                   {#if editing === n.id}
-                    <foreignObject x="6" y="25" width="188" height="34">
-                      <input id={`${pane.id}-map-inline-label`} aria-label="Node label" style="width: 100%; box-sizing: border-box; color: var(--ink); background: var(--surface); border: 1px solid var(--accent);" bind:value={inlineLabel} maxlength="200"
+                    <foreignObject x="0" y="0" width={Math.max(size.w, 180)} height={size.h}>
+                      <input id={`${pane.id}-map-inline-label`} class="inline-label" aria-label="Node label" bind:value={inlineLabel} maxlength="200"
                         onpointerdown={e => e.stopPropagation()}
                         oninput={e => updateInline(e.currentTarget.value)}
                         onkeydown={(e) => {
@@ -2402,36 +2456,60 @@
     user-select: none;
     cursor: grab;
   }
+  /* Q44: rounded pills with a branch-coloured dot; parentless nodes are inverted ink roots. */
   .graph-node {
     cursor: move;
-  }
-  .graph-node rect {
-    fill: var(--surface);
-    stroke: var(--border);
-    stroke-width: 2;
-  }
-  .graph-node.selected rect,
-  .graph-node:focus rect {
-    stroke: var(--accent);
-    stroke-width: 3;
-  }
-  .graph-node:focus {
     outline: none;
   }
-  .graph-node text {
+  .graph-node .pill {
+    fill: color-mix(in srgb, var(--b) 14%, var(--solid-panel));
+    stroke: color-mix(in srgb, var(--b) 55%, transparent);
+    stroke-width: 1.2;
+    transition: fill 160ms;
+  }
+  .graph-node:hover .pill { fill: color-mix(in srgb, var(--b) 26%, var(--solid-panel)); }
+  .graph-node.selected .pill,
+  .graph-node:focus-visible .pill {
+    stroke: var(--b);
+    stroke-width: 2;
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--b) 45%, transparent));
+  }
+  .graph-node .dot { fill: var(--b); }
+  .graph-node .label {
     fill: var(--ink);
-    font: 12px var(--br-font-ui, monospace);
+    font: 500 12.5px var(--font-ui);
     pointer-events: none;
   }
-  .graph-node .node-kind {
-    fill: var(--violet);
-    font-size: 9px;
+  .graph-node.root .pill { fill: var(--ink); stroke: none; }
+  .graph-node.root:hover .pill { fill: color-mix(in srgb, var(--ink) 88%, var(--solid-void)); }
+  .graph-node.root.selected .pill,
+  .graph-node.root:focus-visible .pill { stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 45%, transparent)); }
+  .graph-node.root .label { fill: var(--solid-void); font: 600 13px var(--heading); }
+  .graph-node .fold circle { fill: color-mix(in srgb, var(--b) 40%, var(--solid-panel)); }
+  .graph-node.root .fold circle { fill: var(--solid-void); }
+  .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-mono); pointer-events: none; }
+  .inline-label {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border: 1.5px solid var(--accent);
+    border-radius: 999px;
+    color: var(--ink);
+    background: var(--solid-panel);
+    font: 500 12.5px var(--font-ui);
   }
+  @media (prefers-reduced-motion: reduce) { .graph-node .pill { transition: none; } }
   .edge {
     fill: none;
     stroke: var(--violet);
     stroke-width: 2;
     pointer-events: none;
+  }
+  .edge.branch {
+    stroke: var(--b);
+    stroke-width: 1.6;
+    stroke-opacity: 0.6;
   }
   .edge.active {
     stroke: var(--accent);

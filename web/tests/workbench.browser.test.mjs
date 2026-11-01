@@ -1352,3 +1352,64 @@ describe("notes tabs and floating outline", () => {
     await context.close();
   });
 });
+
+/** Opens Study → Mind map and creates a fresh map from `template`; returns its node locator. */
+async function newMindMap(page, title, template = "Lecture") {
+  const schema = page.getByRole("region", { name: "Mental schema maps" });
+  await schema.waitFor();
+  const fresh = schema.getByRole("button", { name: "New map", exact: true });
+  const titleField = schema.getByRole("textbox", { name: "New map title" });
+  await Promise.race([fresh.waitFor(), titleField.waitFor()]);
+  if (await fresh.isVisible()) await fresh.click();
+  await titleField.fill(title);
+  await schema.locator("summary", { hasText: "Advanced options" }).click();
+  await schema.getByRole("combobox", { name: "Starting template" }).selectOption(template);
+  await schema.getByRole("button", { name: "Create map" }).click();
+  await page.waitForFunction((label) => [...document.querySelectorAll("svg.stage [data-node]")].some((node) => node.textContent.includes(label)), title);
+  return { schema, nodes: schema.locator("svg.stage [data-node]") };
+}
+/** Resolves a CSS colour expression (e.g. `var(--ink)`) to the computed rgb() string. */
+const resolveColor = (page, value) => page.evaluate((color) => {
+  const probe = document.createElement("i");
+  probe.style.color = color;
+  document.body.append(probe);
+  const result = getComputedStyle(probe).color;
+  probe.remove();
+  return result;
+}, value);
+
+describe("mind-map pills", () => {
+  test("nodes are compact capsules with a branch-coloured dot and an inverted ink root pill", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { nodes } = await newMindMap(page, "Pipelines");
+    assert.equal(await nodes.count(), 4);
+    const shapes = await nodes.evaluateAll((list) => list.map((node) => {
+      const pill = node.querySelector("rect.pill"), dot = node.querySelector("circle.dot"), label = node.querySelector("text.label");
+      const box = pill?.getBBox();
+      return {
+        text: label?.textContent, root: node.classList.contains("root"), height: box?.height, width: box?.width,
+        rx: Number(pill?.getAttribute("rx")), fill: pill && getComputedStyle(pill).fill, ink: label && getComputedStyle(label).fill,
+        dot: dot && getComputedStyle(dot).fill,
+      };
+    }));
+    const root = shapes.find((shape) => shape.root);
+    assert.ok(root, "no root pill");
+    assert.equal(root.text, "Pipelines");
+    assert.equal(root.fill, await resolveColor(page, "var(--ink)"), "root pill is not filled with ink");
+    assert.equal(root.ink, await resolveColor(page, "var(--solid-void)"), "root label is not inverted");
+    const branches = shapes.filter((shape) => !shape.root);
+    assert.equal(branches.length, 3);
+    const palette = await Promise.all([1, 2, 3, 4, 5, 6].map((n) => resolveColor(page, `var(--c${n})`)));
+    for (const shape of [root, ...branches]) {
+      assert.ok(shape.height <= 40, `${shape.text} is ${shape.height}px tall`);
+      assert.equal(shape.rx, shape.height / 2, `${shape.text} is not a capsule`);
+    }
+    for (const shape of branches) {
+      assert.ok(shape.width < 160, `${shape.text} is ${shape.width}px wide`);
+      assert.ok(palette.includes(shape.dot), `${shape.text} has no branch-coloured dot`);
+    }
+    assert.equal(new Set(branches.map((shape) => shape.dot)).size, 3, "branches do not get distinct colours");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
