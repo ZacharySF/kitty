@@ -25,16 +25,16 @@ after(async () => {
   await server?.close();
 });
 
-async function harness() {
+async function harness(search = "") {
   const context = await browser.newContext({ viewport: { width: 1000, height: 800 } });
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
-  await open(page);
+  await open(page, search);
   return { page, problems, context };
 }
-async function open(page) {
-  await page.goto(new URL("tests/dock-harness.html", base).href);
+async function open(page, search = "") {
+  await page.goto(new URL(`tests/dock-harness.html${search}`, base).href);
   await page.waitForFunction(() => !!window.dockHarness);
 }
 const dock = (page) => page.locator('[data-kitty-panel="dock"]');
@@ -188,6 +188,80 @@ test("Agent launch chooses a coding agent, remembers it, and exposes named-sessi
   assert.match(await instructions.innerText(), /--session 'kitty-sample'/);
   assert.match(await instructions.innerText(), /tab create.*--label/);
   assert.match(await instructions.innerText(), /\/sample\/workspace/);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("without an installed Tern nothing Tern-related renders in the dock", async () => {
+  const { page, problems, context } = await harness();
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("list", { name: "herdr agent activity" }).waitFor();
+  await page.waitForFunction(() => window.dockHarness.calls.some((call) => call.url === "/api/terminal/tern"));
+  assert.equal(await page.getByRole("region", { name: "Tern" }).count(), 0);
+  assert.equal(await dock(page).getByText(/tern/i).count(), 0);
+  assert.deepEqual(await page.evaluate(() => window.dockHarness.calls.filter((call) => call.method === "POST" && call.url.includes("tern"))), []);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("an installed Tern lists kitty!'s panes in the dock: run a line, focus, capture, open the note", async () => {
+  const { page, problems, context } = await harness("?tern=1");
+  const posted = (url) => page.evaluate((target) => window.dockHarness.calls
+    .filter((call) => call.url === target && call.method === "POST")
+    .map((call) => ({ body: call.body, guarded: call.headers["X-Kitty-Request"] === "1" })), url);
+  await page.getByRole("button", { name: "Agents" }).click();
+  const tern = page.getByRole("region", { name: "Tern" });
+  const panes = tern.getByRole("list", { name: "Tern panes" });
+  await panes.waitFor();
+  // herdr's agent strip stays; Tern is additive.
+  await page.getByRole("list", { name: "herdr agent activity" }).waitFor();
+  assert.match(await panes.getByRole("listitem").filter({ hasText: "cargo test" }).innerText(), /working/i);
+  assert.match(await panes.getByRole("listitem").filter({ hasText: "make check" }).innerText(), /exited 3/i);
+  assert.match(await tern.getByRole("list", { name: "Recent Tern activity" }).innerText(), /pane 5 exited 3/i);
+
+  // The focused pane is the default target; an exited pane cannot take a command.
+  const target = tern.getByRole("combobox", { name: "Tern pane" });
+  assert.equal(await target.inputValue(), "4");
+  const command = tern.getByRole("textbox", { name: "Command line for the Tern pane" });
+  await command.fill("echo kitty-$((6*7))");
+  await tern.getByRole("button", { name: "Run" }).click();
+  await panes.getByRole("listitem").filter({ hasText: "echo kitty-$((6*7))" }).waitFor();
+  assert.deepEqual(await posted("/api/terminal/tern/run"), [{ body: { block: 4, text: "echo kitty-$((6*7))" }, guarded: true }]);
+  assert.equal(await command.inputValue(), "");
+  await target.selectOption("5");
+  await command.fill("ls");
+  assert.equal(await tern.getByRole("button", { name: "Run" }).isDisabled(), true);
+
+  await tern.getByRole("button", { name: "Focus make check in Tern" }).click();
+  await tern.getByRole("status").filter({ hasText: "Showing make check in kitty!'s Tern window." }).waitFor();
+  assert.deepEqual(await posted("/api/terminal/tern/focus"), [{ body: { block: 5 }, guarded: true }]);
+
+  await tern.getByRole("button", { name: "Capture echo kitty-$((6*7)) to a quick note" }).click();
+  await tern.getByRole("status").filter({ hasText: "Saved to quick note #7." }).waitFor();
+  assert.deepEqual(await posted("/api/terminal/tern/capture"), [{ body: { block: 4 }, guarded: true }]);
+  await tern.getByRole("button", { name: "Open note" }).click();
+  assert.deepEqual((await page.evaluate(() => window.dockHarness.opened)).map((item) => item.url), ["/#quick-note/7"]);
+
+  await tern.getByRole("button", { name: "New pane" }).click();
+  await panes.getByRole("listitem").nth(2).waitFor();
+  assert.deepEqual(await posted("/api/terminal/tern/new"), [{ body: {}, guarded: true }]);
+  await tern.getByRole("button", { name: "Open in Tern" }).click();
+  assert.deepEqual(await posted("/api/terminal/tern/open"), [{ body: {}, guarded: true }]);
+  // Tern draws in its own window: no Tern action attached a terminal (only herdr's, before Agents).
+  assert.equal(await page.evaluate(() => window.dockHarness.sockets.length), 1);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a refused Tern command is reported where it was typed", async () => {
+  const { page, problems, context } = await harness("?tern=1");
+  await page.evaluate(() => { window.dockHarness.ternErrors["/api/terminal/tern/run"] = "A command for Tern is one line of at most 4096 characters, without control characters"; });
+  await page.getByRole("button", { name: "Agents" }).click();
+  const tern = page.getByRole("region", { name: "Tern" });
+  await tern.getByRole("textbox", { name: "Command line for the Tern pane" }).fill("echo hi");
+  await tern.getByRole("button", { name: "Run" }).click();
+  await tern.getByRole("alert").filter({ hasText: "one line of at most 4096 characters" }).waitFor();
+  assert.equal(await tern.getByRole("textbox", { name: "Command line for the Tern pane" }).inputValue(), "echo hi");
   assert.deepEqual(problems, []);
   await context.close();
 });
