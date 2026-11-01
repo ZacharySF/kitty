@@ -2202,7 +2202,10 @@ describe("agent status cards", () => {
     assert.match(await working.textContent(), /run pytest · 4 passed/);
     assert.match(await working.textContent(), /synthetic/i, "workspace label missing");
     const timer = working.locator("time");
-    assert.match(await timer.textContent(), /^1:1\d$/);
+    // The card counts up from `since` (75 s before the reload); the page load time varies.
+    const [minutes, seconds] = (await timer.textContent()).split(":").map(Number);
+    const shown = minutes * 60 + seconds, elapsed = (Date.now() - started) / 1000;
+    assert.ok(shown >= 75 && shown <= Math.ceil(elapsed), `agent timer shows ${shown}s, expected 75–${Math.ceil(elapsed)}s`);
     await page.waitForFunction(() => document.querySelectorAll('[aria-label="Agent activity"] svg[role="img"] path.line').length === 2);
     assert.match(await working.getByRole("img").getAttribute("aria-label"), /output over the last 30 seconds/);
     assert.equal(await working.getByRole("button", { name: "Open pane" }).count(), 0, "a working agent offers Open pane");
