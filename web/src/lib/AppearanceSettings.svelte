@@ -3,7 +3,7 @@
   import { Panel } from "@nunera/bracket";
   import AppearancePreview from "./AppearancePreview.svelte";
   import { PRESETS, savedAppearance, setAppearance, type Appearance, type Preset } from "./appearance";
-  import { GRAPH_SETTINGS_EVENT, graphLook, setAtlasLook, type AtlasLook } from "./graphPreferences";
+  import { GRAPH_SETTINGS_EVENT, graphLook, setGraphLook, type AtlasLook } from "./graphPreferences";
   import { THEMES, type ThemeId } from "./themeCatalog";
   import { THEME_EVENT, currentTheme, setTheme } from "./themes";
 
@@ -31,7 +31,7 @@
   }
   function chooseLook(next: AtlasLook) {
     try {
-      setAtlasLook(next);
+      setGraphLook(next);
       look = next;
       error = "";
     } catch {
