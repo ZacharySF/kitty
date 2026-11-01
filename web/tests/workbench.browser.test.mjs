@@ -400,3 +400,31 @@ describe("command palette", () => {
     await context.close();
   });
 });
+
+describe("workspace tabs", () => {
+  test("underline tabs: icon per tab, the active tab underlined in its group colour, close shown on hover", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const bar = page.getByRole("navigation", { name: "Workspace tabs" });
+    await bar.waitFor();
+    await page.keyboard.press("Control+t");
+    await page.waitForFunction(() => document.querySelectorAll('[role="tab"]').length === 2);
+    const tabs = bar.locator(".tab");
+    const [first, second] = [tabs.nth(0), tabs.nth(1)];
+    assert.equal(await second.getAttribute("class").then((c) => c.includes("active")), true, "new tab is not active");
+    for (const tab of [first, second]) assert.equal(await tab.locator("svg").count(), 1, "tab has no icon");
+    const underline = (tab) => tab.evaluate((node) => {
+      const after = getComputedStyle(node, "::after");
+      return { height: after.height, color: after.backgroundColor, tone: getComputedStyle(node).getPropertyValue("--tone").trim() };
+    });
+    const active = await underline(second);
+    assert.equal(active.height, "2px", "active tab has no underline");
+    assert.notEqual(active.tone, "", "active tab has no group tone");
+    assert.notEqual((await underline(first)).height, "2px", "inactive tab is underlined");
+    const close = first.locator(".close-tab");
+    assert.equal(await close.evaluate((node) => getComputedStyle(node).visibility), "hidden", "inactive close button shows at rest");
+    await first.hover();
+    assert.equal(await close.evaluate((node) => getComputedStyle(node).visibility), "visible", "close button does not show on hover");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

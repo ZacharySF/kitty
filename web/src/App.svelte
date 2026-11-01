@@ -61,7 +61,10 @@
   let tabBar: { openMenu: (event: MouseEvent) => void; closeMenu: (restore?: boolean) => void } | undefined = $state();
   const title = $derived(navigation.find(item => item.id === view)?.label || "Workspace");
   const tabLabels = $derived(tabs.map(tab => ({
-    id: tab.id, label: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
+    id: tab.id,
+    label: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
+    icon: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.icon || "atlas",
+    tone: navigationGroups.find(group => group.views.includes(tab.view))?.tone ?? "var(--c1)",
   })));
   const schemaLabel = $derived(
     ({ jobs: "Jobs", notes: "Notes", flashcards: "Flashcards", opportunities: "Opportunities", schema: "Mind maps" } as Partial<Record<View, string>>)[view] || title,
