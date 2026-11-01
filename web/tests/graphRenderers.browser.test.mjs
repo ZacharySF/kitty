@@ -215,7 +215,7 @@ describe("look switching and preference", () => {
     await page.close();
   });
 
-  test("the look preference defaults to 2D, persists, accepts the home-only Brain and notifies open graphs", async () => {
+  test("the section graph look defaults to 2D, persists, ignores anything else and notifies open graphs", async () => {
     const { page } = await harness();
     const result = await page.evaluate(async () => {
       const prefs = await import("/src/lib/graphPreferences.ts");
@@ -225,16 +225,14 @@ describe("look switching and preference", () => {
       window.addEventListener(prefs.GRAPH_SETTINGS_EVENT, () => heard.push(prefs.graphLook()));
       prefs.setGraphLook("3d");
       const stored = prefs.graphLook();
-      prefs.setGraphLook("brain");
+      // Home is always the Brain; it is no longer a look, so an old saved "brain" reads as 2D.
+      localStorage.setItem(prefs.GRAPH_LOOK_KEY, "brain");
       const brain = prefs.graphLook();
-      // Section graphs have no Brain: they draw it as their own 3D graph.
-      const clamped = prefs.rendererLook();
       localStorage.setItem(prefs.GRAPH_LOOK_KEY, "hologram");
       const invalid = prefs.graphLook();
-      const invalidRenderer = prefs.rendererLook();
-      return { initial, stored, brain, clamped, invalid, invalidRenderer, heard };
+      return { initial, stored, brain, invalid, heard };
     });
-    assert.deepEqual(result, { initial: "2d", stored: "3d", brain: "brain", clamped: "3d", invalid: "2d", invalidRenderer: "2d", heard: ["3d", "brain"] });
+    assert.deepEqual(result, { initial: "2d", stored: "3d", brain: "2d", invalid: "2d", heard: ["3d"] });
     await page.close();
   });
 });

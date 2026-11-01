@@ -217,7 +217,8 @@ through; panels turn opaque under reduced transparency). Graph nodes and their
 edges use the active theme's graph palette.
 **Settings → Appearance** sets the whole look in one panel beside a live
 preview: theme, title font (Fraunces or plain), density (compact 13px or
-comfortable 14px), motion (full or reduced), atlas look (2D, 3D or Brain), the blossom
+comfortable 14px), motion (full or reduced), home (Brain or 2D map), section graph look
+(2D or 3D), the blossom
 motif and the background (the nebula, or the nebula with drifting petals, which
 rest under reduced motion). **Cozy**, **Focused** and **Minimal** set all of them
 at once; any single control still changes afterwards. Choices are saved in this
@@ -635,16 +636,20 @@ Alternative groups, job limits and browser progress remain under preparation
 options. **More filters** exposes ranking, source and other filters; selected-job
 actions and job details have their own expandable advanced controls.
 
-Home is the **atlas**, containing workspace sections rather than individual jobs
-or note pages. It sits in the centre between two narrow rails that scroll on
+Home is the **Brain** (below), every record and edit in the workspace as a
+glowing point-cloud cat, or the 2D **atlas** of workspace sections; the
+Workspace panel's **Brain | 2D** switch (or Settings → Appearance) chooses, and
+the choice is remembered (`kitty.home.look`; an earlier 3D choice opens the
+Brain). It sits in the centre between two narrow rails that scroll on
 their own. The left rail holds **Today** (today's events with a live now-line,
 the current event's progress and a countdown to the next) and **Quick note**
 (Ctrl+Enter saves; the last three stay visible). The right rail holds **Agents**
 (what each herdr workspace agent is doing; **Approve** opens herdr on a blocked
-one) and **Workspace** with the 2D/3D switch, **Find a section** (`/`) and the
-Sections list. Job-search reminders, deadlines and weekly goals live in **Find
-jobs**, not on home. Every schema
-starts in Tree; an explicit layout preference can
+one) and **Workspace** with the Brain/2D switch, **Find a section** (`/`, which
+highlights the match in the Brain or on the map) and the Sections list.
+Job-search reminders, deadlines and weekly goals live in **Find jobs**, not on
+home. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
+Appearance); every schema starts in Tree, and an explicit layout preference can
 then be changed in **Settings → Workspace**. Home has one Study entry and only
 the Jobs section entry, not separate job-action nodes.
 The kitty logo returns home. Clickable schema tabs show section →
@@ -658,18 +663,31 @@ Browse lists remain available when labels overlap or WebGL is unavailable.
 Left or middle-button drag rotates; the wheel zooms; right-button drag pans.
 Ctrl + Left/Right rotates the visible 3D schema in ten-degree steps, except while
 editing text, selecting text, or using a dialog.
-**Brain** is a third home look beside 2D and 3D (Workspace panel or Settings →
-Workspace). It draws every record and every edit from `GET /api/brain` as one
-point of light on black: records form a colourful cerebrum (one lobe per section)
-and cerebellum, edits run down a glowing spinal cord with the newest nearest the
-brain, and a faint halo of edits surrounds the records they changed. Its View
-panel sets the layout (Anatomy, Spheres, Wheel), grouping (section, navigation
-group or type), labels, turning and speed, edit→record lines, the body scaffold
-and point size; Reset restores the defaults and the choices are remembered. The
-legend lists each group's records + edits; click one, or a point, to highlight
-it. Hovering a point shows its label, section, type and date. Section schemas
-have no Brain and draw it as 3D. A backend without `/api/brain` gets a notice,
-never invented data. Reduced motion skips the build-up, twinkle and turning.
+The **Brain** on home draws every record and every edit from `GET /api/brain` as one
+point of light inside a sitting cat, over the theme's own backdrop: records form
+the cat's colourful brain (one lobe per section) and cerebellum inside a faint
+skull with two pointed ears and bright whiskers; edits run down its spinal cord
+and out along its curled tail in time order, oldest at the tail tip and newest
+nearest the brain, with sparse nerves down the four legs and a faint halo of
+edits around the records they changed. The cat builds itself from the tail tip
+up. Colours come from the active theme and change with it; inside a group, each
+record type and each kind of edit (save, create, delete, status, review…) has its
+own shade. The **View** button opens its View panel (closed at first; whether it is
+open is remembered, and while it is open the cat is framed beside it). It sets the
+layout (Anatomy, Spheres, Wheel), grouping
+(section, navigation group or type), labels, turning and speed, edit→record
+lines, the body scaffold, the background (Transparent, or Black for the original
+night sky), point size and colours: pick any group's colour from the theme's
+swatches or a hex value, or Reset colours to follow the theme again (picks are
+remembered per grouping). Reset restores the view; the choices are remembered.
+The legend lists each group's records + edits and, on hover or focus, the kinds
+inside it; click an entry to highlight it. Hovering a sphere, sector or lobe
+highlights its group; clicking it opens that group alone, laid out by kind to
+fill the stage, until **← All** or Escape. Labels never overlap; ones without
+room hide. Hovering a point shows its label, section, type and date. Without
+WebGL home is the 2D atlas; a backend without `/api/brain` gets a notice, never
+invented data. Reduced motion skips the build-up, twinkle and
+turning.
 Theme presets include dark cherry-pink **Cherry cat**, with blossom ASCII,
 and a Scythe palette. Scythe illustration requires the actual supplied artwork;
 no unrelated image is substituted. Motion respects reduced-motion preferences,

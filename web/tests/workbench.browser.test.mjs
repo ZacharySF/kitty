@@ -1,6 +1,6 @@
 // The real app in a real browser against the disposable synthetic backend
-// (`kitty-web --demo`); no private workspace is read. Covers the atlas fitting
-// the window under the floating dock, and selected toggles staying readable.
+// (`kitty-web --demo`); no private workspace is read. Covers the Brain home fitting
+// the window above the dock, and selected toggles staying readable.
 // Run from web/ with Node >=22, uv and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
 // PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/workbench.browser.test.mjs
@@ -87,7 +87,8 @@ before(async () => {
   });
   await server.listen();
   base = server.resolvedUrls.local[0];
-  browser = await chromium.launch();
+  // Home is the Brain, which needs WebGL: software rendering where there is no GPU.
+  browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"] });
 });
 after(async () => {
   await browser?.close();
@@ -134,31 +135,25 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
 const rect = (locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON());
 
 /**
- * Polls until the 2D atlas canvas fills its stage and nothing is drawn in a
- * band along its edges: every node, label and region is inside the canvas.
+ * Polls until the Brain's WebGL canvas has drawn the workspace and fills its stage,
+ * with a drawing buffer of the same proportions (the camera fits what it sees).
  */
 async function fitted(page) {
   await page.waitForFunction(() => {
     const stage = document.querySelector(".atlas .stage");
-    const canvas = stage?.querySelector("canvas");
+    const canvas = stage?.querySelector("[data-brain-stage] canvas[data-points]");
     if (!canvas || !canvas.width || !canvas.height) return false;
     const box = canvas.getBoundingClientRect(), outer = stage.getBoundingClientRect();
     if (Math.abs(box.height - outer.height) > 2 || Math.abs(box.width - outer.width) > 2) return false;
-    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
-    const band = Math.ceil(4 * canvas.width / box.width);
-    let drawn = 0;
-    for (let y = 0; y < canvas.height; y += 1)
-      for (let x = 0; x < canvas.width; x += 1)
-        if ((x < band || y < band || x >= canvas.width - band || y >= canvas.height - band) && pixels[(y * canvas.width + x) * 4 + 3]) drawn += 1;
-    return drawn === 0 && canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data.some((value, index) => index % 4 === 3 && value);
-  }, null, { timeout: 10_000, polling: 200 });
+    return Math.abs(canvas.width / canvas.height - box.width / box.height) < 0.02;
+  }, null, { timeout: 20_000, polling: 200 });
 }
 
 /** The atlas fills the window (the floating dock takes no page space), the page does not scroll and the graph is fitted. */
 async function assertAtlasFits(page, label) {
   const atlas = page.locator(".atlas");
   await atlas.waitFor();
-  await fitted(page).catch(() => assert.fail(`${label}: graph is not fitted to its visible canvas`));
+  await fitted(page).catch(() => assert.fail(`${label}: the Brain is not fitted to its visible stage`));
   const bottom = await page.evaluate(() => innerHeight);
   const box = await rect(atlas);
   assert.ok(box.top >= 0 && box.bottom <= bottom + 1, `${label}: atlas ${box.top}–${box.bottom} is not within 0–${bottom}`);
@@ -189,7 +184,7 @@ async function assertSidebarReachable(page, label) {
   assert.deepEqual(unreachable, [], `${label}: sidebar controls cannot be reached`);
 }
 
-describe("atlas fits the window under the floating dock", () => {
+describe("the Brain home fills the window under the floating dock", () => {
   for (const viewport of [DEFAULT, MINIMUM, SCALED_MINIMUM]) {
     const size = `${viewport.width}×${viewport.height}`;
     for (const [name, options] of [
@@ -207,7 +202,7 @@ describe("atlas fits the window under the floating dock", () => {
       });
     }
 
-    test(`${size}, F fullscreens the fitted graph and Escape refits it; hiding, showing or dragging the dock never re-lays out the atlas`, async () => {
+    test(`${size}, F fullscreens the fitted Brain and Escape refits it; hiding, showing or dragging the dock never re-lays out home`, async () => {
       const { page, problems, context } = await open("today", { viewport });
       const dock = page.locator('[data-kitty-panel="dock"]');
       await dock.waitFor();
@@ -223,20 +218,26 @@ describe("atlas fits the window under the floating dock", () => {
       await assertAtlasFits(page, `${size} after Escape`);
       await assertSidebarReachable(page, `${size} after Escape`);
       const atlas = await rect(page.locator(".atlas"));
+      const brain = page.locator("[data-brain-stage]");
+      const stageBox = await rect(brain);
       await dock.getByRole("button", { name: "Hide dock" }).click();
       await page.getByRole("button", { name: "Show dock" }).waitFor();
       assert.deepEqual(await rect(page.locator(".atlas")), atlas, `${size}: hiding the dock re-laid out the atlas`);
+      assert.deepEqual(await rect(brain), stageBox, `${size}: hiding the dock changed the Brain stage`);
       await page.getByRole("button", { name: "Show dock" }).click();
       await dock.waitFor();
       assert.deepEqual(await rect(page.locator(".atlas")), atlas, `${size}: showing the dock re-laid out the atlas`);
+      assert.deepEqual(await rect(brain), stageBox, `${size}: showing the dock changed the Brain stage`);
       // Moving the card by its header and resizing it by its grip leave the page alone mid-drag and after.
       await page.evaluate(() => {
         const atlas = document.querySelector(".atlas");
-        const first = JSON.stringify(atlas.getBoundingClientRect());
+        const brain = document.querySelector("[data-brain-stage]");
+        const box = () => JSON.stringify([atlas.getBoundingClientRect(), brain.getBoundingClientRect()]);
+        const first = box();
         window.atlasWatch = { changed: 0 };
         const sample = () => {
           if (!window.atlasWatch) return;
-          if (JSON.stringify(atlas.getBoundingClientRect()) !== first) window.atlasWatch.changed += 1;
+          if (box() !== first) window.atlasWatch.changed += 1;
           requestAnimationFrame(sample);
         };
         requestAnimationFrame(sample);
@@ -259,6 +260,7 @@ describe("atlas fits the window under the floating dock", () => {
       assert.equal(await page.evaluate(() => { const { changed } = window.atlasWatch; window.atlasWatch = null; return changed; }), 0,
         `${size}: dragging the dock re-laid out the atlas`);
       assert.deepEqual(await rect(page.locator(".atlas")), atlas);
+      assert.deepEqual(await rect(brain), stageBox, `${size}: moving or resizing the dock changed the Brain stage`);
       assert.deepEqual(problems, []);
       await context.close();
     });
@@ -501,15 +503,15 @@ describe("loaders", () => {
     assert.notEqual(await rows.locator(".skeleton-row span").first().evaluate((node) => getComputedStyle(node).animationName), "none");
     release();
     await rows.waitFor({ state: "detached" });
-    let releaseAtlas;
-    const atlasHeld = new Promise((resolve) => (releaseAtlas = resolve));
-    await page.route((url) => url.pathname === "/api/atlas", async (route) => { await atlasHeld; await route.continue(); });
+    let releaseBrain;
+    const brainHeld = new Promise((resolve) => (releaseBrain = resolve));
+    await page.route((url) => url.pathname === "/api/brain", async (route) => { await brainHeld; await route.continue(); });
     await page.keyboard.press("Control+t");
-    const eyes = page.locator('[role="status"].kitty-loader[data-kind="eyes"]').filter({ hasText: "Drawing your atlas…" });
+    const eyes = page.locator('[role="status"].kitty-loader[data-kind="eyes"]').filter({ hasText: "Waking the brain…" });
     await eyes.waitFor();
     assert.equal(await eyes.locator(".eye").count(), 2);
     assert.notEqual(await eyes.locator(".eye").first().evaluate((node) => getComputedStyle(node).animationName), "none", "eyes do not blink");
-    releaseAtlas();
+    releaseBrain();
     await eyes.waitFor({ state: "detached" });
     assert.deepEqual(problems, []);
     await context.close();
@@ -906,7 +908,7 @@ describe("study streak", () => {
 
 describe("home rails", () => {
   for (const viewport of [DEFAULT, SCALED_MINIMUM]) {
-    test(`home at ${viewport.width}×${viewport.height}: the atlas sits centre between two scrolling widget rails; find and sections stay in reach`, async () => {
+    test(`home at ${viewport.width}×${viewport.height}: the Brain sits centre between two scrolling widget rails; find and sections stay in reach`, async () => {
       const { page, problems, context } = await open("today", { viewport, dock: "hidden" });
       const left = page.getByRole("complementary", { name: "Home widgets" });
       const right = page.getByRole("complementary", { name: "Workspace" });
@@ -1063,8 +1065,13 @@ describe("appearance settings", () => {
     const titleFont = () => page.getByRole("heading", { level: 1, name: "Settings" }).evaluate((node) => getComputedStyle(node).fontFamily);
     const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
 
-    // Defaults: Kitty, Fraunces titles, compact 13px, full motion, 2D, blossoms, nebula.
-    for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
+    // Defaults: Kitty, Fraunces titles, compact 13px, full motion, a Brain home, 2D section graphs, blossoms, nebula.
+    for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
+    assert.equal(await panel.getByRole("group", { name: "Home" }).getByRole("radio").count(), 2, "home offers Brain and 2D only");
+    await radio("2D map").check();
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "2d");
+    await radio("Brain").check();
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "brain");
     assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), true);
     assert.match(await titleFont(), /Fraunces/);
     assert.equal(await bodySize(), "13px");
@@ -1088,7 +1095,7 @@ describe("appearance settings", () => {
     assert.equal((await saved()).density, "comfortable");
     assert.equal((await saved()).titleFont, "plain", "changing density reset another setting");
 
-    // Cozy: petal drift behind the app and a 3D atlas; reduced motion pauses the petals.
+    // Cozy: petal drift behind the app and 3D section graphs; reduced motion pauses the petals.
     await panel.getByRole("button", { name: /^Cozy/ }).click();
     assert.equal(await radio("3D").isChecked(), true);
     assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "3d");
@@ -2195,7 +2202,10 @@ describe("agent status cards", () => {
     assert.match(await working.textContent(), /run pytest · 4 passed/);
     assert.match(await working.textContent(), /synthetic/i, "workspace label missing");
     const timer = working.locator("time");
-    assert.match(await timer.textContent(), /^1:1\d$/);
+    // The card counts up from `since` (75 s before the reload); the page load time varies.
+    const [minutes, seconds] = (await timer.textContent()).split(":").map(Number);
+    const shown = minutes * 60 + seconds, elapsed = (Date.now() - started) / 1000;
+    assert.ok(shown >= 75 && shown <= Math.ceil(elapsed), `agent timer shows ${shown}s, expected 75–${Math.ceil(elapsed)}s`);
     await page.waitForFunction(() => document.querySelectorAll('[aria-label="Agent activity"] svg[role="img"] path.line').length === 2);
     assert.match(await working.getByRole("img").getAttribute("aria-label"), /output over the last 30 seconds/);
     assert.equal(await working.getByRole("button", { name: "Open pane" }).count(), 0, "a working agent offers Open pane");

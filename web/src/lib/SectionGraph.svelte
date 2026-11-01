@@ -12,7 +12,7 @@
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
   import { mountGraph, type GraphHandle, type GraphLayout, type GraphLink } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, rendererLook } from "./graphPreferences";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
   import { prefersReducedMotion } from "./appearance";
   import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -70,7 +70,7 @@
     const syncSettings = () => {
       layout = graphLayout();
       handle?.setPhysics(graphPhysics());
-      void handle?.setLook(rendererLook()).catch(cause => { notice = (cause as Error).message; });
+      void handle?.setLook(graphLook()).catch(cause => { notice = (cause as Error).message; });
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     return () => window.removeEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
@@ -136,7 +136,7 @@
       nodes: initial.nodes,
       links: initial.links,
       layout: initialLayout,
-      look: rendererLook(),
+      look: graphLook(),
       physics: graphPhysics(),
       reducedMotion: prefersReducedMotion(),
       active: untrack(() => pane.active),

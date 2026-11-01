@@ -3,7 +3,8 @@
   import { Panel } from "@nunera/bracket";
   import AppearancePreview from "./AppearancePreview.svelte";
   import { PRESETS, savedAppearance, setAppearance, type Appearance, type Preset } from "./appearance";
-  import { GRAPH_SETTINGS_EVENT, graphLook, setGraphLook, type AtlasLook } from "./graphPreferences";
+  import type { GraphLook } from "./graph3d";
+  import { GRAPH_SETTINGS_EVENT, graphLook, homeLook, setGraphLook, setHomeLook, type HomeLook } from "./graphPreferences";
   import { THEMES, type ThemeId } from "./themeCatalog";
   import { THEME_EVENT, currentTheme, setTheme } from "./themes";
 
@@ -13,7 +14,8 @@
    */
   let appearance = $state(savedAppearance());
   let theme = $state<ThemeId>(currentTheme());
-  let look = $state<AtlasLook>(graphLook());
+  let look = $state<GraphLook>(graphLook());
+  let home = $state<HomeLook>(homeLook());
   let error = $state("");
 
   type Choice = { [K in keyof Appearance]: Appearance[K] extends boolean ? never : K }[keyof Appearance];
@@ -23,19 +25,29 @@
     { key: "motion", label: "Motion", options: [["full", "Full"], ["reduced", "Reduced"]] },
     { key: "background", label: "Background", options: [["nebula", "Nebula"], ["petals", "Petal drift"]] },
   ];
-  const LOOKS: [AtlasLook, string][] = [["2d", "2D"], ["3d", "3D"], ["brain", "Brain"]];
+  const LOOKS: [GraphLook, string][] = [["2d", "2D"], ["3d", "3D"]];
+  const HOME_LOOKS: [HomeLook, string][] = [["brain", "Brain"], ["2d", "2D map"]];
 
   function change(next: Appearance) {
     appearance = next;
     setAppearance(next);
   }
-  function chooseLook(next: AtlasLook) {
+  function chooseLook(next: GraphLook) {
     try {
       setGraphLook(next);
       look = next;
       error = "";
     } catch {
-      error = "This browser could not save the atlas look.";
+      error = "This browser could not save the section graph look.";
+    }
+  }
+  function chooseHome(next: HomeLook) {
+    try {
+      setHomeLook(next);
+      home = next;
+      error = "";
+    } catch {
+      error = "This browser could not save the home look.";
     }
   }
   function applyPreset(preset: Preset) {
@@ -49,7 +61,10 @@
 
   onMount(() => {
     const syncTheme = () => (theme = currentTheme());
-    const syncLook = () => (look = graphLook());
+    const syncLook = () => {
+      look = graphLook();
+      home = homeLook();
+    };
     window.addEventListener(THEME_EVENT, syncTheme);
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncLook);
     return () => {
@@ -101,7 +116,8 @@
         {@render segments(choice.label, `appearance-${choice.key}`, choice.options, appearance[choice.key], (id) =>
           change({ ...appearance, [choice.key]: id } as Appearance))}
       {/each}
-      {@render segments("Atlas look", "appearance-look", LOOKS, look, (id) => chooseLook(id as AtlasLook))}
+      {@render segments("Home", "appearance-home", HOME_LOOKS, home, (id) => chooseHome(id as HomeLook))}
+      {@render segments("Section graph look", "appearance-look", LOOKS, look, (id) => chooseLook(id as GraphLook))}
       <label class="check wide">
         <input type="checkbox" checked={appearance.motif} onchange={(event) => change({ ...appearance, motif: event.currentTarget.checked })} />
         Blossom motif in icons and the theme picker

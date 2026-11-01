@@ -16,12 +16,12 @@ const opened = [];
 window.atlasHarness = {
   errors,
   opened,
-  /** Replaces every tab with fresh atlases using the given look and modules. */
-  async mount({ look, enabled, count = 2 }) {
+  /** Replaces every tab with fresh 2D atlases using the given modules. */
+  async mount({ enabled, count = 2 }) {
     for (const tab of tabs) unmount(tab.instance);
     host.replaceChildren();
     tabs = [];
-    localStorage.setItem("kitty.graph.look", look);
+    localStorage.setItem("kitty.home.look", "2d");
     setActiveModules(enabled);
     for (let index = 0; index < count; index += 1) {
       const target = document.createElement("div");

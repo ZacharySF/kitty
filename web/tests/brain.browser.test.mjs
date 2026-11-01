@@ -1,4 +1,4 @@
-// The Brain look: a mindcorpus-style point cloud where every record and every edit is a point.
+// The Brain look: a mindcorpus-style point cloud, shaped like a cat, where every record and every edit is a point.
 // `/api/brain` is mocked with a synthetic ~20k-node workspace (tests/brainFixture.mjs).
 // Run with Node >=22 and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
@@ -37,7 +37,11 @@ after(async () => {
 });
 
 /** A fresh profile whose `/api/brain` answers with `brain` (or `status`), and every other API with synthetic data. */
-async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, settings } = {}) {
+/**
+ * A fresh profile whose `/api/brain` answers with `brain` (or `status`), and every other API with synthetic data.
+ * The View panel is opened (most tests use its controls) unless `fresh` keeps the first-run view.
+ */
+async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, settings = {}, fresh = false } = {}) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 760 }, reducedMotion });
   await context.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -46,7 +50,7 @@ async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, set
     if (path.startsWith("/api/atlas/sections/")) return route.fulfill({ json: SECTION_GRAPH });
     return route.fulfill({ status: 503, json: { error: "synthetic harness" } });
   });
-  if (settings) await context.addInitScript((value) => localStorage.setItem("kitty.brain.view", value), JSON.stringify(settings));
+  if (!fresh) await context.addInitScript((value) => localStorage.setItem("kitty.brain.view", value), JSON.stringify({ panel: true, ...settings }));
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -59,6 +63,27 @@ const screenPoint = (page, id) => page.evaluate((id) => window.brainHarness.scre
 const worldPoint = (page, id) => page.evaluate((id) => window.brainHarness.worldPoint(id), id);
 const drawn = (page) => page.locator("[data-brain-stage] canvas[data-points]");
 const stored = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("kitty.brain.view") || "null"));
+const pointColour = (page, id) => page.evaluate((id) => window.brainHarness.pointColour(id), id);
+const stage = (page) => page.locator("[data-brain-stage]");
+const legendDot = (page, key) => page.getByRole("list", { name: "Legend" }).locator(`[data-key="${key}"] i`).evaluate((element) => getComputedStyle(element).backgroundColor);
+const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
+const near = (a, b, tolerance = 0.02) => a.every((value, c) => Math.abs(value - b[c]) <= tolerance);
+const RECORD_IDS = BRAIN.nodes.filter((node) => node.kind === "record").map((node) => node.id);
+/** Projected bounding box of the cat's head (skull, ears, brain and whiskers: every record above its neck). */
+const headBox = (page) => page.evaluate((ids) => {
+  const box = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+  for (const id of ids) {
+    const world = window.brainHarness.worldPoint(id);
+    const point = world && world[1] > 3.7 ? window.brainHarness.screenPoint(id) : null;
+    if (!point) continue;
+    box.left = Math.min(box.left, point.x);
+    box.right = Math.max(box.right, point.x);
+    box.top = Math.min(box.top, point.y);
+    box.bottom = Math.max(box.bottom, point.y);
+  }
+  return box;
+}, RECORD_IDS);
+const within = (box, area) => box.left >= area.left && box.right <= area.right && box.top >= area.top && box.bottom <= area.bottom;
 
 async function brainReady(page) {
   await drawn(page).waitFor({ timeout: 30_000 });
@@ -66,15 +91,124 @@ async function brainReady(page) {
 }
 
 describe("brain stage", () => {
-  test("draws one point per node on a WebGL canvas, black regardless of theme", async () => {
+  test("draws one point per node on a transparent WebGL canvas; Black restores the night sky", async () => {
     const { page, problems, context } = await open();
     await mount(page, "stage");
     await brainReady(page);
     const canvas = drawn(page);
     assert.equal(Number(await canvas.getAttribute("data-points")), BRAIN.nodes.length);
-    assert.equal(await canvas.evaluate((element) => !!(element.getContext("webgl2") || element.getContext("webgl"))), true);
-    const background = await page.locator("[data-brain-stage]").evaluate((element) => getComputedStyle(element).backgroundColor);
-    assert.equal(background, "rgb(0, 0, 0)");
+    const gl = await canvas.evaluate((element) => {
+      const context = element.getContext("webgl2") || element.getContext("webgl");
+      return context ? context.getContextAttributes().alpha : null;
+    });
+    assert.equal(gl, true, "the drawing buffer keeps an alpha channel");
+    assert.equal(await canvas.getAttribute("data-clear-alpha"), "0", "the renderer clears to nothing");
+    const background = () => stage(page).evaluate((element) => getComputedStyle(element).backgroundColor);
+    assert.equal(await background(), "rgba(0, 0, 0, 0)");
+    assert.equal(await stage(page).getAttribute("data-background"), "transparent");
+    await page.getByRole("group", { name: "Background" }).getByRole("button", { name: "Black" }).click();
+    assert.equal(await background(), "rgb(0, 0, 0)");
+    assert.equal((await stored(page)).background, "black");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("hovering a sphere highlights its group; clicking opens it alone; Escape returns", async () => {
+    const { page, problems, context } = await open({ settings: { turning: false, layout: "spheres" } });
+    await mount(page, "stage");
+    await brainReady(page);
+    const jobs = BRAIN.nodes.filter((node) => node.section === "jobs").length;
+    const point = await screenPoint(page, "jobs.job:0");
+    assert.ok(point, "a job is on screen");
+    await page.mouse.move(point.x, point.y, { steps: 2 });
+    await page.waitForFunction(() => document.querySelector("[data-brain-stage]")?.getAttribute("data-hover-group") === "jobs");
+    assert.equal(await page.getByRole("list", { name: "Legend" }).locator('[data-key="jobs"]').evaluate((element) => element.classList.contains("hot")), true);
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.waitForFunction(() => document.querySelector("[data-brain-stage]")?.getAttribute("data-isolated") === "jobs");
+    assert.equal(Number(await drawn(page).getAttribute("data-shown")), jobs, "only the jobs are shown");
+    const legend = page.getByRole("list", { name: "Legend" });
+    assert.ok(await legend.locator('[data-key="record:job"]').count(), "the legend lists the group's kinds");
+    assert.match(await stage(page).innerText(), /JOBS BY KIND/);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("[data-brain-stage]")?.hasAttribute("data-isolated"));
+    assert.equal(Number(await drawn(page).getAttribute("data-shown")), BRAIN.nodes.length);
+    // The pill returns too.
+    await page.mouse.move(point.x, point.y, { steps: 2 });
+    await page.waitForFunction(() => document.querySelector("[data-brain-stage]")?.getAttribute("data-hover-group") === "jobs");
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.getByRole("button", { name: /Back to all/ }).click();
+    await page.waitForFunction(() => !document.querySelector("[data-brain-stage]")?.hasAttribute("data-isolated"));
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  for (const groupBy of ["section", "type"]) {
+    test(`section labels never overlap (anatomy, by ${groupBy})`, async () => {
+      const { page, context } = await open({ settings: { turning: false, labels: "sections", groupBy } });
+      await mount(page, "stage");
+      await brainReady(page);
+      await page.waitForTimeout(300);
+      const boxes = await page.locator(".labels span").evaluateAll((elements) =>
+        elements.filter((element) => getComputedStyle(element).visibility === "visible").map((element) => {
+          const { left, top, right, bottom } = element.getBoundingClientRect();
+          return { text: element.textContent, left, top, right, bottom };
+        }));
+      assert.ok(boxes.length >= 6, `${boxes.length} labels shown`);
+      boxes.forEach((a, i) => boxes.slice(i + 1).forEach((b) => {
+        const apart = a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
+        assert.ok(apart, `${a.text} overlaps ${b.text}`);
+      }));
+      await context.close();
+    });
+  }
+
+  test("hovering a legend entry shows the kinds inside it, each in its own shade", async () => {
+    const { page, context } = await open();
+    await mount(page, "stage");
+    await brainReady(page);
+    await page.getByRole("list", { name: "Legend" }).locator('[data-key="notes"]').hover();
+    const kinds = page.getByRole("list", { name: "Notes kinds" });
+    await kinds.waitFor();
+    const shades = await kinds.locator("li[data-kind] i").evaluateAll((elements) => elements.map((element) => getComputedStyle(element).backgroundColor));
+    assert.ok(shades.length >= 4, "page, notebook, folder and edit actions");
+    assert.equal(new Set(shades).size, shades.length, "every kind has its own colour");
+    await context.close();
+  });
+
+  test("a group's colour can be picked, survives a reload and a theme switch, and resets to the theme's", async () => {
+    const { page, problems, context } = await open();
+    await mount(page, "stage");
+    await brainReady(page);
+    await page.evaluate(() => window.brainHarness.setTheme("dracula"));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.legend [data-key="notes"] i')).backgroundColor !== "rgb(255, 61, 61)");
+    const dracula = await legendDot(page, "notes");
+    const draculaPoint = await pointColour(page, "notes.page:0");
+    await page.evaluate(() => window.brainHarness.setTheme("gruvbox"));
+    await page.waitForFunction((before) => getComputedStyle(document.querySelector('.legend [data-key="notes"] i')).backgroundColor !== before, dracula);
+    assert.notDeepEqual(await pointColour(page, "notes.page:0"), draculaPoint, "the theme recolours the cat");
+
+    await page.getByRole("button", { name: "Colour of Notes" }).click();
+    const hex = page.getByRole("textbox", { name: "Hex colour" });
+    await hex.fill("#e05a9a");
+    await hex.press("Enter");
+    const picked = [0xe0, 0x5a, 0x9a].map((value) => value / 255);
+    await page.waitForFunction((want) => getComputedStyle(document.querySelector('.legend [data-key="notes"] i')).backgroundColor === want, rgb("#e05a9a"));
+    assert.ok(near(await pointColour(page, "notes.page:0"), picked), "the points take the picked colour");
+    assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("kitty.brain.colors"))).section, { notes: "#e05a9a" });
+
+    await page.reload();
+    await page.waitForFunction(() => !!window.brainHarness);
+    await page.evaluate(() => window.brainHarness.setTheme("dracula"));
+    await mount(page, "stage");
+    await brainReady(page);
+    assert.equal(await legendDot(page, "notes"), rgb("#e05a9a"), "the pick survives a reload and a theme switch");
+    assert.ok(near(await pointColour(page, "notes.page:0"), picked));
+
+    await page.getByRole("button", { name: "Reset colours" }).click();
+    await page.waitForFunction((want) => getComputedStyle(document.querySelector('.legend [data-key="notes"] i')).backgroundColor === want, dracula);
+    assert.ok(near(await pointColour(page, "notes.page:0"), draculaPoint, 0.001), "reset returns to the theme's colours");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -143,11 +277,11 @@ describe("brain stage", () => {
     assert.match(await page.locator("[data-brain-stage]").innerText(), /BY TYPE/);
     const changed = await stored(page);
     assert.deepEqual([changed.layout, changed.groupBy, changed.lines, changed.pointSize], ["wheel", "type", true, 2]);
-    await page.getByRole("button", { name: "Reset" }).click();
+    await page.getByRole("button", { name: "Reset", exact: true }).click();
     const reset = await stored(page);
     assert.deepEqual(
       { ...reset, panel: undefined },
-      { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 1, lines: false, scaffold: true, pointSize: 1, panel: undefined },
+      { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 1, lines: false, scaffold: true, pointSize: 1, background: "transparent", panel: undefined },
     );
     assert.equal(await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Anatomy" }).getAttribute("aria-pressed"), "true");
     assert.equal(await page.getByRole("switch", { name: "Lines" }).getAttribute("aria-checked"), "false");
@@ -156,16 +290,36 @@ describe("brain stage", () => {
     await context.close();
   });
 
-  test("the view panel collapses and remembers it", async () => {
-    const { page, context } = await open();
+  test("the View panel starts closed with the cat's head in view; open, it reframes the cat beside it and is remembered", async () => {
+    const { page, problems, context } = await open({ fresh: true });
     await mount(page, "stage");
     await brainReady(page);
     const toggle = page.getByRole("button", { name: "View", exact: true });
-    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
-    await toggle.click();
     assert.equal(await toggle.getAttribute("aria-expanded"), "false");
     assert.equal(await page.getByRole("group", { name: "Layout" }).count(), 0);
+    const area = await stage(page).evaluate((element) => element.getBoundingClientRect().toJSON());
+    const closed = await headBox(page);
+    assert.ok(within(closed, area), `the head ${JSON.stringify(closed)} leaves the stage ${JSON.stringify(area)}`);
+
+    await toggle.click();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+    assert.equal((await stored(page)).panel, true);
+    const panel = await page.locator(".panel").evaluate((element) => element.getBoundingClientRect().toJSON());
+    let beside = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      beside = await headBox(page);
+      if (beside.right <= panel.left - 4) break;
+      await page.waitForTimeout(100);
+    }
+    assert.ok(beside.right <= panel.left - 4, `the panel (from x ${panel.left}) covers the head (to x ${beside.right})`);
+    assert.ok(within(beside, { ...area, right: panel.left }), "the head stays inside the stage beside the panel");
+
+    await mount(page, "stage");
+    await brainReady(page);
+    assert.equal(await page.getByRole("button", { name: "View", exact: true }).getAttribute("aria-expanded"), "true", "the open panel is remembered");
+    await page.getByRole("button", { name: "View", exact: true }).click();
     assert.equal((await stored(page)).panel, false);
+    assert.deepEqual(problems, []);
     await context.close();
   });
 
@@ -194,32 +348,60 @@ describe("brain stage", () => {
   });
 });
 
-describe("brain is a home-only look", () => {
-  test("home shows the brain and returns to the 2D atlas", async () => {
+describe("home is the Brain or the 2D atlas", () => {
+  test("home opens on the Brain; its switch offers only Brain and 2D, and remembers the choice", async () => {
     const { page, problems, context } = await open();
-    await mount(page, "atlas", { look: "brain" });
+    await mount(page, "atlas");
     await brainReady(page);
-    const looks = page.getByRole("group", { name: "Graph look" });
+    const looks = page.getByRole("group", { name: "Home look" });
+    assert.deepEqual(await looks.getByRole("button").allInnerTexts(), ["Brain", "2D"], "home offers no 3D");
     assert.equal(await looks.getByRole("button", { name: "Brain" }).getAttribute("aria-pressed"), "true");
+    assert.equal(await page.locator(".atlas .stage > .canvas").evaluate((element) => getComputedStyle(element).visibility), "hidden", "the paused 2D atlas never shows through the transparent brain");
+    // Finding a section highlights it in the Brain.
+    const search = page.getByRole("searchbox", { name: /Find a section/ });
+    await search.fill("Notes");
+    await search.press("Enter");
+    await page.waitForFunction(() => document.querySelector('.legend [data-key="notes"]')?.getAttribute("aria-pressed") === "true");
     await looks.getByRole("button", { name: "2D" }).click();
     await page.waitForFunction(() => !document.querySelector("[data-brain-stage]"));
     await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "2d");
+    assert.equal(await page.locator(".atlas .stage > .canvas").evaluate((element) => getComputedStyle(element).visibility), "visible");
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "2d");
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), null, "home's choice leaves section graphs alone");
+    await mount(page, "atlas");
+    await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
+    assert.equal(await page.locator("[data-brain-stage]").count(), 0, "the 2D choice is remembered");
     await looks.getByRole("button", { name: "Brain" }).click();
     await brainReady(page);
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  for (const kind of ["section", "schema"]) {
-    test(`a ${kind} graph clamps the brain preference to its own 3D graph`, async () => {
+  for (const [saved, shown] of [["3d", "brain"], ["brain", "brain"], ["2d", "2d"]]) {
+    test(`an old shared look of ${saved} opens home as ${shown}`, async () => {
       const { page, problems, context } = await open();
-      await mount(page, kind, { look: "brain" });
+      await mount(page, "atlas", { look: saved });
+      if (shown === "brain") await brainReady(page);
+      else await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
+      assert.equal(await page.getByRole("group", { name: "Home look" }).getByRole("button", { name: shown === "brain" ? "Brain" : "2D" }).getAttribute("aria-pressed"), "true");
+      assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), shown);
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+
+  for (const kind of ["section", "schema"]) {
+    test(`a ${kind} graph keeps its own 2D/3D switch, with no Brain`, async () => {
+      const { page, problems, context } = await open();
+      await mount(page, kind, { look: "3d" });
       await page.locator('canvas[data-graph-look="3d"]').waitFor({ timeout: 30_000 });
       assert.equal(await page.locator("[data-brain-stage]").count(), 0);
       const looks = page.getByRole("group", { name: "Graph look" });
       assert.equal(await looks.getByRole("button", { name: "Brain" }).count(), 0);
       assert.equal(await looks.getByRole("button", { name: "3D" }).getAttribute("aria-pressed"), "true");
+      await looks.getByRole("button", { name: "2D" }).click();
+      await page.locator('canvas[data-graph-look="2d"]').waitFor({ timeout: 30_000 });
+      assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "2d");
       assert.deepEqual(problems, []);
       await context.close();
     });

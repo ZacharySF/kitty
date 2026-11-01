@@ -1,6 +1,8 @@
-<!-- The Brain's View panel: a collapsible, mindcorpus-like column of form, grouping, motion and drawing controls. -->
+<!-- The Brain's View panel: a collapsible, mindcorpus-like column of form, grouping, motion, drawing and colour controls. -->
 <script lang="ts">
+  import type { BrainGroup } from "./brainLayout";
   import {
+    BRAIN_BACKGROUNDS,
     BRAIN_GROUPINGS,
     BRAIN_LABELS,
     BRAIN_LAYOUTS,
@@ -12,14 +14,40 @@
   let {
     view,
     reducedMotion,
+    colours,
+    swatches,
+    picked,
+    onrecolour,
+    onresetcolours,
     onchange,
     onreset,
   }: {
     view: BrainView;
     reducedMotion: boolean;
+    /** The legend's groups, whose colours can be changed. */
+    colours: BrainGroup[];
+    /** Theme colours offered in the picker. */
+    swatches: string[];
+    /** Group keys the user has recoloured. */
+    picked: Record<string, string>;
+    onrecolour: (key: string, hex: string | null) => void;
+    onresetcolours: () => void;
     onchange: (next: BrainView) => void;
     onreset: () => void;
   } = $props();
+
+  /** The group whose colour picker is open. */
+  let editing = $state<string | null>(null);
+  let custom = $state("");
+  const editingGroup = $derived(colours.find((group) => group.key === editing) ?? null);
+  function openPicker(group: BrainGroup) {
+    editing = editing === group.key ? null : group.key;
+    custom = group.hex;
+  }
+  function applyCustom() {
+    const hex = custom.trim().startsWith("#") ? custom.trim() : `#${custom.trim()}`;
+    if (editing && /^#[0-9a-f]{6}$/i.test(hex)) onrecolour(editing, hex);
+  }
 
   const panelId = `brain-view-${Math.random().toString(36).slice(2, 8)}`;
   const set = (patch: Partial<BrainView>) => onchange({ ...view, ...patch });
@@ -74,11 +102,44 @@
         <h4>Drawing</h4>
         {@render toggle("Lines", view.lines, () => set({ lines: !view.lines }))}
         {@render toggle("Scaffold", view.scaffold, () => set({ scaffold: !view.scaffold }))}
+        {@render choices("Background", BRAIN_BACKGROUNDS, view.background, (background) => set({ background }))}
         <label class="row slider">
           <span class="label">Point size</span>
           <input type="range" aria-label="Point size" min={BRAIN_POINT_SIZE.min} max={BRAIN_POINT_SIZE.max} step={BRAIN_POINT_SIZE.step} value={view.pointSize} style:--fill={fill(view.pointSize, BRAIN_POINT_SIZE)} oninput={(event) => set({ pointSize: Number(event.currentTarget.value) })} />
           <output>{percent(view.pointSize)}</output>
         </label>
+      </section>
+      <section>
+        <h4>Colours</h4>
+        <ul class="colours" aria-label="Colours">
+          {#each colours as group (group.key)}
+            <li>
+              <button
+                type="button"
+                class="row colour"
+                aria-label={`Colour of ${group.label}`}
+                aria-expanded={editing === group.key}
+                data-key={group.key}
+                onclick={() => openPicker(group)}
+              ><i style:background={group.hex}></i><span class="label">{group.label}</span>{#if picked[group.key]}<span class="mark" title="Your colour">•</span>{/if}</button>
+              {#if editing === group.key && editingGroup}
+                <div class="picker" role="group" aria-label={`Pick a colour for ${group.label}`}>
+                  <div class="swatches">
+                    {#each swatches as swatch}
+                      <button type="button" aria-label={swatch} aria-pressed={group.hex === swatch} style:background={swatch} onclick={() => onrecolour(group.key, swatch)}></button>
+                    {/each}
+                  </div>
+                  <div class="custom">
+                    <input type="color" aria-label="Custom colour" value={group.hex} oninput={(event) => onrecolour(group.key, event.currentTarget.value)} />
+                    <input type="text" aria-label="Hex colour" spellcheck="false" maxlength="7" bind:value={custom} onchange={applyCustom} onkeydown={(event) => { if (event.key === "Enter") applyCustom(); }} />
+                    {#if picked[group.key]}<button type="button" class="link" onclick={() => onrecolour(group.key, null)}>Theme</button>{/if}
+                  </div>
+                </div>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+        <button type="button" class="link reset-colours" disabled={!Object.keys(picked).length} onclick={() => { editing = null; onresetcolours(); }}>Reset colours</button>
       </section>
       <button type="button" class="reset" onclick={onreset}>Reset</button>
     </aside>
@@ -97,7 +158,7 @@
     gap: 8px;
     max-height: calc(100% - 28px);
     font: 11px/1.3 var(--br-font-ui, system-ui, sans-serif);
-    color: #f2f2f2;
+    color: var(--brain-ink);
   }
   button {
     font: inherit;
@@ -110,18 +171,20 @@
     gap: 6px;
     height: 28px;
     padding: 0 10px;
-    background: #000;
-    border: 1px solid #3a3a3a;
+    background: var(--brain-ground);
+    border: 1px solid var(--brain-track);
     border-radius: 3px;
+    backdrop-filter: var(--brain-blur);
+    -webkit-backdrop-filter: var(--brain-blur);
   }
   .opener:hover,
   .opener[aria-expanded="true"] {
-    border-color: #8a8a8a;
+    border-color: var(--brain-edge-hot);
   }
   .opener svg {
     width: 14px;
     height: 14px;
-    fill: #000;
+    fill: var(--brain-ground);
     stroke: currentColor;
     stroke-width: 1.2;
     stroke-linecap: round;
@@ -130,15 +193,17 @@
     width: 236px;
     overflow-y: auto;
     padding: 4px 12px 12px;
-    background: rgba(0, 0, 0, 0.88);
-    border: 1px solid #262626;
+    background: var(--brain-surface);
+    border: 1px solid var(--brain-edge-soft);
     border-radius: 3px;
+    backdrop-filter: var(--brain-blur);
+    -webkit-backdrop-filter: var(--brain-blur);
     scrollbar-width: thin;
-    scrollbar-color: #333 transparent;
+    scrollbar-color: var(--brain-edge) transparent;
   }
   section {
     padding: 10px 0 8px;
-    border-bottom: 1px solid #1c1c1c;
+    border-bottom: 1px solid var(--brain-rule);
   }
   h4 {
     margin: 0 0 8px;
@@ -146,7 +211,7 @@
     font-weight: 500;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #7d7d7d;
+    color: var(--brain-faint);
   }
   .row {
     display: flex;
@@ -156,12 +221,12 @@
     min-height: 24px;
   }
   .label {
-    color: #d8d8d8;
+    color: var(--brain-label);
     white-space: nowrap;
   }
   .segments {
     display: inline-flex;
-    border: 1px solid #333;
+    border: 1px solid var(--brain-edge);
     border-radius: 3px;
     overflow: hidden;
   }
@@ -169,17 +234,17 @@
     padding: 3px 7px;
     background: transparent;
     border: 0;
-    color: #a8a8a8;
+    color: var(--brain-mute);
   }
   .segments button + button {
-    border-left: 1px solid #333;
+    border-left: 1px solid var(--brain-edge);
   }
   .segments button:hover {
-    color: #fff;
+    color: var(--brain-strong);
   }
   .segments button[aria-pressed="true"] {
-    background: #f2f2f2;
-    color: #000;
+    background: var(--brain-ink);
+    color: var(--brain-ground-solid);
   }
   .switch {
     width: 100%;
@@ -193,7 +258,7 @@
     width: 24px;
     height: 13px;
     border-radius: 7px;
-    background: #333;
+    background: var(--brain-edge);
     transition: background 0.15s;
   }
   .switch i::after {
@@ -204,11 +269,11 @@
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    background: #000;
+    background: var(--brain-ground-solid);
     transition: transform 0.15s;
   }
   .switch[aria-checked="true"] i {
-    background: #f2f2f2;
+    background: var(--brain-ink);
   }
   .switch[aria-checked="true"] i::after {
     transform: translateX(11px);
@@ -229,7 +294,7 @@
     padding: 0;
     border: 0;
     border-radius: 0;
-    background: linear-gradient(#f2f2f2, #f2f2f2) 0 50% / var(--fill) 2px no-repeat, linear-gradient(#3a3a3a, #3a3a3a) 0 50% / 100% 2px no-repeat;
+    background: linear-gradient(var(--brain-ink), var(--brain-ink)) 0 50% / var(--fill) 2px no-repeat, linear-gradient(var(--brain-track), var(--brain-track)) 0 50% / 100% 2px no-repeat;
     appearance: none;
     -webkit-appearance: none;
     cursor: pointer;
@@ -239,7 +304,7 @@
     height: 10px;
     border: 0;
     border-radius: 50%;
-    background: #f2f2f2;
+    background: var(--brain-ink);
     -webkit-appearance: none;
   }
   .slider input[type="range"]::-moz-range-thumb {
@@ -247,7 +312,7 @@
     height: 10px;
     border: 0;
     border-radius: 50%;
-    background: #f2f2f2;
+    background: var(--brain-ink);
   }
   .panel .slider input[type="range"]:disabled {
     opacity: 0.45;
@@ -255,7 +320,7 @@
   }
   .slider output {
     text-align: right;
-    color: #a8a8a8;
+    color: var(--brain-mute);
     font-variant-numeric: tabular-nums;
   }
   .reset {
@@ -264,14 +329,109 @@
     padding: 3px 0;
     background: none;
     border: 0;
-    color: #a8a8a8;
+    color: var(--brain-mute);
   }
-  .reset:hover {
-    color: #fff;
+  .reset:hover,
+  .link:not(:disabled):hover {
+    color: var(--brain-strong);
+  }
+  .colours {
+    display: grid;
+    gap: 1px;
+    max-height: 180px;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    scrollbar-width: thin;
+  }
+  .colour {
+    justify-content: flex-start;
+    width: 100%;
+    padding: 0;
+    background: none;
+    border: 0;
+    text-align: left;
+  }
+  .colour i,
+  .swatches button {
+    flex: none;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--brain-edge);
+  }
+  .colour .label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .colour[aria-expanded="true"] .label,
+  .colour:hover .label {
+    color: var(--brain-strong);
+  }
+  .mark {
+    margin-left: auto;
+    color: var(--brain-mute);
+  }
+  .picker {
+    display: grid;
+    gap: 6px;
+    padding: 6px 0 8px 19px;
+  }
+  .swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .swatches button {
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: 0;
+  }
+  .swatches button[aria-pressed="true"] {
+    box-shadow: 0 0 0 2px var(--brain-ink);
+  }
+  .custom {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .panel .custom input[type="color"] {
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid var(--brain-edge);
+    border-radius: 3px;
+    background: none;
+    cursor: pointer;
+  }
+  .panel .custom input[type="text"] {
+    width: 74px;
+    height: 20px;
+    padding: 0 5px;
+    font: 10.5px/1 var(--font-mono, ui-monospace, monospace);
+    color: var(--brain-ink);
+    background: transparent;
+    border: 1px solid var(--brain-edge);
+    border-radius: 3px;
+  }
+  .link {
+    padding: 2px 0;
+    background: none;
+    border: 0;
+    color: var(--brain-mute);
+  }
+  .link:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .reset-colours {
+    margin-top: 6px;
   }
   button:focus-visible,
   input:focus-visible {
-    outline: 1px solid #fff;
+    outline: 1px solid var(--brain-strong);
     outline-offset: 2px;
   }
   @media (prefers-reduced-motion: reduce) {

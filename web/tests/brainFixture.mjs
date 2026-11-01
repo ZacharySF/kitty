@@ -15,6 +15,7 @@ const SECTIONS = [
   { id: "opportunities", label: "Opportunities", group: "Job search", weight: 2, types: ["opportunity"], edits: ["status"] },
   { id: "schema", label: "Mind maps", group: "Study", weight: 1, types: ["mind map"], edits: ["save"] },
 ];
+const JOBS = SECTIONS.find((section) => section.id === "jobs");
 const WORDS = ["Linear algebra", "Thesis draft", "Cell culture", "Sourdough", "Running log", "Grant", "Ceramics", "Imaging",
   "Conference", "Side project", "Weekly plan", "Reading list", "Lab meeting", "Interview prep", "Portfolio", "Budget"];
 
@@ -29,8 +30,13 @@ function random(seed) {
   };
 }
 
-/** A brain response with `records` records and `edits` edits (about a quarter records by default). */
-export function syntheticBrain({ total = 20000, records = Math.round(total * 0.26), seed = 7, now = Date.UTC(2026, 9, 31) } = {}) {
+/**
+ * A brain response with `records` records and `edits` edits (about a quarter records by default).
+ * `jobs` adds that many job records on top, like a workspace dominated by a job search.
+ */
+export function syntheticBrain({ total = 20000, jobs = 0, records = Math.round(total * 0.26) + jobs, seed = 7, now = Date.UTC(2026, 9, 31) } = {}) {
+  // The extra jobs come on top of `total`.
+  const edits = Math.max(0, total + jobs - records);
   const rand = random(seed);
   const pick = (items) => items[Math.floor(rand() * items.length)];
   const weightTotal = SECTIONS.reduce((sum, section) => sum + section.weight, 0);
@@ -45,7 +51,7 @@ export function syntheticBrain({ total = 20000, records = Math.round(total * 0.2
   const counters = new Map();
   for (let index = 0; index < records; index += 1) {
     // The first record of each section is pinned so tests can address it.
-    const section = index < SECTIONS.length ? SECTIONS[index] : weighted();
+    const section = index < SECTIONS.length ? SECTIONS[index] : index < SECTIONS.length + jobs ? JOBS : weighted();
     const type = section.types[0] === "page" && index >= SECTIONS.length ? pick(section.types) : section.types[0];
     const key = `${section.id}.${type}`;
     const number = counters.get(key) ?? 0;
@@ -64,12 +70,12 @@ export function syntheticBrain({ total = 20000, records = Math.round(total * 0.2
     siblings.push(node);
     nodes.push(node);
   }
-  const edits = [];
-  for (let index = 0; index < total - records; index += 1) {
+  const changes = [];
+  for (let index = 0; index < edits; index += 1) {
     const section = weighted();
     const parent = rand() < 0.9 ? pick(bySection.get(section.id)) : null;
     const verb = pick(section.edits);
-    edits.push({
+    changes.push({
       kind: "edit",
       section: section.id,
       type: verb,
@@ -78,8 +84,8 @@ export function syntheticBrain({ total = 20000, records = Math.round(total * 0.2
       parent: parent?.id ?? null,
     });
   }
-  edits.sort((a, b) => b.at.localeCompare(a.at));
-  edits.forEach((edit, index) => nodes.push({ id: `edit:${index}`, ...edit }));
+  changes.sort((a, b) => b.at.localeCompare(a.at));
+  changes.forEach((edit, index) => nodes.push({ id: `edit:${index}`, ...edit }));
   const sections = SECTIONS.map(({ id, label, group }) => ({
     id, label, group,
     records: nodes.filter((node) => node.section === id && node.kind === "record").length,
@@ -89,7 +95,7 @@ export function syntheticBrain({ total = 20000, records = Math.round(total * 0.2
     generated_at: new Date(now).toISOString(),
     sections,
     nodes,
-    total: { records, edits: total - records },
+    total: { records, edits },
     truncated: false,
   };
 }

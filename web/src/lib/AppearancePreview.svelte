@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { Appearance } from "./appearance";
-  import type { AtlasLook } from "./graphPreferences";
+  import type { GraphLook } from "./graph3d";
   import { PETAL, PETAL_ANGLES } from "./icons";
 
   /** Q59: a small kitty window drawn in the live theme with the chosen appearance. */
-  let { appearance, look }: { appearance: Appearance; look: AtlasLook } = $props();
+  let { appearance, look }: { appearance: Appearance; look: GraphLook } = $props();
   const uid = $props.id();
 
   const NODES = [
