@@ -474,7 +474,10 @@ options. **More filters** exposes ranking, source and other filters; selected-jo
 actions and job details have their own expandable advanced controls.
 
 Home is the **atlas**, containing workspace sections rather than individual jobs
-or note pages. Every schema starts in Tree; an explicit layout preference can
+or note pages. It sits in the centre between two narrow rails that scroll on
+their own: home widgets on the left, and the **Workspace** rail on the right with
+the 2D/3D switch, **Find a section** (`/`) and the Sections list. Every schema
+starts in Tree; an explicit layout preference can
 then be changed in **Settings → Workspace**. Home has one Study entry and only
 the Jobs section entry, not separate job-action nodes.
 The kitty logo returns home. Clickable schema tabs show section →

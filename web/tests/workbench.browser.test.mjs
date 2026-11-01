@@ -626,3 +626,31 @@ describe("Liquid Glass theme", () => {
     await context.close();
   });
 });
+
+describe("home rails", () => {
+  for (const viewport of [DEFAULT, SCALED_MINIMUM]) {
+    test(`home at ${viewport.width}×${viewport.height}: the atlas sits centre between two scrolling widget rails; find and sections stay in reach`, async () => {
+      const { page, problems, context } = await open("today", { viewport, dock: "hidden" });
+      const left = page.getByRole("complementary", { name: "Home widgets" });
+      const right = page.getByRole("complementary", { name: "Workspace" });
+      const stage = page.locator('[data-kitty-panel="graph"]');
+      await Promise.all([left.waitFor(), right.waitFor(), stage.waitFor()]);
+      const [l, s, r] = await Promise.all([rect(left), rect(stage), rect(right)]);
+      assert.ok(l.right <= s.left && s.right <= r.left, `rails do not flank the atlas: ${l.left}-${l.right} | ${s.left}-${s.right} | ${r.left}-${r.right}`);
+      assert.ok(s.width > l.width && s.width > r.width, `the atlas (${s.width}px) is not the widest column`);
+      for (const [name, box] of [["left", l], ["right", r]])
+        assert.ok(Math.abs(box.top - s.top) <= 1 && Math.abs(box.bottom - s.bottom) <= 1, `${name} rail is not as tall as the atlas`);
+      // Each rail scrolls on its own; the page never does.
+      const scrolled = await right.evaluate((rail) => { rail.scrollTop = 200; return rail.scrollTop; });
+      assert.ok(scrolled > 0, "the Workspace rail does not scroll");
+      assert.ok(["auto", "scroll"].includes(await left.evaluate((rail) => getComputedStyle(rail).overflowY)), "the widget rail does not scroll");
+      assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
+      await right.getByRole("searchbox", { name: /Find a section/ }).fill("Flash");
+      await right.getByRole("list", { name: "Matching nodes" }).getByRole("button", { name: /Flashcards/ }).waitFor();
+      assert.ok(await right.getByRole("navigation", { name: "Workspace sections" }).getByRole("link", { name: "Calendar" }).isVisible());
+      await assertAtlasFits(page, `${viewport.width} rails`);
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+});

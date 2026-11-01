@@ -496,7 +496,34 @@
   </nav>
 {/snippet}
 
-<div class="atlas" class:list-mode={mode === "list"}>
+<div class="atlas" class:list-mode={mode === "list"} class:with-widgets={readouts.length > 0}>
+  {#if readouts.length}
+    <aside class="rail widgets" aria-label="Home widgets">
+      <section class="today" aria-labelledby={`${atlasId}-today`}>
+        <h3 id={`${atlasId}-today`}>Today</h3>
+        <div class="readouts" aria-busy={dailyLoading}>
+          {#each readouts as readout}
+            <button onclick={() => onview(readout.view)}
+              ><span>{readout.label}</span><strong
+                >{readout.value === null ? "—" : readout.value}</strong
+              ></button
+            >
+          {/each}
+        </div>
+        <p class="muted small">
+          {dailyLoading
+            ? "Updating your day…"
+            : "Live local totals · — means unavailable, not zero."}
+        </p>
+      </section>
+      {#if applyai}<Button size="sm" onclick={onguide}
+        ><Icon name="questions" size={15} /> How to apply</Button
+      >
+      <div class="brief">
+        <Dashboard {revision} {onopenjob} onview={(view) => onview(view)} />
+      </div>{/if}
+    </aside>
+  {/if}
   <div
     class="stage"
     class:drop-target={!!draggedSection && hidden.has(draggedSection) && mode === "graph"}
@@ -534,9 +561,9 @@
 
   <Panel
     as="aside"
-    class="atlas-panel"
+    class="atlas-panel rail"
     title="Workspace"
-    aria-label="Atlas controls and navigation"
+    aria-label="Workspace"
   >
     <GraphLookToggle brain />
 
@@ -625,30 +652,6 @@
           The full list is shown in the main area.
         </p>{:else}{@render sectionList(false)}{/if}
     </details>
-
-    {#if readouts.length}<details class="block">
-      <summary>Today</summary>
-      <div class="readouts" aria-busy={dailyLoading}>
-        {#each readouts as readout}
-          <button onclick={() => onview(readout.view)}
-            ><span>{readout.label}</span><strong
-              >{readout.value === null ? "—" : readout.value}</strong
-            ></button
-          >
-        {/each}
-      </div>
-      <p class="muted small">
-        {dailyLoading
-          ? "Updating your day…"
-          : "Live local totals · — means unavailable, not zero."}
-      </p>
-      {#if applyai}<Button size="sm" onclick={onguide}
-        ><Icon name="questions" size={15} /> How to apply</Button
-      >
-      <div class="brief">
-        <Dashboard {revision} {onopenjob} onview={(view) => onview(view)} />
-      </div>{/if}
-    </details>{/if}
   </Panel>
 </div>
 
@@ -677,22 +680,62 @@
 {/if}
 
 <style>
-  /* Fills the room App gives it (zero basis: the sidebar never sizes the row);
-     the sidebar scrolls on its own. The floor keeps a cramped graph usable. */
+  /* Q18 (layout C): the atlas in the centre with two narrow rails that scroll on
+     their own. Fills the room App gives it (zero basis: a rail never sizes the
+     row). The floor keeps a cramped graph usable. */
   .atlas {
+    --rail-left: clamp(180px, 20vw, 280px);
+    --rail-right: clamp(196px, 22vw, 300px);
     flex: 1 1 0px;
     min-height: 120px;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+    grid-template-columns: minmax(0, 1fr) var(--rail-right);
     grid-template-rows: minmax(0, 1fr);
-    border: 1px solid var(--border-fine, var(--border));
-    background: var(--canvas);
+    gap: 12px;
+  }
+  .atlas.with-widgets {
+    grid-template-columns: var(--rail-left) minmax(0, 1fr) var(--rail-right);
   }
   .stage {
     position: relative;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+    border-radius: 14px;
+    background: var(--canvas);
+  }
+  /* Drawn over the canvas so the canvas still fills the stage edge to edge. */
+  .stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border: 1px solid var(--hairline);
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  .rail,
+  :global(.atlas-panel.rail) {
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline) transparent;
+  }
+  .widgets {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .widgets > :global(*) {
+    flex: none;
+  }
+  .today h3 {
+    margin: 0 0 8px;
+    font: 600 13px var(--heading);
+    color: var(--ink);
   }
   .canvas {
     position: absolute;
@@ -756,14 +799,9 @@
     color: var(--warning);
   }
   :global(.atlas-panel) {
-    min-width: 0;
-    min-height: 0;
-    overflow-y: auto;
-    border: 0 !important;
-    border-left: 1px solid var(--border) !important;
+    border: 1px solid var(--hairline) !important;
+    border-radius: 14px;
     background: var(--chrome) !important;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
   }
   :global(.atlas-panel .br-panel__header) {
     position: sticky;
@@ -1015,9 +1053,6 @@
     font: 17px var(--br-font-display);
     color: var(--ink);
   }
-  .brief {
-    margin-top: 12px;
-  }
   .brief :global(.panel-heading) {
     padding: 12px 14px;
   }
@@ -1033,22 +1068,23 @@
   /* Phone widths stack. The desktop minimum window (760×500) stays side by side
      even when display scaling lays it out narrower in CSS pixels. */
   @media (max-width: 599.98px) {
-    .atlas {
+    .atlas,
+    .atlas.with-widgets {
       flex: none;
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: none;
     }
     .stage {
+      order: -1;
       height: 58vh;
       min-height: 320px;
     }
     .list-mode .stage {
       height: auto;
     }
-    :global(.atlas-panel) {
+    .rail,
+    :global(.atlas-panel.rail) {
       overflow: visible;
-      border-left: 0 !important;
-      border-top: 1px solid var(--border) !important;
     }
     .stage-caption {
       display: none;
