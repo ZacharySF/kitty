@@ -6,7 +6,9 @@ import {
   DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, DOCK_STORAGE_KEY,
   clampDockHeight, firstDockHeight, readDock, writeDock,
 } from '../src/lib/dock.ts';
-import { terminalSocketUrl, terminalTheme } from '../src/lib/terminal.ts';
+import {
+  terminalSocketUrl, terminalTheme, ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, ternTarget,
+} from '../src/lib/terminal.ts';
 
 function memory(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -89,4 +91,41 @@ test('the terminal is transparent and drawn in the given theme roles', () => {
   for (const key of ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
     'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'])
     assert.match(theme[key], /^#[0-9a-f]{6}$/, key);
+});
+
+test('the dock acts only on panes of kitty!\'s own Tern session, with their live state', () => {
+  const block = (id, extra = {}) => ({ id, title: '', cwd: '/w', program: '/run/current-system/sw/bin/bash', cols: 80, rows: 24,
+    focused: false, live: true, exited: null, working: false, ...extra });
+  const status = { sessions: [
+    { id: 1, name: 'other', shown: false, tabs: [{ id: 2, number: 1, name: null, shown: true, blocks: [block(3)] }] },
+    { id: 4, name: 'kitty', shown: true, tabs: [
+      { id: 5, number: 1, name: null, shown: false, blocks: [block(6, { title: 'echo kitty-42' })] },
+      { id: 7, number: 2, name: null, shown: true, blocks: [block(8, { exited: 3, focused: true }), block(9, { working: true, program: null })] },
+    ] },
+  ] };
+  const panes = ternPanes(status);
+  assert.deepEqual(panes.map((pane) => [pane.id, pane.tab]), [[6, 1], [8, 2], [9, 2]]);
+  assert.deepEqual(panes.map(ternPaneLabel), ['echo kitty-42', 'bash', 'pane 9']);
+  assert.deepEqual(panes.map((pane) => ternBlockState(pane).label), ['idle', 'exited 3', 'working']);
+  assert.equal(ternBlockState(block(1, { exited: 0, working: true })).state, 'exited');
+  assert.equal(ternEventLabel({ event: 'pane_exited', pane: 8, status: 3, at: '' }), 'pane 8 exited 3');
+  assert.equal(ternEventLabel({ event: 'pane_exited', pane: 8, status: null, at: '' }), 'pane 8 exited');
+  assert.equal(ternEventLabel({ event: 'pane_spawned', pane: 9, status: null, at: '' }), 'pane 9 started');
+});
+
+test('the Run target is the chosen pane, else the focused pane of the shown tab', () => {
+  const pane = (id, tab, shown, focused) => ({ id, tab, shown, focused, title: '', cwd: '/w', program: '/bin/bash', cols: 80, rows: 24,
+    live: true, exited: null, working: false });
+  // Tern marks one focused block per tab; only the shown tab's is the one on screen.
+  const panes = [pane(3, 1, false, true), pane(9, 2, true, true), pane(10, 2, true, false)];
+  assert.equal(ternTarget(panes, null).id, 9);
+  assert.equal(ternTarget(panes, 10).id, 10);
+  assert.equal(ternTarget(panes, 99).id, 9, 'a chosen pane that closed falls back');
+  assert.equal(ternTarget([pane(3, 1, false, false), pane(4, 2, false, false)], null).id, 3);
+  assert.equal(ternTarget([], null), null);
+  const status = { sessions: [{ id: 1, name: 'kitty', shown: true, tabs: [
+    { id: 2, number: 1, name: null, shown: false, blocks: [pane(3)] },
+    { id: 5, number: 2, name: null, shown: true, blocks: [pane(6)] },
+  ] }] };
+  assert.deepEqual(ternPanes(status).map((item) => [item.id, item.shown]), [[3, false], [6, true]]);
 });

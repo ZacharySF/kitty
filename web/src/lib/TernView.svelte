@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
-  import type { TernStatus } from "./terminal";
+  import { ternBlockState, type TernStatus } from "./terminal";
 
   /**
    * Stencil Tern beside herdr (docs/terminal-dock-design.md, Tern). A truthful status
@@ -95,12 +95,13 @@
         {#each status.sessions as session (session.id)}
           {#each session.tabs as tab (tab.id)}
             {#each tab.blocks as block (block.id)}
+              {@const live = ternBlockState(block)}
               <li class:focused={block.focused}>
                 <span class="where">{session.name} · tab {tab.number ?? "?"}{tab.name ? ` ${tab.name}` : ""}</span>
                 <span class="title">{block.title || block.program}</span>
                 <span class="cwd"><code>{block.cwd}</code></span>
                 <span class="size">{size(block.cols, block.rows)}</span>
-                <span class="state" data-state={block.exited !== null ? "exited" : block.working ? "working" : "idle"}>{block.exited !== null ? `exited ${block.exited}` : block.working ? "working" : "idle"}</span>
+                <span class="state" data-state={live.state}>{live.label}</span>
               </li>
             {/each}
           {/each}

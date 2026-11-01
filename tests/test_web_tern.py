@@ -19,8 +19,12 @@ import pytest
 from tern_support import FakeTern, alive, listening
 from terminal_support import make_root, site
 
+from kitty.core.tern import MAX_CAPTURE_BYTES, TRIMMED, parse_event, plain_text
+
 STATUS_KEYS = {"install_url", "installed", "path", "source", "override", "version", "problem",
-               "workspace", "socket", "running", "windows", "sessions"}
+               "workspace", "socket", "running", "windows", "sessions", "activity", "quick_notes"}
+PANE_ACTIONS = (("/api/terminal/tern/new", {}), ("/api/terminal/tern/run", {"block": 3, "text": "ls"}),
+                ("/api/terminal/tern/focus", {"block": 3}), ("/api/terminal/tern/capture", {"block": 3}))
 OUTER_TERN = {"TERN_PANE": "5", "TERN_PANE_SOCKET": "", "TERN_WINDOW_KEY": "", "TERN_WINDOW_SOCKET": "",
               "TERN_EXE": "/somewhere/else/tern", "TERN_IDENTITY": "{}"}
 
@@ -71,7 +75,8 @@ def test_module_off_has_no_tern_route_or_process(tmp_path, tern):
     settings = make_root(tmp_path, ())
     with site(settings) as running:
         for path, body in (("/api/terminal/tern", None), ("/api/terminal/tern/open", {}),
-                           ("/api/terminal/tern/start", {}), ("/api/terminal/tern/settings", {"path": ""})):
+                           ("/api/terminal/tern/start", {}), ("/api/terminal/tern/settings", {"path": ""}),
+                           *PANE_ACTIONS):
             code, answer = running.request(path, body)
             assert code == 403 and "module is disabled" in answer["error"]
     assert tern.calls() == []
@@ -82,16 +87,16 @@ def test_absent_tern_reports_the_install_pointer_and_starts_nothing(tmp_path, te
     empty = tmp_path / "empty-bin"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
-    settings = make_root(tmp_path, ("terminal",))
+    settings = make_root(tmp_path, ("workspace", "terminal"))
     with site(settings) as running:
         body = status(running)
         assert body["installed"] is False and body["path"] is None and body["source"] is None
         assert body["version"] is None and body["problem"] is None
         assert body["install_url"] == "https://stencil.so/tern"
         assert body["running"] is False and body["windows"] == 0 and body["sessions"] == []
-        for action in ("open", "start"):
-            code, answer = running.request(f"/api/terminal/tern/{action}", {})
-            assert code == 409 and "https://stencil.so/tern" in answer["error"]
+        for path, payload in (("/api/terminal/tern/open", {}), ("/api/terminal/tern/start", {}), *PANE_ACTIONS):
+            code, answer = running.request(path, payload)
+            assert code == 409 and "https://stencil.so/tern" in answer["error"], path
     assert tern.calls() == []
     assert not (tern.runtime / "kitty").exists()
 
@@ -160,9 +165,11 @@ def test_open_in_tern_runs_a_window_on_kittys_own_daemon_and_quit_leaves_nothing
         [block] = tab["blocks"]
         assert block["cwd"] == str(settings.root) and block["working"] is True
         assert set(block) == {"id", "title", "cwd", "program", "cols", "rows", "focused", "live", "exited", "working"}
-        # A second Open only adds a window: one daemon, one kitty session.
+        # A second Open hands over to the open window, which Tern raises: one window, daemon and session.
         assert running.request("/api/terminal/tern/open", {})[0] == 200
-        assert wait_for(lambda: status(running)["windows"] == 2)
+        assert wait_for(lambda: len(windows := [item for item in tern.invocations() if item["argv"][:1] == ["--dir"]]) == 2
+                        and not alive(windows[1]["pid"]))
+        assert status(running)["windows"] == 1
         assert len(status(running)["sessions"]) == 1
     invocations = tern.invocations()
     calls = [item["argv"] for item in invocations]
@@ -272,3 +279,198 @@ def test_a_socket_path_too_long_for_unix_sockets_is_refused(tmp_path, tern, monk
         code, body = running.request("/api/terminal/tern/start", {})
         assert code == 503 and "longer than 107 bytes" in body["error"]
     assert not any(call[:1] == ["daemon"] for call in tern.calls())
+
+
+# Panes of kitty!'s session: new, run, focus, capture and their live state ----------
+
+def kitty_blocks(body: dict) -> list[dict]:
+    return [block for session in body["sessions"] if session["name"] == "kitty"
+            for tab in session["tabs"] for block in tab["blocks"]]
+
+
+def test_a_new_pane_starts_kittys_session_once_then_adds_tabs(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    root = str(settings.root)
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/new", {})
+        assert code == 200 and set(body) == STATUS_KEYS and body["running"] is True
+        # The session kitty! just created is the new pane; no extra tab.
+        [first] = kitty_blocks(body)
+        code, body = running.request("/api/terminal/tern/new", {})
+        assert code == 200
+        first_again, second = kitty_blocks(body)
+        assert first_again["id"] == first["id"] and second["id"] != first["id"]
+        assert second["cwd"] == root and body["windows"] == 0
+        assert running.request("/api/terminal/tern/new", {"cwd": "/"})[0] == 400
+    calls = tern.calls()
+    assert calls.count(["new", "session", "kitty", "--cwd", root, "--json"]) == 1
+    assert calls.count(["new", "tab", "kitty", "--cwd", root, "--json"]) == 1
+    assert not any(call[:1] == ["--dir"] for call in calls)
+
+
+def test_run_and_capture_save_a_kitty_pane_as_a_quick_note_on_kittys_daemon_only(tmp_path, tern):
+    owner = tern.start_daemon(tern.owner_socket)
+    settings = make_root(tmp_path, ("workspace", "terminal"))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/new", {})
+        assert code == 200 and body["quick_notes"] is True
+        [block] = kitty_blocks(body)
+        socket_path = Path(body["socket"])
+        code, body = running.request("/api/terminal/tern/run", {"block": block["id"], "text": "echo kitty-42"})
+        assert code == 200 and set(body) == STATUS_KEYS
+        [pane] = kitty_blocks(body)
+        assert pane["title"] == "echo kitty-42" and pane["exited"] is None
+        code, saved = running.request("/api/terminal/tern/capture", {"block": block["id"]})
+        assert code == 200 and saved == {"note_id": saved["note_id"], "block": block["id"], "truncated": False}
+        code, note = running.request(f"/api/quick-notes/{saved['note_id']}")
+    assert code == 200 and note["tint"] == "sky"
+    header, blank, *text = note["body"].split("\n")
+    assert header.startswith(f"Tern capture · kitty/{block['id']} · ") and blank == ""
+    # Terminal controls stripped, trailing blank lines dropped.
+    assert text == ["$ echo kitty-42", "kitty-42"]
+    calls = tern.calls()
+    assert ["run", f"kitty/{block['id']}", "--", "echo kitty-42"] in calls
+    assert ["capture", f"kitty/{block['id']}", "--scrollback"] in calls
+    for item in tern.invocations():
+        if item["argv"] != ["daemon", "--socket", str(tern.owner_socket)]:
+            assert item["env"]["TERN_DAEMON_SOCKET"] == str(socket_path), item["argv"]
+    # The user's own daemon kept running with none of kitty!'s panes.
+    assert owner.poll() is None
+    assert json.loads(tern.run("inspect", "--json", socket_path=tern.owner_socket).stdout)["sessions"] == []
+
+
+@pytest.mark.parametrize("path, body", [
+    ("/api/terminal/tern/run", {"block": 3}),
+    ("/api/terminal/tern/run", {"block": 3, "text": "ls\nrm -rf /"}),
+    ("/api/terminal/tern/run", {"block": 3, "text": "ls\r"}),
+    ("/api/terminal/tern/run", {"block": 3, "text": "  "}),
+    ("/api/terminal/tern/run", {"block": 3, "text": "clear\x1b[2J"}),
+    ("/api/terminal/tern/run", {"block": 3, "text": "x" * 4097}),
+    ("/api/terminal/tern/run", {"block": 3, "text": 5}),
+    ("/api/terminal/tern/run", {"block": "3", "text": "ls"}),
+    ("/api/terminal/tern/run", {"block": "Default/3", "text": "ls"}),
+    ("/api/terminal/tern/focus", {"block": True}),
+    ("/api/terminal/tern/focus", {"block": -3}),
+    ("/api/terminal/tern/focus", {"block": 2 ** 64}),
+    ("/api/terminal/tern/focus", {"block": 3, "extra": 1}),
+    ("/api/terminal/tern/capture", {}),
+    ("/api/terminal/tern/capture", []),
+])
+def test_invalid_pane_requests_never_reach_tern(tmp_path, tern, path, body):
+    settings = make_root(tmp_path, ("workspace", "terminal"))
+    with site(settings) as running:
+        assert running.request("/api/terminal/tern/start", {})[0] == 200
+        code, answer = running.request(path, body)
+    assert code == 400, answer
+    assert not any(call[:1] in (["run"], ["focus"], ["capture"]) for call in tern.calls())
+
+
+def test_a_pane_outside_kittys_session_is_not_found(tmp_path, tern):
+    settings = make_root(tmp_path, ("workspace", "terminal"))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/start", {})
+        socket_path = Path(body["socket"])
+        # Another session on kitty!'s daemon (a script using the shown socket) is not kitty!'s.
+        other = json.loads(tern.run("new", "session", "other", "--cwd", "/", "--json", socket_path=socket_path).stdout)
+        for block in (999, other["block"]):
+            for path, payload in (("run", {"block": block, "text": "ls"}), ("focus", {"block": block}),
+                                  ("capture", {"block": block})):
+                code, answer = running.request(f"/api/terminal/tern/{path}", payload)
+                assert code == 404 and "no pane" in answer["error"], (path, block)
+    assert not any(call[:1] in (["run"], ["focus"], ["capture"]) for call in tern.calls())
+
+
+def test_pane_actions_need_kittys_session_running(tmp_path, tern):
+    settings = make_root(tmp_path, ("workspace", "terminal"))
+    with site(settings) as running:
+        for path, payload in PANE_ACTIONS[1:]:
+            code, answer = running.request(path, payload)
+            assert code == 409 and "not running" in answer["error"], path
+    assert tern.calls() == [["--version"]]
+
+
+def test_focus_raises_kittys_tern_window_on_the_pane_opening_one_when_none_is_open(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    root = str(settings.root)
+    with site(settings) as running:
+        running.request("/api/terminal/tern/new", {})
+        code, body = running.request("/api/terminal/tern/new", {})
+        first, second = kitty_blocks(body)
+        assert second["focused"] is True and first["focused"] is False
+        code, body = running.request("/api/terminal/tern/focus", {"block": first["id"]})
+        assert code == 200
+        assert [block["focused"] for block in kitty_blocks(body)] == [True, False]
+        assert wait_for(lambda: status(running)["windows"] == 1)
+        # With kitty!'s window open, `tern --dir` hands over to it (Tern raises it): no second window.
+        assert running.request("/api/terminal/tern/focus", {"block": second["id"]})[0] == 200
+        assert [block["focused"] for block in kitty_blocks(status(running))] == [False, True]
+        windows = wait_for(lambda: len(found := [item for item in tern.invocations() if item["argv"] == ["--dir", root]]) == 2
+                           and not alive(found[1]["pid"]) and found)
+        assert status(running)["windows"] == 1 and alive(windows[0]["pid"])
+    calls = tern.calls()
+    assert calls.index(["focus", f"kitty/{first['id']}"]) < calls.index(["--dir", root])
+    assert ["focus", f"kitty/{second['id']}"] in calls
+    assert all(not alive(item["pid"]) for item in tern.invocations())
+
+
+def test_capture_needs_the_workspace_module_for_quick_notes(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        code, body = running.request("/api/terminal/tern/new", {})
+        assert body["quick_notes"] is False
+        [block] = kitty_blocks(body)
+        code, answer = running.request("/api/terminal/tern/capture", {"block": block["id"]})
+    assert code == 409 and "Workspace" in answer["error"]
+    assert not any(call[:1] == ["capture"] for call in tern.calls())
+
+
+def test_a_long_capture_keeps_the_newest_output_within_a_quick_note(tmp_path, tern):
+    settings = make_root(tmp_path, ("workspace", "terminal"))
+    with site(settings) as running:
+        [block] = kitty_blocks(running.request("/api/terminal/tern/new", {})[1])
+        tern.mode("big")
+        code, saved = running.request("/api/terminal/tern/capture", {"block": block["id"]})
+        tern.mode("")
+        assert code == 200 and saved["truncated"] is True
+        body = running.request(f"/api/quick-notes/{saved['note_id']}")[1]["body"]
+    text = body.split("\n", 2)[2]
+    assert len(text.encode()) <= MAX_CAPTURE_BYTES
+    head, *kept = text.split("\n")
+    assert head == TRIMMED and kept[-1] == "line 003999 " + "é" * 40
+    assert all(line.startswith("line ") for line in kept)
+
+
+def test_exited_panes_stay_listed_with_their_status_and_events_and_quit_stops_following(tmp_path, tern):
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        [block] = kitty_blocks(running.request("/api/terminal/tern/new", {})[1])
+        events = wait_for(lambda: [item["argv"] for item in tern.invocations() if item["argv"][:1] == ["events"]])
+        assert events == [["events", "--filter", "pane_spawned,pane_exited"]]
+        assert running.request("/api/terminal/tern/run", {"block": block["id"], "text": "exit 3"})[0] == 200
+        [pane] = kitty_blocks(status(running))
+        assert pane["exited"] == 3
+        activity = wait_for(lambda: (body := status(running))["activity"] and body["activity"])
+        assert [(item["event"], item["pane"], item["status"]) for item in activity][:1] == [
+            ("pane_exited", block["id"], 3)]
+        assert all(isinstance(item["at"], str) and item["at"] for item in activity)
+        [follower] = [item["pid"] for item in tern.invocations() if item["argv"][:1] == ["events"]]
+        assert alive(follower)
+    assert wait_for(lambda: not alive(follower), timeout=5)
+
+
+def test_plain_text_strips_terminal_controls():
+    raw = ("\x1b[31mred\x1b[0m line  \r\n\x1b]0;title\x07next\x00\x07 bell \x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\\n"
+           "\x9b2Jc1 \x1b(Bcharset\ttab\x7f\n\n\n")
+    assert plain_text(raw) == "red line\nnext bell link\nc1 charset\ttab"
+
+
+def test_parse_event_accepts_only_pane_events():
+    assert parse_event(b'{"event":"pane_spawned","pane":5,"by":3}')["pane"] == 5
+    exited = parse_event(b'{"event":"pane_exited","pane":18446744073709551615,"status":3}\n')
+    assert exited["event"] == "pane_exited" and exited["pane"] == 18446744073709551615 and exited["status"] == 3
+    assert parse_event(b'{"event":"pane_exited","pane":5}')["status"] is None
+    for line in (b"not json", b"[1]", b'{"event":"layout_changed","by":3}', b'{"event":"pane_spawned"}',
+                 b'{"event":"pane_spawned","pane":"5"}', b'{"event":"pane_spawned","pane":true}',
+                 b'{"event":"pane_spawned","pane":-1}', b'{"event":"pane_exited","pane":5,"status":"0"}',
+                 b"\xff\xfe", b""):
+        assert parse_event(line) is None, line

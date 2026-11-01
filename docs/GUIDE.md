@@ -178,6 +178,16 @@ WebKitGTK view lacks, so kitty! does not embed it. Scripts reach the session wit
 and stops its Tern daemon (Tern restores the layout next time); closing the window
 with **Keep running on close** leaves them running.
 
+The dock's **Agents** view lists the panes of kitty!'s Tern session (only when Tern
+is installed) with their state, including exited panes and their exit status, and
+recent pane starts and exits. **New pane** adds a tab to the session, **Run** types
+one command line into the chosen pane (multi-line or control characters are
+refused), **Focus** shows a pane in kitty!'s Tern window and raises it (opening
+one when none is open) and **Capture** saves the pane's text, terminal controls stripped and the
+newest 60 KiB kept, as a quick note (Workspace module) that **Open note** pops out.
+These act only on kitty!'s own daemon and its `kitty` session
+(`POST /api/terminal/tern/{new,run,focus,capture}`).
+
 
 ## Try it on fake data first
 

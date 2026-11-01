@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "./api";
+  import TernPanes from "./TernPanes.svelte";
   import type { TerminalActivity } from "./terminal";
 
   /** Q3: herdr's own agent states per workspace. Reading never starts herdr. */
@@ -46,6 +47,7 @@
       {/each}
     </ul>
   {/if}
+  <TernPanes />
 </div>
 
 <style>

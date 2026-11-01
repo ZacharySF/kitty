@@ -10,8 +10,8 @@ Notion's architecture that make a local-first app better:
 
 It adds peer-to-peer CRDT sync across one person's devices. It rejects the parts that solve
 multi-tenant cloud problems kitty does not have: Postgres sharding, Redis, S3, a Node service,
-and a React rewrite. The Tern bridge is already built (branch `feature/tern-bridge-20261031`,
-commit `e759532`). Everything else is designed but not started. Build order is in
+and a React rewrite. The Tern bridge is built and merged (pull requests #21 and #33 into
+`feat/desktop-releases`). Everything else is designed but not started. Build order is in
 [Build order](#build-order). Edits from different devices are merged with Loro (Q5).
 
 ## Terms
@@ -155,7 +155,7 @@ Why the alternatives lost:
 - **D:** cannot run at all. Tern's web client requires WebGPU, and `navigator.gpu` was missing in kitty's WebKitGTK 2.54.1 window even with the flag forced. It also downloads a 68 MB wasm from build.stencil.so.
 - **Bundling Tern in any form:** Tern is proprietary and its terms forbid providing it to third parties.
 
-**Status: the bridge is built** (see [Verified facts](#verified-facts)). The plugin waits for pairing (Q7).
+**Status: the bridge is built and merged** (#21, #33; see [Verified facts](#verified-facts)). The plugin waits for pairing (Q7).
 
 ### Q2: Sync is offline-first and peer-to-peer between one person's devices
 
@@ -580,11 +580,12 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
 
 ## Verified facts
 
-- **Tern bridge implemented** on branch `feature/tern-bridge-20261031`, commit `e759532`:
-  - **Code:** `src/kitty/core/tern.py`, `src/kitty/web_tern.py`, `web/src/lib/TernPanes.svelte`, plus dock wiring.
-  - **Routes:** `GET /api/terminal/tern` and `POST /api/terminal/tern/{open,run,focus,capture}`. A capture saves the pane text as a quick note.
-  - **Automated checks:** full pytest passed (2724 passed, 3 skipped); `svelte-check` reported 0 errors; all 53 web tests passed, including the dock browser tests for both Tern present and absent; the production build passed.
-  - **Live smoke** against real Tern 0.9.8 on an isolated daemon: opened a tab, captured `hello-kitty`, saved it as a quick note through the HTTP routes, saw the `pane_exited` event, rejected a multi-line command (400), and returned 404 for an unknown block.
+- **Tern bridge merged** (#21 status view, Open in Tern, kitty!'s own daemon; #33 dock panes):
+  - **Code:** `src/kitty/core/tern.py` (`TernRuntime`), `src/kitty/web_tern.py`, `web/src/lib/TernView.svelte` (Tern node under Plan) and `web/src/lib/TernPanes.svelte` (the dock's Agents view).
+  - **Daemon:** kitty!'s own, on `$XDG_RUNTIME_DIR/kitty/tern-<workspace hash>/daemon.sock` (directory 0700, owner-only socket); every `tern` kitty! runs targets only that socket, and pane actions only blocks of its `kitty` session (`kitty/<id>`). Quit closes kitty!'s Tern windows, stops following events and stops the daemon.
+  - **Routes:** `GET /api/terminal/tern`; `POST /api/terminal/tern/{start,open,settings}` (#21) and `POST /api/terminal/tern/{new,run,focus,capture}` (#33). A capture saves the pane text as a quick note; a multi-line command is 400, a block outside kitty!'s session 404. Status includes exited panes with their exit status and recent `pane_spawned`/`pane_exited` events.
+  - **Automated checks (#33):** full pytest passed (2714 passed, 3 skipped), including 37 in `tests/test_web_tern.py`; `svelte-check` reported 0 errors; all 108 web tests passed, including the dock browser tests for Tern present and absent; the production build passed.
+  - **Live check (#33)** against real Tern 0.9.8 on an isolated daemon (own HOME/XDG/`TERN_CONFIG_DIR`, Xvfb, `STENCIL_GPU=cpu`), from kitty!'s UI in Chromium and in the native kitty! window: New pane, Run `echo kitty-$((6*7))`, the pane listed, Capture into quick note #1 (shows `kitty-42`) and Open note, Focus opened kitty!'s Tern window and, with it behind kitty!, raised it; `exit 3` showed the pane as exited 3 with its `pane_exited` event; a multi-line command was refused (400); Quit left no `tern` process or socket. The owner's default Tern socket had no daemon before or after. Isolated Tern windows show Stencil's closed-beta sign-in gate, so the pane inside the window was not seen.
 - **Tern constraints:**
   - Proprietary closed beta that requires a Stencil sign-in, so it cannot be bundled.
   - Its web client needs WebGPU, which is missing in WebKitGTK 2.54.1 (tested).
