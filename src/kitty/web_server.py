@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from kitty.config import Config, ConfigError
+from kitty.core import record_events
 from kitty.core.bootstrap import configure_modules
 from kitty.core.workspace import open_workspace
 from kitty.db import connect
@@ -110,7 +111,7 @@ def _pdf_available(settings: Settings, resume: Resume) -> bool:
 
 
 #: API route prefix -> owning module; the longest matching prefix wins. Anything not
-#: listed (tasks, ai status/settings/models, atlas home, bootstrap, modules, reload)
+#: listed (tasks, ai status/settings/models, atlas home, brain, bootstrap, modules, reload)
 #: belongs to the always-on core.
 ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "applyai") for prefix in (
@@ -131,7 +132,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
     (None, "web_ai"),
-    ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
+    ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), (None, "web_desktop"),
     (None, "web_account"),
     ("terminal", "web_terminal"), ("terminal", "web_tern"),
@@ -345,6 +346,11 @@ class WebApplication:
         if path == "/api/modules":
             return self.set_modules(body)
         self.guard(path)
+        result = self._dispatch_mutation(conn, path, body)
+        record_events.capture(conn, path, body, result)
+        return result
+
+    def _dispatch_mutation(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
         for extension in self.extensions:
             result = extension.post(self, conn, path, body)
             if result is not None:
