@@ -120,9 +120,9 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme }
   await page.goto(new URL(`#${hash}`, base).href);
   if (theme)
     await page.evaluate(async (palette) => {
-      const themes = await import("/src/lib/themes.ts");
-      themes.THEMES.push(palette);
-      themes.setTheme(palette.id);
+      const [{ THEMES }, { setTheme }] = await Promise.all([import("/src/lib/themeCatalog.ts"), import("/src/lib/themes.ts")]);
+      THEMES.push(palette);
+      setTheme(palette.id);
     }, theme);
   return { page, problems, context };
 }
@@ -286,7 +286,7 @@ async function assertSelection(page, selected, other, label) {
 }
 
 describe("selected job views stay readable", () => {
-  for (const [themeName, theme] of [["Harness", undefined], ["a light theme", PAPER]]) {
+  for (const [themeName, theme] of [["Kitty (default)", undefined], ["a light theme", PAPER]]) {
     for (const viewport of [DEFAULT, MINIMUM]) {
       test(`${themeName} at ${viewport.width}px: Map and List show a readable, distinct selection`, async () => {
         // The dock's first height depends on how much of Jobs loaded; keep it out of the measured area.

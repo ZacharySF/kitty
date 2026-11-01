@@ -1198,7 +1198,8 @@ main > :is(.panel, .br-panel, .br-card) {
   white-space: pre;
   font: 6px/1.1 var(--font-mono);
 }
-@media (forced-colors: active) {
+/* The blossom is decoration; in narrow windows its width would wrap the top bar onto a second row. */
+@media (forced-colors: active), (max-width: 1100px) {
   :root[data-theme="kitty"] .wordmark::after { display: none; }
 }
 .workspace-groups { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 7px; }

@@ -193,10 +193,11 @@ not named `demo.db`, so it cannot wipe real applications.
 
 The Svelte website uses the same Python core and SQLite database as the CLI/TUI.
 The workbench uses `@nunera/bracket` with self-hosted Inter UI text, Inter Tight
-headings and JetBrains Mono for code. The Theme menu persists Plum, Lavender,
-Ocean, Desktop, Kitty pink or Graphite locally. Plum is a lighter dark purple;
-Lavender and Kitty pink are light themes. Graph nodes and their edges use the
-same purple, blue and white palette. No Rust service is needed: the Python core
+headings and JetBrains Mono for code. The Theme menu persists one of nine dark
+themes locally: **Kitty** (the default: plum, pastel pink and a cherry-blossom
+motif), Harness, Dracula, Catppuccin Mocha, Tokyo Night, Nord, Gruvbox, One Dark
+and Scythe. Graph nodes and their edges use the active theme's graph palette.
+No Rust service is needed: the Python core
 owns application behavior.
 
 From the project root, with Node 22+ and npm available:
@@ -811,8 +812,8 @@ is unavailable. A browser-only website explains that desktop controls are unavai
 The page uses the protected backend API and a fixed command allowlist over the
 shell's private owner pipe; it receives no Tauri IPC permissions.
 
-The main window and quick-note windows are transparent: the default **Harness**
-theme (LearnHarness-style near-black with kitty pink accents) and every other theme
+The main window and quick-note windows are transparent: the default **Kitty**
+theme (plum near-black with pastel pink accents) and every other theme
 draw translucent glass panels over a soft glow, so the desktop shows through.
 Browser tabs keep an opaque background. Titles use the bundled CMU Serif Bold
 (SIL OFL, `web/public/fonts/OFL.txt`).
