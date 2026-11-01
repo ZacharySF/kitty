@@ -416,12 +416,14 @@ offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting.
+A page is the theme's flat background colour with no grid; **More → Paper** adds
+lines, a grid, dots or Cornell margins when you want them.
 Its tools sit in one floating pill at the bottom of the canvas: select, pen,
 highlighter, eraser, text and sticky (mind maps: select, sticky, connect, pen,
 eraser and **+ Concept**), your last five colours as round swatches (**+** opens all
 twelve named colours and a hex field), a stroke-size toggle, undo/redo, and **⋯**
-for the other tools, fill, exact stroke and text size, pen mode, grid, snap, zoom
-and the text outline. Click the handle on the pill's bottom edge to tuck it away to
+for the other tools, fill, exact stroke and text size, pen mode, snap, zoom and
+the text outline. Click the handle on the pill's bottom edge to tuck it away to
 a small tab and again to bring it back (remembered); tool keys still work while it
 is tucked. **Canvas fullscreen** (⛶) puts only the canvas and the same pill on the
 laptop screen, not the whole application. Its exit control and Escape restore the

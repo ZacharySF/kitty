@@ -100,7 +100,6 @@
   import {
     bounds,
     CANVAS_INK,
-    CANVAS_PAPER,
     clone,
     downloadBlob,
     drawingInput,
@@ -116,6 +115,7 @@
     lassoSelection,
     noteTabSwipe,
     noteTabEdge,
+    paperPattern,
     removeElements,
     renderCanvas,
     resizeElement,
@@ -363,7 +363,8 @@
     searchTimer: ReturnType<typeof setTimeout> | undefined;
   let saving: Promise<void> | null = null,
     viewSaving: Promise<void> | null = null;
-  let ink = $state(CANVAS_INK), paper = $state(CANVAS_PAPER);
+  // Q68: the page is the theme's flat void colour; syncColors follows theme switches.
+  let ink = $state(CANVAS_INK), paper = $state(getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim());
   const images = new Map<string, HTMLImageElement>(),
     pointers = new Map<number, Point>();
   let penOnly = $state(false),
@@ -1539,7 +1540,7 @@
           `${name}.kitty.json`,
         );
       } else {
-        const svg = await exportSVG(doc);
+        const svg = await exportSVG(doc, paper);
         downloadBlob(
           kind === "svg"
             ? new Blob([svg], { type: "image/svg+xml" })
@@ -1650,7 +1651,7 @@
     const syncColors=()=>{
       const previous=ink,style=getComputedStyle(document.documentElement);
       ink=style.getPropertyValue("--ink").trim()||CANVAS_INK;
-      paper=style.getPropertyValue("--canvas").trim()||CANVAS_PAPER;
+      paper=style.getPropertyValue("--solid-void").trim();
       if(color===previous||color===CANVAS_INK)color=ink;
     };
     syncColors();window.addEventListener("kitty:theme",syncColors);
@@ -1922,7 +1923,7 @@
           <p class="muted help">{tools.map(item=>`${item.key} ${item.label}`).join(" · ")} · Space+drag pan · Ctrl+Z undo · Esc clear selection</p>
         {/if}
         <p class="muted help">Ctrl+S save · Ctrl+Alt+N new page</p>
-        <label>Paper<select value={doc.background||"dotted"} onchange={event=>commit({...doc,background:event.currentTarget.value as CanvasDocument["background"]})}>
+        <label>Paper<select value={paperPattern(doc)} onchange={event=>commit({...doc,background:event.currentTarget.value as CanvasDocument["background"]})}>
           {#each ["blank","lined","grid","dotted","cornell"] as pattern}<option value={pattern}>{pattern}</option>{/each}
         </select></label>
         <Button size="sm" onclick={favoritePage}>☆ Favorite</Button>
@@ -2067,7 +2068,6 @@
                   <span class="eyebrow">Canvas</span>
                   <div class="pill-menu-row">
                     <label class="check"><input type="checkbox" bind:checked={penOnly} onchange={savePenMode}/>Pen mode</label>
-                    <label class="check"><input type="checkbox" checked={doc.grid} onchange={(e) => commit({ ...doc, grid: e.currentTarget.checked })}/>Grid</label>
                     <label class="check"><input type="checkbox" checked={doc.snap} onchange={(e) => commit({ ...doc, snap: e.currentTarget.checked })}/>Snap</label>
                   </div>
                   <div class="pill-menu-row zoom-row">
@@ -2492,7 +2492,7 @@
     height: clamp(420px, 65vh, 900px);
     min-width: 0;
     overflow: hidden;
-    background: var(--canvas);
+    background: var(--solid-void);
     border: 1px solid var(--border);
     border-radius: 8px;
   }
@@ -2503,7 +2503,7 @@
     min-height: 0;
     border: 0;
     border-radius: 0;
-    background: var(--canvas);
+    background: var(--solid-void);
     color: var(--ink);
   }
   .focus-corner {

@@ -1635,3 +1635,33 @@ describe("notes canvas colours", () => {
     await context.close();
   });
 });
+
+describe("notes canvas background", () => {
+  test("an empty page is the theme's flat void colour with no grid, and follows a theme switch", async () => {
+    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const canvas = await openCanvas(page);
+    /** The canvas's top-left 240×120 CSS px: the distinct colours drawn there and the theme's --solid-void. */
+    const sample = () => canvas.evaluate((node) => {
+      const scale = node.width / node.getBoundingClientRect().width;
+      const data = node.getContext("2d").getImageData(0, 0, Math.round(240 * scale), Math.round(120 * scale)).data;
+      const seen = new Set();
+      for (let i = 0; i < data.length; i += 4) seen.add(`#${[data[i], data[i + 1], data[i + 2]].map((c) => c.toString(16).padStart(2, "0")).join("")}`);
+      return { colours: [...seen], void: getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim().toLowerCase() };
+    });
+    await page.waitForFunction(() => document.querySelector("canvas[aria-label^='Infinite drawing canvas']")?.width > 0);
+    const kitty = await sample();
+    assert.equal(kitty.void, "#1b151a", "the default theme is not Kitty");
+    assert.deepEqual(kitty.colours, [kitty.void], "the empty canvas is not one flat void colour (grid, dots or nebula showed)");
+    await page.evaluate(async () => (await import("/src/lib/themes.ts")).setTheme("harness"));
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim() === "#141414");
+    await page.waitForFunction(() => {
+      const node = document.querySelector("canvas[aria-label^='Infinite drawing canvas']");
+      const [r, g, b] = node.getContext("2d").getImageData(2, 2, 1, 1).data;
+      return r === 0x14 && g === 0x14 && b === 0x14;
+    }, null, { timeout: 5_000 }).catch(() => {});
+    const harness = await sample();
+    assert.deepEqual(harness.colours, [harness.void], "the canvas did not repaint in the new theme's void colour");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
