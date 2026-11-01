@@ -18,11 +18,14 @@
 
 <script lang="ts">
   /**
-   * Q62: both versions drawn on the day grid, kitty's solid and Google's dashed. Clicking a
+   * Q62: both versions drawn on the day grid in the event's calendar paint (`fill`, with
+   * readable `ink`), kitty's as a solid block and Google's as a dashed ghost. Clicking a
    * block picks it; the list strikes out what the other choice would lose.
    */
-  let { conflict, disabled, onresolve }: {
+  let { conflict, fill, ink, disabled, onresolve }: {
     conflict: Conflict;
+    fill: string;
+    ink: string;
     disabled: boolean;
     onresolve: (choice: "local" | "remote" | "duplicate") => void;
   } = $props();
@@ -69,7 +72,7 @@
   const name = (side: Side) => (side === "local" ? "kitty" : "Google");
 </script>
 
-<article class="ghost" aria-label={`Conflict: ${conflict.local.title}`}>
+<article class="ghost" aria-label={`Conflict: ${conflict.local.title}`} style:--block={fill} style:--block-ink={ink}>
   <div class="day" role="group" aria-label="Both versions on the day">
     {#each axis.hours as hour}<span class="hr" style:top={top(hour * 60)}><b>{String(hour).padStart(2, "0")}:00</b></span>{/each}
     {#each SIDES as side}
@@ -150,53 +153,55 @@
     gap: 1px;
     padding: 6px 8px;
     overflow: hidden;
-    border-radius: 8px;
+    border-radius: 9px;
     color: var(--ink);
     text-align: left;
     cursor: pointer;
     transition: opacity 200ms, box-shadow 200ms;
   }
+  /* kitty's version reads like the calendar's own filled block; Google's is its dashed ghost. */
   .blk[data-side="local"] {
     left: 6px;
     right: calc(50% + 2px);
-    border: 1px solid color-mix(in srgb, var(--c1, var(--violet)) 70%, transparent);
-    border-left: 3px solid var(--c1, var(--violet));
-    background: color-mix(in srgb, var(--c1, var(--violet)) 22%, var(--solid-panel, #1c1c1c));
+    border: 1px solid var(--block);
+    background: var(--block);
+    color: var(--block-ink);
   }
   .blk[data-side="remote"] {
     left: calc(50% + 2px);
     right: 6px;
-    border: 1.5px dashed color-mix(in srgb, var(--c4, var(--violet)) 80%, transparent);
-    background: color-mix(in srgb, var(--c4, var(--violet)) 10%, transparent);
+    border: 1.5px dashed var(--block);
+    background: color-mix(in srgb, var(--block) 12%, transparent);
   }
   .blk.gone {
-    border-style: dashed;
+    border: 1.5px dashed color-mix(in srgb, var(--block) 70%, transparent);
     background: transparent;
     color: var(--muted);
   }
   .blk.on {
     z-index: 1;
-    box-shadow: 0 0 0 2px var(--br-lineHot), 0 0 24px color-mix(in srgb, var(--violet) 30%, transparent);
+    box-shadow: 0 0 0 2px var(--br-lineHot), 0 6px 16px color-mix(in srgb, var(--block) 35%, transparent);
   }
-  .blk.on[data-side="remote"] {
+  .blk.on[data-side="remote"]:not(.gone) {
     border-style: solid;
-    background: color-mix(in srgb, var(--c4, var(--violet)) 22%, var(--solid-panel, #1c1c1c));
+    background: var(--block);
+    color: var(--block-ink);
   }
   .blk.off {
     opacity: 0.3;
   }
   .blk small {
-    color: var(--muted);
     font: 9px var(--font-mono);
     letter-spacing: 0.12em;
     text-transform: uppercase;
+    opacity: 0.72;
   }
   .blk strong {
     font: 600 12px var(--font-ui);
   }
   .blk span {
-    color: var(--muted);
     font-size: 11px;
+    opacity: 0.72;
   }
   .side {
     display: grid;
@@ -231,13 +236,18 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-  .changes s {
-    color: var(--c1, var(--violet));
+  .changes s,
+  .changes b {
+    padding-left: 6px;
+    color: var(--ink);
+    font-weight: 500;
     text-decoration: none;
   }
+  .changes s {
+    border-left: 2px solid var(--block);
+  }
   .changes b {
-    color: var(--c4, var(--violet));
-    font-weight: 500;
+    border-left: 2px dashed var(--block);
   }
   .changes .lost {
     opacity: 0.45;

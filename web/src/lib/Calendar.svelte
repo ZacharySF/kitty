@@ -2436,8 +2436,10 @@
       {#if googleConflicts.length}<h3>
           Conflicts · never silently overwritten
         </h3>
-        {#each googleConflicts as c (c.id)}<GoogleConflict
+        {#each googleConflicts as c (c.id)}{@const fill = paint(c.local)}<GoogleConflict
             conflict={c}
+            {fill}
+            ink={blockText(theme, fill)}
             disabled={demo || googleTask?.status === "running"}
             onresolve={(choice) =>
               void googleWork("/calendar/google/resolve", {

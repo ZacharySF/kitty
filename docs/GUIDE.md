@@ -571,9 +571,10 @@ Repeat rules, time zone, custom reminder offsets and Google properties stay in
 the drawer's expandable sections.
 A task's **＋ Map** action optionally adds it beneath a chosen map node.
 When an event changed both in kitty and in Google Calendar, **Imports & Google**
-draws both versions on a small day grid: kitty's solid, Google's dashed (a
-deleted side shows as an empty dashed block). Click the block to keep; the list
-beside it shows each field that differs and strikes out the values you would lose.
+draws both versions on a small day grid in the event's colour: kitty's as a solid
+block, Google's as a dashed ghost (a deleted side shows as an empty dashed block).
+Click the block to keep; the list beside it shows each field that differs and
+strikes out the values you would lose.
 **Keep kitty's** waits for a separately confirmed push, **Use Google's** applies
 Google's version, and **Keep both** saves kitty's as a copy. Calendar settings
 conflicts list the differing name, timezone and colour.
