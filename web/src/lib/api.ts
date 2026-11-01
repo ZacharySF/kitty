@@ -111,6 +111,32 @@ export interface TaskRecord {
   error: string | null;
 }
 
+/** One workspace section in `GET /api/brain`; `group` is its navigation group (Plan, Study, Job search). */
+export interface BrainSection {
+  id: string;
+  label: string;
+  group: string;
+  records: number;
+  edits: number;
+}
+/** A record (a thing that exists) or an edit (one change to it); every edit has `at`. */
+export interface BrainNode {
+  id: string;
+  kind: "record" | "edit";
+  section: string;
+  type: string;
+  label: string;
+  at: string | null;
+  parent: string | null;
+}
+export interface BrainData {
+  generated_at: string;
+  sections: BrainSection[];
+  nodes: BrainNode[];
+  total: { records: number; edits: number };
+  truncated: boolean;
+}
+
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method: body === undefined ? "GET" : "POST",

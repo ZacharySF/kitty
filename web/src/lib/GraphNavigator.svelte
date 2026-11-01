@@ -30,6 +30,7 @@
   import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import Loader from "./Loader.svelte";
+  import BrainStage from "./brain/BrainStage.svelte";
 
   const pane = useWorkspaceContext();
 
@@ -67,7 +68,9 @@
   let atlas = $state<Atlas | null>(null);
   let atlasError = $state("");
   const layout = graphLayout();
+  // "brain" replaces the stage with BrainStage; the 2D/3D atlas then waits, paused, underneath.
   let look = $state(graphLook());
+  let brain = $state<BrainStage>();
   const physics = graphPhysics();
   let mode = $state<"loading" | "graph" | "list">("loading");
   let notice = $state("");
@@ -134,7 +137,9 @@
   }
   function locate(node: GraphNode) {
     selected = node;
-    handle?.focus(node.id);
+    if (look === "brain") {
+      if (node.id.startsWith("view:")) brain?.focusSection(node.id.slice(5));
+    } else handle?.focus(node.id);
   }
   function clearSelection() {
     selected = null;
@@ -181,7 +186,7 @@
   }
   /** Tracks a pointer pressed on a section node so the list can show it accepts the drop. */
   function stagePointerDown(event: PointerEvent) {
-    const node = mode === "graph" && pane.active && !event.button ? handle?.nodeAt(event.clientX, event.clientY) : null;
+    const node = mode === "graph" && pane.active && look !== "brain" && !event.button ? handle?.nodeAt(event.clientX, event.clientY) : null;
     const view = node?.id.startsWith("view:") ? node.id.slice(5) : "";
     nodeDrag = listed(view) ? { view, label: node!.label } : null;
   }
@@ -328,7 +333,7 @@
   });
   $effect(() => {
     const active = pane.active;
-    handle?.setActive(active);
+    handle?.setActive(active && look !== "brain");
     if (active && (handle || mode === "list") && pendingGroup) focusGroup(pendingGroup);
   });
 
@@ -338,7 +343,7 @@
       handle?.setLayout(graphLayout());
       handle?.setPhysics(graphPhysics());
       look = graphLook();
-      void handle?.setLook(look).catch(cause => { notice = (cause as Error).message; });
+      if (look !== "brain") void handle?.setLook(look).catch(cause => { notice = (cause as Error).message; });
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     // Every atlas, in this window's tabs or another window, follows the same choice.
@@ -362,9 +367,9 @@
           ...graph,
           layout,
           physics,
-          look: graphLook(),
+          look: look === "brain" ? "2d" : look,
           reducedMotion,
-          active: pane.active,
+          active: pane.active && look !== "brain",
           onSelect: (node) => {
             if (!pane.active) return;
             if (openable(node)) open(node);
@@ -498,17 +503,19 @@
     role="region"
     data-kitty-panel="graph"
     tabindex="-1"
-    aria-label={`${look === "2d" ? "2D" : "3D"} atlas of your workspace`}
+    aria-label={look === "brain" ? "Brain of every record and edit in your workspace" : `${look === "2d" ? "2D" : "3D"} atlas of your workspace`}
     aria-describedby={`${atlasId}-description`}
     ondragover={sectionDragOver}
     ondrop={sectionDrop}
     onpointerdowncapture={stagePointerDown}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      A map of workspace sections. {look === "2d" ? "Drag nodes to move, drag the background to pan" : "Drag to rotate"}, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.
+      {#if look === "brain"}Every record and every edit in your workspace as a point of light. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. {look === "2d" ? "Drag nodes to move, drag the background to pan" : "Drag to rotate"}, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.{/if}
     </p>
     <div class="canvas" bind:this={container}></div>
-    {#if mode === "list"}
+    {#if look === "brain"}
+      <BrainStage bind:this={brain} active={pane.active} {revision} />
+    {:else if mode === "list"}
       <div class="fallback">
         <p class="notice" role="status">
           <span aria-hidden="true">!</span>
@@ -531,7 +538,7 @@
     title="Workspace"
     aria-label="Atlas controls and navigation"
   >
-    <GraphLookToggle />
+    <GraphLookToggle brain />
 
     <div class="search">
       <label for={`${atlasId}-search`}>Find a section <kbd>/</kbd></label>
