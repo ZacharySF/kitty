@@ -2042,9 +2042,10 @@ dependencies = [
 
 [[package]]
 name = "kitty-workspace"
-version = "0.3.16"
+version = "0.3.17"
 dependencies = [
  "base64 0.22.1",
+ "gtk",
  "libc",
  "open",
  "parking_lot",
