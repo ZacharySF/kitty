@@ -207,8 +207,12 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       const ax = a.x! + ua[0] * ia, ay = a.y! + ua[1] * ia, bx = b.x! + ub[0] * ib, by = b.y! + ub[1] * ib;
       const gradient = ctx.createLinearGradient(ax, ay, bx, by);
       gradient.addColorStop(0, a.color); gradient.addColorStop(1, b.color);
-      ctx.globalAlpha = !focus ? 0.45 : a.id === focus || b.id === focus ? 0.9 : 0.08;
-      ctx.strokeStyle = gradient; ctx.lineWidth = Math.min(2, Math.max(0.8, link.weight ?? 1)) * 1.15 / k;
+      // Solid, legible strokes: thin translucent hairlines smear under compositor upscaling
+      // (e.g. XWayland at 125%), so links keep ~1.75 CSS px and strong alpha at rest.
+      const touching = !!focus && (a.id === focus || b.id === focus);
+      ctx.globalAlpha = !focus ? 0.8 : touching ? 1 : 0.14;
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = (touching ? 2.25 : 1.75) * Math.min(1.4, Math.max(1, link.weight ?? 1)) / k;
       ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(cx, cy, bx, by); ctx.stroke();
       if (link.directed) {
         const angle = Math.atan2(-ub[1], -ub[0]), size = 5.5 / Math.max(0.6, k);
@@ -239,7 +243,7 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       ctx.restore();
       const alpha = ctx.globalAlpha;
       ctx.globalAlpha = alpha * (hub || lift > 0 ? 0.85 : 0.45);
-      ctx.strokeStyle = node.color; ctx.lineWidth = (hub ? 1.1 : 0.8) / Math.max(1, k * 0.8);
+      ctx.strokeStyle = node.color; ctx.lineWidth = (hub ? 1.25 : 1) / Math.max(1, k * 0.8);
       ctx.beginPath(); ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 7.5); ctx.stroke();
       ctx.globalAlpha = alpha;
       if (withText) {

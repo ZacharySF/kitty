@@ -295,3 +295,49 @@ describe("2d cards", () => {
     await page.close();
   });
 });
+
+describe("2d links", () => {
+  test("links at rest are solid, legible lines rather than faint hairlines", async () => {
+    const { page, problems } = await harness();
+    await call(page, "mount", "2d");
+    await call(page, "focus", null);
+    await call(page, "settled");
+    await page.mouse.move(1, 690);
+    // Midpoint of the Study hub → Notes arc, from the renderer's arc formula (linear under zoom).
+    const a = await call(page, "point", "group:Study");
+    const b = await call(page, "point", "view:notes");
+    const c = { x: (a.x + b.x) / 2 - (b.y - a.y) * 0.2, y: (a.y + b.y) / 2 + (b.x - a.x) * 0.2 };
+    const mid = { x: 0.25 * a.x + 0.5 * c.x + 0.25 * b.x, y: 0.25 * a.y + 0.5 * c.y + 0.25 * b.y };
+    const line = await page.evaluate(({ x, y }) => {
+      const canvas = document.querySelector("#stage canvas");
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      const r = Math.round(8 * scale);
+      const cx = Math.round((x - rect.left) * scale), cy = Math.round((y - rect.top) * scale);
+      const pixels = canvas.getContext("2d").getImageData(cx - r, cy - r, 2 * r + 1, 2 * r + 1).data;
+      const bg = [0x14, 0x11, 0x1b];
+      const lum = (rgb) => {
+        const [R, G, B] = rgb.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+        return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+      };
+      const contrastOf = (rgba) => {
+        const alpha = rgba[3] / 255;
+        const over = [0, 1, 2].map((i) => rgba[i] * alpha + bg[i] * (1 - alpha));
+        const [hi, lo] = [lum(over), lum(bg)].sort((m, n) => n - m);
+        return (hi + 0.05) / (lo + 0.05);
+      };
+      let best = 0;
+      const strong = [];
+      for (let i = 0; i < pixels.length; i += 4) strong.push(contrastOf(pixels.slice(i, i + 4)));
+      best = Math.max(...strong);
+      // Line thickness in CSS px: pixels at least half as strong as the core, along one window column/row.
+      const solid = strong.filter((v) => v >= 1 + (best - 1) * 0.5).length;
+      return { contrast: best, solidCssPx2: solid / (scale * scale) };
+    }, mid);
+    const seen = `contrast ${line.contrast.toFixed(2)}, ${line.solidCssPx2.toFixed(1)} solid CSS px² in a 17px window`;
+    assert.ok(line.contrast >= 4.5, `link core is too faint against the background (${seen})`);
+    assert.ok(line.solidCssPx2 >= 24, `link is a hairline (${seen})`);
+    assert.deepEqual(problems, []);
+    await page.close();
+  });
+});
