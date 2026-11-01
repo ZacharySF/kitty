@@ -423,6 +423,11 @@ def _public_entity(row):
     return result
 
 
+def subject_colors(conn):
+    """Every study subject with its colour, the single source Study and the calendar paint it with."""
+    return [dict(row) for row in conn.execute("SELECT id,name,color FROM study_subjects ORDER BY name,id")]
+
+
 def save_entity(conn, kind, body):
     if kind not in TABLES:
         raise ValueError("Unknown study collection")
@@ -584,8 +589,9 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
                       and (target["subject_id"] is None or subject_id == target["subject_id"])
                       and (target["project_id"] is None or project_id == target["project_id"]))
         goals.append({"id": target["id"], "seconds": seconds, "goal_seconds": target["minutes"] * 60})
-    subject_names = {row["id"]: row["name"] for row in conn.execute("SELECT id,name FROM study_subjects")}
-    colors = {row["id"]: row["color"] for row in conn.execute("SELECT id,color FROM study_subjects")}
+    names = {item["id"]: item for item in subject_colors(conn)}
+    subject_names = {key: item["name"] for key, item in names.items()}
+    colors = {key: item["color"] for key, item in names.items()}
 
     def day_entry(key):
         # Each day's study split by subject, largest first, so views can tint a

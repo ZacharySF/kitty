@@ -534,7 +534,12 @@ Blocks stay before their exam. Make a plan saves dated blocks from your own
 dates and durations. Returns are grouped Due / This week / Later: Recalled
 advances through 1, 3, 7, 16 and 35 days; Shaky restarts at one day.
 **Calendar** opens one week with half-hour slots and a day-plan sidebar; events
-are filled blocks in the theme palette. A floating range pill at the bottom of
+are filled blocks in the theme palette. An event or calendar linked to a study
+subject takes that subject's Study colour, shown in the editor as a locked
+**Auto · Subject** chip; unlinked ones pick one of the theme's six palette
+colours (new calendars start on the next one), which recolour with the theme.
+Colours picked before keep their hex, and tasks linked to a subject carry its
+colour too. A floating range pill at the bottom of
 the calendar steps back/forward, returns to today, jumps to a date and switches
 **D**ay, **W**eek, **M**onth, **A**genda, **Y**ear and day **P**lan. While the
 calendar has focus the same letters switch views, **J**/**K** step and **T** goes

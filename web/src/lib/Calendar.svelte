@@ -7,7 +7,8 @@
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import { currentTheme, THEME_EVENT } from "./themes";
   import { getTheme } from "./themeCatalog";
-  import { blockText, paletteSlot } from "./calendar/palette";
+  import { blockText, calendarPaint, itemPaint, nextSlot, subjectOf, type Subject } from "./calendar/palette";
+  import ColorField from "./calendar/ColorField.svelte";
   import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";
   import RangePill, { VIEWS, type CalendarView } from "./calendar/RangePill.svelte";
   import YearHeatmap from "./calendar/YearHeatmap.svelte";
@@ -25,7 +26,9 @@
   type Cal = {
     id: string;
     name: string;
+    /** Theme palette slot `c1`..`c6`, or a #rrggbb kept from before slots or from Google. */
     color: string;
+    subject_id?: number | null;
     timezone: string;
     visible: number;
     revision: number;
@@ -63,6 +66,9 @@
     attachments: { title: string; url: string }[];
     event_type: string;
     google_options: Record<string, unknown>;
+    subject_id?: number | null;
+    /** Picked palette slot; null follows the calendar. Ignored while a subject is linked. */
+    color?: string | null;
     undo_id?: number;
   };
   type Task = {
@@ -76,6 +82,7 @@
     status: string;
     tags: string[];
     project: string;
+    subject_id?: number | null;
     calendar_id: string;
     repeat_frequency: string;
     repeat_interval: number;
@@ -87,6 +94,7 @@
     calendars: Cal[];
     events: Event[];
     tasks: Task[];
+    subjects: Subject[];
     activity: Record<string, number | string>[];
     reminders: {
       event_id: string;
@@ -140,6 +148,7 @@
     calendars: [],
     events: [],
     tasks: [],
+    subjects: [],
     activity: [],
     reminders: [],
     conflicts: [],
@@ -422,7 +431,8 @@
     const start = new Date(Date.parse(`${startInput}:00Z`) + offset).toISOString();
     const end = new Date(Date.parse(`${endInput}:00Z`) + offset).toISOString();
     return data.events.map((e) => e.id === open.id && e.occurrence === open.occurrence
-      ? { ...e, title: open.title, calendar_id: open.calendar_id, location: open.location, start, end } : e);
+      ? { ...e, title: open.title, calendar_id: open.calendar_id, subject_id: open.subject_id, color: open.color,
+        location: open.location, start, end } : e);
   });
   function shiftTime(minutes: number, which: "start" | "end") {
     if (which === "start") {
@@ -519,17 +529,20 @@
     }
     return slots;
   });
-  function color(id: string) {
-    return data.calendars.find((c) => c.id === id)?.color || "var(--accent)";
-  }
   let theme = $state(getTheme(currentTheme()));
-  /** Theme palette slot (1..6) of a calendar. */
-  const calendarSlot = (id: string) => paletteSlot(data.calendars.findIndex((c) => c.id === id));
-  const paletteColor = (id: string) => `var(--c${calendarSlot(id)})`;
-  /** Filled-block colours for a calendar: a theme palette slot and the text that reads on it. */
-  function blockStyle(id: string) {
-    return `--block:${paletteColor(id)};--block-ink:${blockText(theme, calendarSlot(id))}`;
+  /** An event's colour: its (or its calendar's) study subject's, else its palette slot, else its calendar's. */
+  const paint = (e: Pick<Event, "calendar_id" | "subject_id" | "color">) => itemPaint(e, data.calendars, data.subjects).color;
+  const calendarColor = (c: Cal) => calendarPaint(c, data.subjects).color;
+  /** A task's colour when it is linked to a study subject; unlinked tasks stay muted. */
+  const taskColor = (t: Task) => subjectOf(t, data.subjects)?.color;
+  /** Filled-block colours for an event and the text that reads on them. */
+  function blockStyle(e: Event) {
+    const fill = paint(e);
+    return `--block:${fill};--block-ink:${blockText(theme, fill)}`;
   }
+  const editorCalendar = $derived(editor ? data.calendars.find((c) => c.id === editor?.calendar_id) : undefined);
+  /** The drawer's "Calendar colour" default: the event's calendar paint. */
+  const calendarDefault = $derived(editorCalendar ? { ...calendarPaint(editorCalendar, data.subjects), name: editorCalendar.name } : null);
   async function load() {
     const serial = ++loadCounter;
     loading = true;
@@ -705,6 +718,8 @@
       attachments: [],
       event_type: "default",
       google_options: {},
+      subject_id: null,
+      color: null,
     };
     startInput = start;
     endInput =
@@ -843,6 +858,8 @@
         attachments,
         event_type: e.event_type,
         google_options: JSON.parse(googleOptionsText),
+        subject_id: e.subject_id ?? null,
+        color: e.color ?? null,
       };
       let patch: Record<string, unknown> = changes;
       if (e.id) {
@@ -854,7 +871,7 @@
           Object.entries(changes).filter(
             ([key, value]) =>
               JSON.stringify(value) !==
-              JSON.stringify(base?.[key as keyof Event]),
+              JSON.stringify(base?.[key as keyof Event] ?? null),
           ),
         );
       }
@@ -1082,6 +1099,7 @@
       status: "todo",
       tags: [],
       project: "",
+      subject_id: null,
       calendar_id: (data.calendars.find((c) => c.visible) || data.calendars[0])?.id || "personal",
       repeat_frequency: "",
       repeat_interval: 1,
@@ -1101,6 +1119,7 @@
       status,
       tags,
       project,
+      subject_id,
       calendar_id,
       repeat_frequency,
       repeat_interval,
@@ -1125,6 +1144,7 @@
         status,
         tags,
         project,
+        subject_id: subject_id ?? null,
         calendar_id,
         repeat_frequency: repeat_frequency || "",
         repeat_interval: repeat_frequency ? repeat_interval : 1,
@@ -1717,7 +1737,7 @@
       </datalist>
     </div>
   <div class="calendars">
-    {#each data.calendars as c}<label style={`--calendar-color:${c.color}`}
+    {#each data.calendars as c}<label style={`--calendar-color:${calendarColor(c)}`}
         ><input
           type="checkbox"
           checked={!!c.visible}
@@ -1730,7 +1750,8 @@
       onclick={() =>
         (calendarEditor = {
           name: "",
-          color: "#6d5dfc",
+          color: nextSlot(data.calendars.length),
+          subject_id: null,
           timezone: tz,
           visible: 1,
         })}>＋ Calendar</button
@@ -1789,7 +1810,7 @@
           >
             <button class="day-head" onclick={() => (selectedDate = day)}
               aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
-            <span class="dots" aria-hidden="true">{#each dayEvents.slice(0, 4) as e (e.id + e.occurrence)}<i style:background={paletteColor(e.calendar_id)}></i>{/each}</span>
+            <span class="dots" aria-hidden="true">{#each dayEvents.slice(0, 4) as e (e.id + e.occurrence)}<i style:background={paint(e)}></i>{/each}</span>
             <button class="day-add" aria-label={`Add event on ${day}`}
               onclick={() => newEvent(day + "T09:00", day + "T10:00")}>＋</button>
           </div>{/each}
@@ -1803,7 +1824,7 @@
             end: e.all_day ? "" : parts(e.end).time,
             title: e.title + (e.rrule ? " ↻" : ""),
             place: e.location || data.calendars.find((c) => c.id === e.calendar_id)?.name || "",
-            color: paletteColor(e.calendar_id),
+            color: paint(e),
             open: () => openEvent(e),
             drag: (event) => drag(e, event),
             dragend: finishDrag,
@@ -1814,7 +1835,7 @@
             end: "",
             title: t.title,
             place: t.status === "done" ? "Completed" : t.priority,
-            color: "var(--muted)",
+            color: taskColor(t) ?? "var(--muted)",
             task: true,
             open: () => (taskEditor = { ...t }),
             drag: (event) => dragTask(t, event),
@@ -1852,13 +1873,13 @@
                   aria-label={`Create all-day event on ${day}`}>＋</button>
                 <div class="all-day-items">
                   {#each eventsOn(day).filter((e) => e.all_day) as e}
-                    <button class="event-chip all-day-event" style={`--calendar-color:${color(e.calendar_id)}`}
+                    <button class="event-chip all-day-event" style={`--calendar-color:${paint(e)}`}
                       draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
                       oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
                       onclick={() => { selectedDate = day; openEvent(e); }} title={e.title}>{e.title}</button>
                   {/each}
                   {#each tasksOn(day).filter((task) => task.due.length === 10) as t}
-                    <button class="task-chip" class:completed={t.status === "done"}
+                    <button class="task-chip" class:completed={t.status === "done"} style:--task-color={taskColor(t)}
                       draggable="true" ondragstart={(event) => dragTask(t, event)} ondragend={finishDrag}
                       oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
                       onclick={() => { selectedDate = day; taskEditor = { ...t }; }}
@@ -1902,7 +1923,7 @@
                         newEvent(slot(day, halfHour), slot(day, halfHour + 1));
                     }}></button>
                   {#each weekTasks[day][halfHour] as task}
-                    <button class="task-chip timed-task" class:completed={task.status === "done"}
+                    <button class="task-chip timed-task" class:completed={task.status === "done"} style:--task-color={taskColor(task)}
                       style={`top:${parts(task.due).minute % 30 / 30 * 100}%`}
                       draggable="true" ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
                       onclick={() => (taskEditor = { ...task })}
@@ -1920,7 +1941,7 @@
               {#each weekEvents[day] as placement}
                 {@const e = placement.event}
                 <div class="event-chip timed" draggable="true" role="group" aria-label={e.title}
-                  style={`${blockStyle(e.calendar_id)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
+                  style={`${blockStyle(e)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
                   ondragstart={(event) => drag(e, event)} ondragend={finishDrag}>
                   <button class="timed-content" title={`${e.title} · ${label(e.start)} – ${label(e.end)}`}
                     oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
@@ -1947,9 +1968,9 @@
         now={anchor === today ? currentMinute : null}
         busy={pending > 0}
         events={timedEvents(anchor).map((p) => ({ key: `${p.event.id}:${p.event.occurrence}`, title: p.event.title,
-          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event.calendar_id), open: () => openEvent(p.event) }))}
+          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event), open: () => openEvent(p.event) }))}
         tasks={planTasks.map(({ task, at }) => ({ id: task.id!, title: task.title, priority: task.priority,
-          done: task.status === "done", at, open: () => (taskEditor = { ...task }) }))}
+          done: task.status === "done", at, color: taskColor(task), open: () => (taskEditor = { ...task }) }))}
         onplan={(id) => void planTask(id)}
         onunplan={(id) => void unplanTask(id)}
         ontoggle={(id) => { const task = data.tasks.find((t) => t.id === id); if (task) void taskStatus(task, task.status === "done" ? "todo" : "done"); }} />
@@ -1960,7 +1981,7 @@
               <h2><button class="agenda-date" onclick={() => (selectedDate = day)}>{dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}</button></h2>
               {#each eventsOn(day) as e}<button
                   class="agenda-event"
-                  style={`--calendar-color:${color(e.calendar_id)}`}
+                  style={`--calendar-color:${paint(e)}`}
                   onclick={() => openEvent(e)}
                   ><span
                     >{e.all_day
@@ -1969,6 +1990,7 @@
                   ><strong>{e.title}</strong><span>{e.location}</span></button
                 >{/each}{#each tasksOn(day) as t}<button
                   class="agenda-event"
+                  style:--calendar-color={taskColor(t)}
                   onclick={() => (taskEditor = { ...t })}
                   ><span>Task · {t.priority} · {t.status}</span><strong
                     >{t.title}</strong
@@ -1994,7 +2016,7 @@
           <Button size="sm" onclick={newTask}>Add task</Button>
           <div class="tray-list">
             {#each trayTasks as task}
-              <button class="tray-task" draggable="true"
+              <button class="tray-task" draggable="true" style:--task-color={taskColor(task)}
                 ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
                 onclick={() => (taskEditor = { ...task })}>
                 <strong>{task.title}</strong>
@@ -2013,7 +2035,7 @@
         </div>
         {#if view !== "month"}
         {#each eventsOn(selectedDate) as e}
-          <button class="plan-event" style={`--calendar-color:${color(e.calendar_id)}`} onclick={() => openEvent(e)}
+          <button class="plan-event" style={`--calendar-color:${paint(e)}`} onclick={() => openEvent(e)}
             oncontextmenu={(event) => void deleteEventAtPointer(event, e)}>
             <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
             <strong>{e.title}</strong>
@@ -2681,7 +2703,7 @@
 </section>
 
 {#if editor && isActive}
-  <EventDrawer title={editor.id ? "Event details" : "New event"} accent={paletteColor(editor.calendar_id)}
+  <EventDrawer title={editor.id ? "Event details" : "New event"} accent={paint(editor)}
     eyebrow={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
     onclose={() => (editor = null)}>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -2731,11 +2753,12 @@
           <legend class="eyebrow">calendar</legend>
           <div class="swatches">
             {#each data.calendars as c (c.id)}
-              <button type="button" class="swatch" style:--sw={paletteColor(c.id)} title={c.name} aria-label={c.name}
+              <button type="button" class="swatch" style:--sw={calendarColor(c)} title={c.name} aria-label={c.name}
                 aria-pressed={editor.calendar_id === c.id} onclick={() => editor && (editor.calendar_id = c.id)}></button>
             {/each}
           </div>
         </fieldset>
+        <ColorField subjects={data.subjects} bind:subject={editor.subject_id} bind:color={editor.color} inherited={calendarDefault} />
         <label class="drawer-field"><span class="eyebrow">place</span><input bind:value={editor.location} placeholder="Add a place" /></label>
         <div class="drawer-field" role="group" aria-label="Remind me">
           <span class="eyebrow">remind me</span>
@@ -2896,6 +2919,11 @@
           <label>Calendar<select bind:value={taskEditor.calendar_id}>
             {#each data.calendars as c}<option value={c.id}>{c.name}</option>{/each}
           </select></label>
+          {#if data.subjects.length}<label>Study subject<select value={taskEditor.subject_id ?? ""}
+            onchange={(e) => taskEditor && (taskEditor.subject_id = e.currentTarget.value ? Number(e.currentTarget.value) : null)}>
+            <option value="">No subject</option>
+            {#each data.subjects as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+          </select></label>{/if}
         </div>
         <details class="editor-options">
           <summary>More options · notes, priority & repeat</summary>
@@ -3002,9 +3030,9 @@
         }}
       >
         <label>Name<input bind:value={calendarEditor.name} required /></label
-        ><label
-          >Color<input type="color" bind:value={calendarEditor.color} /></label
-        ><label
+        ><ColorField plain subjects={data.subjects} bind:subject={calendarEditor.subject_id}
+          bind:color={() => calendarEditor?.color, (value) => calendarEditor && (calendarEditor.color = value ?? undefined)} />
+        <label
           >Timezone<input
             bind:value={calendarEditor.timezone}
             required
@@ -3432,6 +3460,8 @@
     font-size: 0.75rem;
     margin: 0.25rem 0;
     color: var(--muted);
+    /* A subject-linked task carries its subject colour as a left rule. */
+    box-shadow: inset 3px 0 0 var(--task-color, transparent);
   }
   .time-scroll {
     overflow: auto;
@@ -3582,7 +3612,7 @@
   .task-tray { margin: 0.7rem 0 1rem; padding: 0.8rem; border: 1px solid var(--border); border-radius: 8px; }
   .task-tray h3 { margin: 0; }
   .tray-list { display: grid; gap: 0.4rem; max-height: 320px; overflow-y: auto; margin-top: 0.6rem; }
-  .tray-task { display: grid; gap: 0.25rem; text-align: left; width: 100%; padding: 0.6rem; }
+  .tray-task { display: grid; gap: 0.25rem; text-align: left; width: 100%; padding: 0.6rem; box-shadow: inset 3px 0 0 var(--task-color, transparent); }
   .tray-task span { font-size: 0.75rem; color: var(--muted); }
   .timed-task { position: absolute; z-index: 4; left: 2px; right: 2px; max-width: calc(100% - 4px); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; }
   [draggable="true"] { cursor: grab; }

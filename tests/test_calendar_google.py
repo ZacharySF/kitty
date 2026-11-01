@@ -750,3 +750,28 @@ def test_calendar_clear_lists_every_event_and_requires_explicit_confirmation(wor
     assert provider.events == {}
     assert google.preview_operation(workspace.settings, body)['items'] == []
     assert approved(workspace.settings, body)['ok']
+
+
+def test_palette_slots_and_subject_links_stay_local_through_google_sync(workspace, provider):
+    conn = workspace.conn
+    from kitty.core import study
+    physics = study.save_entity(conn, 'subjects', {'name': 'Physics', 'color': '#31a2bc'})['item']['id']
+    provider.add_event()
+    cal = linked(workspace)
+    sync(workspace, cal)
+    cal = calendar._get_calendar(conn, cal['id'])
+    assert cal['color'] == '#123abc'
+    cal = calendar.save_calendar(conn, {'id': cal['id'], 'revision': cal['revision'], 'color': 'c4'})
+    item = calendar.occurrences(conn, '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z')[0]
+    edit(workspace, item, subject_id=physics, color='c2')
+    sync(workspace, cal, 'both')
+    assert provider.subscription['backgroundColor'] == '#123abc', 'Google only stores hex; a palette slot is local'
+    assert not any(call['path'].endswith('/calendarList/remote') for call in provider.writes)
+    provider.add_event(summary='Renamed in Google')
+    sync(workspace, cal)
+    pulled = calendar.get_event(conn, item['id'])
+    assert (pulled['title'], pulled['subject_id'], pulled['color']) == ('Renamed in Google', physics, 'c2')
+    assert calendar._get_calendar(conn, cal['id'])['color'] == 'c4'
+    provider.subscription.update(provider.stamp({**provider.subscription, 'backgroundColor': '#abcdef'}))
+    sync(workspace, cal)
+    assert calendar._get_calendar(conn, cal['id'])['color'] == '#abcdef', 'a colour changed in Google still arrives'

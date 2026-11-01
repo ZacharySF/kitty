@@ -319,7 +319,7 @@ def _calendar_remote(client, google_id):
     subscription = checked_request(client, 'GET', 'users/me/calendarList/' + enc(google_id))
     return {'resource': resource, 'subscription': subscription,
             'values': {'name': resource.get('summary', 'Google calendar'), 'timezone': resource.get('timeZone', 'UTC'),
-                       'color': subscription.get('backgroundColor', '#6d5dfc')}}
+                       'color': subscription.get('backgroundColor') or 'c1'}}
 
 
 def _calendar_metadata(client, conn, cal, direction):
@@ -328,6 +328,13 @@ def _calendar_metadata(client, conn, cal, direction):
     saved = conn.execute('SELECT value FROM calendar_google_state WHERE key=?', (key,)).fetchone()
     base = json.loads(saved['value']) if saved else {'local': remote['values'], 'remote': remote}
     values = {k: cal[k] for k in ('name', 'timezone', 'color')}
+    # Google stores hex only: a theme palette slot stays local, and is replaced only
+    # when the calendar's colour changes in Google.
+    palette = not local.HEX.fullmatch(cal['color'])
+    if palette:
+        values['color'] = base['local']['color']
+    keep = palette and remote['values']['color'] == base['remote']['values']['color']
+    pulled_color = cal['color'] if keep else remote['values']['color']
     local_changed = values != base['local']
     remote_changed = remote['values'] != base['remote']['values']
     if local_changed and remote_changed and values != remote['values']:
@@ -339,7 +346,7 @@ def _calendar_metadata(client, conn, cal, direction):
         if values['name'] != remote['values']['name'] or values['timezone'] != remote['values']['timezone']:
             checked_request(client, 'PATCH', 'calendars/' + enc(cal['google_id']),
                             body={'summary': values['name'], 'timeZone': values['timezone']}, etag=remote['resource'].get('etag'))
-        if values['color'] != remote['values']['color']:
+        if values['color'] != remote['values']['color'] and local.HEX.fullmatch(values['color']):
             checked_request(client, 'PATCH', 'users/me/calendarList/' + enc(cal['google_id']),
                             body={'backgroundColor': values['color']}, params={'colorRgbFormat': 'true'}, etag=remote['subscription'].get('etag'))
         remote = _calendar_remote(client, cal['google_id'])
@@ -353,7 +360,7 @@ def _calendar_metadata(client, conn, cal, direction):
                 zone_name = remote['values']['timezone']
                 local.zone(zone_name)
                 conn.execute('UPDATE calendar_calendars SET name=?,timezone=?,color=?,revision=revision+1,updated_at=? WHERE id=?',
-                             (remote['values']['name'], zone_name, remote['values']['color'], local.now(), cal['id']))
+                             (remote['values']['name'], zone_name, pulled_color, local.now(), cal['id']))
             _state(conn, key, {'local': remote['values'], 'remote': remote})
     return True
 
@@ -409,7 +416,8 @@ def select_calendar(settings, conn, body):
     if existing:
         return local._get_calendar(conn, existing['id'])
     cal = local.save_calendar(conn, {'name': remote.get('summaryOverride') or remote.get('summary', 'Google calendar'),
-                                     'color': remote.get('backgroundColor', '#6d5dfc'), 'timezone': remote.get('timeZone', 'UTC')})
+                                     **({'color': remote['backgroundColor']} if remote.get('backgroundColor') else {}),
+                                     'timezone': remote.get('timeZone', 'UTC')})
     conn.execute('UPDATE calendar_calendars SET google_id=?,google_etag=? WHERE id=?', (remote_id, remote.get('etag'), cal['id']))
     return local._get_calendar(conn, cal['id'])
 
@@ -442,6 +450,11 @@ def _apply_remote(conn, calendar_id, remote, mapping=None):
         original = remote.get('originalStartTime', {})
         key = local.stamp(local.instant(original.get('date') or original.get('dateTime', ''), data['timezone'], data['all_day']), data['all_day'])
         replacement = None if remote.get('status') == 'cancelled' else remote_to_local(conn, remote, calendar_id)
+        if replacement:
+            previous = conn.execute('SELECT data FROM calendar_exceptions WHERE event_id=? AND occurrence=?',
+                                    (master['event_id'], key)).fetchone()
+            shown = json.loads(previous['data']) if previous and previous['data'] else data
+            replacement.update({field: shown.get(field) for field in local.LOCAL_DISPLAY})
         conn.execute('INSERT INTO calendar_exceptions VALUES(?,?,?) ON CONFLICT(event_id,occurrence) DO UPDATE SET data=excluded.data',
                      (master['event_id'], key, json.dumps(replacement) if replacement else None))
         local._update(conn, master['event_id'], {k: v for k, v in data.items() if k in local.EVENT_FIELDS}, manual=False)
@@ -464,8 +477,9 @@ def _apply_remote(conn, calendar_id, remote, mapping=None):
     if mapping:
         ident = mapping['event_id']
         old = local._event(conn, ident, include_deleted=True)
-        # Preserve source linkage and human provenance when updating a linked copy.
+        # Preserve source linkage, human provenance and local-only display (subject, colour).
         data['source_key'], data['source_url'] = old.get('source_key'), old.get('source_url', '')
+        data.update({field: old.get(field) for field in local.LOCAL_DISPLAY})
         local._update(conn, ident, data, manual=False)
     else:
         ident = local._insert(conn, data)
