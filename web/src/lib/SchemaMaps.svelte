@@ -205,12 +205,25 @@
     before: Snapshot;
     moved: boolean;
     branch: string[];
+    /** Shift-drag on empty space draws a selection box instead of panning. */
+    box?: boolean;
   } | null = null;
+  // Q65 F: further selected topics (with `selected` among them) and the selection box in map units.
+  let multi = $state<string[]>([]), marquee = $state<{x0: number; y0: number; x1: number; y1: number} | null>(null);
+  const picked = $derived(new Set(multi.includes(selected) ? multi : selected ? [selected] : []));
+  /** Picked topics whose ancestors are not picked: what moves, reparents or detaches as a whole. */
+  function pickedTops() {
+    return [...picked].filter(id => {
+      for (let p = parents.get(id), seen = new Set<string>(); p !== undefined && !seen.has(p); seen.add(p), p = parents.get(p))
+        if (picked.has(p)) return false;
+      return true;
+    });
+  }
   // Q65 B/C: the node being dragged, the pill it would snap into, whether D detached it and whether Alt places it freely.
   let dragging = $state(""), dropTarget = $state(""), detaching = $state(false), placing = $state(false);
   // Q65 D: the swatch row paints the node or (with Whole branch) its descendants too; copied style pastes onto others.
   const PALETTE = ["c1", "c2", "c3", "c4", "c5", "c6"];
-  let paintBranch = $state(false), copiedStyle = $state<{color?: string} | null>(null), stageWidth = $state(0);
+  let paintBranch = $state(false), copiedStyle = $state<{color?: string} | null>(null), stageWidth = $state(0), styleWidth = $state(0);
   // Q65 E: the topic a "Connect to…" starts from, and the cross connection whose label is being typed.
   let linking = $state(""), labelling = $state(""), edgeDraft = $state("");
   let view = $state<View3D>("edit"),
@@ -311,14 +324,14 @@
     return `var(--c${Math.max(0, index) % 6 + 1}, var(--accent))`;
   }
   function nodeColor(n: Node) { return n.color ? `var(--${n.color})` : branchColor(n); }
-  /** The nodes a style action applies to. */
-  function styleTargets() {
-    if (!node) return [];
-    const ids = paintBranch ? descendants(node.id) : new Set([node.id]);
-    return current!.graph.nodes.filter(n => ids.has(n.id));
+  /** The nodes a style action applies to: every picked topic, with their branches under Whole branch. */
+  function styleTargets(branches = paintBranch) {
+    const ids = new Set<string>();
+    for (const id of picked) for (const item of branches ? descendants(id) : [id]) ids.add(item);
+    return current?.graph.nodes.filter(n => ids.has(n.id)) ?? [];
   }
   function paint(color: string | undefined) {
-    if (!editable || !node) return;
+    if (!editable || !picked.size) return;
     remember();
     for (const n of styleTargets()) { if (color) n.color = color; else delete n.color; }
   }
@@ -328,10 +341,10 @@
     notice = "Style copied";
   }
   function pasteStyle() {
-    if (!editable || !node || !copiedStyle) return;
+    if (!editable || !picked.size || !copiedStyle) return;
     const style = copiedStyle;
     remember();
-    if (style.color) node.color = style.color; else delete node.color;
+    for (const n of styleTargets(false)) { if (style.color) n.color = style.color; else delete n.color; }
   }
   function hiddenLabel(n: Node) {
     return recall && parents.has(n.id) && !revealed.includes(n.id);
@@ -695,7 +708,9 @@
       busy = false;
     }
   }
+  /** Selects `n`; a topic outside the multi-selection replaces it. */
   function choose(n: Node) {
+    if (!multi.includes(n.id)) multi = [];
     selected = n.id;
     selectedEdge = "";
     draftLabel = n.label;
@@ -750,21 +765,23 @@
     node.notes = draftNotes;
     node.url = draftUrl.trim();
   }
+  /** Deletes every picked topic and its connections. */
   function deleteNode() {
     if (!current || !node || !editable) return;
+    const gone = new Set(picked);
     remember();
-    current.graph.nodes = current.graph.nodes.filter((n) => n.id !== selected);
-    current.graph.edges = current.graph.edges.filter(
-      (e) => e.from !== selected && e.to !== selected,
-    );
-    if (edgeFrom === selected) edgeFrom = "";
-    if (edgeTo === selected) edgeTo = "";
+    current.graph.nodes = current.graph.nodes.filter((n) => !gone.has(n.id));
+    current.graph.edges = current.graph.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to));
+    if (gone.has(edgeFrom)) edgeFrom = "";
+    if (gone.has(edgeTo)) edgeTo = "";
     selected = "";
+    multi = [];
   }
   function deleteAtPointer(event: MouseEvent, target: Node) {
     if ((event.target as Element).closest('input,textarea,[contenteditable="true"]') || window.getSelection()?.toString()) return;
     event.preventDefault();
     if (!editable || !confirm(`Remove “${name(target)}” from this map? Linked notes, cards and jobs stay unchanged.`)) return;
+    multi = [];
     choose(target);
     deleteNode();
   }
@@ -872,7 +889,10 @@
       else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); choose(n); reorder(n, e.key === "ArrowUp" ? -1 : 1); }
       return;
     }
-    choose(n);
+    if (e.key === "Escape" && multi.length) { e.preventDefault(); e.stopPropagation(); multi = []; return; }
+    // Shift+arrows extend the selection to the topic the arrow moves to.
+    const extend = e.shiftKey && e.key.startsWith("Arrow");
+    if (!extend) choose(n);
     if (["Tab", "Enter", " ", "Delete", "Backspace", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
       e.preventDefault(); e.stopPropagation();
     }
@@ -888,7 +908,11 @@
         : e.key === "ArrowRight" ? current?.graph.edges.find(edge => treeEdges.has(edge.id) && edge.from === n.id && visible.has(edge.to))?.to
         : sibs[sibs.indexOf(n.id) + step] ?? visibleNodes[index + step]?.id;
       const target = visibleNodes.find(item => item.id === id);
-      if (target) { choose(target); focusOn(target.id); }
+      if (target && extend) {
+        multi = [...new Set([...picked, n.id, target.id])];
+        choose(target);
+        focusOn(target.id);
+      } else if (target) { choose(target); focusOn(target.id); }
     } else if (e.key.length === 1) { e.preventDefault(); e.stopPropagation(); void editInline(n, e.key); }
   }
   function start(e: PointerEvent, id = "") {
@@ -899,27 +923,44 @@
       if (id) void linkTo(id); else linking = "";
       return;
     }
+    if (id && e.shiftKey) {
+      // Shift-click adds a topic to (or takes it out of) the selection.
+      (e.currentTarget as SVGGElement).focus();
+      const ids = new Set(picked);
+      if (ids.has(id) && ids.size > 1) ids.delete(id); else ids.add(id);
+      multi = [...ids];
+      const n = current.graph.nodes.find((n) => n.id === (ids.has(id) ? id : multi[0]))!;
+      choose(n);
+      return;
+    }
     if (id) {
       (e.currentTarget as SVGGElement).focus();
       const n = current.graph.nodes.find((n) => n.id === id)!;
       choose(n);
     }
+    const branch = new Set<string>();
+    if (id) for (const top of picked.has(id) ? pickedTops() : [id]) for (const item of descendants(top)) branch.add(item);
     gesture = {
       pointer: e.pointerId,
       x: e.clientX,
       y: e.clientY,
       node: id,
-      branch: id ? [...descendants(id)] : [],
+      branch: [...branch],
       before: snapshot(),
       moved: false,
+      box: !id && e.shiftKey,
     };
     stage?.setPointerCapture(e.pointerId);
+  }
+  /** Map coordinates of a pointer position. */
+  function worldPoint(e: PointerEvent) {
+    const rect = stage!.getBoundingClientRect(), v = current!.viewport;
+    return {x: (e.clientX - rect.left - v.x) / v.zoom, y: (e.clientY - rect.top - v.y) / v.zoom};
   }
   /** The pill under the pointer that a dragged branch may move into (never its own branch). */
   function dropCandidate(e: PointerEvent, branch: string[]) {
     if (!current || !stage) return undefined;
-    const rect = stage.getBoundingClientRect(), v = current.viewport;
-    const x = (e.clientX - rect.left - v.x) / v.zoom, y = (e.clientY - rect.top - v.y) / v.zoom;
+    const {x, y} = worldPoint(e);
     return visibleNodes.find(n => !branch.includes(n.id) && x >= n.x && x <= n.x + box(n).w && y >= n.y && y <= n.y + box(n).h);
   }
   function move(e: PointerEvent) {
@@ -948,6 +989,9 @@
       }
       dragging = gesture.node;
       dropTarget = target?.id ?? "";
+    } else if (gesture.box) {
+      const a = worldPoint({clientX: gesture.x, clientY: gesture.y} as PointerEvent), b = worldPoint(e);
+      marquee = {x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y)};
     } else {
       current.viewport.x = Math.max(
         -1e7,
@@ -982,32 +1026,41 @@
   function end(e: PointerEvent, cancel = false) {
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
     const target = dropTarget;
+    // Every picked branch moves when a picked topic is dragged; otherwise just the dragged one.
+    const tops = (picked.has(gesture.node) ? pickedTops() : [gesture.node]).map(id => current!.graph.nodes.find(n => n.id === id)!).filter(Boolean);
     if (cancel) Object.assign(current, clone(gesture.before));
-    else if (gesture.moved && gesture.node) {
+    else if (gesture.box) {
+      const area = marquee, hits = area ? visibleNodes.filter(n => n.x < area.x1 && n.x + box(n).w > area.x0 && n.y < area.y1 && n.y + box(n).h > area.y0) : [];
+      if (hits.length) { multi = hits.map(n => n.id); choose(hits[0]); focusOn(hits[0].id); }
+    } else if (gesture.moved && gesture.node) {
       const dragged = current.graph.nodes.find(n => n.id === gesture!.node)!;
       const free = !detaching && e.altKey;
       if (detaching || target || free || dragged.free) {
         history = [...history.slice(-29), gesture.before];
-        if (detaching) detachBranch(dragged);
-        else if (free) dragged.free = true; // Alt-drag: it keeps its parent but leaves the automatic layout.
-        else if (target) {
-          current.graph.edges = current.graph.edges.filter(e => !(treeEdges.has(e.id) && e.to === dragged.id));
-          current.graph.edges.push({id: crypto.randomUUID(), from: target, to: dragged.id, label: ""});
-          delete dragged.free;
-          const parent = current.graph.nodes.find(n => n.id === target);
-          if (parent) parent.collapsed = false;
+        for (const top of tops) {
+          if (detaching) { if (!isRoot(top)) detachBranch(top); }
+          else if (free) top.free = true; // Alt-drag: it keeps its parent but leaves the automatic layout.
+          else if (target) {
+            current.graph.edges = current.graph.edges.filter(e => !(treeEdges.has(e.id) && e.to === top.id));
+            current.graph.edges.push({id: crypto.randomUUID(), from: target, to: top.id, label: ""});
+            delete top.free;
+          }
         }
+        const parent = target ? current.graph.nodes.find(n => n.id === target) : undefined;
+        if (parent) parent.collapsed = false;
         relayout(false);
         dirty = true;
         notice = detaching ? "Branch detached · save to keep" : "Unsaved local edits";
       } else Object.assign(current, clone(gesture.before)); // No target: the branch snaps back into the layout.
+    } else if (gesture.node && !gesture.moved) {
+      if (multi.length) multi = []; // A plain click picks just that topic.
     } else if (gesture.moved) {
       history = [...history.slice(-29), gesture.before];
       dirty = true;
       notice = "Unsaved local edits";
     }
     gesture = null;
-    dragging = ""; dropTarget = ""; detaching = false; placing = false;
+    dragging = ""; dropTarget = ""; detaching = false; placing = false; marquee = null;
     if (stage?.hasPointerCapture(e.pointerId))
       stage.releasePointerCapture(e.pointerId);
   }
@@ -1475,7 +1528,7 @@
   }
   function pick(e: PointerEvent) {
     const edge = (e.target as Element | null)?.getAttribute?.("data-edge");
-    if (edge) {
+    if (edge && !e.shiftKey) {
       selectedEdge = edge;
       selected = "";
       return;
@@ -2213,9 +2266,10 @@
             {@const v = current.viewport}
             {@const top = node.y * v.zoom + v.y + 8}
             <!-- Q65 D: the selection's swatch row floats above its pill (below it near the stage top). -->
-            <div class="node-style" class:below={top < 56} role="toolbar" aria-label="Node style"
-              style:left={`${Math.max(8, Math.min(node.x * v.zoom + v.x, stageWidth - 430))}px`}
+            <div class="node-style" class:below={top < 56} role="toolbar" aria-label="Node style" bind:offsetWidth={styleWidth}
+              style:left={`${Math.max(8, Math.min(node.x * v.zoom + v.x, stageWidth - styleWidth - 8))}px`}
               style:top={`${top < 56 ? top + box(node).h * v.zoom + 8 : top - 8}px`}>
+              {#if picked.size > 1}<span class="count">{picked.size} selected</span><span class="rule" aria-hidden="true"></span>{/if}
               {#each PALETTE as slot, index (slot)}<button class="swatch" style:--dot={`var(--${slot})`} aria-label={`Colour ${index + 1}`} aria-pressed={node.color === slot} title={`Colour ${index + 1}`} onclick={() => paint(slot)}></button>{/each}
               <button class="swatch auto" aria-label="Automatic colour" aria-pressed={!node.color} title="Automatic branch colour" onclick={() => paint(undefined)}></button>
               <span class="rule" aria-hidden="true"></span>
@@ -2223,6 +2277,7 @@
               <span class="rule" aria-hidden="true"></span>
               <button class="word" aria-keyshortcuts="Alt+C" title="Copy style (Alt+C)" onclick={copyStyle}>Copy style</button>
               <button class="word" aria-keyshortcuts="Alt+V" title="Paste style (Alt+V)" disabled={!copiedStyle} onclick={pasteStyle}>Paste style</button>
+              {#if picked.size > 1}<span class="rule" aria-hidden="true"></span><button class="word" aria-keyshortcuts="Delete" title="Delete the selected topics (Delete)" onclick={deleteNode}>Delete {picked.size}</button>{/if}
             </div>
           {/if}
           <svg
@@ -2310,7 +2365,7 @@
                   role="button"
                   tabindex="0"
                   aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}${n.free && !root ? ", placed freely" : ""}. Tab child, Enter sibling, arrows move, Control arrows reorder, Control Enter or type to rename, Space collapse.`}
-                  class:selected={selected === n.id}
+                  class:selected={picked.has(n.id)}
                   class:root
                   class:drop-target={dropTarget === n.id}
                   class:dragging={dragging === n.id}
@@ -2357,13 +2412,14 @@
                   </foreignObject>
                 {/if}
               {/if}
+              {#if marquee}<rect class="marquee" x={marquee.x0} y={marquee.y0} width={marquee.x1 - marquee.x0} height={marquee.y1 - marquee.y0} rx="6" />{/if}
               <!-- The dragged pill is redrawn on top so it stays visible over the pill it snaps into. -->
               {#if dragging}<use href={`#${pane.id}-node-${dragging}`} class="drag-ghost" />{/if}
             </g>
           </svg>
           </div>
           <p class="hint">
-            Tab child · Enter sibling · arrows move · Ctrl+↑/↓ reorder · Ctrl+Enter or type to rename · Space fold · Alt-drag places freely
+            Tab child · Enter sibling · arrows move · Shift+arrows or Shift-drag select several · Ctrl+↑/↓ reorder · Ctrl+Enter or type to rename · Space fold · Alt-drag places freely
           </p>
           <details><summary>Connections</summary>
           <Panel title="[02] Directional connections">
@@ -2534,7 +2590,7 @@
                 >
               </div>
               <Button onclick={deleteNode} disabled={!editable}
-                >Delete node + its connections</Button
+                >{picked.size > 1 ? `Delete ${picked.size} nodes + their connections` : "Delete node + its connections"}</Button
               >
             {:else}<p>
                 Select a node in the graph or searchable list. Full labels,
@@ -2802,6 +2858,16 @@
   .node-style .word:hover:not(:disabled) { color: var(--ink); }
   .node-style .word:disabled { opacity: 0.45; cursor: default; }
   .node-style .word[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
+  .node-style .count { padding: 0 6px; color: var(--ink); font: 600 11.5px var(--font-ui); }
+  /* Q65 F: the Shift-drag selection box. */
+  .marquee {
+    fill: color-mix(in srgb, var(--accent) 10%, transparent);
+    stroke: var(--accent);
+    stroke-width: 1;
+    stroke-dasharray: 4 3;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+  }
   @media (prefers-reduced-motion: reduce) { .node-style .swatch { transition: none; } }
   .inline-label {
     width: 100%;

@@ -1852,3 +1852,56 @@ describe("mind-map cross connections", () => {
     await context.close();
   });
 });
+
+describe("mind-map multi-select", () => {
+  test("Shift+arrows and a Shift-drag box select several topics to recolour, move and delete together", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { schema } = await newMindMap(page, "Bulk map");
+    const pill = (label) => mapNode(page, label).locator("rect.pill");
+    const dot = (label) => mapNode(page, label).locator("circle.dot").evaluate((node) => getComputedStyle(node).fill);
+    const picked = () => page.locator("svg.stage [data-node].selected text.label").allTextContents();
+    await schema.locator("svg.stage").evaluate((svg) => svg.scrollIntoView({ block: "end" }));
+    await mapNode(page, "Key ideas").click();
+    await page.keyboard.press("Shift+ArrowDown");
+    await page.keyboard.press("Shift+ArrowDown");
+    assert.deepEqual((await picked()).sort(), ["Examples", "Key ideas", "Questions"]);
+    const toolbar = schema.getByRole("toolbar", { name: "Node style" });
+    await toolbar.getByText("3 selected").waitFor();
+    await toolbar.getByRole("button", { name: "Colour 6" }).click();
+    const six = await resolveColor(page, "var(--c6)");
+    for (const label of ["Key ideas", "Examples", "Questions"]) assert.equal(await dot(label), six, `${label} was not recoloured`);
+    // A plain click selects one topic again; a Shift-drag box from empty space picks Examples and Questions.
+    await mapNode(page, "Key ideas").click();
+    assert.deepEqual(await picked(), ["Key ideas"]);
+    const a = await pill("Examples").boundingBox(), b = await pill("Questions").boundingBox();
+    await page.keyboard.down("Shift");
+    await page.mouse.move(b.x + b.width + 40, b.y + b.height + 12);
+    await page.mouse.down();
+    await page.mouse.move(a.x + 10, a.y - 6, { steps: 6 });
+    assert.equal(await page.locator("svg.stage rect.marquee").count(), 1, "no selection box is drawn");
+    await page.mouse.up();
+    await page.keyboard.up("Shift");
+    assert.deepEqual((await picked()).sort(), ["Examples", "Questions"]);
+    // Alt-dragging one of them moves both by the same amount.
+    const before = await nodeBoxes(page), from = await centre(pill("Examples"));
+    await page.keyboard.down("Alt");
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 150, from.y + 60, { steps: 6 });
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    const after = await nodeBoxes(page);
+    for (const label of ["Examples", "Questions"]) {
+      assert.ok(after[label].x - before[label].x > 80 && after[label].y - before[label].y > 30, `${label} did not move with the selection`);
+    }
+    assert.ok(Math.abs((after.Examples.x - before.Examples.x) - (after.Questions.x - before.Questions.x)) < 2, "the selection did not move together");
+    assert.deepEqual((await picked()).sort(), ["Examples", "Questions"], "the drag dropped the selection");
+    // Delete removes both.
+    await page.keyboard.press("Delete");
+    assert.equal(await mapNode(page, "Examples").count(), 0);
+    assert.equal(await mapNode(page, "Questions").count(), 0);
+    assert.equal(await mapNode(page, "Key ideas").count(), 1);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
