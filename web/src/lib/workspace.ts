@@ -50,16 +50,19 @@ export function visibleNavigation(enabled: Enabled) {
   return navigation.filter(item => viewEnabled(item.id, enabled));
 }
 
-export const navigationGroups: { label: string; shortcut: string; views: View[] }[] = [
+/** `tone` is the group's graph colour, used to mark its tabs. */
+export const navigationGroups: { label: string; shortcut: string; tone: string; views: View[] }[] = [
   {
     label: "Plan",
     shortcut: "Ctrl + Alt",
+    tone: "var(--c1)",
     views: ["today", "calendar", "opportunities", "reminders", "herdr", "tern"],
   },
-  { label: "Study", shortcut: "Ctrl + X", views: ["study", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
+  { label: "Study", shortcut: "Ctrl + X", tone: "var(--c3)", views: ["study", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
     label: "Job search",
     shortcut: "Ctrl + C",
+    tone: "var(--c4)",
     views: [
       "jobs",
       "inbox",
@@ -76,7 +79,7 @@ export const navigationGroups: { label: string; shortcut: string; views: View[] 
       "reports",
     ],
   },
-  { label: "Settings", shortcut: "Ctrl + V", views: ["settings", "profile", "ai"] },
+  { label: "Settings", shortcut: "Ctrl + V", tone: "var(--c6)", views: ["settings", "profile", "ai"] },
 ];
 /**
  * Groups with their enabled views. A group that would only offer the atlas home

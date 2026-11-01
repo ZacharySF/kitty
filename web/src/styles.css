@@ -1409,7 +1409,7 @@ main > :is(.panel, .br-panel, .br-card) {
 :root body main.atlas-main {
   padding-top: 0;
 }
-:root body :is(.panel, .br-panel, .br-card, .atlas, .workspace-tabbar .tab.active) {
+:root body :is(.panel, .br-panel, .br-card, .atlas) {
   border-color: var(--hairline);
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
@@ -1420,21 +1420,6 @@ main > :is(.panel, .br-panel, .br-card) {
 :root body .atlas {
   background: transparent;
   overflow: hidden;
-}
-:root body .workspace-tabbar {
-  border-bottom-color: var(--hairline);
-}
-:root body .workspace-tabbar .tab {
-  border-radius: 10px 10px 0 0;
-  font-family: var(--font-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-:root body .workspace-tabbar .tab.active {
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--br-structure) 80%, transparent);
-}
-:root body .workspace-tabbar .tab > button {
-  font-size: 10.5px;
 }
 :root body :is(input, select, textarea):not([class*="br-"]):not(.quick-note textarea) {
   border-color: var(--hairline);
