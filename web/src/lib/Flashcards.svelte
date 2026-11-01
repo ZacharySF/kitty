@@ -6,6 +6,7 @@
   import EmptyState from "./EmptyState.svelte";
   import SectionGraph, { type SectionNode } from "./SectionGraph.svelte";
   import GradeKeys, { GRADES, type HeldKey } from "./flashcards/GradeKeys.svelte";
+  import ReviewStack, { FLY_MS } from "./flashcards/ReviewStack.svelte";
   import type { Crumb } from "./breadcrumb.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
@@ -124,6 +125,7 @@
   let answerFace = $state(false);
   let held = $state<HeldKey>(null);
   let heldToken = 0;
+  let flying = $state(0);
   let studyId = $state<string | null>(null),
     practiceResume = $state<{
       study_id: string;
@@ -863,8 +865,21 @@
     await action();
     setTimeout(() => { if (token === heldToken) held = null; }, Math.max(0, 140 - (performance.now() - pressedAt)));
   }
+  /** Sends the top card off the pile in the grade's direction, then records the grade. */
+  async function sendOff(rating: number) {
+    if (!pane.active || !review || !revealed || busy || flying) return;
+    flying = rating;
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    await new Promise((resolve) => setTimeout(resolve, still ? 0 : FLY_MS));
+    await grade(rating);
+    flying = 0;
+  }
+  function flip() {
+    if (!revealed) void press("space", reveal);
+    else answerFace = !answerFace;
+  }
   function space() {
-    void press("space", () => (revealed ? grade(3) : reveal()));
+    void press("space", () => (revealed ? sendOff(3) : reveal()));
   }
   function keydown(event: KeyboardEvent) {
     if (
@@ -879,8 +894,9 @@
     )
       return;
     const target = event.target as HTMLElement;
+    // The focused top card of the stack still takes Space and 1–4.
     if (
-      target.closest("input,textarea,select,button,a,[role=button]") ||
+      target.closest("input,textarea,select,button,a,[role=button]:not([data-review-card])") ||
       target.isContentEditable
     )
       return;
@@ -890,7 +906,7 @@
     } else if (revealed && /^[1-4]$/.test(event.key)) {
       event.preventDefault();
       const rating = Number(event.key);
-      void press(rating, () => grade(rating));
+      void press(rating, () => sendOff(rating));
     }
   }
 </script>
@@ -1331,28 +1347,29 @@
       </p>
       <div class="toolbar"><p class="hint">Try to recall the answer, flip the card, then rate how well you remembered.</p>
         <Button size="sm" variant="ghost" onclick={undo} disabled={busy}>Undo last review</Button></div>
-      {#if review}<article class="review-card" aria-live="polite">
-          <small>{review.state} · {review.mode}</small>
-          <div class="flip-stage"><div class="flip-card" class:flipped={answerFace}>
-            <div class="card-face question-face" aria-hidden={answerFace} inert={answerFace}>
-              <small>Question</small><div class="card-content">{@html review.front}</div>
-            </div>
-            <div class="card-face answer-face" aria-hidden={!answerFace} inert={!answerFace}>
-              <small>Answer</small>{#if revealed}<div class="card-content">{@html back}</div>{/if}
-            </div>
-          </div></div>
+      {#if review}<div class="review-card" aria-live="polite">
+          <ReviewStack
+            token={review.token}
+            front={review.front}
+            {back}
+            caption={`${review.state} · ${review.mode}`}
+            {revealed}
+            {answerFace}
+            {remaining}
+            {flying}
+            onflip={flip}
+            onswipe={(rating) => void press(rating, () => sendOff(rating))}
+          />
           {#if typedEnabled}<label
               >Your answer<input
                 bind:value={typedAnswer}
                 readonly={revealed}
                 autocomplete="off"
               /></label
-            >{/if}{#if revealed}
-            <Button size="sm" variant="ghost" onclick={() => (answerFace = !answerFace)}>{answerFace ? "Show question" : "Show answer"}</Button>
-            {@render referencePanel()}
-          {/if}
-          <GradeKeys {revealed} {intervals} {held} ongrade={(rating) => void press(rating, () => grade(rating))} onspace={space} />
-        </article>{:else}<Panel><EmptyState level={3} title={busy ? "Preparing your review…" : "No eligible card right now"}>
+            >{/if}
+          <GradeKeys {revealed} {intervals} {held} ongrade={(rating) => void press(rating, () => sendOff(rating))} onspace={space} />
+          {#if revealed}{@render referencePanel()}{/if}
+        </div>{:else}<Panel><EmptyState level={3} title={busy ? "Preparing your review…" : "No eligible card right now"}>
           <p>Learning cards appear at their scheduled time. Daily limits reset at local midnight. Add a card, refresh later, or choose a practice mode under Study options.</p>
           {#snippet actions()}
             <Button onclick={() => void startReview()} disabled={busy}>Refresh review</Button>
@@ -1655,27 +1672,11 @@
     gap: 0.5rem;
   }
   .review-card {
-    max-width: 750px;
+    display: grid;
+    gap: 0.9rem;
+    max-width: 640px;
     margin: 1.5rem auto;
-    text-align: center;
-  }
-  .flip-stage { perspective: 1400px; margin: 1rem 0; }
-  .flip-card { display: grid; min-height: 240px; transform-style: preserve-3d; transition: transform .48s cubic-bezier(.2,.65,.25,1); }
-  .flip-card.flipped { transform: rotateY(180deg); }
-  .card-face { grid-area: 1 / 1; padding: 1.5rem; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: 12px; background: var(--surface); backface-visibility: hidden; -webkit-backface-visibility: hidden; align-content: center; }
-  .card-face > small { color: var(--muted); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; }
-  .answer-face { transform: rotateY(180deg); }
-  .card-content {
-    font-size: 1.3rem;
-    overflow-wrap: anywhere;
-    padding: 1.5rem 0;
-  }
-  .card-content :global(img) {
-    max-width: 100%;
-    max-height: 400px;
-  }
-  .card-content :global(audio) {
-    max-width: 100%;
+    overflow: hidden;
   }
   .graph {
     display: flex;
@@ -1729,12 +1730,5 @@
   }
   @media (max-width: 600px) {
     .flashcards { padding: 1rem; }
-    .card-face { padding: 1rem; }
-    .card-content { font-size: 1.1rem; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .flip-card { transition: none; transform: none; }
-    .flip-card.flipped, .answer-face { transform: none; }
-    .card-face[aria-hidden="true"] { visibility: hidden; }
   }
 </style>

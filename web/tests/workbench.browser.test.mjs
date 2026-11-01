@@ -581,6 +581,55 @@ describe("flashcard review", () => {
     assert.deepEqual(problems, []);
     await context.close();
   });
+
+  test("stacked deck: flip the top card, then a swipe or 1–4 sends it off in the grade's direction", async () => {
+    const { page, problems, context } = await reviewDeck("Stack deck", [["Capital of Peru?", "Lima"], ["Capital of Chile?", "Santiago"], ["Capital of Bolivia?", "Sucre"], ["Capital of Ecuador?", "Quito"]]);
+    const stack = page.getByRole("region", { name: /Card stack/ });
+    await stack.waitFor();
+    const top = stack.getByRole("button");
+    // A pile: cards wait underneath and peek out below the top card.
+    const pile = await stack.evaluate((node) => {
+      const cards = [...node.querySelectorAll(":scope > *")].map((card) => card.getBoundingClientRect());
+      return { count: cards.length, peeking: cards.slice(0, -1).every((card) => card.bottom > cards.at(-1).bottom) };
+    });
+    assert.ok(pile.count >= 3, `only ${pile.count} cards in the pile`);
+    assert.ok(pile.peeking, "cards underneath do not peek out below the top card");
+    assert.equal(await top.getAttribute("aria-label"), "Flip card");
+    await top.click();
+    await stack.getByText(/Lima|Santiago|Sucre|Quito/).waitFor();
+    const latest = () => page.evaluate(async () => (await (await fetch("/api/flashcards/history", { cache: "no-store" })).json()).reviews[0] ?? null);
+    /** The grade of the next recorded review, once the following card is on the pile. */
+    const gradedAfter = async (before, count) => {
+      await page.waitForFunction((text) => !document.body.innerText.includes(text), count);
+      const review = await latest();
+      assert.notEqual(review?.id, before?.id, "no review was recorded");
+      return review.rating;
+    };
+    const eligible = async () => (await page.getByText(/eligible cards/).textContent()).trim();
+    // Dragging right past the threshold grades Good and the card leaves to the right.
+    let before = await latest(), count = await eligible();
+    const box = await top.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 220, box.y + box.height / 2 + 10, { steps: 8 });
+    await page.mouse.up();
+    assert.equal(await gradedAfter(before, count), 3, "a right swipe did not grade Good");
+    // Key 1 sends the next card off to the left as Again.
+    await top.click();
+    await stack.getByText(/Lima|Santiago|Sucre|Quito/).waitFor();
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    await page.route("**/api/flashcards/grade", async (route) => { await held; await route.continue(); });
+    before = await latest();
+    count = await eligible();
+    const start = (await top.boundingBox()).x;
+    await page.keyboard.press("1");
+    await page.waitForFunction(([x]) => document.querySelector('[role="region"][aria-label^="Card stack"] [role="button"]').getBoundingClientRect().x < x - 100, [start]);
+    release();
+    assert.equal(await gradedAfter(before, count), 1, "key 1 did not grade Again");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
 });
 
 describe("Liquid Glass theme", () => {
