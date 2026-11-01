@@ -5,9 +5,18 @@
 // that still fit. Other windows' `change` messages are applied under the edits not yet
 // confirmed here, so they never clobber what is being typed.
 import { BlockConflict, PageDoc, codePointSplice, viewOnly, type Op, type PageState } from "./blockDoc.ts";
+import type { Suggestions } from "./blockTags.ts";
 
 export type TxnMessage = { txn_id: string; ops: Op[]; base: Record<string, number> };
-export type Ack = { type: "ack"; txn_id: string; seq: Record<string, number>; revisions: Record<string, number | null> };
+/**
+ * The server's confirmation. Auto-tags (Q13) ride along: `tagged` holds operations the
+ * server added to the transaction (always-attach tags), `suggestions` the keyword matches
+ * for the blocks it changed, `tags` the names of the tags involved.
+ */
+export type Ack = {
+  type: "ack"; txn_id: string; seq: Record<string, number>; revisions: Record<string, number | null>;
+  tagged?: Record<string, Op[]>; suggestions?: Suggestions; tags?: Record<string, string>;
+};
 export type Reject = { type: "reject"; txn_id: string; status: number; error: string };
 export type Reply = Ack | Reject;
 export type Change = { seq: number; txn_id: string; page_id: string; ops: Op[] };
@@ -20,6 +29,8 @@ export type SyncOptions = {
   onupdate: () => void;
   /** The page revision moved; `own` when this window's transaction moved it. */
   onrevision?: (from: number, to: number, own: boolean) => void;
+  /** This window's transaction was confirmed (its suggestions and tag names arrive here). */
+  onack?: (ack: Ack) => void;
   onerror?: (message: string) => void;
   /** How long typing waits (ms) before it is sent; structural edits go at once. */
   debounce?: number;
@@ -158,6 +169,8 @@ export class PageSync {
       for (const op of ops) this.server.apply(op, false);
       const to = reply.revisions[this.pageId] ?? from;
       this.server.apply({ op: "set", id: this.pageId, props: { revision: to } });
+      for (const op of reply.tagged?.[this.pageId] ?? []) this.server.apply(op, false);
+      this.options.onack?.(reply);
       this.rebuild();
       this.options.onrevision?.(from, to, true);
     } else {
@@ -306,6 +319,9 @@ export class PageSync {
       const seq = reply.seq[this.pageId] ?? 0;
       this.server = flight.predicted;
       this.server.apply({ op: "set", id: this.pageId, props: { revision: to } });
+      // Tags the server attached in the same transaction (its own change is not echoed here).
+      for (const op of reply.tagged?.[this.pageId] ?? []) this.server.apply(op, false);
+      this.options.onack?.(reply);
       // Changes committed before this transaction were already part of its base revision.
       this.applyRemote(buffered.filter((change) => change.seq > seq || viewOnly(change.ops)));
       this.rebuild();

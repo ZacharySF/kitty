@@ -12,13 +12,16 @@ export type TextContext = {
   firstLine: boolean;
   lastLine: boolean;
   type: string;
+  /** The caret is on a suggested tag keyword: Tab attaches the tag, Esc ignores it (Q13). */
+  suggestion?: boolean;
 };
 export type KeyContext = TextContext | { mode: "blocks" };
 export type Command =
   | "split" | "newline" | "mergeBackward" | "mergeForward" | "indent" | "outdent" | "selectBlock"
   | "focusPrevious" | "focusNext" | "focusPreviousEnd" | "focusNextStart" | "extendUp" | "extendDown"
   | "moveUp" | "moveDown" | "bold" | "italic" | "code" | "link"
-  | "selectNext" | "selectPrevious" | "edit" | "deleteBlocks" | "clearSelection" | "selectAll";
+  | "selectNext" | "selectPrevious" | "edit" | "deleteBlocks" | "clearSelection" | "selectAll"
+  | "acceptTag" | "rejectTag";
 
 const MARKS: Record<string, Command> = { b: "bold", i: "italic", e: "code", k: "link" };
 
@@ -28,6 +31,10 @@ export function keyCommand(event: KeyLike, context: KeyContext): Command | null 
   const plain = !mod && !event.altKey;
   if (mod && event.shiftKey && !event.altKey && event.key === "ArrowUp") return "moveUp";
   if (mod && event.shiftKey && !event.altKey && event.key === "ArrowDown") return "moveDown";
+  if (context.mode === "text" && context.suggestion && context.collapsed && plain && !event.shiftKey) {
+    if (event.key === "Tab") return "acceptTag";
+    if (event.key === "Escape") return "rejectTag";
+  }
   if (event.key === "Tab" && plain) return event.shiftKey ? "outdent" : "indent";
   if (context.mode === "blocks") {
     if (plain && event.key === "ArrowDown") return event.shiftKey ? "extendDown" : "selectNext";

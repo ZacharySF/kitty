@@ -106,6 +106,16 @@ function position(element: HTMLElement, offset: number): { node: Node; offset: n
   return walk(element) ?? last;
 }
 
+/** A DOM range over text offsets [start, end) of `element` (for decorations such as tag suggestions). */
+export function textRange(element: HTMLElement, start: number, end: number): Range {
+  const range = element.ownerDocument.createRange();
+  const from = position(element, start);
+  const to = position(element, end);
+  range.setStart(from.node, from.offset);
+  range.setEnd(to.node, to.offset);
+  return range;
+}
+
 /** Put the caret (or a selection) at text offsets inside `element`. */
 export function setCaret(element: HTMLElement, start: number, end = start): void {
   const selection = element.ownerDocument.getSelection();

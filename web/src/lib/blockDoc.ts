@@ -37,6 +37,8 @@ const TEXT_TYPES: Record<string, true> = {
 /** Types whose children belong to another UI. */
 const OPAQUE_TYPES: Record<string, true> = { canvas: true };
 const VIEW_KEYS: Record<string, true> = { viewport: true, viewport_revision: true, favorite: true, last_opened: true, position: true };
+/** A block's state for one tag (blockTags.ts): not an edit either. */
+const TAG_KEY = /^tag_[0-9a-f]{32}$/;
 
 export function isTextType(type: string): boolean {
   return Object.hasOwn(TEXT_TYPES, type);
@@ -234,9 +236,9 @@ export class PageDoc {
   }
 }
 
-/** True when a change only touches view state (no revision bump; safe to apply twice). */
+/** True when a change only touches view state or tag states (no revision bump; safe to apply twice). */
 export function viewOnly(ops: Op[]): boolean {
-  return ops.every((op) => op.op === "set" && op.type === undefined && Object.keys(op.props ?? {}).every((key) => Object.hasOwn(VIEW_KEYS, key)));
+  return ops.every((op) => op.op === "set" && op.type === undefined && Object.keys(op.props ?? {}).every((key) => Object.hasOwn(VIEW_KEYS, key) || TAG_KEY.test(key)));
 }
 
 /** The editor's rows: text-flow blocks in reading order; collapsed blocks hide their children. */

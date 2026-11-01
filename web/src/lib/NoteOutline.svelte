@@ -11,10 +11,12 @@
   import { api } from "./api";
   import BlockEditor, { type PageRef } from "./BlockEditor.svelte";
   import NoteBlockText from "./NoteBlockText.svelte";
+  import TagPage from "./TagPage.svelte";
+  import { createTag, findTag } from "./tags";
   import type { BlockData } from "./blockDoc";
 
   // A note page's writing view: kitty!'s block editor plus Notes' reference tools
-  // (live ((references)), citation contexts, [[page]] and #tag topics, unlinked mentions).
+  // (live ((references)), citation contexts, [[page]] and #tag topics, tag pages, unlinked mentions).
   let {
     pageId, pages, references, counts, focusBlock = "",
     onpage, onopen, onopenpage, oncreatepage, onrevision, onerror,
@@ -40,6 +42,8 @@
   let topic = $state<TopicContext | null>(null);
   let mentions = $state<Mention[]>([]);
   let error = $state("");
+  /** The tag whose page is open in the side panel (a chip or a #tag with a tag record was clicked). */
+  let tagId = $state<string | null>(null);
 
   export function flush(): Promise<void> { return editor?.flush() ?? Promise.resolve(); }
   export function pending(): boolean { return editor?.pending() ?? false; }
@@ -59,8 +63,19 @@
     return () => clearTimeout(mentionTimer);
   });
 
-  async function citations(id: string) { try { context = await api(`/notes/blocks/${id}/contexts`); topic = null; error = ""; } catch (cause) { error = (cause as Error).message; } }
-  async function showTopic(kind: "page" | "tag", name: string) { try { topic = await api(`/notes/topics?kind=${kind}&topic=${encodeURIComponent(name)}`); context = null; error = ""; } catch (cause) { error = (cause as Error).message; } }
+  async function citations(id: string) { try { context = await api(`/notes/blocks/${id}/contexts`); topic = null; tagId = null; error = ""; } catch (cause) { error = (cause as Error).message; } }
+  async function showTopic(kind: "page" | "tag", name: string) {
+    try {
+      const found = kind === "tag" ? (await findTag(name)).id : null;
+      if (found) return openTag(found);
+      topic = await api(`/notes/topics?kind=${kind}&topic=${encodeURIComponent(name)}`); context = null; tagId = null; error = "";
+    } catch (cause) { error = (cause as Error).message; }
+  }
+  function openTag(id: string) { tagId = id; context = null; topic = null; error = ""; }
+  async function makeTag(name: string) {
+    try { openTag((await createTag({ name })).id); }
+    catch (cause) { error = (cause as Error).message; }
+  }
   async function moreContexts() {
     const current = context;
     if (!current || current.next_offset === null) return;
@@ -113,7 +128,7 @@
     <article class="outline" aria-label="Text note outline">
       <BlockEditor bind:this={editor} target={{ type: "page", number: pageId }} label="Text note blocks"
         pages={pages.filter((page) => page.id !== pageId).map((page) => ({ number: page.id, title: page.title }))}
-        {focusBlock} {extras} {onrevision} {onerror} {onopenpage} {oncreatepage} />
+        {focusBlock} {extras} {onrevision} {onerror} {onopenpage} {oncreatepage} ontag={openTag} />
       {#if mentions.length}
         <section class="mentions"><h3>Unlinked title mentions</h3>
           {#each mentions as mention (`${mention.block_id}:${mention.page_id}`)}
@@ -122,10 +137,12 @@
         </section>
       {/if}
     </article>
-    {#if context || topic}
+    {#if context || topic || tagId}
       <aside class="contexts" aria-label="Reference contexts">
-        <button class="close" onclick={() => { context = null; topic = null; }}>Close ×</button>
-        {#if context}
+        <button class="close" onclick={() => { context = null; topic = null; tagId = null; }}>Close ×</button>
+        {#if tagId}
+          <TagPage {tagId} onopen={(page, block) => onopen(page, block)} />
+        {:else if context}
           <h3>{context.count} citations</h3>
           {#if context.page_id}<button class="context original" onclick={() => context?.page_id && onopen(context.page_id, context.id)}><strong>Original · {context.title}</strong><span>{context.text}</span></button>{:else}<p class="original">{context.text}</p>{/if}
           {#each context.contexts as item}
@@ -136,6 +153,7 @@
           {#if context.next_offset !== null}<button onclick={() => void moreContexts()}>Show more citation contexts ({context.contexts.length} of {context.count})</button>{/if}
         {:else if topic}
           <h3>{topic.kind === "tag" ? "#" : "[["}{topic.topic}{topic.kind === "tag" ? "" : "]]"}</h3>
+          {#if topic.kind === "tag"}<button class="make-tag" onclick={() => topic && void makeTag(topic.topic)}>Make #{topic.topic} a tag with keywords</button>{/if}
           {#each topic.blocks as item}<button class="context" onclick={() => onopen(item.page_id, item.id)}><strong>{item.title}</strong><span>{item.text}</span></button>{:else}<p>No matching blocks.</p>{/each}
           {#if topic.next_offset !== null}<button onclick={() => void moreTopics()}>Show more topic blocks ({topic.blocks.length} of {topic.count})</button>{/if}
         {/if}
@@ -160,6 +178,7 @@
   .context span, .original { font-size: 12px; line-height: 1.6; }
   .context small { color: var(--muted); }
   .close { float: right; font-size: 11px; }
+  .make-tag { color: var(--accent); font-size: 12px; padding: 4px 0; }
   .mentions { margin: 50px 0 0 44px; border-top: 1px solid var(--border); padding-top: 15px; font-size: 12px; color: var(--muted); }
   .mentions h3 { font-size: 12px; }
   .mentions div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; }

@@ -28,18 +28,21 @@
   import { api } from "./api";
   import { onBlockChange, transact, whenLive, type BlockChange } from "./live";
   import { isTextType, visibleRows, type BlockData, type Op, type PageState } from "./blockDoc";
-  import { PageSync } from "./blockSync";
+  import { PageSync, type Ack } from "./blockSync";
   import {
     ATOMIC, appendKeys, deleteBlocks, dropBlocks, firstBlock, indent, insertAfter, insertSpecs, mergeBackward, mergeForward,
     moveBlocks, outdent, pasteAfter, split, topBlocks, turnInto, type Edit,
   } from "./blockEdits";
   import { keyCommand, type Command } from "./blockKeymap";
   import { blocksMarkdown, concatMarks, marksHTML, marksOf, normalizeMarks, parseMarkdown, shortcut, sliceMarks, toggleMark, type Mark, type Spec } from "./blockText";
-  import { caretLines, caretOffsets, readEditable, setCaret } from "./blockDom";
+  import { caretLines, caretOffsets, readEditable, setCaret, textRange } from "./blockDom";
+  import {
+    acceptOps, attachedTags, liveSuggestions, mergeSuggestions, rejectOps, suggestionsAt, unnamedTags, type SuggestionItem, type Suggestions,
+  } from "./blockTags";
 
   let {
     target, label = "Page blocks", pages = [], extras, focusBlock = "",
-    onrevision, onerror, onopenpage, oncreatepage,
+    onrevision, onerror, onopenpage, oncreatepage, ontag,
   }: {
     target: PageRef;
     label?: string;
@@ -54,6 +57,8 @@
     onopenpage?: (pageBlockId: string) => void;
     /** Create a new page for a `/` sub-page; returns its page block. */
     oncreatepage?: () => Promise<{ page: string; title: string } | null>;
+    /** Open a tag's page (a tag chip under a block was clicked). */
+    ontag?: (tagId: string) => void;
   } = $props();
 
   let root = $state<HTMLDivElement>();
@@ -73,6 +78,16 @@
   let slash = $state<Slash | null>(null);
   let menu = $state<{ id: string; x: number; y: number } | null>(null);
   let link = $state<{ id: string; start: number; end: number; url: string; x: number; y: number } | null>(null);
+  // Auto-tags (Q13): the server's keyword suggestions per block, tag names, and where the caret is.
+  type TaggedState = PageState & { suggestions?: Suggestions; tags?: Record<string, string> };
+  let suggestions = $state.raw<Suggestions>({});
+  let tagNames = $state.raw<Record<string, string>>({});
+  let caretAt = $state<{ id: string; start: number; end: number } | null>(null);
+  let hintBox = $state<{ x: number; y: number } | null>(null);
+  const lookedUp = new Set<string>();
+  let namesLoading = false;
+  let ownRanges: Range[] = [];
+  const HIGHLIGHT = "kitty-tag-suggestion";
 
   const rows = $derived.by(() => {
     void version;
@@ -94,14 +109,16 @@
       try {
         // Load after the socket is live, so every change after the loaded state is pushed here.
         await Promise.race([whenLive(), new Promise((resolve) => setTimeout(resolve, 5000))]);
-        const state = await api<PageState>(`/blocks/page?${pageQuery(target)}`);
+        const state = await api<TaggedState>(`/blocks/page?${pageQuery(target)}`);
         if (disposed) return;
+        adoptTags(state, true);
         current = new PageSync({
           state,
           send: transact,
-          load: () => api<PageState>(`/blocks/page?page=${state.page_id}`),
+          load: () => api<TaggedState>(`/blocks/page?page=${state.page_id}`).then((next) => { adoptTags(next, true); return next; }),
           onupdate: () => { version += 1; },
           onrevision: (from, to, own) => onrevision?.(from, to, own),
+          onack: (ack: Ack) => adoptTags(ack),
           onerror: (message) => { error = message; onerror?.(message); },
           debounce: 250,
         });
@@ -115,7 +132,103 @@
       disposed = true;
       stop();
       current?.dispose();
+      paintSuggestions(true);
     };
+  });
+
+  // Auto-tags ----------------------------------------------------------------------------
+
+  function adoptTags(state: { suggestions?: Suggestions; tags?: Record<string, string> }, replace = false) {
+    if (state.tags && Object.keys(state.tags).length) tagNames = { ...tagNames, ...state.tags };
+    if (replace) suggestions = mergeSuggestions({}, state.suggestions);
+    else if (state.suggestions) suggestions = mergeSuggestions(suggestions, state.suggestions);
+  }
+
+  /** Faint underlines under suggested keywords (CSS Custom Highlights: the editable's DOM is untouched). */
+  function paintSuggestions(clear = false) {
+    const registry = (globalThis.CSS as { highlights?: Map<string, Highlight> } | undefined)?.highlights;
+    if (!registry || typeof Highlight === "undefined") return;
+    let highlight = registry.get(HIGHLIGHT);
+    if (!highlight) registry.set(HIGHLIGHT, (highlight = new Highlight()));
+    for (const range of ownRanges) highlight.delete(range);
+    ownRanges = [];
+    const current = sync;
+    if (clear || !current) return;
+    for (const [id, entry] of Object.entries(suggestions)) {
+      const element = current.local.has(id) ? editableOf(id) : null;
+      if (!element || composing === element) continue;
+      for (const item of liveSuggestions(current.local.get(id), entry)) {
+        const range = textRange(element, item.start, item.end);
+        highlight.add(range);
+        ownRanges.push(range);
+      }
+    }
+  }
+
+  $effect(() => {
+    void version;
+    void suggestions;
+    void sync;
+    void tick().then(() => paintSuggestions());
+  });
+
+  /** Suggestions under the caret of block `id`, if any. */
+  function suggestionsHere(id: string, start: number, end: number): SuggestionItem[] {
+    const current = sync;
+    if (!current?.local.has(id)) return [];
+    return suggestionsAt(liveSuggestions(current.local.get(id), suggestions[id]), start, end);
+  }
+
+  const hint = $derived.by(() => {
+    void version;
+    const at = caretAt;
+    const items = at ? suggestionsHere(at.id, at.start, at.end) : [];
+    return at && items.length ? { id: at.id, items } : null;
+  });
+
+  $effect(() => {
+    const current = hint;
+    const element = current ? editableOf(current.id) : null;
+    if (!current || !element) {
+      hintBox = null;
+      return;
+    }
+    const box = textRange(element, current.items[0].start, current.items[0].end).getBoundingClientRect();
+    hintBox = { x: box.left, y: box.bottom + 4 };
+  });
+
+  function trackCaret() {
+    const active = root?.ownerDocument.activeElement as HTMLElement | null | undefined;
+    const id = active?.dataset?.editable;
+    const caret = active && id && root?.contains(active) ? caretOffsets(active) : null;
+    const next = caret && id ? { id, ...caret } : null;
+    if (next?.id !== caretAt?.id || next?.start !== caretAt?.start || next?.end !== caretAt?.end) caretAt = next;
+  }
+
+  function acceptTag(id: string, item: SuggestionItem) {
+    sync?.commit(acceptOps(id, item.tag));
+    tagNames = { ...tagNames, [item.tag]: item.name };
+    announcement = `Tagged #${item.name}`;
+  }
+
+  /** Ignore a suggestion or remove a tag: remembered for this block, so it never comes back. */
+  function rejectTag(id: string, tag: string, name: string) {
+    sync?.commit(rejectOps(id, tag));
+    announcement = `#${name} will not be suggested or attached here again`;
+  }
+
+  // Tag chips need names; tags another window attached may be new to this one.
+  $effect(() => {
+    const missing = unnamedTags(rows.map((row) => row.block), tagNames).filter((tag) => !lookedUp.has(tag));
+    if (!missing.length || namesLoading) return;
+    untrack(() => {
+      namesLoading = true;
+      for (const tag of missing) lookedUp.add(tag);
+      api<{ tags: { id: string; name: string }[] }>("/tags")
+        .then((result) => { tagNames = { ...tagNames, ...Object.fromEntries(result.tags.map((tag) => [tag.id, tag.name])) }; })
+        .catch(() => {})
+        .finally(() => { namesLoading = false; });
+    });
   });
 
   /** Send everything typed here and wait for the server to confirm it. */
@@ -534,10 +647,18 @@
     }
     const vertical = event.key === "ArrowUp" || event.key === "ArrowDown";
     const lines = vertical ? caretLines(element) : { first: false, last: false };
+    const here = event.key === "Tab" || event.key === "Escape" ? suggestionsHere(id, caret.start, caret.end) : [];
     const command = keyCommand(event, {
       mode: "text", atStart: caret.start === 0, atEnd: caret.end === text.length, collapsed: caret.start === caret.end,
-      firstLine: lines.first, lastLine: lines.last, type: current.local.get(id).type,
+      firstLine: lines.first, lastLine: lines.last, type: current.local.get(id).type, suggestion: here.length > 0,
     });
+    if (command === "acceptTag" || command === "rejectTag") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (command === "acceptTag") acceptTag(id, here[0]);
+      else rejectTag(id, here[0].tag, here[0].name);
+      return;
+    }
     textCommand(command, event, element, id);
   }
 
@@ -745,7 +866,7 @@
   const bullets = ["•", "◦", "▪"];
 </script>
 
-<svelte:document oncopy={onCopy} oncut={onCut} onpaste={onDocumentPaste} />
+<svelte:document oncopy={onCopy} oncut={onCut} onpaste={onDocumentPaste} onselectionchange={trackCaret} />
 <svelte:window
   onpointerup={() => { pressed = null; }}
   onclick={() => { menu = null; }}
@@ -768,6 +889,7 @@
 >
   {#each rows as row, index (row.block.id)}
     {@const block = row.block}
+    {@const tagged = attachedTags(block, tagNames)}
     <div
       class="block-row type-{block.type}"
       class:selected={chosen.has(block.id)}
@@ -843,6 +965,17 @@
             <input class="language" aria-label={`Code language, block ${index + 1}`} placeholder="language" value={String(block.properties.language ?? "")}
               onchange={(event) => sync?.commit([{ op: "set", id: block.id, props: { language: event.currentTarget.value.trim() || null } }])} />
           {/if}
+          {#if tagged.length}
+            <div class="block-tags" role="list" aria-label={`Tags of block ${index + 1}`}>
+              {#each tagged as item (item.tag)}
+                <span class="tag-chip" class:auto={item.state === "auto"} role="listitem"
+                  title={item.state === "auto" ? "Attached automatically" : item.state === "accepted" ? "Attached from a suggestion" : "Attached by hand"}>
+                  <button class="tag-open" onclick={() => ontag?.(item.tag)}>#{item.name}</button>
+                  <button class="tag-remove" aria-label={`Remove tag ${item.name}`} onclick={() => rejectTag(block.id, item.tag, item.name)}>×</button>
+                </span>
+              {/each}
+            </div>
+          {/if}
         {/if}
         {@render extras?.(block)}
       </div>
@@ -877,6 +1010,19 @@
     {/each}
     <hr />
     <button role="menuitem" class="danger" onclick={() => { const ids = targets; menu = null; if (sync) void run(deleteBlocks(sync.local, ids)); }}>Delete{targets.length > 1 ? ` ${targets.length} blocks` : ""}</button>
+  </div>
+{/if}
+
+{#if hint && hintBox}
+  {@const current = hint}
+  <div class="popover tag-hint" role="group" aria-label="Suggested tags" style:left={`${Math.min(hintBox.x, innerWidth - 240)}px`} style:top={`${Math.min(hintBox.y, innerHeight - 120)}px`}>
+    {#each current.items as item (item.tag)}
+      <div class="tag-hint-row">
+        <button class="accept" onpointerdown={(event) => event.preventDefault()} onclick={() => acceptTag(current.id, item)}>Tag #{item.name}</button>
+        <button class="ignore" onpointerdown={(event) => event.preventDefault()} onclick={() => rejectTag(current.id, item.tag, item.name)}>Ignore</button>
+      </div>
+    {/each}
+    <p class="tag-hint-keys"><kbd>Tab</kbd> tag · <kbd>Esc</kbd> ignore</p>
   </div>
 {/if}
 
@@ -939,6 +1085,17 @@
   .link-form { flex-direction: row; align-items: center; gap: 6px; }
   .link-form input { font: inherit; font-size: 13px; width: 200px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--canvas, transparent); color: var(--ink); }
   .editor-error { color: var(--error); font-size: 13px; margin: 4px 44px; }
+  .block-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 1px 0 4px; }
+  .tag-chip { display: inline-flex; align-items: center; font-size: 11px; line-height: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); border-radius: 999px; }
+  .tag-chip.auto { border-style: dashed; }
+  .tag-chip button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 3px 6px; border-radius: 999px; }
+  .tag-chip .tag-remove { padding: 3px 6px 3px 0; color: var(--muted); }
+  .tag-chip button:hover, .tag-chip button:focus-visible { color: var(--ink); }
+  .tag-hint { min-width: 180px; gap: 2px; }
+  .tag-hint-row { display: flex; gap: 4px; }
+  .tag-hint-row .accept { flex: 1; color: var(--accent); font-weight: 600; }
+  .tag-hint-row .ignore { color: var(--muted); }
+  .tag-hint-keys { margin: 2px 8px 0; font-size: 11px; color: var(--muted); }
   .editor-error button { font: inherit; color: var(--accent); background: none; border: 0; cursor: pointer; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
