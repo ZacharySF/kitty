@@ -118,7 +118,9 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme }
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL(`#${hash}`, base).href);
-  if (theme)
+  if (typeof theme === "string")
+    await page.evaluate(async (id) => (await import("/src/lib/themes.ts")).setTheme(id), theme);
+  else if (theme)
     await page.evaluate(async (palette) => {
       const [{ THEMES }, { setTheme }] = await Promise.all([import("/src/lib/themeCatalog.ts"), import("/src/lib/themes.ts")]);
       THEMES.push(palette);
@@ -286,7 +288,7 @@ async function assertSelection(page, selected, other, label) {
 }
 
 describe("selected job views stay readable", () => {
-  for (const [themeName, theme] of [["Kitty (default)", undefined], ["a light theme", PAPER]]) {
+  for (const [themeName, theme] of [["Kitty (default)", undefined], ["Liquid Glass", "liquid-glass"], ["a light theme", PAPER]]) {
     for (const viewport of [DEFAULT, MINIMUM]) {
       test(`${themeName} at ${viewport.width}px: Map and List show a readable, distinct selection`, async () => {
         // The dock's first height depends on how much of Jobs loaded; keep it out of the measured area.
@@ -576,6 +578,42 @@ describe("flashcard review", () => {
     await page.waitForFunction((y) => document.querySelectorAll('[role="group"][aria-label="Grade keys"] kbd')[1].getBoundingClientRect().y > y, before);
     release();
     await page.waitForFunction((text) => !document.body.innerText.includes(text), remaining.trim());
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("Liquid Glass theme", () => {
+  test("panels are frosted, lit glass over a moving aurora, and their text stays readable", async () => {
+    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    await page.locator(".br-panel").first().waitFor();
+    await page.evaluate(async () => (await import("/src/lib/themes.ts")).setTheme("liquid-glass"));
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "liquid-glass");
+    const glass = await page.evaluate(() => {
+      const panel = document.querySelector(".br-panel");
+      const style = getComputedStyle(panel);
+      const filter = style.backdropFilter || style.webkitBackdropFilter || "";
+      const blur = Number(/blur\(([\d.]+)px\)/.exec(filter)?.[1] ?? 0);
+      const saturate = Number(/saturate\(([\d.]+)%?\)/.exec(filter)?.[1] ?? 0);
+      const rim = getComputedStyle(panel, "::after");
+      const aurora = getComputedStyle(document.body, "::before");
+      return {
+        blur,
+        saturate: saturate > 10 ? saturate / 100 : saturate,
+        specular: /inset/.test(style.boxShadow) && /rgba\(255, 255, 255/.test(style.boxShadow),
+        rim: rim.content !== "none" && rim.backgroundImage.includes("gradient"),
+        aurora: aurora.content !== "none" && aurora.backgroundImage.includes("gradient") && aurora.animationName !== "none",
+      };
+    });
+    assert.ok(glass.blur >= 20, `panel blur ${glass.blur}px`);
+    assert.ok(glass.saturate >= 1.6, `panel saturation ${glass.saturate}`);
+    assert.ok(glass.specular, "panel has no inner specular highlight");
+    assert.ok(glass.rim, "panel has no light-catching rim");
+    assert.ok(glass.aurora, "no moving aurora behind the glass");
+    // Readability over the busiest part of the backdrop: panel heading text vs the composited panel.
+    const heading = page.locator(".br-panel__header").first();
+    const on = await painted(page, heading);
+    assert.ok(on.ratio >= 4.5, `panel heading contrast ${on.ratio.toFixed(2)} (${on.text} on ${on.fill})`);
     assert.deepEqual(problems, []);
     await context.close();
   });

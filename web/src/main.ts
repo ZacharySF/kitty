@@ -10,6 +10,7 @@ import "@fontsource-variable/newsreader/opsz-italic.css";
 import "@fontsource-variable/fredoka";
 import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
+import "./liquidGlass.css";
 
 applySavedTheme();
 

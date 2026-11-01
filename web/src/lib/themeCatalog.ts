@@ -10,7 +10,8 @@ export type ThemeId =
   | "gruvbox"
   | "one-dark"
   | "kitty"
-  | "scythe";
+  | "scythe"
+  | "liquid-glass";
 
 export type Palette = Omit<Theme, "name">;
 
@@ -25,7 +26,9 @@ export type KittyTheme = {
   /** Tint used for overlay and popover shadows. */
   shadow: string;
   /** Optional decorative mark for the picker preview. */
-  motif?: "blossom";
+  motif?: "blossom" | "glass";
+  /** Surface opacity (%) for panel/inset/raised; omitted themes use the default glass. */
+  glass?: { panel: number; inset: number; raised: number };
 };
 
 /** Decorative ASCII only; render with aria-hidden, and only for Kitty. */
@@ -268,6 +271,35 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#b5a5dc", "#95b3d4", "#ecebf5", "#9b96c9", "#b7c9e3", "#c397ac"],
     shadow: "#06060d",
+  },
+  {
+    // Frosted, light-catching glass over a slow aurora (theme CSS in styles.css), after
+    // serpantinum's liquid glass: refraction-like blur and saturation, a lit rim and dispersion.
+    id: "liquid-glass",
+    label: "Liquid Glass",
+    scheme: "dark",
+    roles: {
+      void: "#060914",
+      panel: "#1b2236",
+      inset: "#0d1222",
+      raised: "#262f48",
+      line: "#58668a",
+      lineHot: "#d6e6ff",
+      ink: "#f6f9ff",
+      mute: "#cdd6ec",
+      dim: "#aab6d2",
+      structure: "#a6dcff",
+      signal: "#cfc0ff",
+      go: "#8cf2cc",
+      reference: "#93c6ff",
+      caution: "#ffd88f",
+      alternate: "#ffb6dc",
+      danger: "#ff96a6",
+    },
+    graph: ["#7fd2ff", "#b9a2ff", "#ff9fd0", "#76efd1", "#ffd480", "#eaf2ff"],
+    shadow: "#01030a",
+    motif: "glass",
+    glass: { panel: 24, inset: 30, raised: 38 },
   },
 ];
 

@@ -75,8 +75,17 @@
           }}
         >
           <span class="theme-choice">
-            <span class="preview" style:background={theme.roles.void} style:color={theme.roles.structure} style:border-color={theme.roles.line} aria-hidden="true">
-              <span class="preview-panel" style:background={theme.roles.panel} style:border-color={theme.roles.lineHot}>
+            <span
+              class="preview"
+              class:glass={theme.motif === "glass"}
+              style:background={theme.motif === "glass"
+                ? `radial-gradient(60% 90% at 20% 20%, ${theme.graph[0]}, transparent 70%), radial-gradient(60% 90% at 85% 80%, ${theme.graph[2]}, transparent 70%), radial-gradient(50% 80% at 70% 15%, ${theme.graph[1]}, transparent 70%), ${theme.roles.void}`
+                : theme.roles.void}
+              style:color={theme.roles.structure}
+              style:border-color={theme.roles.line}
+              aria-hidden="true"
+            >
+              <span class="preview-panel" style:background={theme.motif === "glass" ? null : theme.roles.panel} style:border-color={theme.motif === "glass" ? null : theme.roles.lineHot}>
                 {#each theme.graph.slice(0, 4) as color}<span style:background={color}></span>{/each}
               </span>
               {#if theme.motif === "blossom"}
@@ -103,6 +112,8 @@
   .picker-heading { margin: 2px 4px 12px; font-size: 13px; font-weight: 600; color: var(--ink); }
   .theme-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .theme-options :global(.br-btn) { padding: 7px; min-width: 0; text-align: left; white-space: normal; }
+  /* Tiles, not pills: the global pill radius would turn each two-line choice into an oval. */
+  :global(:root body) .theme-options :global(.br-btn) { border-radius: 12px; }
   .theme-options :global(.br-btn > .contents) { width: 100%; }
   .theme-options :global(.br-btn[aria-checked="true"]) { border-color: var(--border-active, var(--violet)); background: var(--wash); }
   .theme-options :global(.br-btn) { border-color: var(--border-fine, var(--border)); transition: border-color var(--motion-fast, 140ms), background-color var(--motion-fast, 140ms), transform var(--motion-fast, 140ms); }
@@ -111,6 +122,15 @@
   .preview { position: relative; display: grid; place-items: center; height: 54px; border: 1px solid; border-radius: 6px; overflow: hidden; }
   .preview-panel { display: flex; align-items: center; gap: 5px; padding: 8px; border: 1px solid; border-radius: 6px; }
   .preview-panel > span { width: 10px; height: 10px; border-radius: 50%; }
+  /* Liquid Glass: a frosted, lit pane over its own aurora. */
+  .preview.glass .preview-panel {
+    border-color: rgba(255, 255, 255, 0.35);
+    border-radius: 9px;
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.06));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 4px 10px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(6px) saturate(170%);
+    -webkit-backdrop-filter: blur(6px) saturate(170%);
+  }
   .blossom { position: absolute; right: 4px; bottom: 3px; margin: 0; font: 5px/1 var(--font-mono); opacity: 0.45; white-space: pre; }
   .choice-label { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; line-height: 1.3; }
   .selected-mark { color: var(--violet); min-width: 12px; }

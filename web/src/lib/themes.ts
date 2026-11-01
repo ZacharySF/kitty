@@ -1,5 +1,5 @@
 import { applyTheme } from "@nunera/bracket/theme";
-import { DEFAULT_THEME, getTheme, type KittyTheme, type Palette, type ThemeId } from "./themeCatalog";
+import { DEFAULT_THEME, getTheme, type KittyTheme, type ThemeId } from "./themeCatalog";
 
 /** Dispatched on `window` after a theme is applied; `detail` is the ThemeId. */
 export const THEME_EVENT = "kitty:theme";
@@ -17,8 +17,8 @@ function savedTheme(): ThemeId {
   }
 }
 
-/** Surface alpha: panels stay readable while the backdrop shows through. */
-const GLASS: Partial<Record<keyof Palette, number>> = { panel: 62, inset: 50, raised: 72 };
+/** Default surface alpha (%): panels stay readable while the backdrop shows through. */
+const GLASS: NonNullable<KittyTheme["glass"]> = { panel: 62, inset: 50, raised: 72 };
 
 function applyKittyTheme(theme: KittyTheme): void {
   const root = document.documentElement;
@@ -28,10 +28,10 @@ function applyKittyTheme(theme: KittyTheme): void {
     "comfortable",
   );
   // Bracket derives contrast from opaque hexes first; translucency is layered after.
+  const glass = theme.glass ?? GLASS;
   for (const role of ["void", "panel", "inset", "raised"] as const) {
     root.style.setProperty(`--solid-${role}`, theme.roles[role]);
-    const alpha = GLASS[role];
-    if (alpha) root.style.setProperty(`--br-${role}`, `color-mix(in srgb, ${theme.roles[role]} ${alpha}%, transparent)`);
+    if (role !== "void") root.style.setProperty(`--br-${role}`, `color-mix(in srgb, ${theme.roles[role]} ${glass[role]}%, transparent)`);
   }
   theme.graph.forEach((color, index) =>
     root.style.setProperty(`--c${index + 1}`, color),
