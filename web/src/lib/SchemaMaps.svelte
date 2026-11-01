@@ -202,8 +202,8 @@
     moved: boolean;
     branch: string[];
   } | null = null;
-  // Q65 B: the node being dragged, the pill it would snap into, and whether D detached it.
-  let dragging = $state(""), dropTarget = $state(""), detaching = $state(false);
+  // Q65 B/C: the node being dragged, the pill it would snap into, whether D detached it and whether Alt places it freely.
+  let dragging = $state(""), dropTarget = $state(""), detaching = $state(false), placing = $state(false);
   let view = $state<View3D>("edit"),
     mapLayout = $state<GraphLayout>("tree"),
     netLayout = $state<GraphLayout>("tree");
@@ -857,7 +857,8 @@
     gesture.moved = true;
     if (gesture.node) {
       const branch = gesture.branch, origin = gesture.before.graph.nodes.find((n) => n.id === gesture!.node)!;
-      const target = detaching ? undefined : dropCandidate(e, branch);
+      placing = e.altKey && !detaching;
+      const target = detaching || placing ? undefined : dropCandidate(e, branch);
       let ox = dx / current.viewport.zoom, oy = dy / current.viewport.zoom;
       if (target) {
         // Preview the drop: the branch snaps to where it would land, after the target's last child.
@@ -898,15 +899,24 @@
     relayout(false);
     notice = "Branch detached · save to keep";
   }
+  /** Q65 C: a freely placed node rejoins the automatic layout. */
+  function resetPosition() {
+    if (!current || !node?.free || !editable) return;
+    remember();
+    delete node.free;
+    relayout(false);
+  }
   function end(e: PointerEvent, cancel = false) {
     if (!gesture || !current || gesture.pointer !== e.pointerId) return;
     const target = dropTarget;
     if (cancel) Object.assign(current, clone(gesture.before));
     else if (gesture.moved && gesture.node) {
       const dragged = current.graph.nodes.find(n => n.id === gesture!.node)!;
-      if (detaching || target || dragged.free) {
+      const free = !detaching && e.altKey;
+      if (detaching || target || free || dragged.free) {
         history = [...history.slice(-29), gesture.before];
         if (detaching) detachBranch(dragged);
+        else if (free) dragged.free = true; // Alt-drag: it keeps its parent but leaves the automatic layout.
         else if (target) {
           current.graph.edges = current.graph.edges.filter(e => !(treeEdges.has(e.id) && e.to === dragged.id));
           current.graph.edges.push({id: crypto.randomUUID(), from: target, to: dragged.id, label: ""});
@@ -924,7 +934,7 @@
       notice = "Unsaved local edits";
     }
     gesture = null;
-    dragging = ""; dropTarget = ""; detaching = false;
+    dragging = ""; dropTarget = ""; detaching = false; placing = false;
     if (stage?.hasPointerCapture(e.pointerId))
       stage.releasePointerCapture(e.pointerId);
   }
@@ -2108,11 +2118,11 @@
             </div>
           {/if}
           <div class="stage-wrap">
-          {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · D detaches the branch"}</p>{/if}
+          {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : placing ? "Placing freely · release to leave it here" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · Alt places it freely · D detaches the branch"}</p>{/if}
           <svg
             bind:this={stage}
             class="stage"
-            aria-label="Schema graph. Drag nodes to position; drag empty space to pan. Use node list and inspector for keyboard editing."
+            aria-label="Schema graph. Drag nodes to reparent, Alt-drag to place freely; drag empty space to pan. Use node list and inspector for keyboard editing."
             role="group"
             ondblclick={(e) => {if (!(e.target as Element).closest("[data-node]")) quickAdd("");}}
             onpointerdown={pick}
@@ -2173,7 +2183,7 @@
                   id={`${pane.id}-node-${n.id}`}
                   role="button"
                   tabindex="0"
-                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}. Tab child, Enter sibling, arrows move, Control arrows reorder, Control Enter or type to rename, Space collapse.`}
+                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}${n.free && !root ? ", placed freely" : ""}. Tab child, Enter sibling, arrows move, Control arrows reorder, Control Enter or type to rename, Space collapse.`}
                   class:selected={selected === n.id}
                   class:root
                   class:drop-target={dropTarget === n.id}
@@ -2226,7 +2236,7 @@
           </svg>
           </div>
           <p class="hint">
-            Tab child · Enter sibling · arrows move · Ctrl+↑/↓ reorder · Ctrl+Enter or type to rename · Space fold
+            Tab child · Enter sibling · arrows move · Ctrl+↑/↓ reorder · Ctrl+Enter or type to rename · Space fold · Alt-drag places freely
           </p>
           <details><summary>Connections</summary>
           <Panel title="[02] Directional connections">
@@ -2314,6 +2324,7 @@
               <div class="toolbar">
                 <Button onclick={() => collapse(node)}>{node.collapsed ? "Expand" : "Collapse"}</Button>
                 <Button onclick={detachSelected} disabled={!editable || isRoot(node)} title="Break this branch off as a floating piece (or press D while dragging it)">Detach branch</Button>
+                <Button onclick={resetPosition} disabled={!editable || !node.free} title="Put a freely placed node back into the automatic layout">Reset position</Button>
                 <Button onclick={() => studyBranch("flashcards")}>Make flashcards</Button>
                 <Button onclick={() => studyBranch("quiz")}>Quiz this branch</Button>
                 <Button onclick={startBranchSession} disabled={!editable}>Start session</Button>

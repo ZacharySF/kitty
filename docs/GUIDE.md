@@ -460,6 +460,8 @@ Ctrl+↑/↓ reorders siblings and Space collapses a branch. Drag a topic (its b
 travels with it): the topic it would join lights up and the branch previews its new
 place; dropping elsewhere snaps it back. Press **D** mid-drag, or **Detach branch**
 in the node panel, to break a branch off as a floating piece that keeps its place.
+Alt-drag places a topic anywhere while keeping its parent; its own children are laid
+out beside it, and **Reset position** puts it back into the automatic layout.
 Tree/radial layouts, an outline, linked note cards and links between maps help
 organize material. **Quiz me** hides labels for recall; a branch can produce a
 flashcard draft. **Auto-links** also suggests local sources for node labels;

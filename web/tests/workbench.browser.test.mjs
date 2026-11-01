@@ -1722,3 +1722,45 @@ describe("documents side-by-side", () => {
     await context.close();
   });
 });
+
+describe("mind-map free positioning", () => {
+  test("Alt-drag places a node anywhere and keeps its parent; Reset position snaps it back into the layout", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { schema } = await newMindMap(page, "Free map");
+    const pill = (label) => mapNode(page, label).locator("rect.pill");
+    await schema.locator("svg.stage").evaluate((svg) => svg.scrollIntoView({ block: "end" }));
+    const before = await nodeBoxes(page);
+    // Alt-drag Examples across Questions (no snap while Alt is held) into empty space.
+    const start = await centre(pill("Examples")), over = await centre(pill("Questions"));
+    await page.keyboard.down("Alt");
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(over.x, over.y, { steps: 5 });
+    assert.doesNotMatch(await mapNode(page, "Questions").getAttribute("class"), /drop-target/, "Alt-drag still snaps into a target");
+    await page.getByRole("status").filter({ hasText: /^Placing freely/ }).waitFor();
+    await page.mouse.move(start.x + 180, start.y + 140, { steps: 5 });
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    const dropped = await centre(pill("Examples"));
+    assert.ok(Math.abs(dropped.x - (start.x + 180)) < 6 && Math.abs(dropped.y - (start.y + 140)) < 6, "Examples did not stay where it was dropped");
+    assert.doesNotMatch(await mapNode(page, "Examples").getAttribute("class"), /\broot\b/, "Alt-drag detached the node from its parent");
+    assert.match(await mapNode(page, "Examples").getAttribute("aria-label"), /placed freely/);
+    // A child added to the free node is laid out beside it, not back in the tree.
+    await mapNode(page, "Examples").click();
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Case");
+    await page.keyboard.press("Escape");
+    let boxes = await nodeBoxes(page);
+    assert.ok(boxes.Case.x > boxes.Examples.x && Math.abs(boxes.Case.y - boxes.Examples.y) < 4, "the free node's child is not laid out beside it");
+    // Reset position puts Examples back between its siblings.
+    await mapNode(page, "Examples").click();
+    await schema.getByRole("button", { name: "Reset position" }).click();
+    boxes = await nodeBoxes(page);
+    assert.equal(boxes.Examples.x, before.Examples.x, "Examples is not back in its column");
+    assert.ok(boxes.Examples.y > boxes["Key ideas"].y && boxes.Examples.y < boxes.Questions.y, "Examples is not back between its siblings");
+    assert.doesNotMatch(await mapNode(page, "Examples").getAttribute("aria-label"), /placed freely/);
+    assert.equal(await schema.getByRole("button", { name: "Reset position" }).isDisabled(), true);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
