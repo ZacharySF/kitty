@@ -24,8 +24,10 @@ page the change belongs to, so the existing screens can find their page.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import select
+import socket
 import sqlite3
 import threading
 import uuid
@@ -62,6 +64,22 @@ class Subscriber:
         self.pages: set[str] | None = None
         #: The last sequence this window had when it connected (its hello).
         self.seq = seq
+        # A self-pipe wakes the window's socket thread as soon as a change is queued.
+        self.wake_read, self.wake_write = os.pipe()
+        os.set_blocking(self.wake_read, False)
+        os.set_blocking(self.wake_write, False)
+
+    def put(self, messages: list[dict]) -> None:
+        for message in messages:
+            self.queue.put(message)
+        try:
+            os.write(self.wake_write, b"!")
+        except BlockingIOError:
+            pass  # Already awake: the pipe holds unread wake-ups.
+
+    def close(self) -> None:
+        os.close(self.wake_read)
+        os.close(self.wake_write)
 
 
 class Live:
@@ -98,6 +116,7 @@ class Live:
     def unsubscribe(self, subscriber: Subscriber) -> None:
         with self._lock:
             self._subscribers.discard(subscriber)
+        subscriber.close()
 
     def _run(self) -> None:
         with closing(connect(self.app.settings.db_path)) as conn:
@@ -112,8 +131,7 @@ class Live:
                     with self._lock:
                         self.seq = batch[-1]["seq"]
                         for subscriber in self._subscribers:
-                            for message in batch:
-                                subscriber.queue.put(message)
+                            subscriber.put(batch)
                     batch = changes(conn, self.seq) if len(batch) == BATCH else []
 
     def stop(self) -> None:
@@ -155,6 +173,11 @@ def start(app) -> None:
 
 def stop(app) -> None:
     app.blocks_live.stop()
+
+
+def mutated(app) -> None:
+    """An HTTP mutation committed (a Notes save, say): push it now rather than at the next poll."""
+    app.blocks_live.nudge()
 
 
 def get(app, conn, path, query):
@@ -217,12 +240,20 @@ def _handle(connection, live: Live, subscriber: Subscriber, payload: bytes) -> N
 def _serve(connection, live: Live, subscriber: Subscriber, closing_event: threading.Event) -> None:
     """Relay pushes and handle messages until the window closes or the server shuts down."""
     connection.settimeout(None)
+    # Acks and pushes are small and back to back; Nagle's algorithm would hold one behind the other.
+    connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     reader = Reader()
     code = 1000
     try:
         _send(connection, {"type": "hello", "seq": subscriber.seq, "device_id": live.device_id})
         while not closing_event.is_set():
-            ready, _, _ = select.select([connection], [], [], 0.05)
+            ready, _, _ = select.select([connection, subscriber.wake_read], [], [], 0.25)
+            if subscriber.wake_read in ready:
+                while True:
+                    try:
+                        os.read(subscriber.wake_read, 4096)
+                    except BlockingIOError:
+                        break
             while True:
                 try:
                     change = subscriber.queue.get_nowait()
@@ -230,7 +261,7 @@ def _serve(connection, live: Live, subscriber: Subscriber, closing_event: thread
                     break
                 if subscriber.pages is None or change["page_id"] in subscriber.pages:
                     _send(connection, change)
-            if ready:
+            if connection in ready:
                 data = connection.recv(65536)
                 if not data:
                     return

@@ -194,6 +194,13 @@ class WebApplication:
             self.automation.close()
         self.tasks.close()
 
+    def mutated(self) -> None:
+        """Tell extensions a mutation committed (live push wakes at once instead of polling)."""
+        for extension in self.extensions:
+            hook = getattr(extension, "mutated", None)
+            if hook:
+                hook(self)
+
     def require_module(self, module: str) -> None:
         """403 unless `module` is in this process's active snapshot."""
         if module not in self.modules:
@@ -541,6 +548,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with self.server.app.mutation_lock:
                     with closing(connect(self.server.app.settings.db_path)) as conn:
                         result = self.server.app.mutate(conn, path, body)
+                self.server.app.mutated()
                 self._json(200, result)
             elif self.command == "GET" and self.headers.get("Upgrade") is not None:
                 self._upgrade(path, query)
