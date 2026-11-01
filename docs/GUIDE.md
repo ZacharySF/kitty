@@ -623,7 +623,9 @@ The website supports:
   status/date filters, favorites and selection across pages.
 - Manual posting entry, optional public-page metadata lookup, track/tier decisions,
   deadline overrides, persistent notes, queue/skip/later and durable ineligibility.
-- Pipeline, reminders, explicit recording of an already-submitted application,
+- Pipeline swimlanes by track (drag or Shift+arrows between stages and tracks),
+  reminders you can edit, snooze a day or delete (hover, or swipe right/left, with
+  undo), explicit recording of an already-submitted application,
   configured follow-ups, dated evidence and append-only status undo.
 - Resume registration/upload, vocabulary coaching with posting evidence, audited
   candidate generation, exact diff/fact/PDF review, promotion and rollback.

@@ -2057,3 +2057,57 @@ describe("agent status cards", () => {
     await context.close();
   });
 });
+
+describe("reminder actions", () => {
+  test("hover reveals edit, snooze and delete; swiping right snoozes and left deletes, each with Undo", async () => {
+    const { page, problems, context } = await open("reminders", { dock: "hidden" });
+    const form = page.locator("form").filter({ has: page.getByRole("button", { name: "Add reminder" }) });
+    await form.getByLabel("When").selectOption("+7");
+    await form.getByLabel("Reminder").fill("Synthetic swipe check");
+    await form.getByRole("button", { name: "Add reminder" }).click();
+    const row = page.getByRole("group", { name: /Synthetic swipe check/ });
+    await row.waitFor();
+    const snooze = row.getByRole("button", { name: "Snooze a day" });
+    const shown = () => snooze.evaluate((node) => getComputedStyle(node.parentElement).opacity);
+    await page.mouse.move(0, 0);
+    assert.equal(await shown(), "0", "actions show before hover");
+    await row.hover();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[aria-label*="Synthetic swipe check"] .acts')).opacity === "1");
+    const due = () => row.locator(".due").textContent();
+    const before = await due();
+    await snooze.click();
+    const pill = page.getByRole("status").filter({ hasText: "Snoozed a day: Synthetic swipe check" });
+    await pill.waitFor();
+    await page.waitForFunction((old) => document.querySelector('[aria-label*="Synthetic swipe check"] .due')?.textContent !== old, before);
+    await pill.getByRole("button", { name: "Undo" }).click();
+    await page.waitForFunction((old) => document.querySelector('[aria-label*="Synthetic swipe check"] .due')?.textContent === old, before);
+    // Edit in place.
+    await row.hover();
+    await row.getByRole("button", { name: "Edit" }).click();
+    await page.getByRole("textbox", { name: "Reminder text" }).fill("Synthetic swipe check, edited");
+    await page.keyboard.press("Enter");
+    const edited = page.getByRole("group", { name: /Synthetic swipe check, edited/ });
+    await edited.waitFor();
+    const swipe = async (dx) => {
+      await edited.scrollIntoViewIfNeeded();
+      const box = await edited.boundingBox();
+      // Start left of centre: the undo pill floats over the middle of the list.
+      const y = box.y + box.height / 2;
+      const x = box.x + 180;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + dx, y, { steps: 10 });
+      await page.mouse.up();
+    };
+    await swipe(160);
+    await page.getByRole("status").filter({ hasText: "Snoozed a day" }).waitFor();
+    await swipe(-160);
+    const deleted = page.getByRole("status").filter({ hasText: "Deleted: Synthetic swipe check, edited" });
+    await deleted.waitFor();
+    await edited.waitFor({ state: "detached" });
+    await deleted.getByRole("button", { name: "Undo" }).click();
+    await edited.waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
