@@ -348,6 +348,24 @@ def test_divergent_edit_review_never_silently_pushes(workspace, provider, choice
         assert any(v['calendar_id'] == 'personal' and v['title'] == 'Local version (local conflict copy)' for v in copies)
 
 
+def test_conflicts_carry_google_version_as_a_calendar_event(workspace, provider):
+    """Q62: the day grid draws Google's side from the same fields as kitty's, not raw JSON."""
+    provider.add_event()
+    cal = linked(workspace)
+    sync(workspace, cal)
+    item = calendar.occurrences(workspace.conn, '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z')[0]
+    edit(workspace, item, title='Local version')
+    provider.add_event(summary='Google version', location='Room 204')
+    sync(workspace, cal, 'both')
+    conflict = google.conflicts(workspace.conn)[0]
+    assert conflict['local']['title'] == 'Local version'
+    assert conflict['remote']['title'] == 'Google version' and conflict['remote']['location'] == 'Room 204'
+    assert conflict['remote']['start'] and conflict['remote']['end'] and 'all_day' in conflict['remote']
+    provider.add_event(status='cancelled')
+    sync(workspace, cal, 'both')
+    assert google.conflicts(workspace.conn)[0]['remote'] is None
+
+
 def test_provider_etag_race_becomes_actionable_conflict(workspace, provider):
     provider.add_event()
     cal = linked(workspace)

@@ -19,6 +19,7 @@
   import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
   import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
   import { notifier } from "./notifications.svelte";
+  import GoogleConflict, { type ConflictEvent } from "./GoogleConflict.svelte";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -224,8 +225,8 @@
     {
       id: number;
       local_revision: number;
-      local: Event;
-      remote_json: Record<string, unknown>;
+      local: Event & { deleted?: boolean };
+      remote: ConflictEvent | null;
     }[]
   >([]);
   let resource = $state("calendarList");
@@ -2411,10 +2412,13 @@
           class="conflict"
         >
           <h3>Calendar settings conflict</h3>
-          <div class="comparison">
-            <pre>{JSON.stringify(conflict.local, null, 2)}</pre>
-            <pre>{JSON.stringify(conflict.remote.values, null, 2)}</pre>
-          </div>
+          <ul class="setting-diff" aria-label="Settings that differ">
+            {#each [["Name", "name"], ["Timezone", "timezone"], ["Colour", "color"]] as const as [label, key]}
+              {#if conflict.local[key] !== conflict.remote.values[key]}<li>
+                  <span>{label}</span><span>kitty: {conflict.local[key]}</span><span>Google: {conflict.remote.values[key]}</span>
+                </li>{/if}
+            {/each}
+          </ul>
           {#each [["local", "Keep local settings (push later)"], ["remote", "Use Google settings"]] as [choice, title]}
             <button
               disabled={demo || googleTask?.status === "running"}
@@ -2432,27 +2436,17 @@
       {#if googleConflicts.length}<h3>
           Conflicts · never silently overwritten
         </h3>
-        {#each googleConflicts as c}<article class="conflict">
-            <h4>{c.local.title}</h4>
-            <div class="comparison">
-              <pre>{JSON.stringify(c.local, null, 2)}</pre>
-              <pre>{JSON.stringify(c.remote_json, null, 2)}</pre>
-            </div>
-            <div class="controls">
-              {#each [["local", "Keep local (push later)"], ["remote", "Use Google version"], ["duplicate", "Save local copy + use Google"]] as [choice, title]}<button
-                  disabled={demo || googleTask?.status === "running"}
-                  onclick={() => {
-                    if (window.confirm(`Confirm: ${title}?`))
-                      void googleWork("/calendar/google/resolve", {
-                        id: c.id,
-                        revision: c.local.revision,
-                        choice,
-                        confirmed: true,
-                      });
-                  }}>{title}</button
-                >{/each}
-            </div>
-          </article>{/each}{/if}
+        {#each googleConflicts as c (c.id)}<GoogleConflict
+            conflict={c}
+            disabled={demo || googleTask?.status === "running"}
+            onresolve={(choice) =>
+              void googleWork("/calendar/google/resolve", {
+                id: c.id,
+                revision: c.local.revision,
+                choice,
+                confirmed: true,
+              })}
+          />{/each}{/if}
       <details class="google-tools">
         <summary>Google resource editor · exact reviewed API operations</summary
         >
@@ -3798,10 +3792,18 @@
     max-height: 28rem;
     overflow: auto;
   }
-  .comparison {
+  .setting-diff {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.7rem;
+    gap: 0.3rem;
+    margin: 0.5rem 0;
+    padding: 0;
+    list-style: none;
+  }
+  .setting-diff li {
+    display: grid;
+    grid-template-columns: 6rem 1fr 1fr;
+    gap: 0.6rem;
+    font-size: 0.85rem;
   }
   .review {
     border: 1px solid var(--accent);
@@ -4033,8 +4035,7 @@
     .month-layout {
       grid-template-columns: minmax(0, 1fr);
     }
-    .form-grid,
-    .comparison {
+    .form-grid {
       grid-template-columns: 1fr;
     }
     .controls label {

@@ -423,10 +423,20 @@ def select_calendar(settings, conn, body):
 
 
 def conflicts(conn):
+    """Open conflicts. `remote` is Google's side as a kitty event (None when Google deleted it,
+    or when its recurrence cannot be represented locally), so both can be drawn the same way."""
+    from kitty.web_server import APIError
     out = []
     for row in conn.execute('SELECT * FROM calendar_google_conflicts WHERE resolved_at IS NULL ORDER BY id'):
         remote = json.loads(row['remote_json'])
-        out.append({**dict(row), 'remote_json': remote, 'local': local._event(conn, row['event_id'], include_deleted=True)})
+        view = None
+        if remote.get('status') != 'cancelled':
+            try:
+                view = remote_to_local(conn, remote, row['calendar_id'])
+            except APIError:
+                view = None
+        out.append({**dict(row), 'remote_json': remote, 'remote': view,
+                    'local': local._event(conn, row['event_id'], include_deleted=True)})
     return out
 
 

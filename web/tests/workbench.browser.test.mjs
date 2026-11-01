@@ -2734,3 +2734,58 @@ describe("job-search report", () => {
     await context.close();
   });
 });
+
+describe("Google calendar conflicts", () => {
+  test("both versions sit on the day grid, kitty's solid and Google's dashed; picking one strikes out what is lost", async () => {
+    const event = (fields) => ({ title: "Linear algebra lecture", start: "2026-11-02T09:00:00+00:00", end: "2026-11-02T10:30:00+00:00", all_day: false,
+      timezone: "UTC", location: "Hall B", description: "Bring problem set 6", reminders: [15], rrule: "", ...fields });
+    const resolved = [];
+    const { page, problems, context } = await open("calendar", {
+      dock: "hidden",
+      setup: async (context) => {
+        await context.route("**/api/bootstrap", async (route) => {
+          const response = await route.fetch();
+          await route.fulfill({ response, json: { ...(await response.json()), demo: false } });
+        });
+        await context.route("**/api/calendar/google/conflicts", (route) => route.fulfill({ json: { items: [{
+          id: 41, local_revision: 7, remote_json: { summary: "raw" },
+          local: event({ revision: 7, deleted: false }),
+          remote: event({ title: "Linear Algebra — Lecture 14", start: "2026-11-02T09:15:00+00:00", end: "2026-11-02T10:45:00+00:00", location: "Room 204" }),
+        }] } }));
+        await context.route("**/api/calendar/google/resolve", (route) => {
+          resolved.push(route.request().postDataJSON());
+          return route.fulfill({ json: { task: { id: "t-41", kind: "calendar-google", status: "completed", started_at: "", finished_at: "", result: { ok: true }, error: null } } });
+        });
+      },
+    });
+    await page.getByRole("button", { name: "Imports & Google" }).click();
+    const conflict = page.getByRole("article", { name: "Conflict: Linear algebra lecture" });
+    await conflict.waitFor();
+    assert.equal(await page.locator("pre").filter({ hasText: '"summary": "raw"' }).count(), 0, "raw JSON is still shown");
+    const mine = conflict.getByRole("button", { name: /^kitty's version/ });
+    const google = conflict.getByRole("button", { name: /^Google's version/ });
+    const style = (locator) => locator.evaluate((node) => getComputedStyle(node).borderTopStyle);
+    assert.equal(await style(mine), "solid");
+    assert.equal(await style(google), "dashed");
+    // Google's block starts a quarter hour later, so it sits lower on the grid.
+    assert.ok((await google.boundingBox()).y > (await mine.boundingBox()).y);
+    const changes = conflict.getByRole("list", { name: "What changes" });
+    assert.deepEqual(await changes.locator("li > span").allTextContents(), ["Title", "Time", "Where"]);
+    const keep = conflict.getByRole("button", { name: "Pick a block" });
+    assert.equal(await keep.isDisabled(), true);
+    await google.click();
+    assert.equal(await google.getAttribute("aria-pressed"), "true");
+    // Choosing Google's version loses kitty's values.
+    assert.equal(await changes.locator('[data-side="local"].lost').count(), 3);
+    assert.equal(await changes.locator('[data-side="remote"].lost').count(), 0);
+    assert.equal(await changes.locator('[data-side="local"]').first().evaluate((node) => getComputedStyle(node).textDecorationLine), "line-through");
+    await mine.click();
+    assert.equal(await changes.locator('[data-side="remote"].lost').count(), 3);
+    await google.click();
+    await conflict.getByRole("button", { name: "Use Google's" }).click();
+    await page.waitForFunction(() => true);
+    assert.deepEqual(resolved, [{ id: 41, revision: 7, choice: "remote", confirmed: true }]);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
