@@ -788,13 +788,16 @@
     relayout(false);
     focusOn(n.id);
   }
+  /** Mid-drag, D breaks the branch off (press again to reattach on drop), wherever focus is. */
+  function dragKey(e: KeyboardEvent) {
+    if (!pane.active || !gesture?.node || e.key.toLowerCase() !== "d" || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault(); e.stopPropagation();
+    detaching = !detaching; dropTarget = "";
+  }
   function nodeKey(e: KeyboardEvent, n: Node) {
     if (!editable || e.altKey) return;
-    if (gesture?.node) {
-      // Mid-drag, D breaks the branch off (press again to reattach on drop).
-      if (e.key.toLowerCase() === "d") { e.preventDefault(); e.stopPropagation(); detaching = !detaching; dropTarget = ""; }
-      return;
-    }
+    // A drag owns the keyboard (see dragKey); keys must not rename the dragged node.
+    if (gesture?.node) return;
     if (e.ctrlKey || e.metaKey) {
       if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void editInline(n); }
       else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); choose(n); reorder(n, e.key === "ArrowUp" ? -1 : 1); }
@@ -1576,6 +1579,7 @@
   });
 </script>
 
+<svelte:window onkeydowncapture={dragKey} />
 <section class="schema" aria-label="Mental schema maps" bind:this={container}>
   {#snippet mapControls()}
     <div class="toolbar">
