@@ -8,6 +8,7 @@
   import { currentTheme, THEME_EVENT } from "./themes";
   import { getTheme } from "./themeCatalog";
   import { blockText, paletteSlot } from "./calendar/palette";
+  import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -471,10 +472,12 @@
     return data.calendars.find((c) => c.id === id)?.color || "var(--accent)";
   }
   let theme = $state(getTheme(currentTheme()));
+  /** Theme palette slot (1..6) of a calendar. */
+  const calendarSlot = (id: string) => paletteSlot(data.calendars.findIndex((c) => c.id === id));
+  const paletteColor = (id: string) => `var(--c${calendarSlot(id)})`;
   /** Filled-block colours for a calendar: a theme palette slot and the text that reads on it. */
   function blockStyle(id: string) {
-    const slot = paletteSlot(data.calendars.findIndex((c) => c.id === id));
-    return `--block:var(--c${slot});--block-ink:${blockText(theme, slot)}`;
+    return `--block:${paletteColor(id)};--block-ink:${blockText(theme, calendarSlot(id))}`;
   }
   async function load() {
     const serial = ++loadCounter;
@@ -1625,15 +1628,16 @@
     <div class="calendar-layout">
     <div class="calendar-main">
     {#if view === "month"}
+      <div class="month-layout">
       <div class="month-grid" role="grid" aria-label="Month calendar">
         {#each days.slice(0, 7) as day}
           <div class="weekday-label" role="columnheader">{dateTitle(day, { weekday: "short" })}</div>
         {/each}
-        {#each days as day}<div
+        {#each days as day}{@const dayEvents = eventsOn(day)}<div
             class="day-cell"
             class:selected={day === selectedDate}
             class:today={day === today}
-            aria-label={dateTitle(day, { weekday: "long", month: "long", day: "numeric" })}
+            aria-label={`${dateTitle(day, { weekday: "long", month: "long", day: "numeric" })}, ${dayEvents.length === 1 ? "1 event" : `${dayEvents.length} events`}`}
             aria-selected={day === selectedDate}
             class:outside={day.slice(0, 7) !== anchor.slice(0, 7)}
             class:selecting={!!rangeStart &&
@@ -1653,47 +1657,40 @@
             ondragover={(e) => allowDrop(day, true, e)}
             ondrop={(e) => dropOn(day, true, e)}
           >
-            <div class="day-cell-heading">
-              <button class="day-head" onclick={() => (selectedDate = day)}
-                aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>
-                <strong>{dateTitle(day, { day: "numeric" })}</strong>
-              </button>
-              <button class="day-add" aria-label={`Add event on ${day}`}
-                onclick={() => newEvent(day + "T09:00", day + "T10:00")}>＋</button>
-            </div>
-            {#each eventsOn(day) as e}<div
-                class="event-chip"
-                style={`--calendar-color:${color(e.calendar_id)}`}
-                draggable="true"
-                ondragstart={(event) => drag(e, event)}
-                ondragend={finishDrag}
-                role="group"
-                aria-label={e.title}
-              >
-                <button onclick={() => openEvent(e)}
-                  oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
-                  >{!e.all_day
-                    ? parts(e.start).time + " "
-                    : ""}{e.title}{e.rrule ? " ↻" : ""}</button
-                ><button
-                  class="resize"
-                  draggable="true"
-                  ondragstart={(event) => {
-                    event.stopPropagation();
-                    drag(e, event, "resize");
-                  }}
-                  aria-label={`Resize ${e.title}`}>↔</button
-                >
-              </div>{/each}{#each tasksOn(day) as t}<button
-                class="task-chip"
-                draggable="true"
-                ondragstart={(event) => dragTask(t, event)}
-                ondragend={finishDrag}
-                oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
-                class:completed={t.status === "done"}
-                onclick={() => (taskEditor = { ...t })}>{t.status === "done" ? "✓" : "☐"} {t.title}</button
-              >{/each}
+            <button class="day-head" onclick={() => (selectedDate = day)}
+              aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
+            <span class="dots" aria-hidden="true">{#each dayEvents.slice(0, 4) as e (e.id + e.occurrence)}<i style:background={paletteColor(e.calendar_id)}></i>{/each}</span>
+            <button class="day-add" aria-label={`Add event on ${day}`}
+              onclick={() => newEvent(day + "T09:00", day + "T10:00")}>＋</button>
           </div>{/each}
+      </div>
+      <DayAgenda
+        eyebrow={`${selectedDate === today ? "Today · " : ""}${dateTitle(selectedDate, { weekday: "short", month: "short", day: "numeric" })}`}
+        items={[
+          ...eventsOn(selectedDate).map((e): AgendaItem => ({
+            key: `event:${e.id}:${e.occurrence}`,
+            start: e.all_day ? "All day" : parts(e.start).time,
+            end: e.all_day ? "" : parts(e.end).time,
+            title: e.title + (e.rrule ? " ↻" : ""),
+            place: e.location || data.calendars.find((c) => c.id === e.calendar_id)?.name || "",
+            color: paletteColor(e.calendar_id),
+            open: () => openEvent(e),
+            drag: (event) => drag(e, event),
+            dragend: finishDrag,
+          })),
+          ...tasksOn(selectedDate).map((t): AgendaItem => ({
+            key: `task:${t.id}`,
+            start: t.due.length > 10 ? parts(t.due).time : "Task",
+            end: "",
+            title: t.title,
+            place: t.status === "done" ? "Completed" : t.priority,
+            color: "var(--muted)",
+            task: true,
+            open: () => (taskEditor = { ...t }),
+            drag: (event) => dragTask(t, event),
+            dragend: finishDrag,
+          })),
+        ]} />
       </div>
     {:else if view === "week" || view === "day"}
       <div class="time-scroll" use:scrollToMorning role="region" aria-label={view === "week" ? "Week calendar" : "Day calendar"}>
@@ -1866,6 +1863,7 @@
           <Button size="sm" intent="primary" onclick={newTask}>Add task</Button>
           <Button size="sm" onclick={() => newEvent(selectedDate + "T09:00", selectedDate + "T10:00")}>Add event</Button>
         </div>
+        {#if view !== "month"}
         {#each eventsOn(selectedDate) as e}
           <button class="plan-event" style={`--calendar-color:${color(e.calendar_id)}`} onclick={() => openEvent(e)}
             oncontextmenu={(event) => void deleteEventAtPointer(event, e)}>
@@ -1888,6 +1886,7 @@
         {/each}
         {#if !eventsOn(selectedDate).length && !tasksOn(selectedDate).length}
           <div class="day-empty"><p class="hint">Nothing planned.</p></div>
+        {/if}
         {/if}
       </Panel>
     </aside>
@@ -3183,65 +3182,92 @@
   .reminders button {
     margin-left: auto;
   }
+  .month-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(220px, 1fr);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
   .month-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    min-width: 560px;
+    align-content: start;
+    gap: 2px;
+    padding: 4px 8px 8px;
   }
   .day-cell {
-    min-height: 132px;
-    padding: 0.35rem;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 56px;
     min-width: 0;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .day-cell:hover {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
   }
   .day-cell.selected {
-    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-    box-shadow: inset 0 0 0 1px var(--accent);
+    background: var(--ink);
   }
-  .day-cell.today .day-head strong {
+  .day-cell.selected .day-head {
+    color: var(--solid-void);
+  }
+  .day-cell.today .day-head {
     color: var(--accent);
+    font-weight: 700;
   }
-  .day-cell-heading {
+  .day-cell.selected.today .day-head {
+    color: var(--solid-void);
+  }
+  .day-head {
+    padding: 0.15rem 0.4rem;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font: 500 0.82rem var(--font-ui);
+  }
+  .dots {
     display: flex;
-    align-items: center;
-    gap: 0.2rem;
-    margin-bottom: 0.45rem;
+    gap: 3px;
+    height: 5px;
+    pointer-events: none;
+  }
+  .dots i {
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
   }
   .day-add {
-    padding: 0.1rem 0.3rem;
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    padding: 0 0.25rem;
     border-color: transparent;
     background: transparent;
     color: var(--muted);
+    font-size: 0.7rem;
+    opacity: 0;
+  }
+  .day-cell:hover .day-add,
+  .day-add:focus-visible {
+    opacity: 1;
+  }
+  .day-cell.selected .day-add {
+    color: var(--solid-void);
   }
   .outside {
-    opacity: 0.55;
-  }
-  .day-head {
-    display: flex;
-    flex: 1;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.2rem;
-    min-width: 0;
-    padding: 0.3rem;
-    border: 0;
-    background: transparent;
-    text-align: left;
-    font-size: 0.8rem;
+    opacity: 0.45;
   }
   .weekday-label {
-    padding: 0.65rem 0.4rem;
+    padding: 0.55rem 0.4rem 0.3rem;
     text-align: center;
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--muted);
-    background: var(--surface-raised);
-    border-bottom: 1px solid var(--border);
-  }
-  .day-head strong {
-    font-size: 0.9rem;
+    font: 600 0.7rem var(--font-mono);
+    color: var(--subtle);
   }
   .selecting {
     background: color-mix(
@@ -3783,8 +3809,8 @@
     }
   }
   @media (max-width: 760px) {
-    .month-grid {
-      grid-template-columns: repeat(7, minmax(80px, 1fr));
+    .month-layout {
+      grid-template-columns: minmax(0, 1fr);
     }
     .form-grid,
     .comparison {
@@ -3819,7 +3845,7 @@
       margin-left: 0;
     }
     .day-cell {
-      min-height: 110px;
+      min-height: 44px;
     }
     .modal-backdrop {
       padding: 0.3rem;

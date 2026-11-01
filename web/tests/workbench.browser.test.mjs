@@ -1147,4 +1147,29 @@ describe("calendar redesign", () => {
     assert.deepEqual(problems, []);
     await context.close();
   });
+
+  test("month cells show up to four calendar dots and clicking a date fills the side agenda", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    const now = new Date();
+    const on20 = (hour) => new Date(now.getFullYear(), now.getMonth(), 20, hour).toISOString();
+    for (const hour of [8, 10, 12, 14, 16])
+      await addEvent(page, { title: `Dot ${hour}`, start: on20(hour), end: on20(hour + 1), location: hour === 12 ? "Room 5" : "" });
+    await page.reload();
+    await page.getByRole("combobox", { name: "Calendar view" }).selectOption("month");
+    const grid = page.getByRole("grid", { name: "Month calendar" });
+    const cell = grid.getByRole("gridcell", { name: / 20, 5 events$/ }).first();
+    await cell.waitFor();
+    assert.match(await cell.getAttribute("aria-label"), /5 events/);
+    assert.equal(await cell.locator(".dots > *").count(), 4, "a busy day should show four dots");
+    assert.equal(await grid.getByText("Dot 8").count(), 0, "month cells still list event titles");
+    await cell.click();
+    const agenda = page.getByRole("complementary", { name: "Day agenda" });
+    await agenda.getByRole("heading", { name: "5 events" }).waitFor();
+    const items = agenda.getByRole("button", { name: /Dot \d+/ });
+    assert.equal(await items.count(), 5);
+    assert.match(await items.nth(2).textContent(), /12:00[\s\S]*Dot 12[\s\S]*Room 5/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
 });
