@@ -78,12 +78,46 @@ window.fetch = async (input, init = {}) => {
     return json({ viewport_revision: page.viewport_revision });
   }
   if (match?.[2] === "/organize") return json({});
+  if (path === "/blocks/session" && method === "POST") return json({ token: "synthetic-token", socket: "/api/blocks/socket" });
   if (path === "/documents/originals") return json({ originals: [] });
   if (path === "/backlinks/related") return json({ linked: [], unlinked: [], related: [] });
   if (path === "/notes/tags") return json({ tags: [] });
   if (path.startsWith("/atlas/sections/")) return json({ nodes: [], links: [], total: 0, shown: 0 });
   return json({ error: "not in harness" }, 404);
 };
+
+// kitty!'s live blocks socket: the harness plays the server and pushes changes made "in another window".
+const sockets = [];
+class FakeSocket extends EventTarget {
+  static OPEN = 1;
+  readyState = 0;
+  constructor(url) {
+    super();
+    this.url = url;
+    sockets.push(this);
+    setTimeout(() => {
+      this.readyState = 1;
+      this.onopen?.({});
+      this.onmessage?.({ data: JSON.stringify({ type: "hello", seq: 0, device_id: "harness" }) });
+    }, 0);
+  }
+  send() {}
+  close() { this.readyState = 3; this.onclose?.({}); }
+}
+window.WebSocket = FakeSocket;
+let seq = 0;
+// Another window saved page `id`: apply the edit to the stand-in store, then push the change.
+harness.editElsewhere = (id, edit) => {
+  const page = pages.get(id);
+  edit(page);
+  page.revision += 1;
+  seq += 1;
+  for (const socket of sockets) {
+    socket.onmessage?.({ data: JSON.stringify({ type: "change", seq, txn_id: `t${seq}`, page_id: `p${id}`, at: now, device_id: "harness",
+      root: { type: "page", number: id }, ops: [] }) });
+  }
+};
+harness.sockets = sockets;
 
 const params = new URLSearchParams(location.search);
 sessionStorage.setItem("kitty.notes.open-page", params.get("page") ?? "1");

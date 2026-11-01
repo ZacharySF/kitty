@@ -6,6 +6,7 @@
   import RichDocumentEditor from './RichDocumentEditor.svelte';
   import { documentHTML } from './notesDocument';
   import { useWorkspaceContext } from './workspaceContext.svelte';
+  import { onBlockChange } from './live';
   const pane = useWorkspaceContext();
   type Doc = {id: number; title: string; content: string; format: 'markdown' | 'text'; notebook_id: number | null; revision: number; updated_at: string};
   type Book = {id: number; title: string; folder_id: number | null};
@@ -30,8 +31,21 @@
     void load();
     const leave = (event: BeforeUnloadEvent) => {if (dirty) {event.preventDefault(); event.returnValue = '';}};
     window.addEventListener('beforeunload', leave);
-    return () => window.removeEventListener('beforeunload', leave);
+    // Saves from other windows arrive live; the open document reloads only when it has no local edits.
+    const stopLive = onBlockChange(change => {
+      if (change && change.root?.type !== 'document') return;
+      void load();
+      if (!change || change.root?.number === id) void refreshOpen();
+    });
+    return () => {window.removeEventListener('beforeunload', leave); stopLive();};
   });
+  async function refreshOpen() {
+    if (!id || dirty || busy) return;
+    try {
+      const doc = await api<Doc>(`/documents/${id}`);
+      if (doc.id === id && doc.revision !== revision && !dirty && !busy) await open(id);
+    } catch {/* A removed document stays on screen until the user moves on. */}
+  }
   async function load() {
     try {
       const [documents, notes] = await Promise.all([api<{documents: Doc[]}>('/documents'), api<{notebooks: Book[]; folders: Folder[]}>('/notes')]);

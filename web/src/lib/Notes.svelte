@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { Button } from "@nunera/bracket";
   import NotesLibrary, { type Folder, type Notebook, type PageSummary } from "./NotesLibrary.svelte";
   import CanvasColorMenu from "./CanvasColorMenu.svelte";
@@ -12,6 +12,7 @@
   import SchemaMaps from "./SchemaMaps.svelte";
   import MindMapFeedback from "./MindMapFeedback.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import { onBlockChange } from "./live";
   const pane = useWorkspaceContext();
   let noteMode = $state<"text" | "canvas" | "mindmap">("text");
   let blocks = $state<NoteBlock[]>([]), blockReferences = $state<Record<string,string>>({}), citationCounts = $state<Record<string,number>>({});
@@ -88,6 +89,10 @@
     try{await api(`/notes/pages/${pageId}/organize`,{favorite:!(pages.find(p=>p.id===pageId) as PageSummary & {favorite?:boolean})?.favorite});await loadIndex();}
     catch(cause){error=(cause as Error).message;}
   }
+  // A pane that becomes active again catches up on changes it skipped while inactive.
+  $effect(() => {
+    if (pane.active) untrack(() => void refreshReferences());
+  });
   $effect(() => {
     if (presentation === "saved") return;
     const book=notebooks.find(n=>n.id===notebookId);
@@ -1599,7 +1604,13 @@
     void loadIndex().then(() => { indexReady = true; });
     const openLinkedPage=(event:Event)=>{if(!pane.active)return;const id=(event as CustomEvent).detail?.page_id;if(id)void openPage(Number(id));};
     window.addEventListener("kitty-open-note",openLinkedPage);
-    const referenceTimer=setInterval(()=>void refreshReferences(),4000);
+    // Live push replaces polling: a change saved in any window refreshes this one now.
+    let indexTimer: ReturnType<typeof setTimeout> | undefined;
+    const stopLive=onBlockChange(change=>{
+      if(change&&change.root?.type!=="page")return;
+      clearTimeout(indexTimer);indexTimer=setTimeout(()=>void loadIndex(),250);
+      if(!change||change.root?.number===pageId)void refreshReferences();
+    });
     window.addEventListener("focus",refreshReferences);
     const syncColors=()=>{
       const previous=ink,style=getComputedStyle(document.documentElement);
@@ -1644,13 +1655,14 @@
         finishActiveGesture();
         void saveContent();
         void saveView();
-      }
+      } else void refreshReferences();
     };
     window.addEventListener("beforeunload", unload);
     document.addEventListener("visibilitychange", visibility);
     return () => {
       observer.disconnect();
-      clearInterval(referenceTimer);
+      stopLive();
+      clearTimeout(indexTimer);
       window.removeEventListener("focus",refreshReferences);
       window.removeEventListener("kitty-open-note",openLinkedPage);
       window.removeEventListener("kitty:theme",syncColors);

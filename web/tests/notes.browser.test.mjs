@@ -194,3 +194,31 @@ test("an unsaved edit blocks switching pages until it saves", async () => {
   assert.deepEqual(problems, []);
   await context.close();
 });
+
+test("an edit saved in another window appears live without a reload", async () => {
+  const { page, problems, context } = await notes();
+  await page.waitForFunction(() => window.notesHarness.sockets.some((socket) => socket.readyState === 1));
+  assert.match(await page.evaluate(() => window.notesHarness.sockets[0].url), /^ws:\/\/[^/]+\/api\/blocks\/socket\?token=synthetic-token$/);
+  await page.evaluate(() => window.notesHarness.editElsewhere(1, (stored) => {
+    stored.title = "Consistent hashing (from window 2)";
+    stored.blocks[0].text = "Edited live in a second window.";
+  }));
+  // Well under the old 4 s refresh poll: the push itself triggers the reload.
+  await until(async () => (await block(page, 1).inputValue()) === "Edited live in a second window.", "the pushed edit shows");
+  await titleIs(page, "Consistent hashing (from window 2)");
+  await until(async () => (await library(page).innerText()).includes("Consistent hashing (from window 2)"), "the library shows the new title");
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a live change never overwrites an unsaved local edit", async () => {
+  const { page, problems, context } = await notes();
+  await page.waitForFunction(() => window.notesHarness.sockets.some((socket) => socket.readyState === 1));
+  await page.evaluate(() => { window.notesHarness.failSaves = true; });
+  await block(page, 1).fill("My unsaved draft.");
+  await page.evaluate(() => window.notesHarness.editElsewhere(1, (stored) => { stored.blocks[0].text = "Someone else's edit."; }));
+  await page.waitForTimeout(600);
+  assert.equal(await block(page, 1).inputValue(), "My unsaved draft.");
+  assert.deepEqual(problems, []);
+  await context.close();
+});

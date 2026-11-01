@@ -575,8 +575,14 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
 
   The legacy tables stay readable and refuse writes (triggers) for one release. A runner directive (`-- python: module:function`) lets a numbered migration call a Python conversion in the same transaction.
 - **Existing UI:** every Notes, Documents and Quick notes endpoint keeps its request and response shape. They now read the projection and write through transactions; a whole-page save becomes the smallest diff (`convert.sync_tree`). Deleting a page or quick note moves it to Trash.
+- **WebSocket transactions and live push** (`src/kitty/web_blocks.py`, `web/src/lib/live.ts`):
+  - A window gets a single-use token from `POST /api/blocks/session`, then opens `/api/blocks/socket`. The socket has the same exact Host and Origin guard as the terminal; the RFC 6455 code is now shared in `web_socket.py`.
+  - `{"type":"txn","ops","base"}` is applied by the server and answered with `ack` (sequence numbers and revisions) or `reject` (status and error) to the sender only.
+  - Every committed `op_log` row is pushed to every window as a `change`. This includes rows written by the HTTP adapters, background imports and other processes: one thread follows the log and starts with the first window.
+  - A reconnecting window sends `resume` with its last sequence and receives what it missed, or `reset` if that history was compacted.
+  - Notes, Documents, Quick notes and pop-out quick-note windows refresh on a push; the 4-second Notes poll is gone. Unsaved local edits are never overwritten.
 
-**Extending it for step 2 (block editor):** the editor sends `transact` operations directly, using the IDs, order keys and `base` revisions it already holds, and renders from the projection. The legacy adapters in `notes.py`, `note_blocks.py`, `documents.py` and `quick_notes.py` can then be removed screen by screen. New block types need no schema change: a type is a name plus properties.
+**Extending it for step 2 (block editor):** the editor sends `txn` messages over the socket in `live.ts`, using the IDs, order keys and `base` revisions it already holds. It echoes keystrokes locally until the `ack` arrives and renders other windows' `change` messages. The legacy adapters in `notes.py`, `note_blocks.py`, `documents.py` and `quick_notes.py` can then be removed screen by screen. New block types need no schema change: a type is a name plus properties.
 
 ## Verified facts
 
