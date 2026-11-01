@@ -18,11 +18,13 @@ export type BrainPlacement = {
   births: Float32Array;
   /** Shown group per node; -2 hides the node (outside an isolated group). */
   groups: Float32Array;
+  /** Point size multiplier per node: anatomy draws its packed brain finer, so the lobes keep their colours. */
+  scales: Float32Array;
   /** xyz per shown group: where its label floats. */
   anchors: Float32Array;
   /** Spheres only: xyz + radius per shown group, so hovering anywhere over a sphere finds it. */
   regions: Float32Array | null;
-  /** Anatomy only: the nodes drawn as whiskers, which take the theme's ink rather than their group's colour. */
+  /** Anatomy only: the nodes drawn as whiskers and eyes, which take the theme's ink rather than their group's colour. */
   whiskers: Int32Array;
   /** Index of each node's parent, or -1. */
   parents: Int32Array;
@@ -343,15 +345,28 @@ function timeRank(indices: number[], times: Float64Array): Map<number, number> {
   return new Map(dated.map((i, rank) => [i, rank / last]));
 }
 
-// ── Anatomy: a sitting cat ────────────────────────────────────────────────
-// Axes: x points where the cat faces, y is up, z runs across its body. One unit is
-// about half a head; the cat sits on y = 0 and its tail curls up behind it.
-const BRAIN_AT: Vec = [1.12, 4.98, 0];
+// ── Anatomy: a standing cat drawn only as its brain and vessels ───────────
+// Axes: x points where the cat faces, y is up, z runs across its body (+z toward the home camera).
+// One unit is about half a head. The cat stands on y = 0 in the pose of a standing cat seen from
+// the side: head up and turned toward the viewer, back level, tail stretched out behind. There is
+// no body: the brain sits in the head and vessels branch from the spinal cord into each region,
+// so the cat's outline is wherever its vessels run.
+const HEAD_AT: Vec = [3.3, 5.5, 0];
+/** The head turns ~70° toward the viewer, so the side view shows both ears and eyes. */
+const HEAD_YAW = 1.2;
+const FACE: Vec = [Math.cos(HEAD_YAW), 0, Math.sin(HEAD_YAW)];
+const ACROSS: Vec = [-Math.sin(HEAD_YAW), 0, Math.cos(HEAD_YAW)];
+/** Head-local (forward, up, across) to cat space. */
+const inHead = (f: number, u: number, s: number): Vec => [HEAD_AT[0] + f * FACE[0] + s * ACROSS[0], HEAD_AT[1] + u, HEAD_AT[2] + f * FACE[2] + s * ACROSS[2]];
 // Brain-local axes (as the cortex is drawn): x across, y up, z forward.
-const CEREBRUM = { rx: 0.8, ry: 0.6, rz: 1.0 };
-const CEREBELLUM = { x: 0, y: -0.3, z: -0.84, rx: 0.5, ry: 0.26, rz: 0.27 };
-const STEM_TOP: Vec = [0, -0.5, -0.72];
-const toCat = (p: Vec): Vec => [BRAIN_AT[0] + p[2], BRAIN_AT[1] + p[1], BRAIN_AT[2] + p[0]];
+const CEREBRUM = { rx: 0.95, ry: 0.7, rz: 1.12 };
+const CEREBELLUM = { x: 0, y: -0.34, z: -0.94, rx: 0.56, ry: 0.29, rz: 0.3 };
+const STEM_TOP: Vec = [0, -0.56, -0.8];
+const toCat = (p: Vec): Vec => inHead(p[2] - 0.12, p[1] + 0.14, p[0]);
+/** Centre of the cerebrum, in cat space. */
+export const CAT_BRAIN: Vec = toCat([0, 0, 0]);
+const distance = (a: Vec, b: Vec) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const lerp = (a: Vec, b: Vec, t: number): Vec => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
 type Path = { points: Vec[]; lengths: number[]; total: number };
 /** A Catmull-Rom curve through `knots`, sampled densely so points can be placed by arc length. */
@@ -366,7 +381,7 @@ function curve(knots: Vec[], steps = 48): Path {
   }
   points.push(knots[knots.length - 1]);
   const lengths = [0];
-  for (let i = 1; i < points.length; i += 1) lengths.push(lengths[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1], points[i][2] - points[i - 1][2]));
+  for (let i = 1; i < points.length; i += 1) lengths.push(lengths[i - 1] + distance(points[i], points[i - 1]));
   return { points, lengths, total: lengths[lengths.length - 1] };
 }
 /** Point at fraction `s` (0–1) of the curve's length. */
@@ -379,134 +394,348 @@ function along(path: Path, s: number): Vec {
     else hi = mid;
   }
   const span = path.lengths[hi] - path.lengths[lo] || 1;
-  const f = (goal - path.lengths[lo]) / span;
-  return [0, 1, 2].map((c) => path.points[lo][c] + (path.points[hi][c] - path.points[lo][c]) * f) as Vec;
+  return lerp(path.points[lo], path.points[hi], (goal - path.lengths[lo]) / span);
 }
 const arcAt = (path: Path, knot: number, steps = 48) => path.lengths[knot * steps] / path.total;
 
-// The cord leaves the brainstem, runs down the sloping back to the hips and out along a long tail
-// that lies on the floor behind the cat and curls up at its tip.
-const SPINE_KNOTS: Vec[] = [
-  toCat(STEM_TOP), [0.1, 3.85, 0], [-0.32, 3.1, 0], [-0.82, 2.25, 0], [-1.28, 1.45, 0], [-1.62, 0.8, 0], [-1.95, 0.36, 0],
-  [-2.7, 0.16, -0.05], [-3.55, 0.18, -0.12], [-4.25, 0.48, -0.2], [-4.72, 1.08, -0.26], [-4.78, 1.8, -0.3], [-4.48, 2.32, -0.3], [-4.02, 2.42, -0.28],
+// The spinal cord leaves the brainstem, runs along the level back to the sacrum and out along the
+// tail, which is held out behind the cat and lifts a little at its tip.
+const CORD = curve([
+  toCat(STEM_TOP), [2.55, 5.05, -0.22], [1.85, 5.15, 0], [0.6, 5.4, 0], [-0.4, 5.32, 0], [-1.35, 5.1, 0],
+  [-2.25, 4.85, -0.03], [-3.2, 4.66, -0.06], [-4.2, 4.62, -0.1], [-5.0, 4.85, -0.12], [-5.5, 5.3, -0.1], [-5.62, 5.62, -0.06],
+]);
+const WITHERS = arcAt(CORD, 2);
+const SACRUM = arcAt(CORD, 5);
+const TAIL_ROOT = arcAt(CORD, 6);
+/** A limb's nerve, from the cord out to the shoulder or hip and down to the floor, on the near (+z) or far side. */
+const limb = (root: number, knots: Vec[], side: number) => ({ root, path: curve([along(CORD, root), ...knots.map(([x, y, z]) => [x, y, z * side] as Vec)], 24) });
+// Fore: shoulder, elbow, wrist, paw; the far foreleg reaches back in mid-stride.
+const FORELEGS = [
+  limb(WITHERS * 0.8, [[2.75, 4.5, 0.38], [3.35, 3.85, 0.42], [3.5, 2.65, 0.42], [3.7, 0.8, 0.42], [3.82, 0.14, 0.42]], 1),
+  limb(WITHERS * 0.8, [[2.6, 4.5, 0.38], [2.85, 3.85, 0.42], [2.85, 2.7, 0.42], [2.0, 0.85, 0.42], [1.7, 0.14, 0.42]], -1),
 ];
-const SPINE = curve(SPINE_KNOTS);
-const TAIL_FROM = arcAt(SPINE, 6);
-const SHOULDER = arcAt(SPINE, 2);
-const HIP = arcAt(SPINE, 4);
-const spineRadius = (s: number) => (s < TAIL_FROM ? 0.19 - 0.06 * (s / TAIL_FROM) : 0.13 - 0.06 * ((s - TAIL_FROM) / (1 - TAIL_FROM)));
-/** Nerves from the cord down each leg to the toes: front legs from the shoulders, hind legs folded under the haunch. */
-const legs = (root: number, knots: Vec[]) => [-1, 1].map((side) => curve([along(SPINE, root), ...knots.map(([x, y, z]) => [x, y, z * side] as Vec)], 24));
-const FRONT_LEGS = legs(SHOULDER, [[0.2, 2.75, 0.28], [0.72, 2.15, 0.38], [0.9, 1.1, 0.4], [0.98, 0.32, 0.4], [1.12, 0.1, 0.4]]);
-const HIND_LEGS = legs(HIP, [[-1.1, 1.05, 0.55], [-0.12, 0.9, 0.66], [-0.85, 0.18, 0.68], [0.3, 0.1, 0.7]]);
-
-const HEAD = { c: [1.25, 4.88, 0] as Vec, r: [1.27, 1.06, 1.16] as Vec };
-const MUZZLE = { c: [2.45, 4.45, 0] as Vec, r: [0.42, 0.36, 0.55] as Vec };
-const ear = (side: number) => ({ base: [1.05, 5.66, 0.62 * side] as Vec, tip: [0.88, 6.78, 0.96 * side] as Vec, ra: 0.46, rb: 0.3 });
-const EARS = [ear(-1), ear(1)];
-
-/** Surfaces the cat is drawn from: each can be sampled and asked whether a point lies inside. */
-type Shape = { area: number; sample: (r: Random) => Vec; inside: (p: Vec) => boolean };
-function ellipsoid(c: Vec, radii: Vec): Shape {
-  const [a, b, d] = radii;
-  const p = 1.6;
-  return {
-    area: 4 * Math.PI * Math.pow((Math.pow(a * b, p) + Math.pow(a * d, p) + Math.pow(b * d, p)) / 3, 1 / p),
-    sample: (r) => {
-      const u = randomUnit(r);
-      return [c[0] + u[0] * a, c[1] + u[1] * b, c[2] + u[2] * d];
-    },
-    inside: (q) => ((q[0] - c[0]) / a) ** 2 + ((q[1] - c[1]) / b) ** 2 + ((q[2] - c[2]) / d) ** 2 < 1,
-  };
-}
-/** A cone with an elliptical base: an ear. */
-function cone({ base, tip, ra, rb }: { base: Vec; tip: Vec; ra: number; rb: number }): Shape {
-  const axis: Vec = [tip[0] - base[0], tip[1] - base[1], tip[2] - base[2]];
-  const height = Math.hypot(...axis);
-  const w = normalise(axis);
-  const u = normalise([w[1], -w[0], 0]);
-  const v: Vec = [w[1] * u[2] - w[2] * u[1], w[2] * u[0] - w[0] * u[2], w[0] * u[1] - w[1] * u[0]];
-  return {
-    area: Math.PI * ((ra + rb) / 2) * Math.hypot(height, (ra + rb) / 2),
-    sample: (r) => {
-      const t = 1 - Math.sqrt(r());
-      const angle = 2 * Math.PI * r();
-      const a = (1 - t) * ra * Math.cos(angle), b = (1 - t) * rb * Math.sin(angle);
-      return [0, 1, 2].map((c) => base[c] + axis[c] * t + u[c] * a + v[c] * b) as Vec;
-    },
-    inside: (q) => {
-      const d: Vec = [q[0] - base[0], q[1] - base[1], q[2] - base[2]];
-      const t = (d[0] * w[0] + d[1] * w[1] + d[2] * w[2]) / height;
-      if (t < 0 || t > 1) return false;
-      const a = (d[0] * u[0] + d[1] * u[1] + d[2] * u[2]) / (ra * (1 - t));
-      const b = (d[0] * v[0] + d[1] * v[1] + d[2] * v[2]) / (rb * (1 - t));
-      return a * a + b * b < 1;
-    },
-  };
-}
-/** A tube of radius `radius(s)` around part of a path (a leg or the tail). */
-function tube(path: Path, from: number, to: number, radius: (s: number) => number): Shape {
-  const samples = Array.from({ length: 64 }, (_, k) => {
-    const s = from + ((to - from) * k) / 63;
-    return { s, p: along(path, s) };
+// Hind: hip, knee, hock (the backward-pointing heel), foot and the base of the toes.
+const HINDLEGS = [
+  limb(SACRUM * 0.93, [[-1.0, 4.3, 0.5], [-0.75, 2.8, 0.52], [-1.65, 1.6, 0.5], [-1.0, 0.55, 0.5], [-0.45, 0.12, 0.5]], 1),
+  limb(SACRUM * 0.93, [[-0.8, 4.3, 0.5], [-0.35, 2.9, 0.52], [-1.0, 1.7, 0.5], [-0.75, 0.5, 0.5], [-0.5, 0.12, 0.5]], -1),
+];
+const WRIST = FORELEGS.map((leg) => arcAt(leg.path, 4, 24));
+const HOCK = HINDLEGS.map((leg) => arcAt(leg.path, 3, 24));
+/** Four toes fanning forward from the end of a leg. */
+const toesOf = (leg: Path) => {
+  const end = leg.points[leg.points.length - 1];
+  return [0, 1, 2, 3].map((k) => {
+    const spread = (k - 1.5) * 0.075;
+    return curve([end, [end[0] + 0.14, end[1] - 0.04, end[2] + spread * 0.5], [end[0] + 0.3, 0.04, end[2] + spread]], 6);
   });
-  return {
-    area: 2 * Math.PI * radius((from + to) / 2) * (to - from) * path.total,
-    sample: (r) => {
-      const s = from + (to - from) * r();
-      const centre = along(path, s);
-      const ahead = along(path, Math.min(1, s + 0.01)), behind = along(path, Math.max(0, s - 0.01));
-      const tangent = normalise([ahead[0] - behind[0], ahead[1] - behind[1], ahead[2] - behind[2]]);
-      const d = randomUnit(r);
-      const dot = d[0] * tangent[0] + d[1] * tangent[1] + d[2] * tangent[2];
-      const out = normalise([d[0] - dot * tangent[0], d[1] - dot * tangent[1], d[2] - dot * tangent[2]]);
-      const width = radius(s);
-      return [centre[0] + out[0] * width, centre[1] + out[1] * width, centre[2] + out[2] * width];
+};
+const CHEST = curve([along(CORD, 0.03), [3.0, 4.55, 0], [3.75, 3.9, 0], [3.78, 3.1, 0], [3.2, 2.72, 0]], 16);
+const BELLY = curve([[3.2, 2.72, 0], [2.2, 3.02, 0], [1.0, 3.18, 0], [-0.1, 3.3, 0], [-0.75, 3.55, 0]], 16);
+
+/** A point on an ellipsoid's surface, only where `keep` allows (given the unit direction). */
+function onEllipsoid(c: Vec, radii: Vec, r: Random, keep: (u: Vec) => boolean = () => true): Vec {
+  let u = randomUnit(r);
+  for (let attempt = 0; attempt < 16 && !keep(u); attempt += 1) u = randomUnit(r);
+  return [c[0] + u[0] * radii[0], c[1] + u[1] * radii[1], c[2] + u[2] * radii[2]];
+}
+/** A point on a tube of radius `radius(s)` around part of a path (a leg or the tail). */
+function onTube(path: Path, from: number, to: number, radius: (s: number) => number, r: Random): Vec {
+  const s = from + (to - from) * r();
+  const centre = along(path, s);
+  const ahead = along(path, Math.min(1, s + 0.01)), behind = along(path, Math.max(0, s - 0.01));
+  const tangent = normalise([ahead[0] - behind[0], ahead[1] - behind[1], ahead[2] - behind[2]]);
+  const d = randomUnit(r);
+  const dot = d[0] * tangent[0] + d[1] * tangent[1] + d[2] * tangent[2];
+  const out = normalise([d[0] - dot * tangent[0], d[1] - dot * tangent[1], d[2] - dot * tangent[2]]);
+  const width = radius(s);
+  return [centre[0] + out[0] * width, centre[1] + out[1] * width, centre[2] + out[2] * width];
+}
+
+/** One vessel: a polyline with its path distance from the brain and its width at every point. */
+export type CatVessel = { region: number; group: number; level: number; points: Vec[]; dist: number[]; width: number[] };
+/** Part of a path as a vessel; `base` is the path distance from the brain where the path starts. */
+function section(path: Path, from: number, to: number, base: number, width: [number, number]): Omit<CatVessel, "region" | "group"> {
+  const count = Math.max(2, Math.ceil(((to - from) * path.total) / 0.05) + 1);
+  const points: Vec[] = [], dist: number[] = [], widths: number[] = [];
+  for (let k = 0; k < count; k += 1) {
+    const t = k / (count - 1);
+    const s = from + (to - from) * t;
+    points.push(along(path, s));
+    dist.push(base + s * path.total);
+    widths.push(width[0] + (width[1] - width[0]) * t);
+  }
+  return { level: 0, points, dist, width: widths };
+}
+const cordAt = (s: number) => s * CORD.total;
+const cord = (from: number, to: number, width: [number, number]) => section(CORD, from, to, 0, width);
+const legSection = (leg: { root: number; path: Path }, from: number, to: number, width: [number, number]) => section(leg.path, from, to, cordAt(leg.root), width);
+const legEnd = (leg: { root: number; path: Path }) => cordAt(leg.root) + leg.path.total;
+
+type Region = {
+  name: string;
+  /** Its share of the vessel nodes, relative to the other regions. */
+  weight: number;
+  /** Branches off the trunks even with no data, so an empty region still draws its part of the cat. */
+  min: number;
+  /** How far from its trunk a branch aims before turning to the nearest surface: short twigs on legs and tail, long fans over the torso. */
+  reach: number;
+  /** The fixed vessels the branches grow from; `nodes` lets the flank add ribs as it fills. */
+  trunks: (nodes: number) => Omit<CatVessel, "region" | "group">[];
+  /** A point on the region's outer surface: where branches end, so the outline emerges from them. */
+  target: (r: Random) => Vec;
+};
+const side = (r: Random) => (r() < 0.5 ? 0 : 1);
+/** The cat's regions in anatomical order, front to back: a group that spans several takes a run of them. */
+const CAT: Region[] = [
+  { name: "withers", weight: 0.8, min: 3, reach: 0.9,
+    trunks: () => [cord(0, WITHERS, [0.085, 0.075]), ...[-1, 1].map((z) => section(curve([along(CORD, WITHERS * 0.9), [2.3, 4.75, 0.72 * z], [2.95, 4.15, 0.62 * z]], 12), 0, 1, cordAt(WITHERS * 0.9), [0.04, 0.025]))],
+    target: (r) => onEllipsoid([2.15, 4.85, 0], [0.75, 0.55, 0.8], r, (u) => u[1] > -0.4) },
+  { name: "chest", weight: 1.2, min: 3, reach: 1,
+    trunks: () => [section(CHEST, 0, 1, cordAt(0.03), [0.05, 0.04])],
+    target: (r) => onEllipsoid([3.45, 3.75, 0], [0.82, 1.0, 0.72], r, (u) => u[0] > -0.3) },
+  { name: "forelegs", weight: 1, min: 2, reach: 0.3,
+    trunks: () => FORELEGS.map((leg, k) => legSection(leg, 0, WRIST[k], [0.05, 0.04])),
+    target: (r) => { const k = side(r); return onTube(FORELEGS[k].path, 0.2, WRIST[k], (s) => 0.24 - 0.1 * s, r); } },
+  { name: "paws", weight: 0.3, min: 2, reach: 0.25,
+    trunks: () => FORELEGS.flatMap((leg, k) => [legSection(leg, WRIST[k], 1, [0.04, 0.035]), ...toesOf(leg.path).map((toe) => section(toe, 0, 1, legEnd(leg), [0.03, 0.018]))]),
+    target: (r) => { const k = side(r); return onTube(FORELEGS[k].path, WRIST[k], 1, () => 0.13, r); } },
+  { name: "back", weight: 1, min: 3, reach: 0.9,
+    trunks: () => [cord(WITHERS, SACRUM, [0.075, 0.07])],
+    target: (r) => onEllipsoid([0.45, 5.15, 0], [1.45, 0.62, 0.85], r, (u) => u[1] > -0.2) },
+  { name: "flank", weight: 2, min: 2, reach: 1.1,
+    // Ribs: intercostal vessels arching down each side from the cord, more of them as the flank fills.
+    trunks: (nodes) => {
+      const count = Math.min(6, 3 + Math.floor(nodes / 400));
+      return [-1, 1].flatMap((z) => Array.from({ length: count }, (_, k) => {
+        const s = WITHERS + (SACRUM - WITHERS) * (0.12 + (0.76 * k) / (count - 1));
+        const [x, y] = along(CORD, s);
+        return section(curve([along(CORD, s), [x - 0.1, y - 0.3, 0.8 * z], [x - 0.25, 4.05, 0.98 * z], [x - 0.35, 3.4, 0.6 * z]], 10), 0, 1, cordAt(s), [0.035, 0.022]);
+      }));
     },
-    inside: (q) => samples.some(({ s, p }) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < radius(s)),
+    target: (r) => onEllipsoid([0.55, 4.25, 0], [1.55, 1.0, 0.98], r, (u) => Math.abs(u[2]) > 0.45) },
+  { name: "belly", weight: 1, min: 3, reach: 0.9,
+    trunks: () => [section(BELLY, 0, 1, cordAt(0.03) + CHEST.total, [0.045, 0.035])],
+    target: (r) => onEllipsoid([1.15, 3.42, 0], [1.75, 0.38, 0.72], r, (u) => u[1] < 0.3) },
+  { name: "rump", weight: 1.2, min: 2, reach: 1,
+    trunks: () => [-1, 1].map((z) => section(curve([along(CORD, SACRUM * 1.03), [-1.75, 4.9, 0.42 * z], [-2.0, 4.15, 0.55 * z], [-1.75, 3.35, 0.45 * z]], 12), 0, 1, cordAt(SACRUM * 1.03), [0.045, 0.03])),
+    target: (r) => onEllipsoid([-1.15, 4.25, 0], [0.82, 1.1, 0.82], r) },
+  { name: "hindlegs", weight: 1.2, min: 2, reach: 0.35,
+    trunks: () => HINDLEGS.map((leg, k) => legSection(leg, 0, HOCK[k] - 0.035, [0.055, 0.04])),
+    target: (r) => { const k = side(r); return onTube(HINDLEGS[k].path, 0.15, HOCK[k] - 0.04, (s) => 0.36 - (0.2 * s) / HOCK[k], r); } },
+  { name: "hock", weight: 0.2, min: 2, reach: 0.2,
+    trunks: () => HINDLEGS.map((leg, k) => legSection(leg, HOCK[k] - 0.035, HOCK[k] + 0.05, [0.04, 0.035])),
+    target: (r) => { const k = side(r); return onTube(HINDLEGS[k].path, HOCK[k] - 0.035, HOCK[k] + 0.05, () => 0.15, r); } },
+  { name: "feet", weight: 0.4, min: 2, reach: 0.25,
+    trunks: () => HINDLEGS.map((leg, k) => legSection(leg, HOCK[k] + 0.05, 1, [0.035, 0.03])),
+    target: (r) => { const k = side(r); return onTube(HINDLEGS[k].path, HOCK[k] + 0.05, 1, () => 0.12, r); } },
+  { name: "toes", weight: 0.2, min: 2, reach: 0.2,
+    trunks: () => HINDLEGS.flatMap((leg) => toesOf(leg.path).map((toe) => section(toe, 0, 1, legEnd(leg), [0.03, 0.018]))),
+    target: (r) => { const end = HINDLEGS[side(r)].path.points.at(-1)!; return onEllipsoid([end[0] + 0.2, 0.1, end[2]], [0.2, 0.07, 0.16], r); } },
+  { name: "tail base", weight: 0.4, min: 2, reach: 0.3,
+    trunks: () => [cord(SACRUM, TAIL_ROOT, [0.07, 0.06])],
+    target: (r) => onTube(CORD, SACRUM, TAIL_ROOT, () => 0.24, r) },
+  { name: "tail", weight: 0.7, min: 3, reach: 0.3,
+    trunks: () => [cord(TAIL_ROOT, 1, [0.06, 0.03])],
+    target: (r) => onTube(CORD, TAIL_ROOT, 1, (s) => 0.2 - (0.12 * (s - TAIL_ROOT)) / (1 - TAIL_ROOT), r) },
+];
+export const CAT_REGIONS = CAT.map((region) => region.name);
+/** Share of records drawn as beads on their group's vessels; the rest form the brain, ears, eyes and whiskers. */
+const RECORD_VESSELS = 0.06;
+/** Brain points are drawn this much smaller: thousands share the small cortex, and full-size glows would add up to white. */
+const BRAIN_POINT = 0.8;
+
+/** Counts summing to `total`, proportional to `weights`, each at least one (largest remainder). */
+function apportion(weights: number[], total: number): number[] {
+  const sum = weights.reduce((a, b) => a + b, 0) || 1;
+  const counts = weights.map(() => 1);
+  for (let left = total - weights.length; left > 0; left -= 1) {
+    let best = 0;
+    weights.forEach((weight, k) => {
+      if ((weight / sum) * total - counts[k] > (weights[best] / sum) * total - counts[best]) best = k;
+    });
+    counts[best] += 1;
+  }
+  return counts;
+}
+/**
+ * Which groups own each region, and how many of their vessel nodes it holds. The groups are laid
+ * end to end along the regions (front to back), each over a stretch as long as its share of the
+ * nodes, so every region holds nodes in proportion to its room: a large group spans a run of
+ * regions, small neighbours share one. A sliver of a group at a region's edge folds back into
+ * the group's other regions.
+ */
+function territories(model: BrainModel): { group: number; nodes: number }[][] {
+  const owners: { group: number; nodes: number }[][] = CAT.map(() => []);
+  const nodes = model.groups.map((group) => group.edits + group.records * RECORD_VESSELS);
+  const total = nodes.reduce((a, b) => a + b, 0);
+  if (!total) {
+    if (nodes.length) CAT.forEach((_, index) => owners[index].push({ group: 0, nodes: 0 }));
+    return owners;
+  }
+  const capacity = CAT.reduce((sum, region) => sum + region.weight, 0);
+  const spans: { region: number; overlap: number }[][] = nodes.map(() => []);
+  let start = 0;
+  nodes.forEach((count, g) => {
+    const end = start + (count / total) * capacity;
+    let edge = 0;
+    CAT.forEach((region, index) => {
+      const overlap = Math.min(end, edge + region.weight) - Math.max(start, edge);
+      if (overlap > 1e-9 || (count === 0 && start >= edge && start < edge + region.weight)) spans[g].push({ region: index, overlap: Math.max(overlap, 1e-9) });
+      edge += region.weight;
+    });
+    start = end;
+  });
+  spans.forEach((span, g) => {
+    // Keep the group's slivers only where it is a region's main owner.
+    const main = (index: number) => !spans.some((other, h) => h !== g && other.some((s) => s.region === index && s.overlap > span.find((own) => own.region === index)!.overlap));
+    const kept = span.filter((s) => s.overlap >= 0.12 * CAT[s.region].weight || main(s.region));
+    const use = kept.length ? kept : [span.reduce((a, b) => (b.overlap > a.overlap ? b : a))];
+    const sum = use.reduce((a, s) => a + s.overlap, 0);
+    for (const s of use) owners[s.region].push({ group: g, nodes: (nodes[g] * s.overlap) / sum });
+  });
+  // The region's main owner leads it (its trunks are drawn from that group).
+  for (const own of owners) own.sort((a, b) => b.nodes - a.nodes || a.group - b.group);
+  return owners;
+}
+
+const BRANCH_WIDTH = [0, 0.032, 0.022, 0.015];
+/** Vessel nodes per unit of vessel length a region grows toward, so every region glows about as densely. */
+const NODES_PER_UNIT = 40;
+const MOST_TREES = 90;
+/**
+ * Branching trees off a region's trunks, more and deeper as the region holds more nodes: each
+ * branch runs from a trunk to the region's surface and forks into finer twigs ending near it.
+ * Each tree has its own seed, so adding data adds trees and never moves the existing ones.
+ */
+function grow(region: Region, nodes: number, trunks: Omit<CatVessel, "region" | "group">[], least: number) {
+  const depth = nodes < 80 ? 1 : nodes < 1200 ? 2 : 3;
+  const lengths = trunks.map((trunk) => trunk.dist[trunk.dist.length - 1] - trunk.dist[0]);
+  const sum = lengths.reduce((a, b) => a + b, 0);
+  const goal = nodes / NODES_PER_UNIT;
+  let grown = sum;
+  const trees: Omit<CatVessel, "region" | "group">[][] = [];
+  for (let b = 0; b < MOST_TREES && (b < Math.max(least, region.min) || grown < goal); b += 1) {
+    const r = stream(hash32(`vessel:${region.name}:${b}`));
+    let roll = r() * sum, pick = 0;
+    while (pick < trunks.length - 1 && (roll -= lengths[pick]) > 0) pick += 1;
+    const trunk = trunks[pick];
+    const at = Math.round((0.08 + 0.84 * r()) * (trunk.points.length - 1));
+    const start = trunk.points[at];
+    // The surface point nearest to where the branch aims: a twig hugging a leg, or a fan across the torso.
+    const near = (aim: Vec, tries: number) => {
+      let best = region.target(r);
+      for (let k = 1; k < tries; k += 1) {
+        const candidate = region.target(r);
+        if (distance(candidate, aim) < distance(best, aim)) best = candidate;
+      }
+      return best;
+    };
+    const tree: Omit<CatVessel, "region" | "group">[] = [];
+    const branch = (from: Vec, base: number, target: Vec, level: number) => {
+      const span = distance(from, target);
+      const bend = randomUnit(r);
+      const mid: Vec = [0, 1, 2].map((c) => (from[c] + target[c]) / 2 + bend[c] * span * 0.16) as Vec;
+      const path = curve([from, mid, target], Math.max(2, Math.ceil(span / 0.1)));
+      const width = BRANCH_WIDTH[level];
+      const vessel = { level, points: path.points, dist: path.lengths.map((length) => base + length), width: path.lengths.map((length) => width * (1 - (0.45 * length) / (path.total || 1))) };
+      tree.push(vessel);
+      grown += path.total;
+      if (level >= depth) return;
+      for (let child = 0; child < 2; child += 1) {
+        const k = Math.round((0.35 + 0.5 * r()) * (path.points.length - 1));
+        const offset = randomUnit(r);
+        branch(path.points[k], vessel.dist[k], near([0, 1, 2].map((c) => target[c] + offset[c] * span * 0.5) as Vec, 3), level + 1);
+      }
+    };
+    const aim = randomUnit(r);
+    branch(start, trunk.dist[at], near([0, 1, 2].map((c) => start[c] + aim[c] * region.reach) as Vec, 6), 1);
+    trees.push(tree);
+  }
+  return trees;
+}
+
+/**
+ * The cat as vessels: each region's trunks and branching trees, each vessel owned by a group.
+ * Depends only on the groups and their sizes, so the layout and the scaffold always agree.
+ */
+export function catAnatomy(model: BrainModel): { regions: { name: string; groups: number[] }[]; vessels: CatVessel[] } {
+  const owners = territories(model);
+  const vessels: CatVessel[] = [];
+  CAT.forEach((region, index) => {
+    const own = owners[index];
+    const nodes = own.reduce((sum, owner) => sum + owner.nodes, 0);
+    const lead = own[0]?.group ?? -1;
+    const trunks = region.trunks(nodes);
+    for (const trunk of trunks) vessels.push({ ...trunk, region: index, group: lead });
+    // A shared region deals its trees to its groups by size, at least one each.
+    const trees = grow(region, nodes, trunks, own.length);
+    const deal = own.length ? apportion(own.map((owner) => owner.nodes), trees.length) : [trees.length];
+    let next = 0;
+    deal.forEach((count, k) => {
+      for (const tree of trees.slice(next, next + count)) for (const vessel of tree) vessels.push({ ...vessel, region: index, group: own[k]?.group ?? -1 });
+      next += count;
+    });
+  });
+  return { regions: CAT.map((region, index) => ({ name: region.name, groups: owners[index].map((owner) => owner.group) })), vessels };
+}
+
+/**
+ * Picks points on vessels by quantile of their path distance from the brain (0: nearest), with
+ * thicker vessels holding more points. Returns the point, jittered within the vessel, and its distance.
+ */
+function vesselSampler(vessels: CatVessel[]) {
+  const segments: { a: Vec; b: Vec; width: number; dist: number; weight: number }[] = [];
+  for (const vessel of vessels)
+    for (let k = 0; k < vessel.points.length - 1; k += 1) {
+      const width = (vessel.width[k] + vessel.width[k + 1]) / 2;
+      const length = distance(vessel.points[k], vessel.points[k + 1]);
+      segments.push({ a: vessel.points[k], b: vessel.points[k + 1], width, dist: (vessel.dist[k] + vessel.dist[k + 1]) / 2, weight: length * (0.3 + width / 0.05) });
+    }
+  segments.sort((x, y) => x.dist - y.dist);
+  const cumulative = new Float64Array(segments.length);
+  let total = 0;
+  segments.forEach((segment, k) => (cumulative[k] = total += segment.weight));
+  return (q: number, r: Random): { p: Vec; dist: number } => {
+    if (!segments.length) return { p: CAT_BRAIN, dist: 0 };
+    const goal = clamp01(q) * total;
+    let lo = 0, hi = segments.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cumulative[mid] < goal) lo = mid + 1;
+      else hi = mid;
+    }
+    const { a, b, width, dist } = segments[lo];
+    const p = lerp(a, b, r());
+    const spread = width * 0.35;
+    return { p: [p[0] + gauss(r) * spread, p[1] + gauss(r) * spread, p[2] + gauss(r) * spread], dist };
   };
 }
-const HEAD_SHAPES: Shape[] = [ellipsoid(HEAD.c, HEAD.r), ellipsoid(MUZZLE.c, MUZZLE.r), ...EARS.map(cone)];
-/** The whole cat, for the scaffold: head, neck, chest, back, haunches, legs, paws and tail. */
-const BODY_SHAPES: Shape[] = [
-  ...HEAD_SHAPES,
-  ellipsoid([0.55, 3.75, 0], [0.62, 0.72, 0.62]),
-  ellipsoid([0.4, 2.55, 0], [0.78, 1.0, 0.72]),
-  ellipsoid([-0.3, 2.2, 0], [0.9, 1.0, 0.78]),
-  ellipsoid([-0.75, 1.0, 0], [1.2, 1.0, 0.9]),
-  ...[-1, 1].flatMap((side) => [
-    ellipsoid([-0.7, 0.85, 0.5 * side], [1.0, 0.82, 0.48]),
-    tube(curve([[0.72, 2.1, 0.38 * side], [0.98, 0.2, 0.38 * side]], 8), 0, 1, () => 0.19),
-    ellipsoid([1.12, 0.1, 0.38 * side], [0.28, 0.11, 0.19]),
-    ellipsoid([0.3, 0.1, 0.7 * side], [0.4, 0.11, 0.2]),
-  ]),
-  tube(SPINE, TAIL_FROM, 1, (s) => 0.21 - 0.09 * ((s - TAIL_FROM) / (1 - TAIL_FROM))),
-];
-/** A point on the union's surface: drawn from one shape (by area) and kept only if no other shape covers it. */
-function surfacePoint(shapes: Shape[], r: Random, weights = shapes.map((shape) => shape.area)): Vec {
-  const total = weights.reduce((sum, weight) => sum + weight, 0);
-  let p: Vec = [0, 0, 0];
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    let roll = r() * total;
-    let pick = 0;
-    while (pick < shapes.length - 1 && (roll -= weights[pick]) > 0) pick += 1;
-    p = shapes[pick].sample(r);
-    if (!shapes.some((shape, index) => index !== pick && shape.inside(p))) return p;
-  }
-  return p;
-}
+
 /** Whiskers: three bright lines fanning out from each side of the muzzle. */
 function whiskerPoint(r: Random): Vec {
-  const side = r() < 0.5 ? -1 : 1;
+  const across = r() < 0.5 ? -1 : 1;
   const row = Math.floor(r() * 3);
   const t = r();
-  const direction = normalise([0.3, 0.12 - 0.12 * row, side]);
-  const length = 1.35;
-  return [
-    2.7 + direction[0] * t * length + gauss(r) * 0.006,
-    4.4 - 0.07 * row + direction[1] * t * length - 0.16 * t * t + gauss(r) * 0.006,
-    0.32 * side + direction[2] * t * length + gauss(r) * 0.006,
-  ];
+  const p = inHead(1.12 + 0.3 * t, -0.5 - 0.07 * row + t * (0.14 - 0.14 * row) - 0.16 * t * t, across * (0.26 + 0.95 * t));
+  return [p[0] + gauss(r) * 0.006, p[1] + gauss(r) * 0.006, p[2] + gauss(r) * 0.006];
+}
+/** Two small bright eyes just in front of the brain. */
+function eyePoint(r: Random): Vec {
+  const p = inHead(1.1, -0.18, r() < 0.5 ? -0.42 : 0.42);
+  return [p[0] + gauss(r) * 0.03, p[1] + gauss(r) * 0.03, p[2] + gauss(r) * 0.03];
+}
+// Each ear is its veins: a front and a back edge meeting at the tip, and a midrib up its middle.
+const EARS = [-1, 1].flatMap((s) => {
+  const front = inHead(0.2, 0.74, 0.6 * s), back = inHead(-0.55, 0.66, 0.88 * s), tip = inHead(-0.25, 1.75, 1.15 * s), root = inHead(-0.2, 0.7, 0.74 * s);
+  const bow = (a: Vec, b: Vec, out: number): Vec => { const m = lerp(a, b, 0.5); return [m[0] + ACROSS[0] * out * s, m[1], m[2] + ACROSS[2] * out * s]; };
+  return [curve([front, bow(front, tip, 0.05), tip], 8), curve([back, bow(back, tip, 0.06), tip], 8), curve([root, lerp(root, tip, 0.8)], 8)];
+});
+const EAR_LENGTH = EARS.reduce((sum, ear) => sum + ear.total, 0);
+function earPoint(r: Random): Vec {
+  let roll = r() * EAR_LENGTH, pick = 0;
+  while (pick < EARS.length - 1 && (roll -= EARS[pick].total) > 0) pick += 1;
+  const p = along(EARS[pick], r());
+  return [p[0] + gauss(r) * 0.012, p[1] + gauss(r) * 0.012, p[2] + gauss(r) * 0.012];
 }
 
 /** Ridges of a folded cortex, in roughly [-1, 1]. */
@@ -535,7 +764,14 @@ function cortexPoint(dir: Vec, r: Random): Vec {
   const depth = (1 - 0.14 * Math.pow(r(), 2.4)) * (1 + 0.05 * fold);
   const side = d[0] >= 0 ? 1 : -1;
   const y = d[1] * CEREBRUM.ry * depth;
-  return [side * 0.04 + d[0] * CEREBRUM.rx * depth, y < 0 ? y * 0.82 : y, d[2] * CEREBRUM.rz * depth];
+  return [side * 0.035 + d[0] * CEREBRUM.rx * depth, y < 0 ? y * 0.82 : y, d[2] * CEREBRUM.rz * depth];
+}
+/** A point on the folded cerebellum tucked behind the cerebrum, brain-local. */
+function cerebellumPoint(r: Random): Vec {
+  const d = randomUnit(r);
+  const depth = 0.84 + 0.16 * r();
+  const folia = 0.022 * Math.sin(Math.atan2(d[1], d[2]) * 24);
+  return [CEREBELLUM.x + d[0] * CEREBELLUM.rx * depth, CEREBELLUM.y + d[1] * CEREBELLUM.ry * depth + folia, CEREBELLUM.z + d[2] * CEREBELLUM.rz * depth];
 }
 /** The lobe a cortex direction belongs to: nearest centre, scaled by each lobe's size (a weighted Voronoi). */
 function lobeAt(d: Vec, lobeOf: { dir: Vec; angle: number }[]) {
@@ -550,37 +786,39 @@ function lobeAt(d: Vec, lobeOf: { dir: Vec; angle: number }[]) {
   });
   return best;
 }
-function anatomy(data: BrainData, model: BrainModel, parents: Int32Array, times: Float64Array, out: Float32Array, births: Float32Array) {
+function anatomy(data: BrainData, model: BrainModel, times: Float64Array, out: Float32Array, births: Float32Array, scales: Float32Array) {
+  const cat = catAnatomy(model);
   const lobeOf = lobes(model);
-  const records: number[] = [];
-  const edits: number[] = [];
-  data.nodes.forEach((node, i) => (node.kind === "record" ? records : edits).push(i));
-  const stem = toCat(STEM_TOP);
-  // Ears weigh more than their area so the silhouette reads at a glance.
-  const headWeights = HEAD_SHAPES.map((shape, index) => shape.area * (index >= 2 ? 3.2 : 1));
-  const whiskers: number[] = [];
-  for (const i of records) {
-    const r = stream(hash32(data.nodes[i].id));
+  const farthest = Math.max(1, ...cat.vessels.map((vessel) => vessel.dist[vessel.dist.length - 1]));
+  const onVessels: number[][] = model.groups.map(() => []);
+  const inked: number[] = [];
+  data.nodes.forEach((node, i) => {
+    const g = model.groupOf[i];
+    if (node.kind === "edit") {
+      onVessels[g].push(i);
+      return;
+    }
+    const r = stream(hash32(node.id));
     const roll = r();
     let p: Vec;
-    if (roll < 0.04) {
+    if (roll < 0.035) {
       p = whiskerPoint(r);
-      births[i] = 0.9 + 0.08 * r();
-      whiskers.push(i);
-    } else if (roll < 0.17) {
-      // A sparse glittering skull, muzzle and ears around the brain.
-      p = surfacePoint(HEAD_SHAPES, r, headWeights);
-      births[i] = 0.8 + 0.16 * r();
+      births[i] = 0.2 + 0.06 * r();
+      inked.push(i);
+    } else if (roll < 0.045) {
+      p = eyePoint(r);
+      births[i] = 0.18 + 0.04 * r();
+      inked.push(i);
+    } else if (roll < 0.105) {
+      p = earPoint(r);
+      births[i] = 0.14 + 0.1 * r();
+    } else if (roll < 0.105 + RECORD_VESSELS) {
+      onVessels[g].push(i);
+      return;
     } else {
-      if (roll < 0.27) {
-        // Cerebellum: a folded shell tucked behind the cerebrum.
-        const d = randomUnit(r);
-        const depth = 0.84 + 0.16 * r();
-        const folia = 0.025 * Math.sin(Math.atan2(d[1], d[2]) * 24);
-        p = toCat([CEREBELLUM.x + d[0] * CEREBELLUM.rx * depth, CEREBELLUM.y + d[1] * CEREBELLUM.ry * depth + folia, CEREBELLUM.z + d[2] * CEREBELLUM.rz * depth]);
-      } else {
+      if (roll < 0.3) p = toCat(cerebellumPoint(r));
+      else {
         // Each group owns a coloured lobe; draws are kept inside it and favour the ridges of the folds.
-        const g = model.groupOf[i];
         const lobe = lobeOf[g];
         const spread = Math.min(Math.PI, Math.max(0.36, lobe.angle * 1.5));
         let d = capDirection(lobe.dir, spread, r);
@@ -590,62 +828,35 @@ function anatomy(data: BrainData, model: BrainModel, parents: Int32Array, times:
         }
         p = toCat(cortexPoint(d, r));
       }
-      births[i] = 0.45 + 0.4 * clamp01(Math.hypot(p[0] - stem[0], p[1] - stem[1], p[2] - stem[2]) / 1.9);
+      // The brain lights first, from its centre out.
+      births[i] = 0.02 + 0.16 * clamp01(distance(p, CAT_BRAIN) / 1.0);
+      scales[i] = BRAIN_POINT;
     }
     out.set(p, i * 3);
-  }
-  // Edits arrive along the cord in time order: the oldest at the tail tip, the newest nearest the brain.
-  const rank = timeRank(edits, times);
-  for (const i of edits) {
-    const r = stream(hash32(data.nodes[i].id));
-    const newness = rank.get(i) ?? r();
-    const s = Math.min(1, (1 - newness) * 0.985 + r() * 0.015);
-    const parent = parents[i];
-    const roll = r();
-    let p: Vec;
-    let birth: number;
-    if (parent >= 0 && data.nodes[parent].kind === "record" && roll < 0.2) {
-      // A faint halo of changes around the record they touched.
-      const d = randomUnit(r);
-      const distance = 0.03 + 0.08 * Math.pow(r(), 1.5);
-      p = [out[parent * 3] + d[0] * distance, out[parent * 3 + 1] + d[1] * distance, out[parent * 3 + 2] + d[2] * distance];
-      birth = Math.min(1, births[parent] + 0.04);
-    } else if (roll < 0.36 && s > 0.03 && s < TAIL_FROM) {
-      // Sparse nerves down the four legs, forking into toes at the paws.
-      const front = s < (SHOULDER + HIP) / 2;
-      const leg = (front ? FRONT_LEGS : HIND_LEGS)[r() < 0.5 ? 0 : 1];
-      const t = Math.pow(r(), 0.7);
-      const base = along(leg, Math.min(t, 0.94));
-      let toe: Vec = [0, 0, 0];
-      if (t > 0.94) {
-        const f = (t - 0.94) / 0.06;
-        toe = [0.24 * f, -0.02 * f, (Math.floor(r() * 4) - 1.5) * 0.08 * f];
-      }
-      p = [base[0] + toe[0] + gauss(r) * 0.016, base[1] + toe[1] + gauss(r) * 0.016, base[2] + toe[2] + gauss(r) * 0.016];
-      birth = 0.45 * (1 - (front ? SHOULDER : HIP)) + 0.12 * t;
-    } else {
-      const centre = along(SPINE, s);
-      const radius = spineRadius(s) * (r() < 0.3 ? 0.4 : 1);
-      const d = randomUnit(r);
-      const spread = Math.abs(gauss(r)) * radius;
-      p = [centre[0] + d[0] * spread, centre[1] + d[1] * spread, centre[2] + d[2] * spread];
-      birth = 0.45 * (1 - s);
+  });
+  // A group's edits (and a few of its records) glow along its vessels in time order: the newest
+  // nearest the brain, the oldest out at the tips. They light up from the brain outward.
+  onVessels.forEach((members, g) => {
+    const sample = vesselSampler(cat.vessels.filter((vessel) => vessel.group === g));
+    const rank = timeRank(members, times);
+    for (const i of members) {
+      const r = stream(hash32(data.nodes[i].id) ^ 0x5bd1e995);
+      const age = 1 - (rank.get(i) ?? r());
+      const { p, dist } = sample(age * 0.94 + r() * 0.06, r);
+      out.set(p, i * 3);
+      births[i] = clamp01(0.24 + (0.74 * dist) / farthest);
     }
-    out.set(p, i * 3);
-    births[i] = clamp01(birth);
-  }
-  // Labels float off their lobe; groups of edits alone (by type: save, create…) are labelled along the cord instead.
+  });
+  // Labels float over each group's own region; a group without vessels is labelled off its lobe.
   const anchors = new Float32Array(model.groups.length * 3);
-  const cordOnly = model.groups.flatMap((group, g) => (group.records ? [] : [g]));
-  lobeOf.forEach((lobe, g) => {
-    if (model.groups[g].records) anchors.set(toCat(cortexPoint(lobe.dir, () => 0).map((value) => value * 1.5) as Vec), g * 3);
+  model.groups.forEach((_, g) => {
+    const points = cat.vessels.filter((vessel) => vessel.group === g && vessel.level > 0).flatMap((vessel) => vessel.points);
+    const own = points.length ? points : cat.vessels.filter((vessel) => vessel.group === g).flatMap((vessel) => vessel.points);
+    if (own.length) anchors.set([0, 1, 2].map((c) => own.reduce((sum, p) => sum + p[c], 0) / own.length), g * 3);
+    else anchors.set(toCat(cortexPoint(lobeOf[g].dir, () => 0).map((value) => value * 1.5) as Vec), g * 3);
   });
-  cordOnly.forEach((g, k) => {
-    const c = along(SPINE, 0.06 + (0.88 * (k + 0.5)) / cordOnly.length);
-    anchors.set([c[0], c[1] + 0.22, c[2] + 0.3], g * 3);
-  });
-  // Framed low, so the cat sits above the legend; the open View panel reframes it (scene inset).
-  return { anchors, regions: null, whiskers: Int32Array.from(whiskers), center: [-0.2, 3.1, 0] as Vec, radius: 4.4 };
+  // Framed a little low, so the cat stands above the legend; the open View panel reframes it (scene inset).
+  return { anchors, regions: null, whiskers: Int32Array.from(inked), center: [0, 2.9, 0] as Vec, radius: 5.4 };
 }
 
 // ── Spheres ────────────────────────────────────────────────────────────────
@@ -726,13 +937,14 @@ function placeAll(data: BrainData, model: BrainModel, layout: BrainLayout) {
   const { parents, times } = nodeIndex(data);
   const positions = new Float32Array(data.nodes.length * 3);
   const births = new Float32Array(data.nodes.length);
+  const scales = new Float32Array(data.nodes.length).fill(1);
   const placed =
-    layout === "anatomy" ? anatomy(data, model, parents, times, positions, births)
+    layout === "anatomy" ? anatomy(data, model, times, positions, births, scales)
     : layout === "spheres" ? spheres(data, model, positions, births)
     : wheel(data, model, times, positions, births);
-  const view = layout === "anatomy" ? { azimuth: 0.7, elevation: 0.12 } : layout === "spheres" ? { azimuth: 0, elevation: 0.62 } : { azimuth: 0, elevation: 0 };
+  const view = layout === "anatomy" ? { azimuth: 0.15, elevation: 0.08 } : layout === "spheres" ? { azimuth: 0, elevation: 0.62 } : { azimuth: 0, elevation: 0 };
   const turnAxis: "y" | "z" = layout === "wheel" ? "z" : "y";
-  return { positions, births, parents, groups: Float32Array.from(model.groupOf), ...placed, turnAxis, view, lineAlpha: layout === "anatomy" ? 0.022 : 0.08 };
+  return { positions, births, scales, parents, groups: Float32Array.from(model.groupOf), ...placed, turnAxis, view, lineAlpha: layout === "anatomy" ? 0.022 : 0.08 };
 }
 
 /**
@@ -753,13 +965,15 @@ export function layoutBrain(data: BrainData, model: BrainModel, layout: BrainLay
   const positions = full.positions.slice();
   const births = new Float32Array(data.nodes.length).fill(1);
   const groups = new Float32Array(data.nodes.length).fill(-2);
+  const scales = new Float32Array(data.nodes.length).fill(1);
   members.forEach((i, j) => {
     positions.set(sub.positions.subarray(j * 3, j * 3 + 3), i * 3);
     births[i] = sub.births[j];
     groups[i] = sub.groups[j];
+    scales[i] = sub.scales[j];
   });
   const parents = full.parents.map((parent, i) => (memberOf.has(i) && memberOf.has(parent) ? parent : -1));
-  return { ...sub, positions, births, groups, parents, whiskers: sub.whiskers.map((j) => members[j]) };
+  return { ...sub, positions, births, groups, scales, parents, whiskers: sub.whiskers.map((j) => members[j]) };
 }
 
 const MAX_LINES = 6000;
@@ -785,17 +999,19 @@ export function brainLines(placement: BrainPlacement, colors: Float32Array) {
   return { positions: lines, colors: tints };
 }
 
-/** A faint, non-interactive shell giving each layout its shape: the cat's body, sphere outlines, wheel rings. */
+/** A faint, non-interactive frame giving each layout its shape: the cat's vessels and brain, sphere outlines, wheel rings. */
 export function brainScaffold(layout: BrainLayout, model: BrainModel): Float32Array {
   const points: number[] = [];
   const r = stream(hash32(`scaffold:${layout}`));
   if (layout === "anatomy") {
-    // The cat's silhouette: the surface of its head, ears, body, legs, paws and tail.
-    for (let n = 0; n < 9000; n += 1) {
-      const p = surfacePoint(BODY_SHAPES, r);
-      const fuzz = 0.012;
-      points.push(p[0] + gauss(r) * fuzz, p[1] + gauss(r) * fuzz, p[2] + gauss(r) * fuzz);
-    }
+    // Every vessel of the cat, even ones with no nodes yet, plus the brain, ears, eyes and whiskers: no skin.
+    const sample = vesselSampler(catAnatomy(model).vessels);
+    for (let n = 0; n < 6500; n += 1) points.push(...sample(r(), r).p);
+    for (let n = 0; n < 1500; n += 1) points.push(...toCat(cortexPoint(randomUnit(r), r)));
+    for (let n = 0; n < 250; n += 1) points.push(...toCat(cerebellumPoint(r)));
+    for (let n = 0; n < 300; n += 1) points.push(...earPoint(r));
+    for (let n = 0; n < 120; n += 1) points.push(...whiskerPoint(r));
+    for (let n = 0; n < 40; n += 1) points.push(...eyePoint(r));
   } else if (layout === "spheres") {
     const { radii, centres, ring } = sphereFrames(model);
     centres.forEach((c, g) => {

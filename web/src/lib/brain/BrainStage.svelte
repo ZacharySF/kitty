@@ -316,7 +316,7 @@
       {
         positions: placement.positions,
         colors: colours!,
-        sizes: style.sizes,
+        sizes: style.sizes.map((size, i) => size * placement!.scales[i]),
         seeds: style.seeds,
         births: placement.births,
         groups: placement.groups,
@@ -386,7 +386,7 @@
   data-hover-group={hoverKey ?? undefined}
 >
   <p class="sr-only">
-    Every record and every edit in your workspace drawn as a point inside a cat: records form its brain, edits run down its spine into its tail, newest nearest the brain.
+    Every record and every edit in your workspace drawn as a point in a standing cat made only of its brain and veins: records form its brain, one lobe per {grouping.toLowerCase()}; each {grouping.toLowerCase()}'s edits are the veins of one region of its body, newest nearest the brain.
     Drag to rotate, scroll to zoom, click a group to open it on its own and press Escape to return. The legend below highlights one {grouping.toLowerCase()} at a time.
   </p>
   <div class="canvas" bind:this={host}></div>

@@ -437,7 +437,7 @@
     onpointerdowncapture={stagePointerDown}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      {#if look === "brain"}Every record and every edit in your workspace as a point of light inside a cat. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.{/if}
+      {#if look === "brain"}Every record and every edit in your workspace as a point of light in a cat drawn as its brain and veins. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.{/if}
     </p>
     <!-- Hidden under the Brain, whose stage is transparent. -->
     <div class="canvas" class:behind={look === "brain"} bind:this={container}></div>
@@ -616,6 +616,17 @@
     border: 1px solid var(--hairline);
     border-radius: inherit;
     pointer-events: none;
+  }
+  /* The Brain on its Transparent background: neither the stage's canvas colour nor the atlas's
+     glass sheet (fill, blur, inner shadow) paints behind it, so the theme's backdrop shows through. */
+  .atlas:has(> .stage > :global([data-brain-stage][data-background="transparent"])) {
+    background: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .stage:has(> :global([data-brain-stage][data-background="transparent"])) {
+    background: none;
   }
   .rail {
     min-width: 0;
