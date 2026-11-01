@@ -1696,8 +1696,9 @@
     padding: 0.55rem 0.8rem;
     cursor: pointer;
   }
-  /* The app's pressed-toggle look (styles.css): solid accent with its contrasting text. */
-  :global(:root body) nav :global(button.br-btn[aria-current="page"]) {
+  /* The app's pressed-toggle look (styles.css): solid accent with its contrasting text.
+     The doubled class outranks a theme's own control fill (liquidGlass.css). */
+  :global(:root body) nav :global(button.br-btn.br-btn[aria-current="page"]) {
     background: var(--accent);
     border-color: var(--accent);
     color: var(--on-accent);
