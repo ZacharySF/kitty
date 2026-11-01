@@ -123,7 +123,7 @@ after 30 seconds and is issued only by the header-protected `POST
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
 **Dock.** With the module on, the bottom of the window holds the dock: herdr's
-client in a transparent terminal drawn in the theme colours, herdr's own
+client in a transparent terminal drawn in the Harness colours, herdr's own
 agent-activity strip (working / blocked / done / idle per herdr workspace, read
 from `GET /api/terminal/activity`, which never starts herdr), or nothing but a thin
 handle that brings it back. Drag the divider (or focus it and use the arrow keys) to
