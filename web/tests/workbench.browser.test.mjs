@@ -371,3 +371,32 @@ describe("flashcard view switcher", () => {
     await context.close();
   });
 });
+
+describe("command palette", () => {
+  test("Spotlight palette: empty until you type, six results with a top hit, Enter opens it, Escape closes", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await page.locator(".wordmark").waitFor();
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    await palette.waitFor();
+    const field = palette.getByRole("combobox");
+    assert.equal(await field.evaluate((node) => node === document.activeElement), true, "search field is not focused");
+    assert.equal(await palette.getByRole("option").count(), 0, "results show before typing");
+    await field.fill("a");
+    await page.waitForFunction(() => document.querySelectorAll('dialog [role="option"]').length > 0);
+    assert.ok((await palette.getByRole("option").count()) <= 6, "more than six results");
+    await field.fill("calen");
+    const top = palette.locator('[role="option"][data-top="true"]');
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Calendar"));
+    assert.equal(await top.getAttribute("aria-selected"), "true");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash === "#calendar");
+    assert.equal(await palette.count(), 0, "palette stayed open after opening a result");
+    await page.keyboard.press("Control+k");
+    await palette.waitFor();
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector('dialog[aria-label="Search kitty!"]'));
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
