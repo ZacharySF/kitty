@@ -602,6 +602,19 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
 - The legacy adapters in `notes.py`, `note_blocks.py`, `documents.py` and `quick_notes.py` can then be removed screen by screen.
 - New block types need no schema change: a type is a name plus properties.
 
+## Build step 2: what was built
+
+- **Editor** (`web/src/lib/BlockEditor.svelte`): one contenteditable per text-flow block (`text`, `heading_1`–`heading_3`, `to_do`, `bulleted_list`, `numbered_list`, `toggle`, `quote`, `callout`, `code`, `divider`, `page_link`). Block types may now carry digits. Pure logic lives in node-tested modules:
+  - `blockKeys.ts`: a port of `order.py`, so the editor makes the same order keys as the server;
+  - `blockDoc.ts`: the page document and the operation vocabulary, applied strictly to local edits and leniently to pushed changes (canvas elements are left to the canvas UI);
+  - `blockEdits.ts`: split, merge, nest/un-nest, move, drop, turn into (type only), delete to Trash, paste;
+  - `blockText.ts`: inline marks (bold, italic, code, link) kept in a `marks` property beside plain `text`, Markdown shortcuts, Markdown paste and copy;
+  - `blockKeymap.ts`: one keyboard model for typing and for block selection (Esc, Shift+arrows, Ctrl/Cmd+Shift+arrows, Tab);
+  - `blockSync.ts`: edits echo at once, go out one `txn` at a time with the page's `base` revision (typing as code-point splices), and re-sync on `reject`. Other windows' changes render under unconfirmed local edits. A Notes HTTP save runs `exclusive`ly so the two writers never race.
+- **Server additions:** `GET /api/blocks/page` (what the editor loads, with the `seq` it reflects); history sessions list every transaction as a `moment`; outline readers (citations, topics, mentions, search, `note_outline` via migration 035) treat every text-flow type as page text. The whole-outline `POST /api/notes/pages/:id/blocks` is gone; imports and portable copies still use `note_blocks.save_blocks`, which now keeps types and properties.
+- **Notes:** `NoteOutline.svelte` (editor plus citations, topics and unlinked mentions) replaces the textarea outline. Blocks drag onto a page in the sidebar or a page tab to move there. History (`BlockHistory.svelte`: sessions, a slider over every moment, read-only preview, Restore) and Trash (`BlockTrash.svelte`) open from the page's More menu.
+- **Not moved:** Documents keep their Markdown editor. A document is stored as exact-byte Markdown chunks (`convert.split_document`) for lossless export; moving it onto typed blocks needs a conversion of that format first. Quick notes keep their own editor.
+
 ## Verified facts
 
 - **Tern bridge merged** (#21 status view, Open in Tern, kitty!'s own daemon; #33 dock panes):

@@ -7,7 +7,10 @@
   import { api, type TaskRecord } from "./api";
   import AIReview from "./AIReview.svelte";
   import NoteReferences from "./NoteReferences.svelte";
-  import NoteBlocks, { type NoteBlock, type BlocksResult } from "./NoteBlocks.svelte";
+  import NoteOutline, { type BlocksResult } from "./NoteOutline.svelte";
+  import { BLOCK_DRAG_TYPE, pageQuery } from "./BlockEditor.svelte";
+  import BlockHistory from "./BlockHistory.svelte";
+  import BlockTrash from "./BlockTrash.svelte";
   import DocumentImport from "./DocumentImport.svelte";
   import SchemaMaps from "./SchemaMaps.svelte";
   import MindMapFeedback from "./MindMapFeedback.svelte";
@@ -15,7 +18,8 @@
   import { onBlockChange } from "./live";
   const pane = useWorkspaceContext();
   let noteMode = $state<"text" | "canvas" | "mindmap">("text");
-  let blocks = $state<NoteBlock[]>([]), blockReferences = $state<Record<string,string>>({}), citationCounts = $state<Record<string,number>>({});
+  let outlineText = $state(""), blockReferences = $state<Record<string,string>>({}), citationCounts = $state<Record<string,number>>({});
+  let historyOpen = $state(false), trashOpen = $state(false);
   let openTabs = $state<number[]>([]), focusBlock = $state(""), tabDrag = 0;
   let pageMenu = $state<{id:number;x:number;y:number}|null>(null);
   let originals = $state<{id:number;name:string}[]>([]);
@@ -34,17 +38,48 @@
     focusBlock="";await openPage(id);
     if(!pane.active||pageId!==id)return;
     setMode("text");
-    const ancestors=new Set<string>();let parent=blocks.find(block=>block.id===bid)?.parent_id;
-    while(parent&&!ancestors.has(parent)){ancestors.add(parent);const ancestor=parent;parent=blocks.find(block=>block.id===ancestor)?.parent_id;}
-    if(blocks.some(block=>ancestors.has(block.id)&&block.collapsed)){blocks=blocks.map(block=>ancestors.has(block.id)?{...block,collapsed:false}:block);scheduleContent();}
+    // The block editor reveals the block, opening any collapsed parents.
     focusBlock=bid;
   }
   async function refreshReferences() {
     if(!pane.active||!pageId||document.hidden)return;
     const id=pageId;
-    try { const result=await api<BlocksResult>(`/notes/pages/${id}/blocks`);if(id!==pageId)return;blockReferences=result.references;citationCounts=result.citation_counts;
-      if(!dirty&&!saving&&result.revision!==pageRevision){await openPage(id,true);}
+    try { const result=await api<BlocksResult>(`/notes/pages/${id}/blocks`);if(id!==pageId)return;blockReferences=result.references;citationCounts=result.citation_counts;outlineText=result.blocks.map(block=>block.text).join("\n");
+      if(!dirty&&!saving&&result.revision!==pageRevision)await refreshPage(id);
     } catch { /* Save errors are shown by the writing pipeline, not background refresh. */ }
+  }
+  // Another window changed this page: take its title and canvas without disturbing the block editor.
+  async function refreshPage(id:number) {
+    const page=await api<Page>(`/notes/pages/${id}`);
+    if(id!==pageId||dirty||saving||gesture)return;
+    title=page.title;doc=page.document;pageRevision=page.revision;
+    selected=selected.filter(element=>doc.elements.some(e=>e.id===element));
+  }
+  // The block editor's own transactions move the page revision this view saves against.
+  function editorRevision(from:number,to:number,own:boolean) {
+    if(own&&pageRevision===from)pageRevision=to;
+  }
+  async function openLinkedPage(pageBlock:string) {
+    try{const found=await api<{root:{type:string;properties:{number?:number}}}>(`/blocks/page?${pageQuery({page:pageBlock})}`);
+      if(found.root.type==="page"&&found.root.properties.number)await openPage(found.root.properties.number);}
+    catch(cause){error=(cause as Error).message;}
+  }
+  async function createSubpage(): Promise<{page:string;title:string}|null> {
+    if(!notebookId)return null;
+    const page=await api<Page>("/notes/pages",{notebook_id:notebookId,title:"Untitled page"});
+    const state=await api<{page_id:string;root:{text:string}}>(`/blocks/page?${pageQuery({type:"page",number:page.id})}`);
+    void loadIndex();
+    return {page:state.page_id,title:state.root.text};
+  }
+  function blockDrag(event:DragEvent):string[]|null {
+    const raw=event.dataTransfer?.getData(BLOCK_DRAG_TYPE);
+    if(!raw)return null;
+    try{const ids=(JSON.parse(raw) as {ids?:unknown}).ids;return Array.isArray(ids)?ids.filter((id):id is string=>typeof id==="string"):null;}catch{return null;}
+  }
+  async function moveBlocksToPage(target:number,ids:string[]) {
+    if(target===pageId||!noteOutline)return;
+    try{if(await noteOutline.moveToPage(ids,{type:"page",number:target}))operationStatus=`Moved ${ids.length===1?"a block":`${ids.length} blocks`} to “${pages.find(page=>page.id===target)?.title??"page"}”`;}
+    catch(cause){error=(cause as Error).message;}
   }
   async function deletePageById(id:number) {pageMenu=null;if(id!==pageId){if(!(await beforeSwitch()))return;await openPage(id,false,true);if(pageId!==id)return;}await deletePage();}
   let presentation = $state<"map" | "editor" | "saved">("map");
@@ -269,8 +304,8 @@
   } | null = null;
   let fullscreen = $state(false), sidebarOpen = $state(true);
   // Compact editor toolbar: views and infrequent page actions live in labelled overflow panels.
-  let viewsOpen = $state(false), moreOpen = $state(false), blockPreview = $state(false);
-  let noteBlocks = $state<ReturnType<typeof NoteBlocks>>();
+  let viewsOpen = $state(false), moreOpen = $state(false);
+  let noteOutline = $state<ReturnType<typeof NoteOutline>>();
   // Escape closes an open overflow panel and returns focus to its summary.
   function closeOnEscape(menu: HTMLDetailsElement) {
     const close = (event: KeyboardEvent) => {
@@ -311,7 +346,7 @@
     blocked = $state(false);
   export function hasUnsavedChanges(): boolean {
     return dirty || viewDirty || Boolean(saving) || Boolean(viewSaving) || blocked || Boolean(viewError) ||
-      gesture !== null || Boolean(savedMapEditor?.hasUnsavedChanges());
+      gesture !== null || Boolean(savedMapEditor?.hasUnsavedChanges()) || Boolean(noteOutline?.pending());
   }
   export function isCanvasFullscreen(): boolean {
     return Boolean(stage && document.fullscreenElement === stage);
@@ -412,7 +447,7 @@
     try {
       sessionStorage.setItem(
         recoveryKey(),
-        JSON.stringify({ revision: pageRevision, title, document: doc, blocks }),
+        JSON.stringify({ revision: pageRevision, title, document: doc }),
       );
     } catch {
       error =
@@ -457,22 +492,18 @@
     const id = pageId,
       generation = contentGeneration,
       document = clone(doc),
-      pageTitle = title,
-      outlineBlocks = $state.snapshot(blocks),
-      rev = pageRevision;
+      pageTitle = title;
     saveStatus = "Saving locally…";
     saving = (async () => {
       try {
-        const result = await api<BlocksResult>(`/notes/pages/${id}/blocks`, {
-          revision: rev,
-          title: pageTitle,
-          document,
-          blocks: outlineBlocks,
-        });
+        // Title and canvas save over HTTP; the block editor's own transactions wait meanwhile.
+        const write = async () => {
+          const saved = await api<Page>(`/notes/pages/${id}`, { revision: pageRevision, title: pageTitle, document });
+          if (pageId === id) pageRevision = saved.revision;
+          return saved.revision;
+        };
+        await (noteOutline ? noteOutline.exclusive(write) : write());
         if (pageId !== id) return;
-        pageRevision = result.revision;
-        blockReferences = result.references;
-        citationCounts = result.citation_counts;
         pages = pages.map(page => page.id === id ? {...page, title: pageTitle} : page);
         noteTitles = noteTitles.map(page => page.id === id ? {...page, title: pageTitle} : page);
         if (generation === contentGeneration) {
@@ -544,6 +575,7 @@
     finishActiveGesture();
     await saveContent();
     await saveView();
+    await noteOutline?.flush();
     if (dirty) { error ||= "Save or export these local edits before switching pages."; return; }
     loading = true;
     error = "";
@@ -551,7 +583,7 @@
       const page = await api<Page>(`/notes/pages/${id}`);
       const blockData = await api<BlocksResult>(`/notes/pages/${id}/blocks`);
       if(page.revision!==blockData.revision)throw new Error("Page changed while opening; open it again to load one consistent revision.");
-      blocks=blockData.blocks;blockReferences=blockData.references;citationCounts=blockData.citation_counts;
+      outlineText=blockData.blocks.map(block=>block.text).join("\n");blockReferences=blockData.references;citationCounts=blockData.citation_counts;
       if(!openTabs.includes(id)){openTabs=[...openTabs,id];persistTabs();}
       originals=[];
       void api<{originals:typeof originals}>(`/documents/originals?page_id=${id}`).then(result=>{if(pageId===id)originals=result.originals;}).catch(()=>{});
@@ -584,7 +616,6 @@
           {
             doc = pending.document;
             title = pending.title;
-            if(Array.isArray(pending.blocks))blocks=pending.blocks;
             dirty = true;
             contentGeneration++;
             if (pending.revision !== pageRevision) {
@@ -613,8 +644,10 @@
     finishActiveGesture();
     await saveContent();
     await saveView();
+    await noteOutline?.flush();
     if (dirty) error ||= "These edits could not save. Retry or export before switching pages.";
-    return pane.active && !dirty;
+    else if (noteOutline?.pending()) error ||= "Block edits are still being saved. Try again in a moment.";
+    return pane.active && !dirty && !noteOutline?.pending();
   }
   function finishFullscreenLayout() {
     resetNavigationContacts();
@@ -694,24 +727,25 @@
     if (
       !pane.active || !pageId ||
       !confirm(
-        "Permanently delete this page? Export it first if you want a copy.",
+        "Move this page to Trash? You can restore it from Trash for 30 days.",
       )
     )
       return;
     try {
       await saveContent();
       if (dirty) return;
-      await api(`/notes/pages/${pageId}/delete`, {
-        revision: pageRevision,
-        confirm: true,
-      });
+      const id = pageId;
+      const remove = async () => {
+        await api(`/notes/pages/${id}/delete`, { revision: pageRevision, confirm: true });
+        return null;
+      };
+      await (noteOutline ? noteOutline.exclusive(remove) : remove());
       try {
         sessionStorage.removeItem(recoveryKey());
       } catch {
         /* best effort */
       }
       openTabs=openTabs.filter(id=>id!==pageId);persistTabs();
-      blocks=[];
       pageId = 0;
       doc = emptyDocument();
       title="";
@@ -1474,6 +1508,8 @@
           });
           attachments.push({ id, name: "Reference.png", data });
         }
+        await noteOutline?.flush();
+        const blocks = (await api<BlocksResult>(`/notes/pages/${pageId}/blocks`)).blocks;
         downloadBlob(
           new Blob(
             [
@@ -1747,7 +1783,7 @@
     {#each openTabs as id (id)}
       <div class:active={id===pageId && presentation==="editor"} class="note-tab">
         <button aria-current={id===pageId && presentation==="editor"?"page":undefined} draggable={!fullscreen}
-          ondragstart={()=>tabDrag=id} ondragover={event=>event.preventDefault()} ondrop={event=>{event.preventDefault();reorderTab(id);}}
+          ondragstart={()=>tabDrag=id} ondragover={event=>event.preventDefault()} ondrop={event=>{event.preventDefault();const ids=blockDrag(event);if(ids)void moveBlocksToPage(id,ids);else reorderTab(id);}}
           oncontextmenu={event=>{event.preventDefault();if(!fullscreen)pageMenu={id,x:event.clientX,y:event.clientY};}}
           onclick={()=>void openPage(id)}>{id===pageId?title:pages.find(page=>page.id===id)?.title||`Page ${id}`}</button>
         <button aria-label={`Close ${pages.find(page=>page.id===id)?.title||"page"} tab`} onclick={()=>void closeTab(id)}>×</button>
@@ -1793,6 +1829,7 @@
       <NotesLibrary {folders} {notebooks} {pages} {notebookId} {pageId} {search} {folderFocus}
         busy={loading || busy} onrefresh={loadIndex} onopenpage={openPage} onselectnotebook={notebookSchema}
         onnewpage={createPage} onbeforeswitch={beforeSwitch} onerror={message => error = message} ondeletepage={deletePageById}
+        onblocksdrop={(page, event) => { const ids = blockDrag(event); if (ids) void moveBlocksToPage(page, ids); return !!ids; }}
         onsearch={value => { search = value; clearTimeout(searchTimer); searchTimer = setTimeout(() => void loadIndex(), 250); }} />
       <details>
         <summary>Local privacy & retention</summary>
@@ -1829,7 +1866,7 @@
           <Button size="sm" type="submit" disabled={!linkTitle.trim()}>Open / create</Button>
         </form>
         <Button size="sm" variant="ghost" aria-pressed={relatedOpen} onclick={()=>relatedOpen=!relatedOpen}>Connections</Button>
-        {#if relatedOpen && noteMode!=="text"}<NoteReferences pageId={pageId} text={`${title}\n${textElements.map(e=>e.text||"").join("\n")}\n${blocks.map(b=>b.text).join("\n")}`} onopen={id=>void openPage(id)} onlink={linkMention}/>{/if}
+        {#if relatedOpen && noteMode!=="text"}<NoteReferences pageId={pageId} text={`${title}\n${textElements.map(e=>e.text||"").join("\n")}\n${outlineText}`} onopen={id=>void openPage(id)} onlink={linkMention}/>{/if}
       {/if}
     </aside>
     <div class="canvas-main">
@@ -1873,11 +1910,7 @@
         <input type="search" aria-label="Find in page" placeholder="Find in page…" bind:value={pageFind} oninput={()=>{if(pageFind)outline=true;}}/>
         <details class="overflow page-actions" bind:open={moreOpen} use:closeOnEscape><summary>More <span aria-hidden="true">▾</span></summary><div class="overflow-menu" role="group" aria-label="More page actions and help">
         {#if noteMode==="text"}
-          <div class="menu-row">
-            <button class="button" aria-pressed={blockPreview} onclick={()=>blockPreview=!blockPreview}>{blockPreview?"Edit outline":"Preview outline"}</button>
-            <button class="button" disabled={!pageId} onclick={()=>{moreOpen=false;noteBlocks?.add();}}>＋ Block</button>
-          </div>
-          <p class="muted help">Outline · Enter new bullet · Tab nest · Shift+Tab unnest</p>
+          <p class="muted help">Blocks · / commands · # - [] &gt; Markdown shortcuts · Esc selects blocks · Tab nests · Ctrl+Shift+↑↓ moves · drag ⋮⋮ to reorder or onto a page</p>
         {:else}
           <p class="muted help">{tools.map(item=>`${item.key} ${item.label}`).join(" · ")} · Space+drag pan · Ctrl+Z undo · Esc clear selection</p>
         {/if}
@@ -1886,6 +1919,8 @@
           {#each ["blank","lined","grid","dotted","cornell"] as pattern}<option value={pattern}>{pattern}</option>{/each}
         </select></label>
         <Button size="sm" onclick={favoritePage}>☆ Favorite</Button>
+        <Button size="sm" disabled={!pageId} onclick={()=>{moreOpen=false;historyOpen=true;}}>History</Button>
+        <Button size="sm" onclick={()=>{moreOpen=false;trashOpen=true;}}>Trash</Button>
         <button
           class="button"
           disabled={!pageId || loading}
@@ -1910,9 +1945,13 @@
         </div></details>
       </div>
       <div hidden={noteMode!=="text"}>
-        {#if pageId}{#key pageId}<NoteBlocks bind:this={noteBlocks} bind:preview={blockPreview} {pageId} {blocks} references={blockReferences} counts={citationCounts} pages={noteTitles} {focusBlock} onchange={value=>{blocks=value;scheduleContent();}} onpage={value=>void resolveLink(value)} onopen={openBlock}/>{/key}{/if}
+        {#if pageId}{#key pageId}<NoteOutline bind:this={noteOutline} {pageId} references={blockReferences} counts={citationCounts} pages={noteTitles} {focusBlock}
+          onpage={value=>void resolveLink(value)} onopen={openBlock} onopenpage={pageBlock=>void openLinkedPage(pageBlock)} oncreatepage={createSubpage}
+          onrevision={editorRevision} onerror={message=>error=message}/>{/key}{/if}
         <details class="note-import"><summary>Import PDF / Markdown</summary><DocumentImport {notebookId} onimport={id=>{void loadIndex().then(()=>openBlock(id));}}/>{#each originals as original}<a href={`/api/documents/originals/${original.id}`} download>{original.name}</a>{/each}</details>
       </div>
+      {#if historyOpen && pageId}<BlockHistory page={{type:"page",number:pageId}} title={title} onclose={()=>historyOpen=false}/>{/if}
+      {#if trashOpen}<BlockTrash onclose={()=>trashOpen=false} onopen={id=>{trashOpen=false;void loadIndex().then(()=>openPage(id));}}/>{/if}
       <div class="canvas-panel" hidden={noteMode==="text"}>
       <div class="tools" role="toolbar" aria-label="Drawing tools">
         {#each tools.filter(item=>(noteMode==="mindmap"?["select","sticky","connector","pen","eraser"]:["select","pen","highlighter","eraser","text","sticky"]).includes(item.id)) as item}<Button variant="ghost" size="sm"
@@ -2405,7 +2444,6 @@
     -webkit-backdrop-filter: blur(20px) saturate(140%);
   }
   .page-actions .overflow-menu { width: 280px; }
-  .overflow-menu .menu-row { display: flex; gap: 6px; flex-wrap: wrap; }
   .overflow-menu .help { margin: 0; }
   .tools,
   .canvas-controls,

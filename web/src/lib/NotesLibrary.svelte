@@ -8,19 +8,23 @@
   import { untrack } from "svelte";
   import { Button } from "@nunera/bracket";
   import { api } from "./api";
-  let { folders, notebooks, pages, notebookId, pageId, search, folderFocus = null, busy = false, onsearch, onrefresh, onopenpage, onselectnotebook, onnewpage, onbeforeswitch, onerror, ondeletepage }: {
+  import { BLOCK_DRAG_TYPE } from "./BlockEditor.svelte";
+  let { folders, notebooks, pages, notebookId, pageId, search, folderFocus = null, busy = false, onsearch, onrefresh, onopenpage, onselectnotebook, onnewpage, onbeforeswitch, onerror, ondeletepage, onblocksdrop }: {
     folders: Folder[]; notebooks: Notebook[]; pages: PageSummary[];
     notebookId: number; pageId: number; search: string; folderFocus?: number | null; busy?: boolean;
     onsearch: (value: string) => void; onrefresh: () => Promise<void>;
     onopenpage: (id: number) => Promise<void>; onselectnotebook: (id: number) => Promise<void>;
     onnewpage: () => Promise<void>; onbeforeswitch: () => Promise<boolean>; onerror: (error: string) => void;
     ondeletepage: (id:number)=>Promise<void>;
+    /** Blocks dragged from the editor onto a page: true when the drop carried blocks. */
+    onblocksdrop?: (page: number, event: DragEvent) => boolean;
   } = $props();
   let editor = $state<"folder" | "notebook" | null>(null);
   let editId = $state(0), editRevision = $state(0), name = $state(""), parentId = $state(""), subject = $state(""), project = $state("");
   let saving = $state(false), selectedFolder = $state<number | null>(null);
   let collapsed = $state<Set<number>>(new Set());
   let dragged: {kind:"pages"|"notebooks"|"folders";id:number}|null = null;
+  let blockTarget = $state(0);
   let tags=$state<{page_id:number;title:string;text:string;tags:string[]}[]>([]);
   let pageMenu=$state<{id:number;x:number;y:number}|null>(null);
   async function drop(event:DragEvent,kind:"pages"|"notebooks"|"folders",id:number) {
@@ -150,7 +154,10 @@
       {#if notebookId === notebook.id || search}
         <div class="tree-children pages">
           {#each pages.filter(p => p.notebook_id === notebook.id) as page (page.id)}
-            <button class="tree-item page-item" draggable="true" ondragstart={()=>dragged={kind:"pages",id:page.id}} ondragover={event=>event.preventDefault()} ondrop={event=>void drop(event,"pages",page.id)} oncontextmenu={event=>{event.preventDefault();pageMenu={id:page.id,x:event.clientX,y:event.clientY};}} class:current={pageId === page.id} aria-current={pageId === page.id ? "page" : undefined} onclick={() => void onopenpage(page.id)} disabled={busy || saving}>
+            <button class="tree-item page-item" class:block-target={blockTarget === page.id} draggable="true" ondragstart={()=>dragged={kind:"pages",id:page.id}}
+              ondragover={event=>{event.preventDefault();if(event.dataTransfer?.types.includes(BLOCK_DRAG_TYPE))blockTarget=page.id;}} ondragleave={()=>{if(blockTarget===page.id)blockTarget=0;}}
+              ondrop={event=>{blockTarget=0;if(onblocksdrop?.(page.id,event)){event.preventDefault();dragged=null;return;}void drop(event,"pages",page.id);}}
+              oncontextmenu={event=>{event.preventDefault();pageMenu={id:page.id,x:event.clientX,y:event.clientY};}} class:current={pageId === page.id} aria-current={pageId === page.id ? "page" : undefined} onclick={() => void onopenpage(page.id)} disabled={busy || saving}>
               {@render glyph("page")}<span class="item-title">{page.title}</span>
             </button>
           {:else}<span class="empty-branch">{search ? "No matching pages" : "No pages yet"}</span>{/each}
@@ -213,6 +220,7 @@
   .row-menu {padding:3px 6px;flex-shrink:0;border-radius:4px;color:var(--muted);font-size:18px;line-height:1;}
   .tree-children {margin-left:13px;padding-left:7px;border-left:1px solid var(--border);}
   .page-item {padding-left:7px;}
+  .page-item.block-target {outline:2px solid var(--accent);outline-offset:-2px;}
   .add-page {color:var(--muted);font-size:12px;}
   .empty-branch {display:block;padding:6px;color:var(--muted);font-size:11px;}
   .library-empty {padding:12px 4px;color:var(--muted);font-size:12px;line-height:1.6;}
