@@ -21,18 +21,23 @@
   let mode = $state<DockMode>(saved.mode);
   let height = $state<number | null>(saved.height);
   /** The view the handle brings back after hiding. */
-  let shown = saved.shown;
+  let shown = $state(saved.shown);
+  let float = $state(saved.float);
   let handle = $state<HTMLButtonElement>();
   let viewport = $state(window.innerHeight);
   const size = $derived(height === null ? null : clampDockHeight(height, viewport));
 
   function remember() {
-    writeDock(localStorage, { mode, height: size, shown });
+    writeDock(localStorage, { mode, height: size, shown, float });
   }
   function choose(next: DockMode) {
     if (next !== "hidden") shown = next;
     mode = next;
     if (next !== "hidden" && height === null) height = firstDockHeight(viewport, measure());
+    remember();
+  }
+  function setFloat(next: boolean) {
+    float = next;
     remember();
   }
   function resizeTo(next: number) {
@@ -65,8 +70,8 @@
   }
 
   $effect(() => {
-    // Hidden: only the handle takes room. Shown: the dock's height.
-    const space = mode === "hidden" ? (handle?.offsetHeight ?? 0) : (size ?? 0);
+    // Floating: nothing is reserved. Hidden: only the handle. Shown: the dock's height.
+    const space = float ? 0 : mode === "hidden" ? (handle?.offsetHeight ?? 0) : (size ?? 0);
     document.documentElement.style.setProperty("--dock-space", `${space}px`);
   });
   onMount(() => {
@@ -87,10 +92,14 @@
   });
 </script>
 
-{#if mode === "hidden"}
+{#if mode === "hidden" && float}
+  <button class="dock-pill" aria-label="Show dock" title="Show dock" onclick={() => choose(shown)}>
+    <span class="pill-dot" aria-hidden="true"></span>{shown === "terminal" ? "Terminal" : "Agents"}
+  </button>
+{:else if mode === "hidden"}
   <button bind:this={handle} class="dock-handle" aria-label="Show dock" title="Show dock" onclick={() => choose(shown)}><span aria-hidden="true"></span></button>
 {:else if size !== null}
-  <section class="dock" data-kitty-panel="dock" tabindex="-1" aria-label="Dock" style:height={`${size}px`}>
+  <section class="dock" class:floating={float} data-kitty-panel="dock" data-float={float} tabindex="-1" aria-label="Dock" style:height={`${size}px`}>
     <!-- A focusable separator with a value is the WAI-ARIA window splitter, an interactive widget. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
     <div
@@ -114,6 +123,7 @@
         <button aria-pressed={mode === "activity"} onclick={() => choose("activity")}>Agents</button>
       </div>
       {#if mode === "terminal"}<button class="dock-action" onclick={onherdr}>Open herdr view</button>{/if}
+      <button class="dock-action" aria-label={float ? "Dock to bottom" : "Float dock"} title={float ? "Dock to the bottom of the window" : "Float as a card in the corner"} onclick={() => setFloat(!float)}>{float ? "Dock" : "Float"}</button>
       <button class="dock-action" aria-label="Hide dock" title="Hide dock" onclick={() => choose("hidden")}>Hide</button>
     </header>
     <div class="dock-body">
@@ -150,6 +160,51 @@
     background: color-mix(in srgb, var(--solid-void, #141414) 78%, transparent);
     backdrop-filter: blur(20px) saturate(140%);
     -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+  /* Floating: a glass card inset in the bottom-right corner, no longer full width. */
+  .dock.floating {
+    left: auto;
+    right: 16px;
+    bottom: 16px;
+    width: min(560px, calc(100vw - 32px));
+    max-height: calc(100vh - 120px);
+    padding-top: 8px;
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
+    box-shadow: var(--overlay-shadow);
+  }
+  .dock.floating .dock-divider {
+    display: none;
+  }
+  .dock-pill {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 30;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--solid-void, #141414) 78%, transparent);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    box-shadow: var(--overlay-shadow);
+    color: var(--ink);
+    font: 500 12.5px var(--font-ui);
+    cursor: pointer;
+  }
+  .dock-pill:hover,
+  .dock-pill:focus-visible {
+    border-color: var(--br-lineHot);
+  }
+  .pill-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--c1);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c1) 70%, transparent);
   }
   .dock-divider {
     flex: none;

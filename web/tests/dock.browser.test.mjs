@@ -48,7 +48,7 @@ test("opens on herdr's terminal, sized to the empty area below the main panel", 
   await dock(page).waitFor();
   assert.equal(await height(dock(page)), 300);
   assert.equal(await dockSpace(page), "300px");
-  assert.deepEqual(await saved(page), { mode: "terminal", height: 300, shown: "terminal" });
+  assert.deepEqual(await saved(page), { mode: "terminal", height: 300, shown: "terminal", float: false });
   const terminal = dock(page).locator("[data-kitty-terminal]");
   await terminal.waitFor();
   await page.waitForFunction(() => window.dockHarness.sockets.length === 1);
@@ -188,6 +188,31 @@ test("Agent launch chooses a coding agent, remembers it, and exposes named-sessi
   assert.match(await instructions.innerText(), /--session 'kitty-sample'/);
   assert.match(await instructions.innerText(), /tab create.*--label/);
   assert.match(await instructions.innerText(), /\/sample\/workspace/);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("Float detaches the dock into a bottom-right card that frees the page; Hide leaves a pill; Dock puts it back", async () => {
+  const { page, problems, context } = await harness();
+  await dock(page).waitFor();
+  await page.getByRole("button", { name: "Float dock" }).click();
+  const card = dock(page);
+  await page.waitForFunction(() => document.querySelector('[data-kitty-panel="dock"]')?.dataset.float === "true");
+  assert.equal(await dockSpace(page), "0px", "a floating dock still reserves page space");
+  const box = await card.boundingBox();
+  assert.ok(box.x > 400 && box.x + box.width <= 1000 - 8 && box.y + box.height <= 800 - 8, `card at ${JSON.stringify(box)} is not inset bottom-right`);
+  assert.ok(box.width < 1000 - 100, "floating card spans the window");
+  assert.equal((await saved(page)).float, true);
+  await page.getByRole("button", { name: "Hide dock" }).click();
+  const pill = page.getByRole("button", { name: "Show dock" });
+  await pill.waitFor();
+  const pillBox = await pill.boundingBox();
+  assert.ok(pillBox.width < 220 && pillBox.x > 700, `pill at ${JSON.stringify(pillBox)} is not a small bottom-right pill`);
+  await pill.click();
+  await page.getByRole("button", { name: "Dock to bottom" }).click();
+  await page.waitForFunction(() => document.querySelector('[data-kitty-panel="dock"]')?.dataset.float === "false");
+  assert.notEqual(await dockSpace(page), "0px");
+  assert.equal((await saved(page)).float, false);
   assert.deepEqual(problems, []);
   await context.close();
 });
