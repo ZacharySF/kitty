@@ -266,7 +266,7 @@ def test_doctor_is_module_aware(tmp_path):
     assert doctor_core.failures(checks) == []
     names = {check.name for check in checks}
     assert "config/modules.yaml" in names and "database" in names
-    assert not any(name.startswith(("config/profile", "config/tracks", "resume", "source/", "env/")) for name in names)
+    assert not any(name.startswith(("config/profile", "config/tracks", "resume", "source/", "key/")) for name in names)
 
     write(root / "config", "enabled: [bogus]\n")
     broken = doctor_core.failures(doctor_core.run_all(settings))

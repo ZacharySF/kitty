@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -15,6 +16,20 @@ from kitty.db import connect, migrate
 from kitty.settings import Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Tests never touch the owner's OS keyring: off for this process and every child it starts.
+os.environ["KITTY_KEYRING"] = "none"
+
+
+@pytest.fixture(autouse=True)
+def _no_real_keyring(monkeypatch):
+    """Even a test that clears KITTY_KEYRING cannot reach the real Secret Service."""
+    from kitty.core import keys
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("tests must inject a fake keyring")
+
+    monkeypatch.setattr(keys, "SecretServiceKeyring", refuse)
 
 
 @pytest.fixture

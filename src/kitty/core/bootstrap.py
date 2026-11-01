@@ -94,8 +94,7 @@ def configure_modules(config_dir: Path, enabled: Sequence[str]) -> tuple[str, ..
     """Provision missing public defaults, then persist a restart-only selection."""
     selection = normalize_modules(enabled)
     config_dir.mkdir(parents=True, exist_ok=True)
-    settings = Settings(root=config_dir.parent, db_path=config_dir.parent / "data" / "apply.db",
-                        demo=False, anthropic_key_set=False)
+    settings = Settings(root=config_dir.parent, db_path=config_dir.parent / "data" / "apply.db", demo=False)
     copy_examples(settings, selection)
     return save_modules(config_dir, selection)
 

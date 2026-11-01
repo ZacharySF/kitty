@@ -26,9 +26,9 @@ def test_doctor_fails_when_the_database_is_missing(tmp_path, workspace):
 
 def test_doctor_never_prints_a_key_value(workspace, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret-value")
-    checks = doctor_core.check_env(Settings.load(root=workspace.settings.root))
-    line = next(check for check in checks if check.name == "env/ANTHROPIC_API_KEY")
-    assert line.detail == "present"
+    checks = doctor_core.check_keys(Settings.load(root=workspace.settings.root))
+    line = next(check for check in checks if check.name == "key/ANTHROPIC")
+    assert line.detail == "set (env)"
     assert "secret" not in str(checks)
 
 

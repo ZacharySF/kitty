@@ -8,7 +8,6 @@ when the actual charge is lower. Unknown charges remain reserved in run stats.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from collections.abc import Callable
 from contextlib import ExitStack
@@ -18,6 +17,7 @@ import httpx
 
 from kitty.config import Config
 from kitty.core import jobs as jobs_core
+from kitty.core import keys
 from kitty.core import sources as sources_core
 from kitty.core.triage.cost import Estimate, Usage
 from kitty.core.triage.prompt import AnswerError
@@ -44,20 +44,12 @@ def _key(settings: Settings) -> str:
     """Read only the inference key; never include it or remote bodies in errors."""
     if settings.demo:
         raise TriageError("OpenRouter paid triage is unavailable in demo mode")
-    path = settings.root / ".private" / "openrouter-key"
-    if path.parent.is_symlink() or path.is_symlink():
-        raise TriageError("Private OpenRouter key storage must not be a symbolic link")
     try:
-        if path.is_file():
-            if path.stat().st_mode & 0o077:
-                raise TriageError("Private OpenRouter key permissions must be owner-only")
-            key = path.read_text(encoding="utf-8").strip()
-        else:
-            key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    except (OSError, UnicodeError):
-        raise TriageError("Cannot read the private OpenRouter key") from None
-    if not key or any(char.isspace() or ord(char) < 32 or ord(char) > 126 for char in key):
-        raise TriageError("Set OPENROUTER_API_KEY or an owner-only .private/openrouter-key")
+        key = keys.read(settings, "OPENROUTER")
+    except keys.KeysError as exc:
+        raise TriageError(str(exc)) from None
+    if not key:
+        raise TriageError("Set the OpenRouter key: kitty keys set OPENROUTER")
     return key
 
 

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from kitty import web_ai
+from kitty.core import keys
 from kitty.web_server import APIError
 from kitty.web_tasks import TaskRunner
 
@@ -46,15 +47,16 @@ def preview(ai, workspace, purpose='summarize'):
 def test_key_is_private_and_settings_staleness_cannot_replace_it(ai, workspace):
     status = web_ai.get(ai, workspace.conn, '/api/ai/status', {})
     assert 'synthetic-openrouter-test-key' not in str(status)
-    assert web_ai._key_path(ai).stat().st_mode & 0o077 == 0
+    path = keys.for_settings(ai.settings).file_path('OPENROUTER')
+    assert path.stat().st_mode & 0o077 == 0
     web_ai.post(ai, workspace.conn, '/api/ai/settings', {'revision': status['revision'], 'daily_budget_usd': 2, 'confirmed': True})
     with pytest.raises(APIError) as error:
         web_ai.post(ai, workspace.conn, '/api/ai/settings', {'revision': status['revision'], 'key': 'stale-replacement-test-key', 'confirmed': True})
     assert error.value.status == 409
     assert web_ai._key(ai) == 'synthetic-openrouter-test-key'
     workspace.settings.root.joinpath('.private', 'outside').write_text('outside-content')
-    web_ai._key_path(ai).unlink()
-    web_ai._key_path(ai).symlink_to('outside')
+    path.unlink()
+    path.symlink_to('outside')
     with pytest.raises(APIError):
         web_ai.post(ai, workspace.conn, '/api/ai/settings', {'revision': status['revision'] + 1, 'key': 'new-synthetic-test-key', 'confirmed': True})
     assert workspace.settings.root.joinpath('.private', 'outside').read_text() == 'outside-content'

@@ -139,7 +139,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
-    (None, "web_desktop"), (None, "web_clients"),
+    (None, "web_desktop"), (None, "web_clients"), (None, "web_keys"),
     (None, "web_account"),
     ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
@@ -724,8 +724,7 @@ def main() -> None:
                     example_dir = Path(__file__).resolve().parents[2] / "config"
                 for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
                     shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
-                settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db",
-                                    demo=True, anthropic_key_set=False)
+                settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
                 _serve(settings, static_dir, args.port)
         else:
             _serve(Settings.load(root=root), static_dir, args.port)

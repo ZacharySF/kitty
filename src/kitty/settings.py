@@ -59,7 +59,6 @@ class Settings:
     root: Path
     db_path: Path
     demo: bool
-    anthropic_key_set: bool
     #: Browser the form filler starts (None when not installed).
     firefox_path: str | None = None
     #: Local remote-control port of that browser; the window stays open between runs.
@@ -128,7 +127,6 @@ class Settings:
             root=project_root,
             db_path=resolved_db,
             demo=demo,
-            anthropic_key_set=bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
             firefox_path=find_firefox(),
             browser_port=int(os.environ.get("KITTY_BROWSER_PORT") or DEFAULT_BROWSER_PORT),
             herdr_path=os.environ.get("KITTY_HERDR", "").strip() or None,

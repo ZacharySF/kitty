@@ -19,10 +19,7 @@ def prepare_workspace(root: Path, examples: Path, package: str) -> None:
     config.mkdir(exist_ok=True, mode=0o700)
     settings_module = importlib.import_module(f"{package}.settings")
     bootstrap = importlib.import_module(f"{package}.core.bootstrap")
-    settings = settings_module.Settings(
-        root=root, db_path=root / "data" / "apply.db", demo=False,
-        anthropic_key_set=False,
-    )
+    settings = settings_module.Settings(root=root, db_path=root / "data" / "apply.db", demo=False)
     enabled = bootstrap.initialize_modules(settings)
     for example in examples.glob("*.yaml.example"):
         if example.name == "modules.yaml.example" or "applyai" not in enabled:

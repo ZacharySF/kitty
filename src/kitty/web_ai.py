@@ -3,17 +3,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import secrets
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
-from tempfile import NamedTemporaryFile
 
 import httpx
 
+from kitty.core import keys as keystore
 from kitty.db import connect
 from kitty.db.connection import transaction
 
@@ -69,38 +67,31 @@ def _number(value, name, minimum, maximum):
     return number
 
 
-def _key_path(app):
-    return app.settings.root / '.private' / 'openrouter-key'
+def _keystore(app):
+    return keystore.for_settings(app.settings)
 
 
 def _key(app):
-    path = _key_path(app)
-    if path.parent.is_symlink() or path.is_symlink():
-        raise _error(409, 'Private AI key storage must not be a symbolic link')
-    if path.is_file():
-        if path.stat().st_mode & 0o077:
-            raise _error(409, 'Private AI key permissions must be owner-only')
-        return path.read_text().strip()
-    return os.environ.get('OPENROUTER_API_KEY', '').strip() if not app.settings.demo else ''
+    try:
+        return _keystore(app).read('OPENROUTER')
+    except keystore.KeysError as exc:
+        raise _error(exc.status, str(exc)) from None
 
 
 def _write_key(app, value):
     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{10,512}', value):
         raise _error(400, 'Enter a valid OpenRouter API key')
-    path = _key_path(app)
-    if path.parent.is_symlink() or path.is_symlink():
-        raise _error(409, 'Private AI key storage must not be a symbolic link')
-    path.parent.mkdir(mode=0o700, exist_ok=True)
-    with NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        try:
-            os.chmod(temporary, 0o600)
-            handle.write(value)
-            handle.flush()
-            os.fsync(handle.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+    try:
+        _keystore(app).set('OPENROUTER', value)
+    except keystore.KeysError as exc:
+        raise _error(exc.status, str(exc)) from None
+
+
+def _remove_key(app):
+    try:
+        _keystore(app).remove('OPENROUTER')
+    except keystore.KeysError as exc:
+        raise _error(exc.status, str(exc)) from None
 
 
 def _settings(conn):
@@ -389,8 +380,7 @@ def post(app, conn, path, body):
         if body.get('key'):
             _write_key(app, body['key'])
         elif body.get('remove_key') is True:
-            _key(app)  # Reject symbolic-link private storage first.
-            _key_path(app).unlink(missing_ok=True)
+            _remove_key(app)
         with transaction(conn):
             conn.execute('UPDATE ai_settings SET model=?,routing=?,max_output_tokens=?,daily_budget_usd=?,revision=revision+1 WHERE id=1', (model, routing, maximum, str(cap)))
         return _status(app, conn)
