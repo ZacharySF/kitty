@@ -414,10 +414,25 @@ Notebook schemas derive wiki and shared-concept edges without changing your
 documents. Related matches are suggestions, not claims that two concepts are
 identical; no AI, external indexing or network calls are involved.
 
-**Flashcards** opens a deck → note schema. **Add card** is available immediately,
-including from All decks. Review grades with a keyboard strip: keycaps 1–4
-(Again, Hard, Good, Easy, each with its next interval) and Space (flip, then Good)
-sink as you press them.
+**Flashcards** opens Decks: a tile per deck whose ring splits today's load into
+review, learning and new around today's count; hovering a tile shows the split,
+measured recall and Review. A Tiles / Graph toggle (remembered) swaps the tiles for
+the deck → note graph. **Add card** is available immediately,
+including from All decks. Review deals the queue as a stacked deck: tap the top card
+(or press Space) to flip it, then swipe it or press a key to send it off in the
+grade's direction (← Again, ↓ Hard, → Good, ↑ Easy). Below the pile a keyboard strip
+shows keycaps 1–4 with each next interval and Space (flip, then Good); they sink as
+you press them.
+**Stats** shows memory statistics for the selected scope: today's queue (learning,
+review and new, with suspended, leech and buried cards and a time estimate), a
+30-day due forecast with overdue cards in today, FSRS forgetting curves for weak,
+medium and strong cards against your target retention with measured recall, a
+maturity donut (new, learning, young under 21 days, mature) and a 26-week daily
+review heatmap with your streak.
+**Cards** is a split browser: a filterable card list (search plus one-click due, new,
+learning, review, leech and suspended filters) beside the selected card's flippable
+preview, its FSRS stability, difficulty and recall now, its last reviews, and
+Suspend, Bury, Edit, Archive and Delete.
 FSRS scheduling, cloze/reversed cards, media and portable imports are supported.
 This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimizer,
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.

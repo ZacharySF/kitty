@@ -586,3 +586,95 @@ def test_flashcard_schema_and_exact_editor_handle_zero_cards_and_deleted_items(c
     with pytest.raises(APIError, match="no longer exists") as error:
         web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {"focus": f"deck:{deck}"})
     assert error.value.status == 404
+
+
+def test_overview_splits_each_deck_load_and_measures_recall(cards):
+    conn, clock, _ = cards
+    deck = f.save_deck(conn, {"name": "Load", "settings": {}})
+    child = f.save_deck(conn, {"name": "Load::Child", "settings": {}})
+    for _ in range(3):
+        add(cards, deck=child["id"])
+    review_once(conn, 1, deck_id=deck["id"])  # new → learning
+    review_once(conn, 4, deck_id=deck["id"])  # new → review
+    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+    assert (decks["Load"]["new"], decks["Load"]["learning"], decks["Load"]["review"]) == (1, 0, 0)
+    assert decks["Load"]["recall"] is None
+    clock[0] += timedelta(days=30)
+    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+    for name in ("Load", "Load::Child"):
+        assert (decks[name]["due"], decks[name]["new"], decks[name]["learning"], decks[name]["review"]) == (2, 1, 1, 1)
+    review_once(conn, 3, deck_id=deck["id"])  # a learning step, not a due review
+    review_once(conn, 1, deck_id=deck["id"])  # the review card lapses
+    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+    assert decks["Load"]["recall"] == decks["Load::Child"]["recall"] == 0.0
+    assert decks["Default"]["recall"] is None and decks["Default"]["learning"] == 0
+    clock[0] += timedelta(days=91)
+    assert {d["name"]: d for d in f.overview(conn)["decks"]}["Load"]["recall"] is None
+
+
+def test_stats_forecast_retention_maturity_heatmap_and_queue_for_a_scope(cards):
+    conn, clock, _ = cards
+    deck = f.save_deck(conn, {"name": "Stats", "settings": {"retention": 0.85}})
+    child = f.save_deck(conn, {"name": "Stats::Child", "settings": {}})
+    other = f.save_deck(conn, {"name": "Other", "settings": {}})
+    notes = [add(cards, deck=child["id"]) for _ in range(4)]
+    add(cards, deck=other["id"])
+    review_once(conn, 4, deck_id=deck["id"])  # new → review, due in days
+    review_once(conn, 1, deck_id=deck["id"])  # new → learning, due in a minute
+    scoped = f.stats(conn, deck["id"], "UTC")
+    assert len(scoped["forecast"]) == 30 and scoped["forecast"][0]["day"] == "2026-10-14"
+    assert scoped["forecast"][0]["learning"] == 1
+    assert sum(day["review"] for day in scoped["forecast"]) == 1
+    assert scoped["maturity"] == {"new": 2, "learning": 1, "young": 1, "mature": 0}
+    assert len(scoped["heatmap"]) == 182 and scoped["heatmap"][-1] == {"day": "2026-10-14", "reviews": 2}
+    assert scoped["streak"] == 1
+    assert scoped["queue"] == {"learning": 0, "review": 0, "new": 2, "suspended": 0, "leeches": 0, "buried": 0, "seconds_per_card": 1.234}
+    retention = scoped["retention"]
+    assert retention["target"] == 0.85 and 0 < retention["decay"] < 1
+    assert retention["stability"]["weak"] == retention["stability"]["strong"] > 0
+    assert retention["measured"] == []
+    whole = f.stats(conn, None, "UTC")
+    assert whole["maturity"]["new"] == 3 and whole["retention"]["target"] == 0.9
+    # Overdue cards fold into today; a remembered due review is measured.
+    clock[0] += timedelta(days=60)
+    later = f.stats(conn, deck["id"], "UTC")
+    assert (later["forecast"][0]["review"], later["forecast"][0]["learning"]) == (1, 1)
+    assert later["queue"]["learning"] == 1 and later["queue"]["review"] == 1
+    assert later["streak"] == 0 and later["heatmap"][-1]["reviews"] == 0
+    review_once(conn, 3, deck_id=deck["id"])  # the learning step
+    review_once(conn, 4, deck_id=deck["id"])  # the overdue review, remembered
+    measured = f.stats(conn, deck["id"], "UTC")["retention"]["measured"]
+    assert [(bucket["n"], bucket["r"]) for bucket in measured] == [(1, 1.0)] and measured[0]["t"] >= 30
+    assert f.stats(conn, deck["id"], "UTC")["maturity"]["mature"] == 1
+    # Suspended, leech and buried cards leave today's queue and are counted.
+    new_cards = [conn.execute("SELECT id,revision FROM flash_cards WHERE note_id=? AND state='new'", (note["id"],)).fetchone() for note in notes]
+    new_cards = [card for card in new_cards if card]
+    f.action(conn, {"action": "suspend", "id": new_cards[0]["id"], "revision": new_cards[0]["revision"]})
+    f.action(conn, {"action": "bury", "id": new_cards[1]["id"], "revision": new_cards[1]["revision"]})
+    queue = f.stats(conn, deck["id"], "UTC")["queue"]
+    assert (queue["new"], queue["suspended"], queue["buried"]) == (0, 1, 1)
+    routed = web_flashcards.get(None, conn, "/api/flashcards/stats", {"deck_id": str(deck["id"]), "timezone": "America/New_York"})
+    assert routed["forecast"][0]["day"] == "2026-12-13"
+    with pytest.raises(APIError, match="timezone"):
+        web_flashcards.get(None, conn, "/api/flashcards/stats", {"timezone": "Mars/Base"})
+
+
+def test_card_detail_reports_rendered_faces_memory_state_and_parking(cards):
+    conn, clock, _ = cards
+    note = add(cards)
+    ident = conn.execute("SELECT id FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone()[0]
+    fresh = web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(ident)})
+    assert fresh["card"]["state"] == "new" and fresh["card"]["memory"] is None
+    assert "synthetic-question" in fresh["card"]["front"] and "answer-only-secret" in fresh["card"]["back"]
+    assert fresh["card"]["deck"] == "Default" and fresh["card"]["note_id"] == note["id"]
+    card, _ = review_once(conn, 4)
+    clock[0] += timedelta(days=3)
+    detail = web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(card["id"])})["card"]
+    memory = detail["memory"]
+    assert detail["state"] == "review" and detail["reviews"] == 1
+    assert memory["stability"] > 3 and 1 <= memory["difficulty"] <= 10 and 0 < memory["retrievability"] < 1
+    f.action(conn, {"action": "bury", "id": card["id"], "revision": detail["revision"]})
+    assert web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(card["id"])})["card"]["buried_until"] > clock[0].isoformat()
+    with pytest.raises(APIError, match="no longer exists") as error:
+        web_flashcards.get(None, conn, "/api/flashcards/card", {"id": "999999"})
+    assert error.value.status == 404

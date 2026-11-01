@@ -17,6 +17,7 @@ import sqlite3
 import tempfile
 import uuid
 import zipfile
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -434,20 +435,127 @@ def overview(conn):
         t["fields"], t["templates"] = json.loads(t["fields"]), json.loads(t["templates"])
     all_rows = _rows(conn)
     eligible = _eligible(conn, all_rows, now())
-    days = [dict(r) for r in conn.execute("SELECT local_day AS day,COUNT(*) AS reviews,SUM(rating=1) AS again,SUM(duration_ms)/1000.0 AS seconds FROM flash_reviews WHERE undone=0 AND mode='regular' GROUP BY local_day ORDER BY local_day DESC LIMIT 90")]
-    day_set = {d["day"] for d in days}
-    current, streak = now().date(), 0
-    if current.isoformat() not in day_set: current -= timedelta(days=1)
-    while current.isoformat() in day_set:
-        streak += 1
-        current -= timedelta(days=1)
-    stats = {"total": len(all_rows), "new": sum(r["state"] == "new" for r in eligible), "learning": sum(r["state"] in {"learning", "relearning"} for r in eligible), "review": sum(r["state"] == "review" for r in eligible), "due": sum(r["state"] != "new" for r in eligible), "streak": streak, "days": days,
+    reviewed_days = {r[0] for r in conn.execute("SELECT DISTINCT local_day FROM flash_reviews WHERE undone=0 AND mode='regular'")}
+    stats = {"total": len(all_rows), "new": sum(r["state"] == "new" for r in eligible), "learning": sum(r["state"] in {"learning", "relearning"} for r in eligible), "review": sum(r["state"] == "review" for r in eligible), "due": sum(r["state"] != "new" for r in eligible), "streak": _streak(reviewed_days, now().date()),
              "suspended": sum(bool(r["suspended"]) for r in all_rows), "leeches": sum(bool(r["leech"]) for r in all_rows)}
+    # Measured recall: the share of due reviews (not learning steps) remembered in the last 90 days.
+    since = (now() - timedelta(days=90)).isoformat()
+    names = {d["id"]: d["name"] for d in decks}
+    recalled = [(names.get(r[0], ""), r[1], r[2]) for r in conn.execute(
+        "SELECT deck_id,SUM(rating>1),COUNT(*) FROM flash_reviews WHERE undone=0 AND mode='regular' AND was_review=1 AND reviewed_at>=? GROUP BY deck_id", (since,))]
     for deck in decks:
-        members = [r for r in eligible if r["deck_name"] == deck["name"] or r["deck_name"].startswith(deck["name"] + "::")]
+        prefix = deck["name"] + "::"
+        members = [r for r in eligible if r["deck_name"] == deck["name"] or r["deck_name"].startswith(prefix)]
         deck["due"] = sum(r["state"] != "new" for r in members)
         deck["new"] = sum(r["state"] == "new" for r in members)
+        deck["learning"] = sum(r["state"] in {"learning", "relearning"} for r in members)
+        deck["review"] = sum(r["state"] == "review" for r in members)
+        inner = [(passed, total) for name, passed, total in recalled if name == deck["name"] or name.startswith(prefix)]
+        total = sum(count for _, count in inner)
+        deck["recall"] = round(sum(passed for passed, _ in inner) / total, 4) if total else None
     return {"decks": decks, "types": types, "stats": stats, "media": [dict(r) for r in conn.execute("SELECT name,mime,length(content) AS size FROM flash_media ORDER BY name")]}
+
+
+def _streak(days, today):
+    """Consecutive reviewed days ending today, or yesterday while today is still open."""
+    current, streak = today, 0
+    if current.isoformat() not in days: current -= timedelta(days=1)
+    while current.isoformat() in days:
+        streak += 1
+        current -= timedelta(days=1)
+    return streak
+
+
+def _quantile(values, q):
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * q
+    low = int(position)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+MEASURED_BUCKETS = ((1, 1), (3, 3), (7, 7), (14, 14), (30, 30), (60, 60), (36500, 120))
+
+
+def stats(conn, deck_id=None, tz="UTC"):
+    """Read-only memory statistics for a deck (with subdecks) or the collection.
+
+    forecast: review/learning cards due on each of the next 30 local days, overdue in
+    today; retention: FSRS decay, target, stability quartiles and measured recall by
+    elapsed days; maturity: new/learning/young (<21 d interval)/mature; heatmap: 182
+    days of review counts; queue: today's eligible split plus suspended/leech/buried.
+    """
+    zone = ZoneInfo(tz)
+    moment = now()
+    today = moment.astimezone(zone).date()
+    rows = _rows(conn, deck_id)
+    decks = {r["id"]: dict(r) for r in conn.execute("SELECT id,name,archived,settings FROM flash_decks")}
+    scope = None
+    if deck_id:
+        name = decks[deck_id]["name"]
+        scope = {ident for ident, d in decks.items() if d["name"] == name or d["name"].startswith(name + "::")}
+    archived = [d["name"] for d in decks.values() if d["archived"]]
+    active = [r for r in rows if not r["suspended"] and not r["note_archived"]
+              and not any(r["deck_name"] == a or r["deck_name"].startswith(a + "::") for a in archived)]
+    forecast = [{"day": (today + timedelta(days=offset)).isoformat(), "review": 0, "learning": 0} for offset in range(30)]
+    for row in active:
+        if row["state"] == "new": continue
+        offset = max(0, (datetime.fromisoformat(row["due"]).astimezone(zone).date() - today).days)
+        if offset < 30: forecast[offset]["review" if row["state"] == "review" else "learning"] += 1
+    maturity = {"new": 0, "learning": 0, "young": 0, "mature": 0}
+    stabilities = []
+    for row in rows:
+        if row["state"] == "new": maturity["new"] += 1
+        elif row["state"] != "review": maturity["learning"] += 1
+        else:
+            memory = json.loads(row["fsrs"]) if row["fsrs"] else {}
+            last = memory.get("last_review")
+            interval = (datetime.fromisoformat(row["due"]) - datetime.fromisoformat(last)).days if last else 0
+            maturity["mature" if interval >= 21 else "young"] += 1
+            if memory.get("stability"): stabilities.append(memory["stability"])
+    where, args = "", []
+    if scope is not None:
+        where = f" AND deck_id IN ({','.join('?' * len(scope))})"
+        args = sorted(scope)
+    # Days in the viewer's timezone (stored local_day follows each deck's timezone).
+    counts = Counter(datetime.fromisoformat(r[0]).astimezone(zone).date().isoformat() for r in conn.execute(
+        "SELECT reviewed_at FROM flash_reviews WHERE undone=0 AND mode='regular'" + where, args))
+    heatmap = [{"day": (today - timedelta(days=back)).isoformat(), "reviews": counts.get((today - timedelta(days=back)).isoformat(), 0)} for back in range(181, -1, -1)]
+    reviewed_days = set(counts)
+    buckets = [[0, 0] for _ in MEASURED_BUCKETS]
+    for reviewed_at, rating, before in conn.execute("SELECT reviewed_at,rating,before_state FROM flash_reviews WHERE undone=0 AND mode='regular' AND was_review=1 AND reviewed_at>=?" + where, ((moment - timedelta(days=365)).isoformat(), *args)):
+        last = json.loads(json.loads(before).get("fsrs") or "{}").get("last_review")
+        if not last: continue
+        elapsed = (datetime.fromisoformat(reviewed_at) - datetime.fromisoformat(last)).total_seconds() / 86400
+        index = next(i for i, (limit, _) in enumerate(MEASURED_BUCKETS) if elapsed <= limit)
+        buckets[index][0] += rating > 1
+        buckets[index][1] += 1
+    measured = [{"t": shown, "r": round(passed / total, 4), "n": total} for (_, shown), (passed, total) in zip(MEASURED_BUCKETS, buckets) if total]
+    eligible = _eligible(conn, rows, moment)
+    durations = conn.execute("SELECT AVG(duration_ms) FROM flash_reviews WHERE undone=0 AND mode='regular' AND reviewed_at>=?" + where, ((moment - timedelta(days=30)).isoformat(), *args)).fetchone()[0]
+    target_deck = decks[deck_id] if deck_id else next((d for d in decks.values() if d["name"] == "Default"), None)
+    from fsrs import Scheduler
+    return {
+        "forecast": forecast,
+        "retention": {
+            "decay": Scheduler().parameters[20],
+            "target": json.loads(target_deck["settings"])["retention"] if target_deck else DEFAULT_SETTINGS["retention"],
+            "stability": {"weak": _quantile(stabilities, 0.25), "medium": _quantile(stabilities, 0.5), "strong": _quantile(stabilities, 0.75)} if stabilities else None,
+            "measured": measured,
+        },
+        "maturity": maturity,
+        "heatmap": heatmap,
+        "streak": _streak(reviewed_days, today),
+        "queue": {
+            "learning": sum(r["state"] in {"learning", "relearning"} for r in eligible),
+            "review": sum(r["state"] == "review" for r in eligible),
+            "new": sum(r["state"] == "new" for r in eligible),
+            "suspended": sum(bool(r["suspended"]) for r in rows),
+            "leeches": sum(bool(r["leech"]) for r in rows),
+            "buried": sum(bool(r["buried_until"]) and r["buried_until"] > moment.isoformat() for r in rows),
+            "seconds_per_card": round(durations / 1000, 3) if durations is not None else None,
+        },
+    }
 
 
 def browser(conn, deck_id=None, search="", limit=100, offset=0):
@@ -630,6 +738,22 @@ def action(conn, body):
 def history(conn, card_id=None):
     where, args = ("WHERE card_id=?", (card_id,)) if card_id else ("", ())
     return {"reviews": [dict(r) for r in conn.execute("SELECT id,card_id,rating,reviewed_at,local_day,duration_ms,mode,undone FROM flash_reviews " + where + " ORDER BY id DESC LIMIT 200", args)]}
+
+
+def card_detail(conn, ident):
+    """One card for the browser preview: both rendered faces and its FSRS memory state."""
+    card = conn.execute("SELECT c.*,d.name AS deck FROM flash_cards c JOIN flash_notes n ON n.id=c.note_id JOIN flash_decks d ON d.id=n.deck_id WHERE c.id=?", (ident,)).fetchone()
+    if card is None: return None
+    card = dict(card)
+    memory = None
+    if card["state"] != "new" and card["fsrs"]:
+        from fsrs import Scheduler
+        fsrs_card = _fsrs_card(card)
+        if fsrs_card.stability is not None:
+            memory = {"stability": fsrs_card.stability, "difficulty": fsrs_card.difficulty,
+                      "retrievability": Scheduler().get_card_retrievability(fsrs_card, now())}
+    result = {key: card[key] for key in ("id", "note_id", "ordinal", "deck", "state", "due", "suspended", "buried_until", "leech", "lapses", "reviews", "revision")}
+    return result | {"front": render(conn, card), "back": render(conn, card, True), "memory": memory}
 
 
 def import_text(conn, text, deck_id, type_id, delimiter=","):
