@@ -157,3 +157,52 @@ def test_citation_contexts_and_topic_blocks_are_fully_pageable(workspace):
     assert first_topic['count'] == 503
     assert len(first_topic['blocks']) + len(rest_topic['blocks']) == 503
     assert rest_topic['next_offset'] is None
+
+
+def last_ops(conn):
+    import json
+    return json.loads(conn.execute('SELECT ops FROM op_log ORDER BY seq DESC LIMIT 1').fetchone()[0])['ops']
+
+
+def test_whole_outline_saves_become_minimal_block_transactions(workspace):
+    conn = workspace.conn
+    page = new_page(conn)
+    items = [block(f'Item {index}', ordering=index) for index in range(50)]
+    revision = note_blocks.save_blocks(conn, page['id'], page['revision'], items)['revision']
+    items[17] = {**items[17], 'text': 'Edited'}
+    revision = note_blocks.save_blocks(conn, page['id'], revision, items)['revision']
+    assert [(op['op'], op.get('id')) for op in last_ops(conn)][:-1] == [('text', items[17]['id'])]
+    moved = items.pop(3)
+    items.insert(40, moved)
+    items = [{**item, 'ordering': index} for index, item in enumerate(items)]
+    note_blocks.save_blocks(conn, page['id'], revision, items)
+    assert [op['op'] for op in last_ops(conn)] == ['move', 'set']
+    assert [b['id'] for b in note_blocks.get_blocks(conn, page['id'])['blocks']] == [item['id'] for item in items]
+
+
+def test_canvas_saves_touch_only_changed_elements(workspace):
+    conn = workspace.conn
+    page = new_page(conn)
+    document = notes.empty_document()
+    document['elements'] = [{'id': f'n{index}', 'kind': 'sticky', 'layer': 'default', 'x': index * 10, 'y': 0, 'w': 50, 'h': 50,
+                             'color': '#000000', 'fill': 'none', 'width': 1, 'text': f'Note {index}', 'fontSize': 20} for index in range(20)]
+    notes.save_page(conn, page['id'], 1, document, 'Board')
+    document['elements'][5]['x'] = 999
+    notes.save_page(conn, page['id'], 2, document, 'Board')
+    ops = last_ops(conn)
+    assert [op['op'] for op in ops] == ['set', 'set'] and ops[0]['props'] == {'x': 999}
+    assert notes.page(conn, page['id'])['document'] == notes.normalize(document)
+
+
+def test_deleted_pages_go_to_trash_and_leave_the_library(workspace):
+    conn = workspace.conn
+    page = new_page(conn, 'Disposable')
+    note_blocks.save_blocks(conn, page['id'], 1, [block('Keep in trash #gone')])
+    notes.delete_page(conn, page['id'], 2)
+    assert notes.listing(conn)['pages'] == []
+    with pytest.raises(notes.NotesError) as missing:
+        notes.page(conn, page['id'])
+    assert missing.value.status == 404
+    assert note_blocks.topics(conn, 'tag', 'gone')['count'] == 0
+    trashed = conn.execute("SELECT COUNT(*) FROM blocks WHERE page_id=(SELECT page_id FROM blocks WHERE text='Disposable') AND deleted_at IS NOT NULL").fetchone()[0]
+    assert trashed == 3

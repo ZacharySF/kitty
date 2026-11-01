@@ -557,6 +557,27 @@ runs.
 
 The Tern bridge (Q1, first half) is already done.
 
+## Build step 1: what was built
+
+The block backend lives in `src/kitty/core/blocks/` (no web imports).
+
+- **Tables** (migration `032_blocks.sql`): `blocks`, `op_log`, `page_snapshots`, `block_refs`, `block_topics` and the one-row `block_history` (device ID, compaction horizon), as in the [data model sketch](#data-model-sketch). Two additions:
+  - `blocks.page_id` names each block's root (the page, document or quick note it belongs to), so a page loads with one indexed query.
+  - Root blocks keep the integer `number` the existing Notes API uses; `note_page_index` and `note_outline` are SQL views over the projection for existing readers (atlas, schema maps, backlinks).
+  - `block_tags`, `tag_rejections`, `graph_positions`, `peers` and `clients` are not created yet; the step that uses each one adds it.
+- **Operations** (`pagedoc.py`): `insert`, `set`, `text` (replace or splice), `move`, `delete` (to Trash), `restore`, `purge`, and `release`/`adopt` for a move between pages. A move that would create a cycle is refused.
+- **Transactions** (`store.transact`): inside one SQLite transaction the server loads each touched page, applies every operation, refuses stale `base` revisions (409), appends one `op_log` row per touched page and rewrites only the changed projection rows, refs and topics. Content edits bump the page's `revision`; view state (`viewport`, `favorite`, `last_opened`, `position`) does not. Triggers keep `op_log` append-only: rows are never updated, and are deleted only below the compaction horizon.
+- **CRDT (Q5):** step 1 keeps Loro behind the `PageDoc` interface and does not ship it yet. With a single writer (Q6) every transaction already has a total order, so a CRDT merges nothing until a second device exists. Step 3 adds a Loro `PageDoc`, seeds each page from its projection, and adds Loro update bytes to new `op_log` rows. Rows written before then stay replayable without Loro.
+- **Migration** (`033_notes_to_blocks.sql` runs `blocks.legacy.migrate_notes`): it first writes `data/exports/notes-before-blocks-<time>.json` (owner-only, every row of every notes table). Then each note page, document and quick note becomes one root block, written by one transaction:
+  - outline items become `text` blocks;
+  - the canvas becomes a `canvas` block whose children are the elements in paint order. Each keeps its `x`, `y`, `w` and `h` as properties; z order is the order key. Runs of adjacent strokes become one `ink` block (Q18).
+  - documents are split into paragraph-level blocks that keep their exact separators.
+
+  The legacy tables stay readable and refuse writes (triggers) for one release. A runner directive (`-- python: module:function`) lets a numbered migration call a Python conversion in the same transaction.
+- **Existing UI:** every Notes, Documents and Quick notes endpoint keeps its request and response shape. They now read the projection and write through transactions; a whole-page save becomes the smallest diff (`convert.sync_tree`). Deleting a page or quick note moves it to Trash.
+
+**Extending it for step 2 (block editor):** the editor sends `transact` operations directly, using the IDs, order keys and `base` revisions it already holds, and renders from the projection. The legacy adapters in `notes.py`, `note_blocks.py`, `documents.py` and `quick_notes.py` can then be removed screen by screen. New block types need no schema change: a type is a name plus properties.
+
 ## Verified facts
 
 - **Tern bridge implemented** on branch `feature/tern-bridge-20261031`, commit `e759532`:

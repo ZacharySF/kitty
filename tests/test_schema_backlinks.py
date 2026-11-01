@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from kitty import web_schema
-from kitty.core import backlinks, jobs, schema_maps as schema
+from kitty.core import backlinks, jobs, notes, schema_maps as schema
 from kitty.web_server import APIError
 
 STAMP = '2026-01-01T00:00:00+00:00'
@@ -19,12 +19,14 @@ def node(key, label, **extra):
 
 def page(conn, title, *texts, kind='text'):
     notebook = conn.execute('SELECT id FROM note_notebooks LIMIT 1').fetchone()
-    notebook_id = notebook[0] if notebook else conn.execute(
-        'INSERT INTO note_notebooks(title,created_at,updated_at) VALUES(?,?,?)', ('Synthetic', STAMP, STAMP)).lastrowid
-    document = {'version': 1, 'layers': [{'id': 'default', 'name': 'Drawing', 'visible': True, 'locked': False}],
-                'elements': [{'id': f'e{index}', 'kind': kind, 'text': text} for index, text in enumerate(texts)]}
-    return conn.execute('INSERT INTO note_pages(notebook_id,title,document,created_at,updated_at) VALUES(?,?,?,?,?)',
-                        (notebook_id, title, json.dumps(document), STAMP, STAMP)).lastrowid
+    notebook_id = notebook[0] if notebook else notes.create_notebook(conn, 'Synthetic')['id']
+    created = notes.create_page(conn, notebook_id, title)
+    document = notes.empty_document()
+    document['elements'] = [{'id': f'e{index}', 'kind': kind, 'layer': 'default', 'x': 0, 'y': 0, 'w': 10, 'h': 10,
+                             'color': '#000000', 'width': 1, **({'text': text} if kind in {'text', 'sticky'} else {})}
+                            for index, text in enumerate(texts)]
+    notes.save_page(conn, created['id'], created['revision'], document, title)
+    return created['id']
 
 
 def mapped(conn, *nodes):

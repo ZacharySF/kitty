@@ -2,10 +2,16 @@
 
 Adding a schema change means dropping `002_something.sql` next to `001_initial.sql`.
 Files are never edited once shipped.
+
+A script whose first line is `-- python: package.module:function` also converts data:
+the runner calls ``function(conn)`` and then runs the script's statements, all in the
+same transaction as the schema_version record (the function lives in an importable
+module, so frozen builds that bundle only data files under migrations/ still run it).
 """
 
 from __future__ import annotations
 
+import importlib
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -87,6 +93,29 @@ def _wants_foreign_keys_off(migration: Migration) -> bool:
     return first.strip().lower() == "-- foreign_keys: off"
 
 
+def _python_step(migration: Migration):
+    """The data-conversion function named by a `-- python: module:function` first line."""
+    first = migration.sql.lstrip().split("\n", 1)[0].strip()
+    match = re.fullmatch(r"-- python: ([a-z_][a-z0-9_.]*):([a-z_][a-z0-9_]*)", first)
+    if match is None:
+        return None
+    return getattr(importlib.import_module(match[1]), match[2])
+
+
+def _statements(sql: str):
+    """Split a script into complete statements (trigger bodies included)."""
+    buffer = ""
+    for line in sql.splitlines(keepends=True):
+        buffer += line
+        if sqlite3.complete_statement(buffer):
+            if buffer.strip():
+                yield buffer
+            buffer = ""
+    if buffer.strip() and not all(part.strip().startswith("--") for part in buffer.splitlines() if part.strip()):
+        raise ValueError("Migration script ends with an incomplete statement")
+
+
+
 def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[Migration]:
     """Apply every pending migration; return the ones applied.
 
@@ -113,7 +142,15 @@ def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[Mig
         if keys_off:
             conn.execute("PRAGMA foreign_keys = OFF")
         try:
-            conn.executescript(f"BEGIN;\n{migration.sql}\n{record}")
+            step = _python_step(migration)
+            if step is None:
+                conn.executescript(f"BEGIN;\n{migration.sql}\n{record}")
+            else:
+                conn.execute("BEGIN IMMEDIATE")
+                step(conn)
+                for statement in _statements(migration.sql):
+                    conn.execute(statement)
+                conn.execute(record)
             broken = conn.execute("PRAGMA foreign_key_check").fetchall()
             if broken:
                 raise sqlite3.IntegrityError(
