@@ -16,9 +16,10 @@ from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
+from kitty.core.blocks import crdt
 from kitty.core.blocks.convert import props_diff
 from kitty.core.blocks.pagedoc import BlockError, OrderedPageDoc, block_id
-from kitty.core.blocks.store import load_page, replay, transact
+from kitty.core.blocks.store import device_id, load_page, replay, transact
 from kitty.db.connection import transaction
 
 #: Every transaction is kept this long (Q20); a setting of the build file once builds exist (Q8).
@@ -60,7 +61,11 @@ def page_history(conn: sqlite3.Connection, page_id: str) -> dict:
             current["ops"][kind] = current["ops"].get(kind, 0) + count
     snapshots = [dict(row) for row in conn.execute("SELECT day,seq FROM page_snapshots WHERE page_id=? ORDER BY seq DESC", (page_id,))]
     horizon = conn.execute("SELECT horizon_seq FROM block_history WHERE id=1").fetchone()[0]
-    return {"page_id": page_id, "horizon_seq": horizon, "sessions": sessions[::-1], "snapshots": snapshots}
+    try:  # merged sessions carry the paired device that made them
+        devices = {row[0]: row[1] for row in conn.execute("SELECT device_id, name FROM peers")}
+    except sqlite3.OperationalError:  # before migration 038
+        devices = {}
+    return {"page_id": page_id, "horizon_seq": horizon, "sessions": sessions[::-1], "snapshots": snapshots, "devices": devices}
 
 
 def _version(conn: sqlite3.Connection, page_id: str, seq) -> OrderedPageDoc:
@@ -153,8 +158,13 @@ def compact(conn: sqlite3.Connection, now: datetime | None = None, days: int = R
             transact(conn, [{"op": "purge", "id": bid} for bid in expired], at=now.isoformat())
         horizon = conn.execute("SELECT horizon_seq FROM block_history WHERE id=1").fetchone()[0]
         last = conn.execute("SELECT MAX(seq) FROM op_log WHERE seq>? AND at<?", (horizon, cutoff)).fetchone()[0]
+        acknowledged = _acknowledged(conn)
+        if last is not None and acknowledged is not None:
+            # Never fold rows a paired device has not confirmed it holds (Q16).
+            last = min(last, acknowledged) if acknowledged > horizon else None
         folded = snapshots = 0
         if last is not None:
+            _cover_crdt(conn, horizon, last, now.isoformat())
             pages = [row[0] for row in conn.execute("SELECT DISTINCT page_id FROM op_log WHERE seq>? AND seq<=?", (horizon, last))]
             for page_id in pages:
                 if not conn.execute("SELECT 1 FROM blocks WHERE page_id=? LIMIT 1", (page_id,)).fetchone():
@@ -175,3 +185,27 @@ def compact(conn: sqlite3.Connection, now: datetime | None = None, days: int = R
             conn.execute("UPDATE block_history SET horizon_seq=?,horizon_at=? WHERE id=1", (last, cutoff))
             folded = conn.execute("DELETE FROM op_log WHERE seq<=?", (last,)).rowcount
     return {"folded": folded, "snapshots": snapshots, "purged": len(expired), "horizon_seq": max(horizon, last or 0)}
+
+
+def _acknowledged(conn: sqlite3.Connection) -> int | None:
+    """The highest sequence every paired device has acknowledged; None without paired devices."""
+    try:
+        count, lowest = conn.execute("SELECT COUNT(*), MIN(acked_seq) FROM peers").fetchone()
+    except sqlite3.OperationalError:  # before migration 038
+        return None
+    return lowest if count else None
+
+
+def _cover_crdt(conn: sqlite3.Connection, horizon: int, last: int, at: str) -> None:
+    """Rewrite the Loro snapshot of every page whose op_log tail is about to be folded."""
+    try:
+        rows = conn.execute("SELECT c.page_id FROM page_crdt c WHERE c.snapshot_seq<? AND EXISTS (SELECT 1 FROM op_log o "
+                            "WHERE o.page_id=c.page_id AND o.seq>? AND o.seq<=? AND o.crdt IS NOT NULL)", (last, horizon, last)).fetchall()
+    except sqlite3.OperationalError:  # before migration 038
+        return
+    peer = crdt.peer_of(device_id(conn))
+    for (page_id,) in rows:
+        doc = crdt.load(conn, page_id, peer)
+        newest = conn.execute("SELECT MAX(seq) FROM op_log WHERE page_id=? AND crdt IS NOT NULL", (page_id,)).fetchone()[0]
+        crdt.snapshot(conn, page_id, doc, newest, at)
+        crdt.keep(peer, page_id, doc)

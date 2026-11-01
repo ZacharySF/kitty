@@ -302,7 +302,7 @@ def backfill(conn: sqlite3.Connection) -> None:
         if normalize_term(topic) in existing.names:
             continue
         sample = conn.execute("SELECT b.text FROM block_topics t JOIN blocks b ON b.id=t.block_id WHERE t.kind='tag' AND t.topic=? "
-                              "ORDER BY b.created_at, b.id LIMIT 1", (topic,)).fetchone()
+                              "ORDER BY b.created_at, b.page_id, b.order_key, b.id LIMIT 1", (topic,)).fetchone()
         spelled = next((match[1] for match in TAG.finditer(sample[0] if sample else "") if match[1].casefold() == topic), topic)
         ops.append({"op": "insert", "id": str(uuid.uuid4()), "type": "tag", "parent": None, "text": spelled[:MAX_NAME],
                     "props": {"revision": 1, "keywords": [], "aliases": []}})

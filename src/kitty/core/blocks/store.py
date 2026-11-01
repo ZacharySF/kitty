@@ -1,12 +1,15 @@
 """Server-applied transactions: page documents -> append-only op log -> projection.
 
 `transact` is the only writer of `blocks`, `op_log`, `block_refs`, `block_topics`,
-`block_tags` and `tag_rejections` (the last two through kitty.core.blocks.tagging).
-Inside one SQLite transaction it loads each touched page document, applies every
+`block_tags` and `tag_rejections` (the last two through kitty.core.blocks.tagging);
+merges from paired devices (kitty.core.blocks.merge) write through the same
+`_Transaction`. Inside one SQLite transaction it loads each touched page document
+(its projection plus its Loro document, kitty.core.blocks.crdt), applies every
 operation (so cycles, limits and stale revisions are refused before anything is
-written), appends one `op_log` row per touched page, and rewrites only the
-projection rows that changed. Readers use the projection; history and the tests
-rebuild a page from the log with `replay`.
+written), appends one `op_log` row per touched page carrying the readable operations
+and the Loro update bytes, and rewrites only the projection rows that changed.
+Readers use the projection; history and the tests rebuild a page from the log's
+operations with `replay`, which needs no Loro.
 """
 from __future__ import annotations
 
@@ -18,7 +21,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from kitty.core.blocks import tagging
+from kitty.core.blocks import crdt, tagging
+from kitty.core.blocks.crdt import LoroPageDoc
 from kitty.core.blocks.order import key_between
 from kitty.core.blocks.pagedoc import Block, BlockError, OrderedPageDoc, block_id, is_edit_key
 from kitty.core.blocks.tokens import REF, TAG, WIKI
@@ -42,10 +46,20 @@ def _block(row: sqlite3.Row) -> Block:
                  json.loads(row["properties"]), row["text"], row["created_at"], row["updated_at"], row["deleted_at"])
 
 
+def _rows(conn: sqlite3.Connection, page_id: str) -> tuple[dict[str, Block], dict[str, str]]:
+    blocks, nodes = {}, {}
+    cursor = conn.execute("SELECT * FROM blocks WHERE page_id=?", (page_id,))
+    has_node = any(column[0] == "node" for column in cursor.description)
+    for row in cursor:
+        blocks[row["id"]] = _block(row)
+        if has_node and row["node"]:
+            nodes[row["id"]] = row["node"]
+    return blocks, nodes
+
+
 def load_page(conn: sqlite3.Connection, page_id: str) -> OrderedPageDoc:
     """The current projection of one page (deleted blocks included)."""
-    rows = conn.execute("SELECT * FROM blocks WHERE page_id=?", (page_id,))
-    return OrderedPageDoc(page_id, {row["id"]: _block(row) for row in rows})
+    return OrderedPageDoc(page_id, _rows(conn, page_id)[0])
 
 
 #: Block types whose children belong to another UI (the canvas), not to a page loader.
@@ -105,18 +119,45 @@ def _is_edit(op: dict) -> bool:
     return not (op["op"] == "set" and "type" not in op and not any(is_edit_key(key) for key in op.get("props", {})))
 
 
+def _has_crdt(conn: sqlite3.Connection) -> bool:
+    """Whether the schema has the Loro tables (migrations before 038 transact without them)."""
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='page_crdt'").fetchone() is not None
+
+
 class _Transaction:
     def __init__(self, conn: sqlite3.Connection, at: str):
         self.conn = conn
         self.at = at
-        self.docs: dict[str, OrderedPageDoc] = {}
+        self.docs: dict[str, LoroPageDoc] = {}
         self.logged: dict[str, list[dict]] = {}
         self.created: set[str] = set()
+        self.crdt = _has_crdt(conn)
+        self.peer = crdt.peer_of(device_id(conn))
+        self._titles: dict[Any, str | None] = {}
 
-    def doc(self, page_id: str) -> OrderedPageDoc:
+    def notebook_title(self, notebook_id: Any) -> str | None:
+        if notebook_id not in self._titles:
+            row = self.conn.execute("SELECT title FROM note_notebooks WHERE id=?", (notebook_id,)).fetchone() \
+                if isinstance(notebook_id, int) else None
+            self._titles[notebook_id] = row[0] if row else None
+        return self._titles[notebook_id]
+
+    def doc(self, page_id: str) -> LoroPageDoc:
         if page_id not in self.docs:
-            self.docs[page_id] = load_page(self.conn, page_id)
+            blocks, nodes = _rows(self.conn, page_id)
+            self.docs[page_id] = crdt.open_page(self.conn, page_id, self.peer, blocks=blocks, nodes=nodes,
+                                                notebook_title=self.notebook_title) if self.crdt else OrderedPageDoc(page_id, blocks)
         return self.docs[page_id]
+
+    def new_page(self, page_id: str) -> LoroPageDoc:
+        """A page created in this transaction (continuing its Loro document if one was ever made)."""
+        if not self.crdt:
+            self.docs[page_id] = OrderedPageDoc(page_id)
+            return self.docs[page_id]
+        doc = crdt.open_page(self.conn, page_id, self.peer, blocks={}, nodes={}, notebook_title=self.notebook_title)
+        doc.ensure()
+        self.docs[page_id] = doc
+        return doc
 
     def page_of(self, bid: str) -> str:
         for page_id, doc in self.docs.items():
@@ -156,14 +197,14 @@ class _Transaction:
             raise BlockError("Each operation must be an object")
         op = dict(raw)
         kind = op.get("op")
-        if kind in {"release", "adopt"}:
-            raise BlockError("Move blocks between pages with a move operation")
+        if kind in {"release", "adopt", "put"}:
+            raise BlockError("Move blocks between pages with a move operation" if kind != "put" else "Unknown block operation")
         if kind == "insert":
             if op.get("parent") is None:
                 page_id = block_id(op.get("id"))
                 if page_id in self.docs or self.conn.execute("SELECT 1 FROM blocks WHERE id=?", (page_id,)).fetchone():
                     raise BlockError("Block already exists", 409)
-                self.docs[page_id] = OrderedPageDoc(page_id)
+                self.new_page(page_id)
                 self.created.add(page_id)
             else:
                 page_id = self.page_of(block_id(op["parent"]))
@@ -206,7 +247,28 @@ class _Transaction:
             if type(revision) is not int or root.properties.get("revision") != revision:
                 raise BlockError("Page changed in another window; reload before saving", 409)
 
-    def bump(self) -> dict[str, int | None]:
+    def separate_keys(self) -> None:
+        """Give a block placed with a sibling's key (a window with a stale copy) a key of its own.
+
+        Same rule as ``crdt.project``: siblings sort by (key, ID) and a key not above the
+        previous one moves between it and the next larger key.
+        """
+        for page_id, ops in list(self.logged.items()):
+            doc = self.docs[page_id]
+            parents = {op.get("parent") for op in ops if op["op"] in {"insert", "move", "adopt"} and op.get("parent")}
+            for parent in sorted(parent for parent in parents if parent in doc.blocks and doc.blocks[parent].live):
+                kids = doc.children(parent, deleted=True)
+                previous: str | None = None
+                for index, kid in enumerate(kids):
+                    key = kid.order_key
+                    if previous is not None and key <= previous:
+                        following = next((other.order_key for other in kids[index + 1:] if other.order_key > previous), None)
+                        key = key_between(previous, following)
+                        self.record(page_id, {"op": "move", "id": kid.id, "parent": parent, "key": key})
+                    previous = key
+
+    def bump(self, edited: set[str] | None = None) -> dict[str, int | None]:
+        """Bump the revision of every page this transaction edited (`edited`: decided by the caller)."""
         revisions: dict[str, int | None] = {}
         for page_id, ops in self.logged.items():
             root = self.docs[page_id].root
@@ -215,7 +277,8 @@ class _Transaction:
                 continue
             current = root.properties.get("revision", 1)
             explicit = any(op["op"] == "set" and op.get("id") == page_id and "revision" in op.get("props", {}) for op in ops)
-            if page_id not in self.created and not explicit and any(_is_edit(op) for op in ops):
+            changed = page_id in edited if edited is not None else any(_is_edit(op) for op in ops)
+            if page_id not in self.created and not explicit and changed:
                 current += 1
                 self.record(page_id, {"op": "set", "id": page_id, "props": {"revision": current}})
             revisions[page_id] = current
@@ -229,20 +292,39 @@ class _Transaction:
         for page_id, ops in self.logged.items():
             doc = self.docs[page_id]
             payload = json.dumps({"v": LOG_FORMAT, "ops": ops}, ensure_ascii=False, separators=(",", ":")).encode()
-            seqs[page_id] = conn.execute("INSERT INTO op_log(device_id,txn_id,page_id,at,ops) VALUES (?,?,?,?,?)",
-                                         (device, txn_id, page_id, self.at, payload)).lastrowid
+            if self.crdt:
+                update = doc.finish()
+                seqs[page_id] = conn.execute("INSERT INTO op_log(device_id,txn_id,page_id,at,ops,crdt) VALUES (?,?,?,?,?,?)",
+                                             (device, txn_id, page_id, self.at, payload, update)).lastrowid
+                crdt.store(conn, doc, seqs[page_id], update, self.at)
+                if doc.loro is not None:
+                    crdt.keep(self.peer, page_id, doc.loro)
+            else:
+                seqs[page_id] = conn.execute("INSERT INTO op_log(device_id,txn_id,page_id,at,ops) VALUES (?,?,?,?,?)",
+                                             (device, txn_id, page_id, self.at, payload)).lastrowid
             if doc.removed:
-                conn.executemany("DELETE FROM blocks WHERE id=?", [(bid,) for bid in doc.removed])
+                # Scoped to this page: the same ID may be landing on another page in this transaction.
+                conn.executemany("DELETE FROM blocks WHERE id=? AND page_id=?", [(bid, page_id) for bid in doc.removed])
             changed = [doc.blocks[bid] for bid in doc.changed]
             projected.extend(changed)
-            conn.executemany(
-                "INSERT INTO blocks(id,type,parent_id,page_id,order_key,properties,text,created_at,updated_at,deleted_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,parent_id=excluded.parent_id,"
-                "page_id=excluded.page_id,order_key=excluded.order_key,properties=excluded.properties,text=excluded.text,"
-                "created_at=excluded.created_at,updated_at=excluded.updated_at,deleted_at=excluded.deleted_at",
-                [(item.id, item.type, item.parent_id, item.page_id, item.order_key,
-                  json.dumps(item.properties, ensure_ascii=False, separators=(",", ":")), item.text,
-                  item.created_at, item.updated_at, item.deleted_at) for item in changed])
+            rows = [(item.id, item.type, item.parent_id, item.page_id, item.order_key,
+                     json.dumps(item.properties, ensure_ascii=False, separators=(",", ":")), item.text,
+                     item.created_at, item.updated_at, item.deleted_at) for item in changed]
+            if self.crdt:
+                conn.executemany(
+                    "INSERT INTO blocks(id,type,parent_id,page_id,order_key,properties,text,created_at,updated_at,deleted_at,node) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,parent_id=excluded.parent_id,"
+                    "page_id=excluded.page_id,order_key=excluded.order_key,properties=excluded.properties,text=excluded.text,"
+                    "created_at=excluded.created_at,updated_at=excluded.updated_at,deleted_at=excluded.deleted_at,node=excluded.node",
+                    [(*row, doc.nodes.get(row[0])) for row in rows])
+                conn.executemany("UPDATE blocks SET node=? WHERE id=?",
+                                 [(doc.nodes.get(bid), bid) for bid in doc.renodes if bid not in doc.changed and bid in doc.blocks])
+            else:
+                conn.executemany(
+                    "INSERT INTO blocks(id,type,parent_id,page_id,order_key,properties,text,created_at,updated_at,deleted_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,parent_id=excluded.parent_id,"
+                    "page_id=excluded.page_id,order_key=excluded.order_key,properties=excluded.properties,text=excluded.text,"
+                    "created_at=excluded.created_at,updated_at=excluded.updated_at,deleted_at=excluded.deleted_at", rows)
             conn.executemany("DELETE FROM block_refs WHERE source_id=?", [(item.id,) for item in changed])
             conn.executemany("DELETE FROM block_topics WHERE block_id=?", [(item.id,) for item in changed])
             for item in changed:
@@ -279,6 +361,8 @@ def transact(conn: sqlite3.Connection, ops: Iterable[Any], *, base: Any = None, 
         work.check_base(base)
         for op in ops:
             work.apply(op)
+        if work.crdt:
+            work.separate_keys()
         tags = tagging.annotate(conn, work.docs, work.record, suggest=suggest)
         revisions = work.bump()
         seqs = work.write(device_id(conn), txn_id)

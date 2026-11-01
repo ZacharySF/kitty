@@ -24,7 +24,10 @@ export type Op =
   | { op: "text"; id: string; at: number; del: number; ins: string }
   | { op: "move"; id: string; parent: string; key: string }
   | { op: "delete" | "restore" | "release" | "purge"; id: string }
-  | { op: "adopt"; parent: string; key: string; blocks: AdoptedRow[] };
+  | { op: "adopt"; parent: string; key: string; blocks: AdoptedRow[] }
+  /** A block exactly as a merge with another device left it (the server writes these; windows only receive them). */
+  | { op: "put"; id: string; type: string; parent: string | null; key: string; props: Props; text?: string;
+      created?: string; updated?: string; deleted?: string | null };
 /** What GET /api/blocks/page returns. */
 export type PageState = { page_id: string; seq: number; revision: number; root: BlockData; blocks: BlockData[] };
 export type Row = { block: BlockData; depth: number; number?: number; hasChildren: boolean };
@@ -230,6 +233,39 @@ export class PageDoc {
           this.attach({ id: row.id, type: row.type, parent_id: parentId, order_key: index === 0 ? op.key : row.order_key,
             properties: structuredClone(row.properties ?? {}), text: row.text ?? "" });
         });
+        return false;
+      }
+      case "put": {
+        // A merge with another device: this block as it now is. Blocks in Trash leave this
+        // document; a block it never held arrives with its text, or the page must reload.
+        if (strict) throw new BlockConflict("Merged changes come from the server");
+        const block = this.blocks.get(op.id);
+        if (op.parent === null) {
+          if (block) {
+            block.type = op.type;
+            block.properties = structuredClone(op.props);
+            if (op.text !== undefined) block.text = op.text;
+          }
+          return false;
+        }
+        const parent = this.blocks.get(op.parent);
+        if (op.deleted || !parent || isOpaque(parent)) {
+          if (block) this.detach(op.id);
+          return false;
+        }
+        if (!block) {
+          if (op.text === undefined) return true;
+          this.attach({ id: op.id, type: op.type, parent_id: parent.id, order_key: op.key, properties: structuredClone(op.props), text: op.text });
+          return false;
+        }
+        if (this.isWithin(parent.id, block.id)) return true;
+        if (block.parent_id !== null) this.kids.get(block.parent_id)?.delete(block.id);
+        block.parent_id = parent.id;
+        block.order_key = op.key;
+        block.type = op.type;
+        block.properties = structuredClone(op.props);
+        if (op.text !== undefined) block.text = op.text;
+        this.attach(block);
         return false;
       }
     }

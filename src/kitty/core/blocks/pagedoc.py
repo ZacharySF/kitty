@@ -1,11 +1,12 @@
 """One page's blocks in memory, and the operations that change them.
 
 `PageDoc` is the seam the platform design (Q5) asks for: the server applies every
-operation to a page document before it reaches the log and the projection. Build
-step 1 has a single writer (Q6), so `OrderedPageDoc` applies operations in the
-server's total order and needs no merging. Peer sync (build step 3) puts a Loro
-document behind the same interface; the operation vocabulary below is what both
-implement and what the operation log records.
+operation to a page document before it reaches the log and the projection.
+`OrderedPageDoc` applies operations in the single writer's total order (Q6);
+`kitty.core.blocks.crdt.LoroPageDoc` extends it so that every applied operation is
+mirrored into the page's Loro document, which is what devices merge (build step 3).
+The operation vocabulary below is what both implement and what the operation log
+records.
 
 Operations (each targets one block of this page):
 
@@ -18,6 +19,9 @@ Operations (each targets one block of this page):
 - ``purge``   {id}: removes the block and its subtree for good
 - ``release`` {id} / ``adopt`` {parent, key, blocks}: the two halves of a move
   between pages, logged on the source and the destination page respectively.
+- ``put``     {id, type, parent, key, props, text?, created, updated, deleted}: makes
+  one block exactly this (inserting it if new). Only merges write it: it is how a
+  result merged from another device's changes reaches the log, History and windows.
 """
 from __future__ import annotations
 
@@ -217,11 +221,21 @@ class OrderedPageDoc:
 
     # Writing -------------------------------------------------------------------------
 
+    def _touch(self, bid: str) -> None:
+        """Record that `bid` was inserted or changed (documents that mirror changes hook in here)."""
+        self.changed.add(bid)
+        self.removed.discard(bid)
+
+    def _forget(self, subtree: list[Block]) -> None:
+        """Record that `subtree` (parents first) left the page."""
+        for item in subtree:
+            self.changed.discard(item.id)
+            self.removed.add(item.id)
+
     def _attach(self, item: Block) -> None:
         self.blocks[item.id] = item
         self._kids.setdefault(item.parent_id, set()).add(item.id)
-        self.changed.add(item.id)
-        self.removed.discard(item.id)
+        self._touch(item.id)
 
     def _detach(self, bid: str) -> list[Block]:
         """Remove `bid` and its subtree; returns them parents-first."""
@@ -231,8 +245,7 @@ class OrderedPageDoc:
         for item in subtree:
             del self.blocks[item.id]
             self._kids.pop(item.id, None)
-            self.changed.discard(item.id)
-            self.removed.add(item.id)
+        self._forget(subtree)
         return subtree
 
     def _live_parent(self, value: Any) -> Block:
@@ -285,7 +298,7 @@ class OrderedPageDoc:
                 item.properties[key] = value
         if "type" in op or any(is_edit_key(key) for key in props):
             item.updated_at = at
-        self.changed.add(item.id)
+        self._touch(item.id)
 
     def _op_text(self, op: dict, at: str) -> None:
         item = self.get(block_id(op.get("id")))
@@ -297,7 +310,7 @@ class OrderedPageDoc:
                 raise BlockError("Text splice is outside the block's text")
             item.text = _text(item.text[:start] + insert + item.text[start + length:])
         item.updated_at = at
-        self.changed.add(item.id)
+        self._touch(item.id)
 
     def _op_move(self, op: dict, at: str) -> None:
         item = self.get(block_id(op.get("id")))
@@ -315,7 +328,7 @@ class OrderedPageDoc:
         self._kids[item.parent_id].discard(item.id)
         item.parent_id, item.order_key, item.updated_at = parent.id, _key(op.get("key")), at
         self._kids.setdefault(parent.id, set()).add(item.id)
-        self.changed.add(item.id)
+        self._touch(item.id)
 
     def _op_delete(self, op: dict, at: str) -> None:
         item = self.get(block_id(op.get("id")))
@@ -324,7 +337,7 @@ class OrderedPageDoc:
         for target in (item, *self.descendants(item.id)):
             if target.live:
                 target.deleted_at = at
-                self.changed.add(target.id)
+                self._touch(target.id)
 
     def _op_restore(self, op: dict, at: str) -> None:
         item = self.get(block_id(op.get("id")))
@@ -334,7 +347,7 @@ class OrderedPageDoc:
         for target in (item, *self.descendants(item.id)):
             if target.deleted_at == stamp:
                 target.deleted_at = None
-                self.changed.add(target.id)
+                self._touch(target.id)
 
     def _op_purge(self, op: dict, at: str) -> None:
         bid = block_id(op.get("id"))
@@ -372,6 +385,41 @@ class OrderedPageDoc:
             self._attach(item)
         if max(self.depth(item.id) for item in incoming) > MAX_DEPTH:
             raise BlockError(f"Blocks nest at most {MAX_DEPTH} levels")
+
+    def _op_put(self, op: dict, at: str) -> None:
+        bid = block_id(op.get("id"))
+        kind, key, props = _type(op.get("type")), _key(op.get("key")), _props(op.get("props", {}))
+        parent_id = op.get("parent")
+        if parent_id is None:
+            if bid != self.page_id:
+                raise BlockError("Only a page's own root block has no parent")
+        else:
+            parent_id = block_id(parent_id)
+            cursor: str | None = parent_id
+            while cursor is not None:
+                if cursor == bid:
+                    raise BlockError("Moving a block inside itself would create a cycle")
+                above = self.blocks.get(cursor)
+                if above is None:
+                    raise BlockError("Parent block not found on this page", 404)
+                cursor = above.parent_id
+        created = _stamp(op.get("created"), at)
+        updated = _stamp(op.get("updated"), created)
+        deleted = None if op.get("deleted") is None else _stamp(op["deleted"], at)
+        item = self.blocks.get(bid)
+        if item is None:
+            self._attach(Block(bid, kind, parent_id, self.page_id, key, dict(props), _text(op.get("text", "")),
+                               created, updated, deleted))
+            return
+        if item.parent_id != parent_id:
+            self._kids[item.parent_id].discard(bid)
+            item.parent_id = parent_id
+            self._kids.setdefault(parent_id, set()).add(bid)
+        if "text" in op:
+            item.text = _text(op["text"])
+        item.type, item.order_key, item.properties = kind, key, dict(props)
+        item.created_at, item.updated_at, item.deleted_at = created, updated, deleted
+        self._touch(bid)
 
     def check(self) -> None:
         """Invariants after a whole transaction: live blocks hang under live parents."""

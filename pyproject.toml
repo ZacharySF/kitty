@@ -25,6 +25,9 @@ dependencies = [
     "Pillow>=11",
     "PyMuPDF>=1.25",
     "keyring>=25",
+    "loro>=1.17.1",
+    "spake2>=0.9",
+    "zeroconf>=0.153.0",
 ]
 
 [project.scripts]

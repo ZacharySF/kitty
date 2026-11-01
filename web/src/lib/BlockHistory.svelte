@@ -12,7 +12,7 @@
 
   type Moment = { seq: number; at: string; session: number | null };
   type Session = { device_id: string; start: string; end: string; first_seq: number; last_seq: number; transactions: number; ops: Record<string, number>; moments: { seq: number; at: string }[] };
-  type History = { page_id: string; horizon_seq: number; sessions: Session[]; snapshots: { day: string; seq: number }[] };
+  type History = { page_id: string; horizon_seq: number; sessions: Session[]; snapshots: { day: string; seq: number }[]; devices?: Record<string, string> };
   type Preview = { page_id: string; seq: number; blocks: (BlockData & { deleted_at: string | null })[] };
 
   let { page, title = "", onclose }: { page: PageRef; title?: string; onclose: () => void } = $props();
@@ -40,7 +40,8 @@
       ? date.toLocaleDateString(undefined, { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" })
       : date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
   };
-  const device = (id: string) => (id === liveDevice() ? "This device" : `Device ${id.slice(0, 8)}`);
+  // Merged changes are logged under the device that made them; paired devices go by their names.
+  const device = (id: string) => (id === liveDevice() ? "This device" : history?.devices?.[id] ?? `Device ${id.slice(0, 8)}`);
   const summary = (ops: Record<string, number>) => Object.entries(ops).filter(([kind]) => kind !== "set" || Object.keys(ops).length === 1)
     .map(([kind, count]) => `${count} ${kind}`).join(" · ");
 

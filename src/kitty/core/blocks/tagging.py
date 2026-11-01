@@ -271,10 +271,23 @@ def project(conn: sqlite3.Connection, changed: list[Block], at: str) -> None:
 
 
 def _refresh_inline(conn: sqlite3.Connection, tag: Block, at: str) -> None:
-    """A tag record changed (created, renamed, aliased, trashed): re-derive its ``#name`` attachments."""
+    """A tag record changed (created, renamed, aliased, trashed): re-derive its attachments.
+
+    Its ``#name`` attachments follow its name and aliases. Blocks may also carry a
+    ``tag_<id>`` state written before the record existed here (a peer's block can
+    arrive before the tag it is tagged with): those are projected now.
+    """
     key = key_of(tag.id)
     conn.execute(f"DELETE FROM block_tags WHERE tag_id=? AND source='manual' AND block_id NOT IN "
                  f"(SELECT id FROM blocks WHERE json_extract(properties, '$.{key}') = 'manual')", (tag.id,))
+    stated = (f"FROM blocks WHERE properties LIKE ? AND deleted_at IS NULL AND NOT (type='tag' AND parent_id IS NULL) "
+              f"AND json_extract(properties, '$.{key}')")
+    like = f'%"{key}"%'
+    conn.execute(f"INSERT INTO block_tags(block_id,tag_id,source,created_at) SELECT id, ?, json_extract(properties, '$.{key}'), ? "
+                 f"{stated} IN ('manual','auto','accepted') ON CONFLICT(block_id,tag_id) DO UPDATE SET source=excluded.source",
+                 (tag.id, at, like))
+    conn.execute(f"INSERT OR IGNORE INTO tag_rejections(block_id,tag_id,created_at) SELECT id, ?, ? {stated} = 'rejected'",
+                 (tag.id, at, like))
     if not tag.live:
         return
     props = tag.properties
