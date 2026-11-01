@@ -245,6 +245,8 @@ test("an installed Tern lists kitty!'s panes in the dock: run a line, focus, cap
   await tern.getByRole("button", { name: "New pane" }).click();
   await panes.getByRole("listitem").nth(2).waitFor();
   assert.deepEqual(await posted("/api/terminal/tern/new"), [{ body: {}, guarded: true }]);
+  // The new pane becomes the Run target.
+  assert.equal(await target.inputValue(), "6");
   await tern.getByRole("button", { name: "Open in Tern" }).click();
   assert.deepEqual(await posted("/api/terminal/tern/open"), [{ body: {}, guarded: true }]);
   // Tern draws in its own window: no Tern action attached a terminal (only herdr's, before Agents).

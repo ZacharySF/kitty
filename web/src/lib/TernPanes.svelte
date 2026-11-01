@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "./api";
   import { popOutQuickNote } from "./quickNotes";
-  import { ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, type TernStatus } from "./terminal";
+  import { ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, ternTarget, type TernStatus } from "./terminal";
 
   /**
    * The panes of kitty!'s own Tern session in the dock (docs/terminal-dock-design.md,
@@ -18,8 +18,7 @@
   let command = $state("");
   let chosen = $state<number | null>(null);
   const panes = $derived(tern ? ternPanes(tern) : []);
-  /** The chosen pane while it exists, else the focused (or first) one. */
-  const target = $derived(panes.find((pane) => pane.id === chosen) ?? panes.find((pane) => pane.focused) ?? panes[0] ?? null);
+  const target = $derived(ternTarget(panes, chosen));
 
   async function load() {
     try {
@@ -50,6 +49,13 @@
     tern = await api<TernStatus>(`/terminal/tern/${path}`, body);
     return done;
   });
+  const addPane = () => act(async () => {
+    const before = new Set(panes.map((pane) => pane.id));
+    tern = await api<TernStatus>("/terminal/tern/new", {});
+    // The new pane is where the next command goes.
+    chosen = ternPanes(tern).find((pane) => !before.has(pane.id))?.id ?? chosen;
+    return "Opened a new pane in kitty!'s Tern session.";
+  });
   async function runCommand(event: SubmitEvent) {
     event.preventDefault();
     if (!target || !command.trim()) return;
@@ -74,7 +80,7 @@
   <section class="tern" aria-label="Tern">
     <header>
       <p class="heading"><span class="name">Tern</span> <span class="meta">kitty session · {tern.version}{tern.windows ? ` · ${tern.windows} window${tern.windows === 1 ? "" : "s"}` : ""}</span></p>
-      <button disabled={busy} onclick={() => update("new", {}, "Opened a new pane in kitty!'s Tern session.")}>New pane</button>
+      <button disabled={busy} onclick={addPane}>New pane</button>
       <button disabled={busy} onclick={() => update("open", {}, "Opened a Tern window on kitty!'s session.")}>Open in Tern</button>
     </header>
     {#if !tern.running}

@@ -88,12 +88,19 @@ export type TernStatus = {
 };
 export type TernEvent = { event: "pane_spawned" | "pane_exited"; pane: number; status: number | null; at: string };
 /** A pane of kitty!'s own Tern session, the only panes kitty! runs, focuses or captures. */
-export type TernPane = TernBlock & { tab: number | null };
+export type TernPane = TernBlock & { tab: number | null; shown: boolean };
 
 /** kitty!'s session is named "kitty" (kitty/core/tern.py SESSION). */
 export function ternPanes(status: TernStatus): TernPane[] {
   return status.sessions.filter((session) => session.name === "kitty")
-    .flatMap((session) => session.tabs.flatMap((tab) => tab.blocks.map((block) => ({ ...block, tab: tab.number }))));
+    .flatMap((session) => session.tabs.flatMap((tab) => tab.blocks.map((block) => ({ ...block, tab: tab.number, shown: tab.shown }))));
+}
+
+/** The pane a command runs in: the chosen one while it exists, else the one on screen (Tern marks
+ *  a focused block in every tab; only the shown tab's is visible), else the first. */
+export function ternTarget(panes: TernPane[], chosen: number | null): TernPane | null {
+  return panes.find((pane) => pane.id === chosen) ?? panes.find((pane) => pane.shown && pane.focused)
+    ?? panes.find((pane) => pane.focused) ?? panes[0] ?? null;
 }
 
 export function ternPaneLabel(pane: TernBlock): string {

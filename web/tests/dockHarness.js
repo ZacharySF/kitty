@@ -43,8 +43,9 @@ function ternPost(url, body) {
   if (ternErrors[url]) return json({ error: ternErrors[url] }, 400);
   const blocks = tern.sessions[0].tabs.flatMap((tab) => tab.blocks);
   if (action === "new") {
+    // Like Tern without a window: the new tab's block is focused, the shown tab stays.
     const id = Math.max(...blocks.map((block) => block.id)) + 1;
-    tern.sessions[0].tabs.push({ id: id + 100, number: tern.sessions[0].tabs.length + 1, name: null, shown: true, blocks: [ternBlock(id, { focused: true })] });
+    tern.sessions[0].tabs.push({ id: id + 100, number: tern.sessions[0].tabs.length + 1, name: null, shown: false, blocks: [ternBlock(id, { focused: true })] });
   } else if (action === "open") {
     tern.windows += 1;
   } else if (action === "run") {
