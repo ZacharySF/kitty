@@ -718,3 +718,73 @@ describe("study progress", () => {
     await context.close();
   });
 });
+
+describe("study plans", () => {
+  test("Exams & plans shows countdown cards, a timeline to each exam, a 12-day strip to drag blocks with a load warning, and a returns queue", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    const stamp = Date.now();
+    await page.evaluate(async (stamp) => {
+      const call = async (path, body) => {
+        const response = await fetch(`/api/study${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) } : undefined);
+        const result = await response.json();
+        if (!response.ok) throw new Error(`${path}: ${JSON.stringify(result)}`);
+        return result;
+      };
+      const { stats } = await call("");
+      const day = (offset) => new Date(Date.parse(`${stats.today}T12:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+      let { timer } = await call("/timer");
+      if (timer.status !== "idle") ({ timer } = await call("/timer", { action: "stop", revision: timer.revision, request_id: crypto.randomUUID() }));
+      const subject = (await call("/subjects", { name: `Planner ${stamp}`, color: "#40a080" })).item;
+      const exam = (await call("/exams", { title: `Exam ${stamp}`, subject_id: subject.id, exam_date: day(5), timezone: "UTC" })).item;
+      await call("/generate-plan", { exam_id: exam.id, exam_revision: exam.revision, start_date: day(1), minutes: 120, block_minutes: 60, local_time: "17:00", replace: false });
+      const responses = Array(14).fill(""); responses[4] = `Return ${stamp}`;
+      ({ timer } = await call("/timer"));
+      ({ timer } = await call("/timer", { action: "start", revision: timer.revision, request_id: crypto.randomUUID(), subject_id: subject.id, guide: { checked: Array(14).fill(false), responses, reflection: "", next_review: day(0) } }));
+      await call("/timer", { action: "stop", revision: timer.revision, request_id: crypto.randomUUID() });
+      window.dispatchEvent(new CustomEvent("kitty-study-changed"));
+    }, stamp);
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Exams & plans", exact: true }).click();
+
+    const card = page.getByRole("region", { name: "Exam countdowns" }).getByRole("article").filter({ hasText: `Exam ${stamp}` });
+    await card.waitFor();
+    assert.match(await card.textContent(), /5\s*days/);
+    assert.match(await card.textContent(), /0\/2 blocks/);
+    assert.equal(await card.getByRole("button", { name: "Study now" }).count(), 1, "the countdown card has no single action");
+
+    const timeline = page.getByRole("region", { name: "Timeline to exams" });
+    const blocks = timeline.getByRole("button", { name: new RegExp(`^Study: Exam ${stamp}`) });
+    assert.equal(await blocks.count(), 2);
+    assert.equal(await timeline.getByRole("img", { name: new RegExp(`^Exam ${stamp} in 5 days`) }).count(), 1, "the exam is not a blossom on its lane");
+    assert.equal(await timeline.getByRole("img", { name: new RegExp(`^Spaced return: Return ${stamp}`) }).count(), 1, "the return is not on the returns lane");
+    await blocks.first().click();
+    await timeline.getByRole("button", { name: "Mark done" }).click();
+    await page.waitForFunction((stamp) => /done/.test(document.querySelector(`[aria-label="Timeline to exams"] [aria-label^="Study: Exam ${stamp}"]`)?.getAttribute("aria-label") ?? ""), stamp);
+    await card.getByText("1/2 blocks").waitFor();
+
+    await page.getByRole("radio", { name: "Days" }).click();
+    const strip = page.getByRole("region", { name: "Next 12 days" });
+    const days = strip.getByRole("group");
+    assert.equal(await days.count(), 12);
+    const mine = (index) => days.nth(index).getByRole("button", { name: new RegExp(`^Study: Exam ${stamp}`) });
+    assert.equal(await mine(1).count(), 1);
+    // Keep the whole strip on screen: scrolling mid-drag cancels a native drag.
+    await strip.evaluate((node) => node.scrollIntoView({ block: "start" }));
+    await mine(1).dragTo(days.nth(2), { targetPosition: { x: 20, y: 40 } });
+    await mine(2).waitFor();
+    assert.equal(await mine(1).count(), 0, "the dragged block stayed on its day");
+    await mine(3).dragTo(days.nth(2), { targetPosition: { x: 20, y: 40 } });
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Next 12 days"] [role="group"]')[2]?.getAttribute("aria-label")?.includes("heavy"));
+    assert.equal(await mine(2).count(), 2);
+    await days.nth(2).getByText(/Heavy day/).waitFor();
+
+    const returns = page.getByRole("region", { name: "Spaced returns" });
+    const due = returns.getByRole("region", { name: "Due" }).getByRole("article").filter({ hasText: `Return ${stamp}` });
+    await due.getByRole("button", { name: "Recalled" }).click();
+    const later = returns.getByRole("region", { name: "This week" }).getByRole("article").filter({ hasText: `Return ${stamp}` });
+    await later.waitFor();
+    assert.equal(await later.getByRole("img", { name: /^Rung 2 of 5/ }).count(), 1, "recalling did not climb the ladder");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

@@ -91,7 +91,11 @@ export type Stats = {
   };
 };
 export type GuideState = { checked: boolean[]; responses: string[]; reflection: string; next_review: string };
-export type Guide = { id: string; revision: number; created_at: string; ended_at: string | null; state: GuideState };
+/** `subject_id` is the session's subject; `return_step` is the spaced return's rung on the ladder. */
+export type Guide = {
+  id: string; revision: number; created_at: string; ended_at: string | null;
+  subject_id: number | null; return_step: number; state: GuideState;
+};
 export type Workspace = {
   timer: Timer;
   settings: Settings;

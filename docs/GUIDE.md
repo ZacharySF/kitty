@@ -448,6 +448,13 @@ beside a share ring (hover or click a subject to isolate it), tints a month
 calendar by each day's main subject and deepens it by minutes, with a ✓ for each
 week that met the weekly goal (or had any study when no weekly goal is set), and
 draws goal rings for today, this week and today's flashcard reviews.
+**Exams & plans** shows exam countdown/readiness cards, a two-week timeline
+with an exam lane and a spaced-returns lane, and a twelve-day strip. Select a
+block to mark it done or export it explicitly to Calendar. Drag blocks between
+days (or use Alt+Left/Right); days above 90 planned minutes show a load warning.
+Blocks stay before their exam. Make a plan saves dated blocks from your own
+dates and durations. Returns are grouped Due / This week / Later: Recalled
+advances through 1, 3, 7, 16 and 35 days; Shaky restarts at one day.
 **Calendar** opens one week with half-hour slots and a day-plan sidebar.
 Previous/next changes weeks; Month/Day/Agenda remain optional. Click a slot to
 schedule a time, or drag an event/task to another date or time. Drops open the

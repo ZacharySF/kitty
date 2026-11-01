@@ -20,6 +20,8 @@ UTC = timezone.utc
 TABLES = {"subjects": "study_subjects", "projects": "study_projects", "targets": "study_targets",
           "tasks": "study_tasks", "exams": "study_exams", "plan": "study_plan_blocks"}
 PRIMING_SECONDS = 300
+# Days until the next spaced return; recalling a return climbs one rung, a shaky one restarts.
+RETURN_LADDER = (1, 3, 7, 16, 35)
 
 
 class StudyConflict(ValueError):
@@ -169,8 +171,18 @@ def _guide(conn, session_id):
     if row is None:
         return None
     result = dict(row)
-    result["state"] = json.loads(result.pop("state_json"))
+    state = json.loads(result.pop("state_json"))
+    # The session's subject and the return's ladder rung are kept by the server
+    # beside the user's guide state; older guides have neither.
+    result["subject_id"] = state.pop("subject_id", None)
+    result["return_step"] = state.pop("return_step", 0)
+    result["state"] = state
     return result
+
+
+def _store_guide(conn, session_id, state, subject_id, return_step):
+    conn.execute("UPDATE study_guides SET state_json=?,revision=revision+1 WHERE id=?",
+                 (json.dumps({**state, "subject_id": subject_id, "return_step": return_step}), session_id))
 
 
 def save_guide(conn, body):
@@ -182,8 +194,28 @@ def save_guide(conn, body):
         if current is None:
             raise ValueError("Study guide not found")
         _revision(current, body.get("revision"))
-        conn.execute("UPDATE study_guides SET state_json=?,revision=revision+1 WHERE id=?",
-                     (json.dumps(state), session_id))
+        _store_guide(conn, session_id, state, current["subject_id"], current["return_step"])
+        return {"guide": _guide(conn, session_id)}
+
+
+def review_return(conn, body, *, now=None):
+    """Grade a spaced return: recalled climbs the ladder, shaky restarts it; both reschedule from today."""
+    _fields(body, {"session_id", "revision", "result"})
+    now = clock(now)
+    session_id = text(body.get("session_id"), "Study session", 100, required=True)
+    if body.get("result") not in {"recalled", "shaky"}:
+        raise ValueError("A return is either recalled or shaky")
+    with transaction(conn, immediate=True):
+        current = _guide(conn, session_id)
+        if current is None:
+            raise ValueError("Study guide not found")
+        _revision(current, body.get("revision"))
+        if not current["state"]["next_review"]:
+            raise ValueError("This session has no spaced return to grade")
+        step = min(len(RETURN_LADDER) - 1, current["return_step"] + 1) if body["result"] == "recalled" else 0
+        today = now.astimezone(ZoneInfo(_settings(conn)["timezone"])).date()
+        state = {**current["state"], "next_review": (today + timedelta(days=RETURN_LADDER[step])).isoformat()}
+        _store_guide(conn, session_id, state, current["subject_id"], step)
         return {"guide": _guide(conn, session_id)}
 
 
@@ -274,7 +306,8 @@ def timer_command(conn, body, *, now=None):
                          completed_phase_id=None, completed_phase=None,
                          timezone=zone(body.get("timezone", settings["timezone"])))
             conn.execute("INSERT INTO study_guides(id,created_at,state_json) VALUES(?,?,?)",
-                         (timer["session_id"], iso(now), json.dumps(_guide_state(body.get("guide")))))
+                         (timer["session_id"], iso(now), json.dumps({**_guide_state(body.get("guide")),
+                                                                     "subject_id": timer["subject_id"], "return_step": 0})))
             _begin_phase(timer, now)
             timer.update(notes=text(body.get("notes", ""), "Notes"),
                          distractions=text(body.get("distractions", ""), "Distractions"))

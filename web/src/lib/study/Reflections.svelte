@@ -1,14 +1,13 @@
 <script lang="ts">
-  import type { Guide } from "./types";
+  import { returnTitle } from "./planning";
+  import type { Guide, Item } from "./types";
 
   /** Spaced returns due today or earlier, then saved reflections; each reopens its guide. */
-  let { guides, today, onopen }: { guides: Guide[]; today: string; onopen: (guide: Guide) => void } = $props();
+  let { guides, subjects, today, onopen }: { guides: Guide[]; subjects: Item[]; today: string; onopen: (guide: Guide) => void } = $props();
 
   const saved = $derived(guides.filter((guide) => guide.state.next_review || guide.state.reflection));
   const due = $derived(saved.filter((guide) => guide.state.next_review && guide.state.next_review <= today)
     .sort((a, b) => a.state.next_review.localeCompare(b.state.next_review)));
-  const title = (guide: Guide) =>
-    guide.state.responses[4] || guide.state.responses[0] || `Session of ${new Date(guide.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
 </script>
 
 <div class="returns">
@@ -16,7 +15,7 @@
   {#if due.length}
     <ul class="chips">
       {#each due as guide (guide.id)}
-        <li><button type="button" class="chip" onclick={() => onopen(guide)} title={`Due ${guide.state.next_review}`}>{title(guide)}</button></li>
+        <li><button type="button" class="chip" onclick={() => onopen(guide)} title={`Due ${guide.state.next_review}`}><span class="dot" style:background={subjects.find((item) => item.id === guide.subject_id)?.color || "var(--accent)"}></span>{returnTitle(guide)}</button></li>
       {/each}
     </ul>
   {:else}
@@ -65,8 +64,19 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .chips .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
   .chip:hover {
     background: var(--wash);
+  }
+  .dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
   }
   article {
     display: grid;

@@ -510,7 +510,7 @@
               <SessionNotes timer={data.timer} bind:notes bind:distractions bind:notesDirty bind:noteRevision disabled={busy || !online} {confirm} onannotate={() => timerAction("annotate")} />
             </div>
             <div class="column">
-              <Reflections guides={data.guides} today={data.stats.today} onopen={openGuide} />
+              <Reflections guides={data.guides} subjects={data.subjects} today={data.stats.today} onopen={openGuide} />
             </div>
           </section>
         {/if}
@@ -526,7 +526,12 @@
       {:else if tab === "sessions"}
         <HistoryView {data} period={historyPeriod} label={historyLabel} onopen={(session) => (sessionEditing = { session: session ?? null })} ondelete={deleteSession} />
       {:else if tab === "exams"}
-        <PlansView {data} disabled={busy || !online} {change} {confirm} notify={(message) => (notice = message)} fail={(message) => (error = message)} onedit={openEditor} ondelete={deleteItem} />
+        <PlansView {data} disabled={busy || !online} {change} {confirm} notify={(message) => (notice = message)} fail={(message) => (error = message)}
+          onedit={openEditor} onopen={openGuide} onstudy={(exam) => {
+            if (data?.timer.status === "idle") { subjectId = exam.subject_id ? String(exam.subject_id) : ""; projectId = ""; }
+            else notice = "Stop the current cycle before changing focus.";
+            tab = "session";
+          }} />
       {:else if tab === "helpers"}
         <HelpersView bind:text={aiText} {demo} active={pane.active}
           ontemplate={(template) => { setNoteDraft(template); tab = "session"; }}
