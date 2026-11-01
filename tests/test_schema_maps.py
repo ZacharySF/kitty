@@ -288,6 +288,24 @@ def test_node_palette_colour_persists_and_round_trips_portably(workspace):
             save(conn, schema.load(conn, item['id']), {'nodes': [node('n', color=colour)], 'edges': []})
 
 
+def test_cross_connection_kind_persists_and_round_trips_portably(workspace):
+    conn = workspace.conn
+    item = connected(conn)
+    item['graph']['nodes'].append(node('optics'))
+    item['graph']['edges'] += [{'id': 'link', 'from': 'optics', 'to': 'calculus', 'label': 'needs', 'kind': 'cross'},
+                               {'id': 'branch', 'from': 'physics', 'to': 'optics', 'label': '', 'kind': 'tree'}]
+    save(conn, item)
+    edges = {edge['id']: edge for edge in schema.load(conn, item['id'])['graph']['edges']}
+    assert edges['link'] == {'id': 'link', 'from': 'optics', 'to': 'calculus', 'label': 'needs', 'kind': 'cross'}
+    assert 'kind' not in edges['branch'] and 'kind' not in edges['uses']
+    copy = schema.create(conn, {'title': 'Copy', 'mode': 'study', 'document': schema.export(conn, item['id'])})
+    assert {edge['id']: edge.get('kind') for edge in copy['graph']['edges']}['link'] == 'cross'
+    for kind in ('bogus', 1, None):
+        with pytest.raises(ValueError, match='Connection kind'):
+            save(conn, schema.load(conn, item['id']), {'nodes': [node('a'), node('b')],
+                                                       'edges': [{'id': 'x', 'from': 'a', 'to': 'b', 'label': '', 'kind': kind}]})
+
+
 def test_note_card_source_is_unique_and_live(workspace):
     conn = workspace.conn
     notebook = conn.execute("INSERT INTO note_notebooks(title,created_at,updated_at) VALUES('Synthetic notebook','2026-01-01','2026-01-01')").lastrowid

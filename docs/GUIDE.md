@@ -465,6 +465,10 @@ out beside it, and **Reset position** puts it back into the automatic layout.
 A swatch row floats above the selected topic: pick one of the theme's six colours
 (or automatic) for the topic, or turn on **Whole branch** to paint its descendants
 too; **Copy style** / **Paste style** (Alt+C / Alt+V) carry a colour to other topics.
+**Connect to…** in the node panel links the topic to any other one: click (or move
+to and press Enter on) the other topic, then type the connection's label. Connections
+are dashed curves outside the tree: they never change the layout, hide when either
+end is folded away, and double-clicking one edits its label.
 Tree/radial layouts, an outline, linked note cards and links between maps help
 organize material. **Quiz me** hides labels for recall; a branch can produce a
 flashcard draft. **Auto-links** also suggests local sources for node labels;

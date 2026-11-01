@@ -1360,6 +1360,8 @@ async function newMindMap(page, title, template = "Lecture") {
   const fresh = schema.getByRole("button", { name: "New map", exact: true });
   const titleField = schema.getByRole("textbox", { name: "New map title" });
   await Promise.race([fresh.waitFor(), titleField.waitFor()]);
+  // The editor reopens the last map once the map list loads; let that settle before choosing.
+  await page.waitForLoadState("networkidle");
   if (await fresh.isVisible()) await fresh.click();
   await titleField.fill(title);
   await schema.locator("summary", { hasText: "Advanced options" }).click();
@@ -1801,6 +1803,51 @@ describe("mind-map recolour", () => {
     await mapNode(page, "Questions").click();
     await swatches.getByRole("button", { name: "Automatic colour" }).click();
     assert.notEqual(await dot("Questions"), await colour(5), "Automatic colour did not clear the colour");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("mind-map cross connections", () => {
+  test("Connect to… links any two topics with a labelled curve that stays out of the tree layout and folds with its ends", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { schema } = await newMindMap(page, "Link map");
+    await mapNode(page, "Key ideas").click();
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Alpha");
+    await page.keyboard.press("Escape");
+    const before = await nodeBoxes(page);
+    await mapNode(page, "Alpha").click();
+    await schema.getByRole("button", { name: "Connect to…" }).click();
+    await page.getByRole("status").filter({ hasText: /^Click a topic to connect “Alpha”/ }).waitFor();
+    await mapNode(page, "Questions").click();
+    const label = page.getByRole("textbox", { name: "Connection label" });
+    await label.waitFor();
+    await label.fill("explains");
+    await label.press("Enter");
+    const text = page.locator("svg.stage text.edge-label", { hasText: "explains" });
+    await text.waitFor();
+    assert.deepEqual(await nodeBoxes(page), before, "linking moved topics");
+    assert.doesNotMatch(await mapNode(page, "Questions").getAttribute("class"), /\broot\b/);
+    // The link is a curve, not a straight chord.
+    const bend = await page.locator("svg.stage path.edge.cross").evaluate((path) => {
+      const length = path.getTotalLength(), a = path.getPointAtLength(0), b = path.getPointAtLength(length), m = path.getPointAtLength(length / 2);
+      return Math.abs((b.x - a.x) * (a.y - m.y) - (a.x - m.x) * (b.y - a.y)) / Math.hypot(b.x - a.x, b.y - a.y);
+    });
+    assert.ok(bend > 10, `the connection is not curved (${bend}px)`);
+    await schema.getByRole("button", { name: "Tree layout" }).click();
+    const relaid = await nodeBoxes(page);
+    assert.equal(relaid.Questions.x, relaid.Examples.x, "the link pulled Questions out of its tree column");
+    // Folding Key ideas hides Alpha and its link, but not Questions.
+    await mapNode(page, "Key ideas").click();
+    await page.keyboard.press(" ");
+    assert.equal(await text.count(), 0, "the link stayed visible with its end folded away");
+    assert.equal(await mapNode(page, "Questions").count(), 1);
+    await page.keyboard.press(" ");
+    await schema.getByRole("button", { name: /^Save map/ }).click();
+    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await page.reload();
+    await text.waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });

@@ -175,7 +175,7 @@ def graph(conn, value, *, portable=False):
                                 **({'map_id': linked_map} if linked_map is not None else {})})
     edge_ids = set()
     for edge in edges:
-        _fields(edge, {'id', 'from', 'to', 'label'})
+        _fields(edge, {'id', 'from', 'to', 'label', 'kind'})
         key = _key(edge.get('id'))
         start, end = edge.get('from'), edge.get('to')
         if not isinstance(start, str) or not isinstance(end, str) or start not in ids or end not in ids:
@@ -183,7 +183,12 @@ def graph(conn, value, *, portable=False):
         if key in edge_ids:
             raise ValueError('Connection IDs must be unique')
         edge_ids.add(key)
-        result['edges'].append({'id': key, 'from': start, 'to': end, 'label': _text(edge.get('label', ''), 'Connection label', 200)})
+        # A cross connection links any two nodes outside the tree; without a kind, an edge may shape the tree.
+        edge_kind = edge.get('kind', 'tree')
+        if not isinstance(edge_kind, str) or edge_kind not in {'tree', 'cross'}:
+            raise ValueError('Connection kind must be tree or cross')
+        result['edges'].append({'id': key, 'from': start, 'to': end, 'label': _text(edge.get('label', ''), 'Connection label', 200),
+                                **({'kind': 'cross'} if edge_kind == 'cross' else {})})
     if len(json.dumps(result, ensure_ascii=True).encode()) > MAX_BYTES - 4096:
         raise ValueError('Graph exceeds the 1 MB size limit')
     return result

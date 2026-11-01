@@ -39,7 +39,8 @@
     /** Q65 D: a theme palette slot (`c1`–`c6`); absent means the automatic branch colour. */
     color?: string;
   };
-  type Edge = { id: string; from: string; to: string; label: string };
+  /** Q65 E: `cross` marks a labelled connection outside the tree; other edges may shape the tree. */
+  type Edge = { id: string; from: string; to: string; label: string; kind?: "cross" };
   type Graph = { nodes: Node[]; edges: Edge[] };
   type View = { x: number; y: number; zoom: number };
   type Live = {
@@ -168,9 +169,10 @@
     busy = $state(false),
     dirty = $state(false),
     blocked = $state(false);
-  const parents = $derived(new Map([...(current?.graph.edges ?? [])].reverse().filter(e => e.from !== e.to).map(e => [e.to, e.from])));
-  /** The first non-loop edge into each node is its tree edge; any other edge is drawn as a free connection. */
-  const treeEdges = $derived(new Set([...new Map([...(current?.graph.edges ?? [])].reverse().filter(e => e.from !== e.to).map(e => [e.to, e.id])).values()]));
+  /** The first non-loop, non-cross edge into each node is its tree edge; any other edge is drawn as a connection. */
+  const treeLinks = $derived([...(current?.graph.edges ?? [])].reverse().filter(e => e.from !== e.to && e.kind !== "cross"));
+  const parents = $derived(new Map(treeLinks.map(e => [e.to, e.from])));
+  const treeEdges = $derived(new Set([...new Map(treeLinks.map(e => [e.to, e.id])).values()]));
   let error = $state(""),
     notice = $state(""),
     newTitle = $state(""),
@@ -209,6 +211,8 @@
   // Q65 D: the swatch row paints the node or (with Whole branch) its descendants too; copied style pastes onto others.
   const PALETTE = ["c1", "c2", "c3", "c4", "c5", "c6"];
   let paintBranch = $state(false), copiedStyle = $state<{color?: string} | null>(null), stageWidth = $state(0);
+  // Q65 E: the topic a "Connect to…" starts from, and the cross connection whose label is being typed.
+  let linking = $state(""), labelling = $state(""), edgeDraft = $state("");
   let view = $state<View3D>("edit"),
     mapLayout = $state<GraphLayout>("tree"),
     netLayout = $state<GraphLayout>("tree");
@@ -231,17 +235,22 @@
   let noteSearch = $state(""), notePages = $state<{id: number; title: string}[]>([]);
   let template = $state("Blank");
   const draftKey = (id: number) => `kitty.schema.draft.${id}`;
+  /** Tree children of each node in edge order; cross connections never make a branch. */
+  const childIds = $derived.by(() => {
+    const map = new Map<string, string[]>();
+    for (const e of current?.graph.edges ?? []) if (treeEdges.has(e.id)) map.set(e.from, [...(map.get(e.from) ?? []), e.to]);
+    return map;
+  });
   function descendants(id: string) {
     const ids = new Set([id]);
-    for (let i = 0; i < (current?.graph.nodes.length ?? 0); i++)
-      for (const edge of current?.graph.edges ?? []) if (ids.has(edge.from)) ids.add(edge.to);
+    for (const item of ids) for (const child of childIds.get(item) ?? []) ids.add(child);
     return ids;
   }
   function reparent(parent: string) {
     if (!current || !node || !editable) return;
     if (parent && descendants(node.id).has(parent)) { error = "A topic cannot be moved inside its own branch."; return; }
     remember();
-    current.graph.edges = current.graph.edges.filter(edge => edge.to !== node.id);
+    current.graph.edges = current.graph.edges.filter(edge => !(treeEdges.has(edge.id) && edge.to === node.id));
     if (parent) {
       current.graph.edges.push({id: crypto.randomUUID(), from: parent, to: node.id, label: ""});
       const target = current.graph.nodes.find(item => item.id === parent);
@@ -255,31 +264,37 @@
     const visit = (id: string, seen = new Set<string>()) => {
       if (seen.has(id)) return;
       seen.add(id);
-      for (const e of current!.graph.edges.filter(e => e.from === id)) {
-        if (!seen.has(e.to)) {hidden.add(e.to); visit(e.to, seen);}
+      for (const child of childIds.get(id) ?? []) {
+        if (!seen.has(child)) {hidden.add(child); visit(child, seen);}
       }
     };
     for (const n of current.graph.nodes) if (n.collapsed) visit(n.id);
     const result: Node[] = [], seen = new Set<string>();
+    const byId = new Map(current.graph.nodes.map(n => [n.id, n]));
     const append = (n: Node) => {
       if (seen.has(n.id) || hidden.has(n.id)) return;
       seen.add(n.id); result.push(n);
-      for (const edge of current!.graph.edges.filter(e => e.from === n.id)) {
-        const child = current!.graph.nodes.find(n => n.id === edge.to);
+      for (const id of childIds.get(n.id) ?? []) {
+        const child = byId.get(id);
         if (child) append(child);
       }
     };
-    for (const n of current.graph.nodes.filter(n => !current!.graph.edges.some(e => e.to === n.id))) append(n);
+    for (const n of current.graph.nodes.filter(isRoot)) append(n);
     for (const n of current.graph.nodes) append(n);
     return result;
+  });
+  /** Edges whose two ends are shown, so connections fold away with either end. */
+  const shownEdges = $derived.by(() => {
+    const shown = new Set(visibleNodes.map(n => n.id));
+    return current?.graph.edges.filter(e => shown.has(e.from) && shown.has(e.to)) ?? [];
   });
   function depth(id: string) {
     const seen = new Set<string>();
     while (!seen.has(id)) {
       seen.add(id);
-      const parent = current?.graph.edges.find(e => e.to === id);
-      if (!parent) break;
-      id = parent.from;
+      const parent = parents.get(id);
+      if (parent === undefined) break;
+      id = parent;
     }
     return seen.size - 1;
   }
@@ -288,8 +303,8 @@
     const seen = new Set<string>();
     while (!seen.has(branch)) {
       seen.add(branch);
-      const parent = current?.graph.edges.find(e => e.to === branch)?.from;
-      if (!parent || !current?.graph.edges.some(e => e.to === parent)) break;
+      const parent = parents.get(branch);
+      if (parent === undefined || !parents.has(parent)) break;
       branch = parent;
     }
     const index = current?.graph.nodes.findIndex(n => n.id === branch) ?? 0;
@@ -319,7 +334,7 @@
     if (style.color) node.color = style.color; else delete node.color;
   }
   function hiddenLabel(n: Node) {
-    return recall && !!current?.graph.edges.some(e => e.to === n.id) && !revealed.includes(n.id);
+    return recall && parents.has(n.id) && !revealed.includes(n.id);
   }
   function collapse(n: Node) { remember(); n.collapsed = !n.collapsed; }
   async function editInline(n: Node, initial = name(n)) {
@@ -761,23 +776,40 @@
     node.source = null;
     choose(node);
   }
-  function connect() {
-    if (
-      !current ||
-      !editable ||
-      !current.graph.nodes.some((n) => n.id === edgeFrom) ||
-      !current.graph.nodes.some((n) => n.id === edgeTo) ||
-      current.graph.edges.length >= 600
-    )
-      return;
+  /** Q65 E: adds a labelled cross connection, which never changes the tree or its layout. */
+  function link(from: string, to: string, text: string) {
+    if (!current || !editable || current.graph.edges.length >= 600 ||
+      !current.graph.nodes.some(n => n.id === from) || !current.graph.nodes.some(n => n.id === to)) return "";
     remember();
-    current.graph.edges.push({
-      id: crypto.randomUUID(),
-      from: edgeFrom,
-      to: edgeTo,
-      label: edgeLabel,
-    });
-    arrange("tree");
+    const id = crypto.randomUUID();
+    current.graph.edges.push({id, from, to, label: text, kind: "cross"});
+    return id;
+  }
+  function connect() {
+    link(edgeFrom, edgeTo, edgeLabel);
+  }
+  /** Finishes "Connect to…" on `target`, then asks for the connection's label in place. */
+  async function linkTo(target: string) {
+    const from = linking;
+    linking = "";
+    const id = target === from ? "" : link(from, target, "");
+    if (!id) return;
+    labelling = id; edgeDraft = "";
+    await tick();
+    if (pane.active) container?.querySelector<HTMLInputElement>(`#${CSS.escape(`${pane.id}-edge-label`)}`)?.focus();
+  }
+  async function relabel(id: string) {
+    const e = current?.graph.edges.find(e => e.id === id);
+    if (!e || !editable) return;
+    labelling = id; edgeDraft = e.label;
+    await tick();
+    if (pane.active) container?.querySelector<HTMLInputElement>(`#${CSS.escape(`${pane.id}-edge-label`)}`)?.focus();
+  }
+  function finishLabel(keep = true, focus = false) {
+    const e = current?.graph.edges.find(e => e.id === labelling);
+    labelling = "";
+    if (e && keep && e.label !== edgeDraft.trim()) { remember(); e.label = edgeDraft.trim(); }
+    if (e && focus) focusOn(e.to);
   }
   function removeEdge(id: string) {
     if (!current || !editable) return;
@@ -816,8 +848,9 @@
     relayout(false);
     focusOn(n.id);
   }
-  /** Mid-drag, D breaks the branch off (press again to reattach on drop), wherever focus is. */
+  /** Window keys: Escape leaves "Connect to…"; mid-drag, D breaks the branch off (press again to reattach on drop), wherever focus is. */
   function dragKey(e: KeyboardEvent) {
+    if (pane.active && linking && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); linking = ""; return; }
     if (!pane.active || !gesture?.node || e.key.toLowerCase() !== "d" || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault(); e.stopPropagation();
     detaching = !detaching; dropTarget = "";
@@ -832,6 +865,8 @@
       return;
     }
     if (e.altKey) return;
+    // "Connect to…": move to the other topic and press Enter (Escape cancels, see dragKey).
+    if (linking && e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void linkTo(n.id); return; }
     if (e.ctrlKey || e.metaKey) {
       if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void editInline(n); }
       else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); choose(n); reorder(n, e.key === "ArrowUp" ? -1 : 1); }
@@ -860,6 +895,10 @@
     if (!current || !editable || gesture || e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    if (linking) {
+      if (id) void linkTo(id); else linking = "";
+      return;
+    }
     if (id) {
       (e.currentTarget as SVGGElement).focus();
       const n = current.graph.nodes.find((n) => n.id === id)!;
@@ -1040,9 +1079,10 @@
   }
   /**
    * Edge paths. A node's tree edge is a horizontal branch curve from the parent's side to the
-   * child's facing side. Other connections are straight when a pair has one connection, mirrored
-   * arcs for bidirectional or parallel connections and stacked loops for self-connections, with
-   * endpoints on the pill borders so arrowheads stay visible.
+   * child's facing side. Other connections (Q65 E) are arcs bent off the chord (brackets round the
+   * right side when both pills share a column), fanned apart for bidirectional or parallel
+   * connections, and stacked loops for self-connections, with endpoints on the pill borders so
+   * arrowheads stay visible.
    */
   const geometry = $derived.by(() => {
     const shapes = new Map<string, { d: string; lx: number; ly: number; tree: boolean }>();
@@ -1077,13 +1117,28 @@
           });
           return;
         }
+        // Pills sharing a column: bracket around their right side instead of cutting through the column.
+        if (Math.abs(a.x + as.w / 2 - (b.x + bs.w / 2)) < (as.w + bs.w) / 2) {
+          const sx = a.x + as.w, ex = b.x + bs.w, ay = a.y + as.h / 2, by = b.y + bs.h / 2,
+            // The bracket's apex clears every shown pill in the column between its two ends.
+            right = visibleNodes.reduce((edge, n) => n.y + box(n).h / 2 > Math.min(ay, by) && n.y + box(n).h / 2 < Math.max(ay, by) && n.x <= Math.max(sx, ex)
+              ? Math.max(edge, n.x + box(n).w) : edge, Math.max(sx, ex)),
+            rx = (right + 28 + index * 24 - 0.125 * (sx + ex)) / 0.75;
+          shapes.set(e.id, {
+            d: `M ${sx} ${ay} C ${rx} ${ay}, ${rx} ${by}, ${ex} ${by}`,
+            lx: 0.125 * (sx + ex) + 0.75 * rx,
+            ly: (ay + by) / 2 + 4,
+            tree: false,
+          });
+          return;
+        }
         const ca = { x: a.x + as.w / 2, y: a.y + as.h / 2 },
           cb = { x: b.x + bs.w / 2, y: b.y + bs.h / 2 },
           sign = e.from < e.to ? 1 : -1,
           dx = (cb.x - ca.x) * sign,
           dy = (cb.y - ca.y) * sign,
           length = Math.hypot(dx, dy) || 1,
-          offset = list.length === 1 ? 0 : (index - (list.length - 1) / 2) * 48,
+          offset = Math.min(110, Math.max(30, length * 0.25)) + (index - (list.length - 1) / 2) * 48,
           control = {
             x: (ca.x + cb.x) / 2 - (dy / length) * offset,
             y: (ca.y + cb.y) / 2 + (dx / length) * offset,
@@ -2125,7 +2180,7 @@
           <div class="toolbar">
             <Button onclick={() => arrange("tree")} disabled={!editable}>Tree layout</Button>
             <Button onclick={() => quickAdd()} disabled={!editable}>{node ? "+ Child" : "+ Topic"}</Button>
-            <Button onclick={() => quickAdd(current?.graph.edges.find(edge => edge.to === selected)?.from ?? "")} disabled={!editable || !node}>+ Sibling</Button>
+            <Button onclick={() => quickAdd(parents.get(selected) ?? "")} disabled={!editable || !node}>+ Sibling</Button>
             <Button onclick={() => node && editInline(node)} disabled={!editable || !node}>Rename</Button>
             <Button onclick={() => outline = !outline} aria-pressed={outline}>Outline</Button>
             <Button onclick={() => {recall = !recall; revealed = [];}} aria-pressed={recall}>{recall ? "End recall" : "Quiz me"}</Button>
@@ -2152,8 +2207,9 @@
             </div>
           {/if}
           <div class="stage-wrap" bind:clientWidth={stageWidth}>
-          {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : placing ? "Placing freely · release to leave it here" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · Alt places it freely · D detaches the branch"}</p>{/if}
-          {#if node && !dragging && !editing && editable && visibleNodes.includes(node)}
+          {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : placing ? "Placing freely · release to leave it here" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · Alt places it freely · D detaches the branch"}</p>
+          {:else if linking}<p class="drag-hint" role="status">Click a topic to connect “{name(current.graph.nodes.find(n => n.id === linking)!)}” to it · Esc cancels</p>{/if}
+          {#if node && !dragging && !editing && !linking && !labelling && editable && visibleNodes.includes(node)}
             {@const v = current.viewport}
             {@const top = node.y * v.zoom + v.y + 8}
             <!-- Q65 D: the selection's swatch row floats above its pill (below it near the stage top). -->
@@ -2174,7 +2230,11 @@
             class="stage"
             aria-label="Schema graph. Drag nodes to reparent, Alt-drag to place freely; drag empty space to pan. Use node list and inspector for keyboard editing."
             role="group"
-            ondblclick={(e) => {if (!(e.target as Element).closest("[data-node]")) quickAdd("");}}
+            ondblclick={(e) => {
+              const edge = (e.target as Element).getAttribute("data-edge");
+              if (edge) void relabel(edge);
+              else if (!(e.target as Element).closest("[data-node]")) quickAdd("");
+            }}
             onpointerdown={pick}
             onpointermove={move}
             onpointerup={(e) => end(e)}
@@ -2209,12 +2269,13 @@
             <g
               transform={`translate(${current.viewport.x},${current.viewport.y}) scale(${current.viewport.zoom})`}
             >
-              {#each current.graph.edges.filter(e => visibleNodes.some(n => n.id === e.from) && visibleNodes.some(n => n.id === e.to) && !(e.to === dragging && treeEdges.has(e.id) && (detaching || (dropTarget && dropTarget !== e.from)))) as e (e.id)}
+              {#each shownEdges.filter(e => !(e.to === dragging && treeEdges.has(e.id) && (detaching || (dropTarget && dropTarget !== e.from)))) as e (e.id)}
                 {@const shape = geometry.get(e.id)}
                 {#if shape}<path
                     d={shape.d}
                     class="edge"
                     class:branch={shape.tree}
+                    class:cross={!shape.tree}
                     class:active={selectedEdge === e.id}
                     style:--b={nodeColor(current.graph.nodes.find(n => n.id === e.to)!)}
                     marker-end={shape.tree ? undefined : selectedEdge === e.id
@@ -2223,6 +2284,21 @@
                   /><path d={shape.d} class="edge-hit" data-edge={e.id} />{/if}
               {/each}
               {#if dragging && dropTarget}<path class="snap-preview" d={snapPath(dropTarget, dragging)} />{/if}
+              <!-- Labels sit under the pills so a label never blocks a topic. -->
+              {#each shownEdges as e (e.id)}
+                {@const shape = geometry.get(e.id)}
+                {#if shape && e.label && labelling !== e.id}<text
+                    x={shape.lx}
+                    y={shape.ly}
+                    class="edge-label"
+                    class:active={selectedEdge === e.id}
+                    data-edge={e.id}
+                    text-anchor="middle"
+                    >{e.label.length > 32
+                      ? e.label.slice(0, 31) + "…"
+                      : e.label}</text
+                  >{/if}
+              {/each}
               {#each visibleNodes as n (n.id)}
                 {@const size = box(n)}
                 {@const root = isRoot(n)}
@@ -2267,20 +2343,20 @@
                   {/if}
                 </g>
               {/each}
-              {#each current.graph.edges as e (e.id)}
-                {@const shape = geometry.get(e.id)}
-                {#if shape && e.label}<text
-                    x={shape.lx}
-                    y={shape.ly}
-                    class="edge-label"
-                    class:active={selectedEdge === e.id}
-                    data-edge={e.id}
-                    text-anchor="middle"
-                    >{e.label.length > 32
-                      ? e.label.slice(0, 31) + "…"
-                      : e.label}</text
-                  >{/if}
-              {/each}
+              {#if labelling}
+                {@const e = shownEdges.find(e => e.id === labelling)}
+                {@const shape = e && geometry.get(e.id)}
+                {#if e && shape}
+                  <foreignObject x={shape.lx - 80} y={shape.ly - 17} width="160" height="26">
+                    <input id={`${pane.id}-edge-label`} class="inline-label edge-input" aria-label="Connection label" placeholder="relationship" bind:value={edgeDraft} maxlength="200"
+                      onpointerdown={event => event.stopPropagation()}
+                      onkeydown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Enter" || event.key === "Escape") {event.preventDefault(); finishLabel(event.key === "Enter", true);}
+                      }} onblur={() => {if (labelling) finishLabel();}} />
+                  </foreignObject>
+                {/if}
+              {/if}
               <!-- The dragged pill is redrawn on top so it stays visible over the pill it snaps into. -->
               {#if dragging}<use href={`#${pane.id}-node-${dragging}`} class="drag-ghost" />{/if}
             </g>
@@ -2376,12 +2452,13 @@
                 <Button onclick={() => collapse(node)}>{node.collapsed ? "Expand" : "Collapse"}</Button>
                 <Button onclick={detachSelected} disabled={!editable || isRoot(node)} title="Break this branch off as a floating piece (or press D while dragging it)">Detach branch</Button>
                 <Button onclick={resetPosition} disabled={!editable || !node.free} title="Put a freely placed node back into the automatic layout">Reset position</Button>
+                <Button onclick={() => {linking = node!.id; focusOn(node!.id);}} disabled={!editable} aria-pressed={linking === node.id} title="Draw a labelled connection to any other topic, outside the tree">Connect to…</Button>
                 <Button onclick={() => studyBranch("flashcards")}>Make flashcards</Button>
                 <Button onclick={() => studyBranch("quiz")}>Quiz this branch</Button>
                 <Button onclick={startBranchSession} disabled={!editable}>Start session</Button>
                 {#if node.source?.kind === "note_page" || node.map_id}<Button onclick={() => openCard(node)}>Open ↗</Button>{/if}
               </div>
-              <label>Move under<select value={current.graph.edges.find(edge => edge.to === node.id)?.from ?? ""} disabled={!editable} onchange={e => reparent(e.currentTarget.value)}>
+              <label>Move under<select value={parents.get(node.id) ?? ""} disabled={!editable} onchange={e => reparent(e.currentTarget.value)}>
                 <option value="">No parent (root topic)</option>
                 {#each current.graph.nodes.filter(item => !descendants(node.id).has(item.id)) as parent}<option value={parent.id}>{name(parent)}</option>{/each}
               </select></label>
@@ -2772,6 +2849,13 @@
     stroke-width: 2;
     pointer-events: none;
   }
+  /* Q65 E: cross connections are dashed violet arcs outside the tree. */
+  .edge.cross {
+    stroke-width: 1.6;
+    stroke-dasharray: 6 5;
+    stroke-linecap: round;
+  }
+  .edge-input { padding: 0 10px; border-color: var(--violet); font-size: 11.5px; }
   .edge.branch {
     stroke: var(--b);
     stroke-width: 1.6;
