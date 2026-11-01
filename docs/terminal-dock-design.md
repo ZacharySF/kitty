@@ -143,7 +143,7 @@ Rejected:
 - **A** works only in a Chromium tab, not in the desktop app, and loads its wasm from build.stencil.so.
 - **C** is not allowed: Tern is closed-beta proprietary software; kitty! runs only the user's `tern` (PATH or a saved path) and behaves exactly as before without it.
 
-Lifecycle follows Q7 and Q2: nothing starts until Start or Open; the daemon lives on a private socket (`$XDG_RUNTIME_DIR/kitty/tern-<hash>/daemon.sock`, directory 0700, refused unless owner-only) so the user's own Tern daemon and sessions are never touched; every `tern` kitty! runs gets `TERN_DAEMON_SOCKET` for that socket and none of an outer Tern pane's variables. Quit closes the windows kitty! opened and stops its daemon (by its socket's peer pid); a window would otherwise restart a daemon on its own. Status comes from `tern inspect --json` (sessions, panes, working state, attached windows) polled like the activity strip.
+Lifecycle follows Q7 and Q2: nothing starts until Start or Open; the daemon lives on a private socket (`$XDG_RUNTIME_DIR/kitty/tern-<hash>/daemon.sock`, directory 0700, refused unless owner-only) so the user's own Tern daemon and sessions are never touched; every `tern` kitty! runs gets `TERN_DAEMON_SOCKET` for that socket and none of an outer Tern pane's variables. Inside an FHS sandbox (NixOS runs the AppImage through `appimage-run`, detected by its `/.host-etc`), the daemon and windows start outside it as transient systemd user services (`systemd-run --user --wait`, units `kitty-tern-<hash>` and `kitty-tern-<hash>-window-*`) in the user manager's environment plus the socket, user Tern and display variables passed by name: Tern starts panes as login shells, and the sandbox's `/etc/profile` would leave them without the user's programs. Quit closes the windows kitty! opened and stops its daemon (their services, then by its socket's peer pid); a window would otherwise restart a daemon on its own. Status comes from `tern inspect --json` (sessions, panes, working state, attached windows) polled like the activity strip.
 
 ## Routine choices
 
@@ -178,7 +178,7 @@ Lifecycle follows Q7 and Q2: nothing starts until Start or Open; the daemon live
 - Bare-F shortcut must never fire while typing (text fields, contenteditable, terminal); Ctrl+Shift+F must not collide with herdr's own bindings.
 - Two graph renderers double the interaction surface (focus, drag, context menus, deletion, hide/show by drag); both need the same behavioural tests.
 - Persisted hidden-node choices must tolerate modules being turned off (hidden or disabled sections must not resurrect or crash the atlas).
-- Tern is closed beta: its CLI and `inspect --json` fields may change between the user's updates (kitty! does not pin it); an unreadable report is shown as an error, never as an empty session. Opening Tern from the AppImage environment is unverified.
+- Tern is closed beta: its CLI and `inspect --json` fields may change between the user's updates (kitty! does not pin it); an unreadable report is shown as an error, never as an empty session. From the NixOS AppImage, Tern needs a systemd user session to leave the FHS sandbox; without one its panes lack the user's programs.
 
 ## Deferred
 
