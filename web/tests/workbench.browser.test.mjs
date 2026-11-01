@@ -711,3 +711,46 @@ describe("flashcard decks", () => {
     await context.close();
   });
 });
+
+describe("flashcard memory stats", () => {
+  test("Stats shows today's queue, a 30-day forecast, retention curves, maturity and a 26-week heatmap for the scope", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Stats deck", [["Sun?", "Star"], ["Moon?", "Satellite"], ["Mars?", "Planet"], ["Io?", "Moon"]]);
+    // One card graduates straight to review (Easy), one stays in learning (Again).
+    await page.evaluate(async () => {
+      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) })).json();
+      const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === "Stats deck");
+      for (const rating of [4, 1]) {
+        const { card } = await post("/flashcards/review", { deck_id: deck.id, search: "", mode: "regular" });
+        await post("/flashcards/reveal", { token: card.token });
+        await post("/flashcards/grade", { token: card.token, rating, duration_ms: 6000 });
+      }
+    });
+    await page.reload();
+    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Stats deck" });
+    await views.getByRole("button", { name: "Stats" }).click();
+    const panel = (name) => page.getByRole("region", { name });
+    const queue = panel("Today's queue");
+    await queue.waitFor();
+    assert.match((await queue.textContent()).replace(/\s+/g, " "), /2 cards today/);
+    for (const [count, label] of [["0", "Learning"], ["0", "Review"], ["2", "New"]])
+      assert.equal(await queue.getByRole("listitem").filter({ hasText: label }).locator("b").textContent(), count, `${label} count`);
+    for (const chip of ["0 suspended", "0 leeches", "0 buried"]) await queue.getByText(chip).waitFor();
+    const forecast = panel("Due forecast · 30 days");
+    assert.equal(await forecast.locator("svg title").count(), 30, "forecast does not cover 30 days");
+    assert.match(await forecast.locator("svg title").first().textContent(), /today · 1 due \(1 learning\)/);
+    const retention = panel("Retention curve");
+    assert.match(await retention.getByRole("img").getAttribute("aria-label"), /weak.*medium.*strong.*90% target/);
+    const maturity = panel("Maturity");
+    for (const [label, count] of [["New", "2"], ["Learning", "1"], ["Young", "1"], ["Mature", "0"]])
+      assert.equal(await maturity.getByRole("listitem").filter({ hasText: label }).locator("b").textContent(), count, `${label} maturity`);
+    const heatmap = panel("Reviews per day · 26 weeks");
+    assert.equal(await heatmap.locator("[title$='reviews'], [title$='review']").count(), 182, "heatmap does not show 182 days");
+    assert.match(await heatmap.textContent(), /1-day streak/);
+    assert.equal(await page.getByText(/last 90 active days/).count(), 0, "the 90-day bar chart is still shown");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

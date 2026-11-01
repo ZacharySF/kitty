@@ -8,6 +8,7 @@
   import GradeKeys, { GRADES, type HeldKey } from "./flashcards/GradeKeys.svelte";
   import ReviewStack, { FLY_MS } from "./flashcards/ReviewStack.svelte";
   import DeckTiles from "./flashcards/DeckTiles.svelte";
+  import MemoryStats from "./flashcards/stats/MemoryStats.svelte";
   import type { Crumb } from "./breadcrumb.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
@@ -90,7 +91,6 @@
       streak: number;
       suspended: number;
       leeches: number;
-      days: { day: string; reviews: number; again: number; seconds: number }[];
     };
   };
   let overview = $state<Overview | null>(null),
@@ -176,6 +176,8 @@
   }
   let graphFocus = $derived(deckId ? `deck:${deckId}` : null);
   let graphRevision = $state(0);
+  /** Bumped after every overview load so the memory stats refresh with it. */
+  let loads = $state(0);
   let noteRequest = 0;
   function allDecks() {
     noteRequest += 1;
@@ -308,6 +310,7 @@
       overview = await api<Overview>("/flashcards");
       if (!deckId && view !== "decks") deckId = overview.decks[0]?.id || 0;
       graphRevision += 1;
+      loads += 1;
       if (!typeId) typeId = overview.types[0]?.id || 0;
       if (pane.active) await consumePendingNavigation();
     } catch (e) {
@@ -959,7 +962,7 @@
   </header>
   {#if !editorView}
     <nav aria-label="Flashcard views">
-      {#each [["decks", "Decks"], ["browser", "Cards"]] as item}
+      {#each [["decks", "Decks"], ["browser", "Cards"], ["stats", "Stats"]] as item}
         <Button size="sm" variant="ghost" aria-current={view === item[0] ? "page" : undefined} onclick={() => void show(item[0])}>{item[1]}</Button>
       {/each}
       <details class="tools-menu">
@@ -1027,15 +1030,6 @@
         <SectionGraph section="flashcards" revision={graphRevision} focus={graphFocus} onselect={selectGraphNode} ondelete={deleteGraphNote} />
         <p class="hint">Select a deck to focus its tree, or open a card node to edit it. Use Cards for a searchable list.</p>
       {:else if overview.stats.total}
-      <div class="metrics">
-        <span><strong>{overview.stats.total}</strong> cards</span><span
-          ><strong>{overview.stats.due}</strong> due</span
-        ><span><strong>{overview.stats.new}</strong> available new</span><span
-          ><strong>{overview.stats.streak}</strong> day streak</span
-        ><span
-          >{overview.stats.suspended} suspended · {overview.stats.leeches} leeches</span
-        >
-      </div>
       <DeckTiles
         decks={overview.decks}
         selected={deckId}
@@ -1056,18 +1050,8 @@
           >{/each}
       </div>
       </details>
-      <details><summary>Review activity · last 90 active days</summary>
-      <div class="graph">
-        {#each [...overview.stats.days].reverse() as day}<div
-            title={`${day.day}: ${day.reviews} reviews, ${day.again} Again, ${Math.round(day.seconds)} seconds`}
-          >
-            <span
-              style={`height:${Math.max(3, Math.min(100, day.reviews * 3))}px`}
-            ></span><small>{day.day.slice(5)}</small>
-          </div>{/each}
-      </div>
-      {#if !overview.stats.days.length}<p>No completed reviews yet.</p>{/if}
-      </details>
+    {:else if view === "stats"}
+      <MemoryStats {deckId} revision={loads} />
     {:else if view === "browser"}
       <form
         class="toolbar"
@@ -1635,17 +1619,6 @@
     flex: 1;
     min-width: 180px;
   }
-  .metrics {
-    display: flex;
-    gap: 1.5rem;
-    flex-wrap: wrap;
-    background: var(--surface-raised);
-    padding: 1rem;
-    border-radius: 0.6rem;
-  }
-  .metrics strong {
-    font-size: 1.5rem;
-  }
   article {
     background: var(--surface-raised);
     border: 1px solid var(--border);
@@ -1690,26 +1663,6 @@
     max-width: 640px;
     margin: 1.5rem auto;
     overflow: hidden;
-  }
-  .graph {
-    display: flex;
-    align-items: flex-end;
-    gap: 0.3rem;
-    overflow-x: auto;
-    min-height: 130px;
-    padding: 0.8rem 0;
-  }
-  .graph div {
-    text-align: center;
-    min-width: 35px;
-  }
-  .graph span {
-    display: block;
-    background: var(--accent);
-    border-radius: 0.2rem 0.2rem 0 0;
-  }
-  .graph small {
-    font-size: 0.65rem;
   }
   .upload {
     border: 1px dashed var(--border);

@@ -423,6 +423,12 @@ including from All decks. Review deals the queue as a stacked deck: tap the top 
 grade's direction (← Again, ↓ Hard, → Good, ↑ Easy). Below the pile a keyboard strip
 shows keycaps 1–4 with each next interval and Space (flip, then Good); they sink as
 you press them.
+**Stats** shows memory statistics for the selected scope: today's queue (learning,
+review and new, with suspended, leech and buried cards and a time estimate), a
+30-day due forecast with overdue cards in today, FSRS forgetting curves for weak,
+medium and strong cards against your target retention with measured recall, a
+maturity donut (new, learning, young under 21 days, mature) and a 26-week daily
+review heatmap with your streak.
 FSRS scheduling, cloze/reversed cards, media and portable imports are supported.
 This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimizer,
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.
