@@ -7,6 +7,7 @@
   import SchemaMaps from "./SchemaMaps.svelte";
   import StudyGuide from "./StudyGuide.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import EmptyState from "./EmptyState.svelte";
 
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
@@ -1106,9 +1107,7 @@
                   onchange={() => toggleChecklist(task, item.id)}
                 />{item.text}</label
               >{/each}
-          </article>{:else}<p>
-            No tasks yet. Make the next step small and specific.
-          </p>{/each}
+          </article>{:else}<EmptyState level={3} title="No tasks yet"><p>Make the next step small and specific.</p></EmptyState>{/each}
       {:else if tab === "subjects"}
         {#each ["subjects", "projects"] as kind}<div class="panel">
             <div class="row">
@@ -1266,7 +1265,7 @@
                   revision: block.revision,
                 })}>Delete block</Button
             >
-          </article>{:else}<p>No planned blocks yet.</p>{/each}
+          </article>{:else}<EmptyState level={3} title="No planned blocks yet"><p>Make a dated study plan above to fill this in.</p></EmptyState>{/each}
         <p class="muted">
           Checking a planned block does not log study time. Complete a focus
           session or add a manual session.

@@ -8,6 +8,7 @@
     type Bootstrap,
   } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
+  import EmptyState from "./EmptyState.svelte";
 
   let { demo = false }: { demo?: boolean } = $props();
   type SourceDetails = Source & {
@@ -287,13 +288,9 @@
       Keyboard: j/k select · e enable/disable · s/Enter run selected · d
       discover · r refresh status. All mutations require confirmation.
     </p>
-    {#if !loading && sources.length === 0}<div class="empty-state">
-        <h3>No configured sources</h3>
-        <p>
-          Add source configuration in Profile. An empty list is not evidence of
-          a successful discovery run.
-        </p>
-      </div>{/if}
+    {#if !loading && sources.length === 0}<EmptyState level={3} title="No configured sources">
+        <p>Add source configuration in Profile. An empty list is not evidence of a successful discovery run.</p>
+      </EmptyState>{/if}
     <ul class="source-list">
       {#each sources as source, index (source.name)}
         <li

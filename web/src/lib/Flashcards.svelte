@@ -3,6 +3,7 @@
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
   import AIReview from "./AIReview.svelte";
+  import EmptyState from "./EmptyState.svelte";
   import SectionGraph, { type SectionNode } from "./SectionGraph.svelte";
   import type { Crumb } from "./breadcrumb.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -969,19 +970,17 @@
     {#if view === "schema"}
       {#if !overview.stats.total}
         <Panel>
-          <div class="empty-state">
-            <small>Start with one question</small>
-            <h2>Your first card is a question and an answer.</h2>
+          <EmptyState eyebrow="Start with one question" title="Your first card is a question and an answer.">
             <p>Keep cards in a deck, write a prompt on the front, then reveal the back when you study. Nothing is saved until you choose Save card.</p>
-            <div class="toolbar">
-              {#if overview.decks.some(deck => !deck.archived)}
+            {#snippet actions()}
+              {#if overview?.decks.some(deck => !deck.archived)}
                 <Button intent="primary" onclick={() => newNote()}>Create your first card</Button>
                 <Button variant="ghost" onclick={() => editDeck()}>Create a different deck</Button>
               {:else}
                 <Button intent="primary" onclick={() => editDeck()}>Create your first deck</Button>
               {/if}
-            </div>
-          </div>
+            {/snippet}
+          </EmptyState>
         </Panel>
       {/if}
       {#if graphFocus}<Button size="sm" variant="ghost" onclick={rootSchema}>All decks and notes</Button>{/if}
@@ -1062,12 +1061,13 @@
       </form>
       <p>{total} notes in {scopeLabel}{search ? ` matching “${search}”` : ""}.</p>
       <details><summary>Advanced search &amp; scheduling</summary><p>Search with is:due/new/review/learning/suspended/leech/archived or deck:name. Editing retains schedules of unchanged card ordinals; deleted templates/clozes remove their cards.</p></details>
-      {#if !total}<Panel><div class="empty-state">
-        <h2>{search ? "No matching cards" : "No cards in this scope yet"}</h2>
+      {#if !total}<Panel><EmptyState title={search ? "No matching cards" : "No cards in this scope yet"}>
         <p>{search ? "Try a broader search, or create a card in the selected deck." : "Write a question on the front and its answer on the back to start studying."}</p>
-        <Button intent="primary" onclick={() => newNote()} disabled={!overview.decks.some(deck => !deck.archived)}>New card</Button>
-        {#if search}<Button variant="ghost" onclick={() => { search = ""; offset = 0; void browse(); }}>Clear search</Button>{/if}
-      </div></Panel>{/if}
+        {#snippet actions()}
+          <Button intent="primary" onclick={() => newNote()} disabled={!overview?.decks.some(deck => !deck.archived)}>New card</Button>
+          {#if search}<Button variant="ghost" onclick={() => { search = ""; offset = 0; void browse(); }}>Clear search</Button>{/if}
+        {/snippet}
+      </EmptyState></Panel>{/if}
       {#each notes as note}<article class="note" oncontextmenu={(event) => {
         if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]') || window.getSelection()?.toString()) return;
         event.preventDefault(); if (!busy) void noteAction(note, "delete");
@@ -1351,12 +1351,13 @@
                     >{/if}</button
                 >{/each}
             </div>{:else}<Button intent="primary" onclick={reveal} disabled={busy}>Flip to answer · Space</Button>{/if}
-        </article>{:else}<Panel><div class="empty-state">
-          <h3>{busy ? "Preparing your review…" : "No eligible card right now"}</h3>
+        </article>{:else}<Panel><EmptyState level={3} title={busy ? "Preparing your review…" : "No eligible card right now"}>
           <p>Learning cards appear at their scheduled time. Daily limits reset at local midnight. Add a card, refresh later, or choose a practice mode under Study options.</p>
-          <div class="toolbar"><Button onclick={() => void startReview()} disabled={busy}>Refresh review</Button>
-            <Button variant="ghost" onclick={() => newNote()} disabled={busy || !overview.decks.some(deck => !deck.archived)}>New card</Button></div>
-        </div></Panel>{/if}
+          {#snippet actions()}
+            <Button onclick={() => void startReview()} disabled={busy}>Refresh review</Button>
+            <Button variant="ghost" onclick={() => newNote()} disabled={busy || !overview?.decks.some(deck => !deck.archived)}>New card</Button>
+          {/snippet}
+        </EmptyState></Panel>{/if}
       <p class="hint">
         Outside inputs: Space reveals / grades Good; 1–4 grades only after
         reveal.
@@ -1497,7 +1498,6 @@
   }
   .primary-actions,
   .editor-actions,
-  .empty-state .toolbar,
   .tools-menu .toolbar {
     justify-content: flex-start;
   }
@@ -1515,10 +1515,6 @@
   .scope-heading h2 { margin: 0.3rem 0 0; font-size: 1.25rem; overflow-wrap: anywhere; }
   .scope-heading p { margin: 0; }
   .scope-heading span { display: block; margin-top: 0.3rem; font-size: 0.85rem; }
-  .empty-state { padding: 1rem; }
-  .empty-state h2,
-  .empty-state h3 { margin: 0.6rem 0; }
-  .empty-state p { max-width: 65ch; line-height: 1.6; }
   details { margin: 0.85rem 0; }
   summary { cursor: pointer; color: var(--ink); font-weight: 600; line-height: 1.5; }
   details[open] > summary { margin-bottom: 0.7rem; }

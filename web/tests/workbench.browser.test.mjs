@@ -428,3 +428,22 @@ describe("workspace tabs", () => {
     await context.close();
   });
 });
+
+describe("empty states", () => {
+  test("an empty Flashcards collection shows the sleeping kitty with its title and actions; motion stops when reduced", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const empty = page.locator(".kitty-empty").first();
+    await empty.waitFor();
+    assert.equal(await empty.locator("svg.sleeping-cat").count(), 1, "no sleeping cat drawn");
+    assert.match(await empty.getByRole("heading").first().textContent(), /first card/i);
+    assert.ok(await empty.getByRole("button").count() >= 1, "empty state has no action");
+    const box = await empty.locator("svg.sleeping-cat").boundingBox();
+    assert.ok(box && box.width >= 100 && box.width <= 200, `cat is ${box?.width}px wide`);
+    const animated = (page) => page.evaluate(() => getComputedStyle(document.querySelector(".kitty-empty svg.sleeping-cat .zs text")).animationName);
+    assert.notEqual(await animated(page), "none", "z's do not drift");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    assert.equal(await animated(page), "none", "z's still drift under reduced motion");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
