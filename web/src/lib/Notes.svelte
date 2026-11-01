@@ -408,10 +408,6 @@
   // Q46: one floating pill at the bottom of the canvas stage; the rest sit in its overflow.
   const pillTools = $derived(tools.filter(item => (noteMode === "mindmap" ? ["select", "sticky", "connector", "pen", "eraser"] : ["select", "pen", "highlighter", "eraser", "text", "sticky"]).includes(item.id)));
   const moreTools = $derived(tools.filter(item => !pillTools.includes(item)));
-  const pillInks = $derived([
-    { name: "Theme ink", value: ink }, { name: "Lavender", value: "#beafea" },
-    { name: "Blue", value: "#88b8ef" }, { name: "Rose", value: "#e99eb4" },
-  ]);
   const STROKE_SIZES = [2, 4, 8];
   let toolsCollapsed = $state(false), canvasMore = $state(false), canvasMoreMenu = $state<HTMLDetailsElement>();
   function chooseTool(id: Tool) {
@@ -1989,9 +1985,9 @@
               <label>Concept
                 <textarea rows="2" maxlength="20000" readonly={!editable(element,doc)} value={element.text||""} oninput={event=>patchText(element.id,event.currentTarget.value)}></textarea>
               </label>
+              <div class="concept-colour"><span class="eyebrow">Ink</span><CanvasColorMenu label="Ink" placement="down" bind:value={()=>element.color,(value:string)=>patchCanvasElement(element.id,{color:value})}/></div>
+              {#if element.kind==="sticky"}<div class="concept-colour"><span class="eyebrow">Card</span><CanvasColorMenu label="Card" placement="down" bind:value={()=>element.fill,(value:string)=>patchCanvasElement(element.id,{fill:value})}/></div>{/if}
               <div class="concept-actions">
-                <CanvasColorMenu label="Ink" bind:value={()=>element.color,(value:string)=>patchCanvasElement(element.id,{color:value})}/>
-                {#if element.kind==="sticky"}<CanvasColorMenu label="Card" bind:value={()=>element.fill,(value:string)=>patchCanvasElement(element.id,{fill:value})}/>{/if}
                 <Button size="sm" variant="ghost" disabled={!editable(element,doc)} onclick={deleteSelected}>Delete</Button>
                 <Button size="sm" variant="ghost" aria-label="Close concept editor" onclick={()=>selected=[]}>×</Button>
               </div>
@@ -2046,11 +2042,7 @@
               {/each}
               {#if noteMode==="mindmap"}<button class="pill-btn pill-word" disabled={!pageId} onclick={()=>addConcept()}>+ Concept</button>{/if}
               <span class="pill-rule" aria-hidden="true"></span>
-              <div class="pill-inks" role="group" aria-label="Ink colours">
-                {#each pillInks as swatch (swatch.name)}
-                  <button class="pill-dot" style:--dot={swatch.value} aria-label={`Ink: ${swatch.name}`} aria-pressed={color.toLowerCase() === swatch.value.toLowerCase()} title={swatch.name} onclick={() => color = swatch.value}></button>
-                {/each}
-              </div>
+              <CanvasColorMenu label="Ink" bind:value={color}/>
               <span class="pill-rule" aria-hidden="true"></span>
               <button class="pill-btn" aria-label={`Stroke size ${lineWidth}`} title="Stroke size: click for the next size" onclick={() => lineWidth = STROKE_SIZES.find(size => size > lineWidth) ?? STROKE_SIZES[0]}><span class="stroke-dot" style:width={`${Math.min(lineWidth, 12) + 2}px`} style:height={`${Math.min(lineWidth, 12) + 2}px`}></span></button>
               <span class="pill-rule" aria-hidden="true"></span>
@@ -2065,11 +2057,11 @@
                       <button aria-label={item.label} aria-keyshortcuts={item.key} aria-pressed={tool === item.id} disabled={!pageId} onclick={() => { chooseTool(item.id); canvasMore = false; }}><Icon name={`tool-${item.id}`} size={16}/>{item.label}<kbd aria-hidden="true">{item.key}</kbd></button>
                     {/each}
                   </div>
-                  <span class="eyebrow">Colour &amp; stroke</span>
-                  <div class="pill-menu-row">
-                    <CanvasColorMenu label="Ink" bind:value={color}/>
-                    {#if ["sticky","rect","ellipse"].includes(tool)}<CanvasColorMenu label={noteMode==="mindmap"?"Card":"Fill"} bind:value={fillColor}/>{/if}
-                  </div>
+                  {#if ["sticky","rect","ellipse"].includes(tool)}
+                    <span class="eyebrow">{noteMode==="mindmap"?"Card":"Fill"}</span>
+                    <CanvasColorMenu label={noteMode==="mindmap"?"Card":"Fill"} placement="inline" bind:value={fillColor}/>
+                  {/if}
+                  <span class="eyebrow">Stroke &amp; text</span>
                   <label class="pill-range">{tool === "eraser" ? "Eraser radius (screen px)" : "Stroke width"}<span><input type="range" min="1" max="60" bind:value={lineWidth}/><output>{lineWidth}</output></span></label>
                   <label class="pill-range">Text size<span><input type="number" min="8" max="120" bind:value={fontSize}/></span></label>
                   <span class="eyebrow">Canvas</span>
@@ -2354,7 +2346,7 @@
   .canvas-stage:fullscreen .concept-inspector{top:118px}
   .concept-inspector textarea{width:100%;box-sizing:border-box;resize:vertical;max-height:25vh}
   .concept-actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
-  .concept-actions :global(details.color-menu){border:0;padding:0}
+  .concept-colour{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .mindmap-hint{font-size:12px;line-height:1.6;color:var(--muted);margin:8px 0}
   /* Q43: the library slides over the page instead of taking a column. */
   .library-scrim{position:absolute;inset:0;z-index:20;padding:0;border:0;cursor:default;background:color-mix(in srgb,var(--shadow-tint) 40%,transparent)}
@@ -2589,18 +2581,6 @@
   }
   .canvas-pill .pill-word { width: auto; padding: 0 10px; font-size: 12px; }
   .pill-rule { flex-shrink: 0; width: 1px; height: 20px; margin: 0 4px; background: var(--hairline); }
-  .pill-inks { display: flex; align-items: center; gap: 2px; }
-  .canvas-pill .pill-dot {
-    flex-shrink: 0;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border: 2px solid transparent;
-    border-radius: 50%;
-    background: var(--dot) content-box;
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 20%, transparent);
-  }
-  .canvas-pill .pill-dot[aria-pressed="true"] { border-color: var(--dot); }
   .stroke-dot { display: block; border-radius: 50%; background: currentColor; }
   .canvas-pill details.pill-more { position: relative; flex-shrink: 0; padding: 0; border: 0; }
   .pill-more > summary { list-style: none; cursor: pointer; }

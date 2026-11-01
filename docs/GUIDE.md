@@ -418,7 +418,8 @@ in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting.
 Its tools sit in one floating pill at the bottom of the canvas: select, pen,
 highlighter, eraser, text and sticky (mind maps: select, sticky, connect, pen,
-eraser and **+ Concept**), ink colours, a stroke-size toggle, undo/redo, and **⋯**
+eraser and **+ Concept**), your last five colours as round swatches (**+** opens all
+twelve named colours and a hex field), a stroke-size toggle, undo/redo, and **⋯**
 for the other tools, fill, exact stroke and text size, pen mode, grid, snap, zoom
 and the text outline. Click the handle on the pill's bottom edge to tuck it away to
 a small tab and again to bring it back (remembered); tool keys still work while it

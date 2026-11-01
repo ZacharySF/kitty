@@ -1592,3 +1592,46 @@ describe("notes canvas pill", () => {
     await context.close();
   });
 });
+
+describe("notes canvas colours", () => {
+  test("the pill shows the last 5 colours as round swatches; + opens all 12 named colours and a hex field; recents persist", async () => {
+    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    await openCanvas(page);
+    const inks = page.getByRole("toolbar", { name: "Drawing tools" }).getByRole("group", { name: "Ink colours" });
+    await inks.waitFor();
+    const recents = inks.getByRole("button", { name: /^Ink: / });
+    assert.equal(await recents.count(), 5, "the recents row is not five swatches");
+    const round = await recents.first().evaluate((node) => { const box = node.getBoundingClientRect(); return { round: getComputedStyle(node).borderRadius, w: box.width, h: box.height }; });
+    assert.ok(round.w === round.h && round.w <= 28 && /50%|999|9999/.test(round.round), `swatches are not round dots: ${JSON.stringify(round)}`);
+    const plus = inks.getByRole("button", { name: "All ink colours" });
+    assert.equal(await plus.getAttribute("aria-expanded"), "false");
+    const palette = page.getByRole("dialog", { name: "Ink palette" });
+    const names = ["Paper", "Graphite", "Lavender", "Violet", "Blue", "Teal", "Sage", "Yellow", "Peach", "Orange", "Rose", "Red"];
+    await plus.click();
+    await palette.waitFor();
+    assert.equal(await plus.getAttribute("aria-expanded"), "true");
+    assert.deepEqual(await palette.getByRole("button").allTextContents().then((texts) => texts.map((text) => text.trim())), names, "the palette does not show the 12 colour names");
+    assert.equal(await palette.getByRole("textbox", { name: "Ink hex" }).count(), 1, "the hex field is gone");
+    await page.keyboard.press("Escape");
+    await palette.waitFor({ state: "hidden" });
+    // Pick six colours: the row keeps the last five, newest first, and the newest is the ink.
+    const picks = ["Violet", "Teal", "Sage", "Peach", "Orange", "Red"];
+    for (const name of picks) {
+      await plus.click();
+      await palette.getByRole("button", { name: `Ink: ${name}` }).click();
+      await palette.waitFor({ state: "hidden" });
+    }
+    const expected = picks.slice(1).reverse().map((name) => `Ink: ${name}`);
+    const labels = async () => recents.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label")));
+    assert.deepEqual(await labels(), expected, "recents are not the last five picks");
+    assert.equal(await recents.first().getAttribute("aria-pressed"), "true", "the newest pick is not the current ink");
+    await recents.nth(2).click();
+    assert.equal(await recents.nth(2).getAttribute("aria-pressed"), "true", "a recent swatch does not set the ink");
+    await page.reload();
+    await openCanvas(page);
+    await inks.waitFor();
+    assert.deepEqual(await labels(), expected, "recents did not persist");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
