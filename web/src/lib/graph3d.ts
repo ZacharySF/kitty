@@ -24,6 +24,7 @@ import type * as Three from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { harmonize } from "./graphPalette";
 import { mountGraph2D } from "./graph2d";
+import { createSky, type SkyColours } from "./graphSky";
 
 export type GraphNode = {
   id: string;
@@ -1429,6 +1430,15 @@ async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphR
     });
   graph.scene().add(hulls);
   graph.scene().add(batches);
+  // The theme's void behind a pastel nebula; 2D keeps the page's own background.
+  const skyColours = (): SkyColours => ({
+    void: resolveColor(cssVar("--solid-void") || cssVar("--br-void") || "#14111b", probe),
+    a: palette[0],
+    b: palette[3 % palette.length],
+    stars: [ink, ink, palette[0], palette[3 % palette.length]],
+  });
+  const sky = createSky(T, skyColours(), reduced);
+  graph.scene().add(sky.object);
   graph.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   graph.renderer().domElement.setAttribute("aria-hidden", "true");
 
@@ -1577,12 +1587,14 @@ async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphR
     ink = resolveColor(cssVar("--ink"), probe);
     mutedRgb = hexRgb(resolveColor(cssVar("--muted"), probe));
     chrome = hexRgb(resolveColor(cssVar("--chrome"), probe));
+    sky.setColours(skyColours());
     handle.update({nodes: nodes.map(node => node.data), links: links.map(link => link.data)});
   };
   window.addEventListener("kitty:theme", recolor);
   const onMotionChange = () => {
     reduced = motionQuery.matches || !!opts.reducedMotion;
     controls.enableDamping = !reduced;
+    sky.setReduced(reduced);
     setRotation(!hoverId);
     graph.cooldownTicks(reduced ? 0 : Infinity);
     if (reduced) {
@@ -1718,6 +1730,7 @@ async function mountGraph3D(el: HTMLElement, opts: GraphOptions): Promise<GraphR
       cancelAnimationFrame(labelFrame);
       controls.removeEventListener?.("change", scheduleLabels);
       const renderer = graph.renderer();
+      sky.dispose();
       graph._destructor();
       for (const resource of [
         hubGeometry,
