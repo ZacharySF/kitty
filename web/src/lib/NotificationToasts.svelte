@@ -79,7 +79,7 @@
   .toasts {
     position: fixed;
     right: 16px;
-    bottom: calc(var(--dock-space, 0px) + 16px);
+    bottom: max(16px, calc(var(--dock-clearance, 0px) + 12px));
     z-index: 40;
     display: grid;
     width: min(320px, calc(100vw - 32px));

@@ -3,8 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, DOCK_STORAGE_KEY,
-  clampDockHeight, firstDockHeight, readDock, writeDock,
+  DOCK_MARGIN, DOCK_MIN_HEIGHT, DOCK_MIN_WIDTH, DOCK_STORAGE_KEY,
+  clampDockOffset, clampDockSize, defaultDockSize, readDock, writeDock,
 } from '../src/lib/dock.ts';
 import { terminalSocketUrl, terminalTheme } from '../src/lib/terminal.ts';
 
@@ -17,49 +17,66 @@ function memory(initial = {}) {
   };
 }
 
-test('a fresh dock opens on the terminal with no remembered height', () => {
-  assert.deepEqual(readDock(memory()), { mode: 'terminal', height: null, shown: 'terminal', float: false });
+const CORNER = { right: 16, bottom: 16 };
+
+test('a fresh dock opens on the terminal as a default-sized card in the corner', () => {
+  assert.deepEqual(readDock(memory()), { mode: 'terminal', shown: 'terminal', size: null, offset: CORNER });
 });
 
-test('the dock remembers its state, height and the view the handle brings back', () => {
+test('the dock remembers its state, card size, position and the view the pill brings back', () => {
   const storage = memory();
-  writeDock(storage, { mode: 'hidden', height: 287, shown: 'activity', float: true });
-  assert.deepEqual(readDock(storage), { mode: 'hidden', height: 287, shown: 'activity', float: true });
-  writeDock(storage, { mode: 'activity', height: 300, shown: 'activity', float: false });
-  assert.deepEqual(readDock(storage), { mode: 'activity', height: 300, shown: 'activity', float: false });
+  writeDock(storage, { mode: 'hidden', shown: 'activity', size: { width: 600, height: 380 }, offset: { right: 40, bottom: 90 } });
+  assert.deepEqual(readDock(storage), { mode: 'hidden', shown: 'activity', size: { width: 600, height: 380 }, offset: { right: 40, bottom: 90 } });
   // A visible dock always restores to what it shows.
-  storage.setItem(DOCK_STORAGE_KEY, '{"mode":"terminal","height":300,"shown":"activity"}');
+  storage.setItem(DOCK_STORAGE_KEY, '{"mode":"terminal","shown":"activity"}');
   assert.equal(readDock(storage).shown, 'terminal');
 });
 
+test('legacy docked state loads as the floating card: float and the docked height are dropped', () => {
+  for (const saved of [
+    '{"mode":"terminal","height":300,"shown":"terminal","float":false}',
+    '{"mode":"terminal","height":300,"shown":"terminal","float":true}',
+    '{"mode":"terminal","height":300,"shown":"terminal"}',
+  ]) assert.deepEqual(readDock(memory({ [DOCK_STORAGE_KEY]: saved })), { mode: 'terminal', shown: 'terminal', size: null, offset: CORNER }, saved);
+  const hidden = readDock(memory({ [DOCK_STORAGE_KEY]: '{"mode":"hidden","height":420,"shown":"activity","float":false}' }));
+  assert.deepEqual(hidden, { mode: 'hidden', shown: 'activity', size: null, offset: CORNER });
+  assert.ok(!('float' in hidden) && !('height' in hidden));
+});
+
 test('corrupt or foreign saved dock state falls back instead of failing', () => {
-  for (const saved of ['not json', '[]', 'null', '{"mode":"drawer","height":"tall"}', '{"mode":"terminal","height":-5}', '{"mode":"hidden","shown":"hidden"}']) {
+  for (const saved of ['not json', '[]', 'null', '{"mode":"drawer","size":"tall"}', '{"mode":"terminal","size":{"width":-5,"height":300}}',
+    '{"mode":"hidden","shown":"hidden"}', '{"mode":"terminal","offset":{"right":"x","bottom":-3}}']) {
     const state = readDock(memory({ [DOCK_STORAGE_KEY]: saved }));
     assert.ok(['terminal', 'activity', 'hidden'].includes(state.mode), saved);
     assert.ok(['terminal', 'activity'].includes(state.shown), saved);
-    assert.ok(state.height === null || state.height > 0, saved);
+    assert.equal(state.size, null, saved);
+    assert.deepEqual(state.offset, CORNER, saved);
   }
-  assert.deepEqual(readDock(memory({ [DOCK_STORAGE_KEY]: '{"mode":"activity","height":-5}' })), { mode: 'activity', height: null, shown: 'activity', float: false });
   const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
-  assert.deepEqual(readDock(broken), { mode: 'terminal', height: null, shown: 'terminal', float: false });
-  assert.doesNotThrow(() => writeDock(broken, { mode: 'hidden', height: 200, shown: 'terminal' }));
+  assert.deepEqual(readDock(broken), { mode: 'terminal', shown: 'terminal', size: null, offset: CORNER });
+  assert.doesNotThrow(() => writeDock(broken, { mode: 'hidden', shown: 'terminal', size: null, offset: CORNER }));
 });
 
-test('the first dock size is the empty area below the main panel', () => {
-  // Window 900 high, main panel content ends at 540: the dock fills the 360 below it.
-  assert.equal(firstDockHeight(900, 540), 360);
-  // Content taller than the window leaves no empty area: the dock still opens usable.
-  assert.equal(firstDockHeight(900, 1400), DOCK_MIN_HEIGHT);
-  // A nearly empty page cannot push the main panel out of the window.
-  assert.equal(firstDockHeight(900, 40), 900 - MAIN_MIN_HEIGHT);
+test('the default card is min(720px, 92vw) wide and min(440px, 60vh) tall', () => {
+  assert.deepEqual(defaultDockSize(1600, 1000), { width: 720, height: 440 });
+  assert.deepEqual(defaultDockSize(600, 500), { width: 552, height: 300 });
 });
 
-test('dragging keeps both the dock and the main panel usable', () => {
-  assert.equal(clampDockHeight(10, 900), DOCK_MIN_HEIGHT);
-  assert.equal(clampDockHeight(5000, 900), 900 - MAIN_MIN_HEIGHT);
-  assert.equal(clampDockHeight(412.6, 900), 413);
-  // A window too short for both favours the dock's minimum.
-  assert.equal(clampDockHeight(400, 200), DOCK_MIN_HEIGHT);
+test('resizing keeps the card usable and inside the window', () => {
+  assert.deepEqual(clampDockSize({ width: 10, height: 10 }, 1000, 800), { width: DOCK_MIN_WIDTH, height: DOCK_MIN_HEIGHT });
+  assert.deepEqual(clampDockSize({ width: 5000, height: 5000 }, 1000, 800), { width: 1000 - 2 * DOCK_MARGIN, height: 800 - 2 * DOCK_MARGIN });
+  assert.deepEqual(clampDockSize({ width: 600.4, height: 412.6 }, 1000, 800), { width: 600, height: 413 });
+  // A window too small for the minimum favours the minimum.
+  assert.deepEqual(clampDockSize({ width: 400, height: 400 }, 200, 100), { width: DOCK_MIN_WIDTH, height: DOCK_MIN_HEIGHT });
+});
+
+test('moving keeps the whole card on screen', () => {
+  const size = { width: 600, height: 400 };
+  assert.deepEqual(clampDockOffset({ right: -50, bottom: -50 }, size, 1000, 800), { right: DOCK_MARGIN, bottom: DOCK_MARGIN });
+  assert.deepEqual(clampDockOffset({ right: 900, bottom: 900 }, size, 1000, 800), { right: 1000 - 600 - DOCK_MARGIN, bottom: 800 - 400 - DOCK_MARGIN });
+  assert.deepEqual(clampDockOffset({ right: 120.6, bottom: 33.2 }, size, 1000, 800), { right: 121, bottom: 33 });
+  // A card wider than the window stays pinned to the margin.
+  assert.deepEqual(clampDockOffset({ right: 200, bottom: 200 }, size, 500, 300), { right: DOCK_MARGIN, bottom: DOCK_MARGIN });
 });
 
 test('the terminal socket stays on the page origin with ws/wss matching http/https', () => {
@@ -89,9 +106,4 @@ test('the terminal is transparent and drawn in the given theme roles', () => {
   for (const key of ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
     'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'])
     assert.match(theme[key], /^#[0-9a-f]{6}$/, key);
-});
-
-test('floating is remembered, and anything but true means docked', () => {
-  for (const [saved, float] of [['{"mode":"terminal","float":true}', true], ['{"mode":"terminal","float":"yes"}', false], ['{"mode":"terminal"}', false]])
-    assert.equal(readDock(memory({ [DOCK_STORAGE_KEY]: saved })).float, float, saved);
 });

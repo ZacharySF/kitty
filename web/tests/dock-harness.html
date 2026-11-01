@@ -6,7 +6,8 @@
     <title>Dock harness</title>
     <style>
       html, body { margin: 0; background: #141414; color: #e6e6e6; }
-      #view { padding: 0; }
+      /* The page fills the window; the dock must never make it re-lay out. */
+      #view { padding: 0; height: 100vh; box-sizing: border-box; }
       #content { height: 500px; }
     </style>
   </head>

@@ -206,14 +206,6 @@
     if (studyTools) quickCard = { deck: (event as CustomEvent<{ deck_id?: number }>).detail?.deck_id || null };
   }
   function showGuide() { if (applyai) guide = true; }
-  /** Bottom edge of the active view's content: the dock first fills the space below it (Q8). */
-  function panelBottom() {
-    const panel = document.getElementById(`workspace-pane-${activeId}`);
-    if (!panel) return window.innerHeight;
-    let bottom = panel.getBoundingClientRect().top;
-    for (const child of panel.children) bottom = Math.max(bottom, child.getBoundingClientRect().bottom);
-    return bottom;
-  }
   $effect(() => { if (guide && guideDialog && !guideDialog.open) guideDialog.showModal(); });
 
   let bootstrapRequest = 0;
@@ -464,7 +456,7 @@
   </main>
 </div>
 {#if notifySources}<NotificationToasts onopen={openNotice} /><NotificationCenter onopen={openNotice} />{/if}
-{#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock measure={panelBottom} onherdr={() => navigate("herdr")} />{/await}{/if}
+{#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock onherdr={() => navigate("herdr")} />{/await}{/if}
 {#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
 {#if guide && applyai}<dialog
     bind:this={guideDialog}

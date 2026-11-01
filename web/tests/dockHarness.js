@@ -66,13 +66,9 @@ window.fetch = async (url, init = {}) => {
 
 applySavedTheme();
 const fullscreen = installPanelFullscreen(window, document);
-const content = document.getElementById("content");
 mount(Dock, {
   target: document.getElementById("dock"),
-  props: {
-    measure: () => content.getBoundingClientRect().bottom,
-    onherdr: () => events.push("open-herdr-view"),
-  },
+  props: { onherdr: () => events.push("open-herdr-view") },
 });
 
 window.dockHarness = {

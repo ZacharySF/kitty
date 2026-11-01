@@ -482,10 +482,10 @@
   .acts button.danger:hover:not(:disabled) {
     color: var(--error);
   }
-  /* Fixed above the dock so it stays in reach however far the list is scrolled. */
+  /* Fixed above the floating dock so it stays in reach however far the list is scrolled. */
   .undo {
     position: fixed;
-    bottom: calc(var(--dock-space, 0px) + 24px);
+    bottom: max(24px, calc(var(--dock-clearance, 0px) + 12px));
     left: 50%;
     z-index: 25;
     display: inline-flex;
