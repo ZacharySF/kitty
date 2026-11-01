@@ -237,7 +237,7 @@
       const target = current.graph.nodes.find(item => item.id === parent);
       if (target) target.collapsed = false;
     }
-    arrange("tree");
+    relayout();
   }
   const visibleNodes = $derived.by(() => {
     if (!current) return [];
@@ -309,19 +309,36 @@
       if (selected === target.id) draftLabel = target.label;
     }
     editing = "";
-    if (focus) void tick().then(() => { if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${CSS.escape(selected)}"]`)?.focus(); });
+    if (focus) focusOn(selected);
   }
-  function quickAdd(parent = selected) {
+  /** Adds a topic under `parent` (a root when empty), directly after the sibling `after` when given. */
+  function quickAdd(parent = selected, after = "") {
     if (!current || !editable || current.graph.nodes.length >= 300) return;
     remember();
     const n: Node = {id: crypto.randomUUID(), kind: "topic", label: "Topic", notes: "", url: "", source: null, x: 0, y: 0};
-    current.graph.nodes.push(n);
     if (parent) {
-      current.graph.edges.push({id: crypto.randomUUID(), from: parent, to: n.id, label: ""});
+      const edge = {id: crypto.randomUUID(), from: parent, to: n.id, label: ""};
+      const index = after ? current.graph.edges.findIndex(e => treeEdges.has(e.id) && e.to === after) : -1;
+      if (index < 0) current.graph.edges.push(edge); else current.graph.edges.splice(index + 1, 0, edge);
       const p = current.graph.nodes.find(n => n.id === parent);
       if (p) p.collapsed = false;
+      current.graph.nodes.push(n);
+    } else {
+      const index = after ? current.graph.nodes.findIndex(item => item.id === after) : -1;
+      if (index < 0) current.graph.nodes.push(n); else current.graph.nodes.splice(index + 1, 0, n);
     }
-    arrange("tree"); void editInline(n, "");
+    relayout(); void editInline(n, "");
+  }
+  /** Lays the tree out again without a separate history step (the caller already remembered). */
+  function relayout(fit = true) {
+    if (!current) return;
+    const positions = treeLayout(current.graph);
+    for (const n of current.graph.nodes) {
+      const point = positions.get(n.id)!;
+      n.x = clampPosition(point.x);
+      n.y = clampPosition(point.y);
+    }
+    if (fit) frame();
   }
   async function findNoteCards() {
     try { const result = await api<{pages: {id: number; title: string}[]}>(`/notes?search=${encodeURIComponent(noteSearch)}`); notePages = result.pages; }
@@ -742,23 +759,54 @@
     remember();
     e[field] = value;
   }
+  /** Siblings in display order: the children of the same parent, or the parentless roots. */
+  function siblingIds(id: string) {
+    if (!current) return [];
+    const parent = parents.get(id);
+    return parent === undefined
+      ? current.graph.nodes.filter(isRoot).map(n => n.id)
+      : current.graph.edges.filter(e => treeEdges.has(e.id) && e.from === parent).map(e => e.to);
+  }
+  function focusOn(id: string) {
+    void tick().then(() => { if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${CSS.escape(id)}"]`)?.focus(); });
+  }
+  /** Ctrl+↑/↓: swap a node with its previous/next sibling, then lay the tree out again. */
+  function reorder(n: Node, direction: -1 | 1) {
+    if (!current || !editable) return;
+    const sibs = siblingIds(n.id), other = sibs[sibs.indexOf(n.id) + direction];
+    if (!other) return;
+    remember();
+    const list: {id: string}[] = parents.has(n.id) ? current.graph.edges : current.graph.nodes;
+    const at = (id: string) => parents.has(n.id) ? current!.graph.edges.findIndex(e => treeEdges.has(e.id) && e.to === id) : current!.graph.nodes.findIndex(item => item.id === id);
+    const a = at(n.id), b = at(other);
+    [list[a], list[b]] = [list[b], list[a]];
+    relayout(false);
+    focusOn(n.id);
+  }
   function nodeKey(e: KeyboardEvent, n: Node) {
-    if (!editable || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!editable || e.altKey) return;
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void editInline(n); }
+      else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); choose(n); reorder(n, e.key === "ArrowUp" ? -1 : 1); }
+      return;
+    }
     choose(n);
     if (["Tab", "Enter", " ", "Delete", "Backspace", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
       e.preventDefault(); e.stopPropagation();
     }
     if (e.key === "Tab") quickAdd(n.id);
-    else if (e.key === "Enter") quickAdd(current?.graph.edges.find(edge => edge.to === n.id)?.from ?? "");
+    else if (e.key === "Enter") quickAdd(parents.get(n.id) ?? "", n.id);
     else if (e.key === " ") { if (recall) revealed = [...revealed, n.id]; else collapse(n); }
     else if (e.key === "Delete" || e.key === "Backspace") deleteNode();
     else if (e.key.startsWith("Arrow")) {
-      const parent = current?.graph.edges.find(edge => edge.to === n.id)?.from;
-      const child = current?.graph.edges.find(edge => edge.from === n.id)?.to;
-      const index = visibleNodes.findIndex(item => item.id === n.id);
-      const id = e.key === "ArrowLeft" ? parent : e.key === "ArrowRight" ? child : visibleNodes[index + (e.key === "ArrowUp" ? -1 : 1)]?.id;
+      const visible = new Set(visibleNodes.map(item => item.id));
+      const sibs = siblingIds(n.id).filter(id => visible.has(id)), index = visibleNodes.findIndex(item => item.id === n.id);
+      const step = e.key === "ArrowUp" ? -1 : 1;
+      const id = e.key === "ArrowLeft" ? parents.get(n.id)
+        : e.key === "ArrowRight" ? current?.graph.edges.find(edge => treeEdges.has(edge.id) && edge.from === n.id && visible.has(edge.to))?.to
+        : sibs[sibs.indexOf(n.id) + step] ?? visibleNodes[index + step]?.id;
       const target = visibleNodes.find(item => item.id === id);
-      if (target) {choose(target); void tick().then(() => { if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${target.id}"]`)?.focus(); });}
+      if (target) { choose(target); focusOn(target.id); }
     } else if (e.key.length === 1) { e.preventDefault(); e.stopPropagation(); void editInline(n, e.key); }
   }
   function start(e: PointerEvent, id = "") {
@@ -1981,7 +2029,7 @@
               <Button onclick={() => arrange("force")} disabled={!editable}>Force</Button>
             </div></details><span>{Math.round(current.viewport.zoom * 100)}%</span>
           </div>
-          <p class="hint">Click a topic and type to rename. Tab adds a child; Enter adds a sibling, including while typing. Save map keeps changes in your workspace; draft backup is device-only.</p>
+          <p class="hint">Click a topic and type (or Ctrl+Enter) to rename. Tab adds a child; Enter adds a sibling, including while typing. Save map keeps changes in your workspace; draft backup is device-only.</p>
           {#if outline}
             <div class="map-outline" role="tree" aria-label="Mind map outline">
               {#each visibleNodes as n (n.id)}
@@ -2054,7 +2102,7 @@
                   data-node={n.id}
                   role="button"
                   tabindex="0"
-                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}. Tab child, Enter sibling, type to rename, Space collapse, arrows select.`}
+                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}. Tab child, Enter sibling, arrows move, Control arrows reorder, Control Enter or type to rename, Space collapse.`}
                   class:selected={selected === n.id}
                   class:root
                   class="graph-node"
@@ -2076,9 +2124,9 @@
                         oninput={e => updateInline(e.currentTarget.value)}
                         onkeydown={(e) => {
                           e.stopPropagation();
-                          if (e.key === "Escape") {e.preventDefault(); editing = "";}
+                          if (e.key === "Escape") {e.preventDefault(); finishInline();}
                           else if (e.key === "Tab") {e.preventDefault(); finishInline(false); quickAdd(selected);}
-                          else if (e.key === "Enter") {e.preventDefault(); finishInline(false); quickAdd(current?.graph.edges.find(edge => edge.to === selected)?.from ?? "");}
+                          else if (e.key === "Enter") {e.preventDefault(); finishInline(false); quickAdd(parents.get(selected) ?? "", selected);}
                         }} onblur={() => {if (editing === n.id) finishInline(false);}} />
                     </foreignObject>
                   {/if}
@@ -2101,7 +2149,7 @@
             </g>
           </svg>
           <p class="hint">
-            Tab child · Enter sibling · type to rename · Space collapse · arrows select
+            Tab child · Enter sibling · arrows move · Ctrl+↑/↓ reorder · Ctrl+Enter or type to rename · Space fold
           </p>
           <details><summary>Connections</summary>
           <Panel title="[02] Directional connections">

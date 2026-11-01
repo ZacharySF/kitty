@@ -1413,3 +1413,54 @@ describe("mind-map pills", () => {
     await context.close();
   });
 });
+
+/** Label of the focused mind-map node. */
+const focusedNode = (page) => page.evaluate(() => document.activeElement?.closest("[data-node]")?.querySelector("text.label")?.textContent ?? null);
+/** Map positions (top-left, world units) of the nodes whose labels are given. */
+const nodeBoxes = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("svg.stage [data-node]")].map((node) => {
+  const [, x, y] = /translate\(([-\d.e]+),([-\d.e]+)\)/.exec(node.getAttribute("transform"));
+  return [node.querySelector("text.label").textContent, { x: Number(x), y: Number(y) }];
+})));
+
+describe("mind-map editing", () => {
+  test("keyboard building: arrows move, Ctrl+arrows reorder, Tab child, Enter sibling, Ctrl+Enter edits", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await newMindMap(page, "Keyboard map");
+    await page.waitForFunction(() => document.activeElement?.closest("[data-node]"));
+    assert.equal(await focusedNode(page), "Keyboard map");
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await focusedNode(page), "Key ideas");
+    await page.keyboard.press("ArrowDown");
+    assert.equal(await focusedNode(page), "Examples");
+    await page.keyboard.press("ArrowUp");
+    assert.equal(await focusedNode(page), "Key ideas");
+    await page.keyboard.press("Control+ArrowDown");
+    let boxes = await nodeBoxes(page);
+    assert.ok(boxes["Key ideas"].y > boxes.Examples.y && boxes["Key ideas"].y < boxes.Questions.y, "Ctrl+Down did not move Key ideas below Examples");
+    assert.equal(await focusedNode(page), "Key ideas");
+    await page.keyboard.press("Control+ArrowUp");
+    boxes = await nodeBoxes(page);
+    assert.ok(boxes["Key ideas"].y < boxes.Examples.y, "Ctrl+Up did not move Key ideas back");
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Alpha");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Beta");
+    await page.keyboard.press("Escape");
+    assert.equal(await focusedNode(page), "Beta");
+    boxes = await nodeBoxes(page);
+    for (const label of ["Alpha", "Beta"]) assert.ok(boxes[label].x > boxes["Key ideas"].x, `${label} is not a child of Key ideas`);
+    assert.ok(boxes.Beta.y > boxes.Alpha.y, "Beta is not Alpha's next sibling");
+    await page.keyboard.press("ArrowLeft");
+    assert.equal(await focusedNode(page), "Key ideas");
+    await page.keyboard.press("Control+Enter");
+    const editor = page.getByRole("textbox", { name: "Node label" });
+    await editor.waitFor();
+    assert.equal(await editor.inputValue(), "Key ideas");
+    await page.keyboard.press("End");
+    await page.keyboard.type(" core");
+    await page.keyboard.press("Escape");
+    assert.equal(await focusedNode(page), "Key ideas core");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

@@ -443,8 +443,10 @@ returns sit on the right. Under 900px wide it stacks into one column, and
 **Focus mode** keeps only the timer and the next tasks. Progress, History,
 Exams & plans, Mind map, Helpers and Timer settings are tabs beside it.
 In **Mind map**, create Lecture, Chapter or Exam review maps,
-or create one from a subject. Click a node, then Tab adds a child, Enter adds a
-sibling, typing renames, arrows navigate and Space collapses a branch.
+or create one from a subject. Topics are compact pills in their branch colour around
+an ink root. Click a node, then Tab adds a child, Enter adds a sibling right after it,
+typing or Ctrl+Enter renames, arrows move between parent, children and siblings,
+Ctrl+↑/↓ reorders siblings and Space collapses a branch.
 Tree/radial layouts, an outline, linked note cards and links between maps help
 organize material. **Quiz me** hides labels for recall; a branch can produce a
 flashcard draft. **Auto-links** also suggests local sources for node labels;
