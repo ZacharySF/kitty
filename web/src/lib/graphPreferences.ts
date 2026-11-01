@@ -1,12 +1,19 @@
-import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphLayout, type GraphPhysics } from "./graph3d";
+import { DEFAULT_PHYSICS, PHYSICS_LIMITS, webglAvailable, type GraphLayout, type GraphLook, type GraphPhysics } from "./graph3d";
 
-import type { GraphLook } from "./graph3d";
+/** The remembered look. "brain" is home-only; every other graph draws it as its own 3D. */
+export type AtlasLook = GraphLook | "brain";
 export const GRAPH_LOOK_KEY = "kitty.graph.look";
-export function graphLook(): GraphLook {
-  try { return localStorage.getItem(GRAPH_LOOK_KEY) === "3d" ? "3d" : "2d"; }
-  catch { return "2d"; }
+export function graphLook(): AtlasLook {
+  try {
+    const value = localStorage.getItem(GRAPH_LOOK_KEY);
+    return value === "3d" || value === "brain" ? value : "2d";
+  } catch { return "2d"; }
 }
-export function setGraphLook(look: GraphLook): void {
+/** The look a 2D/3D graph renderer draws: the Brain clamps to 3D (2D without WebGL). */
+export function rendererLook(look: AtlasLook = graphLook()): GraphLook {
+  return look === "brain" ? (webglAvailable() ? "3d" : "2d") : look;
+}
+export function setGraphLook(look: AtlasLook): void {
   localStorage.setItem(GRAPH_LOOK_KEY, look);
   window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
 }

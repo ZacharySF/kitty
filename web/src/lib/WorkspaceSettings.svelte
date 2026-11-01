@@ -117,7 +117,7 @@
   </Panel>
   </div>
   <Panel title="Schemas">
-    <div class="setting-row"><span>Graph look · remembered for every graph</span><GraphLookToggle /></div>
+    <div class="setting-row"><span title="Brain is a home-only look; section graphs show it in 3D">Graph look · remembered for every graph</span><GraphLookToggle brain /></div>
     <label class="setting-row" title="The layout used when you open Home or a section schema">Default layout<select value={layout} onchange={(event) => { layout = event.currentTarget.value as GraphLayout; save(); }}>{#each GRAPH_LAYOUTS as item}<option value={item.id}>{item.label}</option>{/each}</select></label>
     <div class="physics">{#each Object.keys(PHYSICS_LIMITS) as (keyof GraphPhysics)[] as key}
       <label title={explanations[key]}><span>{labels[key]}</span><input type="range" aria-label={labels[key]} aria-describedby={`graph-${key}-help`} min={PHYSICS_LIMITS[key].min} max={PHYSICS_LIMITS[key].max} step={PHYSICS_LIMITS[key].step} value={physics[key]} oninput={(event) => { physics[key] = Number(event.currentTarget.value); save(); }} /><output>{physics[key].toFixed(key === "repulsion" ? 0 : 2)}</output><small id={`graph-${key}-help`}>{explanations[key]}</small></label>
