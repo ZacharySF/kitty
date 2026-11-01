@@ -5,8 +5,11 @@
  */
 export type DockMode = "terminal" | "activity" | "hidden";
 export const DOCK_MODES: readonly DockMode[] = ["terminal", "activity", "hidden"];
-/** `shown` is what the handle brings back after hiding. */
-export type DockState = { mode: DockMode; height: number | null; shown: Exclude<DockMode, "hidden"> };
+/**
+ * `shown` is what the handle brings back after hiding. `float` detaches the dock into a
+ * floating bottom-right card (hidden: a small pill) that reserves no page space.
+ */
+export type DockState = { mode: DockMode; height: number | null; shown: Exclude<DockMode, "hidden">; float: boolean };
 
 export const DOCK_STORAGE_KEY = "kitty.dock";
 /** Roughly eight terminal rows plus the dock's own controls. */
@@ -29,7 +32,7 @@ export function firstDockHeight(viewport: number, panelBottom: number): number {
 }
 
 export function readDock(storage: Storage): DockState {
-  const fallback: DockState = { mode: "terminal", height: null, shown: "terminal" };
+  const fallback: DockState = { mode: "terminal", height: null, shown: "terminal", float: false };
   try {
     const saved: unknown = JSON.parse(storage.getItem(DOCK_STORAGE_KEY) ?? "null");
     if (!saved || typeof saved !== "object") return fallback;
@@ -40,6 +43,7 @@ export function readDock(storage: Storage): DockState {
       mode,
       height: typeof height === "number" && Number.isFinite(height) && height > 0 ? height : null,
       shown: mode !== "hidden" ? mode : fields.shown === "activity" ? "activity" : "terminal",
+      float: fields.float === true,
     };
   } catch {
     return fallback;

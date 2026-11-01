@@ -18,15 +18,15 @@ function memory(initial = {}) {
 }
 
 test('a fresh dock opens on the terminal with no remembered height', () => {
-  assert.deepEqual(readDock(memory()), { mode: 'terminal', height: null, shown: 'terminal' });
+  assert.deepEqual(readDock(memory()), { mode: 'terminal', height: null, shown: 'terminal', float: false });
 });
 
 test('the dock remembers its state, height and the view the handle brings back', () => {
   const storage = memory();
-  writeDock(storage, { mode: 'hidden', height: 287, shown: 'activity' });
-  assert.deepEqual(readDock(storage), { mode: 'hidden', height: 287, shown: 'activity' });
-  writeDock(storage, { mode: 'activity', height: 300, shown: 'activity' });
-  assert.deepEqual(readDock(storage), { mode: 'activity', height: 300, shown: 'activity' });
+  writeDock(storage, { mode: 'hidden', height: 287, shown: 'activity', float: true });
+  assert.deepEqual(readDock(storage), { mode: 'hidden', height: 287, shown: 'activity', float: true });
+  writeDock(storage, { mode: 'activity', height: 300, shown: 'activity', float: false });
+  assert.deepEqual(readDock(storage), { mode: 'activity', height: 300, shown: 'activity', float: false });
   // A visible dock always restores to what it shows.
   storage.setItem(DOCK_STORAGE_KEY, '{"mode":"terminal","height":300,"shown":"activity"}');
   assert.equal(readDock(storage).shown, 'terminal');
@@ -39,9 +39,9 @@ test('corrupt or foreign saved dock state falls back instead of failing', () => 
     assert.ok(['terminal', 'activity'].includes(state.shown), saved);
     assert.ok(state.height === null || state.height > 0, saved);
   }
-  assert.deepEqual(readDock(memory({ [DOCK_STORAGE_KEY]: '{"mode":"activity","height":-5}' })), { mode: 'activity', height: null, shown: 'activity' });
+  assert.deepEqual(readDock(memory({ [DOCK_STORAGE_KEY]: '{"mode":"activity","height":-5}' })), { mode: 'activity', height: null, shown: 'activity', float: false });
   const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
-  assert.deepEqual(readDock(broken), { mode: 'terminal', height: null, shown: 'terminal' });
+  assert.deepEqual(readDock(broken), { mode: 'terminal', height: null, shown: 'terminal', float: false });
   assert.doesNotThrow(() => writeDock(broken, { mode: 'hidden', height: 200, shown: 'terminal' }));
 });
 
@@ -89,4 +89,9 @@ test('the terminal is transparent and drawn in the given theme roles', () => {
   for (const key of ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
     'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'])
     assert.match(theme[key], /^#[0-9a-f]{6}$/, key);
+});
+
+test('floating is remembered, and anything but true means docked', () => {
+  for (const [saved, float] of [['{"mode":"terminal","float":true}', true], ['{"mode":"terminal","float":"yes"}', false], ['{"mode":"terminal"}', false]])
+    assert.equal(readDock(memory({ [DOCK_STORAGE_KEY]: saved })).float, float, saved);
 });
