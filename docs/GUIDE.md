@@ -414,7 +414,10 @@ Notebook schemas derive wiki and shared-concept edges without changing your
 documents. Related matches are suggestions, not claims that two concepts are
 identical; no AI, external indexing or network calls are involved.
 
-**Flashcards** opens a deck → note schema. **Add card** is available immediately,
+**Flashcards** opens Decks: a tile per deck whose ring splits today's load into
+review, learning and new around today's count; hovering a tile shows the split,
+measured recall and Review. A Tiles / Graph toggle (remembered) swaps the tiles for
+the deck → note graph. **Add card** is available immediately,
 including from All decks. Review deals the queue as a stacked deck: tap the top card
 (or press Space) to flip it, then swipe it or press a key to send it off in the
 grade's direction (← Again, ↓ Hard, → Good, ↑ Easy). Below the pile a keyboard strip

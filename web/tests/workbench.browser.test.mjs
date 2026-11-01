@@ -675,3 +675,39 @@ describe("Liquid Glass theme", () => {
     await context.close();
   });
 });
+
+describe("flashcard decks", () => {
+  test("deck tiles: one due ring with the name and today's count, details on hover, and a remembered Graph look", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Tile deck", [["One?", "1"], ["Two?", "2"], ["Three?", "3"]]);
+    await page.reload();
+    assert.equal(await views.getByRole("button", { name: "Map" }).count(), 0, "the graph is still a separate Map view");
+    assert.equal(await views.getByRole("button", { name: "Decks" }).getAttribute("aria-current"), "page");
+    const looks = page.getByRole("radiogroup", { name: "Deck overview look" });
+    assert.equal(await looks.getByRole("radio", { name: "Tiles" }).getAttribute("aria-checked"), "true");
+    const tile = page.getByRole("button", { name: "Tile deck, 3 due today" });
+    await tile.waitFor();
+    assert.equal(await tile.locator("svg").count(), 1, "a tile draws more than its one ring");
+    assert.match((await tile.textContent()).replace(/\s+/g, " "), /3.*Tile deck|Tile deck.*3/);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const details = page.getByRole("group", { name: "Tile deck details" });
+    assert.match(await details.textContent(), /3 new/);
+    assert.match(await details.textContent(), /no recall yet/i);
+    const opacity = () => details.evaluate((node) => getComputedStyle(node).opacity);
+    assert.equal(await opacity(), "0", "details show before hover");
+    await tile.hover();
+    assert.equal(await opacity(), "1", "details stay hidden on hover");
+    await tile.click();
+    await page.getByRole("heading", { name: "Tile deck", level: 2 }).waitFor();
+    await looks.getByRole("radio", { name: "Graph" }).click();
+    await page.getByRole("region", { name: "Flashcards", exact: true }).first().waitFor();
+    assert.equal(await tile.count(), 0, "tiles stay beside the graph");
+    await page.reload();
+    await page.getByRole("region", { name: "Flashcards", exact: true }).first().waitFor();
+    assert.equal(await looks.getByRole("radio", { name: "Graph" }).getAttribute("aria-checked"), "true", "the Graph look is not remembered");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

@@ -443,10 +443,21 @@ def overview(conn):
         current -= timedelta(days=1)
     stats = {"total": len(all_rows), "new": sum(r["state"] == "new" for r in eligible), "learning": sum(r["state"] in {"learning", "relearning"} for r in eligible), "review": sum(r["state"] == "review" for r in eligible), "due": sum(r["state"] != "new" for r in eligible), "streak": streak, "days": days,
              "suspended": sum(bool(r["suspended"]) for r in all_rows), "leeches": sum(bool(r["leech"]) for r in all_rows)}
+    # Measured recall: the share of due reviews (not learning steps) remembered in the last 90 days.
+    since = (now() - timedelta(days=90)).isoformat()
+    names = {d["id"]: d["name"] for d in decks}
+    recalled = [(names.get(r[0], ""), r[1], r[2]) for r in conn.execute(
+        "SELECT deck_id,SUM(rating>1),COUNT(*) FROM flash_reviews WHERE undone=0 AND mode='regular' AND was_review=1 AND reviewed_at>=? GROUP BY deck_id", (since,))]
     for deck in decks:
-        members = [r for r in eligible if r["deck_name"] == deck["name"] or r["deck_name"].startswith(deck["name"] + "::")]
+        prefix = deck["name"] + "::"
+        members = [r for r in eligible if r["deck_name"] == deck["name"] or r["deck_name"].startswith(prefix)]
         deck["due"] = sum(r["state"] != "new" for r in members)
         deck["new"] = sum(r["state"] == "new" for r in members)
+        deck["learning"] = sum(r["state"] in {"learning", "relearning"} for r in members)
+        deck["review"] = sum(r["state"] == "review" for r in members)
+        inner = [(passed, total) for name, passed, total in recalled if name == deck["name"] or name.startswith(prefix)]
+        total = sum(count for _, count in inner)
+        deck["recall"] = round(sum(passed for passed, _ in inner) / total, 4) if total else None
     return {"decks": decks, "types": types, "stats": stats, "media": [dict(r) for r in conn.execute("SELECT name,mime,length(content) AS size FROM flash_media ORDER BY name")]}
 
 

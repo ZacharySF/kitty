@@ -586,3 +586,27 @@ def test_flashcard_schema_and_exact_editor_handle_zero_cards_and_deleted_items(c
     with pytest.raises(APIError, match="no longer exists") as error:
         web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {"focus": f"deck:{deck}"})
     assert error.value.status == 404
+
+
+def test_overview_splits_each_deck_load_and_measures_recall(cards):
+    conn, clock, _ = cards
+    deck = f.save_deck(conn, {"name": "Load", "settings": {}})
+    child = f.save_deck(conn, {"name": "Load::Child", "settings": {}})
+    for _ in range(3):
+        add(cards, deck=child["id"])
+    review_once(conn, 1, deck_id=deck["id"])  # new → learning
+    review_once(conn, 4, deck_id=deck["id"])  # new → review
+    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+    assert (decks["Load"]["new"], decks["Load"]["learning"], decks["Load"]["review"]) == (1, 0, 0)
+    assert decks["Load"]["recall"] is None
+    clock[0] += timedelta(days=30)
+    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+    for name in ("Load", "Load::Child"):
+        assert (decks[name]["due"], decks[name]["new"], decks[name]["learning"], decks[name]["review"]) == (2, 1, 1, 1)
+    review_once(conn, 3, deck_id=deck["id"])  # a learning step, not a due review
+    review_once(conn, 1, deck_id=deck["id"])  # the review card lapses
+    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+    assert decks["Load"]["recall"] == decks["Load::Child"]["recall"] == 0.0
+    assert decks["Default"]["recall"] is None and decks["Default"]["learning"] == 0
+    clock[0] += timedelta(days=91)
+    assert {d["name"]: d for d in f.overview(conn)["decks"]}["Load"]["recall"] is None
