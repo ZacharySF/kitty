@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Button } from "@nunera/bracket";
+  import { Button, Popover } from "@nunera/bracket";
   import { api } from "./api";
+  import TimerRing from "./TimerRing.svelte";
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
   type Timer = {
@@ -15,6 +16,8 @@
     completed_phase: "priming" | "focus" | "short_break" | null;
     deadline_at: string | null;
     remaining_seconds: number;
+    duration_seconds?: number;
+    cycle?: number;
     notes?: string;
   };
   type Result = {
@@ -31,7 +34,7 @@
   let alert = $state("");
   let soundReady = $state(false);
   let soundError = $state("");
-  let dismissedSession = $state("");
+  let open = $state(false);
   let mounted = false;
   let loading = false;
   let audio: AudioContext | null = null;
@@ -53,16 +56,7 @@
       .padStart(2, "0")}:${(remaining % 60).toString().padStart(2, "0")}`,
   );
   const phase = $derived(timerState?.timer.phase === "priming" ? "Priming" : timerState?.timer.phase === "focus" ? "Focus" : "Break");
-  const bannerSession = $derived(timerState?.timer.session_id || timerState?.timer.phase_id || "idle");
-  function dismiss() {
-    dismissedSession = bannerSession;
-    try { localStorage.setItem("kitty-study-dismissed-session", dismissedSession); } catch { /* In-memory dismissal still works. */ }
-  }
-  function restore() {
-    dismissedSession = "";
-    try { localStorage.removeItem("kitty-study-dismissed-session"); } catch { /* Optional storage. */ }
-    void load();
-  }
+  const attention = $derived(Boolean(alert || error || soundError));
 
   // Background pointer/key gestures retry silently; only an explicit Start,
   // Resume or Enable sound reports that audio is unavailable.
@@ -203,7 +197,6 @@
     mounted = true;
     try {
       const cached = localStorage.getItem(cacheKey);
-      dismissedSession = localStorage.getItem("kitty-study-dismissed-session") || "";
       if (cached) {
         timerState = JSON.parse(cached);
         offline = true;
@@ -231,7 +224,6 @@
     window.addEventListener("focus", changed);
     window.addEventListener("online", changed);
     window.addEventListener("kitty-study-changed", changed);
-    window.addEventListener("kitty-study-restore-bar", restore);
     return () => {
       mounted = false;
       window.clearInterval(tick);
@@ -243,7 +235,6 @@
       window.removeEventListener("focus", changed);
       window.removeEventListener("online", changed);
       window.removeEventListener("kitty-study-changed", changed);
-      window.removeEventListener("kitty-study-restore-bar", restore);
       void audio?.close();
     };
   });
@@ -253,82 +244,105 @@
   });
 </script>
 
-{#if timerState && dismissedSession !== bannerSession && (timerState.timer.status !== "idle" || alert || error || soundError)}
-  <aside class="focus-bar" aria-label="Persistent study timer" class:offline>
-    {#if timerState.timer.status !== "idle"}
-      <strong>{phase} · {clock}</strong><span
-        >{timerState.timer.status.replaceAll("_", " ")}{demo
-          ? " · local demo"
-          : ""}{offline ? " · cached estimate" : ""}</span
-      >
-      {#if timerState.timer.notes}<span title={timerState.timer.notes}>{timerState.timer.notes.split("\n")[0].slice(0, 60)}</span>{/if}
-      {#if timerState.timer.status === "running"}<Button
-          size="sm"
-          disabled={busy || offline}
-          onclick={() => act("pause")}>Pause</Button
-        >
-      {:else if timerState.timer.status === "paused"}<Button
-          size="sm"
-          disabled={busy || offline}
-          onclick={() => act("resume")}>Resume</Button
-        >
-      {:else}<Button
-          size="sm"
-          disabled={busy || offline}
-          onclick={() => act("start")}>Start {phase.toLowerCase()}</Button
-        >{/if}
-      {#if timerState.timer.phase === "short_break"}<Button
-          size="sm"
-          disabled={busy || offline}
-          onclick={() => act("skip_break")}>Skip break</Button
-        >{/if}
-      <Button size="sm" disabled={busy || offline} onclick={() => act("stop")}
-        >Stop</Button
-      >
-      {#if timerState.settings?.sound && !soundReady}
-        <span class="sound-warning" role="status">Sound is not ready in this tab.</span>
-        <Button size="sm" onclick={unlockSound}>Enable sound</Button>
-      {/if}
-    {/if}
-    {#if alert}<span role="status">{alert}</span><Button
-        size="sm"
-        onclick={() => (alert = "")}>Dismiss alert</Button
-      >{/if}
-    {#if soundError}<span class="sound-warning" role="alert">{soundError}</span>{/if}
-    {#if error}<span class="error" role="status">{error}</span><Button
-        size="sm"
-        onclick={() => {
-          error = "";
-          void load();
-        }}>Reconnect / dismiss</Button
-      >{/if}
-    <Button size="sm" onclick={dismiss} title="Hide this bar for this study session. The timer keeps running; restore it from Study.">Dismiss timer bar</Button>
-  </aside>
+<!-- A small ring and the time in the top bar; the popover holds the controls and any alerts. -->
+{#if timerState && (timerState.timer.status !== "idle" || attention)}
+  <div class="study-timer">
+    <Popover bind:open placement="bottom-end" arrow={false}>
+      {#snippet trigger(props)}
+        <Button {...props} size="sm" variant="ghost" class="study-timer-trigger"
+          aria-label={`Study timer: ${phase} ${clock}, ${timerState?.timer.status.replaceAll("_", " ")}${attention ? ", needs attention" : ""}`}>
+          {#if timerState?.timer.status !== "idle"}
+            <TimerRing size={20} stroke={2.5} remaining={remaining}
+              total={timerState?.timer.duration_seconds || (timerState?.timer.phase === "priming" ? 300 : remaining)}
+              phase={timerState?.timer.phase ?? "focus"} label={`${phase} progress`} />
+            <span class="time" class:paused={timerState?.timer.status === "paused"}>{clock}</span>
+          {:else}<span class="time">Study</span>{/if}
+          {#if attention}<span class="attention" aria-hidden="true"></span>{/if}
+        </Button>
+      {/snippet}
+      <div class="study-timer-panel" role="group" aria-label="Study timer controls">
+        {#if timerState.timer.status !== "idle"}
+          <p class="heading"><strong>{phase} · {clock}</strong><span>{timerState.timer.status.replaceAll("_", " ")}{demo ? " · local demo" : ""}{offline ? " · cached estimate" : ""}</span></p>
+          {#if timerState.timer.notes}<p class="notes" title={timerState.timer.notes}>{timerState.timer.notes.split("\n")[0].slice(0, 80)}</p>{/if}
+          <div class="controls">
+            {#if timerState.timer.status === "running"}<Button size="sm" disabled={busy || offline} onclick={() => act("pause")}>Pause</Button>
+            {:else if timerState.timer.status === "paused"}<Button size="sm" disabled={busy || offline} onclick={() => act("resume")}>Resume</Button>
+            {:else}<Button size="sm" disabled={busy || offline} onclick={() => act("start")}>Start {phase.toLowerCase()}</Button>{/if}
+            {#if timerState.timer.phase === "short_break"}<Button size="sm" disabled={busy || offline} onclick={() => act("skip_break")}>Skip break</Button>{/if}
+            <Button size="sm" disabled={busy || offline} onclick={() => act("stop")}>Stop</Button>
+          </div>
+          {#if timerState.settings?.sound && !soundReady}
+            <p class="sound-warning" role="status">Sound is not ready in this tab. <Button size="sm" onclick={unlockSound}>Enable sound</Button></p>
+          {/if}
+        {/if}
+        {#if alert}<p role="status">{alert} <Button size="sm" onclick={() => (alert = "")}>Dismiss</Button></p>{/if}
+        {#if soundError}<p class="sound-warning" role="alert">{soundError}</p>{/if}
+        {#if error}<p class="error" role="status">{error} <Button size="sm" onclick={() => { error = ""; void load(); }}>Reconnect</Button></p>{/if}
+      </div>
+    </Popover>
+  </div>
 {/if}
 
 <style>
-  .focus-bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.65rem;
-    padding: 0.65rem clamp(1rem, 3vw, 2rem);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-raised);
-    color: var(--ink);
+  .study-timer {
+    display: inline-flex;
+    flex-shrink: 0;
   }
-  strong {
+  /* Bracket's "-end" placement sits over the trigger; drop below it like the theme picker. */
+  .study-timer :global(.root[data-placement="bottom-end"] > [role="dialog"]) {
+    top: calc(100% + 8px);
+    bottom: auto;
+    right: 0;
+  }
+  .study-timer :global(.study-timer-trigger) {
+    position: relative;
+    gap: 7px;
+  }
+  .time {
+    font: 500 12.5px var(--font-ui);
     font-variant-numeric: tabular-nums;
-    font-size: 0.88rem;
-    font-weight: 600;
-    letter-spacing: -0.015em;
+    letter-spacing: 0;
+    text-transform: none;
   }
-  span {
+  .time.paused {
     color: var(--muted);
   }
+  .attention {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--warning);
+  }
+  .study-timer-panel {
+    display: grid;
+    gap: 10px;
+    min-width: 260px;
+    max-width: 340px;
+    padding: 12px;
+  }
+  .study-timer-panel p {
+    margin: 0;
+    color: var(--muted);
+  }
+  .heading {
+    display: grid;
+    gap: 2px;
+  }
+  .heading strong {
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
   .error,
-  .sound-warning,
-  .offline {
+  .sound-warning {
     color: var(--warning);
   }
 </style>
