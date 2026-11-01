@@ -18,7 +18,7 @@ import re
 import sqlite3
 import uuid
 
-from kitty.core import calendar, schema_maps
+from kitty.core import calendar, notes, schema_maps
 from kitty.db.connection import transaction
 
 PER_NODE = 12
@@ -115,15 +115,16 @@ def _json(value, default):
         return default
 
 
+def _page_rows(conn, sql, params=()):
+    """Note page rows with the text of their text/sticky elements and their outline."""
+    rows = conn.execute(sql, params).fetchall()
+    texts = notes.page_texts(conn, [row['block_id'] for row in rows])
+    return [(row, [text for is_text, text in texts[row['block_id']][0] if is_text], texts[row['block_id']][1]) for row in rows]
+
+
 def _notes(conn):
-    for row in conn.execute('SELECT id,title,document FROM note_pages ORDER BY updated_at DESC,id DESC LIMIT ?', (RECENT['note_page'],)).fetchall():
-        document = _json(row['document'], {})
-        elements = document.get('elements') if isinstance(document, dict) else None
-        parts = [item['text'] for item in elements if isinstance(item, dict) and item.get('kind') in {'text', 'sticky'}
-                 and isinstance(item.get('text'), str)] if isinstance(elements, list) else []
-        if _exists(conn, 'note_blocks'):
-            parts.extend(block['text'] for block in conn.execute('SELECT text FROM note_blocks WHERE page_id=? ORDER BY ordering,id', (row['id'],)))
-        yield 'note_page', row['id'], row['title'], '\n'.join([row['title'], *parts])
+    for row, canvas, outline in _page_rows(conn, 'SELECT id,block_id,title FROM note_page_index ORDER BY updated_at DESC,id DESC LIMIT ?', (RECENT['note_page'],)):
+        yield 'note_page', row['id'], row['title'], '\n'.join([row['title'], *canvas, *outline])
 
 
 def _subjects(conn):
@@ -182,7 +183,7 @@ def _jobs(conn):
         yield 'job', row['id'], f"{row['title']} · {row['company']}", f"{row['title']}\n{row['company']}\n{_clean(row['jd'])}"
 
 
-SOURCES = (('note_pages', _notes), ('study_subjects', _subjects), ('study_projects', _projects),
+SOURCES = (('blocks', _notes), ('study_subjects', _subjects), ('study_projects', _projects),
            ('study_tasks', _study_tasks), ('calendar_events', _events), ('calendar_tasks', _calendar_tasks),
            ('flash_decks', _decks), ('jobs', _jobs))
 
@@ -336,26 +337,15 @@ def related(conn, text, exclude=None):
             raise ValueError("Exclude must look like <kind>:<id>")
         identity = tuple(exclude.split(":", 1))
     def records():
-        if _exists(conn, 'note_pages'):
-            # Stream documents; do not materialize the whole canvas corpus.
-            for row in conn.execute('SELECT id,title,document FROM note_pages ORDER BY updated_at DESC,id DESC LIMIT 1000'):
-                document = _json(row['document'], {})
-                elements = document.get('elements', []) if isinstance(document, dict) else []
+        if _exists(conn, 'blocks'):
+            for row, canvas, outline in _page_rows(conn, 'SELECT id,block_id,title FROM note_page_index ORDER BY updated_at DESC,id DESC LIMIT 1000'):
                 parts, remaining = [row['title']], RECORD_CHARS
-                for item in elements if isinstance(elements, list) else []:
-                    if isinstance(item, dict) and item.get('kind') in {'text', 'sticky'} and isinstance(item.get('text'), str):
-                        part = item['text'][:remaining]
-                        parts.append(part)
-                        remaining -= len(part)
-                        if remaining <= 0:
-                            break
-                if remaining > 0 and _exists(conn, 'note_blocks'):
-                    for block in conn.execute('SELECT text FROM note_blocks WHERE page_id=? ORDER BY ordering,id', (row['id'],)):
-                        part = block['text'][:remaining]
-                        parts.append(part)
-                        remaining -= len(part)
-                        if remaining <= 0:
-                            break
+                for part in (*canvas, *outline):
+                    part = part[:remaining]
+                    parts.append(part)
+                    remaining -= len(part)
+                    if remaining <= 0:
+                        break
                 yield 'note_page', row['id'], row['title'], '\n'.join(parts)
         if _exists(conn, 'flash_notes') and _exists(conn, 'flash_decks'):
             for row in conn.execute("""SELECT n.id,n.fields,d.name FROM flash_notes n
@@ -479,20 +469,13 @@ def page_connections(conn, page_ids):
     """Derived, read-only wiki/related edges for a bounded notebook graph."""
     if not page_ids:
         return []
-    try:
-        rows = conn.execute(f"SELECT id,title,document FROM note_pages WHERE id IN ({','.join('?' for _ in page_ids)})", page_ids)
-    except sqlite3.OperationalError as exc:
-        if 'no such column' in str(exc) or 'no such table' in str(exc):
-            return []
-        raise
+    if not _exists(conn, 'blocks'):
+        return []
+    rows = _page_rows(conn, f"SELECT id,block_id,title FROM note_page_index WHERE id IN ({','.join('?' for _ in page_ids)})", page_ids)
     records = []
     remaining = TOTAL_CHARS
-    for row in rows:
-        document = _json(row['document'], {})
-        parts = [item.get('text', '')[:RECORD_CHARS] for item in document.get('elements', []) if item.get('kind') in {'text', 'sticky'}]
-        if _exists(conn, 'note_blocks'):
-            parts.extend(block['text'][:RECORD_CHARS] for block in conn.execute('SELECT text FROM note_blocks WHERE page_id=? ORDER BY ordering,id', (row['id'],)))
-        content = (row['title'] + '\n' + '\n'.join(parts))[:RECORD_CHARS]
+    for row, canvas, outline in rows:
+        content = (row['title'] + '\n' + '\n'.join(part[:RECORD_CHARS] for part in (*canvas, *outline)))[:RECORD_CHARS]
         remaining -= len(content)
         if remaining < 0:
             break

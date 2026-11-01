@@ -225,7 +225,7 @@ def _note_section(conn, focus=None):
         entity, ref = focus
         return _notebook_pages(conn, ref) if entity == 'notebook' else _folder_children(conn, ref)
     total = sum(_count(conn, f'SELECT COUNT(*) FROM {table}')
-                for table in ('note_folders', 'note_notebooks', 'note_pages'))
+                for table in ('note_folders', 'note_notebooks', 'note_page_index'))
     # Depth-first order ensures every sampled folder retains its sampled ancestors.
     # The depth guard also bounds traversal of unusually deep imported hierarchies.
     folders = _section_rows(conn, '''WITH RECURSIVE tree(id, title, parent_id, path, depth) AS (
@@ -241,12 +241,12 @@ def _note_section(conn, focus=None):
     columns = {row[1] for row in _section_rows(conn, 'PRAGMA table_info(note_notebooks)')}
     folder_column = 'n.folder_id' if 'folder_id' in columns else 'NULL'
     notebooks = _section_rows(conn, f'''SELECT n.id, n.title, {folder_column},
-        (SELECT COUNT(*) FROM note_pages p WHERE p.notebook_id = n.id)
+        (SELECT COUNT(*) FROM note_page_index p WHERE p.notebook_id = n.id)
         FROM note_notebooks n
         WHERE {folder_column} IS NULL OR {folder_column} IN ({_placeholders(folder_ids)})
         ORDER BY n.updated_at DESC, n.id DESC LIMIT ?''', (*folder_ids, SECTION_GROUP_LIMIT))
     notebook_ids = [row[0] for row in notebooks]
-    pages = _section_rows(conn, f'''SELECT id, title, notebook_id FROM note_pages
+    pages = _section_rows(conn, f'''SELECT id, title, notebook_id FROM note_page_index
         WHERE notebook_id IN ({_placeholders(notebook_ids)})
         ORDER BY updated_at DESC, id DESC LIMIT ?''',
         (*notebook_ids, SECTION_LIMIT - len(folders) - len(notebooks))) if notebook_ids else []
@@ -276,13 +276,13 @@ def _note_section(conn, focus=None):
 
 
 def _notebook_pages(conn, notebook):
-    found = _section_rows(conn, '''SELECT n.title, (SELECT COUNT(*) FROM note_pages p WHERE p.notebook_id = n.id)
+    found = _section_rows(conn, '''SELECT n.title, (SELECT COUNT(*) FROM note_page_index p WHERE p.notebook_id = n.id)
         FROM note_notebooks n WHERE n.id = ?''', (notebook,))
     if not found:
         raise _not_found('notebook')
     title, count = found[0]
     group = f'notebook:{notebook}'
-    pages = _section_rows(conn, '''SELECT id, title FROM note_pages WHERE notebook_id = ?
+    pages = _section_rows(conn, '''SELECT id, title FROM note_page_index WHERE notebook_id = ?
         ORDER BY updated_at DESC, id DESC LIMIT ?''', (notebook, SECTION_LIMIT - 1))
     nodes = [_node('notebook', notebook, title, group, f'{count} pages · {len(pages)} shown', hub=True)]
     nodes.extend(_node('page', ident, page, group) for ident, page in pages)
@@ -303,7 +303,7 @@ def _folder_children(conn, folder):
         (SELECT COUNT(*) FROM note_notebooks n WHERE n.folder_id = f.id)
         FROM note_folders f WHERE f.parent_id = ? ORDER BY f.title COLLATE NOCASE, f.id LIMIT ?''',
         (folder, SECTION_GROUP_LIMIT))
-    books = _section_rows(conn, '''SELECT n.id, n.title, (SELECT COUNT(*) FROM note_pages p WHERE p.notebook_id = n.id)
+    books = _section_rows(conn, '''SELECT n.id, n.title, (SELECT COUNT(*) FROM note_page_index p WHERE p.notebook_id = n.id)
         FROM note_notebooks n WHERE n.folder_id = ? ORDER BY n.updated_at DESC, n.id DESC LIMIT ?''',
         (folder, SECTION_GROUP_LIMIT))
     nodes = [_node('folder', folder, found[0][0], group,

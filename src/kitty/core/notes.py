@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from kitty.core import blocks
+from kitty.core.blocks import convert
 from kitty.db.connection import transaction
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
@@ -176,20 +178,101 @@ def _invalid_point():
     raise NotesError("Line point must be x, y, pressure")
 
 
-def page(conn: sqlite3.Connection, page_id: int) -> dict:
-    row = conn.execute("SELECT * FROM note_pages WHERE id=?", (integer(page_id),)).fetchone()
+# Note pages live in the block backend (kitty.core.blocks): a `page` root block with the
+# page's integer `number`, a `canvas` child holding the drawing, and `text` outline
+# blocks. The functions below keep the Notes API's request and response shapes.
+DEFAULT_VIEWPORT = {"x": 0, "y": 0, "zoom": 1}
+
+
+def apply(conn: sqlite3.Connection, ops: list[dict], base: dict | None = None) -> dict:
+    """Run one block transaction, reporting refusals as NotesError."""
+    try:
+        return blocks.transact(conn, ops, base=base)
+    except blocks.BlockError as exc:
+        raise NotesError(str(exc), exc.status) from None
+
+
+def root_block(conn: sqlite3.Connection, kind: str, number: int, missing: str) -> sqlite3.Row:
+    """The live root block of `kind` addressed by its integer number, or a 404."""
+    row = conn.execute("SELECT * FROM blocks WHERE type=? AND parent_id IS NULL AND deleted_at IS NULL "
+                       "AND json_extract(properties,'$.number')=?", (kind, integer(number))).fetchone()
     if row is None:
-        raise NotesError("Page not found", 404)
-    result = dict(row)
-    result["document"] = json.loads(result["document"])
-    result["viewport"] = json.loads(result["viewport"])
+        raise NotesError(missing, 404)
+    return row
+
+
+def next_number(conn: sqlite3.Connection, kind: str) -> int:
+    return conn.execute("SELECT COALESCE(MAX(json_extract(properties,'$.number')),0)+1 FROM blocks "
+                        "WHERE type=? AND parent_id IS NULL AND json_extract(properties,'$.number') IS NOT NULL", (kind,)).fetchone()[0]
+
+
+def page_doc(conn: sqlite3.Connection, page_id: int) -> blocks.OrderedPageDoc:
+    return blocks.load_page(conn, root_block(conn, "page", page_id, "Page not found")["id"])
+
+
+def canvas_of(doc: blocks.OrderedPageDoc) -> blocks.Block | None:
+    return next((item for item in doc.children(doc.page_id) if item.type == "canvas"), None)
+
+
+def page_document(doc: blocks.OrderedPageDoc) -> dict:
+    canvas = canvas_of(doc)
+    return convert.canvas_document(canvas, doc.children(canvas.id) if canvas else [])
+
+
+def page_from_doc(doc: blocks.OrderedPageDoc) -> dict:
+    root, document = doc.root, page_document(doc)
+    props = root.properties
+    outline = doc.preorder(root.id, types=convert.OUTLINE_TYPES)
+    search = "\n".join([*(item.get("text", "") for item in document.get("elements", ()) if isinstance(item, dict)),
+                        *(item.text for item in outline)])
+    return {"id": props["number"], "notebook_id": props.get("notebook_id"), "title": root.text, "document": document,
+            "search_text": search, "viewport": props.get("viewport", DEFAULT_VIEWPORT), "revision": props.get("revision", 1),
+            "viewport_revision": props.get("viewport_revision", 1), "created_at": root.created_at, "updated_at": root.updated_at,
+            "favorite": props.get("favorite", 0), "last_opened": props.get("last_opened"), "position": props.get("position", 0)}
+
+
+def page(conn: sqlite3.Connection, page_id: int) -> dict:
+    return page_from_doc(page_doc(conn, page_id))
+
+
+def page_texts(conn: sqlite3.Connection, block_ids: list[str]) -> dict[str, tuple[list[tuple[bool, str]], list[str]]]:
+    """Per page root: each canvas element's (is text/sticky, text) in paint order, and outline text in reading order."""
+    result: dict[str, tuple[list[tuple[bool, str]], list[str]]] = {bid: ([], []) for bid in block_ids}
+    element_types = ",".join(f"'{kind}'" for kind in sorted(convert.CANVAS_TYPES))
+    for start in range(0, len(block_ids), 500):
+        chunk = block_ids[start:start + 500]
+        rows = conn.execute(f"SELECT id,page_id,parent_id,type,text,CASE WHEN type='ink' THEN json_array_length(properties,'$.strokes') "
+                            f"END AS strokes FROM blocks WHERE deleted_at IS NULL AND type IN ('text',{element_types}) "
+                            f"AND page_id IN ({','.join('?' * len(chunk))}) ORDER BY order_key,id", chunk).fetchall()
+        children: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            if row["type"] == "text":
+                children.setdefault(row["parent_id"], []).append(row)
+            elif row["type"] == "ink":
+                result[row["page_id"]][0].extend([(False, "")] * row["strokes"])
+            else:
+                result[row["page_id"]][0].append((row["type"] in {"text_box", "sticky"}, row["text"]))
+        for bid in chunk:
+            stack = list(reversed(children.get(bid, ())))
+            while stack:
+                row = stack.pop()
+                result[bid][1].append(row["text"])
+                stack.extend(reversed(children.get(row["id"], ())))
     return result
+
+
+def page_count(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM note_page_index").fetchone()[0]
 
 
 def listing(conn: sqlite3.Connection, search: str = "") -> dict:
     search = text(search, 300)
     pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-    rows = conn.execute("SELECT p.id,p.notebook_id,p.title,p.revision,p.updated_at,p.favorite,p.last_opened,p.position FROM note_pages p JOIN note_notebooks n ON p.notebook_id=n.id WHERE p.title LIKE ? ESCAPE '\\' OR p.search_text LIKE ? ESCAPE '\\' OR n.title LIKE ? ESCAPE '\\' OR n.subject LIKE ? ESCAPE '\\' OR n.project LIKE ? ESCAPE '\\' ORDER BY p.position,p.updated_at DESC,p.id LIMIT 500", (pattern,) * 5)
+    rows = conn.execute("SELECT p.id,p.notebook_id,p.title,p.revision,p.updated_at,p.favorite,p.last_opened,p.position FROM note_page_index p "
+                        "JOIN note_notebooks n ON p.notebook_id=n.id WHERE p.title LIKE ? ESCAPE '\\' OR n.title LIKE ? ESCAPE '\\' "
+                        "OR n.subject LIKE ? ESCAPE '\\' OR n.project LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM blocks c WHERE "
+                        "c.page_id=p.block_id AND c.deleted_at IS NULL AND c.parent_id IS NOT NULL AND c.text LIKE ? ESCAPE '\\') "
+                        "ORDER BY p.position,p.updated_at DESC,p.id LIMIT 500", (pattern,) * 5)
     prefs = dict(conn.execute("SELECT allow_ai,retention_days,revision FROM note_preferences WHERE id=1").fetchone())
     prefs["allow_ai"] = bool(prefs["allow_ai"])
     return {"folders": [dict(row) for row in conn.execute("SELECT * FROM note_folders ORDER BY position,title,id")], "notebooks": [dict(row) for row in conn.execute("SELECT * FROM note_notebooks ORDER BY position,updated_at DESC LIMIT 200")], "pages": [dict(row) for row in rows], "preferences": prefs}
@@ -280,39 +363,69 @@ def save_notebook(conn: sqlite3.Connection, notebook_id: int, revision: Any, tit
     return dict(conn.execute("SELECT * FROM note_notebooks WHERE id=?", (notebook_id,)).fetchone())
 
 
-def create_page(conn: sqlite3.Connection, notebook_id: Any, title: Any = "Untitled page") -> dict:
+def canvas_ops(doc: blocks.OrderedPageDoc, document: dict) -> list[dict]:
+    """Operations that make the page's canvas blocks match a normalized canvas document."""
+    canvas, settings = canvas_of(doc), convert.canvas_settings(document)
+    if canvas is None:
+        canvas_id = convert.canvas_block_id(doc.page_id)
+        ops = [{"op": "insert", "id": canvas_id, "type": "canvas", "parent": doc.page_id, "after": None, "props": settings}]
+    else:
+        canvas_id = canvas.id
+        changes = convert.props_diff(canvas.properties, settings)
+        ops = [{"op": "set", "id": canvas_id, "props": changes}] if changes else []
+    return ops + convert.sync_tree(doc, canvas_id, convert.canvas_specs(doc.page_id, document), lambda item: item.parent_id == canvas_id)
+
+
+def new_page_ops(conn: sqlite3.Connection, notebook_id: int, title: str, *, document: dict | None = None,
+                 view: dict | None = None, extra: dict | None = None) -> tuple[int, list[dict]]:
+    """The page's number and the transaction that creates it (revision 1)."""
+    page_id, number, document = str(uuid.uuid4()), next_number(conn, "page"), document or empty_document()
+    props = {"number": number, "notebook_id": notebook_id, "revision": 1, "viewport": view or dict(DEFAULT_VIEWPORT),
+             "viewport_revision": 1, "favorite": 0, "position": 0, **(extra or {})}
+    canvas_id = convert.canvas_block_id(page_id)
+    ops = [{"op": "insert", "id": page_id, "type": "page", "parent": None, "props": props, "text": title},
+           {"op": "insert", "id": canvas_id, "type": "canvas", "parent": page_id, "props": convert.canvas_settings(document)}]
+    return number, ops + convert.insert_ops(convert.canvas_specs(page_id, document))
+
+
+def create_page(conn: sqlite3.Connection, notebook_id: Any, title: Any = "Untitled page", *, extra: dict | None = None) -> dict:
     nid, title = integer(notebook_id), text(title, 200)
     if not title.strip():
         raise NotesError("Page title is required")
-    with (nullcontext() if conn.in_transaction else transaction(conn)):
+    with (nullcontext() if conn.in_transaction else transaction(conn, immediate=True)):
         if not conn.execute("SELECT 1 FROM note_notebooks WHERE id=?", (nid,)).fetchone():
             raise NotesError("Notebook not found", 404)
-        if conn.execute("SELECT COUNT(*) FROM note_pages").fetchone()[0] >= MAX_PAGES:
+        if page_count(conn) >= MAX_PAGES:
             raise NotesError("Page limit reached")
-        stamp = now()
-        pid = conn.execute("INSERT INTO note_pages(notebook_id,title,document,created_at,updated_at) VALUES (?,?,?,?,?)", (nid, title, json.dumps(empty_document()), stamp, stamp)).lastrowid
-    return page(conn, pid)
+        number, ops = new_page_ops(conn, nid, title, extra=extra)
+        apply(conn, ops)
+    return page(conn, number)
 
 
 def save_page(conn: sqlite3.Connection, page_id: int, revision: Any, document: Any, title: Any) -> dict:
     title, rev = text(title, 200), integer(revision)
     if not title.strip():
         raise NotesError("Page title is required")
-    with transaction(conn):
-        doc = normalize(document, conn)
-        from kitty.core.note_blocks import search_text
-        search = search_text(conn, page_id, doc)
-        cursor = conn.execute("UPDATE note_pages SET title=?,document=?,search_text=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?", (title, json.dumps(doc, ensure_ascii=False), search, now(), integer(page_id), rev))
-        if cursor.rowcount != 1:
+    with transaction(conn, immediate=True):
+        normalized = normalize(document, conn)
+        doc = page_doc(conn, page_id)
+        root = doc.root
+        if root.properties.get("revision") != rev:
             raise NotesError("Page changed in another tab. Export your local copy, then reload; stale edits were not saved.", 409)
+        ops = canvas_ops(doc, normalized)
+        if root.text != title:
+            ops.append({"op": "text", "id": root.id, "text": title})
+        apply(conn, [*ops, {"op": "set", "id": root.id, "props": {"revision": rev + 1}}], base={root.id: rev})
     return {"revision": rev + 1}
 
 
 def save_viewport(conn: sqlite3.Connection, page_id: int, revision: Any, value: Any) -> dict:
     view, rev = viewport(value), integer(revision)
-    with transaction(conn):
-        if conn.execute("UPDATE note_pages SET viewport=?,viewport_revision=viewport_revision+1 WHERE id=? AND viewport_revision=?", (json.dumps(view), integer(page_id), rev)).rowcount != 1:
+    with transaction(conn, immediate=True):
+        root = page_doc(conn, page_id).root
+        if root.properties.get("viewport_revision", 1) != rev:
             raise NotesError("Viewport changed in another tab; reload the page", 409)
+        apply(conn, [{"op": "set", "id": root.id, "props": {"viewport": view, "viewport_revision": rev + 1}}])
     return {"viewport_revision": rev + 1}
 
 
@@ -327,9 +440,12 @@ def preferences(conn: sqlite3.Connection, revision: Any, allow_ai: Any, retentio
 
 
 def delete_page(conn: sqlite3.Connection, page_id: int, revision: Any) -> dict:
-    with transaction(conn):
-        if conn.execute("DELETE FROM note_pages WHERE id=? AND revision=?", (integer(page_id), integer(revision))).rowcount != 1:
+    """Move a page to Trash (restorable for the history retention window)."""
+    with transaction(conn, immediate=True):
+        root = root_block(conn, "page", page_id, "Page changed; reload before deleting")
+        if json.loads(root["properties"]).get("revision") != integer(revision):
             raise NotesError("Page changed; reload before deleting", 409)
+        apply(conn, [{"op": "delete", "id": root["id"]}])
     return {"ok": True}
 
 
@@ -338,7 +454,7 @@ def resolve_page(conn, title, notebook_id=None):
     if not title:
         raise NotesError("Page title is required")
     with transaction(conn, immediate=True):
-        row = conn.execute("SELECT id FROM note_pages WHERE title=? COLLATE NOCASE ORDER BY id LIMIT 1", (title,)).fetchone()
+        row = conn.execute("SELECT id FROM note_page_index WHERE title=? COLLATE NOCASE ORDER BY id LIMIT 1", (title,)).fetchone()
         if row:
             return page(conn, row["id"])
         if notebook_id is None:
@@ -356,14 +472,13 @@ def daily_page(conn, date=None):
     except ValueError:
         raise NotesError("Invalid daily note date") from None
     with transaction(conn, immediate=True):
-        row = conn.execute("SELECT page_id FROM note_daily WHERE date=?", (date,)).fetchone()
+        row = conn.execute("SELECT json_extract(properties,'$.number') AS id FROM blocks WHERE type='page' AND parent_id IS NULL "
+                           "AND deleted_at IS NULL AND json_extract(properties,'$.daily')=? ORDER BY 1 LIMIT 1", (date,)).fetchone()
         if row:
-            return page(conn, row["page_id"])
+            return page(conn, row["id"])
         book = conn.execute("SELECT id FROM note_notebooks WHERE title='Daily notes' ORDER BY id LIMIT 1").fetchone()
         nid = book["id"] if book else create_notebook(conn, "Daily notes")["id"]
-        result = create_page(conn, nid, date)
-        conn.execute("INSERT INTO note_daily(date,page_id) VALUES (?,?)", (date, result["id"]))
-        return result
+        return create_page(conn, nid, date, extra={"daily": date})
 
 
 def organize_page(conn, page_id, body):
@@ -371,24 +486,37 @@ def organize_page(conn, page_id, body):
     for value in body.values():
         if type(value) is not bool:
             raise NotesError("Page flags must be boolean")
-    with transaction(conn):
-        page(conn, page_id)
+    with transaction(conn, immediate=True):
+        root = root_block(conn, "page", page_id, "Page not found")
+        changes = {}
         if "favorite" in body:
-            conn.execute("UPDATE note_pages SET favorite=? WHERE id=?", (body["favorite"], page_id))
+            changes["favorite"] = int(body["favorite"])
         if body.get("visited"):
-            conn.execute("UPDATE note_pages SET last_opened=? WHERE id=?", (now(), page_id))
+            changes["last_opened"] = now()
+        if changes:
+            apply(conn, [{"op": "set", "id": root["id"], "props": changes}])
     return page(conn, page_id)
 
 
 def reorder(conn, kind, ids):
-    tables = {"pages": "note_pages", "notebooks": "note_notebooks", "folders": "note_folders"}
-    if not isinstance(kind, str) or kind not in tables or not isinstance(ids, list) or len(ids) > 500:
+    """Persist library order: page positions are view state on page blocks; notebooks and folders are rows."""
+    if not isinstance(kind, str) or kind not in {"pages", "notebooks", "folders"} or not isinstance(ids, list) or len(ids) > 500:
         raise NotesError("Invalid note order")
     ids = [integer(value) for value in ids]
     if len(set(ids)) != len(ids):
         raise NotesError("Duplicate ordered item")
-    table = tables[kind]
     with transaction(conn, immediate=True):
+        if kind == "pages":
+            ops = []
+            for position, item_id in enumerate(ids):
+                row = conn.execute("SELECT block_id FROM note_page_index WHERE id=?", (item_id,)).fetchone()
+                if row is None:
+                    raise NotesError("Ordered item not found", 404)
+                ops.append({"op": "set", "id": row["block_id"], "props": {"position": position}})
+            if ops:
+                apply(conn, ops)
+            return {"ok": True}
+        table = {"notebooks": "note_notebooks", "folders": "note_folders"}[kind]
         for position, item_id in enumerate(ids):
             if conn.execute(f"UPDATE {table} SET position=? WHERE id=?", (position, item_id)).rowcount != 1:
                 raise NotesError("Ordered item not found", 404)
@@ -397,12 +525,16 @@ def reorder(conn, kind, ids):
 
 def tags_summary(conn):
     result = []
-    for row in conn.execute("SELECT id,title,document FROM note_pages ORDER BY updated_at DESC LIMIT 500"):
-        for item in json.loads(row["document"]).get("elements", []):
-            if item.get("kind") in {"text", "sticky"} and item.get("tags"):
-                result.append({"page_id": row["id"], "title": row["title"], "element_id": item["id"], "text": item.get("text", ""), "tags": item["tags"], "checked": item.get("checked", False)})
-    for row in conn.execute("SELECT b.id,b.page_id,b.text,p.title FROM note_blocks b JOIN note_pages p ON p.id=b.page_id WHERE EXISTS(SELECT 1 FROM note_block_topics t WHERE t.block_id=b.id AND t.kind='tag') ORDER BY p.updated_at DESC,b.ordering LIMIT 2000"):
-        tags = [item["topic"] for item in conn.execute("SELECT topic FROM note_block_topics WHERE block_id=? AND kind='tag' ORDER BY topic", (row["id"],))]
+    for row in conn.execute("SELECT p.id,p.title,b.text,b.properties FROM note_page_index p JOIN blocks c ON c.parent_id=p.block_id AND c.type='canvas' "
+                            "JOIN blocks b ON b.parent_id=c.id AND b.type IN ('text_box','sticky') AND b.deleted_at IS NULL "
+                            "WHERE p.block_id IN (SELECT block_id FROM note_page_index ORDER BY updated_at DESC LIMIT 500) "
+                            "AND json_extract(b.properties,'$.tags') IS NOT NULL ORDER BY p.updated_at DESC,p.id,b.order_key,b.id"):
+        item = json.loads(row["properties"])
+        if item.get("tags"):
+            result.append({"page_id": row["id"], "title": row["title"], "element_id": item["element_id"], "text": row["text"], "tags": item["tags"], "checked": item.get("checked", False)})
+    for row in conn.execute("SELECT o.id,o.page_id,o.text,o.title FROM note_outline o WHERE EXISTS(SELECT 1 FROM block_topics t WHERE t.block_id=o.id AND t.kind='tag') "
+                            "ORDER BY o.updated_at DESC,o.path,o.id LIMIT 2000").fetchall():
+        tags = [item["topic"] for item in conn.execute("SELECT topic FROM block_topics WHERE block_id=? AND kind='tag' ORDER BY topic", (row["id"],))]
         result.append({"page_id": row["page_id"], "title": row["title"], "block_id": row["id"], "text": row["text"], "tags": tags, "checked": False})
     return {"tags": result}
 
@@ -552,12 +684,12 @@ def restore(conn: sqlite3.Connection, data_dir: Path, notebook_id: Any, value: A
     title, view = text(value["title"], 200), viewport(value["viewport"])
     doc = normalize(value["document"])
     from kitty.core import note_blocks
-    blocks = note_blocks.normalize(value.get("blocks", []))
-    block_mapping = {block["id"]: str(uuid.uuid4()) for block in blocks}
-    for block in blocks:
+    outline = note_blocks.normalize(value.get("blocks", []))
+    block_mapping = {block["id"]: str(uuid.uuid4()) for block in outline}
+    for block in outline:
         block["id"] = block_mapping[block["id"]]
         block["parent_id"] = block_mapping.get(block["parent_id"])
-        block["text"] = note_blocks.REF.sub(lambda match: match[0].replace(match[1] or match[2], block_mapping.get((match[1] or match[2]).lower(), match[1] or match[2])), block["text"])
+        block["text"] = blocks.REF.sub(lambda match: match[0].replace(match[1] or match[2], block_mapping.get((match[1] or match[2]).lower(), match[1] or match[2])), block["text"])
     if not title.strip() or not isinstance(value["attachments"], list) or len(value["attachments"]) > 100:
         raise NotesError("Invalid portable page references or title")
     nid = integer(notebook_id, 0)
@@ -596,7 +728,7 @@ def restore(conn: sqlite3.Connection, data_dir: Path, notebook_id: Any, value: A
                 nid = conn.execute("INSERT INTO note_notebooks(title,subject,project,created_at,updated_at) VALUES (?,?,?,?,?)", (notebook["title"], notebook["subject"], notebook["project"], stamp, stamp)).lastrowid
             if not conn.execute("SELECT 1 FROM note_notebooks WHERE id=?", (nid,)).fetchone():
                 raise NotesError("Notebook not found", 404)
-            if conn.execute("SELECT COUNT(*) FROM note_pages").fetchone()[0] >= MAX_PAGES:
+            if page_count(conn) >= MAX_PAGES:
                 raise NotesError("Page limit reached")
             used, count = _storage_usage(conn, root)
             if used + sum(len(r[2][0]) for r in prepared) > MAX_STORAGE_BYTES or count + len(prepared) > 1000:
@@ -614,12 +746,11 @@ def restore(conn: sqlite3.Connection, data_dir: Path, notebook_id: Any, value: A
             for item in doc["elements"]:
                 if item["kind"] == "image":
                     item["attachment"] = mapping[item["attachment"]]
-            stamp = now()
-            search = "\n".join(item.get("text", "") for item in doc["elements"])
-            pid = conn.execute("INSERT INTO note_pages(notebook_id,title,document,search_text,viewport,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (nid, title, json.dumps(doc), search, json.dumps(view), stamp, stamp)).lastrowid
-            if blocks:
-                note_blocks.save_blocks(conn, pid, 1, blocks)
-        return page(conn, pid)
+            number, ops = new_page_ops(conn, nid, title, document=doc, view=view)
+            apply(conn, ops)
+            if outline:
+                note_blocks.save_blocks(conn, number, 1, outline)
+        return page(conn, number)
     except Exception:
         for path in created:
             path.unlink(missing_ok=True)
@@ -636,8 +767,13 @@ def cleanup(conn: sqlite3.Connection, data_dir: Path) -> dict:
         days = conn.execute("SELECT retention_days FROM note_preferences WHERE id=1").fetchone()[0]
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         referenced = set()
-        for row in conn.execute("SELECT document FROM note_pages"):
-            referenced.update(item["attachment"] for item in json.loads(row[0])["elements"] if item["kind"] == "image")
+        for row in conn.execute("SELECT properties FROM blocks WHERE type IN ('image','canvas')"):
+            item = json.loads(row[0])
+            if "attachment" in item:
+                referenced.add(item["attachment"])
+            for element in item.get("raw", {}).get("elements", []) if isinstance(item.get("raw"), dict) else []:
+                if isinstance(element, dict) and element.get("kind") == "image":
+                    referenced.add(element.get("attachment"))
         for row in conn.execute("SELECT * FROM note_attachments WHERE created_at <= ?", (cutoff,)).fetchall():
             if row["id"] in referenced:
                 continue

@@ -11,7 +11,8 @@ from pathlib import Path, PurePosixPath
 import re
 import uuid
 
-from kitty.core import backlinks, notes
+from kitty.core import backlinks, blocks, notes
+from kitty.core.blocks import convert
 from kitty.db.connection import transaction
 
 MAX_TEXT = 512 * 1024
@@ -48,14 +49,35 @@ def notebook(conn, value):
 
 
 def listing(conn):
-    return {'documents': [dict(row) for row in conn.execute('SELECT id,title,format,notebook_id,revision,updated_at FROM documents ORDER BY updated_at DESC,id DESC LIMIT 500')]}
+    rows = conn.execute("SELECT json_extract(properties,'$.number') AS id,text AS title,json_extract(properties,'$.format') AS format,"
+                        "json_extract(properties,'$.notebook_id') AS notebook_id,json_extract(properties,'$.revision') AS revision,updated_at "
+                        "FROM blocks WHERE type='document' AND parent_id IS NULL AND deleted_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT 500")
+    return {'documents': [dict(row) for row in rows]}
+
+
+def _doc(conn, document_id):
+    return blocks.load_page(conn, notes.root_block(conn, 'document', document_id, 'Document not found')['id'])
+
+
+def _shape(doc):
+    root = doc.root
+    props = root.properties
+    return {'id': props['number'], 'title': root.text, 'content': convert.join_document(doc.children(root.id)),
+            'format': props['format'], 'notebook_id': props.get('notebook_id'), 'revision': props['revision'],
+            'created_at': root.created_at, 'updated_at': root.updated_at}
 
 
 def document(conn, document_id):
-    row = conn.execute('SELECT * FROM documents WHERE id=?', (notes.integer(document_id),)).fetchone()
-    if row is None:
-        raise notes.NotesError('Document not found', 404)
-    return dict(row)
+    return _shape(_doc(conn, document_id))
+
+
+def _write_ops(doc, title, content, fmt, notebook_id, revision):
+    """Operations saving a whole document: changed chunks only, plus the next revision."""
+    root = doc.root
+    ops = convert.sync_tree(doc, root.id, convert.document_specs(doc, content, fmt == 'markdown'), lambda item: item.parent_id == root.id)
+    if root.text != title:
+        ops.append({'op': 'text', 'id': root.id, 'text': title})
+    return [*ops, {'op': 'set', 'id': root.id, 'props': {'format': fmt, 'notebook_id': notebook_id, 'revision': revision + 1}}]
 
 
 def save(conn, body, document_id=None):
@@ -66,13 +88,21 @@ def save(conn, body, document_id=None):
         raise notes.NotesError('A title and Markdown or plain text format are required')
     with transaction(conn, immediate=True):
         nid = notebook(conn, body['notebook_id'])
-        stamp = notes.now()
         if document_id is None:
-            if conn.execute('SELECT COUNT(*) FROM documents').fetchone()[0] >= 500:
+            if conn.execute("SELECT COUNT(*) FROM blocks WHERE type='document' AND parent_id IS NULL AND deleted_at IS NULL").fetchone()[0] >= 500:
                 raise notes.NotesError('Document limit reached (500)')
-            document_id = conn.execute('INSERT INTO documents(title,content,format,notebook_id,created_at,updated_at) VALUES (?,?,?,?,?,?)', (title, content, body['format'], nid, stamp, stamp)).lastrowid
-        elif conn.execute('UPDATE documents SET title=?,content=?,format=?,notebook_id=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?', (title, content, body['format'], nid, stamp, notes.integer(document_id), notes.integer(body['revision']))).rowcount != 1:
-            raise notes.NotesError('Document changed in another tab; your local edits were not overwritten. Reload before saving.', 409)
+            root_id, document_id = str(uuid.uuid4()), notes.next_number(conn, 'document')
+            chunks = [{'id': str(uuid.uuid4()), 'parent': root_id, 'type': chunk['type'], 'props': {'sep': chunk['sep']}, 'text': chunk['text']}
+                      for chunk in convert.split_document(content, body['format'] == 'markdown')]
+            notes.apply(conn, [{'op': 'insert', 'id': root_id, 'type': 'document', 'parent': None, 'text': title,
+                                'props': {'number': document_id, 'format': body['format'], 'notebook_id': nid, 'revision': 1}},
+                               *convert.insert_ops(chunks)])
+        else:
+            doc = _doc(conn, document_id)
+            revision = notes.integer(body['revision'])
+            if doc.root.properties['revision'] != revision:
+                raise notes.NotesError('Document changed in another tab; your local edits were not overwritten. Reload before saving.', 409)
+            notes.apply(conn, _write_ops(doc, title, content, body['format'], nid, revision), base={doc.page_id: revision})
     return document(conn, document_id)
 
 
@@ -212,11 +242,9 @@ def import_notes(conn, data_dir, body):
             if disk_usage + sum(len(item['raw']) for item in prepared) > MAX_STORAGE:
                 raise notes.NotesError('Private original storage exceeds 128 MiB')
             if selected:
-                if conn.execute(
-                    'UPDATE documents SET content=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?',
-                    (content, notes.now(), document_id, revision),
-                ).rowcount != 1:
-                    raise notes.NotesError('Document changed in another tab; reload before importing.', 409)
+                doc = _doc(conn, document_id)
+                notes.apply(conn, _write_ops(doc, saved['title'], content, saved['format'], saved['notebook_id'], revision),
+                            base={doc.page_id: revision})
                 for item in prepared:
                     _store_original(conn, root, created, item, document_id=document_id)
                 result = {'document': document(conn, document_id), 'originals': originals(conn, document_id=document_id)}
@@ -231,7 +259,7 @@ def import_notes(conn, data_dir, body):
 
 def _import_pages(conn, root, created, prepared, nid, folder):
     """Create note destinations under the import transaction, preserving path hierarchy."""
-    if conn.execute('SELECT COUNT(*) FROM note_pages').fetchone()[0] + len(prepared) > notes.MAX_PAGES:
+    if notes.page_count(conn) + len(prepared) > notes.MAX_PAGES:
         raise notes.NotesError('Note page limit reached')
     folders, books, result = {}, {}, []
     from kitty.core import note_blocks
@@ -291,16 +319,18 @@ def topics(conn, body):
     nid = notebook(conn, body.get('notebook_id'))
     folder = notes._folder_id(conn, body.get('folder_id'))
     if nid is not None:
-        rows = conn.execute('SELECT id,title,search_text FROM note_pages WHERE notebook_id=? ORDER BY updated_at DESC LIMIT 1000', (nid,))
+        rows = conn.execute('SELECT id,block_id,title FROM note_page_index WHERE notebook_id=? ORDER BY updated_at DESC LIMIT 1000', (nid,)).fetchall()
     elif folder is not None:
-        rows = conn.execute('WITH RECURSIVE descendants(id) AS (SELECT ? UNION SELECT f.id FROM note_folders f JOIN descendants d ON f.parent_id=d.id) SELECT p.id,p.title,p.search_text FROM note_pages p JOIN note_notebooks n ON n.id=p.notebook_id WHERE n.folder_id IN (SELECT id FROM descendants) ORDER BY p.updated_at DESC LIMIT 1000', (folder,))
+        rows = conn.execute('WITH RECURSIVE descendants(id) AS (SELECT ? UNION SELECT f.id FROM note_folders f JOIN descendants d ON f.parent_id=d.id) SELECT p.id,p.block_id,p.title FROM note_page_index p JOIN note_notebooks n ON n.id=p.notebook_id WHERE n.folder_id IN (SELECT id FROM descendants) ORDER BY p.updated_at DESC LIMIT 1000', (folder,)).fetchall()
     else:
-        rows = conn.execute('SELECT id,title,search_text FROM note_pages ORDER BY updated_at DESC LIMIT 1000')
+        rows = conn.execute('SELECT id,block_id,title FROM note_page_index ORDER BY updated_at DESC LIMIT 1000').fetchall()
+    texts = notes.page_texts(conn, [row['block_id'] for row in rows])
     matches, scanned, remaining = [], 0, 4_000_000
     for row in rows:
         if row['id'] == body.get('exclude_page_id'):
             continue
-        value = (row['title'] + '\n' + row['search_text'])[:16000]
+        elements, outline = texts[row['block_id']]
+        value = (row['title'] + '\n' + '\n'.join([*(text for _, text in elements), *outline]))[:16000]
         remaining -= len(value)
         if remaining < 0:
             break
