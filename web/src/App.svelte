@@ -9,7 +9,11 @@
   import AddJob from "./lib/AddJob.svelte";
   import CommandPalette from "./lib/CommandPalette.svelte";
   import KeyboardHelp from "./lib/KeyboardHelp.svelte";
-  import CalendarReminders from "./lib/CalendarReminders.svelte";
+  import NotificationBell from "./lib/NotificationBell.svelte";
+  import NotificationCenter from "./lib/NotificationCenter.svelte";
+  import NotificationToasts from "./lib/NotificationToasts.svelte";
+  import { notifier } from "./lib/notifications.svelte";
+  import type { Notice } from "./lib/notify";
   import StudyFocusBar from "./lib/StudyFocusBar.svelte";
   import ThemePicker from "./lib/ThemePicker.svelte";
   import WorkspacePane from "./lib/WorkspacePane.svelte";
@@ -173,6 +177,18 @@
     else schemaRoot();
   }
   function openJob(id: number) { if (applyai && navigate("jobs")) activeTab.initialJobId = id; }
+  function openNotice(notice: Notice) {
+    if (notice.target.kind === "calendar") navigate("calendar");
+    else if (notice.target.job_id !== null && applyai) openJob(notice.target.job_id);
+    else navigate("reminders");
+  }
+  // Reminder sources the active modules provide; polling restarts only when they change.
+  const notifySources = $derived(workspace && (studyTools || applyai) ? `${studyTools}:${applyai}` : "");
+  $effect(() => {
+    if (!notifySources) return;
+    const [calendar, job] = notifySources.split(":").map(value => value === "true");
+    return untrack(() => notifier.start({ calendar, job }));
+  });
   function studyText(event: Event) {
     if (!studyTools) return;
     const detail = (event as CustomEvent).detail;
@@ -383,6 +399,7 @@
         onclick={() => navigate(group.views[0])}>{group.label}</button>{/each}
     </nav>
     {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
+    {#if notifySources}<NotificationBell />{/if}
     <ThemePicker />
     <button
       class="system-command"
@@ -403,7 +420,6 @@
   </header>
   <WorkspaceTabs bind:this={tabBar} tabs={tabLabels} {activeId} onselect={selectTab} onclose={closeTab} onnew={newTab} />
   </div>
-  {#if studyTools && view !== "calendar"}<CalendarReminders />{/if}
   <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">
         <Badge label="DEMO" intent="warning" size="sm" />Synthetic workspace.
@@ -447,6 +463,7 @@
     {/each}
   </main>
 </div>
+{#if notifySources}<NotificationToasts onopen={openNotice} /><NotificationCenter onopen={openNotice} />{/if}
 {#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock measure={panelBottom} onherdr={() => navigate("herdr")} />{/await}{/if}
 {#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
 {#if guide && applyai}<dialog

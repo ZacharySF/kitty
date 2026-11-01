@@ -96,8 +96,9 @@ after(async () => {
 });
 
 /** Opens a fresh profile on `hash`. `modules: []` is a core-only workspace. The profile is a
- *  returning user: the first-run welcome guide (covered by its own tests) is already done. */
-async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme } = {}) {
+ *  returning user: the first-run welcome guide (covered by its own tests) is already done.
+ *  `setup(context)` adds routes or init scripts before the first page load. */
+async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, setup } = {}) {
   const context = await browser.newContext({ viewport });
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
@@ -114,6 +115,7 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme }
       body.modules.configured = modules;
       await route.fulfill({ response, json: body });
     });
+  await setup?.(context);
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -2546,6 +2548,155 @@ describe("mind-map pen", () => {
     await page.waitForTimeout(800);
     await stroke(page, [palm], { pointerId: 9, pointerType: "touch" });
     assert.deepEqual(await picked(), ["Key ideas"], "a finger no longer selects after the pen left");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+/** Serves the two reminder sources from fixtures; `calls` records snoozes and clears. */
+async function mockReminders(context, { calendar = [], job = [] } = {}) {
+  const state = { calendar: [...calendar], job: [...job], calls: [] };
+  await context.route("**/api/calendar/reminders", (route) => route.fulfill({ json: { items: state.calendar } }));
+  await context.route("**/api/calendar/reminders/dismiss", (route) => {
+    const body = route.request().postDataJSON();
+    state.calls.push(["dismiss", body.event_id]);
+    state.calendar = state.calendar.filter((item) => item.event_id !== body.event_id);
+    return route.fulfill({ json: { ok: true } });
+  });
+  await context.route("**/api/reminders", (route) =>
+    route.request().method() === "GET" ? route.fulfill({ json: { due: state.job, upcoming: [] } }) : route.continue());
+  await context.route(/\/api\/reminders\/\d+\/(snooze|complete)$/, (route) => {
+    const [, id, action] = /reminders\/(\d+)\/(\w+)$/.exec(route.request().url());
+    state.calls.push([action, Number(id)]);
+    state.job = state.job.filter((item) => item.id !== Number(id));
+    return route.fulfill({ json: action === "snooze" ? { ok: true, previous: "x", due_at: "y" } : { ok: true } });
+  });
+  return state;
+}
+const LECTURE = { event_id: "ev-lecture", occurrence: "2026-11-01T09:00:00", minutes: 15, title: "Linear algebra lecture", due: "2026-11-01T08:45:00+00:00" };
+const FOLLOWUP = { id: 7001, kind: "followup", due_at: "2026-11-01T00:00:00Z", note: null, job_id: null, label: "Northwind Labs (demo) - Quant intern" };
+
+describe("notifications", () => {
+  test("reminders from every source toast bottom-right; hover fans the stack out and pauses it; Snooze and Open act", async () => {
+    let state;
+    const { page, problems, context } = await open("settings", {
+      dock: "hidden", setup: async (context) => { state = await mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }); },
+    });
+    const stack = page.getByRole("list", { name: "New notifications" });
+    const toasts = stack.getByRole("listitem");
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="New notifications"] > li').length === 2);
+    assert.equal(await page.locator('aside[aria-label="Calendar reminders"]').count(), 0, "the old reminders box is still shown");
+    const lecture = toasts.filter({ hasText: "Linear algebra lecture" });
+    const followup = toasts.filter({ hasText: "Northwind Labs (demo)" });
+    assert.match(await lecture.textContent(), /Calendar/);
+    assert.match(await followup.textContent(), /Job search/);
+    const box = await stack.boundingBox();
+    const viewport = page.viewportSize();
+    assert.ok(viewport.width - (box.x + box.width) < 40 && viewport.height - (box.y + box.height) < 40, `stack is not bottom-right: ${JSON.stringify(box)}`);
+    // Stacked, the toasts overlap; hovering fans them out and freezes their countdown.
+    const overlap = async () => {
+      const [a, b] = [await lecture.boundingBox(), await followup.boundingBox()];
+      return Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+    };
+    assert.ok(await overlap() > 10, "stacked toasts do not overlap");
+    await followup.hover();
+    await page.waitForFunction(() => {
+      const [a, b] = [...document.querySelectorAll('[aria-label="New notifications"] > li')].map((li) => li.getBoundingClientRect());
+      return Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) <= 0;
+    });
+    const countdown = () => followup.locator("[data-countdown]").getAttribute("data-countdown");
+    const held = await countdown();
+    await page.waitForTimeout(700);
+    assert.equal(await countdown(), held, "the countdown runs while hovered");
+    await followup.getByRole("button", { name: /^Snooze/ }).click();
+    await followup.waitFor({ state: "detached" });
+    assert.deepEqual(state.calls, [["snooze", 7001]]);
+    await lecture.getByRole("button", { name: "Open" }).click();
+    await page.waitForFunction(() => location.hash === "#calendar");
+    await lecture.waitFor({ state: "detached" });
+    // The calendar shows no second reminders box of its own.
+    await page.getByRole("region", { name: "Calendar workspace" }).waitFor();
+    assert.equal(await page.locator('[aria-label="Due reminders"]').count(), 0);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("the bell counts unread notifications and opens a center with All/Unread, sources and mark all read", async () => {
+    const { page, problems, context } = await open("settings", {
+      dock: "hidden", setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
+    });
+    const bell = page.getByRole("button", { name: "Notifications, 2 unread" });
+    await bell.waitFor();
+    assert.equal((await bell.textContent()).trim(), "2");
+    await bell.click();
+    const center = page.getByRole("dialog", { name: "Notification center" });
+    await center.waitFor();
+    const items = center.getByRole("listitem");
+    assert.equal(await items.count(), 2);
+    assert.match(await items.filter({ hasText: "Linear algebra lecture" }).textContent(), /Calendar/);
+    assert.match(await items.filter({ hasText: "Northwind Labs" }).textContent(), /Job search/);
+    // Sources filter the list.
+    await center.getByRole("button", { name: "Job search", exact: true }).click();
+    assert.equal(await items.count(), 1);
+    await center.getByRole("button", { name: "All sources" }).click();
+    await center.getByRole("tab", { name: /Unread/ }).click();
+    assert.equal(await items.count(), 2);
+    await center.getByRole("button", { name: "Mark all read" }).click();
+    await page.getByRole("button", { name: "Notifications, 0 unread" }).waitFor();
+    await center.getByText("You're all caught up.").waitFor();
+    await center.getByRole("tab", { name: "All" }).click();
+    assert.equal(await items.count(), 2);
+    // Read state survives a reload.
+    await page.reload();
+    await page.getByRole("button", { name: "Notifications, 0 unread" }).waitFor();
+    await page.keyboard.press("Escape");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("quiet hours on a 24-hour dial hold notifications, then deliver one morning digest", async () => {
+    const { page, problems, context } = await open("settings", {
+      dock: "hidden",
+      setup: async (context) => {
+        await mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] });
+        // A window that started an hour ago and ends within 15 minutes; calendar events do not ring through.
+        await context.addInitScript(() => {
+          const now = new Date();
+          const minute = now.getHours() * 60 + now.getMinutes();
+          const from = ((Math.floor((minute - 60) / 15) * 15) + 1440) % 1440;
+          const to = (Math.ceil((minute + 1) / 15) * 15) % 1440;
+          if (!localStorage.getItem("kitty.notify.quiet"))
+            localStorage.setItem("kitty.notify.quiet", JSON.stringify({ enabled: true, from, to, letCalendar: false, digest: true }));
+        });
+      },
+    });
+    const panel = page.locator(".br-panel").filter({ has: page.locator(".br-panel__header", { hasText: /^Quiet hours$/ }) });
+    await panel.waitFor();
+    const until = panel.getByRole("slider", { name: "Quiet until" });
+    const from = panel.getByRole("slider", { name: "Quiet from" });
+    assert.match(await until.getAttribute("aria-valuetext"), /^\d\d:\d\d$/);
+    assert.match(await from.getAttribute("aria-valuetext"), /^\d\d:\d\d$/);
+    // Held: nothing toasts, yet the center lists both as held and unread.
+    await page.getByRole("button", { name: "Notifications, 2 unread" }).waitFor();
+    assert.equal(await page.locator('[aria-label="New notifications"] > li').count(), 0, "a reminder toasted during quiet hours");
+    await panel.getByText("Held now: 1 calendar · 1 job search").waitFor();
+    // Pull the end of the window back past now: the held reminders arrive together as the digest.
+    const before = Number(await until.getAttribute("aria-valuenow"));
+    await until.focus();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    assert.equal(Number(await until.getAttribute("aria-valuenow")), (before - 30 + 1440) % 1440);
+    const digest = page.locator('[aria-label="New notifications"] > li');
+    await digest.filter({ hasText: "Morning digest" }).waitFor();
+    assert.equal(await digest.count(), 1, "held reminders toasted one by one");
+    assert.match(await digest.textContent(), /1 calendar · 1 job search/);
+    await digest.getByRole("button", { name: "Open" }).click();
+    await page.getByRole("dialog", { name: "Notification center" }).waitFor();
+    // The choices are remembered.
+    await panel.getByRole("switch", { name: "Let calendar events through" }).click();
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("kitty.notify.quiet")));
+    assert.equal(saved.letCalendar, true);
+    assert.equal(saved.to, (before - 30 + 1440) % 1440);
     assert.deepEqual(problems, []);
     await context.close();
   });

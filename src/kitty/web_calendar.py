@@ -26,8 +26,7 @@ def get(app, conn, path, query):
         cals = [{k: v for k, v in c.items() if k not in {'sync_token', 'google_etag'}} for c in calendar.calendars(conn)]
         return {'calendars': cals, 'events': events, 'tasks': calendar.tasks(conn, search),
                 'subjects': study.subject_colors(conn),
-                'activity': calendar.activity(conn, start, end, tz, applyai=applyai),
-                'reminders': calendar.due_reminders(conn, applyai=applyai), **available}
+                'activity': calendar.activity(conn, start, end, tz, applyai=applyai), **available}
     match = re.fullmatch(r'/api/calendar/events/([a-zA-Z0-9_-]{1,100})', path)
     if match:
         app._no_query(query)

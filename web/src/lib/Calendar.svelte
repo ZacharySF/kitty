@@ -18,6 +18,7 @@
   import EventDrawer from "./calendar/EventDrawer.svelte";
   import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
   import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
+  import { notifier } from "./notifications.svelte";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -96,13 +97,6 @@
     tasks: Task[];
     subjects: Subject[];
     activity: Record<string, number | string>[];
-    reminders: {
-      event_id: string;
-      occurrence: string;
-      minutes: number;
-      title: string;
-      due: string;
-    }[];
     conflicts: {
       event_id: string;
       with: string[];
@@ -150,7 +144,6 @@
     tasks: [],
     subjects: [],
     activity: [],
-    reminders: [],
     conflicts: [],
     free: [],
   });
@@ -310,7 +303,6 @@
     }
     return { destroy: () => { if (isActive) previous?.focus(); } };
   }
-  let notifications = $state(false);
   const statuses = ["todo", "doing", "done", "cancelled"];
   const hours = Array.from({ length: 48 }, (_, i) => i);
   let focusedSlot = $state(18);
@@ -1265,25 +1257,6 @@
       await load();
     });
   }
-  async function dismissReminder(r: Snapshot["reminders"][number]) {
-    await run(async () => {
-      await api("/calendar/reminders/dismiss", r);
-      await load();
-    });
-  }
-  async function enableNotifications() {
-    if (!("Notification" in window)) {
-      error =
-        "Notifications are not supported by this browser; in-app reminders remain available.";
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    notifications = permission === "granted";
-    localStorage.setItem("kitty-calendar-notifications", String(notifications));
-    if (!notifications)
-      notice =
-        "Notification permission not granted. In-app reminders stay enabled.";
-  }
   async function loadGoogle() {
     await run(async () => {
       googleStatus = await api<GoogleStatus>("/calendar/google/status");
@@ -1640,10 +1613,6 @@
     window.addEventListener(THEME_EVENT, syncTheme);
     void loadGoogle();
     void loadTaskMaps();
-    notifications =
-      localStorage.getItem("kitty-calendar-notifications") === "true" &&
-      "Notification" in window &&
-      Notification.permission === "granted";
     const timer = setInterval(() => void pollTask(), 1200);
     const clockTimer = setInterval(() => (clock = new Date().toISOString()), 60000);
     return () => {
@@ -1758,17 +1727,6 @@
     >
   </div>
   </details>
-  {#if data.reminders.length}<aside
-      class="reminders"
-      aria-label="Due reminders"
-    >
-      <h2>Reminders</h2>
-      {#each data.reminders as r}<div>
-          <strong>{r.title}</strong><span>{label(r.due)}</span><button
-            onclick={() => dismissReminder(r)}>Dismiss</button
-          >
-        </div>{/each}
-    </aside>{/if}
   {#if section === "calendar"}
     <details class="interaction-help">
       <summary>Shortcuts</summary>
@@ -2208,20 +2166,18 @@
     <section class="panel">
       <h2>Reminder notifications</h2>
       <p class="hint">
-        Shown only while kitty is open; not a background alarm.
+        Due reminders arrive as toasts and in the bell's notification center, only
+        while kitty runs. Quiet hours live in Settings.
       </p>
       <label
         ><input
           type="checkbox"
-          checked={notifications}
-          onchange={() => {
-            if (!notifications) void enableNotifications();
-            else {
-              notifications = false;
-              localStorage.removeItem("kitty-calendar-notifications");
-            }
+          checked={notifier.system}
+          onchange={(event) => {
+            event.currentTarget.checked = notifier.system;
+            void notifier.toggleSystem();
           }}
-        />Enable system notifications</label
+        />Also show system notifications</label
       >
     </section>
     <section class="panel">
@@ -3310,7 +3266,6 @@
   }
   .error,
   .notice,
-  .reminders,
   .panel {
     padding: 1rem;
     border-radius: 0.65rem;
@@ -3321,16 +3276,6 @@
     color: var(--warning);
     display: flex;
     justify-content: space-between;
-  }
-  .reminders > div {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    flex-wrap: wrap;
-    margin: 0.4rem 0;
-  }
-  .reminders button {
-    margin-left: auto;
   }
   .month-layout {
     display: grid;

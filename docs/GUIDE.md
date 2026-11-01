@@ -574,6 +574,23 @@ A task's **＋ Map** action optionally adds it beneath a chosen map node.
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
 weeks, 30 days or a custom date picker; no date-syntax memorization is required.
 
+**Notifications.** Due calendar reminders and job-search reminders arrive as one
+stack of glass toasts in the bottom-right corner. Hovering (or tabbing into) the
+stack fans it out and pauses every countdown. **Snooze** brings a calendar
+reminder back in ten minutes and moves a job-search reminder a day; **Open**
+jumps to the calendar, the job or Reminders. A toast that times out is not lost:
+the bell in the top bar counts unread notifications and opens the notification
+center, with All/Unread tabs, a source filter, **Mark all read**, and
+**Dismiss**/**Done** on each item. Its footer switches system alerts on or off.
+**Settings → Quiet hours** sets a window on a 24-hour dial (drag either end, or
+use the arrow keys for 15-minute steps). Inside it nothing toasts; reminders are
+held (shown as Held in the center), calendar events can be let through, and when
+the window ends the held items arrive together as one **Morning digest**.
+kitty checks reminders only while it runs: in the desktop app, **Keep running on
+close** keeps it checking from the system tray; when kitty is fully closed,
+reminders that fell due meanwhile arrive the next time it opens. Read, held and
+snoozed state is remembered per browser profile.
+
 **Documents & PDF** authors portable Markdown (numbered source) or rich headings,
 emphasis, nested lists and quotes beside a live preview that scrolls with the
 source; drag or arrow-key the divider to resize the split (remembered per browser).
