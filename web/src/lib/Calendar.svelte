@@ -5,6 +5,9 @@
   import TaskMapAction from "./TaskMapAction.svelte";
   import CalendarDateTime from "./CalendarDateTime.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import { currentTheme, THEME_EVENT } from "./themes";
+  import { getTheme } from "./themeCatalog";
+  import { blockText, paletteSlot } from "./calendar/palette";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -466,6 +469,12 @@
   });
   function color(id: string) {
     return data.calendars.find((c) => c.id === id)?.color || "var(--accent)";
+  }
+  let theme = $state(getTheme(currentTheme()));
+  /** Filled-block colours for a calendar: a theme palette slot and the text that reads on it. */
+  function blockStyle(id: string) {
+    const slot = paletteSlot(data.calendars.findIndex((c) => c.id === id));
+    return `--block:var(--c${slot});--block-ink:${blockText(theme, slot)}`;
   }
   async function load() {
     const serial = ++loadCounter;
@@ -1458,6 +1467,8 @@
   });
   onMount(() => {
     window.addEventListener("click", blockDragClick, true);
+    const syncTheme = () => (theme = getTheme(currentTheme()));
+    window.addEventListener(THEME_EVENT, syncTheme);
     void loadGoogle();
     void loadTaskMaps();
     notifications =
@@ -1468,6 +1479,7 @@
     const clockTimer = setInterval(() => (clock = new Date().toISOString()), 60000);
     return () => {
       window.removeEventListener("click", blockDragClick, true);
+      window.removeEventListener(THEME_EVENT, syncTheme);
       clearInterval(timer);
       clearInterval(clockTimer);
       pane.clearTrail("calendar");
@@ -1775,12 +1787,13 @@
                 </div>
               {/each}
               {#if day === today}
-                <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} aria-hidden="true"></div>
+                <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} role="img"
+                  aria-label={`Now ${parts(clock).time}`}><span class="bloom" aria-hidden="true">✿</span></div>
               {/if}
               {#each weekEvents[day] as placement}
                 {@const e = placement.event}
                 <div class="event-chip timed" draggable="true" role="group" aria-label={e.title}
-                  style={`--calendar-color:${color(e.calendar_id)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
+                  style={`${blockStyle(e.calendar_id)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
                   ondragstart={(event) => drag(e, event)} ondragend={finishDrag}>
                   <button class="timed-content" title={`${e.title} · ${label(e.start)} – ${label(e.end)}`}
                     oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
@@ -3454,9 +3467,11 @@
     z-index: 1;
     margin: 0;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--calendar-color) 50%, var(--border));
-    border-left: 3px solid var(--calendar-color);
-    background: color-mix(in srgb, var(--calendar-color) 22%, var(--surface));
+    border: 0;
+    border-radius: 9px;
+    background: var(--block);
+    color: var(--block-ink);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 25%, transparent) inset;
     overflow: hidden;
     align-items: stretch;
   }
@@ -3469,7 +3484,7 @@
     padding: 0.15rem 0.25rem;
     line-height: 1.15;
     overflow: hidden;
-    color: var(--ink);
+    color: inherit;
   }
   .timed-content strong,
   .timed-content span {
@@ -3483,29 +3498,33 @@
   .timed-content span {
     font-size: 0.65rem;
     margin-top: 0.1rem;
+    opacity: 0.72;
   }
   .timed .resize {
     align-self: flex-end;
     font-size: 0.6rem;
     padding: 0.1rem;
+    color: inherit;
+  }
+  .timed:hover {
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--block) 35%, transparent);
   }
   .now-line {
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 2px solid var(--accent);
+    border-top: 1.5px dashed var(--c1);
     z-index: 3;
     pointer-events: none;
   }
-  .now-line::before {
-    content: "";
+  .now-line .bloom {
     position: absolute;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    left: -3px;
-    top: -4px;
+    left: -6px;
+    top: -9px;
+    color: var(--c1);
+    font-size: 13px;
+    line-height: 1;
+    text-shadow: 0 0 6px var(--c1);
   }
   .agenda section {
     padding: 0.8rem 0;

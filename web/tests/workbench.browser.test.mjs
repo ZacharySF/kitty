@@ -1052,3 +1052,99 @@ describe("home agenda empty", () => {
     await context.close();
   });
 });
+
+describe("calendar redesign", () => {
+  /** Local wall time `hh:mm` on `day` offset from today, as an ISO instant. */
+  const at = (dayOffset, hour, minute = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(hour, minute, 0, 0);
+    return d.toISOString();
+  };
+  /** Creates an event through the real API; returns it. */
+  const addEvent = (page, body) => page.evaluate(async (event) => {
+    const response = await fetch("/api/calendar/events", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" },
+      body: JSON.stringify({ calendar_id: "personal", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...event }),
+    });
+    return response.json();
+  }, body);
+  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/themes.ts")).setTheme(theme), id);
+  /** WCAG contrast of an element's text colour against its own background, plus that background's alpha. */
+  const textContrast = (locator) => locator.evaluate((node) => {
+    const ctx = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
+    const rgba = (value) => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = value; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data]; };
+    const lum = (c) => { const [r, g, b] = c.slice(0, 3).map((v) => v / 255).map((v) => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const style = getComputedStyle(node);
+    const back = rgba(style.backgroundColor);
+    const [a, b] = [lum(rgba(style.color)), lum(back)].sort((x, y) => y - x);
+    return { ratio: (a + 0.05) / (b + 0.05), alpha: back[3] / 255, fill: back.slice(0, 3).join(",") };
+  });
+  /** The six theme palette colours as "r,g,b". */
+  const palette = (page) => page.evaluate(() => [1, 2, 3, 4, 5, 6].map((n) => {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(`--c${n}`).trim();
+    return [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16)).join(",");
+  }));
+
+  test("week events are filled palette blocks with readable text and a blossom now-marker", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    await addEvent(page, { title: "Pastel standup", start: at(0, 10), end: at(0, 11) });
+    await page.reload();
+    const block = page.getByRole("group", { name: "Pastel standup" }).first();
+    await block.waitFor();
+    for (const [theme, minimum] of [["kitty", 4.5], ["gruvbox", 3], ["one-dark", 3]]) {
+      await setTheme(page, theme);
+      const { ratio, alpha } = await textContrast(block);
+      assert.equal(alpha, 1, `${theme}: block is not a solid fill`);
+      assert.ok(ratio >= minimum, `${theme}: block text contrast ${ratio.toFixed(2)} < ${minimum}`);
+    }
+    const { fill } = await textContrast(block);
+    assert.ok((await palette(page)).includes(fill), `block fill ${fill} is not a theme palette colour`);
+    const now = page.getByRole("img", { name: /^Now / });
+    assert.equal(await now.count(), 1, "today has no labelled now-marker");
+    assert.match(await now.textContent(), /✿/, "now-marker has no blossom");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("existing interactions still work: keyboard slots, drag-create, drag-move and resize", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    await addEvent(page, { title: "Move me", start: at(0, 9), end: at(0, 10) });
+    await page.reload();
+    const d = new Date();
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const slotButton = (time) => page.getByRole("button", { name: `Create event ${day} ${time}`, exact: true });
+    const editor = page.getByRole("dialog");
+    await slotButton("14:00").focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await editor.getByRole("heading", { name: "New event" }).waitFor();
+    await page.keyboard.press("Escape");
+    await editor.waitFor({ state: "detached" });
+    await slotButton("16:00").scrollIntoViewIfNeeded();
+    const from = await slotButton("15:00").boundingBox();
+    const to = await slotButton("16:00").boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await editor.getByRole("heading", { name: "New event" }).waitFor();
+    await page.keyboard.press("Escape");
+    await editor.waitFor({ state: "detached" });
+    const block = page.getByRole("group", { name: "Move me" });
+    await block.dragTo(slotButton("12:00"));
+    await block.getByText("12:00–13:00").waitFor();
+    // Chromium cancels a native drag that starts on the tiny ↔ handle under automation; dispatch the same events.
+    const transfer = await page.evaluateHandle(() => new DataTransfer());
+    const handle = block.getByRole("button", { name: "Resize Move me" });
+    await handle.dispatchEvent("dragstart", { dataTransfer: transfer });
+    await slotButton("14:30").dispatchEvent("dragover", { dataTransfer: transfer });
+    await slotButton("14:30").dispatchEvent("drop", { dataTransfer: transfer });
+    await handle.dispatchEvent("dragend", { dataTransfer: transfer });
+    await block.getByText("12:00–14:30").waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
