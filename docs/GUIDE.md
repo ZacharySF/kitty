@@ -507,6 +507,17 @@ canvas (or use **Merge into map → Merge root**). Merging back replaces the spl
 placeholder; other roots stay in the source map. Transfers save both maps
 atomically; undo/redo restores both sides and refuses if either map changed in
 another window. The emptied source map remains available.
+Mouse, touch and pen share one pointer path: tap selects, drag moves or reparents,
+and a double tap (or double-click) edits a topic (or opens its linked note or map),
+adds a topic on empty space or relabels a connection. With a pen, **Ink** in the
+map toolbar draws pressure-sensitive strokes (a mouse draws too; fingers keep
+panning). Each stroke is smoothed when you lift the pen and sticks to the nearest
+topic, so it moves with that topic, hides when its branch is folded, follows a
+split or merge, and is saved with the map. Hold the pen's barrel button and draw a
+loop to select every topic inside it; flip the pen to its eraser end to rub out
+ink (topics are never erased).
+While the pen hovers or has just been used, touches are treated as a resting palm
+and ignored, and the pen's barrel button never opens the delete prompt.
 Tree/radial layouts, an outline, linked note cards and links between maps help
 organize material. **Quiz me** hides labels for recall; a branch can produce a
 flashcard draft. **Auto-links** also suggests local sources for node labels;

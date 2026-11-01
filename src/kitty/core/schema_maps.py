@@ -23,6 +23,9 @@ COLORS = {'c1', 'c2', 'c3', 'c4', 'c5', 'c6'}
 MAX_MAPS = 100
 MAX_NODES = 300
 MAX_EDGES = 600
+#: Pen ink on a map: each stroke is a list of [x, y, pressure] points relative to the node it is attached to.
+MAX_STROKES = 400
+MAX_STROKE_POINTS = 1000
 MAX_BYTES = 1_000_000
 
 
@@ -130,10 +133,12 @@ def _source(conn, value, kind):
 
 
 def graph(conn, value, *, portable=False):
-    _fields(value, {'nodes', 'edges'})
-    nodes, edges = value.get('nodes'), value.get('edges')
+    _fields(value, {'nodes', 'edges', 'strokes'})
+    nodes, edges, strokes = value.get('nodes'), value.get('edges'), value.get('strokes', [])
     if not isinstance(nodes, list) or len(nodes) > MAX_NODES or not isinstance(edges, list) or len(edges) > MAX_EDGES:
         raise ValueError(f'Maps support at most {MAX_NODES} nodes and {MAX_EDGES} connections')
+    if not isinstance(strokes, list) or len(strokes) > MAX_STROKES:
+        raise ValueError(f'Maps support at most {MAX_STROKES} ink strokes')
     result = {'nodes': [], 'edges': []}
     ids, sources = set(), set()
     for node in nodes:
@@ -189,6 +194,28 @@ def graph(conn, value, *, portable=False):
             raise ValueError('Connection kind must be tree or cross')
         result['edges'].append({'id': key, 'from': start, 'to': end, 'label': _text(edge.get('label', ''), 'Connection label', 200),
                                 **({'kind': 'cross'} if edge_kind == 'cross' else {})})
+    stroke_ids, inked = set(), []
+    for stroke in strokes:
+        # Ink belongs to one node and is stored relative to it, so it moves and folds with that node.
+        _fields(stroke, {'id', 'node', 'points'})
+        key = _key(stroke.get('id'))
+        if key in stroke_ids:
+            raise ValueError('Ink stroke IDs must be unique')
+        stroke_ids.add(key)
+        if stroke.get('node') not in ids:
+            raise ValueError('Ink must be attached to a node in this map')
+        points = stroke.get('points')
+        if not isinstance(points, list) or not 1 <= len(points) <= MAX_STROKE_POINTS:
+            raise ValueError(f'Ink strokes need 1 to {MAX_STROKE_POINTS} points')
+        clean = []
+        for point in points:
+            if not isinstance(point, list) or len(point) != 3:
+                raise ValueError('Ink points must be [x, y, pressure]')
+            clean.append([_number(point[0], 'Ink x', -100000, 100000), _number(point[1], 'Ink y', -100000, 100000),
+                          _number(point[2], 'Pressure', 0, 1)])
+        inked.append({'id': key, 'node': stroke['node'], 'points': clean})
+    if inked:
+        result['strokes'] = inked
     if len(json.dumps(result, ensure_ascii=True).encode()) > MAX_BYTES - 4096:
         raise ValueError('Graph exceeds the 1 MB size limit')
     return result
@@ -468,6 +495,9 @@ def transfer(conn, body):
                 for endpoint in ('from', 'to'):
                     if edge[endpoint] == placeholder['id']:
                         edge[endpoint] = remap[root['id']]
+            for stroke in destination.get('strokes', []):
+                if stroke['node'] == placeholder['id']:
+                    stroke['node'] = remap[root['id']]
         anchor = placeholder or (existing[0] if existing else None)
         if anchor:
             x = anchor['x'] if placeholder else anchor['x'] + 300
@@ -478,6 +508,11 @@ def transfer(conn, body):
         destination['nodes'] += moved
         destination['edges'] += [{**edge, 'id': uuid.uuid4().hex, 'from': remap[edge['from']], 'to': remap[edge['to']]}
                                  for edge in source['edges'] if edge['from'] in picked and edge['to'] in picked]
+        # Ink travels with the nodes it is attached to.
+        destination['strokes'] = destination.get('strokes', []) + [
+            {**stroke, 'id': uuid.uuid4().hex, 'node': remap[stroke['node']]}
+            for stroke in source.get('strokes', []) if stroke['node'] in picked]
+        source['strokes'] = [stroke for stroke in source.get('strokes', []) if stroke['node'] not in picked]
         if not splitting and existing and not placeholder:
             parent = next((node for node in existing if not any(
                 e['to'] == node['id'] and e.get('kind') != 'cross' for e in destination['edges'])), existing[0])

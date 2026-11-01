@@ -2444,3 +2444,109 @@ describe("adding flashcards", () => {
     await context.close();
   });
 });
+
+/** Dispatches a synthetic PointerEvent at a viewport point, on whatever is drawn there (like a real pointer). */
+const pointer = (page, type, x, y, init = {}) => page.evaluate(({ type, x, y, init }) => {
+  const stage = document.querySelector("svg.stage"), hit = document.elementFromPoint(x, y);
+  // Leaving fires on the stage itself; everything else lands on what is under the pointer.
+  const target = type === "pointerleave" || !hit ? stage : hit;
+  target.dispatchEvent(new PointerEvent(type, { bubbles: type !== "pointerleave", cancelable: true, composed: true, clientX: x, clientY: y, isPrimary: true, ...init }));
+}, { type, x, y, init });
+/** Synthetic pointers are not active device pointers, so capturing one is a no-op in these tests. */
+const capturable = (page) => page.evaluate(() => {
+  const capture = Element.prototype.setPointerCapture;
+  Element.prototype.setPointerCapture = function (id) { try { capture.call(this, id); } catch { /* not a device pointer */ } };
+});
+/** A pen (or other pointer) press, path and lift; `init` sets pointerType, pressure, button and buttons. */
+async function stroke(page, points, { pressure = () => 0.5, ...init } = {}) {
+  const pressed = { pointerId: 7, pointerType: "pen", button: 0, buttons: 1, ...init };
+  await pointer(page, "pointerdown", points[0].x, points[0].y, { ...pressed, pressure: pressure(0) });
+  for (const [index, point] of points.slice(1).entries()) await pointer(page, "pointermove", point.x, point.y, { ...pressed, button: -1, pressure: pressure(index + 1) });
+  const last = points.at(-1);
+  await pointer(page, "pointerup", last.x, last.y, { ...pressed, buttons: 0, pressure: 0 });
+}
+
+describe("mind-map pen", () => {
+  test("ink sticks to the nearest topic, moves, folds and saves with it; the barrel lasso selects; the eraser removes only ink; palms are ignored", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { schema } = await newMindMap(page, "Pen map");
+    const pill = (label) => mapNode(page, label).locator("rect.pill");
+    const strokes = page.locator("svg.stage g.ink path[data-stroke]");
+    const picked = () => page.locator("svg.stage [data-node].selected text.label").allTextContents();
+    await schema.locator("svg.stage").evaluate((svg) => svg.scrollIntoView({ block: "end" }));
+    await capturable(page);
+    const examplesId = await mapNode(page, "Examples").getAttribute("data-node");
+    // Ink mode: a pressure-varying wavy stroke across Examples attaches to Examples.
+    const ink = schema.getByRole("button", { name: "Ink", exact: true });
+    await ink.click();
+    assert.equal(await ink.getAttribute("aria-pressed"), "true");
+    const e = await pill("Examples").boundingBox();
+    const wave = Array.from({ length: 40 }, (_, i) => ({ x: e.x + 8 + i * (e.width - 16) / 39, y: e.y + e.height / 2 + Math.sin(i / 3) * 0.4 }));
+    await stroke(page, wave, { pressure: (i) => 0.2 + (0.7 * i) / 39 });
+    assert.equal(await strokes.count(), 1, "no ink stroke was drawn");
+    assert.equal(await strokes.getAttribute("data-ink-node"), examplesId, "the stroke is not attached to the nearest topic");
+    // Folding the root hides the topic and its ink.
+    await ink.click();
+    await mapNode(page, "Pen map").click();
+    await page.keyboard.press(" ");
+    assert.equal(await strokes.count(), 0, "ink stayed visible with its topic folded away");
+    await page.keyboard.press(" ");
+    assert.equal(await strokes.count(), 1);
+    // An Alt pen drag moves Examples freely, and the ink travels with it.
+    const inkBefore = await strokes.boundingBox(), from = await centre(pill("Examples"));
+    await stroke(page, [from, { x: from.x + 80, y: from.y + 60 }, { x: from.x + 170, y: from.y + 110 }], { altKey: true });
+    const moved = await centre(pill("Examples")), inkAfter = await strokes.boundingBox();
+    assert.ok(Math.abs(moved.x - from.x - 170) < 3 && Math.abs(moved.y - from.y - 110) < 3, "the pen did not drag Examples");
+    assert.ok(Math.abs(inkAfter.x - inkBefore.x - 170) < 3 && Math.abs(inkAfter.y - inkBefore.y - 110) < 3, "the ink did not move with its topic");
+    // Saved with the map: simplified, relative to Examples, with its pressure.
+    await schema.getByRole("button", { name: /^Save map/ }).click();
+    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await page.reload();
+    await strokes.waitFor();
+    assert.equal(await strokes.getAttribute("data-ink-node"), examplesId);
+    const saved = await page.evaluate(async () => {
+      const { api } = await import("/src/lib/api.ts");
+      return (await api(`/schema/map?id=${localStorage.getItem("kitty.schema.last-map.study")}`)).graph.strokes;
+    });
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].node, examplesId);
+    assert.ok(saved[0].points.length >= 2 && saved[0].points.length < 10, `the stroke was not simplified (${saved[0].points.length} points)`);
+    assert.ok(saved[0].points[0][0] > 0 && saved[0].points[0][0] < 20, "points are not stored relative to the topic");
+    assert.ok(saved[0].points.at(-1)[2] - saved[0].points[0][2] > 0.5, "pressure was not kept");
+    await capturable(page);
+    // Barrel-button lasso around Key ideas and Questions selects both (Examples now sits outside the loop).
+    const k = await pill("Key ideas").boundingBox(), q = await pill("Questions").boundingBox();
+    const left = Math.min(k.x, q.x) - 12, right = Math.max(k.x + k.width, q.x + q.width) + 12, top = Math.min(k.y, q.y) - 6, bottom = Math.max(k.y + k.height, q.y + q.height) + 6;
+    const ex = await centre(pill("Examples"));
+    assert.ok(ex.x > right || ex.y > bottom, "Examples is inside the lasso area");
+    await stroke(page, [{ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom }, { x: left, y: top + 2 }], { button: 2, buttons: 2 });
+    assert.deepEqual((await picked()).sort(), ["Key ideas", "Questions"]);
+    // The eraser end rubs out the ink on Examples but never the topic itself.
+    const nodes = await page.locator("svg.stage [data-node]").count(), over = await strokes.boundingBox();
+    await stroke(page, [{ x: over.x + over.width / 2, y: over.y - 4 }, { x: over.x + over.width / 2, y: over.y + over.height + 4 }], { button: 5, buttons: 32 });
+    assert.equal(await strokes.count(), 0, "the eraser left the ink");
+    assert.equal(await page.locator("svg.stage [data-node]").count(), nodes, "the eraser removed a topic");
+    await page.keyboard.press("Control+z");
+    assert.equal(await strokes.count(), 1, "undo did not bring the ink back");
+    // Double-tapping a topic with the pen edits it.
+    const tap = await centre(pill("Questions"));
+    await stroke(page, [tap]);
+    await stroke(page, [tap]);
+    const editor = page.getByRole("textbox", { name: "Node label" });
+    await editor.waitFor();
+    assert.equal(await editor.inputValue(), "Questions");
+    await page.keyboard.press("Escape");
+    // While the pen hovers, a palm touching Key ideas neither selects nor drags it; once the pen leaves, a finger works.
+    const palm = await centre(pill("Key ideas")), still = await nodeBoxes(page);
+    await pointer(page, "pointermove", palm.x + 30, palm.y, { pointerId: 7, pointerType: "pen", buttons: 0, pressure: 0 });
+    await stroke(page, [palm, { x: palm.x + 80, y: palm.y + 60 }], { pointerId: 9, pointerType: "touch" });
+    assert.deepEqual(await picked(), ["Questions"], "the palm changed the selection");
+    assert.deepEqual(await nodeBoxes(page), still, "the palm dragged a topic");
+    await pointer(page, "pointerleave", palm.x + 30, palm.y, { pointerId: 7, pointerType: "pen", buttons: 0 });
+    await page.waitForTimeout(800);
+    await stroke(page, [palm], { pointerId: 9, pointerType: "touch" });
+    assert.deepEqual(await picked(), ["Key ideas"], "a finger no longer selects after the pen left");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
