@@ -59,7 +59,7 @@
     const target = document.querySelector(step.selector);
     if (!target) { rect = null; return; }
     // Keep the spotlight on the part of the target that is actually visible between the
-    // workspace header and the floating dock, where the dock's card covers its column.
+    // workspace header and the dock, where the dock covers its column.
     let bounds = target.getBoundingClientRect();
     const dock = document.querySelector('[data-kitty-panel="dock"]');
     const card = dock && !dock.contains(target) ? dock.getBoundingClientRect() : null;

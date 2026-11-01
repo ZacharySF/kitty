@@ -122,18 +122,22 @@ after 30 seconds and is issued only by the header-protected `POST
 /api/terminal/session`. A development `kitty-web` uses `KITTY_HERDR=<herdr 0.9.5
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
-**Dock.** With the module on, the dock floats as a glass card in the bottom-right
-corner of the window, over the page: it never takes page space, so views keep the
-whole window. It holds herdr's client in a transparent terminal drawn in the
-Harness colours (**Terminal**) or **Agents** (one card per detected herdr agent with its
-working / blocked / done / idle state, read from `GET /api/terminal/activity`,
-which never starts herdr). Drag the card's header to
+**Dock.** With the module on, the bottom of the window holds the dock: herdr's
+client in a transparent terminal drawn in the Harness colours (**Terminal**) or
+**Agents** (one card per detected herdr agent with its working / blocked / done /
+idle state, read from `GET /api/terminal/activity`, which never starts herdr).
+Docked (the default) it spans the window's width at a fixed height and the page
+ends above it, so nothing is covered. Its height is not dragged: **S**, **M** and
+**L** in its header set a quarter, two fifths or three fifths of the window in one
+step (M at first). **Hide** leaves only a thin handle along the bottom edge; click
+it to bring back what was shown. **Float** detaches the dock into a glass card in
+the bottom-right corner that leaves the page the whole window: drag its header to
 move it and its top-left corner grip to resize it (or focus the grip and use the
 arrow keys); the card previews the move or new outline while you drag and settles
-on release, so nothing re-lays out mid-drag. It always stays on screen. **Hide**
-collapses it to a small pill in the corner that brings back what was shown.
-The view, size and position are remembered per browser profile; notification
-toasts stack above the card or pill. **Open herdr view**, or the **herdr** node under Plan in the
+on release, and always stays on screen. Hidden while floating, it is a small pill
+in the corner; **Dock** puts it back at the bottom. The view, docked height,
+float choice and card size and position are remembered per browser profile;
+notification toasts stack above the dock, handle, card or pill. **Open herdr view**, or the **herdr** node under Plan in the
 atlas, opens the whole session in the workspace tab. In a terminal, bare keys
 (including `f`) go to the shell; **Ctrl+Shift+F** fullscreens the terminal panel and
 **Esc** returns.

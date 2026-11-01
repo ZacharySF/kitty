@@ -16,7 +16,7 @@ export interface TutorialStep {
   unavailable?: boolean;
 }
 
-export const DOCK_SELECTOR = '[data-kitty-panel="dock"], .dock-pill';
+export const DOCK_SELECTOR = '[data-kitty-panel="dock"], .dock-handle, .dock-pill';
 
 export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): TutorialStep[] {
   const workspace = enabled.includes("workspace");
@@ -48,7 +48,7 @@ export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): Tutori
       tip: "A Google connection does not configure LearnHarness, AI services or Calendar sync.",
       view: workspace ? "study" : "settings", selector: workspace ? '[data-kitty-panel="view"]:not([hidden])' : '[data-tutorial="modules"]', unavailable: !workspace },
     ...(enabled.includes("terminal") && dockPresent ? [{ id: "terminal", title: "Your terminal, close at hand.",
-      text: "The terminal dock floats in the corner with your shell beside the work. Drag it to move or resize it, or tuck it away into a pill. This tour never starts a shell or an agent for you.",
+      text: "The terminal dock keeps your shell at the bottom of the window, beside the work. Use its controls to change its height, float it as a card or tuck it away. This tour never starts a shell or an agent for you.",
       tip: "Ctrl + Shift + F expands a focused terminal panel · Esc returns",
       view: "today" as View, selector: DOCK_SELECTOR }] : []),
   ];
