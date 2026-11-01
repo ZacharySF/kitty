@@ -654,3 +654,114 @@ describe("home rails", () => {
     });
   }
 });
+
+describe("home widgets", () => {
+  const minutes = (offset) => new Date(Date.now() + offset * 60_000).toISOString();
+  const day = new Date().toISOString().slice(0, 10);
+  const CALENDAR = {
+    calendars: [{ id: "personal", name: "Personal", color: "#6d5dfc", visible: 1 }],
+    events: [
+      { id: "e-past", title: "Morning review", start: minutes(-180), end: minutes(-150), all_day: false, calendar_id: "personal", location: "" },
+      { id: "e-live", title: "Thesis writing", start: minutes(-30), end: minutes(30), all_day: false, calendar_id: "personal", location: "Library" },
+      { id: "e-next", title: "Seminar", start: minutes(90), end: minutes(150), all_day: false, calendar_id: "personal", location: "Room 4" },
+    ],
+    tasks: [], activity: [], reminders: [],
+  };
+  const ACTIVITY = {
+    running: true,
+    workspaces: [
+      { id: "w1", label: "thesis", status: "working", focused: true, agents: [{ pane: "p1", name: "omp", status: "working" }] },
+      { id: "w2", label: "export", status: "blocked", focused: false, agents: [{ pane: "p2", name: "claude", status: "blocked" }] },
+    ],
+  };
+
+  test("home widgets: hairline Today agenda with now-line, progress and countdown; agents with Approve; Ctrl+Enter quick notes", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: CALENDAR }));
+    await page.route((url) => url.pathname === "/api/terminal/activity", (route) => route.fulfill({ json: ACTIVITY }));
+    await page.reload();
+    const left = page.getByRole("complementary", { name: "Home widgets" });
+    const agenda = left.getByRole("region", { name: "Today" });
+    const note = left.getByRole("region", { name: "Quick note" });
+    const agents = page.getByRole("complementary", { name: "Workspace" }).getByRole("region", { name: "Agents" });
+    await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
+
+    // Q19 hairline minimal: no fill or box, a rule above, a small Space Grotesk title, the eyebrow on the right.
+    for (const widget of [agenda, note, agents]) {
+      const frame = await widget.evaluate((node) => {
+        const style = getComputedStyle(node);
+        const title = node.querySelector("h3"), eyebrow = node.querySelector("header .eyebrow");
+        return {
+          fill: style.backgroundColor, top: style.borderTopWidth, sides: [style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+          font: getComputedStyle(title).fontFamily, size: parseFloat(getComputedStyle(title).fontSize),
+          titleRight: title.getBoundingClientRect().right, eyebrowLeft: eyebrow?.getBoundingClientRect().left ?? -1,
+          sameRow: eyebrow ? Math.abs(eyebrow.getBoundingClientRect().bottom - title.getBoundingClientRect().bottom) < 6 : false,
+        };
+      });
+      assert.equal(frame.fill, "rgba(0, 0, 0, 0)", "widget has a fill");
+      assert.equal(frame.top, "1px");
+      assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
+      assert.match(frame.font, /Space Grotesk/);
+      assert.ok(frame.size <= 14, `title is ${frame.size}px`);
+      assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
+    }
+
+    // Today agenda: past, live with progress, now-line, then the next event with a countdown.
+    const rows = agenda.getByRole("listitem");
+    await agenda.getByText("Seminar").waitFor();
+    const labels = await rows.evaluateAll((items) => items.map((item) => item.getAttribute("aria-label") || item.textContent.trim()));
+    const live = labels.findIndex((label) => /Thesis writing/.test(label));
+    const line = labels.findIndex((label) => /^Now/.test(label));
+    assert.ok(labels.findIndex((label) => /Morning review/.test(label)) < live && live < line && line < labels.findIndex((label) => /Seminar/.test(label)), `agenda order: ${labels}`);
+    const progress = agenda.getByRole("progressbar", { name: /Thesis writing/ });
+    const value = Number(await progress.getAttribute("aria-valuenow"));
+    assert.ok(value >= 45 && value <= 55, `live progress ${value}`);
+    assert.match(await agenda.getByRole("listitem").filter({ hasText: "Seminar" }).textContent(), /in 1h (29|30)m/);
+
+    // Agent activity: per-workspace state, Approve opens herdr for the blocked one.
+    assert.match(await agents.textContent(), /1 working · 1 needs you/);
+    assert.match(await agents.getByRole("listitem").filter({ hasText: "thesis" }).textContent(), /omp/);
+    assert.equal(await agents.getByRole("button", { name: /Approve/ }).count(), 1);
+
+    // Quick note: Ctrl+Enter captures; the last three stay visible.
+    const box = note.getByRole("textbox", { name: "Quick note" });
+    for (const text of ["first thought", "second thought", "third thought", "fourth thought"]) {
+      await box.fill(text);
+      await box.press("Control+Enter");
+      await note.getByRole("listitem").filter({ hasText: text }).waitFor();
+      assert.equal(await box.inputValue(), "");
+    }
+    const notes = await note.getByRole("listitem").allTextContents();
+    assert.equal(notes.length, 3);
+    assert.match(notes[0], /fourth thought/);
+    const saved = await page.evaluate(() => fetch("/api/quick-notes").then((r) => r.json()));
+    assert.ok(saved.notes.some((item) => item.body === "first thought"), "quick note was not saved");
+
+    // Job-search and study readouts no longer sit on home.
+    assert.equal(await page.getByRole("button", { name: /Jobs to explore|Cards due/ }).count(), 0);
+    assert.equal(await page.getByRole("heading", { name: "Reminders & deadlines" }).count(), 0);
+
+    await agents.getByRole("button", { name: /Approve/ }).click();
+    await page.waitForFunction(() => location.hash === "#herdr");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Find jobs holds the reminders brief and How to apply in one collapsible section that remembers it is open", async () => {
+    const { page, problems, context } = await open("jobs", { dock: "hidden" });
+    const brief = page.locator("details").filter({ has: page.locator("summary", { hasText: "Reminders, deadlines & goals" }) });
+    await brief.waitFor();
+    assert.equal(await brief.evaluate((node) => node.open), false, "brief starts open");
+    await brief.locator("summary").click();
+    await brief.getByRole("heading", { name: "Reminders & deadlines" }).waitFor();
+    assert.ok(await brief.getByRole("button", { name: "How to apply" }).isVisible());
+    await page.reload();
+    await brief.getByRole("heading", { name: "Reminders & deadlines" }).waitFor();
+    assert.equal(await brief.evaluate((node) => node.open), true, "brief forgot it was open");
+    await page.evaluate(() => (location.hash = "inbox"));
+    await page.getByRole("heading", { name: /New jobs/ }).first().waitFor();
+    assert.equal(await page.locator("summary", { hasText: "Reminders, deadlines & goals" }).count(), 0, "brief shows outside Find jobs");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

@@ -371,7 +371,8 @@ profile and session, not relaunch or replace an owner's running instance.
 
 ### Start here
 
-**How to apply** in the atlas Today panel opens a three-step guide and checks
+**How to apply** under **Find jobs → Reminders, deadlines & goals** (a section
+that stays closed until you open it, and remembers that) opens a three-step guide and checks
 whether your name/email and a usable resume PDF are
 saved. These checks describe saved data, not application readiness.
 
@@ -475,8 +476,13 @@ actions and job details have their own expandable advanced controls.
 
 Home is the **atlas**, containing workspace sections rather than individual jobs
 or note pages. It sits in the centre between two narrow rails that scroll on
-their own: home widgets on the left, and the **Workspace** rail on the right with
-the 2D/3D switch, **Find a section** (`/`) and the Sections list. Every schema
+their own. The left rail holds **Today** (today's events with a live now-line,
+the current event's progress and a countdown to the next) and **Quick note**
+(Ctrl+Enter saves; the last three stay visible). The right rail holds **Agents**
+(what each herdr workspace agent is doing; **Approve** opens herdr on a blocked
+one) and **Workspace** with the 2D/3D switch, **Find a section** (`/`) and the
+Sections list. Job-search reminders, deadlines and weekly goals live in **Find
+jobs**, not on home. Every schema
 starts in Tree; an explicit layout preference can
 then be changed in **Settings → Workspace**. Home has one Study entry and only
 the Jobs section entry, not separate job-action nodes.

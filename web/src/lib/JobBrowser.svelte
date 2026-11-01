@@ -10,23 +10,46 @@
   import PostingAvailability from "./PostingAvailability.svelte";
   import EmptyState from "./EmptyState.svelte";
   import Loader from "./Loader.svelte";
+  import Dashboard from "./Dashboard.svelte";
   let {
     view,
     workspace,
+    revision = 0,
     onchange,
     onadd,
     onview,
     onopenjob,
+    onguide,
     initialJobId = null,
   }: {
     view: "today" | "inbox" | "jobs" | "queue" | "applications" | "favorites";
     workspace: Bootstrap | null;
+    revision?: number;
     onchange: () => Promise<void>;
     onadd: () => void;
     onview: (view: View) => void;
     onopenjob?: (id: number) => void;
+    onguide?: () => void;
     initialJobId?: number | null;
   } = $props();
+  /** Q20: the reminders brief lives in Find jobs, closed until you open it; the choice is remembered. */
+  const BRIEF_KEY = "kitty.jobs.brief";
+  let briefOpen = $state(readBriefOpen());
+  function readBriefOpen() {
+    try {
+      return localStorage.getItem(BRIEF_KEY) === "open";
+    } catch {
+      return false;
+    }
+  }
+  function toggleBrief(event: Event) {
+    briefOpen = (event.currentTarget as HTMLDetailsElement).open;
+    try {
+      localStorage.setItem(BRIEF_KEY, briefOpen ? "open" : "closed");
+    } catch {
+      // Storage can be unavailable (private mode); the brief still opens this session.
+    }
+  }
   const pane = useWorkspaceContext();
   const fieldId = (name: string) => `${pane.id}-${name}`;
   let jobs = $state<Job[]>([]);
@@ -501,6 +524,13 @@
         >{/if}
     </div>
     {#if view === "jobs"}
+      <details class="job-brief" open={briefOpen} ontoggle={toggleBrief}>
+        <summary>Reminders, deadlines & goals</summary>
+        {#if briefOpen}
+          {#if onguide}<button class="button" onclick={onguide}><Icon name="questions" size={15} /> How to apply</button>{/if}
+          <Dashboard {revision} onopenjob={(id) => onopenjob?.(id)} {onview} />
+        {/if}
+      </details>
       <nav class="schema-tabs" aria-label="Jobs view">
         <button class="button" aria-pressed={presentation === "map"} onclick={() => presentation = "map"}>Map</button>
         <button class="button" aria-pressed={presentation === "list"} onclick={() => presentation = "list"}>List</button>
@@ -893,6 +923,23 @@
 
 <style>
   .schema-tabs {display:flex;gap:8px;padding:12px 20px;}
+  .job-brief {
+    margin: 0 20px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .job-brief > summary {
+    cursor: pointer;
+    color: var(--violet);
+  }
+  .job-brief[open] {
+    display: grid;
+    gap: 10px;
+    padding-bottom: 14px;
+  }
+  .job-brief > .button {
+    justify-self: start;
+  }
   .job-list.dense {
     max-height: min(68vh, 880px);
     overflow-y: auto;

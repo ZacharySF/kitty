@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { Button, Panel } from "@nunera/bracket";
-  import { api, type Bootstrap } from "./api";
+  import { Button } from "@nunera/bracket";
+  import { api } from "./api";
   import Icon from "./Icon.svelte";
-  import Dashboard from "./Dashboard.svelte";
+  import HomeAgents from "./HomeAgents.svelte";
+  import HomeQuickNote from "./HomeQuickNote.svelte";
+  import HomeWidget from "./HomeWidget.svelte";
+  import TodayAgenda from "./TodayAgenda.svelte";
   import {
     navigation,
     viewEnabled,
@@ -39,17 +42,11 @@
   };
 
   let {
-    workspace,
     revision,
     onview,
-    onopenjob,
-    onguide,
   }: {
-    workspace: Bootstrap | null;
     revision: number;
     onview: (view: View) => unknown;
-    onopenjob: (id: number) => void;
-    onguide: () => void;
   } = $props();
 
   const atlasId = `atlas-${pane.id}`;
@@ -58,8 +55,8 @@
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const enabled = $derived(activeModules.enabled);
-  const applyai = $derived(enabled.includes("applyai"));
   const workspaceTools = $derived(enabled.includes("workspace"));
+  const terminal = $derived(enabled.includes("terminal"));
   const sections = $derived(atlasSections(visibleGroups(enabled), navigation));
   let hidden = $state(hiddenSections());
   const listed = (view: string): view is View =>
@@ -77,13 +74,6 @@
   let hovered = $state<GraphNode | null>(null);
   let selected = $state<GraphNode | null>(null);
   let query = $state("");
-  let daily = $state<{
-    events: number | null;
-    focus: number | null;
-    due: number | null;
-    opportunities: number | null;
-  }>({ events: null, focus: null, due: null, opportunities: null });
-  let dailyLoading = $state(false);
   let container: HTMLDivElement;
   let searchField = $state<HTMLInputElement>();
   let handle = $state.raw<GraphHandle | null>(null);
@@ -274,53 +264,12 @@
       if (request === atlasRequest) atlasError = (cause as Error).message;
     }
   }
-  let dailyRequest = 0;
-  async function refreshDaily() {
-    const request = ++dailyRequest;
-    if (!workspaceTools) {
-      daily = { events: null, focus: null, due: null, opportunities: null };
-      dailyLoading = false;
-      return;
-    }
-    dailyLoading = true;
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const calendarQuery = new URLSearchParams({
-      start: start.toISOString(),
-      end: end.toISOString(),
-      timezone,
-    });
-    const [calendar, study, flashcards, opportunities] =
-      await Promise.allSettled([
-        api<{ events: unknown[] }>(`/calendar?${calendarQuery}`),
-        api<{ stats: { today_seconds: number } }>("/study"),
-        api<{ stats: { due: number } }>("/flashcards"),
-        api<{ total: number }>("/opportunities"),
-      ]);
-    if (request !== dailyRequest) return;
-    daily = {
-      events:
-        calendar.status === "fulfilled" ? calendar.value.events.length : null,
-      focus:
-        study.status === "fulfilled" ? study.value.stats.today_seconds : null,
-      due:
-        flashcards.status === "fulfilled" ? flashcards.value.stats.due : null,
-      opportunities:
-        opportunities.status === "fulfilled" ? opportunities.value.total : null,
-    };
-    dailyLoading = false;
-  }
-
   let seenRevision: number | undefined;
   $effect(() => {
     const current = revision;
     if (seenRevision === current) return;
     const first = seenRevision === undefined;
     seenRevision = current;
-    void refreshDaily();
     if (!first) void loadAtlas();
   });
   $effect(() => {
@@ -401,44 +350,6 @@
       handle = null;
     };
   });
-
-  const readouts = $derived(
-    [
-      { label: "Events today", value: daily.events, view: "calendar" as View },
-      {
-        label: "Focused today",
-        value:
-          daily.focus === null ? null : `${Math.floor(daily.focus / 60)} min`,
-        view: "study" as View,
-      },
-      { label: "Cards due", value: daily.due, view: "flashcards" as View },
-      {
-        label: "Opportunities",
-        value: daily.opportunities,
-        view: "opportunities" as View,
-      },
-      {
-        label: "Jobs to explore",
-        value: workspace?.counts?.jobs ?? null,
-        view: "jobs" as View,
-      },
-      {
-        label: "In your queue",
-        value: workspace?.counts?.queued ?? null,
-        view: "queue" as View,
-      },
-      {
-        label: "Applications",
-        value: workspace?.counts?.applications ?? null,
-        view: "pipeline" as View,
-      },
-      {
-        label: "Saved jobs",
-        value: workspace?.counts?.favorites ?? null,
-        view: "favorites" as View,
-      },
-    ].filter((readout) => viewEnabled(readout.view, enabled)),
-  );
 </script>
 
 {#snippet sectionList(large: boolean)}
@@ -496,32 +407,11 @@
   </nav>
 {/snippet}
 
-<div class="atlas" class:list-mode={mode === "list"} class:with-widgets={readouts.length > 0}>
-  {#if readouts.length}
-    <aside class="rail widgets" aria-label="Home widgets">
-      <section class="today" aria-labelledby={`${atlasId}-today`}>
-        <h3 id={`${atlasId}-today`}>Today</h3>
-        <div class="readouts" aria-busy={dailyLoading}>
-          {#each readouts as readout}
-            <button onclick={() => onview(readout.view)}
-              ><span>{readout.label}</span><strong
-                >{readout.value === null ? "—" : readout.value}</strong
-              ></button
-            >
-          {/each}
-        </div>
-        <p class="muted small">
-          {dailyLoading
-            ? "Updating your day…"
-            : "Live local totals · — means unavailable, not zero."}
-        </p>
-      </section>
-      {#if applyai}<Button size="sm" onclick={onguide}
-        ><Icon name="questions" size={15} /> How to apply</Button
-      >
-      <div class="brief">
-        <Dashboard {revision} {onopenjob} onview={(view) => onview(view)} />
-      </div>{/if}
+<div class="atlas" class:list-mode={mode === "list"} class:with-widgets={workspaceTools}>
+  {#if workspaceTools}
+    <aside class="rail" aria-label="Home widgets">
+      <TodayAgenda id={`${atlasId}-agenda`} {revision} {onview} />
+      <HomeQuickNote id={`${atlasId}-note`} {onview} />
     </aside>
   {/if}
   <div
@@ -559,12 +449,9 @@
     {/if}
   </div>
 
-  <Panel
-    as="aside"
-    class="atlas-panel rail"
-    title="Workspace"
-    aria-label="Workspace"
-  >
+  <aside class="rail atlas-panel" aria-label="Workspace">
+    {#if terminal}<HomeAgents id={`${atlasId}-agents`} {onview} />{/if}
+    <HomeWidget id={`${atlasId}-workspace`} title="Workspace" eyebrow="atlas">
     <GraphLookToggle brain />
 
     <div class="search">
@@ -652,7 +539,8 @@
           The full list is shown in the main area.
         </p>{:else}{@render sectionList(false)}{/if}
     </details>
-  </Panel>
+    </HomeWidget>
+  </aside>
 </div>
 
 <svelte:window
@@ -714,28 +602,20 @@
     border-radius: inherit;
     pointer-events: none;
   }
-  .rail,
-  :global(.atlas-panel.rail) {
+  .rail {
     min-width: 0;
     min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-right: 2px;
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
     scrollbar-color: var(--hairline) transparent;
   }
-  .widgets {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 14px;
-  }
-  .widgets > :global(*) {
+  .rail > :global(*) {
     flex: none;
-  }
-  .today h3 {
-    margin: 0 0 8px;
-    font: 600 13px var(--heading);
-    color: var(--ink);
   }
   .canvas {
     position: absolute;
@@ -797,23 +677,6 @@
   }
   .notice span {
     color: var(--warning);
-  }
-  :global(.atlas-panel) {
-    border: 1px solid var(--hairline) !important;
-    border-radius: 14px;
-    background: var(--chrome) !important;
-  }
-  :global(.atlas-panel .br-panel__header) {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--chrome);
-    font-size: 12px;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 10px;
-  }
-  :global(.atlas-panel .br-panel__readout) {
-    color: var(--muted);
   }
   .search label {
     display: flex;
@@ -882,7 +745,7 @@
   }
   .block {
     margin-top: 14px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--hairline);
     padding-top: 10px;
   }
   .block > summary {
@@ -1028,37 +891,6 @@
     font-size: 13px;
     padding: 9px 10px;
   }
-  .readouts {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-  }
-  .readouts button {
-    text-align: left;
-    display: grid;
-    gap: 3px;
-    padding: 8px 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-  }
-  .readouts button:hover {
-    border-color: var(--accent);
-  }
-  .readouts span {
-    font-size: 10px;
-    color: var(--muted);
-  }
-  .readouts strong {
-    font: 17px var(--br-font-display);
-    color: var(--ink);
-  }
-  .brief :global(.panel-heading) {
-    padding: 12px 14px;
-  }
-  .brief :global(.panel-heading h2) {
-    font-size: 16px;
-  }
   /* A short window leaves the graph too little room for the gesture hint. */
   @media (max-height: 640px) {
     .stage-caption {
@@ -1082,8 +914,7 @@
     .list-mode .stage {
       height: auto;
     }
-    .rail,
-    :global(.atlas-panel.rail) {
+    .rail {
       overflow: visible;
     }
     .stage-caption {

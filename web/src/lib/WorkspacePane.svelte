@@ -84,7 +84,7 @@
   {#if !viewEnabled(view, activeModules.enabled)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
   {:else if view === "today"}
-    <GraphNavigator bind:this={atlas} {workspace} {revision} {onview} {onopenjob} {onguide} />
+    <GraphNavigator bind:this={atlas} {revision} {onview} />
   {:else if view === "quick-notes"}
     {#await import("./QuickNotes.svelte")}{@render pending()}{:then { default: QuickNotes }}
       <QuickNotes />
@@ -131,7 +131,7 @@
     {/await}
   {:else if view === "inbox" || view === "jobs" || view === "queue" || view === "applications" || view === "favorites"}
     {#await import("./JobBrowser.svelte")}{@render pending()}{:then { default: JobBrowser }}
-      <JobBrowser bind:this={jobBrowser} {view} {workspace} {initialJobId} onchange={onchange} {onadd} {onview} {onopenjob} />
+      <JobBrowser bind:this={jobBrowser} {view} {workspace} {revision} {initialJobId} onchange={onchange} {onadd} {onview} {onopenjob} {onguide} />
     {/await}
   {:else if view === "pipeline"}
     {#await import("./Pipeline.svelte")}{@render pending()}{:then { default: Pipeline }}
