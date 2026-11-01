@@ -416,8 +416,15 @@ offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting.
-**Canvas fullscreen** (⛶) puts only the canvas and compact tools on the laptop screen,
-not the whole application. Its exit control and Escape restore the workspace.
+Its tools sit in one floating pill at the bottom of the canvas: select, pen,
+highlighter, eraser, text and sticky (mind maps: select, sticky, connect, pen,
+eraser and **+ Concept**), ink colours, a stroke-size toggle, undo/redo, and **⋯**
+for the other tools, fill, exact stroke and text size, pen mode, grid, snap, zoom
+and the text outline. Click the handle on the pill's bottom edge to tuck it away to
+a small tab and again to bring it back (remembered); tool keys still work while it
+is tucked. **Canvas fullscreen** (⛶) puts only the canvas and the same pill on the
+laptop screen, not the whole application. Its exit control and Escape restore the
+workspace.
 Outside text editing, F fullscreens the focused workspace panel instead.
 
 **Connections** automatically compares note and flashcard text locally:

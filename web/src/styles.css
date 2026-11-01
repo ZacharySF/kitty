@@ -1377,7 +1377,7 @@ main > :is(.panel, .br-panel, .br-card) {
 
 /* Toggles that invert when selected keep a complete foreground/background pair
    that the glass fill above cannot split (it would leave on-accent text on glass). */
-:root body :is(.button, .focus-tools .br-btn)[aria-pressed="true"]:not([data-variant="solid"]):not(.primary) {
+:root body .button[aria-pressed="true"]:not([data-variant="solid"]):not(.primary) {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--on-accent);

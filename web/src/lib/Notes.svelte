@@ -53,7 +53,6 @@
   let relatedOpen = $state(true);
   let linkTitle = $state("");
   let pageFind = $state("");
-  const toolGlyph: Record<string,string> = {select:"↖",lasso:"◌",pan:"✋",pen:"✎",highlighter:"▰",eraser:"◇",text:"T",sticky:"▧",rectangle:"□",ellipse:"○",line:"╱",arrow:"↗",connector:"⌁"};
   async function rootSchema() { if (await beforeSwitch()) { presentation="map"; schemaFocus=null; } }
   async function notebookSchema(id:number) {
     if (!(await beforeSwitch())) return;
@@ -406,6 +405,24 @@
     { id: "arrow", label: "Arrow", key: "A" },
     { id: "connector", label: "Connect", key: "C" },
   ];
+  // Q46: one floating pill at the bottom of the canvas stage; the rest sit in its overflow.
+  const pillTools = $derived(tools.filter(item => (noteMode === "mindmap" ? ["select", "sticky", "connector", "pen", "eraser"] : ["select", "pen", "highlighter", "eraser", "text", "sticky"]).includes(item.id)));
+  const moreTools = $derived(tools.filter(item => !pillTools.includes(item)));
+  const pillInks = $derived([
+    { name: "Theme ink", value: ink }, { name: "Lavender", value: "#beafea" },
+    { name: "Blue", value: "#88b8ef" }, { name: "Rose", value: "#e99eb4" },
+  ]);
+  const STROKE_SIZES = [2, 4, 8];
+  let toolsCollapsed = $state(false), canvasMore = $state(false), canvasMoreMenu = $state<HTMLDetailsElement>();
+  function chooseTool(id: Tool) {
+    finishActiveGesture();
+    tool = id;
+  }
+  function toggleTools() {
+    toolsCollapsed = !toolsCollapsed;
+    canvasMore = false;
+    try { localStorage.setItem("kitty.notes.canvas-tools", toolsCollapsed ? "collapsed" : "open"); } catch { /* The pill still toggles. */ }
+  }
 
   async function loadIndex() {
     try {
@@ -1623,6 +1640,7 @@
   onMount(() => {
     try {
       penOnly = localStorage.getItem("kitty.notes.pen-only") === "true";
+      toolsCollapsed = localStorage.getItem("kitty.notes.canvas-tools") === "collapsed";
       const outlinePreference = localStorage.getItem("kitty.notes.outline");
       tocOpen = outlinePreference ? outlinePreference === "open" : innerWidth >= 1100;
     } catch {
@@ -1760,6 +1778,9 @@
   onkeydown={keydown}
   onkeyup={(event) => {
     if (pane.active && event.key === " ") space = false;
+  }}
+  onpointerdown={(event) => {
+    if (canvasMore && event.target instanceof Node && !canvasMoreMenu?.contains(event.target)) canvasMore = false;
   }}
 />
 {#snippet pageTabs()}
@@ -1948,104 +1969,17 @@
         <details class="note-import"><summary>Import PDF / Markdown</summary><DocumentImport {notebookId} onimport={id=>{void loadIndex().then(()=>openBlock(id));}}/>{#each originals as original}<a href={`/api/documents/originals/${original.id}`} download>{original.name}</a>{/each}</details>
       </div>
       <div class="canvas-panel" hidden={noteMode==="text"}>
-      <div class="tools" role="toolbar" aria-label="Drawing tools">
-        {#each tools.filter(item=>(noteMode==="mindmap"?["select","sticky","connector","pen","eraser"]:["select","pen","highlighter","eraser","text","sticky"]).includes(item.id)) as item}<Button variant="ghost" size="sm"
-            aria-label={item.label}
-            aria-pressed={tool === item.id}
-            title={`${item.label} (${item.key})`}
-            disabled={!pageId}
-            onclick={() => {
-              finishActiveGesture();
-              tool = item.id;
-            }}>{toolGlyph[item.id]||item.label.slice(0,1)}</Button
-          >{/each}
-        {#if noteMode==="mindmap"}<Button size="sm" onclick={()=>addConcept()}>+ Concept</Button>{/if}
-        <details class="shape-menu"><summary aria-label="More drawing tools">□ ▾</summary><div>
-          {#each tools.filter(item=>!(noteMode==="mindmap"?["select","sticky","connector","pen","eraser"]:["select","pen","highlighter","eraser","text","sticky"]).includes(item.id)) as item}
-            <Button size="sm" variant="ghost" aria-pressed={tool===item.id} onclick={()=>{finishActiveGesture();tool=item.id;}}>{item.label}</Button>
-          {/each}
-        </div></details>
-      </div>
-      <div class="canvas-controls">
-        {#if tool!=="select" && tool!=="pan" && tool!=="lasso"}<CanvasColorMenu label="Ink" bind:value={color}/>{/if}
-        {#if ["sticky","rect","ellipse"].includes(tool)}<CanvasColorMenu label={noteMode==="mindmap"?"Card":"Fill"} bind:value={fillColor}/>{/if}
-        <details class="stroke-options"><summary>Stroke {lineWidth}</summary><label
-          >{tool === "eraser"
-            ? "Eraser radius (screen px)"
-            : "Stroke width"}<input
-            type="range"
-            min="1"
-            max="60"
-            bind:value={lineWidth}
-          /><span>{lineWidth}</span></label
-        ><label
-          >Text size<input
-            type="number"
-            min="8"
-            max="120"
-            bind:value={fontSize}
-          /></label></details
-        ><button disabled={!undoStack.length} onclick={() => applyUndo()}
-          >Undo</button
-        ><button disabled={!redoStack.length} onclick={() => applyUndo(true)}
-          >Redo</button
-        >
-          <details class="canvas-options"><summary>Canvas options</summary><label class="check"><input type="checkbox" bind:checked={penOnly} onchange={savePenMode}/>Pen mode</label><label class="check"
-          ><input
-            type="checkbox"
-            checked={doc.grid}
-            onchange={(e) => commit({ ...doc, grid: e.currentTarget.checked })}
-          />Grid</label
-        ><label class="check"
-          ><input
-            type="checkbox"
-            checked={doc.snap}
-            onchange={(e) => commit({ ...doc, snap: e.currentTarget.checked })}
-          />Snap</label
-        ><button
-          onclick={() => {
-            view = zoomAt(view, width / 2, height / 2, 0.8);
-            scheduleView();
-          }}>−</button
-        ><output>{Math.round(view.zoom * 100)}%</output><button
-          onclick={() => {
-            view = zoomAt(view, width / 2, height / 2, 1.25);
-            scheduleView();
-          }}>＋</button
-        ><button
-          onclick={() => {
-            view = { x: 0, y: 0, zoom: 1 };
-            scheduleView();
-          }}>Reset (0)</button
-        ><button
-          onclick={() => {
-            view = fit(doc.elements, width, height);
-            scheduleView();
-          }}>Fit</button
-        ><button aria-pressed={outline} onclick={() => (outline = !outline)}
-          >Text outline</button
-        >
-        </details>
-      </div>
       <div class="canvas-stage" bind:this={stage} onpointerdowncapture={event=>{if(event.pointerType==="touch")revealTabs();}}>
         {#if fullscreen}
           <div class="focus-tab-dock" class:revealed={tabsRevealed} onpointerenter={revealTabs} role="group" aria-label="Fullscreen page navigation">
             <button class="focus-tab-handle" aria-label="Show note page tabs" onclick={revealTabs} onfocus={revealTabs}>Pages ▾</button>
             <div class="focus-tab-strip">{@render pageTabs()}</div>
           </div>
-          <div class="focus-tools" role="toolbar" aria-label="Fullscreen drawing tools">
-            {#each tools.filter(item => (noteMode==="mindmap" ? ["select", "sticky", "connector", "pen", "eraser", "pan"] : ["select", "pen", "highlighter", "eraser", "pan"]).includes(item.id)) as item}
-              <Button variant="ghost" size="sm" aria-label={item.label} aria-pressed={tool === item.id} title={item.label} onclick={() => { if (gesture) for (const id of [...pointers.keys()]) finishPointer(id); tool = item.id; }}>{toolGlyph[item.id]}</Button>
-            {/each}
-            {#if noteMode==="mindmap"}<Button size="sm" onclick={()=>addConcept()}>+ Concept</Button>{/if}
-            <CanvasColorMenu label="Ink" bind:value={color} />
-            <label class="focus-width">Width<input aria-label="Stroke width" type="range" min="1" max="60" bind:value={lineWidth} /></label>
-            <button disabled={!undoStack.length} onclick={() => applyUndo()}>Undo</button>
-            <button disabled={!redoStack.length} onclick={() => applyUndo(true)}>Redo</button>
-            <button onclick={() => { blocked = false; void saveContent(); }} title={saveStatus} aria-label={`Save note: ${saveStatus}`}>Save</button>
+          <div class="focus-corner">
+            <button class="focus-exit" onclick={toggleFullscreen} aria-label="Exit canvas fullscreen">Exit fullscreen · Esc</button>
             <span class="focus-save" role="status" aria-live="polite">{saveStatus}</span>
+            <button onclick={() => { blocked = false; void saveContent(); }} title={saveStatus} aria-label={`Save note: ${saveStatus}`}>Save</button>
           </div>
-          <button class="focus-exit" onclick={toggleFullscreen} aria-label="Exit canvas fullscreen">Exit fullscreen · Esc</button>
           {#if error}<div class="focus-error" role="alert">{error}</div>{/if}
         {/if}
         {#if noteMode==="mindmap" && selectedElements.length===1}
@@ -2104,6 +2038,60 @@
             <h3>A place for your next idea</h3>
             <p>Create a notebook and page to start drawing.</p>
           </div>{/if}
+        <div class="canvas-pill" style:--stage-height={`${height}px`}>
+          {#if !toolsCollapsed}
+            <div id={`${pane.id}-drawing-tools`} class="pill-bar" role="toolbar" aria-label="Drawing tools">
+              {#each pillTools as item (item.id)}
+                <button class="pill-btn" aria-label={item.label} aria-keyshortcuts={item.key} aria-pressed={tool === item.id} title={`${item.label} (${item.key})`} disabled={!pageId} onclick={() => chooseTool(item.id)}><Icon name={`tool-${item.id}`} size={18}/></button>
+              {/each}
+              {#if noteMode==="mindmap"}<button class="pill-btn pill-word" disabled={!pageId} onclick={()=>addConcept()}>+ Concept</button>{/if}
+              <span class="pill-rule" aria-hidden="true"></span>
+              <div class="pill-inks" role="group" aria-label="Ink colours">
+                {#each pillInks as swatch (swatch.name)}
+                  <button class="pill-dot" style:--dot={swatch.value} aria-label={`Ink: ${swatch.name}`} aria-pressed={color.toLowerCase() === swatch.value.toLowerCase()} title={swatch.name} onclick={() => color = swatch.value}></button>
+                {/each}
+              </div>
+              <span class="pill-rule" aria-hidden="true"></span>
+              <button class="pill-btn" aria-label={`Stroke size ${lineWidth}`} title="Stroke size: click for the next size" onclick={() => lineWidth = STROKE_SIZES.find(size => size > lineWidth) ?? STROKE_SIZES[0]}><span class="stroke-dot" style:width={`${Math.min(lineWidth, 12) + 2}px`} style:height={`${Math.min(lineWidth, 12) + 2}px`}></span></button>
+              <span class="pill-rule" aria-hidden="true"></span>
+              <button class="pill-btn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!undoStack.length} onclick={() => applyUndo()}><Icon name="undo" size={17}/></button>
+              <button class="pill-btn" aria-label="Redo" title="Redo (Ctrl+Y)" disabled={!redoStack.length} onclick={() => applyUndo(true)}><Icon name="redo" size={17}/></button>
+              <details class="pill-more" bind:this={canvasMoreMenu} bind:open={canvasMore} use:closeOnEscape>
+                <summary class="pill-btn" aria-label="More canvas tools" title="More canvas tools"><Icon name="more" size={18}/></summary>
+                <div class="pill-menu" role="group" aria-label="Canvas options">
+                  <span class="eyebrow">Tools</span>
+                  <div class="pill-menu-tools">
+                    {#each moreTools as item (item.id)}
+                      <button aria-label={item.label} aria-keyshortcuts={item.key} aria-pressed={tool === item.id} disabled={!pageId} onclick={() => { chooseTool(item.id); canvasMore = false; }}><Icon name={`tool-${item.id}`} size={16}/>{item.label}<kbd aria-hidden="true">{item.key}</kbd></button>
+                    {/each}
+                  </div>
+                  <span class="eyebrow">Colour &amp; stroke</span>
+                  <div class="pill-menu-row">
+                    <CanvasColorMenu label="Ink" bind:value={color}/>
+                    {#if ["sticky","rect","ellipse"].includes(tool)}<CanvasColorMenu label={noteMode==="mindmap"?"Card":"Fill"} bind:value={fillColor}/>{/if}
+                  </div>
+                  <label class="pill-range">{tool === "eraser" ? "Eraser radius (screen px)" : "Stroke width"}<span><input type="range" min="1" max="60" bind:value={lineWidth}/><output>{lineWidth}</output></span></label>
+                  <label class="pill-range">Text size<span><input type="number" min="8" max="120" bind:value={fontSize}/></span></label>
+                  <span class="eyebrow">Canvas</span>
+                  <div class="pill-menu-row">
+                    <label class="check"><input type="checkbox" bind:checked={penOnly} onchange={savePenMode}/>Pen mode</label>
+                    <label class="check"><input type="checkbox" checked={doc.grid} onchange={(e) => commit({ ...doc, grid: e.currentTarget.checked })}/>Grid</label>
+                    <label class="check"><input type="checkbox" checked={doc.snap} onchange={(e) => commit({ ...doc, snap: e.currentTarget.checked })}/>Snap</label>
+                  </div>
+                  <div class="pill-menu-row zoom-row">
+                    <button aria-label="Zoom out" onclick={() => { view = zoomAt(view, width / 2, height / 2, 0.8); scheduleView(); }}>−</button>
+                    <output>{Math.round(view.zoom * 100)}%</output>
+                    <button aria-label="Zoom in" onclick={() => { view = zoomAt(view, width / 2, height / 2, 1.25); scheduleView(); }}>＋</button>
+                    <button onclick={() => { view = { x: 0, y: 0, zoom: 1 }; scheduleView(); }}>Reset (0)</button>
+                    <button onclick={() => { view = fit(doc.elements, width, height); scheduleView(); }}>Fit</button>
+                  </div>
+                  <button aria-pressed={outline} onclick={() => (outline = !outline)}>Text outline</button>
+                </div>
+              </details>
+            </div>
+          {/if}
+          <button class="pill-handle" aria-label={toolsCollapsed ? "Show drawing tools" : "Hide drawing tools"} aria-expanded={!toolsCollapsed} aria-controls={toolsCollapsed ? undefined : `${pane.id}-drawing-tools`} title={toolsCollapsed ? "Show drawing tools" : "Hide drawing tools"} onclick={toggleTools}><span aria-hidden="true"></span></button>
+        </div>
       </div>
       <div class="canvas-footer"><span class="canvas-hint">Space + drag: pan · Scroll: zoom · Two-finger swipe: pages · Fullscreen pen double-tap: middle left/right edge</span><span class="canvas-hint">{doc.elements.length} elements</span></div>
       {#if noteMode==="mindmap"}
@@ -2490,8 +2478,6 @@
   .page-actions .overflow-menu { width: 280px; }
   .overflow-menu .menu-row { display: flex; gap: 6px; flex-wrap: wrap; }
   .overflow-menu .help { margin: 0; }
-  .tools,
-  .canvas-controls,
   .selection-actions,
   .export-actions,
   .layer-row {
@@ -2504,36 +2490,10 @@
   .page-bar .note-mode { flex-shrink: 0; }
   .page-bar .page-title { flex: 1 1 180px; min-width: 80px; }
   .page-bar > button { flex-shrink: 0; }
-  .tools {
-    padding: 5px;
-    background: var(--chrome);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    gap: 2px;
-  }
-  .tools :global(.br-btn) { min-height: 31px; font-size: 11px; padding: 5px 8px; }
-  .tools :global(.br-btn[aria-pressed="true"]) {
-    background: color-mix(in srgb, var(--accent) 20%, var(--surface));
-    border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-    color: var(--accent);
-  }
-  .canvas-controls button,
   .selection-actions button,
   .export-actions button,
   .layer-row button {
     font-size: 12px;
-  }
-  .canvas-controls label {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-  }
-  .canvas-controls input[type="number"] {
-    width: 65px;
-  }
-  .canvas-controls input[type="range"] {
-    width: 80px;
   }
   .canvas-stage {
     position: relative;
@@ -2554,40 +2514,174 @@
     background: var(--canvas);
     color: var(--ink);
   }
-  .focus-tools {
-    position: absolute;
-    top: 56px;
-    left: 12px;
-    right: 190px;
-    z-index: 2;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 5px;
-    width: fit-content;
-    max-width: calc(100% - 202px);
-    padding: 6px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--chrome);
-    box-shadow: 0 4px 18px #0003;
-  }
-  .focus-tools .focus-width { display: flex; flex-direction: row; align-items: center; gap: 4px; }
-  .focus-width input { width: 65px; }
-  .focus-tools :global(details.color-menu) { padding: 0; border: 0; }
-  .focus-save { font-size: 11px; color: var(--muted); max-width: 130px; }
-  .notes-workspace .focus-exit {
+  .focus-corner {
     position: absolute;
     top: 12px;
     right: 12px;
     z-index: 3;
-    min-height: 40px;
-    box-shadow: 0 4px 18px #0003;
+    display: grid;
+    grid-template-columns: auto auto;
+    justify-items: end;
+    align-items: center;
+    gap: 6px 8px;
   }
-  .focus-error { position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 2; padding: 8px; background: var(--surface); color: var(--danger, var(--ink)); }
+  .notes-workspace .focus-exit { grid-column: 1 / -1; min-height: 40px; box-shadow: 0 4px 18px #0003; }
+  .focus-save { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+  .focus-error { position: absolute; bottom: 64px; left: 12px; right: 12px; z-index: 2; padding: 8px; background: var(--surface); color: var(--danger, var(--ink)); }
   @media (max-width: 700px) {
-    .focus-save, .focus-width { display: none !important; }
-    .focus-tools { right: 12px; max-width: calc(100% - 24px); }
+    .focus-save { display: none; }
+  }
+  /* Q46: the canvas tools are one floating glass pill docked at the bottom of the stage.
+     Its bottom edge is a handle that collapses it to a small tab, like the dock. */
+  .canvas-pill {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    z-index: 3;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: calc(100% - 24px);
+  }
+  .pill-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 5px 8px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--solid-raised) 72%, transparent);
+    backdrop-filter: var(--glass);
+    -webkit-backdrop-filter: var(--glass);
+    box-shadow: 0 12px 30px -16px color-mix(in srgb, var(--shadow-tint) 80%, transparent);
+    white-space: nowrap;
+    animation: pill-rise 180ms ease-out;
+  }
+  @keyframes pill-rise { from { opacity: 0; transform: translateY(8px); } }
+  .canvas-pill .pill-btn {
+    position: relative;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--muted);
+    transition: transform 140ms ease, background-color 140ms ease, color 140ms ease;
+  }
+  .canvas-pill .pill-btn:hover:not(:disabled) { color: var(--ink); transform: translateY(-2px); }
+  .canvas-pill .pill-btn[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
+  .canvas-pill .pill-btn[aria-pressed="true"]::after {
+    content: "";
+    position: absolute;
+    bottom: 2px;
+    left: calc(50% - 2px);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .canvas-pill .pill-word { width: auto; padding: 0 10px; font-size: 12px; }
+  .pill-rule { flex-shrink: 0; width: 1px; height: 20px; margin: 0 4px; background: var(--hairline); }
+  .pill-inks { display: flex; align-items: center; gap: 2px; }
+  .canvas-pill .pill-dot {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    background: var(--dot) content-box;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 20%, transparent);
+  }
+  .canvas-pill .pill-dot[aria-pressed="true"] { border-color: var(--dot); }
+  .stroke-dot { display: block; border-radius: 50%; background: currentColor; }
+  .canvas-pill details.pill-more { position: relative; flex-shrink: 0; padding: 0; border: 0; }
+  .pill-more > summary { list-style: none; cursor: pointer; }
+  .pill-more > summary::-webkit-details-marker { display: none; }
+  .canvas-pill .pill-more[open] > summary { color: var(--ink); background: var(--wash); }
+  .pill-menu {
+    position: absolute;
+    right: -8px;
+    bottom: calc(100% + 12px);
+    z-index: 4;
+    display: grid;
+    gap: 8px;
+    width: 270px;
+    max-height: calc(var(--stage-height, 420px) - 72px);
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 12px;
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--solid-raised) 94%, transparent);
+    backdrop-filter: var(--glass);
+    -webkit-backdrop-filter: var(--glass);
+    box-shadow: var(--overlay-shadow);
+    white-space: normal;
+  }
+  .pill-menu .eyebrow { margin: 2px 0 -4px; }
+  .pill-menu-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+  .canvas-pill .pill-menu-tools button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .canvas-pill .pill-menu-tools button:hover:not(:disabled),
+  .canvas-pill .pill-menu-tools button[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
+  .pill-menu-tools kbd { margin-left: auto; padding: 0; border: 0; background: none; box-shadow: none; color: var(--subtle); font: 10px var(--font-mono); text-decoration: none; }
+  .pill-menu-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .pill-menu-row.zoom-row { flex-wrap: nowrap; column-gap: 6px; }
+  .canvas-pill .pill-menu button:not(.pill-btn) { padding: 4px 9px; font-size: 12px; }
+  .notes-workspace .pill-range { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+  .pill-range span { display: flex; align-items: center; gap: 6px; }
+  .notes-workspace .pill-range input[type="range"] { width: 110px; padding: 0; accent-color: var(--accent); }
+  .notes-workspace .pill-range input[type="number"] { width: 64px; padding: 4px 6px; }
+  .pill-menu output { min-width: 36px; text-align: center; color: var(--muted); font: 11px var(--font-mono); }
+  .canvas-pill .pill-handle {
+    display: grid;
+    place-items: center;
+    width: 64px;
+    height: 14px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px 8px 0 0;
+    background: transparent;
+  }
+  .canvas-pill .pill-handle[aria-expanded="false"] {
+    height: 16px;
+    border: 1px solid var(--hairline);
+    border-bottom: 0;
+    background: color-mix(in srgb, var(--solid-raised) 72%, transparent);
+    backdrop-filter: var(--glass);
+    -webkit-backdrop-filter: var(--glass);
+  }
+  .pill-handle span {
+    width: 36px;
+    height: 3px;
+    border-radius: 999px;
+    background: var(--muted);
+    opacity: 0.6;
+    transition: opacity 140ms ease, background-color 140ms ease;
+  }
+  .pill-handle:hover span,
+  .pill-handle:focus-visible span { opacity: 1; background: var(--violet); }
+  @media (prefers-reduced-motion: reduce) {
+    .pill-bar { animation: none; }
+    .canvas-pill .pill-btn, .pill-handle span { transition: none; }
+    .canvas-pill .pill-btn:hover:not(:disabled) { transform: none; }
   }
   .canvas-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap:wrap; }
   .page-bar .page-title { font-size: 16px; font-weight: 550; background: transparent; }
@@ -2755,13 +2849,6 @@
   .editor-shell[hidden]{display:none}
   .wiki-link {display:grid;gap:6px;border-top:1px solid var(--border);padding-top:12px}
   .wiki-link label{font-size:12px;color:var(--muted)}
-  .tools{align-self:center;border-radius:14px;padding:6px;box-shadow:0 5px 20px color-mix(in srgb,var(--ink) 5%,transparent)}
-  .tools :global(.br-btn){font-size:20px;min-width:38px;min-height:36px}
-  .shape-menu,.stroke-options,.canvas-options{position:relative;border:0!important;padding:0!important}
-  .shape-menu summary,.stroke-options summary,.canvas-options summary{padding:8px;cursor:pointer;font-size:12px}
-  .shape-menu>div,.stroke-options[open]>label{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px}
-  .shape-menu>div{position:absolute;top:100%;z-index:12;display:grid;min-width:140px;box-shadow:0 10px 30px color-mix(in srgb,var(--ink) 12%,transparent)}
-  .canvas-options[open]{width:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px!important;background:var(--chrome)}
   .page-bar>input[type=search]{flex:0 4 150px;min-width:56px;font-size:12px}
   .wiki-links,.wiki-suggestions{display:flex;gap:5px;flex-wrap:wrap}
 </style>

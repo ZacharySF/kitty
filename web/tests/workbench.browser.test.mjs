@@ -1509,3 +1509,86 @@ describe("mind-map editing", () => {
     await context.close();
   });
 });
+
+/** Opens Notes on its daily page and switches the page to Canvas mode. */
+async function openCanvas(page) {
+  await page.getByRole("textbox", { name: "Page title" }).waitFor();
+  await page.getByRole("group", { name: "Page mode" }).getByRole("button", { name: "Canvas", exact: true }).click();
+  const canvas = page.getByLabel(/^Infinite drawing canvas/);
+  await canvas.waitFor();
+  return canvas;
+}
+
+describe("notes canvas pill", () => {
+  test("the canvas tools are one icon pill at the stage bottom that collapses from its bottom edge and stays collapsed after reload", async () => {
+    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const canvas = await openCanvas(page);
+    const tools = page.getByRole("toolbar", { name: "Drawing tools" });
+    await tools.waitFor();
+    assert.equal(await page.getByRole("toolbar", { name: /drawing tools/i }).count(), 1, "more than one drawing toolbar");
+    // Tools are drawn icons with names and pressed state, not Unicode glyphs.
+    for (const name of ["Select", "Pen", "Highlight", "Eraser", "Text", "Sticky"]) {
+      const button = tools.getByRole("button", { name, exact: true });
+      assert.equal(await button.locator("svg").count(), 1, `${name} has no drawn icon`);
+      assert.equal((await button.textContent()).trim(), "", `${name} still shows a glyph`);
+      assert.match(await button.getAttribute("aria-pressed"), /^(true|false)$/);
+    }
+    assert.equal(await tools.getByRole("group", { name: "Ink colours" }).count(), 1, "no ink colours in the pill");
+    const size = tools.getByRole("button", { name: /^Stroke size/ });
+    const before = await size.getAttribute("aria-label");
+    await size.click();
+    assert.notEqual(await size.getAttribute("aria-label"), before, "the stroke-size toggle does not change size");
+    for (const name of ["Undo", "Redo"]) assert.equal(await tools.getByRole("button", { name, exact: true }).count(), 1, `no ${name}`);
+    // Less-used tools and options stay reachable in the pill's overflow.
+    await tools.getByLabel("More canvas tools").click();
+    await tools.getByRole("button", { name: "Lasso", exact: true }).waitFor();
+    assert.equal(await tools.getByRole("checkbox", { name: "Pen mode" }).isVisible(), true);
+    await page.keyboard.press("Escape");
+    // One floating pill, centred at the bottom of the canvas stage.
+    const stage = await rect(canvas), pill = await rect(tools);
+    assert.ok(Math.abs(pill.left + pill.width / 2 - (stage.left + stage.width / 2)) <= 2, "pill is not centred");
+    assert.ok(pill.top > stage.top + stage.height / 2 && pill.bottom <= stage.bottom, `pill ${pill.top}–${pill.bottom} is not at the stage bottom ${stage.bottom}`);
+    // Its bottom edge is the labelled handle; it collapses to a small handle and back.
+    const handle = page.getByRole("button", { name: "Hide drawing tools" });
+    assert.equal(await handle.getAttribute("aria-expanded"), "true");
+    const edge = await rect(handle);
+    assert.ok(edge.top >= pill.bottom - 1 && edge.bottom <= stage.bottom + 1, "the handle is not the pill's bottom edge");
+    await handle.click();
+    await tools.waitFor({ state: "hidden" });
+    const show = page.getByRole("button", { name: "Show drawing tools" });
+    assert.equal(await show.getAttribute("aria-expanded"), "false");
+    const small = await rect(show);
+    assert.ok(small.width <= 80 && small.height <= 24 && small.bottom <= stage.bottom + 1 && small.bottom >= stage.bottom - 24, "collapsed handle is not a small tab at the stage bottom");
+    await page.reload();
+    await openCanvas(page);
+    await page.getByRole("button", { name: "Show drawing tools" }).waitFor();
+    assert.equal(await tools.count(), 0, "the pill did not stay collapsed after reload");
+    await page.getByRole("button", { name: "Show drawing tools" }).click();
+    await tools.waitFor();
+    assert.notEqual(await tools.evaluate((node) => getComputedStyle(node).animationName), "none", "the pill does not ease in");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    assert.equal(await tools.evaluate((node) => getComputedStyle(node).animationName), "none", "the pill still animates under reduced motion");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("canvas fullscreen keeps the same bottom pill instead of a second toolbar", async () => {
+    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    await openCanvas(page);
+    await page.getByRole("button", { name: "Open canvas fullscreen" }).click();
+    await page.getByRole("button", { name: "Exit canvas fullscreen" }).waitFor();
+    const tools = page.getByRole("toolbar", { name: "Drawing tools" });
+    await tools.waitFor();
+    assert.equal(await page.getByRole("toolbar", { name: /drawing tools/i }).count(), 1, "fullscreen adds a second toolbar");
+    const pill = await rect(tools);
+    const height = await page.evaluate(() => innerHeight);
+    assert.ok(pill.bottom <= height && pill.bottom >= height - 48, `fullscreen pill ends at ${pill.bottom} of ${height}`);
+    await page.getByRole("button", { name: "Hide drawing tools" }).click();
+    await tools.waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Show drawing tools" }).click();
+    await tools.waitFor();
+    assert.equal(await page.getByRole("button", { name: /^Save note/ }).count(), 1, "fullscreen lost its save control");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
