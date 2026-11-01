@@ -75,7 +75,6 @@ export type Stats = {
   daily_streak: number;
   weekly_streak: number;
   session_count: number;
-  heatmap: { date: string; seconds: number }[];
   days: StudyDay[];
   subjects: SubjectTotal[];
   goals: { id: number; seconds: number; goal_seconds: number }[];

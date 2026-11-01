@@ -522,7 +522,7 @@
         <HistoryNav stats={data.stats} period={historyPeriod} date={historyDate} label={historyLabel} onnavigate={navigateHistory} />
       {/if}
       {#if tab === "overview"}
-        <ProgressView {data} period={historyPeriod} label={historyLabel} onedit={openEditor} ondelete={deleteItem} />
+        <ProgressView {data} period={historyPeriod} onedit={openEditor} />
       {:else if tab === "sessions"}
         <HistoryView {data} period={historyPeriod} label={historyLabel} onopen={(session) => (sessionEditing = { session: session ?? null })} ondelete={deleteSession} />
       {:else if tab === "exams"}

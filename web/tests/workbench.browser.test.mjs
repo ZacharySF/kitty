@@ -669,3 +669,52 @@ describe("study cockpit", () => {
     await context.close();
   });
 });
+
+describe("study progress", () => {
+  test("Progress stacks each day's study in subject colours beside a share ring, tints a month calendar by each day's main subject with weekly-goal checks, and draws goal rings", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    const stamp = Date.now();
+    // A fixed past Wednesday keeps the week and month deterministic.
+    const [major, minor] = await page.evaluate(async (stamp) => {
+      const post = async (path, body) => {
+        const response = await fetch(`/api/study/${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) });
+        return (await response.json()).item;
+      };
+      const major = await post("subjects", { name: `Major ${stamp}`, color: "#d05080" });
+      const minor = await post("subjects", { name: `Minor ${stamp}`, color: "#3070e0" });
+      for (const [subject, minutes, hour] of [[major, 50, 10], [minor, 20, 14]])
+        await post("sessions", { request_id: crypto.randomUUID(), started_at: `2026-01-14T${hour}:00:00+00:00`, timezone: "UTC", duration_seconds: minutes * 60, subject_id: subject.id });
+      await post("targets", { title: `Daily ${stamp}`, period: "daily", minutes: 30 });
+      window.dispatchEvent(new CustomEvent("kitty-study-changed"));
+      return [major, minor];
+    }, stamp);
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
+    assert.equal(await page.getByLabel("Daily study activity").count(), 0, "the accent-only heatmap is still shown");
+    await page.getByLabel("Jump to date").fill("2026-01-14");
+    await page.getByLabel("Jump to date").dispatchEvent("change");
+
+    const bars = page.getByRole("region", { name: "Study by subject" });
+    const day = bars.getByRole("button").filter({ has: page.locator(`[data-subject="${major.id}"]`) });
+    await day.waitFor();
+    const colours = await day.locator("[data-subject]").evaluateAll((parts) => parts.map((part) => getComputedStyle(part).backgroundColor));
+    assert.deepEqual(colours, ["rgb(208, 80, 128)", "rgb(48, 112, 224)"], "the day is not stacked in subject colours, largest first");
+    assert.match(await day.getAttribute("aria-label"), new RegExp(`70 min, mostly Major ${stamp}`));
+    const legend = bars.getByRole("button", { name: new RegExp(`^Minor ${stamp}`) });
+    assert.match(await legend.textContent(), /20 min/);
+    await legend.hover();
+    await page.waitForFunction((id) => Number(getComputedStyle(document.querySelector(`[aria-label="Study by subject"] [data-subject="${id}"]`)).opacity) < 0.5, major.id);
+
+    const calendar = page.getByRole("region", { name: "Study calendar" });
+    assert.equal(await calendar.getByRole("button", { name: new RegExp(`: 70 min, mostly Major ${stamp}$`) }).count(), 1, "the calendar day is not tinted by its main subject");
+    const checks = calendar.getByRole("img", { name: /^(Week of|This week)/ });
+    assert.ok((await checks.count()) >= 4, "weeks have no goal checks");
+    assert.equal(await calendar.getByRole("img", { name: /^Week of .*: 70 min, studied$/ }).count(), 1, "the studied week is not checked");
+
+    const goals = page.getByRole("region", { name: "Goal rings" });
+    for (const name of ["Today", "This week", "Flashcard reviews"]) await goals.getByText(name, { exact: true }).waitFor();
+    assert.match(await goals.getByRole("listitem").filter({ hasText: "Today" }).textContent(), /\d+ min\s*\/\s*30 min/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

@@ -553,8 +553,6 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
         goals.append({"id": target["id"], "seconds": seconds, "goal_seconds": target["minutes"] * 60})
     subject_names = {row["id"]: row["name"] for row in conn.execute("SELECT id,name FROM study_subjects")}
     colors = {row["id"]: row["color"] for row in conn.execute("SELECT id,color FROM study_subjects")}
-    heatmap = [{"date": (today - timedelta(days=83 - i)).isoformat(),
-                "seconds": daily.get((today - timedelta(days=83 - i)).isoformat(), 0)} for i in range(84)]
 
     def day_entry(key):
         # Each day's study split by subject, largest first, so views can tint a
@@ -575,7 +573,7 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
             "today_seconds": today_seconds, "week_seconds": week_seconds, "month_seconds": month_seconds, "total_seconds": total,
             "daily_streak": _streak(completed_days, today, timedelta(days=1)),
             "weekly_streak": _streak(completed_weeks, monday, timedelta(days=7)),
-            "session_count": len(sessions), "heatmap": heatmap, "history": history,
+            "session_count": len(sessions), "history": history,
             "days": [day_entry(key) for key in sorted(daily)],
             "subjects": [{"id": key, "name": subject_names.get(key, "Unassigned"), "color": colors.get(key, "#7c6fdb"), "seconds": value} for key, value in subjects.items()],
             "goals": goals}

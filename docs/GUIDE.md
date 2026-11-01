@@ -443,6 +443,11 @@ and a five-minute priming timer, then repeats 25-minute focus / five-minute brea
 phases. Start unlocks the audible phase-change cue. Only completed focus and
 explicit manual entries count toward weekly/monthly totals; priming, breaks and
 pauses do not. The guide's checklist and reflections stay with the session.
+**Progress** stacks each day of the selected week or month in subject colours
+beside a share ring (hover or click a subject to isolate it), tints a month
+calendar by each day's main subject and deepens it by minutes, with a ✓ for each
+week that met the weekly goal (or had any study when no weekly goal is set), and
+draws goal rings for today, this week and today's flashcard reviews.
 **Calendar** opens one week with half-hour slots and a day-plan sidebar.
 Previous/next changes weeks; Month/Day/Agenda remain optional. Click a slot to
 schedule a time, or drag an event/task to another date or time. Drops open the
