@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { api, safeUrl, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
+  import Loader from "./Loader.svelte";
 
   let {
     section,
@@ -334,7 +335,7 @@
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
     <TaskStatus {task} oncomplete={complete} />
-    {#if loading}<p class="muted" role="status">Loading…</p>{/if}
+    {#if loading}<Loader label="Loading…" />{/if}
 
     {#if section === "finder"}
       <p class="muted">

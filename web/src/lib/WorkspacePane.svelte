@@ -7,6 +7,7 @@
 
   import WorkspaceSettings from "./WorkspaceSettings.svelte";
   import AI from "./AI.svelte";
+  import Loader from "./Loader.svelte";
 
   let { tabId, view, active, workspace, revision, epoch, initialJobId, onchange, onadd, onview, onopenjob, onguide }: {
     tabId: string;
@@ -78,7 +79,7 @@
   }
 </script>
 
-{#snippet pending()}<p class="muted" role="status">Loading…</p>{/snippet}
+{#snippet pending()}<Loader kind="eyes" label="kitty is waking up…" />{/snippet}
 {#key `${view}:${epoch}:${initialJobId}`}
   {#if !viewEnabled(view, activeModules.enabled)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->

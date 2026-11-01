@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, dateLabel, type Job } from "./api";
   import type { View } from "./workspace";
+  import Loader from "./Loader.svelte";
   let {
     revision = 0,
     onopenjob,
@@ -70,9 +71,7 @@
   <div class="brief-body">
     {#if error}<p class="error-banner" role="alert">
         {error}
-      </p>{/if}{#if !data && !error}<p class="muted" role="status">
-        Loading reminders…
-      </p>{:else if data}
+      </p>{/if}{#if !data && !error}<Loader label="Loading reminders…" rows={2} />{:else if data}
       {#if !data.reminders.length && !data.deadlines.length}<p class="muted">
           Nothing needs your attention here today.
         </p>{/if}

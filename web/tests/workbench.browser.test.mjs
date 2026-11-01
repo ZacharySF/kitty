@@ -447,3 +447,33 @@ describe("empty states", () => {
     await context.close();
   });
 });
+
+describe("loaders", () => {
+  test("lists load behind shimmering skeleton rows; whole views behind blinking cat eyes", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await page.locator(".wordmark").waitFor();
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    await page.route((url) => url.pathname === "/api/jobs", async (route) => { await held; await route.continue(); });
+    await page.evaluate(() => (location.hash = "inbox"));
+    const rows = page.locator('[role="status"].kitty-loader[data-kind="rows"]');
+    await rows.waitFor();
+    assert.ok((await rows.locator(".skeleton-row").count()) >= 3, "too few skeleton rows");
+    assert.match(await rows.getAttribute("aria-label"), /loading/i);
+    assert.notEqual(await rows.locator(".skeleton-row span").first().evaluate((node) => getComputedStyle(node).animationName), "none");
+    release();
+    await rows.waitFor({ state: "detached" });
+    let releaseAtlas;
+    const atlasHeld = new Promise((resolve) => (releaseAtlas = resolve));
+    await page.route((url) => url.pathname === "/api/atlas", async (route) => { await atlasHeld; await route.continue(); });
+    await page.keyboard.press("Control+t");
+    const eyes = page.locator('[role="status"].kitty-loader[data-kind="eyes"]').filter({ hasText: "Drawing your atlas…" });
+    await eyes.waitFor();
+    assert.equal(await eyes.locator(".eye").count(), 2);
+    assert.notEqual(await eyes.locator(".eye").first().evaluate((node) => getComputedStyle(node).animationName), "none", "eyes do not blink");
+    releaseAtlas();
+    await eyes.waitFor({ state: "detached" });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

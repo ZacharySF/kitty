@@ -29,6 +29,7 @@
   import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
   import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import Loader from "./Loader.svelte";
 
   const pane = useWorkspaceContext();
 
@@ -519,9 +520,7 @@
       <div class="stage-caption" aria-hidden="true">
         <span>{#if draggedSection && hidden.has(draggedSection)}Drop to show {sections.flatMap((group) => group.items).find((item) => item.id === draggedSection)?.label} on the atlas{:else if mode === "graph" && !graph.nodes.length}Every section is hidden · drag one here from Sections to show it{:else}{look === "2d" ? "Drag a node to move · drag background to pan · scroll or pinch to zoom" : "Drag to rotate · scroll to zoom · Ctrl + ← / → to turn"} · drag a node onto Sections to hide it{/if}</span>
       </div>
-      {#if mode === "loading"}<p class="stage-loading" role="status">
-          Drawing your atlas…
-        </p>{/if}
+      {#if mode === "loading"}<div class="stage-loading"><Loader kind="eyes" label="Drawing your atlas…" /></div>{/if}
       {#if hovered}<p class="stage-selection" aria-hidden="true">{hovered.label}</p>{/if}
     {/if}
   </div>
