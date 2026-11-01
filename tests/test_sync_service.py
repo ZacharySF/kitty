@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import secrets
 import socket
-import time
 import uuid
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -69,23 +68,12 @@ def kittys(tmp_path, template):
         kitty.close()
 
 
-def eventually(check, timeout: float = 5.0):
-    """The listener side records its half of a session in its own thread, just after the other side returns."""
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            return check()
-        except (AssertionError, peers.PeersError):
-            if time.monotonic() > deadline:
-                raise
-            time.sleep(0.02)
-
-
 def pair(a: Kitty, b: Kitty) -> None:
     b.sync.show_code()
     code = b.sync.state()["pairing"]["code"]
     a.sync.pair(code.lower().replace("-", " "), b.address)
-    eventually(lambda: b.peer(a))
+    # The showing side trusts the typing side before confirming, so this holds at once.
+    assert b.peer(a)["public_key"]
 
 
 def new_page(kitty: Kitty, *texts: str) -> tuple[str, list[str]]:
@@ -289,3 +277,16 @@ def test_the_device_key_lives_in_the_keys_service(kittys):
     assert a.conn.execute("SELECT COUNT(*) FROM sync_device").fetchone()[0] == 1
     again = peers.identity(a.conn, a.keys)
     assert again.public_key == a.sync.identity.public_key
+
+
+def test_stopping_before_the_listener_thread_runs_is_clean(tmp_path, template, monkeypatch):
+    """stop() can close the listening socket before the accept thread first runs (seen under load)."""
+    spawned = []
+    monkeypatch.setattr(service.SyncService, "_spawn", lambda self, target, name: spawned.append(target))
+    kitty = Kitty(tmp_path, "a", template)
+    try:
+        kitty.sync.stop()
+        accept = next(target for target in spawned if target.__name__ == "_accept_loop")
+        accept()  # returns quietly: no OSError (EBADF) from a closed socket
+    finally:
+        kitty.device.close()

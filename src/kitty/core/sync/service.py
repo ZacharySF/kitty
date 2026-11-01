@@ -138,11 +138,16 @@ class SyncService:
 
     def _listen(self) -> socket.socket:
         try:
-            return socket.create_server((self.host, self.wanted_port), backlog=16)
+            server = socket.create_server((self.host, self.wanted_port), backlog=16)
         except OSError:
             if self.wanted_port == 0:
                 raise
-            return socket.create_server((self.host, 0), backlog=16)
+            server = socket.create_server((self.host, 0), backlog=16)
+        # Closing a socket does not wake accept() on Linux, so the accept loop polls the stop
+        # flag. Set here, before the loop's thread exists: stop() may close the socket before
+        # that thread first runs.
+        server.settimeout(0.5)
+        return server
 
     def _spawn(self, target: Callable[[], None], name: str) -> None:
         thread = threading.Thread(target=target, name=name, daemon=True)
@@ -214,7 +219,7 @@ class SyncService:
             })
         with self._lock:
             code = self._code
-            if code is not None and code.expires <= now and code.paired is None:
+            if code is not None and code.paired is None and (code.expires <= now or code.tries <= 0):
                 self._code = code = None
         identity = self.identity
         return {
@@ -292,20 +297,27 @@ class SyncService:
             self.discovery.update(pairing=False)
 
     def _offered_code(self) -> str | None:
+        """The code an incoming pairing attempt must prove, taking one of its tries.
+
+        The try is spent before the handshake starts, so a wrong guess is already counted
+        when the other side sees the connection close, and a third one retires the code
+        at once. A successful pairing marks the code used instead.
+        """
         with self._lock:
             code = self._code
             if code is None or code.paired is not None or code.expires <= self.clock() or code.tries <= 0:
                 return None
+            code.tries -= 1
             return code.code
 
-    def _failed_try(self) -> None:
+    def _attempt_done(self, code: _Code) -> None:
+        """A pairing attempt that took a try of `code` finished; a spent code is retired."""
         with self._lock:
-            if self._code is not None and self._code.paired is None:
-                self._code.tries -= 1
-                if self._code.tries <= 0:
-                    self._code = None
-                    if self.discovery is not None:
-                        self.discovery.update(pairing=False)
+            if self._code is not code or code.paired is not None or code.tries > 0:
+                return
+            self._code = None
+        if self.discovery is not None:
+            self.discovery.update(pairing=False)
 
     def pair(self, code: object, address: object) -> dict:
         """Pair with the device at `address` that shows `code`; returns ``{device_id, name}``."""
@@ -329,46 +341,79 @@ class SyncService:
         finally:
             channel.close()
 
-    def _finish_pairing(self, channel: channel_core.Channel, address: str | None, peer_host: str | None = None) -> dict:
-        """Swap identities and trust the other device; `peer_host` (the listener side) is where it connected from."""
+    def _finish_pairing(self, channel: channel_core.Channel, address: str | None, peer_host: str | None = None,
+                        *, code: _Code | None = None) -> dict:
+        """Swap identities and trust the other device.
+
+        The side that shows the code (`code` given; `peer_host` is where the other device
+        connected from) trusts the other device before it confirms, so by the time the
+        typing side hears "paired", both list each other; it takes the trust back if the
+        other side refuses.
+        """
         assert self.identity is not None
+        responder = code is not None
         try:
             theirs = protocol.pair_exchange(channel, self.identity, self.port)
-            error = None
-            if theirs["device"] == self.identity.device_id:
-                error = "That is this device (or a copy of its database); copies cannot be paired"
-            else:
-                try:
-                    peers.clean_name(theirs["name"])
-                except peers.PeersError as exc:
-                    error = str(exc)
-            protocol.pair_confirm(channel, error)
         except (protocol.ProtocolError, channel_core.ChannelError) as exc:
             raise peers.PeersError(f"Pairing failed: {exc}", 400) from None
+        error = None
+        if theirs["device"] == self.identity.device_id:
+            error = "That is this device (or a copy of its database); copies cannot be paired"
+        else:
+            try:
+                peers.clean_name(theirs["name"])
+            except peers.PeersError as exc:
+                error = str(exc)
         if address is None:
             address = _join(peer_host, theirs["port"])
+        result = None
+        if responder and error is None:
+            result = self._trust(theirs, channel.remote_static, address)
+            with self._lock:
+                code.paired = result
+                if self._code is None:  # the last try succeeded after state() had hidden the spent code
+                    self._code = code
+        try:
+            protocol.pair_confirm(channel, error)
+        except (protocol.ProtocolError, channel_core.ChannelError) as exc:
+            if result is not None:
+                with closing(self.connect()) as conn:
+                    with transaction(conn, immediate=True):
+                        conn.execute("DELETE FROM peers WHERE device_id=?", (result["device_id"],))
+                with self._lock:
+                    code.paired = None
+            raise peers.PeersError(f"Pairing failed: {exc}", 400) from None
+        if result is None:
+            result = self._trust(theirs, channel.remote_static, address)
+        if responder and self.discovery is not None:
+            self.discovery.update(pairing=False)
+        self.sync_now(result["device_id"])
+        return result
+
+    def _trust(self, theirs: dict, public_key: bytes, address: str | None) -> dict:
         with closing(self.connect()) as conn:
             with transaction(conn, immediate=True):
                 row = peers.add(conn, self.identity, device_id=theirs["device"], name=theirs["name"],
-                                public_key=channel.remote_static, address=address)
-        result = {"device_id": row["device_id"], "name": row["name"]}
-        self.sync_now(row["device_id"])
-        return result
+                                public_key=public_key, address=address)
+        return {"device_id": row["device_id"], "name": row["name"]}
 
     # Listener ------------------------------------------------------------------------
 
     def _accept_loop(self) -> None:
         server = self._server
         assert server is not None
-        server.settimeout(0.5)  # closing a socket does not wake accept() on Linux; poll the stop flag
         while not self._stop.is_set():
             try:
                 sock, address = server.accept()
             except TimeoutError:
                 continue
-            except OSError:
+            except OSError:  # stop() closed the listening socket
                 return
-            sock.settimeout(None)
+            try:
+                sock.settimeout(None)
+            except OSError:
+                sock.close()
+                continue
             self._spawn_connection(sock, address)
 
     def _spawn_connection(self, sock: socket.socket, address) -> None:
@@ -384,28 +429,29 @@ class SyncService:
             sock.close()
             return
         sock.settimeout(IO_TIMEOUT)
-        consulted = False
+        attempt: _Code | None = None
 
-        def code() -> str | None:
-            nonlocal consulted
-            offered = self._offered_code()
-            consulted = offered is not None
-            return offered
+        def offered() -> str | None:
+            nonlocal attempt
+            with self._lock:
+                code, value = self._code, self._offered_code()
+            attempt = code if value is not None else None
+            return value
 
         try:
-            kind, channel = channel_core.serve(sock, private_key=identity.private_key, is_known=self._known, pairing_code=code)
+            kind, channel = channel_core.serve(sock, private_key=identity.private_key, is_known=self._known,
+                                               pairing_code=offered)
         except channel_core.ChannelError:
-            if consulted:
-                self._failed_try()
+            if attempt is not None:
+                self._attempt_done(attempt)
             return
         try:
             if kind == "pair":
-                result = self._finish_pairing(channel, None, address[0] if address else None)
-                with self._lock:
-                    if self._code is not None:
-                        self._code.paired = result
-                if self.discovery is not None:
-                    self.discovery.update(pairing=False)
+                try:
+                    self._finish_pairing(channel, None, address[0] if address else None, code=attempt)
+                finally:
+                    if attempt is not None:
+                        self._attempt_done(attempt)
             else:
                 with closing(self.connect()) as conn:
                     row = peers.by_key(conn, channel.remote_static)
