@@ -399,13 +399,17 @@ saved. These checks describe saved data, not application readiness.
    fills known fields. Check each form and submit it yourself; kitty! never submits.
 
 **Notes** opens today's dated note, reusing the same page on subsequent visits.
-The library on the left is the one notebook/page navigator: folders, notebooks,
-recent pages, tags and drag-to-reorder. The header row holds persistent page tabs,
-the save state, **Views** (saved maps, the folder/notebook **Library overview**
-schema, Today) and canvas fullscreen. One editor toolbar holds the
+The library (☰, top left) slides over the page as a drawer and is the one
+notebook/page navigator: folders, notebooks, recent pages, tags and drag-to-reorder;
+opening a page or pressing Escape closes it. The header row holds browser-style
+page tabs (a dot in the notebook's colour, × to close, + for a new page), the save
+state, **Views** (saved maps, the folder/notebook **Library overview** schema,
+Today) and canvas fullscreen. One editor toolbar holds the
 Writing/Canvas/Mind map switch, page title, Save (Ctrl+S) and Find in page;
 **More** holds outline preview, add block, paper, favorite, reload, delete and the
-keyboard help. Escape closes Views and More.
+keyboard help. Escape closes Views and More. While writing, a floating **On this
+page** outline lists the top-level blocks and the word count; click an entry to
+jump to that block, or collapse the outline to a corner pill (remembered).
 Text notes use stable bullet blocks: Enter adds a sibling, Tab/Shift+Tab nests or
 unnests, `[[Title]]` and `#tags` collect topic mentions, and unlinked title mentions
 offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`

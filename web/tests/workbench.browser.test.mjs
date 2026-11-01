@@ -1310,3 +1310,45 @@ describe("calendar redesign", () => {
     await context.close();
   });
 });
+
+describe("notes tabs and floating outline", () => {
+  test("browser-style page tabs, the library slides over the page, and 'On this page' jumps to blocks", async () => {
+    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const title = page.getByRole("textbox", { name: "Page title" });
+    await title.waitFor();
+    const tabs = page.getByRole("navigation", { name: "Open note pages" });
+    assert.equal(await tabs.locator('[aria-current="page"]').count(), 1, "the open page is not the current tab");
+    assert.equal(await tabs.getByRole("button", { name: "New page" }).count(), 1, "tab strip has no + new page");
+    // The library is a drawer: hidden at rest, sliding over the page without moving it.
+    const library = page.getByRole("navigation", { name: "Folders, notebooks and pages" });
+    assert.equal(await library.isVisible(), false, "the library is open at rest");
+    const before = await rect(title);
+    const toggle = page.getByRole("button", { name: "Open library" });
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+    await toggle.click();
+    await library.waitFor();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+    assert.deepEqual(await rect(title), before, "opening the library moved the page");
+    await page.keyboard.press("Escape");
+    await library.waitFor({ state: "hidden" });
+    // Write three blocks; the floating outline lists them and jumps to one.
+    await page.getByRole("button", { name: "Start writing a text note" }).click();
+    await page.keyboard.type("Alpha: the first idea");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Beta topic, second");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Gamma closing words");
+    const outline = page.getByRole("navigation", { name: "On this page" });
+    await outline.waitFor();
+    const entries = outline.getByRole("button", { name: /^(Alpha|Beta topic|Gamma closing words)$/ });
+    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="On this page"] li button').length === 3);
+    assert.equal(await entries.count(), 3, "outline does not list the three blocks");
+    assert.match(await outline.textContent(), /10 words/);
+    const box = await rect(outline), editor = await rect(page.getByRole("textbox", { name: "Block 1", exact: true }));
+    assert.ok(box.left >= editor.right - 1 || box.top >= editor.bottom, "outline overlaps the writing");
+    await outline.getByRole("button", { name: "Beta topic" }).click();
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Block 2");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

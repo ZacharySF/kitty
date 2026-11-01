@@ -56,7 +56,12 @@ const title = (page) => page.getByRole("textbox", { name: "Page title" });
 const block = (page, n) => page.getByRole("textbox", { name: `Block ${n}`, exact: true });
 const modes = (page) => page.getByRole("group", { name: "Page mode" });
 const mode = (page, name) => modes(page).getByRole("button", { name, exact: true });
-const library = (page) => page.getByRole("navigation", { name: "Folders, notebooks and pages" });
+// The library is a slide-over drawer (Q43): open it before using it.
+async function library(page) {
+  const toggle = page.getByRole("button", { name: "Open library" });
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+  return page.getByRole("navigation", { name: "Folders, notebooks and pages" });
+}
 const more = (page) => page.locator("summary", { hasText: /^More/ });
 const box = async (locator) => locator.boundingBox();
 async function pressedModes(page) {
@@ -92,9 +97,9 @@ test("the library is the single notebook and page navigator", async () => {
   const { page, problems, context } = await notes();
   assert.equal(await page.getByRole("navigation", { name: "Notebooks", exact: true }).count(), 0);
   // Notebook rows read "⌄ Systems design"; their "Edit notebook …" menu buttons must not match.
-  await assert.doesNotReject(library(page).getByRole("button", { name: /^\W*Systems design$/ }).waitFor());
-  await assert.doesNotReject(library(page).getByRole("button", { name: /^\W*Reading log$/ }).waitFor());
-  await library(page).getByRole("button", { name: "Raft notes" }).click();
+  await assert.doesNotReject((await library(page)).getByRole("button", { name: /^\W*Systems design$/ }).waitFor());
+  await assert.doesNotReject((await library(page)).getByRole("button", { name: /^\W*Reading log$/ }).waitFor());
+  await (await library(page)).getByRole("button", { name: "Raft notes" }).click();
   await titleIs(page, "Raft notes");
   assert.equal(await block(page, 1).inputValue(), "A leader replicates log entries to followers.");
   assert.deepEqual(problems, []);
@@ -171,7 +176,7 @@ test("Ctrl+S saves title and writing, and the page reopens with them", async () 
   await page.keyboard.press("Control+s");
   await page.waitForFunction(() => window.notesHarness.saved(1).title === "Consistent hashing (revised)");
   assert.equal(await page.evaluate(() => window.notesHarness.saved(1).blocks[0].text), "Each key belongs to the next node clockwise on the ring.");
-  await library(page).getByRole("button", { name: "Raft notes" }).click();
+  await (await library(page)).getByRole("button", { name: "Raft notes" }).click();
   await titleIs(page, "Raft notes");
   await openTab(page, "Consistent hashing (revised)").click();
   await titleIs(page, "Consistent hashing (revised)");
@@ -184,7 +189,7 @@ test("an unsaved edit blocks switching pages until it saves", async () => {
   const { page, problems, context } = await notes();
   await page.evaluate(() => { window.notesHarness.failSaves = true; });
   await block(page, 1).fill("Draft that must not be lost.");
-  await library(page).getByRole("button", { name: "Raft notes" }).click();
+  await (await library(page)).getByRole("button", { name: "Raft notes" }).click();
   await assert.doesNotReject(page.getByRole("alert").filter({ hasText: "Synthetic save failure" }).waitFor());
   assert.equal(await title(page).inputValue(), "Consistent hashing");
   assert.equal(await block(page, 1).inputValue(), "Draft that must not be lost.");

@@ -34,7 +34,7 @@
     return pages.filter(page=>page.id!==pageId && page.title.trim() && new RegExp(`(^|[^\\p{L}\\p{N}_])${page.title.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}(?=$|[^\\p{L}\\p{N}_])`,"iu").test(plain)).map(page=>({block,page}));
   }).slice(0,100));
   function change(id:string,patch:Partial<NoteBlock>){onchange(blocks.map(block=>block.id===id?{...block,...patch}:block));}
-  async function focus(id:string,position=0){await tick();if(!pane.active)return;const field=root?.querySelector<HTMLTextAreaElement>(`#${CSS.escape(`${pane.id}-note-block-${id}`)}`);if(!field?.getClientRects().length)return;field.focus();field.setSelectionRange(position,position);field.scrollIntoView({block:"nearest"});}
+  async function focus(id:string,position=0){await tick();if(!pane.active)return;const field=root?.querySelector<HTMLTextAreaElement>(`#${CSS.escape(`${pane.id}-note-block-${id}`)}`);if(!field?.getClientRects().length){root?.querySelector(`[data-block="${CSS.escape(id)}"]`)?.scrollIntoView({block:"nearest"});return;}field.focus();field.setSelectionRange(position,position);field.scrollIntoView({block:"nearest"});}
   $effect(()=>{if(focusBlock)void focus(focusBlock);});
   export function add(){const id=crypto.randomUUID();onchange([...ordered,{id,parent_id:null,text:"",ordering:ordered.length,collapsed:false}]);void focus(id);}
   function descendants(id:string):Set<string>{const found=new Set([id]);let changed=true;while(changed){changed=false;for(const b of blocks)if(b.parent_id&&found.has(b.parent_id)&&!found.has(b.id)){found.add(b.id);changed=true;}}return found;}
@@ -83,7 +83,7 @@
 <svelte:window onclick={()=>{if(pane.active)menu=null;}} onkeydown={event=>{if(pane.active&&event.key==="Escape")menu=null;}}/>
 {#snippet branch(parent:string|null,depth:number)}
   {#each ordered.filter(b=>b.parent_id===parent) as block (block.id)}
-    <div class="block-row" role="group" aria-label={`Outline block ${block.ordering+1}`} style:padding-left={`${depth*22}px`} class:focused={focusBlock===block.id} oncontextmenu={event=>{event.preventDefault();menu={id:block.id,x:event.clientX,y:event.clientY};}}>
+    <div class="block-row" role="group" data-block={block.id} aria-label={`Outline block ${block.ordering+1}`} style:padding-left={`${depth*22}px`} class:focused={focusBlock===block.id} oncontextmenu={event=>{event.preventDefault();menu={id:block.id,x:event.clientX,y:event.clientY};}}>
       <button class="bullet" aria-label={block.collapsed?"Expand block":"Collapse block"} aria-expanded={!block.collapsed} onclick={()=>change(block.id,{collapsed:!block.collapsed})} oncontextmenu={event=>{event.preventDefault();menu={id:block.id,x:event.clientX,y:event.clientY};}}>{blocks.some(b=>b.parent_id===block.id)?block.collapsed?"▸":"▾":"•"}</button>
       <div class="block-body">
         {#if preview}<div class="rendered"><NoteBlockText text={block.text} {references} onpage={onpage} ontopic={showTopic} onreference={citations}/></div>
