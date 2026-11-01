@@ -397,7 +397,9 @@ documents. Related matches are suggestions, not claims that two concepts are
 identical; no AI, external indexing or network calls are involved.
 
 **Flashcards** opens a deck → note schema. **Add card** is available immediately,
-including from All decks; Review reveals a flip animation before grading.
+including from All decks. Review grades with a keyboard strip: keycaps 1–4
+(Again, Hard, Good, Easy, each with its next interval) and Space (flip, then Good)
+sink as you press them.
 FSRS scheduling, cloze/reversed cards, media and portable imports are supported.
 This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimizer,
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.

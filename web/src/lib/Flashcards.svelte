@@ -5,6 +5,7 @@
   import AIReview from "./AIReview.svelte";
   import EmptyState from "./EmptyState.svelte";
   import SectionGraph, { type SectionNode } from "./SectionGraph.svelte";
+  import GradeKeys, { GRADES, type HeldKey } from "./flashcards/GradeKeys.svelte";
   import type { Crumb } from "./breadcrumb.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
@@ -121,6 +122,8 @@
     started = $state(0);
   let revealed = $state(false);
   let answerFace = $state(false);
+  let held = $state<HeldKey>(null);
+  let heldToken = 0;
   let studyId = $state<string | null>(null),
     practiceResume = $state<{
       study_id: string;
@@ -273,7 +276,7 @@
     search = "";
     void startReview();
   }
-  const labels = ["Again", "Hard", "Good", "Easy"];
+  const labels = GRADES.map((grade) => grade.label);
   const defaultSettings: Settings = {
     new_limit: 20,
     review_limit: 200,
@@ -598,11 +601,6 @@
       else await loadHistory();
     });
   }
-  function interval(seconds: number) {
-    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-    if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
-    return `${Math.round(seconds / 86400)}d`;
-  }
   async function loadHistory() {
     try {
       historyRows = (
@@ -857,6 +855,17 @@
     }
     return () => window.removeEventListener("kitty-study-text", selectedText);
   });
+  /** Sinks `key` on the keyboard strip until `action` settles (at least briefly, so a tap is visible). */
+  async function press(key: HeldKey, action: () => Promise<void>) {
+    if (busy) return;
+    const token = ++heldToken, pressedAt = performance.now();
+    held = key;
+    await action();
+    setTimeout(() => { if (token === heldToken) held = null; }, Math.max(0, 140 - (performance.now() - pressedAt)));
+  }
+  function space() {
+    void press("space", () => (revealed ? grade(3) : reveal()));
+  }
   function keydown(event: KeyboardEvent) {
     if (
       !pane.active ||
@@ -877,11 +886,11 @@
       return;
     if (event.code === "Space") {
       event.preventDefault();
-      if (!revealed) void reveal();
-      else void grade(3);
+      space();
     } else if (revealed && /^[1-4]$/.test(event.key)) {
       event.preventDefault();
-      void grade(Number(event.key));
+      const rating = Number(event.key);
+      void press(rating, () => grade(rating));
     }
   }
 </script>
@@ -1341,16 +1350,8 @@
             >{/if}{#if revealed}
             <Button size="sm" variant="ghost" onclick={() => (answerFace = !answerFace)}>{answerFace ? "Show question" : "Show answer"}</Button>
             {@render referencePanel()}
-            <p class="rating-guide">How well did you remember? Again = missed · Hard = struggled · Good = recalled · Easy = effortless.</p>
-            <div class="grades">
-              {#each labels as label, index}<button
-                  onclick={() => grade(index + 1)}
-                  disabled={busy}
-                  >{index + 1} · {label}{#if intervals[index]}<small
-                      >{interval(intervals[index].seconds)}</small
-                    >{/if}</button
-                >{/each}
-            </div>{:else}<Button intent="primary" onclick={reveal} disabled={busy}>Flip to answer · Space</Button>{/if}
+          {/if}
+          <GradeKeys {revealed} {intervals} {held} ongrade={(rating) => void press(rating, () => grade(rating))} onspace={space} />
         </article>{:else}<Panel><EmptyState level={3} title={busy ? "Preparing your review…" : "No eligible card right now"}>
           <p>Learning cards appear at their scheduled time. Daily limits reset at local midnight. Add a card, refresh later, or choose a practice mode under Study options.</p>
           {#snippet actions()}
@@ -1358,10 +1359,6 @@
             <Button variant="ghost" onclick={() => newNote()} disabled={busy || !overview?.decks.some(deck => !deck.archived)}>New card</Button>
           {/snippet}
         </EmptyState></Panel>{/if}
-      <p class="hint">
-        Outside inputs: Space reveals / grades Good; 1–4 grades only after
-        reveal.
-      </p>
     {:else if view === "history"}
       <div class="toolbar">
         <h2>Review history</h2>
@@ -1523,7 +1520,6 @@
   .tools-menu .toolbar { margin-bottom: 0.2rem; }
   .selected-deck { border-color: var(--accent); }
   .selected-label { display: inline-block; margin-left: 0.5rem; font-size: 0.75rem; color: var(--accent); }
-  .rating-guide { font-size: 0.9rem; line-height: 1.6; }
   .review-options { padding: 0.8rem 1rem; border: 1px solid var(--border); border-radius: 0.6rem; }
   .editor-actions { padding-top: 0.8rem; border-top: 1px solid var(--border); }
   header h1 {
@@ -1681,14 +1677,6 @@
   .card-content :global(audio) {
     max-width: 100%;
   }
-  .grades {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.5rem;
-  }
-  .grades small {
-    display: block;
-  }
   .graph {
     display: flex;
     align-items: flex-end;
@@ -1741,7 +1729,6 @@
   }
   @media (max-width: 600px) {
     .flashcards { padding: 1rem; }
-    .grades { grid-template-columns: repeat(2, 1fr); }
     .card-face { padding: 1rem; }
     .card-content { font-size: 1.1rem; }
   }
