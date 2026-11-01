@@ -43,6 +43,7 @@ def serve(root: Path, assets: Path, package: str) -> None:
     settings_module = importlib.import_module(f"{package}.settings")
     workspace_module = importlib.import_module(f"{package}.core.workspace")
     desktop_module = importlib.import_module(f"{package}.web_desktop")
+    endpoint_module = importlib.import_module(f"{package}.core.endpoint")
     # Keep the owner pipe private: only owner messages use the original stdout;
     # stray library prints (Python or native) go to /dev/null instead.
     owner_output = os.fdopen(os.dup(1), "w", encoding="utf-8")
@@ -94,9 +95,12 @@ def serve(root: Path, assets: Path, package: str) -> None:
 
         threading.Thread(target=owner_channel, daemon=True, name="kitty-owner").start()
         threading.Thread(target=shutdown, daemon=True, name="kitty-shutdown").start()
-        send(json.dumps({"origin": server.origin}))
         try:
-            server.serve_forever(poll_interval=0.1)
+            # Paired programs (Q7) find this random port through the owner-only
+            # .private/endpoint.json; it is removed again when serving stops.
+            with endpoint_module.published(settings.root, server.origin):
+                send(json.dumps({"origin": server.origin}))
+                server.serve_forever(poll_interval=0.1)
         finally:
             server.server_close()
             # Core owns scheduler, browser-worker and TaskRunner close ordering.

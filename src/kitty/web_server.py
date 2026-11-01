@@ -17,6 +17,7 @@ import importlib
 import json
 import re
 import shutil
+import signal
 import sqlite3
 import threading
 from contextlib import closing
@@ -26,7 +27,9 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from kitty import web_clients
 from kitty.config import Config, ConfigError
+from kitty.core import endpoint
 from kitty.core.bootstrap import configure_modules
 from kitty.core.workspace import open_workspace
 from kitty.db import connect
@@ -55,9 +58,11 @@ STATIC_TYPES = {
 
 
 class APIError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, *, headers: dict[str, str] | None = None):
         super().__init__(message)
         self.status = status
+        #: Extra response headers (WWW-Authenticate, Retry-After) for this error.
+        self.headers = headers or {}
 
 
 def _integer(value: str, name: str, minimum: int, maximum: int) -> int:
@@ -134,7 +139,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
-    (None, "web_desktop"),
+    (None, "web_desktop"), (None, "web_clients"),
     (None, "web_account"),
     ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
@@ -471,7 +476,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         # URLs/search strings and private job IDs do not belong in access logs.
         pass
 
+    def parse_request(self) -> bool:
+        #: Extra headers for this request's response (the client ingress's CORS headers).
+        self.response_headers: dict[str, str] = {}
+        return super().parse_request()
+
     def _security(self, *, mutation: bool = False) -> None:
+        if self.headers.get_all("Authorization", []):
+            raise APIError(403, "Paired client tokens reach only /api/ingress")
         hosts = self.headers.get_all("Host", [])
         if hosts != [self.server.authority]:
             raise APIError(403, "Use the server's loopback address")
@@ -513,6 +525,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:3210; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        for key, value in self.response_headers.items():
+            self.send_header(key, value)
         if download:
             self.send_header("Content-Disposition", f'attachment; filename="{download}"')
         self.end_headers()
@@ -532,10 +546,16 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._dispatch(True)
 
     def do_OPTIONS(self) -> None:
-        self._json(405, {"error": "Cross-origin preflight is not supported"})
+        if web_clients.is_ingress(self.path):
+            self._dispatch(False)
+        else:
+            self._json(405, {"error": "Cross-origin preflight is not supported"})
 
     def _dispatch(self, mutation: bool) -> None:
         try:
+            if web_clients.is_ingress(self.path):
+                web_clients.ingress_request(self)
+                return
             self._security(mutation=mutation)
             path, query = self._target()
             if mutation:
@@ -559,6 +579,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._static(path)
         except APIError as exc:
             self.close_connection = True
+            self.response_headers.update(exc.headers)
             self._json(exc.status, {"error": str(exc)})
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
@@ -655,6 +676,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._send(200, target.read_bytes(), kind)
 
 
+def _interrupt(*_args: object) -> None:
+    raise KeyboardInterrupt
+
+
 def _serve(settings: Settings, static_dir: Path, port: int) -> None:
     with open_workspace(settings) as workspace:
         if settings.demo and workspace.config.enabled("applyai"):
@@ -662,12 +687,17 @@ def _serve(settings: Settings, static_dir: Path, port: int) -> None:
 
             demo.seed(workspace.conn, settings, workspace.config)
         app = WebApplication(settings, workspace.config, static_dir)
+    # A plain `kill` stops kitty-web like Ctrl+C: workers drain and the endpoint file goes.
+    signal.signal(signal.SIGTERM, _interrupt)
     with LocalHTTPServer(app, port) as server:
-        print(f"kitty! {'synthetic demo ' if settings.demo else ''}website: {server.origin}", flush=True)
         try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
+            # Paired programs find this server through the owner-only endpoint file.
+            with endpoint.published(settings.root, server.origin):
+                print(f"kitty! {'synthetic demo ' if settings.demo else ''}website: {server.origin}", flush=True)
+                try:
+                    server.serve_forever()
+                except KeyboardInterrupt:
+                    pass
         finally:
             app.close()
 

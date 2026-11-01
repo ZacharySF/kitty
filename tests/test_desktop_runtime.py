@@ -129,6 +129,17 @@ def test_owner_quit_leaves_unrelated_process_alive(backend):
         unrelated.wait(timeout=10)
 
 
+def test_the_sidecar_publishes_its_endpoint_owner_only_and_removes_it_on_quit(backend):
+    process, origin, root = backend
+    path = root / ".private" / "endpoint.json"
+    assert json.loads(path.read_text()) == {"origin": origin.geturl().rstrip("/"), "pairing": "/api/ingress/pair"}
+    assert path.stat().st_mode & 0o777 == 0o600
+    process.stdin.write("quit\n")
+    process.stdin.flush()
+    assert process.wait(timeout=30) == 0
+    assert not path.exists()
+
+
 def owner_line(process, timeout=10):
     assert select.select([process.stdout], [], [], timeout)[0], "No owner-pipe message"
     return json.loads(process.stdout.readline())
