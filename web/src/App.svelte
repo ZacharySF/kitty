@@ -23,6 +23,7 @@
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
   import PetalDrift from "./lib/PetalDrift.svelte";
+  import ThemeLayer from "./lib/themes/ThemeLayer.svelte";
   import { APPEARANCE_EVENT, savedAppearance, type Appearance } from "./lib/appearance";
   import QuickCard from "./lib/flashcards/QuickCard.svelte";
 
@@ -360,6 +361,7 @@
 </script>
 
 <svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} />
+<ThemeLayer />
 {#if background === "petals"}<PetalDrift />{/if}
 <svelte:head><title>{title} · kitty!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>

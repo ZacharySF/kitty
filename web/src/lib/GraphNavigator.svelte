@@ -455,7 +455,7 @@
       <div class="stage-caption" aria-hidden="true">
         <span>{#if draggedSection && hidden.has(draggedSection)}Drop to show {sections.flatMap((group) => group.items).find((item) => item.id === draggedSection)?.label} on the atlas{:else if mode === "graph" && !graph.nodes.length}Every section is hidden · drag one here from Sections to show it{:else}Drag a node to move · drag background to pan · scroll or pinch to zoom · drag a node onto Sections to hide it{/if}</span>
       </div>
-      {#if mode === "loading"}<div class="stage-loading"><Loader kind="eyes" label="Drawing your atlas…" /></div>{/if}
+      {#if mode === "loading"}<div class="stage-loading"><Loader kind="view" label="Drawing your atlas…" /></div>{/if}
       {#if hovered}<p class="stage-selection" aria-hidden="true">{hovered.label}</p>{/if}
     {/if}
   </div>

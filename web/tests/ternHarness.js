@@ -2,7 +2,8 @@
 // stand-in kitty! API, so the page never reaches a tern binary or daemon.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import "/src/lib/themes/engine.css";
+import { applySavedTheme } from "/src/lib/themes/index.ts";
 import TernView from "/src/lib/TernView.svelte";
 
 const BASE = {

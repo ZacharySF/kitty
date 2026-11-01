@@ -79,7 +79,7 @@
   }
 </script>
 
-{#snippet pending()}<Loader kind="eyes" label="kitty is waking up…" />{/snippet}
+{#snippet pending()}<Loader kind="view" label="kitty is waking up…" />{/snippet}
 {#key `${view}:${epoch}:${initialJobId}`}
   {#if !viewEnabled(view, activeModules.enabled)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->

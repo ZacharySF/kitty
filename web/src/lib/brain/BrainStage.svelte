@@ -405,7 +405,7 @@
       <button type="button" onclick={() => { status = "loading"; void load(); }}>Retry</button>
     </div>
   {:else if status === "loading"}
-    <div class="state"><Loader kind="eyes" label="Waking the brain…" /></div>
+    <div class="state"><Loader kind="view" label="Waking the brain…" /></div>
   {:else if data && !data.nodes.length}
     <div class="state" role="status">
       <p class="title">Nothing to draw yet</p>

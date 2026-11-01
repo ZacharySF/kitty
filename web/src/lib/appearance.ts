@@ -1,4 +1,4 @@
-import type { ThemeId } from "./themeCatalog";
+import type { ThemeId } from "./themes/catalog";
 import type { GraphLook } from "./graph3d";
 
 /**

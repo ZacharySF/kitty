@@ -122,10 +122,10 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL(`#${hash}`, base).href);
   if (typeof theme === "string")
-    await page.evaluate(async (id) => (await import("/src/lib/themes.ts")).setTheme(id), theme);
+    await page.evaluate(async (id) => (await import("/src/lib/themes/index.ts")).setTheme(id), theme);
   else if (theme)
     await page.evaluate(async (palette) => {
-      const [{ THEMES }, { setTheme }] = await Promise.all([import("/src/lib/themeCatalog.ts"), import("/src/lib/themes.ts")]);
+      const [{ THEMES }, { setTheme }] = await Promise.all([import("/src/lib/themes/catalog.ts"), import("/src/lib/themes/index.ts")]);
       THEMES.push(palette);
       setTheme(palette.id);
     }, theme);
@@ -489,7 +489,7 @@ describe("empty states", () => {
 });
 
 describe("loaders", () => {
-  test("lists load behind shimmering skeleton rows; whole views behind blinking cat eyes", async () => {
+  test("lists load behind shimmering skeleton rows; whole views behind the theme's loader (Kitty: the blinking cat in a petal spinner)", async () => {
     const { page, problems, context } = await open("today", { dock: "hidden" });
     await page.locator(".wordmark").waitFor();
     let release;
@@ -507,7 +507,7 @@ describe("loaders", () => {
     const brainHeld = new Promise((resolve) => (releaseBrain = resolve));
     await page.route((url) => url.pathname === "/api/brain", async (route) => { await brainHeld; await route.continue(); });
     await page.keyboard.press("Control+t");
-    const eyes = page.locator('[role="status"].kitty-loader[data-kind="eyes"]').filter({ hasText: "Waking the brain…" });
+    const eyes = page.locator('[role="status"].kitty-loader[data-kind="view"]').filter({ hasText: "Waking the brain…" });
     await eyes.waitFor();
     assert.equal(await eyes.locator(".eye").count(), 2);
     assert.notEqual(await eyes.locator(".eye").first().evaluate((node) => getComputedStyle(node).animationName), "none", "eyes do not blink");
@@ -674,7 +674,7 @@ describe("Liquid Glass theme", () => {
   test("panels are clear, neutral, lit glass like macOS/iOS, never rainbow-tinted, and their text stays readable", async () => {
     const { page, problems, context } = await open("settings", { dock: "hidden" });
     await page.locator(".br-panel").first().waitFor();
-    await page.evaluate(async () => (await import("/src/lib/themes.ts")).setTheme("liquid-glass"));
+    await page.evaluate(async () => (await import("/src/lib/themes/index.ts")).setTheme("liquid-glass"));
     await page.waitForFunction(() => document.documentElement.dataset.theme === "liquid-glass");
     const glass = await page.evaluate(() => {
       const panel = document.querySelector(".br-panel");
@@ -689,7 +689,7 @@ describe("Liquid Glass theme", () => {
       });
       const painted = [
         rim.backgroundImage, style.backgroundImage, style.boxShadow,
-        getComputedStyle(document.body).backgroundImage,
+        getComputedStyle(document.documentElement).backgroundImage,
         getComputedStyle(document.body, "::before").backgroundImage,
       ].join(" ");
       const chroma = Math.max(0, ...colors(painted).map(([r, g, b]) => Math.max(r, g, b) - Math.min(r, g, b)));
@@ -1198,7 +1198,7 @@ describe("calendar redesign", () => {
     });
     return response.json();
   }, body);
-  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/themes.ts")).setTheme(theme), id);
+  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/themes/index.ts")).setTheme(theme), id);
   /** WCAG contrast of an element's text colour against its own background, plus that background's alpha. */
   const textContrast = (locator) => locator.evaluate((node) => {
     const ctx = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
@@ -1795,9 +1795,9 @@ describe("notes canvas background", () => {
       return node?.width > 0 && Math.abs(node.getBoundingClientRect().width - node.closest(".canvas-stage").clientWidth) < 1;
     });
     const kitty = await sample();
-    assert.equal(kitty.void, "#1b151a", "the default theme is not Kitty");
+    assert.equal(kitty.void, "#1a1319", "the default theme is not Kitty");
     assert.deepEqual(kitty.colours, [kitty.void], "the empty canvas is not one flat void colour (grid, dots or nebula showed)");
-    await page.evaluate(async () => (await import("/src/lib/themes.ts")).setTheme("harness"));
+    await page.evaluate(async () => (await import("/src/lib/themes/index.ts")).setTheme("harness"));
     await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim() === "#141414");
     await page.waitForFunction(() => {
       const node = document.querySelector("canvas[aria-label^='Infinite drawing canvas']");

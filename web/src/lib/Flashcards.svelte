@@ -1697,7 +1697,7 @@
     cursor: pointer;
   }
   /* The app's pressed-toggle look (styles.css): solid accent with its contrasting text.
-     The doubled class outranks a theme's own control fill (liquidGlass.css). */
+     The doubled class outranks a theme's own control fill (lib/themes/liquid-glass). */
   :global(:root body) nav :global(button.br-btn.br-btn[aria-current="page"]) {
     background: var(--accent);
     border-color: var(--accent);

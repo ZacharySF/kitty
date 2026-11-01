@@ -194,7 +194,7 @@
     >
   </div>
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
-  {#if !job && !error}<Loader kind="eyes" label="Opening opportunity…" />{/if}
+  {#if !job && !error}<Loader kind="view" label="Opening opportunity…" />{/if}
   {#if job}
     <div class="detail-body">
       <div class="detail-company">
