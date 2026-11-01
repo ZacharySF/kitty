@@ -93,6 +93,6 @@
     font-size: 12.5px;
   }
   h4 {
-    font: 600 12.5px var(--heading);
+    font: 600 12.5px var(--font-ui);
   }
 </style>

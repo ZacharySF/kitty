@@ -105,7 +105,7 @@
   }
   .count strong {
     color: var(--ink);
-    font: 700 52px/0.9 var(--font-title);
+    font: 700 52px/0.9 var(--font-ui);
   }
   .count span {
     color: var(--muted);
@@ -121,7 +121,7 @@
     padding: 0;
     background: none;
     color: var(--ink);
-    font: 600 14px var(--heading);
+    font: 600 14px var(--font-ui);
     text-align: left;
   }
   .title:hover {

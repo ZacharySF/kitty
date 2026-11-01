@@ -117,7 +117,7 @@
   }
   h2 {
     margin: 0;
-    font: 700 17px var(--font-title);
+    font: 700 17px var(--font-ui);
   }
   .link {
     border: 0;

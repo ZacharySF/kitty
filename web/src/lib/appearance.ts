@@ -8,7 +8,7 @@ import type { GraphLook } from "./graph3d";
  * graph look (`kitty.graph.look`) keep their own keys; presets set those too.
  */
 export type Appearance = {
-  /** Fraunces page titles, or plain Space Grotesk. */
+  /** Fraunces page titles, or plain Inter. */
   titleFont: "fraunces" | "plain";
   /** Q11: compact 13px body, or comfortable 14px. */
   density: "compact" | "comfortable";

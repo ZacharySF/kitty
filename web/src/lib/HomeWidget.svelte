@@ -3,7 +3,7 @@
 
   /**
    * Q19: one home widget, framed "hairline minimal": no fill or box, only a
-   * rule above, a small Space Grotesk title and the eyebrow on the right.
+   * rule above, a small Inter title and the eyebrow on the right.
    */
   let {
     id,
@@ -41,7 +41,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: 600 13.5px var(--heading);
+    font: 600 13.5px var(--font-ui);
     letter-spacing: 0.01em;
   }
   .eyebrow {

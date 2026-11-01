@@ -329,6 +329,12 @@
     dirty = $state(false),
     viewDirty = $state(false),
     blocked = $state(false);
+  /** Save-state words that the tab's status dot (Q3) reports instead of the header. */
+  const SAVE_WORDS = new Set(["Saved locally", "Saving locally…", "Unsaved changes"]);
+  $effect(() => {
+    pane.setStatus(blocked ? { state: "failed", detail: saveStatus } : dirty || viewDirty ? { state: "unsaved", detail: "Unsaved changes · Ctrl S saves" } : { state: "saved" });
+    return () => pane.setStatus(null);
+  });
   export function hasUnsavedChanges(): boolean {
     return dirty || viewDirty || Boolean(saving) || Boolean(viewSaving) || blocked || Boolean(viewError) ||
       gesture !== null || Boolean(savedMapEditor?.hasUnsavedChanges());
@@ -1801,7 +1807,7 @@
     <button bind:this={libraryToggle} class="library-toggle" aria-label="Open library" aria-expanded={libraryOpen} aria-controls={`${pane.id}-notes-library`} title="Library" onclick={() => void openLibrary(!libraryOpen)}><Icon name="menu" size={17}/></button>
     <h2 title={`My notes${activeNotebook ? ` / ${activeNotebook.title}` : ""}`}>Notes</h2>
     {#if !fullscreen}{@render pageTabs()}{/if}
-    <span role="status" class="save-status" class:unsaved={dirty} title={saveStatus}>{saveStatus}</span>
+    {#if !blocked && !SAVE_WORDS.has(saveStatus)}<span role="status" class="save-status" title={saveStatus}>{saveStatus}</span>{/if}
     <details class="overflow notes-views" bind:open={viewsOpen} use:closeOnEscape>
       <summary>Views <span aria-hidden="true">▾</span></summary>
       <div class="overflow-menu" role="group" aria-label="Notes views">
@@ -2395,9 +2401,6 @@
   .notes-heading > :not(.note-tabs) { margin-bottom: 5px; }
   .notes-heading h2 { margin: 0 4px 5px 2px; font-size: 18px; flex-shrink: 0; }
   .save-status { font-size: 11px; color: var(--muted); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
-  .unsaved {
-    color: var(--warning);
-  }
   .notebook-layout {
     position: relative;
     display: flex;
@@ -2447,14 +2450,13 @@
     align-items: center;
     gap: 6px;
     list-style: none;
-    padding: 6px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 1.3;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    height: var(--control-h);
+    min-height: 0;
+    padding: 0 12px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-control);
+    color: var(--ink);
+    font: 500 var(--fs-control) / 1 var(--font-ui);
     white-space: nowrap;
   }
   .overflow > summary::-webkit-details-marker { display: none; }

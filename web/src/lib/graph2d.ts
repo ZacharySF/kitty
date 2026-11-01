@@ -54,7 +54,7 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
   let intersecting = true;
   let destroyed = false;
   let frame = 0;
-  let ink = "", chrome = "", muted = "", font = "", heading = "", mono = "", raised = "", shadow = "";
+  let ink = "", chrome = "", muted = "", font = "", mono = "", raised = "", shadow = "";
   let palette: string[] = [];
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const simulation = forceSimulation<Node>().stop().alphaDecay(0.035);
@@ -70,7 +70,6 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
     chrome = style.getPropertyValue("--chrome").trim() || "#0e0c14";
     muted = style.getPropertyValue("--muted").trim() || "#8f86a0";
     font = style.getPropertyValue("--br-font-ui").trim() || "ui-monospace, monospace";
-    heading = style.getPropertyValue("--heading").trim() || font;
     mono = style.getPropertyValue("--font-mono").trim() || "ui-monospace, monospace";
     raised = style.getPropertyValue("--solid-raised").trim() || chrome;
     shadow = style.getPropertyValue("--shadow-tint").trim() || "#000000";
@@ -255,7 +254,7 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
         const eyebrow = node.data.kind && !hub ? node.data.kind : count ? `${count} ${count === 1 ? "link" : "links"}` : "";
         if (eyebrow) ctx.fillText(eyebrow.toUpperCase().slice(0, 18), x + 11 * scale, y + h * 0.4);
         ctx.letterSpacing = "0px";
-        ctx.font = hub ? `700 ${12 * scale}px ${heading}` : `600 ${10.5 * scale}px ${font}`;
+        ctx.font = hub ? `700 ${12 * scale}px ${font}` : `600 ${10.5 * scale}px ${font}`;
         ctx.fillStyle = ink;
         let label = node.data.label;
         while (ctx.measureText(label).width > w - 20 * scale && label.length > 4) label = `${label.slice(0, -2)}…`;

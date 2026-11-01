@@ -15,7 +15,7 @@
   import MiniMonth from "./calendar/MiniMonth.svelte";
   import DayPlan from "./calendar/DayPlan.svelte";
   import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START, type DayLoad } from "./calendar/plan";
-  import EventDrawer from "./calendar/EventDrawer.svelte";
+  import EditDrawer from "./ui/EditDrawer.svelte";
   import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
   import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
   import { notifier } from "./notifications.svelte";
@@ -2655,8 +2655,8 @@
 </section>
 
 {#if editor && isActive}
-  <EventDrawer title={editor.id ? "Event details" : "New event"} accent={paint(editor)}
-    eyebrow={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
+  <EditDrawer title={editor.id ? "Event details" : "New event"} accent={paint(editor)} closeLabel="Close event editor"
+    meta={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
     onclose={() => (editor = null)}>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <form class="drawer-form"
@@ -2832,7 +2832,7 @@
           }}>Delete selected scope</Button>{/if}
         </footer>
       </form>
-  </EventDrawer>{/if}
+  </EditDrawer>{/if}
 {#if taskEditor && isActive}<div class="modal-backdrop" role="presentation">
     <dialog
       use:modal
@@ -3937,7 +3937,7 @@
     border-radius: 0;
     background: transparent;
     color: var(--ink);
-    font: 700 1.2rem var(--font-title);
+    font: 700 1.2rem var(--font-ui);
   }
   .drawer-title:focus-visible {
     outline: none;

@@ -153,7 +153,7 @@
     background: color-mix(in srgb, var(--violet) 11%, var(--solid-panel));
   }
   .name {
-    font: 600 16px var(--font-title);
+    font: 600 16px var(--font-ui);
   }
   .blurb {
     color: var(--muted);
