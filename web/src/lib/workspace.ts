@@ -166,7 +166,7 @@ const shortcutGroups: ShortcutGroup[] = [
       ["Space / p", "Start, pause, or resume the study timer"],
       ["s / r", "Stop / reset the study timer"],
       ["b", "Skip the current break"],
-      ["Escape", "Leave study focus mode"],
+      ["[ / ]", "Open or close the subjects and guide drawers"],
     ],
   },
   {

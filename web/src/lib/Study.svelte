@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { fly } from "svelte/transition";
   import { Button } from "@nunera/bracket";
   import { api } from "./api";
+  import Icon from "./Icon.svelte";
   import SchemaMaps from "./SchemaMaps.svelte";
   import StudyGuide from "./StudyGuide.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -14,11 +16,11 @@
   import Reflections from "./study/Reflections.svelte";
   import SessionEditor from "./study/SessionEditor.svelte";
   import SessionNotes from "./study/SessionNotes.svelte";
-  import SettingsForm from "./study/SettingsForm.svelte";
   import SubjectsColumn from "./study/SubjectsColumn.svelte";
   import TaskList from "./study/TaskList.svelte";
   import TimerPanel from "./study/TimerPanel.svelte";
   import type { Collection, Guide, GuideState, Item, Session, Settings, Workspace } from "./study/types";
+  import Select from "./ui/Select.svelte";
 
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
@@ -26,17 +28,28 @@
   function confirm(message: string) {
     return pane.active && window.confirm(message);
   }
-  /** The hub's tabs; "session" is the three-column cockpit. */
+  /** The hub's tabs; "session" is the focus-first timer with its two drawers. */
   const TABS = [
-    { id: "session", label: "Study session" },
+    { id: "session", label: "Session" },
     { id: "overview", label: "Progress" },
-    { id: "sessions", label: "History" },
     { id: "exams", label: "Exams & plans" },
     { id: "map", label: "Mind map" },
-    { id: "helpers", label: "Helpers" },
-    { id: "settings", label: "Timer settings" },
+    { id: "tools", label: "Tools" },
   ] as const;
-  type Tab = (typeof TABS)[number]["id"];
+  /** "guide" is the full 14-step guide, reached from the guide drawer, not a tab. */
+  type Tab = (typeof TABS)[number]["id"] | "guide";
+  const TOOLS = [{ value: "history", label: "History" }, { value: "helpers", label: "Helpers" }];
+  /** Drawer open state, remembered per browser. */
+  const DRAWERS_KEY = "kitty.study.drawers";
+  let drawers = $state({ left: false, right: false });
+  try {
+    const saved = JSON.parse(localStorage.getItem(DRAWERS_KEY) || "{}");
+    drawers = { left: saved.left === true, right: saved.right === true };
+  } catch { /* Both closed by default. */ }
+  function toggleDrawer(side: "left" | "right", open = !drawers[side]) {
+    drawers = { ...drawers, [side]: open };
+    try { localStorage.setItem(DRAWERS_KEY, JSON.stringify(drawers)); } catch { /* The state still applies in this session. */ }
+  }
   let data = $state<Workspace | null>(null);
   let error = $state("");
   let notice = $state("");
@@ -45,8 +58,8 @@
   let now = $state(Date.now());
   let serverOffset = $state(0);
   let loaded = $state(false);
-  let focusMode = $state(false);
   let tab = $state<Tab>("session");
+  let tool = $state("history");
   let historyPeriod = $state<"week" | "month">("week");
   let historyDate = $state("");
   let subjectId = $state("");
@@ -56,8 +69,6 @@
   let distractions = $state("");
   let notesDirty = $state(false);
   let noteRevision = $state(0);
-  let settings = $state<Settings | null>(null);
-  let settingsDirty = $state(false);
   let editing = $state<{ kind: Collection; item: Item } | null>(null);
   let sessionEditing = $state<{ session: Session | null } | null>(null);
   let aiText = $state("");
@@ -74,15 +85,21 @@
   function openGuide(guide: Guide) {
     if (guideDirty && !confirm("Replace the unsaved guide draft?")) return;
     guideId = guide.id; guideRevision = guide.revision; guideState = structuredClone($state.snapshot(guide.state)); guideDirty = false; newPreparation = true;
-    tab = "session";
+    tab = "guide";
   }
+  /** Saves the guide to its session; a draft without a session is saved when one starts. */
   async function saveGuide() {
-    if (!guideId) { notice = "Preparation draft kept on this device. Start the session to save it with your timer."; return; }
+    if (!guideId || !guideDirty) return;
+    if (busy) { window.setTimeout(() => void saveGuide(), 800); return; }
+    const sent = JSON.stringify($state.snapshot(guideState));
     if (await change("/study/guide", {session_id: guideId, revision: guideRevision, state: guideState})) {
-      guideDirty = false; newPreparation = false;
       const saved = data?.guides.find(guide => guide.id === guideId);
-      if (saved) { guideRevision = saved.revision; guideState = structuredClone($state.snapshot(saved.state)); }
-      notice = "Guide, reflection and next review saved.";
+      if (saved) guideRevision = saved.revision;
+      // Keystrokes made while saving stay dirty and save next.
+      if (JSON.stringify($state.snapshot(guideState)) === sent) {
+        guideDirty = false; newPreparation = false;
+        if (saved) guideState = structuredClone($state.snapshot(saved.state));
+      }
     }
   }
   let mounted = false;
@@ -122,7 +139,6 @@
     data = result;
     serverOffset = Date.parse(result.server_now) - Date.now();
     online = true;
-    if (!settingsDirty) settings = { ...result.settings };
     if (result.guide && !guideDirty && !newPreparation) {
       guideId = result.guide.id;
       guideRevision = result.guide.revision;
@@ -202,7 +218,7 @@
       )
     )
       return;
-    if (action === "start") tab = "session";
+    if (action === "start") tab = tab === "guide" ? "guide" : "session";
     if (action === "start" && guideId && !newPreparation && !guideDirty) {
       guideState = blankGuide(); guideId = ""; guideRevision = 0;
     }
@@ -252,8 +268,20 @@
     if (!pane.active || event.ctrlKey || event.metaKey || event.altKey || event.repeat)
       return false;
     const target = event.target as HTMLElement | null;
-    if (event.defaultPrevented || target?.closest("input,textarea,select,[contenteditable=true],button,.schema"))
+    if (event.defaultPrevented || target?.closest("input,textarea,select,[contenteditable=true],.schema,[role=dialog],[role=menu],[role=listbox]"))
       return false;
+    // [ and ] work from anywhere on the session page, a drawer's buttons included.
+    if (tab === "session" && (event.key === "[" || event.key === "]")) {
+      event.preventDefault();
+      toggleDrawer(event.key === "[" ? "left" : "right");
+      return true;
+    }
+    if (event.key === "Escape" && tab === "session" && (drawers.left || drawers.right) && target?.closest(".drawer")) {
+      event.preventDefault();
+      toggleDrawer(target.closest(".drawer.left") ? "left" : "right", false);
+      return true;
+    }
+    if (target?.closest("button")) return false;
     const key = event.key.toLowerCase();
     if (key === " " || key === "p") {
       event.preventDefault();
@@ -276,11 +304,6 @@
       await timerAction("skip_break");
       return true;
     }
-    if (key === "escape" && focusMode) {
-      event.preventDefault();
-      focusMode = !focusMode;
-      return true;
-    }
     return false;
   }
   onMount(() => {
@@ -293,7 +316,6 @@
           snapshot.guides ??= [];
           snapshot.guide ??= null;
           data = snapshot;
-          settings = { ...snapshot.settings };
           online = false;
         }
       }
@@ -343,7 +365,8 @@
         typeof detail?.text === "string"
       ) {
         aiText = detail.text;
-        tab = "helpers";
+        tab = "tools";
+        tool = "helpers";
       }
     };
     const focusNode = async (event: Event) => {
@@ -352,7 +375,7 @@
       await ready;
       if (!pane.active || !mounted) return;
       if (!data) {error = "The study workspace must reconnect before starting this branch."; return;}
-      if (!data || data.timer.status !== "idle") {notice = "Stop the current cycle before changing focus."; return;}
+      if (!data || data.timer.status !== "idle") {error = "Stop the current cycle before changing focus."; return;}
       subjectId = detail.subject_id ? String(detail.subject_id) : "";
       projectId = ""; targetId = "";
       setNoteDraft(detail.concept ?? "");
@@ -407,9 +430,56 @@
   });
 
   $effect(() => {
-    const current = TABS.find((item) => item.id === tab);
-    if (tab !== "session" && current) pane.setTrail("study", [{label: current.label, onclick: () => {}}], () => {if (pane.active) tab = "session";});
+    const label = tab === "guide" ? "Guide" : TABS.find((item) => item.id === tab)?.label;
+    if (tab !== "session" && label) pane.setTrail("study", [{label, onclick: () => {}}], () => {if (pane.active) tab = "session";});
   });
+  // The guide saves itself a moment after each change.
+  $effect(() => {
+    if (!guideDirty || !guideId) return;
+    JSON.stringify(guideState);
+    const timer = window.setTimeout(() => void saveGuide(), 1200);
+    return () => window.clearTimeout(timer);
+  });
+  // Q3: save state as a dot on the workspace tab instead of status text.
+  $effect(() => {
+    // The mind map reports its own save state.
+    if (tab === "map") return;
+    pane.setStatus(!online ? { state: "failed", detail: "Offline · showing your last snapshot" }
+      : error ? { state: "failed", detail: error }
+      : notesDirty ? { state: "unsaved", detail: "Unsaved session notes" }
+      : guideDirty ? { state: "unsaved", detail: guideId ? "Saving the guide…" : "The guide saves when the session starts" }
+      : { state: "saved" });
+    return () => pane.setStatus(null);
+  });
+
+  /** Sizes the session page to the window above the dock, so it never scrolls. */
+  function fill(node: HTMLElement) {
+    let frame = 0;
+    const size = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const main = node.closest("main");
+        if (!main || !node.offsetParent) return;
+        // Grow into the slack below, or shrink by what overflows the window; never collapse
+        // first, so a resize-sensitive child (the mind map) sees one size change.
+        const box = node.getBoundingClientRect();
+        const slack = main.getBoundingClientRect().bottom - parseFloat(getComputedStyle(main).borderBottomWidth || "0") - box.bottom;
+        const over = document.documentElement.scrollHeight - innerHeight;
+        const next = Math.floor(box.height + (over > 0 ? -over : slack));
+        if (Math.abs(next - box.height) < 1) return;
+        const height = `${next}px`;
+        node.style.height = height;
+        node.style.setProperty("--map-height", height);
+      });
+    };
+    size();
+    const observer = new ResizeObserver(size);
+    observer.observe(document.querySelector(".workbench-top") ?? document.body);
+    const styles = new MutationObserver(size);
+    styles.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+    window.addEventListener("resize", size);
+    return { destroy() { cancelAnimationFrame(frame); observer.disconnect(); styles.disconnect(); window.removeEventListener("resize", size); } };
+  }
 
   function openEditor(kind: Collection, item?: Item, defaults: Partial<Item> = {}) {
     editing = {
@@ -439,108 +509,88 @@
     if (confirm("Delete this completed session? Its study time and streak contribution will be removed."))
       await change("/study/sessions", { action: "delete", id: session.id, revision: session.revision, request_id: crypto.randomUUID() });
   }
-  async function saveSettings(event: SubmitEvent) {
-    event.preventDefault();
-    if (!settings) return;
-    if (settings.notifications && "Notification" in window && Notification.permission !== "granted") {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        error = "Desktop notifications were not authorized; visual phase alerts remain available.";
-        settings.notifications = false;
-      }
-    }
-    if (await change("/study/settings", settings)) {
-      settingsDirty = false;
-      await load(true);
-      notice = "Preferences saved. Active phase durations are unchanged.";
-    }
+  /** Timer settings save as they change and apply from the next phase. */
+  function saveSettings(next: Settings) {
+    return change("/study/settings", next);
+  }
+  async function createItem(kind: Collection, fields: Record<string, unknown>) {
+    return change(`/study/${kind}`, { action: "save", ...fields });
   }
 </script>
 
-<section
-  class:focus-mode={focusMode}
-  class="study"
-  aria-label="Study workspace"
->
+<section class="study" aria-label="Study workspace">
   <header class="section-header">
-    <div>
-      <h2>Study</h2>
-    </div>
-    <div class="row">
-      {#if data?.timer.status === "idle" && tab !== "session"}<Button intent="primary" disabled={busy || !online} onclick={() => timerAction("start")}>Start session · 5 min priming</Button>{/if}
-      <Button onclick={() => { focusMode = !focusMode; if (focusMode) tab = "session"; }}
-        >{focusMode ? "Exit focus mode" : "Focus mode"}</Button>
-    </div>
-  </header>
-  {#if demo}<p class="muted">
-      Demo study records stay local; external AI and Google calls are disabled.
-    </p>{/if}
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if notice}<p class="notice" role="status">{notice}<button class="dismiss-message" aria-label="Dismiss message" onclick={() => notice = ""}>×</button></p>{/if}
-  {#if !online}<p class="offline" role="status">
-      Showing your last saved snapshot. Timer display is an estimate until the
-      local server reconnects. Changes are not queued silently. <Button
-        onclick={() => load()}>Reconnect</Button
-      >
-    </p>{/if}
-  {#if data}
-    {#if !focusMode}
+    <h2>Study</h2>
+    {#if data}
       <nav class="tabs" aria-label="Study tools">
-        {#each TABS as item (item.id)}<Button aria-pressed={tab === item.id} onclick={() => (tab = item.id)}>{item.label}</Button>{/each}
+        {#each TABS as item (item.id)}<Button size="sm" aria-pressed={tab === item.id} onclick={() => (tab = item.id)}>{item.label}</Button>{/each}
       </nav>
     {/if}
+  </header>
+  {#if error}<p class="error" role="alert">{error}<button class="dismiss-message" aria-label="Dismiss message" onclick={() => (error = "")}>×</button></p>{/if}
+  {#if notice}<p class="notice" role="status">{notice}<button class="dismiss-message" aria-label="Dismiss message" onclick={() => (notice = "")}>×</button></p>{/if}
+  {#if !online}<p class="offline" role="status">Offline · showing your last snapshot. <Button size="sm" onclick={() => load()}>Reconnect</Button></p>{/if}
+  {#if data}
     {#if tab === "session"}
-      <div class="cockpit">
-        {#if !focusMode}
-          <SubjectsColumn {data} bind:subjectId bind:projectId locked={data.timer.status !== "idle"} disabled={busy || !online}
-            onedit={openEditor} ontoggle={toggleTask} onchecklist={toggleChecklist} />
+      {@const open = data.tasks.filter((item) => !item.done).length}
+      <div class="focus-first" class:left-open={drawers.left} class:right-open={drawers.right} use:fill>
+        <section class="solo" aria-label="Focus">
+          <TimerPanel {data} bind:targetId {subjectId} {projectId} {remaining} {clockLabel} {phaseTotal} disabled={busy || !online} ontimer={timerAction} onsettings={saveSettings} />
+        </section>
+        <button type="button" class="edge left" aria-label="Subjects & tasks" aria-controls="study-drawer-left" aria-expanded={drawers.left}
+          title="Subjects & tasks ([)" onclick={() => toggleDrawer("left")}>
+          <Icon name="study" size={14} /><span>Subjects & tasks</span>{#if open}<span class="count">{open}</span>{/if}
+        </button>
+        <button type="button" class="edge right" aria-label="Guide & notes" aria-controls="study-drawer-right" aria-expanded={drawers.right}
+          title="Guide & notes (])" onclick={() => toggleDrawer("right")}>
+          <Icon name="notes" size={14} /><span>Guide & notes</span>
+        </button>
+        {#if drawers.left}
+          <aside id="study-drawer-left" class="drawer left" aria-label="Subjects & tasks" transition:fly={{ x: -40, duration: 180 }}>
+            <SubjectsColumn {data} bind:subjectId bind:projectId locked={data.timer.status !== "idle"} disabled={busy || !online}
+              onedit={openEditor} oncreate={createItem} ontoggle={toggleTask} onchecklist={toggleChecklist} />
+          </aside>
         {/if}
-        <TimerPanel {data} bind:targetId {subjectId} {projectId} {remaining} {clockLabel} {phaseTotal} disabled={busy || !online} ontimer={timerAction} />
-        {#if focusMode}
-          <section class="column tasks-focus" aria-label="Next tasks">
-            <span class="eyebrow">Next tasks</span>
-            {#if data.tasks.some((item) => !item.done)}
-              <TaskList tasks={data.tasks.filter((item) => !item.done)} subjects={data.subjects} limit={5} disabled={busy || !online} ontoggle={toggleTask} />
-            {:else}<p class="muted">Add a task in the task list, or focus on one thing you choose.</p>{/if}
-          </section>
-        {:else}
-          <section class="guide-column" aria-label="Guide & notes">
-            <StudyGuide bind:value={guideState} phase={data.timer.phase} active={data.timer.status !== "idle"} dirty={guideDirty} busy={busy || !online} onchange={() => guideDirty = true} onsave={saveGuide} onnew={resetGuide} />
-            <div class="column">
-              <SessionNotes timer={data.timer} bind:notes bind:distractions bind:notesDirty bind:noteRevision disabled={busy || !online} {confirm} onannotate={() => timerAction("annotate")} />
-            </div>
-            <div class="column">
-              <Reflections guides={data.guides} subjects={data.subjects} today={data.stats.today} onopen={openGuide} />
-            </div>
-          </section>
+        {#if drawers.right}
+          <aside id="study-drawer-right" class="drawer right" aria-label="Guide & notes" transition:fly={{ x: 40, duration: 180 }}>
+            <StudyGuide bind:value={guideState} phase={data.timer.phase} active={data.timer.status !== "idle"} busy={busy || !online}
+              onchange={() => (guideDirty = true)} onfull={() => (tab = "guide")} />
+            <hr class="rule" />
+            <SessionNotes timer={data.timer} bind:notes bind:distractions bind:notesDirty bind:noteRevision disabled={busy || !online} {confirm} onannotate={() => timerAction("annotate")} />
+            <Reflections show="due" guides={data.guides} subjects={data.subjects} today={data.stats.today} onopen={openGuide} />
+          </aside>
         {/if}
       </div>
+    {:else if tab === "guide"}
+      <div class="surface page">
+        <StudyGuide mode="full" bind:value={guideState} phase={data.timer.phase} active={data.timer.status !== "idle"} busy={busy || !online}
+          onchange={() => (guideDirty = true)} onnew={resetGuide} />
+        <Reflections show="saved" guides={data.guides} subjects={data.subjects} today={data.stats.today} onopen={openGuide} />
+      </div>
     {:else if tab === "map"}
-      <SchemaMaps {revision} {demo} section="study" />
-    {:else}
-      {#if tab === "overview" || tab === "sessions"}
+      <div class="map-host" use:fill><SchemaMaps {revision} {demo} section="study" /></div>
+    {:else if tab === "overview"}
+      <HistoryNav stats={data.stats} period={historyPeriod} date={historyDate} label={historyLabel} onnavigate={navigateHistory} />
+      <ProgressView {data} period={historyPeriod} onedit={openEditor} onlog={() => (sessionEditing = { session: null })} />
+    {:else if tab === "exams"}
+      <PlansView {data} disabled={busy || !online} {change} {confirm} notify={(message) => (notice = message)} fail={(message) => (error = message)}
+        onedit={openEditor} onopen={openGuide} onstudy={(exam) => {
+          if (data?.timer.status === "idle") { subjectId = exam.subject_id ? String(exam.subject_id) : ""; projectId = ""; }
+          else error = "Stop the current cycle before changing focus.";
+          tab = "session";
+        }} />
+    {:else if tab === "tools"}
+      <div class="tool-switch"><Select label="Tool" options={TOOLS} bind:value={tool} /></div>
+      {#if tool === "history"}
         <HistoryNav stats={data.stats} period={historyPeriod} date={historyDate} label={historyLabel} onnavigate={navigateHistory} />
-      {/if}
-      {#if tab === "overview"}
-        <ProgressView {data} period={historyPeriod} onedit={openEditor} onlog={() => (sessionEditing = { session: null })} />
-      {:else if tab === "sessions"}
         <HistoryView {data} period={historyPeriod} label={historyLabel} onopen={(session) => (sessionEditing = { session: session ?? null })} ondelete={deleteSession} />
-      {:else if tab === "exams"}
-        <PlansView {data} disabled={busy || !online} {change} {confirm} notify={(message) => (notice = message)} fail={(message) => (error = message)}
-          onedit={openEditor} onopen={openGuide} onstudy={(exam) => {
-            if (data?.timer.status === "idle") { subjectId = exam.subject_id ? String(exam.subject_id) : ""; projectId = ""; }
-            else notice = "Stop the current cycle before changing focus.";
-            tab = "session";
-          }} />
-      {:else if tab === "helpers"}
+      {:else}
         <HelpersView bind:text={aiText} {demo} active={pane.active}
-          ontemplate={(template) => { setNoteDraft(template); tab = "session"; }}
-          onresult={(text) => { setNoteDraft(text); notice = "Approved suggestions copied into your unsaved note draft. Review them, then save explicitly."; }} />
-      {:else if tab === "settings" && settings}
-        <SettingsForm bind:settings bind:dirty={settingsDirty} disabled={busy || !online} onsave={saveSettings} />
+          ontemplate={(template) => { setNoteDraft(template); tab = "session"; toggleDrawer("right", true); }}
+          onresult={(text) => { setNoteDraft(text); tab = "session"; toggleDrawer("right", true); }} />
       {/if}
     {/if}
-  {:else}<p role="status">Loading local study records…</p>{/if}
+  {:else}<p role="status">Loading…</p>{/if}
   {#if editing && data}
     {#key editing}<ItemEditor kind={editing.kind} item={editing.item} {data} disabled={busy || !online} {change} ondelete={deleteItem} onclose={() => (editing = null)} />{/key}
   {/if}
@@ -553,51 +603,139 @@
   .study {
     container: study / inline-size;
     display: grid;
-    gap: 1rem;
+    gap: 12px;
     min-width: 0;
   }
   .section-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
+    gap: 18px;
     flex-wrap: wrap;
+    min-height: var(--control-h-lg, 32px);
   }
   h2 {
     margin: 0;
   }
   .tabs {
     display: flex;
-    gap: 0.45rem;
+    gap: 4px;
     flex-wrap: wrap;
   }
-  /* Cockpit: what to study | the live timer | how to study it. */
-  .cockpit {
+  /* Focus-first: the timer alone, centred; the drawers slide over it from the edges. */
+  .focus-first {
+    position: relative;
     display: grid;
-    grid-template-columns: minmax(200px, 250px) minmax(0, 1fr) minmax(280px, 360px);
-    gap: 12px;
-    align-items: start;
+    min-height: 420px;
+    overflow: hidden;
   }
-  .focus-mode .cockpit {
-    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
-  }
-  .focus-mode .cockpit :global(.timer-card) {
-    min-height: 45vh;
-  }
-  .guide-column {
+  .solo {
     display: grid;
-    gap: 12px;
+    place-items: center;
     min-width: 0;
   }
-  .tasks-focus {
-    display: grid;
-    gap: 8px;
+  .solo :global(.timer-card) {
+    width: min(100%, 420px);
   }
-  @container study (max-width: 900px) {
-    .cockpit,
-    .focus-mode .cockpit {
-      grid-template-columns: minmax(0, 1fr);
+  .edge {
+    position: absolute;
+    top: 50%;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 30px;
+    height: 200px;
+    padding: 0;
+    border: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 62%, transparent);
+    color: var(--muted);
+    font: 500 12px/1 var(--font-ui);
+    writing-mode: vertical-rl;
+    cursor: pointer;
+    transform: translateY(-50%);
+    transition: left 180ms ease, right 180ms ease, color 120ms;
+  }
+  .edge:hover,
+  .edge[aria-expanded="true"] {
+    color: var(--ink);
+  }
+  .edge.left {
+    left: 0;
+    border-left: 0;
+    border-radius: 0 12px 12px 0;
+    transform: translateY(-50%) rotate(180deg);
+  }
+  .edge.right {
+    right: 0;
+    border-right: 0;
+    border-radius: 12px 0 0 12px;
+  }
+  .edge :global(svg) {
+    transform: rotate(90deg);
+  }
+  .edge .count {
+    color: var(--muted);
+    font: 500 10.5px var(--font-mono);
+  }
+  .left-open .edge.left {
+    left: var(--drawer-w);
+  }
+  .right-open .edge.right {
+    right: var(--drawer-w);
+  }
+  .focus-first {
+    --drawer-w: min(320px, calc(100% - 48px));
+  }
+  .drawer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 12px;
+    width: var(--drawer-w);
+    box-sizing: border-box;
+    padding: 14px 16px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 90%, transparent);
+    box-shadow: var(--overlay-shadow);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+  }
+  .drawer.left {
+    left: 0;
+    border-left: 0;
+    border-radius: 0 14px 14px 0;
+  }
+  .drawer.right {
+    right: 0;
+    border-right: 0;
+    border-radius: 14px 0 0 14px;
+  }
+  .drawer hr {
+    width: 100%;
+    margin: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .edge {
+      transition: none;
     }
+  }
+  .page {
+    display: grid;
+    gap: 16px;
+    padding: 16px 18px;
+  }
+  .map-host {
+    min-height: 360px;
+  }
+  .tool-switch {
+    justify-self: start;
   }
   .error {
     color: var(--warning);
@@ -606,8 +744,10 @@
     color: var(--success);
   }
   .offline {
-    border: 1px solid var(--warning);
-    padding: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--warning);
   }
   /* Shared by the hub's section components. */
   .study :global {

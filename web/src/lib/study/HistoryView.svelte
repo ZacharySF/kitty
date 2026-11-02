@@ -14,10 +14,7 @@
   const subjectName = (id: number | null | undefined) => data.subjects.find((item) => item.id === id)?.name || "Unassigned";
 </script>
 
-<div class="row"><h3>Study records · {label}</h3><Button onclick={() => onopen()}>Add manual study</Button></div>
-<p class="muted">
-  Completed focus and explicit manual study only. Records use actual study time in the selected {period}, including sessions crossing midnight. Edit or delete a record to correct your history.
-</p>
+<div class="row"><h3>Study records · {label}</h3><Button onclick={() => onopen()}>Log study</Button></div>
 {#each data.sessions as session (session.id)}
   <article class="panel">
     <div class="row">
@@ -30,5 +27,5 @@
     {#if session.distractions}<p class="muted preserve">Distractions: {session.distractions}</p>{/if}
   </article>
 {:else}
-  <p>No study records in this {period}. Browse an earlier period or complete your first focus session.</p>
+  <p class="muted">No study records in this {period}.</p>
 {/each}

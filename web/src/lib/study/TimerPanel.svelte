@@ -1,10 +1,12 @@
 <script lang="ts">
   import { Button } from "@nunera/bracket";
   import TimerRing from "../TimerRing.svelte";
-  import { minutesLabel, phaseLabel, type Workspace } from "./types";
+  import Select from "../ui/Select.svelte";
+  import TimerSettings from "./TimerSettings.svelte";
+  import { minutesLabel, phaseLabel, type Settings, type Workspace } from "./types";
 
-  /** Cockpit centre: the session focus, the live ring and the session controls. */
-  let { data, targetId = $bindable(), subjectId, projectId, remaining, clockLabel, phaseTotal, disabled, ontimer }: {
+  /** The focus-first page's centre: session chip, the live ring, the controls and ⚙ timer settings. */
+  let { data, targetId = $bindable(), subjectId, projectId, remaining, clockLabel, phaseTotal, disabled, ontimer, onsettings }: {
     data: Workspace;
     targetId: string;
     subjectId: string;
@@ -14,69 +16,68 @@
     phaseTotal: number;
     disabled: boolean;
     ontimer: (action: string) => void;
+    onsettings: (next: Settings) => Promise<boolean>;
   } = $props();
 
   const timer = $derived(data.timer);
   const subject = $derived(data.subjects.find((item) => String(item.id) === subjectId));
   const concept = $derived(data.projects.find((item) => String(item.id) === projectId));
-  const mood = $derived(timer.status === "idle" ? "Ready when you are" : timer.status === "paused" ? "Paused"
-    : timer.phase === "priming" ? "Preview the gist and prepare your plan" : timer.phase === "focus" ? "One thing at a time" : "Step away and recharge");
+  const goal = $derived(data.targets.find((item) => String(item.id) === targetId));
+  const rhythm = $derived(`5 min priming → ${minutesLabel(data.settings.focus_seconds)} focus → ${minutesLabel(data.settings.short_break_seconds)} break → repeat. Only completed focus counts.`);
+  const goals = $derived([{ value: "", label: "No goal" }, ...data.targets.map((item) => ({ value: String(item.id), label: item.title ?? "" }))]);
 </script>
 
-<section class="column timer-card" class:break-phase={timer.phase !== "focus"} aria-label="Session timer">
-  <div class="focus-line">
-    <span class="chip"><span class="dot" style:background={subject?.color || "var(--subtle)"} aria-hidden="true"></span>{subject?.name || "Open study"}{#if concept}<span class="concept">· {concept.name}</span>{/if}</span>
-    <span class="cycle">{timer.cycle} focus {timer.cycle === 1 ? "session" : "sessions"} completed</span>
+<section class="timer-card" class:break-phase={timer.phase !== "focus"} aria-label="Session timer">
+  <span class="gear"><TimerSettings settings={data.settings} {disabled} onsave={onsettings} /></span>
+  <div class="meta">
+    <span class="chip" title={rhythm}><span class="dot" style:background={subject?.color || "var(--subtle)"} aria-hidden="true"></span>{subject?.name || "Open study"}{#if concept}<span class="concept">· {concept.name}</span>{/if}</span>
+    <span class="session eyebrow">Session {timer.cycle + 1}{#if timer.status !== "idle"}{#if goal} · goal: {goal.title}{/if}{/if}</span>
+    {#if timer.status === "idle" && data.targets.length}
+      <span class="goal"><Select kind="list" label="Goal" options={goals} bind:value={targetId} {disabled} /></span>
+    {/if}
   </div>
-  <div class="phase-label"><span class="phase-dot"></span>{phaseLabel(timer.phase)}<span class="muted">· {mood}</span></div>
   <TimerRing {remaining} total={phaseTotal} phase={timer.phase} rounds={timer.cycle}
     label={`${phaseLabel(timer.phase)}, ${clockLabel.replace(/^0/, "")} left of ${Math.floor(phaseTotal / 60)}:${(phaseTotal % 60).toString().padStart(2, "0")}`}
   ><div class="clock">{clockLabel}</div></TimerRing>
-  <p class="rhythm">5 min priming <span>→</span> {minutesLabel(data.settings.focus_seconds)} focus <span>→</span> {minutesLabel(data.settings.short_break_seconds)} break <span>→</span> repeat</p>
   <div class="actions">
     {#if timer.status === "running"}<Button {disabled} onclick={() => ontimer("pause")}>Pause <kbd>Space</kbd></Button>
     {:else if timer.status === "paused"}<Button {disabled} onclick={() => ontimer("resume")}>Resume <kbd>Space</kbd></Button>
-    {:else}<Button variant="solid" intent="primary" {disabled} onclick={() => ontimer("start")}>Start session · 5 min priming <kbd>Space</kbd></Button>{/if}
-    <Button disabled={disabled || timer.status === "idle"} onclick={() => ontimer("stop")}>Stop <kbd>s</kbd></Button>
-    {#if timer.phase === "short_break"}<Button {disabled} onclick={() => ontimer("skip_break")}>Skip break <kbd>b</kbd></Button>{/if}
+    {:else}<Button variant="solid" intent="primary" size="lg" {disabled} onclick={() => ontimer("start")}>Start session <kbd>Space</kbd></Button>{/if}
+    {#if timer.phase === "short_break"}<Button {disabled} onclick={() => ontimer("skip_break")}>Skip break <kbd>B</kbd></Button>{/if}
+    {#if timer.status !== "idle"}<Button variant="ghost" {disabled} onclick={() => ontimer("stop")}>Stop <kbd>S</kbd></Button>{/if}
   </div>
-  <label class="goal">Goal
-    <select bind:value={targetId} disabled={timer.status !== "idle"}>
-      <option value="">None</option>
-      {#each data.targets as item (item.id)}<option value={item.id.toString()}>{item.title}</option>{/each}
-    </select>
-  </label>
-  <p class="muted timer-help">Priming, pauses and breaks never count; only completed focus does.</p>
 </section>
 
 <style>
   .timer-card {
+    position: relative;
     display: grid;
     align-content: center;
     justify-items: center;
-    gap: 0.55rem;
+    gap: 14px;
     text-align: center;
-    background: linear-gradient(145deg, var(--surface-raised), var(--surface));
-    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
   }
-  .timer-card :global(.timer-ring) {
-    margin: 0.4rem auto;
+  .gear {
+    position: absolute;
+    top: 0;
+    right: 0;
   }
-  .focus-line {
+  .meta {
     display: grid;
     justify-items: center;
-    gap: 4px;
+    gap: 8px;
   }
   .chip {
     display: inline-flex;
     align-items: center;
     gap: 7px;
     max-width: 100%;
-    padding: 3px 11px;
+    height: 24px;
+    padding: 0 10px;
     border: 1px solid var(--hairline);
     border-radius: 999px;
     color: var(--ink);
-    font: 500 12.5px var(--font-ui);
+    font: 500 12px var(--font-ui);
   }
   .chip .concept {
     color: var(--muted);
@@ -86,63 +87,20 @@
     height: 8px;
     border-radius: 999px;
   }
-  .cycle {
-    color: var(--muted);
-    font: 500 10.5px var(--font-mono);
-  }
   .clock {
     color: var(--ink);
-    font-size: 3.6rem;
+    font-size: 3.2rem;
     font-variant-numeric: tabular-nums;
     font-weight: 500;
-    letter-spacing: -0.05em;
+    letter-spacing: -0.04em;
     line-height: 1;
   }
-  .phase-label,
-  .rhythm,
   .actions {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
     align-items: center;
-    gap: 0.5rem;
-  }
-  .phase-label {
-    font-size: 0.85rem;
-  }
-  .phase-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    background: var(--accent);
-    border-radius: 50%;
-  }
-  .break-phase .phase-dot {
-    background: var(--success);
-  }
-  .rhythm,
-  .timer-help {
-    margin: 0;
-    color: var(--muted);
-    font-size: 0.8rem;
-  }
-  .rhythm span {
-    opacity: 0.55;
-  }
-  .goal {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--muted);
-    font-size: 0.8rem;
-  }
-  .goal select {
-    min-width: 9rem;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    background: var(--canvas);
-    color: var(--ink);
+    gap: 6px;
   }
   kbd {
     font-size: 0.75em;

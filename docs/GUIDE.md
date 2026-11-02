@@ -546,12 +546,19 @@ This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimiz
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.
 Likewise, Notes implements the workflows above, not the Obsidian plugin ecosystem.
 
-**Study** opens a three-column cockpit: subjects (with this week's minutes in
-their colours), concepts and tasks on the left pick what to study; the session
-timer sits in the centre; the fourteen-step guide, session notes and due spaced
-returns sit on the right. Under 900px wide it stacks into one column, and
-**Focus mode** keeps only the timer and the next tasks. Progress, History,
-Exams & plans, Mind map, Helpers and Timer settings are tabs beside it.
+**Study** opens focus-first: only the timer, centred, with its session chip and
+**Start session**. Two drawers slide over the page from edge tabs: **Subjects &
+tasks** on the left (press **[**) picks the session's subject and concept and
+quick-adds subjects, concepts and tasks; **Guide & notes** on the right (press
+**]**) shows the current phase's guide steps (‹ › browse the others), session
+notes with **+ Distraction**, and spaced returns due. Each drawer's open state is
+remembered. **Full guide ›** opens all fourteen steps as phase columns or a rail,
+the step notes, the return review and saved reflections; the guide saves itself.
+The ⚙ on the timer opens timer settings: focus and break lengths in 5-minute
+steps, sound and desktop-notification switches and the time zone, each saved as
+you change it and applied from the next phase. The tabs are Session, Progress,
+Exams & plans, Mind map and Tools (History and Helpers). Unsaved notes or a failed
+save show as a dot on the workspace tab.
 In **Mind map**, create Lecture, Chapter or Exam review maps,
 or create one from a subject. Topics are compact pills in their branch colour around
 an ink root. Click a node, then Tab adds a child, Enter adds a sibling right after it,
@@ -612,11 +619,13 @@ draws goal rings for today, this week and today's flashcard reviews.
 The segmented streak ring counts consecutive days from saved study time toward
 the next milestone. **Log today** opens the manual session editor; saving actual
 time fills the segment, rather than adding a cosmetic check-in.
-**Exams & plans** shows exam countdown/readiness cards, a two-week timeline
+**Exams & plans**: **Add exam** is a quick-add (title, a date chip and a subject
+chip that can create a subject); **More** or clicking an exam opens the side
+drawer with every field. It shows exam countdown/readiness cards, a two-week timeline
 with an exam lane and a spaced-returns lane, and a twelve-day strip. Select a
 block to mark it done or export it explicitly to Calendar. Drag blocks between
 days (or use Alt+Left/Right); days above 90 planned minutes show a load warning.
-Blocks stay before their exam. Make a plan saves dated blocks from your own
+Blocks stay before their exam. **Make a plan** (a popover) saves dated blocks from your own
 dates and durations. Returns are grouped Due / This week / Later: Recalled
 advances through 1, 3, 7, 16 and 35 days; Shaky restarts at one day.
 **Calendar** opens one week with half-hour slots and a day-plan sidebar; events
