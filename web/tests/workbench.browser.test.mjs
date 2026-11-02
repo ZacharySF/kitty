@@ -1505,22 +1505,33 @@ async function openMindMaps(page) {
   await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Mind map", exact: true }).click();
   const { maps } = await (await listed).json();
   const schema = page.getByRole("region", { name: "Mental schema maps" });
-  if (maps.length) await schema.getByRole("button", { name: "New map", exact: true }).waitFor();
+  if (maps.length) await schema.locator("svg.stage").waitFor();
   else await schema.waitFor();
   return schema;
 }
-/** Opens Study → Mind map and creates a fresh map from `template`; returns its node locator. */
-async function newMindMap(page, title, template = "Lecture") {
-  const schema = await openMindMaps(page);
-  const fresh = schema.getByRole("button", { name: "New map", exact: true });
-  const titleField = schema.getByRole("textbox", { name: "New map title" });
-  if (await fresh.isVisible()) await fresh.click();
-  await titleField.fill(title);
-  await schema.locator("summary", { hasText: "Advanced options" }).click();
-  await schema.getByRole("combobox", { name: "Starting template" }).selectOption(template);
-  await schema.getByRole("button", { name: "Create map" }).click();
+/** Creates a map from `template` with the editor's New map popover (Q8); returns its node locator. */
+async function createMap(page, schema, title, template) {
+  await schema.getByRole("button", { name: "New map", exact: true }).click();
+  const popover = page.getByRole("dialog", { name: "New map" });
+  await popover.getByRole("textbox", { name: "New map" }).fill(title);
+  await popover.getByRole("group", { name: "Starting template" }).getByRole("button", { name: template, exact: true }).click();
+  await popover.getByRole("textbox", { name: "New map" }).press("Enter");
   await page.waitForFunction((label) => [...document.querySelectorAll("svg.stage [data-node]")].some((node) => node.textContent.includes(label)), title);
   return { schema, nodes: schema.locator("svg.stage [data-node]") };
+}
+/** Opens Study → Mind map and creates a fresh map from `template`; returns its node locator. */
+async function newMindMap(page, title, template = "Lecture") {
+  return createMap(page, await openMindMaps(page), title, template);
+}
+/** Waits for the autosave (Ctrl+S saves at once): the editor reports "saved". */
+async function savedMap(page) {
+  await page.keyboard.press("Control+s");
+  await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "saved");
+}
+/** Runs an item of the selected topic's ⋯ menu (on the topic bar). */
+async function topicAction(page, name) {
+  await page.getByRole("toolbar", { name: "Topic" }).getByRole("button", { name: "More topic actions" }).click();
+  await page.getByRole("menu", { name: "More topic actions" }).getByRole("menuitem", { name, exact: true }).click();
 }
 /** Resolves a CSS colour expression (e.g. `var(--ink)`) to the computed rgb() string. */
 const resolveColor = (page, value) => page.evaluate((color) => {
@@ -1577,8 +1588,8 @@ const nodeBoxes = (page) => page.evaluate(() => Object.fromEntries([...document.
 })));
 const mapNode = (page, label) => page.locator("svg.stage [data-node]").filter({ has: page.locator("text.label", { hasText: new RegExp(`^${label}$`) }) });
 const centre = async (locator) => { const box = await locator.boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
-/** Waits until the map editor takes input again: it ignores keys and drags while it saves, splits or undoes. */
-const editable = (page) => page.waitForFunction(() => document.querySelector(".schema .mapbar input")?.disabled === false);
+/** Waits until the map editor takes input again: it ignores keys and drags while it splits, undoes or reloads. */
+const editable = (page) => page.waitForFunction(() => document.querySelector(".schema")?.getAttribute("aria-busy") === "false");
 
 describe("mind-map editing", () => {
   test("keyboard building: arrows move, Ctrl+arrows reorder, Tab child, Enter sibling, Ctrl+Enter edits", async () => {
@@ -1655,9 +1666,9 @@ describe("mind-map editing", () => {
     assert.match(await mapNode(page, "Examples").getAttribute("class"), /\broot\b/, "Examples was not detached");
     const dropped = await centre(pill("Examples"));
     assert.ok(Math.abs(dropped.x - (start.x + 60)) < 6 && Math.abs(dropped.y - (start.y + 150)) < 6, "the detached branch did not stay where it was dropped");
-    // The inspector's Detach breaks Questions (with Leaf) off too.
+    // The topic bar's Detach breaks Questions (with Leaf) off too.
     await mapNode(page, "Questions").click();
-    await schema.getByRole("button", { name: "Detach branch" }).click();
+    await schema.getByRole("toolbar", { name: "Topic" }).getByRole("button", { name: "Detach", exact: true }).click();
     assert.match(await mapNode(page, "Questions").getAttribute("class"), /\broot\b/);
     boxes = await nodeBoxes(page);
     assert.ok(boxes.Leaf.x > boxes.Questions.x, "Leaf did not stay with Questions");
@@ -1731,7 +1742,8 @@ describe("notes canvas pill", () => {
   test("canvas fullscreen keeps the same bottom pill instead of a second toolbar", async () => {
     const { page, problems, context } = await open("notes", { dock: "hidden" });
     await openCanvas(page);
-    await page.getByRole("button", { name: "Open canvas fullscreen" }).click();
+    await page.getByRole("button", { name: "More page actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Canvas fullscreen", exact: true }).click();
     await page.getByRole("button", { name: "Exit canvas fullscreen" }).waitFor();
     const tools = page.getByRole("toolbar", { name: "Drawing tools" });
     await tools.waitFor();
@@ -1917,55 +1929,61 @@ describe("mind-map free positioning", () => {
     await page.keyboard.press("Escape");
     let boxes = await nodeBoxes(page);
     assert.ok(boxes.Case.x > boxes.Examples.x && Math.abs(boxes.Case.y - boxes.Examples.y) < 4, "the free node's child is not laid out beside it");
-    // Reset position puts Examples back between its siblings.
+    // Reset position (in the topic bar's ⋯) puts Examples back between its siblings.
     await mapNode(page, "Examples").click();
-    await schema.getByRole("button", { name: "Reset position" }).click();
+    await topicAction(page, "Reset position");
     boxes = await nodeBoxes(page);
     assert.equal(boxes.Examples.x, before.Examples.x, "Examples is not back in its column");
     assert.ok(boxes.Examples.y > boxes["Key ideas"].y && boxes.Examples.y < boxes.Questions.y, "Examples is not back between its siblings");
     assert.doesNotMatch(await mapNode(page, "Examples").getAttribute("aria-label"), /placed freely/);
-    assert.equal(await schema.getByRole("button", { name: "Reset position" }).isDisabled(), true);
+    await mapNode(page, "Examples").click();
+    await page.getByRole("toolbar", { name: "Topic" }).getByRole("button", { name: "More topic actions" }).click();
+    assert.equal(await page.getByRole("menuitem", { name: "Reset position" }).getAttribute("aria-disabled"), "true");
+    await page.keyboard.press("Escape");
     assert.deepEqual(problems, []);
     await context.close();
   });
 });
 
 describe("mind-map recolour", () => {
-  test("a swatch row on the selection recolours a node or its whole branch; style copies and pastes; colours survive a reload", async () => {
+  test("the pill's colour row recolours a node, the topic bar's style recolours its whole branch and copies and pastes style; colours survive a reload", async () => {
     const { page, problems, context } = await open("study", { dock: "hidden" });
     const { schema } = await newMindMap(page, "Colour map");
     const dot = (label) => mapNode(page, label).locator("circle.dot").evaluate((node) => getComputedStyle(node).fill);
     const colour = (n) => resolveColor(page, `var(--c${n})`);
+    const tools = schema.getByRole("toolbar", { name: "Map tools" });
+    const style = async () => {
+      await schema.getByRole("toolbar", { name: "Topic" }).getByRole("button", { name: "Topic colour" }).click();
+      return page.getByRole("dialog", { name: "Topic style" });
+    };
     await mapNode(page, "Key ideas").click();
     await page.keyboard.press("Tab");
     await page.keyboard.type("Alpha");
     await page.keyboard.press("Escape");
     const alpha = await dot("Alpha");
     await mapNode(page, "Key ideas").click();
-    const swatches = schema.getByRole("toolbar", { name: "Node style" });
-    await swatches.getByRole("button", { name: "Colour 4" }).click();
+    await tools.getByRole("button", { name: "Colour 4" }).click();
     assert.equal(await dot("Key ideas"), await colour(4), "the node was not recoloured");
     assert.equal(await dot("Alpha"), alpha, "node-only recolour changed its child");
-    await swatches.getByRole("button", { name: "Whole branch" }).click();
-    await swatches.getByRole("button", { name: "Colour 5" }).click();
+    await (await style()).getByRole("button", { name: "Whole branch" }).click();
+    await tools.getByRole("button", { name: "Colour 5" }).click();
     assert.equal(await dot("Key ideas"), await colour(5));
     assert.equal(await dot("Alpha"), await colour(5), "branch recolour skipped the child");
     // Copy the style from Key ideas and paste it onto Questions (button) and Examples (Alt+V).
-    await swatches.getByRole("button", { name: "Copy style" }).click();
+    await (await style()).getByRole("button", { name: "Copy style" }).click();
     await mapNode(page, "Questions").click();
-    await swatches.getByRole("button", { name: "Paste style" }).click();
+    await (await style()).getByRole("button", { name: "Paste style" }).click();
     assert.equal(await dot("Questions"), await colour(5));
     await mapNode(page, "Examples").click();
     await page.keyboard.press("Alt+v");
     assert.equal(await dot("Examples"), await colour(5));
-    await schema.getByRole("button", { name: /^Save map/ }).click();
-    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await savedMap(page);
     await page.reload();
     await openMindMaps(page);
     await mapNode(page, "Questions").waitFor();
     assert.equal(await dot("Questions"), await colour(5), "the colour was not saved");
     await mapNode(page, "Questions").click();
-    await swatches.getByRole("button", { name: "Automatic colour" }).click();
+    await tools.getByRole("button", { name: "Automatic colour" }).click();
     assert.notEqual(await dot("Questions"), await colour(5), "Automatic colour did not clear the colour");
     assert.deepEqual(problems, []);
     await context.close();
@@ -1982,7 +2000,7 @@ describe("mind-map cross connections", () => {
     await page.keyboard.press("Escape");
     const before = await nodeBoxes(page);
     await mapNode(page, "Alpha").click();
-    await schema.getByRole("button", { name: "Connect to…" }).click();
+    await topicAction(page, "Connect to…");
     await page.getByRole("status").filter({ hasText: /^Click a topic to connect “Alpha”/ }).waitFor();
     await mapNode(page, "Questions").click();
     const label = page.getByRole("textbox", { name: "Connection label" });
@@ -1999,7 +2017,8 @@ describe("mind-map cross connections", () => {
       return Math.abs((b.x - a.x) * (a.y - m.y) - (a.x - m.x) * (b.y - a.y)) / Math.hypot(b.x - a.x, b.y - a.y);
     });
     assert.ok(bend > 10, `the connection is not curved (${bend}px)`);
-    await schema.getByRole("button", { name: "Tree layout" }).click();
+    await schema.getByRole("button", { name: "Layout" }).click();
+    await page.getByRole("menu", { name: "Layout" }).getByRole("menuitem", { name: "Tree" }).click();
     const relaid = await nodeBoxes(page);
     assert.equal(relaid.Questions.x, relaid.Examples.x, "the link pulled Questions out of its tree column");
     // Folding Key ideas hides Alpha and its link, but not Questions.
@@ -2008,8 +2027,7 @@ describe("mind-map cross connections", () => {
     assert.equal(await text.count(), 0, "the link stayed visible with its end folded away");
     assert.equal(await mapNode(page, "Questions").count(), 1);
     await page.keyboard.press(" ");
-    await schema.getByRole("button", { name: /^Save map/ }).click();
-    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await savedMap(page);
     await page.reload();
     await openMindMaps(page);
     await text.waitFor();
@@ -2030,9 +2048,8 @@ describe("mind-map multi-select", () => {
     await page.keyboard.press("Shift+ArrowDown");
     await page.keyboard.press("Shift+ArrowDown");
     assert.deepEqual((await picked()).sort(), ["Examples", "Key ideas", "Questions"]);
-    const toolbar = schema.getByRole("toolbar", { name: "Node style" });
-    await toolbar.getByText("3 selected").waitFor();
-    await toolbar.getByRole("button", { name: "Colour 6" }).click();
+    await schema.getByRole("toolbar", { name: "Topic" }).getByText("3 selected").waitFor();
+    await schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Colour 6" }).click();
     const six = await resolveColor(page, "var(--c6)");
     for (const label of ["Key ideas", "Examples", "Questions"]) assert.equal(await dot(label), six, `${label} was not recoloured`);
     // A plain click selects one topic again; a Shift-drag box from empty space picks Examples and Questions.
@@ -2088,9 +2105,8 @@ describe("mind-map history", () => {
     await page.keyboard.press("Control+Shift+z");
     assert.deepEqual((await nodeBoxes(page)).Examples, moved.Examples);
     await mapNode(page, "Examples").click();
-    await schema.getByRole("button", { name: "Colour 4", exact: true }).click();
-    await schema.getByRole("button", { name: /^Save map/ }).click();
-    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Colour 4", exact: true }).click();
+    await savedMap(page);
     await editable(page);
     await page.keyboard.press("Control+z");
     const dot = () => mapNode(page, "Examples").locator("circle.dot").evaluate(n => getComputedStyle(n).fill);
@@ -2099,8 +2115,8 @@ describe("mind-map history", () => {
     assert.equal(await dot(), await resolveColor(page, "var(--c4)"));
     await page.keyboard.press("Control+z");
     await mapNode(page, "Questions").click();
-    await schema.getByRole("button", { name: "Colour 5", exact: true }).click();
-    assert.equal(await schema.getByRole("button", { name: "Redo", exact: true }).isDisabled(), true);
+    await schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Colour 5", exact: true }).click();
+    assert.equal(await schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Redo", exact: true }).isDisabled(), true);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -2113,8 +2129,8 @@ describe("mind-map split and merge", () => {
     await mapNode(page, "Key ideas").click(); await page.keyboard.press("Tab");
     await page.keyboard.type("Leaf"); await page.keyboard.press("Escape");
     await mapNode(page, "Key ideas").click();
-    await schema.getByRole("button", { name: "Split branch into map", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('select') && [...document.querySelectorAll('svg.stage text.label')].length === 2);
+    await topicAction(page, "Split branch into map");
+    await page.waitForFunction(() => [...document.querySelectorAll('svg.stage text.label')].length === 2);
     await mapNode(page, "Leaf").waitFor();
     await editable(page);
     assert.equal(await mapNode(page, "Transfer map").count(), 0);
@@ -2125,9 +2141,11 @@ describe("mind-map split and merge", () => {
     await mapNode(page, "Key ideas").waitFor();
     await editable(page);
     const root = await centre(mapNode(page, "Key ideas").locator("rect.pill"));
+    // Dragging a root shows the other maps as drop targets; dropping it on one merges it there.
+    await page.mouse.move(root.x, root.y); await page.mouse.down();
+    await page.mouse.move(root.x + 30, root.y + 30, { steps: 3 });
     const target = schema.getByRole("group", { name: "Merge map drop targets" }).getByRole("button", { name: "Transfer map", exact: true });
     const to = await centre(target);
-    await page.mouse.move(root.x, root.y); await page.mouse.down();
     await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up();
     await mapNode(page, "Transfer map").waitFor();
     await mapNode(page, "Leaf").waitFor();
@@ -2136,6 +2154,114 @@ describe("mind-map split and merge", () => {
     await openMindMaps(page);
     await mapNode(page, "Leaf").waitFor();
     assert.equal(await mapNode(page, "Key ideas").count(), 1);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+/** Computed styles that make a floating tool pill look like the Notes canvas pill. */
+const pillLook = (toolbar) => toolbar.evaluate((bar) => {
+  const style = getComputedStyle(bar), button = getComputedStyle(bar.querySelector(".pill-btn"));
+  const handle = bar.parentElement.querySelector(".pill-handle");
+  return {
+    radius: style.borderRadius, padding: style.padding, background: style.backgroundColor, border: style.borderTopColor, filter: style.backdropFilter,
+    button: [button.width, button.height, button.borderRadius], handle: handle && getComputedStyle(handle).width, docked: getComputedStyle(bar.parentElement).position,
+  };
+});
+
+describe("one mind-map editor", () => {
+  test("Mind maps opens one full-bleed editor: a slim top bar, the Notes canvas pill, a bar on the selected topic, and autosave", async () => {
+    const { page, problems, context } = await open("schema", { dock: "hidden" });
+    const schema = page.getByRole("region", { name: "Mental schema maps" });
+    await schema.waitFor();
+    await createMap(page, schema, "Chrome map", "Lecture");
+    // One slim bar: switcher, title, Layout, Map/Graph and ⋯ (last) share one row of at most 48px.
+    const switcher = await rect(schema.getByRole("button", { name: "Switch map" }));
+    const parts = [schema.getByRole("textbox", { name: "Map title" }), schema.getByRole("button", { name: "Layout" }),
+      schema.getByRole("group", { name: "View" }), schema.getByRole("button", { name: "More map actions" })];
+    const boxes = await Promise.all(parts.map(rect));
+    for (const box of boxes) assert.ok(Math.abs(box.top + box.height / 2 - (switcher.top + switcher.height / 2)) < 3, "the top bar is not one row");
+    assert.ok(boxes.at(-1).left >= Math.max(...boxes.slice(0, -1).map((box) => box.right)), "⋯ is not the last control");
+    // The canvas fills the editor under the bar, which fills the window: no help paragraph, title bar or Organize well.
+    const region = await rect(schema), stage = await rect(schema.locator("svg.stage"));
+    assert.ok(stage.top - region.top <= 48, `the canvas starts ${Math.round(stage.top - region.top)}px down`);
+    assert.ok(Math.abs(stage.bottom - region.bottom) <= 2 && Math.abs(stage.left - region.left) <= 2 && Math.abs(stage.right - region.right) <= 2, "the canvas does not fill the editor");
+    assert.ok(region.bottom >= DEFAULT.height - 24, `the editor ends at ${Math.round(region.bottom)}px`);
+    assert.equal(await schema.locator("p:visible").count(), 0, "help text is shown at rest");
+    assert.equal(await schema.locator("select, summary, details").count(), 0, "native selects or fold-outs remain");
+    // The building tools are the Notes canvas pill itself.
+    const mapPill = schema.getByRole("toolbar", { name: "Map tools" });
+    for (const name of ["Select", "Connect topics", "Ink", "Undo", "Redo", "More map tools"]) await mapPill.getByRole("button", { name, exact: true }).waitFor();
+    const look = await pillLook(mapPill), mapPillBox = await rect(mapPill);
+    assert.ok(Math.abs(mapPillBox.left + mapPillBox.width / 2 - (stage.left + stage.width / 2)) < 2 && stage.bottom - mapPillBox.bottom < 24, "the pill is not docked at the bottom centre");
+    // A small bar rides on the selected topic.
+    await mapNode(page, "Key ideas").click();
+    const topic = schema.getByRole("toolbar", { name: "Topic" });
+    await topic.waitFor();
+    const bar = await rect(topic), pill = await rect(mapNode(page, "Key ideas").locator("rect.pill"));
+    assert.ok(Math.abs(bar.bottom - pill.top) <= 2 && bar.left < pill.right && bar.right > pill.left, "the topic bar is not on the selected topic");
+    for (const name of ["Topic colour", "Rename", "Detach", "More topic actions", "Delete topic"]) await topic.getByRole("button", { name, exact: true }).waitFor();
+    // The pill's Connect tool links the selection to the next topic clicked.
+    await mapPill.getByRole("button", { name: "Connect topics" }).click();
+    await mapNode(page, "Questions").click();
+    await page.getByRole("textbox", { name: "Connection label" }).press("Enter");
+    await page.locator("svg.stage path.edge.cross").waitFor();
+    // Edits save by themselves: the title persists without pressing anything.
+    await schema.getByRole("textbox", { name: "Map title" }).fill("Chrome map, renamed");
+    await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "unsaved");
+    await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "saved");
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector('.schema input[aria-label="Map title"]')?.value === "Chrome map, renamed");
+    // Same component as the Notes canvas pill: identical computed look.
+    await page.evaluate(() => { location.hash = "#notes"; });
+    await openCanvas(page);
+    assert.deepEqual(await pillLook(page.getByRole("toolbar", { name: "Drawing tools" })), look, "the map pill differs from the Notes canvas pill");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Ctrl K opens a map in the editor by its title and offers New mind map", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    await page.evaluate(async () => { const { api } = await import("/src/lib/api.ts"); await api("/schema/create", { title: "Palette map", mode: "study" }); });
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    await palette.getByRole("combobox").fill("palette map");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Palette map"));
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector('.schema input[aria-label="Map title"]')?.value === "Palette map");
+    assert.equal(await page.evaluate(() => location.hash), "#schema");
+    await page.keyboard.press("Control+k");
+    await palette.getByRole("combobox").fill("new mind map");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("New mind map"));
+    await page.keyboard.press("Enter");
+    await page.getByRole("dialog", { name: "New map" }).getByRole("textbox", { name: "New map" }).waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Notes' Map mode is the same editor for the page's own map, inside the page", async () => {
+    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    await page.getByRole("group", { name: "Page mode" }).getByRole("button", { name: "Map", exact: true }).click();
+    const schema = page.getByRole("region", { name: "Mental schema maps" });
+    const create = schema.getByRole("button", { name: "Create map" });
+    await create.click();
+    const root = schema.locator("svg.stage [data-node].root");
+    await root.waitFor();
+    const tab = (await page.getByRole("navigation", { name: "Open note pages" }).locator('[aria-current="page"]').textContent()).trim();
+    assert.equal((await root.locator("text.label").textContent()).replace(/^▤ /, ""), tab, "the map is not the page's");
+    // The same editor (its pill and topic bar), but the page keeps its own header: no second top bar.
+    await schema.getByRole("toolbar", { name: "Map tools" }).waitFor();
+    assert.equal(await schema.getByRole("button", { name: "Switch map" }).count(), 0, "the embedded editor draws its own top bar");
+    assert.equal(await page.getByRole("group", { name: "Page mode" }).isVisible(), true);
+    await root.click();
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Branch");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "saved");
+    // Back to Write and to Map again: the page's map comes back.
+    await page.getByRole("group", { name: "Page mode" }).getByRole("button", { name: "Write", exact: true }).click();
+    await page.getByRole("group", { name: "Page mode" }).getByRole("button", { name: "Map", exact: true }).click();
+    await mapNode(page, "Branch").waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -2539,7 +2665,7 @@ describe("mind-map pen", () => {
     await capturable(page);
     const examplesId = await mapNode(page, "Examples").getAttribute("data-node");
     // Ink mode: a pressure-varying wavy stroke across Examples attaches to Examples.
-    const ink = schema.getByRole("button", { name: "Ink", exact: true });
+    const ink = schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Ink", exact: true });
     await ink.click();
     assert.equal(await ink.getAttribute("aria-pressed"), "true");
     const e = await pill("Examples").boundingBox();
@@ -2561,8 +2687,7 @@ describe("mind-map pen", () => {
     assert.ok(Math.abs(moved.x - from.x - 170) < 3 && Math.abs(moved.y - from.y - 110) < 3, "the pen did not drag Examples");
     assert.ok(Math.abs(inkAfter.x - inkBefore.x - 170) < 3 && Math.abs(inkAfter.y - inkBefore.y - 110) < 3, "the ink did not move with its topic");
     // Saved with the map: simplified, relative to Examples, with its pressure.
-    await schema.getByRole("button", { name: /^Save map/ }).click();
-    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await savedMap(page);
     await page.reload();
     // The study cockpit reopens on its session section; the map stays the last one opened.
     await openMindMaps(page);

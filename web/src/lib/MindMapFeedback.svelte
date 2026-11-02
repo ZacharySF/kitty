@@ -21,15 +21,13 @@
   let question = $state("Does this map make sense?");
   const request = $derived(mindMapFeedbackRequest(title, question, graph));
   const text = $derived(JSON.stringify(request, null, 2));
+  const PRIVACY = "Only the map title, your question, topic IDs, labels and notes, and link ends and labels are sent. " +
+    "Positions, ink, linked records, URLs and sources are not. Remove anything private first; " +
+    "you inspect the exact request and approve the paid send. Feedback never changes your map.";
 </script>
 
 <section class="mind-map-feedback" aria-label="Conceptual mind-map feedback">
   <h3>Ask about this map</h3>
-  <p class="muted">
-    Get a draft critique of your organizing question, named concepts, relations,
-    assumptions, and possible improvements—not a score based on shapes or counts.
-    Feedback never changes your map.
-  </p>
   <label for={questionId}>
     Your question
     <textarea
@@ -40,16 +38,11 @@
       placeholder="Does this map make sense? Which concepts or relations need clarification?"
     ></textarea>
   </label>
-  <p class="muted">
-    Only the map title, this question, concept IDs, labels and notes, and connector
-    endpoints and labels are included. Positions, freehand strokes, linked records,
-    URLs stored as metadata, and source metadata are not included. Text you wrote
-    in labels or notes is included; remove anything private before reviewing.
-    Inspect the exact request before separately approving a paid send to OpenRouter.
-  </p>
   {#if graph.nodes.length === 0}
-    <p role="status">Add labeled concepts to request conceptual feedback. Freehand strokes alone are not a concept map.</p>
+    <p role="status">Add labelled topics to ask about this map.</p>
   {/if}
+  <!-- Q9: one line before the paid send; the full privacy detail is its tooltip. -->
+  <p class="muted" title={PRIVACY}>Sends this map's labels, notes and your question to OpenRouter.</p>
   <AIReview
     purpose="mind-map-feedback"
     {text}
@@ -69,6 +62,10 @@
   h3,
   p {
     margin: 0;
+  }
+  .muted {
+    color: var(--muted);
+    font-size: 12px;
   }
   label {
     display: grid;

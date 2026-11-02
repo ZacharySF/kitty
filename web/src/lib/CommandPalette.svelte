@@ -40,9 +40,18 @@
   const typed = $derived(query.trim().length > 0);
 
   type Choice = { label: string; meta: string; icon: string; run: () => void };
+  // Q19: Ctrl K opens the one mind-map editor on a map, or on a new one.
+  const mapsOn = $derived(visibleNavigation(enabled).some((item) => item.id === "schema"));
+  let mapList = $state<{ id: number; title: string }[]>([]);
+  /** Switching view always mounts the editor afresh; it picks the request up from the session. */
+  function openMap(id?: number) {
+    try { sessionStorage.setItem(id ? "kitty.schema.open-map" : "kitty.schema.new-map", id ? String(id) : "1"); } catch { /* Opens the last map. */ }
+    onview("schema");
+  }
   const actions = $derived<Choice[]>([
     ...(applyai ? [{ label: "Add job", meta: "Action", icon: "jobs", run: () => onadd() }] : []),
     ...(onnewcard ? [{ label: "New card", meta: "Flashcards", icon: "flashcards", run: () => onnewcard() }] : []),
+    ...(mapsOn ? [{ label: "New mind map", meta: "Action", icon: "schema", run: () => openMap() }] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
   ]);
@@ -58,6 +67,7 @@
         run: () => onview(item.id),
       })),
       ...actions,
+      ...mapList.map((map) => ({ label: map.title, meta: "Mind map", icon: "schema", run: () => openMap(map.id) })),
     ];
     const rank = (label: string) => {
       const name = label.toLowerCase();
@@ -80,6 +90,7 @@
   onMount(() => {
     dialog.showModal();
     searchField?.focus();
+    if (mapsOn) void api<{ maps: { id: number; title: string }[] }>("/schema").then((result) => { mapList = result.maps; }).catch(() => { /* Maps stay reachable through Mind maps. */ });
   });
   $effect(() => {
     const text = query.trim();

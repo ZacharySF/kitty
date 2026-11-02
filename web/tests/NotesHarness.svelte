@@ -20,7 +20,9 @@
       trail.root = null;
     },
     status: null,
-    setStatus() {},
+    setStatus(status) {
+      window.notesHarness.status = status;
+    },
   });
 </script>
 
