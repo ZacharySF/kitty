@@ -6,7 +6,7 @@
   import CalendarDateTime from "./CalendarDateTime.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import { currentTheme, THEME_EVENT } from "./themes";
-  import { getTheme } from "./themeCatalog";
+  import { getTheme } from "./themes/catalog";
   import { blockText, calendarPaint, itemPaint, nextSlot, subjectOf, type Subject } from "./calendar/palette";
   import ColorField from "./calendar/ColorField.svelte";
   import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";

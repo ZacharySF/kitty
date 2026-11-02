@@ -268,7 +268,7 @@
   ul { list-style: none; padding: 0; margin: 0; max-height: 330px; overflow: auto; display: grid; gap: 0.25rem; }
   li { min-width: 0; }
   li button { display: grid; gap: 0.2rem; width: 100%; text-align: left; border: 1px solid transparent; border-radius: 0.35rem; padding: 0.45rem 0.6rem; background: transparent; color: var(--ink); cursor: pointer; font: inherit; font-size: 0.82rem; overflow-wrap: anywhere; }
-  li button { transition: background-color var(--motion-fast, 140ms), border-color var(--motion-fast, 140ms); }
+  li button { transition: background-color var(--motion-ms, 140ms), border-color var(--motion-ms, 140ms); }
   li button:hover, li button.current { background: var(--surface); border-color: var(--border); }
   li button.hub > span { font-weight: 600; }
   li small { color: var(--muted); font-size: 0.73rem; }

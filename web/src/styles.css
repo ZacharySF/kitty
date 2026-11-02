@@ -114,21 +114,13 @@ button:disabled {
 a {
   color: var(--accent);
 }
+/* Timing comes from the theme's motion style (lib/themes/engine.css); focus rings too. */
 button,
 a {
   transition:
-    background-color 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
-}
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
+    background-color var(--motion-ms, 120ms) var(--motion-ease, ease),
+    color var(--motion-ms, 120ms) var(--motion-ease, ease),
+    border-color var(--motion-ms, 120ms) var(--motion-ease, ease);
 }
 input,
 select,
@@ -1253,10 +1245,8 @@ main > :is(.panel, .br-panel, .br-card) {
 :root[data-density="comfortable"] body {
   font-size: 14px;
 }
-/* Without the motif an icon's blossom shrinks back to its plain centre dot,
-   and the theme picker's ASCII blossom goes. */
-:root[data-motif="off"] svg .blossom path,
-:root[data-motif="off"] span.blossom {
+/* Without the motif an icon's blossom shrinks back to its plain centre dot. */
+:root[data-motif="off"] svg .blossom path {
   display: none;
 }
 :root[data-motif="off"] svg .blossom circle {
@@ -1265,54 +1255,35 @@ main > :is(.panel, .br-panel, .br-card) {
 
 /* ── LearnHarness look ─────────────────────────────────────────────────────
    Fraunces page titles, Inter labels, hairlines, pills and glass panels
-   over a soft nebula drawn from the active theme's graph colors. Surfaces are
-   translucent (see GLASS in themes.ts); the desktop window itself is
+   over the theme's backdrop. Surfaces, focus, selection and motion come from the
+   theme (lib/themes/engine.css); the desktop window itself is
    transparent when the shell marks <html data-window="transparent">. */
 :root {
   --font-title: "Fraunces Variable", "Iowan Old Style", Georgia, serif;
   --hairline: color-mix(in srgb, var(--br-line) 62%, transparent);
   --glass: blur(18px) saturate(140%);
-  --nebula:
-    radial-gradient(60vmax 45vmax at 10% 14%, color-mix(in srgb, var(--c1) 14%, transparent), transparent 70%),
-    radial-gradient(48vmax 38vmax at 90% 10%, color-mix(in srgb, var(--c2) 11%, transparent), transparent 70%),
-    radial-gradient(55vmax 45vmax at 80% 90%, color-mix(in srgb, var(--c3) 10%, transparent), transparent 70%),
-    radial-gradient(45vmax 40vmax at 16% 94%, color-mix(in srgb, var(--c4) 8%, transparent), transparent 70%);
-  background: var(--solid-void, var(--br-void));
 }
 /* Appearance → Titles: Plain sets page titles in Inter. */
 :root[data-title-font="plain"] {
   --font-title: var(--font-ui);
 }
-:root body {
-  background: var(--nebula), var(--solid-void, var(--br-void));
+/* The theme's backdrop (--backdrop, lib/themes/engine.css) is painted on the root, so the
+   theme's art layer and petal drift (z-index -1) show above it; the body stays clear. */
+:root {
+  background: var(--backdrop, none), var(--solid-void, var(--br-void));
   background-attachment: fixed;
 }
-:root[data-window="transparent"] {
+:root body {
   background: transparent;
 }
-:root[data-window="transparent"] body {
-  background: var(--nebula), color-mix(in srgb, var(--solid-void, #141414) 74%, transparent);
+:root[data-window="transparent"] {
+  background: var(--backdrop, none), color-mix(in srgb, var(--solid-void, #141414) 74%, transparent);
 }
-:root[data-window="transparent"][data-surface="quick-note"] body {
+:root[data-window="transparent"][data-surface="quick-note"] {
   background: transparent;
 }
 :root[data-surface="quick-note"] body {
   overflow: hidden;
-}
-/* Petal drift (lib/PetalDrift.svelte) sits at z-index -1, which paints above the
-   root's background but below the body's: the backdrop moves up to the root. */
-:root[data-background="petals"]:not([data-surface="quick-note"]) {
-  background: var(--nebula), var(--solid-void, var(--br-void));
-  background-attachment: fixed;
-}
-:root[data-background="petals"][data-window="transparent"]:not([data-surface="quick-note"]) {
-  background: var(--nebula), color-mix(in srgb, var(--solid-void, #141414) 74%, transparent);
-}
-:root[data-background="petals"]:not([data-surface="quick-note"]) body {
-  background: transparent;
-}
-::selection {
-  background: color-mix(in srgb, var(--br-structure) 34%, transparent);
 }
 
 /* Q5: Fraunces, with its soft rounded terminals, is the page title's face only. */
@@ -1417,11 +1388,11 @@ main > :is(.panel, .br-panel, .br-card) {
 
 /* Toggles that invert when selected keep a complete foreground/background pair
    that the glass fill above cannot split (it would leave on-accent text on glass).
-   The doubled class also outranks a theme's own control fill (liquidGlass.css). */
+   The doubled class also outranks a theme's own control fill (lib/themes/liquid-glass). */
 :root body .button.button[aria-pressed="true"]:not([data-variant="solid"]):not(.primary) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--press-fill, var(--accent));
+  border-color: var(--press-fill, var(--accent));
+  color: var(--press-ink, var(--on-accent));
 }
 
 /* Frame: borderless top bar over a hairline, open main area, glass panels. */
@@ -1462,7 +1433,8 @@ main > :is(.panel, .br-panel, .br-card) {
 }
 :root body .workspace-groups button[aria-current="page"] {
   border-color: transparent;
-  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  background: var(--select-fill, color-mix(in srgb, var(--ink) 12%, transparent));
+  color: var(--select-ink, var(--ink));
 }
 :root body :is(.schema-tab, .schema-back) {
   min-height: 28px;
@@ -1494,20 +1466,17 @@ main > :is(.panel, .br-panel, .br-card) {
   padding-top: 0;
 }
 /* Q2: one surface per page region (a page's main column, a side rail, a drawer).
-   `.surface` is the primitive; the shared panel classes are surfaces too. Themes own
-   the treatment through --surface-fill, --surface-border, --surface-blur and --r-panel. */
-.surface,
-.panel,
-.br-panel,
-.br-card {
-  background: var(--surface-fill, var(--surface));
+   `.surface` is the primitive; the shared panel classes are surfaces too. The theme owns
+   the treatment: lib/themes/engine.css paints every surface's fill, border colour, radius,
+   blur and shadow from the theme's --surface-* tokens and --r-panel. */
+.surface {
   border: 1px solid var(--surface-border, var(--hairline));
 }
-:root body :is(.surface, .panel, .br-panel, .br-card, .atlas) {
-  border-color: var(--surface-border, var(--hairline));
+:root body .atlas {
+  border-color: var(--hairline);
   border-radius: var(--r-panel);
-  backdrop-filter: var(--surface-blur, var(--glass));
-  -webkit-backdrop-filter: var(--surface-blur, var(--glass));
+  backdrop-filter: var(--glass);
+  -webkit-backdrop-filter: var(--glass);
 }
 /* Inside a region, groups are sections split by a full-width hairline and a label,
    never another bordered box: a surface nested in a surface drops its box. */

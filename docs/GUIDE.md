@@ -214,19 +214,38 @@ typefaces, each with one job: Fraunces for the page title only, Inter for the re
 of the interface (headings, labels, buttons, body) and JetBrains Mono for the
 navigation chrome, key caps, code and tabular figures; Fredoka sets only the
 wordmark. Labels, eyebrows and fold-out labels are Inter semibold in sentence case,
-never italic. The Theme menu persists one of ten dark
-themes locally: **Kitty** (the default: plum, pastel pink and a cherry-blossom
-motif), Harness, Dracula, Catppuccin Mocha, Tokyo Night, Nord, Gruvbox, One Dark,
-Scythe and **Liquid Glass** (clear, neutral glass like macOS/iOS: heavy blur and a
-white rim lit from the top-left, no tint; in the desktop window your wallpaper shows
-through; panels turn opaque under reduced transparency). Graph nodes and their
-edges use the active theme's graph palette.
+never italic. The Theme menu persists one of ten dark themes locally. A theme is more
+than colours: each one also sets what its surfaces are made of (frosted glass,
+matte paper with grain, flat sheets, or square double-ruled frames), its focus
+ring (a plain ring, a soft glow, petal corners or corner brackets), how selected
+options, tabs and segments look, its motion style (calm, fluid, snappy or none)
+and its backdrop. Typefaces never change with the theme.
+- **Kitty** (the default): frosted pink glass over a soft blossom backdrop, a
+  sakura accent apart from the dusty structural pink, and six distinct data
+  colours (sakura, lavender, sky, mint, peach, butter). Its motif: list dots
+  become blossoms, ticked checkboxes bloom into a sakura, section rules part
+  around a blossom, the active tab and group grow cat ears, keyboard focus shows
+  two petals at the ring's corners, view loaders are the cat inside a petal
+  spinner and empty states a pink sleeping kitty.
+- **Liquid Glass**: clear, neutral glass like macOS/iOS (heavy blur and a white
+  rim lit from the top-left, no tint; in the desktop window your wallpaper shows
+  through), a soft glow on focus, lit selections, a glass-ring loader and a
+  frosted orb for empty states.
+- **Scythe**: engraved frames with corner ticks under a moonlit meadow,
+  crescent bullets, blade dividers, bracket focus and a crescent loader.
+- Harness and Nord are flat, Catppuccin Mocha and Gruvbox are matte paper, and
+  Dracula and Tokyo Night are glass, each with its own focus, selection and motion.
+
+Surfaces turn opaque under reduced transparency, and every theme's text,
+selected and pressed controls stay at WCAG AA contrast over its backdrop. Graph
+nodes and their edges use the active theme's graph palette.
 **Settings → Appearance** sets the whole look in one panel beside a live
 preview: theme, title font (Fraunces or plain), density (compact 13px or
 comfortable 14px), motion (full or reduced), home (Brain or 2D map), section graph look
-(2D or 3D), the blossom
-motif and the background (the nebula, or the nebula with drifting petals, which
-rest under reduced motion). **Cozy**, **Focused** and **Minimal** set all of them
+(2D or 3D), the theme motif (turn it off to keep a theme's surfaces without its
+bullets, ticks, dividers and ornaments) and the background (the theme's backdrop,
+or with drifting petals). Reduce motion, here or in the system, stops every theme
+animation and transition. **Cozy**, **Focused** and **Minimal** set all of them
 at once; any single control still changes afterwards. Choices are saved in this
 browser (`kitty.appearance`, plus `kitty.theme` and `kitty.graph.look`) and
 applied before the app draws.
@@ -1099,9 +1118,9 @@ is unavailable. A browser-only website explains that desktop controls are unavai
 The page uses the protected backend API and a fixed command allowlist over the
 shell's private owner pipe; it receives no Tauri IPC permissions.
 
-The main window and quick-note windows are transparent: the default **Kitty**
-theme (plum near-black with pastel pink accents) and every other theme
-draw translucent glass panels over a soft glow, so the desktop shows through.
+The main window and quick-note windows are transparent: the theme's backdrop is
+drawn translucent, so the desktop shows through around the surfaces, and through
+them on the glass themes (Kitty, Liquid Glass, Dracula, Tokyo Night).
 Browser tabs keep an opaque background. All typefaces (Fraunces, Inter, Fredoka,
 JetBrains Mono) are SIL OFL fonts bundled from their `@fontsource` packages, so
 no font is fetched from the network.

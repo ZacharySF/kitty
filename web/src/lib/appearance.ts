@@ -1,4 +1,4 @@
-import type { ThemeId } from "./themeCatalog";
+import type { ThemeId } from "./themes/catalog";
 import type { GraphLook } from "./graph3d";
 
 /**
@@ -13,7 +13,7 @@ export type Appearance = {
   /** Q11: compact 13px body, or comfortable 14px. */
   density: "compact" | "comfortable";
   motion: "full" | "reduced";
-  /** Blossom accents in icons and the theme picker. */
+  /** The theme's motif layer (bullets, ticks, dividers, ornaments); off keeps its surfaces. */
   motif: boolean;
   /** Q16: the nebula, or the nebula with drifting petals. */
   background: "nebula" | "petals";

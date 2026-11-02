@@ -1,0 +1,247 @@
+/* ── Theme engine presets (contract.ts) ────────────────────────────────────
+   index.ts mirrors each theme's tokens onto <html data-theme-surface|focus|selection|
+   motion|backdrop>; these rules turn them into surfaces, focus rings, selections, motion
+   and the backdrop, so every theme is more than a colour swap before its motif module
+   (if any) loads. Imported by main.ts after styles.css. Typography is never set here. */
+
+/* Motion: one duration and curve per style; Reduce motion (the setting or the OS) zeroes
+   them, and styles.css stops every animation and transition outright. */
+:root {
+  --motion-ms: 160ms;
+  --motion-ease: ease;
+}
+:root[data-theme-motion="calm"] {
+  --motion-ms: 320ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+:root[data-theme-motion="fluid"] {
+  --motion-ms: 240ms;
+  --motion-ease: cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+:root[data-theme-motion="snappy"] {
+  --motion-ms: 120ms;
+  --motion-ease: cubic-bezier(0.7, 0, 0.3, 1);
+}
+:root[data-theme-motion="none"],
+:root[data-motion="reduced"] {
+  --motion-ms: 0ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  :root[data-theme-motion] {
+    --motion-ms: 0ms;
+  }
+}
+
+/* Backdrop: drawn on <html> so the theme's art layer and petal drift (z-index -1) paint
+   above it; <body> stays clear. A module may replace --backdrop with its own. */
+:root {
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .055 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --backdrop:
+    radial-gradient(60vmax 45vmax at 10% 14%, color-mix(in srgb, var(--c1) 14%, transparent), transparent 70%),
+    radial-gradient(48vmax 38vmax at 90% 10%, color-mix(in srgb, var(--c2) 11%, transparent), transparent 70%),
+    radial-gradient(55vmax 45vmax at 80% 90%, color-mix(in srgb, var(--c3) 10%, transparent), transparent 70%),
+    radial-gradient(45vmax 40vmax at 16% 94%, color-mix(in srgb, var(--c4) 8%, transparent), transparent 70%);
+}
+:root[data-theme-backdrop="grain"] {
+  --backdrop:
+    var(--grain),
+    radial-gradient(120% 90% at 50% 40%, transparent 55%, color-mix(in srgb, var(--shadow-tint) 50%, transparent) 100%),
+    radial-gradient(70% 30% at 50% 0%, color-mix(in srgb, var(--c1) 9%, transparent), transparent 80%);
+}
+:root[data-theme-backdrop="plain"] {
+  --backdrop: radial-gradient(80% 40% at 50% 0%, color-mix(in srgb, var(--ink) 4%, transparent), transparent 80%);
+}
+
+/* Surfaces (Q11-A). Every preset fills --surface-*; panels and slice-1 `.surface`
+   regions read them. Glass: frosted and translucent. Paper: matte grain on the raised
+   colour, a soft shadow, no border. Flat: opaque with a hairline. Frame: square corners
+   and a double hairline over a flat ink fill. */
+:root {
+  --surface-fill: var(--br-panel);
+  --surface-border: var(--hairline);
+  --surface-blur: blur(18px) saturate(140%);
+  --surface-shadow: none;
+}
+:root[data-theme-surface="glass"] {
+  --surface-fill:
+    linear-gradient(165deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 46%),
+    var(--br-panel);
+  --surface-border: var(--hairline);
+  --surface-blur: blur(22px) saturate(150%);
+  --surface-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent),
+    0 18px 44px -20px color-mix(in srgb, var(--shadow-tint) 80%, transparent);
+}
+:root[data-theme-surface="paper"] {
+  --surface-fill:
+    var(--grain),
+    linear-gradient(180deg, var(--solid-raised), color-mix(in srgb, var(--solid-raised) 55%, var(--solid-panel)));
+  --surface-border: transparent;
+  --surface-blur: none;
+  --surface-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent),
+    0 1px 2px color-mix(in srgb, var(--shadow-tint) 50%, transparent),
+    0 14px 34px -14px color-mix(in srgb, var(--shadow-tint) 80%, transparent);
+}
+:root[data-theme-surface="flat"] {
+  --surface-fill: var(--solid-panel);
+  --surface-border: var(--hairline);
+  --surface-blur: none;
+  --surface-shadow: none;
+}
+:root[data-theme-surface="frame"] {
+  --surface-fill: var(--solid-panel);
+  --surface-border: color-mix(in srgb, var(--br-line) 85%, var(--ink));
+  --surface-blur: none;
+  --surface-shadow:
+    inset 0 0 0 3px var(--solid-panel),
+    inset 0 0 0 4px color-mix(in srgb, var(--br-line) 75%, transparent);
+}
+/* Fill at class weight, so a component that paints its own surface keeps it. */
+:where(:root[data-theme-surface]) :is(.panel, .br-panel, .br-card, .surface) {
+  background: var(--surface-fill);
+}
+:root[data-theme-surface] body :is(.panel, .br-panel, .br-card, .surface) {
+  border-color: var(--surface-border);
+  border-radius: var(--r-panel);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
+  box-shadow: var(--surface-shadow);
+}
+
+/* Focus (Q11-E): always at least a 2px ring; glow, petal and bracket add an ornament drawn
+   around the focused control by ThemeLayer's .theme-focus overlay. */
+:root {
+  --focus-ring-color: var(--accent);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 3px;
+}
+:root[data-theme-focus="glow"] {
+  --focus-ring-color: color-mix(in srgb, var(--accent) 85%, var(--ink));
+  --focus-ring-offset: 2px;
+}
+:root[data-theme-focus="petal"] {
+  --focus-ring-color: var(--br-signal);
+}
+:root[data-theme-focus="bracket"] {
+  --focus-ring-color: var(--br-lineHot);
+  --focus-ring-offset: 4px;
+}
+:root :where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+.theme-focus {
+  --focus-out: calc(var(--focus-ring-offset) + var(--focus-ring-width));
+  border-radius: var(--focus-radius, 0px);
+}
+.theme-focus::before,
+.theme-focus::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+.theme-focus[data-focus-style="glow"]::before {
+  inset: calc(var(--focus-out) * -1);
+  border-radius: calc(var(--focus-radius, 0px) + var(--focus-out));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--focus-ring-color) 24%, transparent),
+    0 0 20px 2px color-mix(in srgb, var(--focus-ring-color) 40%, transparent);
+}
+.theme-focus[data-focus-style="glow"]::after {
+  content: none;
+}
+/* Two petals, at the top-left and bottom-right corners of the ring. */
+.theme-focus[data-focus-style="petal"]::before,
+.theme-focus[data-focus-style="petal"]::after {
+  width: 10px;
+  height: 10px;
+  border-radius: 0 999px 0 999px;
+  background: var(--c1);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--c1) 45%, transparent);
+}
+.theme-focus[data-focus-style="petal"]::before {
+  top: calc(var(--focus-out) * -1 - 6px);
+  left: calc(var(--focus-out) * -1 - 6px);
+}
+.theme-focus[data-focus-style="petal"]::after {
+  right: calc(var(--focus-out) * -1 - 6px);
+  bottom: calc(var(--focus-out) * -1 - 6px);
+}
+/* Square brackets at all four corners. */
+.theme-focus[data-focus-style="bracket"]::before {
+  --bracket: var(--focus-ring-color);
+  inset: calc(var(--focus-out) * -1 - 4px);
+  background:
+    linear-gradient(var(--bracket), var(--bracket)) top left / 9px 2px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) top left / 2px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) top right / 9px 2px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) top right / 2px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) bottom left / 9px 2px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) bottom left / 2px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) bottom right / 9px 2px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) bottom right / 2px 9px no-repeat;
+}
+.theme-focus[data-focus-style="bracket"]::after {
+  content: none;
+}
+
+/* Selection (Q11-E): selected options, tabs and current items. Shared controls read the
+   tokens directly (apply --select-fill with `background:`, it may be a gradient); the
+   generic ARIA rule below has a single attribute's weight so a component's own selected
+   look still wins. --press-fill / --press-ink is a pressed toggle's complete colour pair. */
+:root {
+  --select-fill: color-mix(in srgb, var(--br-signal) 20%, var(--solid-panel));
+  --select-ink: var(--ink);
+  --select-edge: inset 0 0 0 1px color-mix(in srgb, var(--br-signal) 40%, transparent);
+  --press-fill: var(--accent);
+  --press-ink: var(--on-accent);
+}
+:root[data-theme-selection="pill"] {
+  --select-fill: color-mix(in srgb, var(--br-signal) 26%, var(--solid-panel));
+  --select-edge: inset 3px 0 0 var(--br-signal);
+}
+:root[data-theme-selection="lit"] {
+  --select-fill:
+    linear-gradient(180deg, color-mix(in srgb, var(--ink) 24%, transparent), color-mix(in srgb, var(--ink) 9%, transparent)),
+    color-mix(in srgb, var(--solid-panel) 70%, transparent);
+  --select-edge: inset 0 1px 0 color-mix(in srgb, var(--ink) 50%, transparent);
+}
+:root[data-theme-selection="bar"] {
+  --select-fill: color-mix(in srgb, var(--br-lineHot) 14%, var(--solid-panel));
+  --select-edge: inset 2px 0 0 var(--br-lineHot);
+}
+:where(:root) :where([role="option"], [role="treeitem"], [role="menuitemradio"]):is([aria-selected="true"], [aria-checked="true"]) {
+  background: var(--select-fill);
+  color: var(--select-ink);
+  box-shadow: var(--select-edge);
+}
+:where(:root) :where([role="tab"]):is([aria-selected="true"]) {
+  background: var(--select-fill);
+  color: var(--select-ink);
+}
+/* Segmented controls (Bracket's ToggleGroup): the pressed segment reads as a selection. */
+:root body .toggle-group .br-btn[aria-pressed="true"] {
+  background: var(--select-fill);
+  border-color: color-mix(in srgb, var(--br-signal) 45%, transparent);
+  color: var(--select-ink);
+}
+::selection {
+  background: color-mix(in srgb, var(--br-signal) 34%, transparent);
+}
+
+/* Reduced transparency: every surface turns solid. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-theme-surface][data-theme] {
+    --surface-fill: var(--solid-panel);
+    --surface-blur: none;
+  }
+}
+@media (forced-colors: active) {
+  .theme-focus,
+  .theme-art,
+  .theme-frame {
+    display: none;
+  }
+}

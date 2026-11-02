@@ -7,11 +7,12 @@ import "@fontsource-variable/inter";
 import "@fontsource-variable/fraunces/full.css";
 import "@fontsource-variable/jetbrains-mono";
 import "/src/styles.css";
-import "/src/liquidGlass.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import "/src/lib/themes/engine.css";
+import { applySavedTheme } from "/src/lib/themes/index.ts";
 import ControlsHarness from "./ControlsHarness.svelte";
 
 window.controlsLog = [];
-applySavedTheme();
+// The saved theme's motif module is in before mounting, as in main.ts.
+await applySavedTheme();
 mount(ControlsHarness, { target: document.getElementById("view") });
 window.controlsReady = true;
