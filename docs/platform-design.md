@@ -50,7 +50,7 @@ Hard rule from the user: "dont adapt any of these if it makes kitty worse". Expl
   - Markdown `documents`;
   - `quick_notes`.
 - **Saving an outline** deletes and re-inserts every block on the page (`src/kitty/core/note_blocks.py:66-97`). There is no note history.
-- **Settings are spread across:**
+- **Settings were spread across** (before builds, Q8):
   - `config/modules.yaml` (restart required);
   - browser `localStorage` (theme, dock, graph);
   - SQLite rows (AI, notes, study);
@@ -296,6 +296,8 @@ browser profile and become shareable.
 Why the alternatives lost: B shuts out non-Nix users. C means operating a service. A static
 gallery page that lists build links can be added later.
 
+**Status: built** (see [Builds (Q8/Q9): what was built](#builds-q8q9-what-was-built)).
+
 ### Q9: Live configuration: the build file is live, including custom CSS and theme tokens
 
 | Option | UX | Correct | Risk | Cost |
@@ -315,6 +317,8 @@ gallery page that lists build links can be added later.
 
 Why C lost: a shared build that runs scripts could steal notes and keys. Scripts need a sandbox
 and a permission model before they are safe.
+
+**Status: built** (see [Builds (Q8/Q9): what was built](#builds-q8q9-what-was-built)).
 
 ### Q10: Keys live in one kitty Keys service
 
@@ -400,7 +404,7 @@ misses the moment of writing.
 Built (auto-tags step):
 - **Records** (`src/kitty/core/blocks/tags.py`, routes in `web_tags.py` under `/api/tags`): a tag is a root block of type `tag` whose text is its name, with `keywords`, `aliases`, `mode` (`suggest`/`always`, absent to follow the setting) and `short` (match terms under 3 characters) as properties. Names and aliases are unique (casefolded) and match like keywords; `#alias` tags like `#name`. Create, update, delete (to Trash), attach, remove and Link all are block transactions.
 - **Attachments are block properties:** a block's state for one tag is `tag_<tag id without dashes>` = `manual`, `auto`, `accepted` or `rejected`, set with ordinary `set` operations, so they are in the op log, History and live push with no new operation kinds. Tag states, like view state, are not edits: they move neither the page `revision` nor `updated_at`, so a tag attached while someone types never causes a 409. Whole-page saves (`convert.sync_tree`) keep them.
-- **Projection** (migration `037_block_tags.sql`): `block_tags` (block, tag, `source` manual/auto/accepted, `created_at`) and `tag_rejections` are rewritten by `store.transact` for the changed blocks, from their `tag_*` properties plus `#name` tokens (counted as `manual`; `block_topics` is unchanged). When a tag record is created, renamed, re-aliased or trashed, its `#name` attachments are re-derived. `tag_settings` holds the global mode (default `suggest`) until the build file (Q8) takes it, and a `vocabulary` counter every tag change moves. A `-- python after:` migration directive (new in the runner) runs the backfill after the tables exist: every existing `#name` became a tag record, spelled as first written, in one transaction.
+- **Projection** (migration `037_block_tags.sql`): `block_tags` (block, tag, `source` manual/auto/accepted, `created_at`) and `tag_rejections` are rewritten by `store.transact` for the changed blocks, from their `tag_*` properties plus `#name` tokens (counted as `manual`; `block_topics` is unchanged). When a tag record is created, renamed, re-aliased or trashed, its `#name` attachments are re-derived. The global mode (default `suggest`) is the build's `settings.tags.mode` (Q8); `tag_settings` holds its projection and a `vocabulary` counter every tag change moves. A `-- python after:` migration directive (new in the runner) runs the backfill after the tables exist: every existing `#name` became a tag record, spelled as first written, in one transaction.
 - **Matching** (`autotag.py`, pure Python, no new dependency): one Aho-Corasick automaton over every live tag's terms, cached per database until the `vocabulary` counter moves. Text is casefolded once (with an index map when folding changes length, e.g. `ß`); a hit counts only on word boundaries and outside skipped spans: backtick and fenced code, inline-code marks (UTF-16 ranges converted to code points), `code` blocks, URLs, e-mail addresses, and `#tag`, `[[page]]`, `((ref))`, `{{embed:ref}}` tokens. Only text-flow blocks of note pages are tagged (not page roots, documents, quick notes, canvas elements or a tag's own page).
 - **On the transaction path** (`tagging.py`): after a transaction's operations are applied, each changed block is scanned; *always* tags it does not carry (and never rejected) are attached as `auto` inside the same transaction, and `auto` tags whose words are gone are dropped (no rejection). The editor's socket transactions also return `suggestions` (`{block: {text, items: [{tag, name, start, end}]}}`, UTF-16 offsets) for *suggest* tags; `GET /api/blocks/page` includes them for the whole page. The editor's own 250 ms typing debounce is the debounce: a transaction goes out when typing pauses.
 - **Editor** (`BlockEditor.svelte`, logic in `blockTags.ts`): suggestions are underlined with the CSS Custom Highlight API (the contenteditable DOM is untouched) only while the block's text is the text they were computed for. With the caret on one, a pop-up offers **Tag #name** / **Ignore**; `Tab` attaches (`accepted`) and `Esc` ignores (`rejected`) via `blockKeymap.ts`. Attached tags show as chips (automatic ones dashed); `×` records `rejected`. `blockSync.ts` applies the server's `tagged` operations from the ack, since a window ignores the echo of its own transaction.
@@ -596,8 +600,8 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
 
   The legacy tables stay readable and refuse writes (triggers) for one release. A runner directive (`-- python: module:function`) lets a numbered migration call a Python conversion in the same transaction.
 - **Existing UI:** every Notes, Documents and Quick notes endpoint keeps its request and response shape. They now read the projection and write through transactions; a whole-page save becomes the smallest diff (`convert.sync_tree`). Deleting a page or quick note moves it to Trash.
-- **WebSocket transactions and live push** (`src/kitty/web_blocks.py`, `web/src/lib/live.ts`):
-  - A window gets a single-use token from `POST /api/blocks/session`, then opens `/api/blocks/socket`. The socket has the same exact Host and Origin guard as the terminal; the RFC 6455 code is now shared in `web_socket.py`.
+- **WebSocket transactions and live push** (`src/kitty/web_live.py` since builds, which made the channel part of the always-on core; `web/src/lib/live.ts`):
+  - A window gets a single-use token from `POST /api/live/session`, then opens `/api/live/socket` (`/api/blocks/session` and `/api/blocks/socket` before builds). The socket has the same exact Host and Origin guard as the terminal; the RFC 6455 code is now shared in `web_socket.py`.
   - `{"type":"txn","ops","base"}` is applied by the server and answered with `ack` (sequence numbers and revisions) or `reject` (status and error) to the sender only.
   - Every committed `op_log` row is pushed to every window as a `change`. This includes rows written by the HTTP adapters, background imports and other processes: one thread follows the log and starts with the first window.
   - A reconnecting window sends `resume` with its last sequence and receives what it missed, or `reset` if that history was compacted.
@@ -613,7 +617,7 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
     - it advances the `block_history` horizon, below which the trigger lets those rows be deleted;
     - a purged page's snapshots go with it.
 
-    The window is `history.RETENTION_DAYS` until builds (Q8) make it a setting. A socket that resumes from before the horizon gets `reset`; step 3's peers use the same horizon to fall back to a snapshot transfer.
+    The window is the build's `settings.history.retention_days` (Q8; `history.retention_days(conn)` reads its projection). A socket that resumes from before the horizon gets `reset`; step 3's peers use the same horizon to fall back to a snapshot transfer.
 
 **Extending it for step 2 (block editor):**
 
@@ -663,6 +667,133 @@ Peer sync (Q16) on Loro (Q5). Code: `src/kitty/core/blocks/crdt.py` (Loro page d
 - **Measured** (this machine; `tests/test_block_merge.py` scenarios, numbers from a script on the same code): a 2,000-block page sent whole is 581 KB; after 500 concurrent single-keystroke transactions on each of two devices, each side's update is 51.6 KB and merging it takes 175–198 ms; both pages then match exactly.
 - **Tests:** `tests/test_block_merge.py` (named concurrent scenarios plus 40 randomized runs: 20 on two devices with 100 random steps, 12 on three devices with 120 steps, 8 on three devices with moves between pages; every run ends with identical projections, refs, topics, tags and rejections on every device, the log of every page replaying to its projection, distinct sibling keys and, outside cross-page moves, every block and every typed token present unless a device deleted it). `tests/test_sync_service.py` (pairing, wrong codes, copies, sync, pause, unpair, unknown keys, compaction gating, snapshot transfer, three devices), `tests/test_web_devices.py` (two real web servers paired over HTTP; a page written on one reaches a window open on the other as a live push), `tests/test_sync_noise.py`, `tests/test_sync_channel.py`, `tests/test_sync_discovery.py`, `web/tests/devices.test.mjs`, `web/tests/devices.browser.test.mjs`, `web/tests/blockMerge.test.mjs`.
 - **Boundaries and known limits:** only block content syncs (pages, documents, quick notes, tags). Jobs, applications, calendar, study, notebooks and folders themselves, Settings and attachment files (images) stay on each device; an image block syncs but its file does not. An edit made on one device to a block another device moved to a different page while both were offline is kept in the source page's history, not on the moved block. A purge (Trash expiry) wins over a concurrent edit of the purged block. Two tag records with the same name made on two devices both stay (each attaches); delete one by hand. Documents keep their Markdown editor and sync as blocks. Pairing a device and syncing need both devices online at the same time (no relay, Q16 B).
+
+## Builds (Q8/Q9): what was built
+
+Code: `src/kitty/core/builds/` (`document`, `css`, `store`, `project`, `share` and the published
+schema `kitty-build.schema.json`), migration `039_builds.sql`, `src/kitty/web_build.py`,
+`src/kitty/web_live.py`, `web/src/lib/build.svelte.ts`, `buildCore.ts`, `BuildEditor.svelte`,
+`BuildSettings.svelte`, `BuildStatus.svelte`. Dependency added with uv: `jsonschema` 4.26 (MIT;
+already in the lock through `mcp`).
+
+- **Where the active build lives: `config/build.json`.** It sits beside the YAML a person edits
+  by hand, so `kitty-web --root`, the desktop workspace and the CLI find it where they find the
+  rest of the configuration, any editor can open it, a demo workspace (a temporary root) never
+  touches the real one, and it is ignored by Git like `config/*.yaml`. Not `.kitty/`: kitty! has
+  no such directory, and `.private/` is for secrets, which a build never holds. History copies
+  are runtime state and go to `data/build-history/` (the newest 10).
+- **What a build holds** (every key optional; a missing key takes its default):
+  `schema` (format 1), `kitty_version`, `name`, `author`, `description`; `modules`;
+  `settings.ai` (model, routing, output limit, daily budget), `settings.notes` (allow AI,
+  attachment retention days), `settings.history.retention_days` (Q15/Q20, default 30),
+  `settings.tags.mode` (Q13), `settings.study` (focus and break lengths, sound, notifications),
+  `settings.opportunities` (scheduled monitoring on/off and interval), `settings.tern.plugin`
+  (the kitty Tern plugin may pair and send captures); `theme.base` (a built-in theme),
+  `theme.tokens`, `theme.css`; `ui.dock`, `ui.graph` (look, layout, physics), `ui.atlas.hidden`,
+  `ui.notes.pen_only`, `ui.terminal.coding_agent`.
+- **What it never holds:** notes, pages, documents, quick notes, tags and any block content;
+  keys and credentials (Q10 Keys service, `.private/`); paired clients (Q7) and paired devices
+  (Q16); applicant data (`config/profile.yaml`, `answers.yaml`, resumes, watchlists, tracks,
+  sources, the opportunity-monitoring profile: major, track, interests, locations); device
+  state (the study timezone, open note tabs, schema drafts, notification permission, recent ink
+  colours, caches). The schema has no place for them, export writes only the normalized build
+  (unknown and `x-` keys are dropped), and `tests/test_builds.py` checks a workspace seeded with
+  synthetic secrets, credentials, a paired client, a profile and notes exports none of them.
+- **Format and errors.** `document.check` parses JSON with a position for every value and key
+  and reports every problem with its line and column: syntax, duplicate keys, `NaN`, schema
+  violations, the CSS policy (a CSS list item maps to its own JSON line). Unknown keys, unknown
+  groups under `ui`, unknown theme names and a newer kitty!'s keys are *warnings*: the build
+  still loads, so builds made by a later kitty! (new themes, Brain view preferences) keep
+  working. A newer format number is refused with "made by a newer kitty!".
+- **Theme tokens:** the 16 roles, `graph1`–`graph6` and `shadow` take hex colours and override
+  the base theme before Bracket derives its palette; any other name `n` sets `--n` on the page
+  to a plain CSS value (checked: no `url()`, braces, semicolons, at-rules or `!important`).
+- **Custom CSS policy** (`css.py`, on CSS tokens, so escapes like `u\72l(` are decoded first):
+  `url()` only for an inline base64 `data:image` (PNG, JPEG, GIF, WebP, AVIF; not SVG); no
+  `image()`, `image-set()`, `cross-fade()`, `element()`, `src()`, `paint()`, `expression()`;
+  at-rules only `@media`, `@supports`, `@container` (no `@import`, `@font-face`, `@namespace`,
+  `@scope`); no `behavior`/`-moz-binding`; balanced brackets, closed strings and comments, no
+  `<!--`. The window injects it only as `@scope (#app) { ... }` through `textContent`, so it can
+  restyle the app but not load anything, run anything or leave `#app`. The page CSP already
+  forbids remote styles, images and fonts; the policy refuses them before they reach it.
+- **Source of truth and projection.** The settings rows (`ai_settings`, `note_preferences`,
+  `study_settings`, `opportunity_settings`, `tag_settings`, and `build_state` for history
+  retention and the Tern plugin) are a projection of the active build, written only by
+  `project.apply`, so their many readers (budget checks, cleanup, the timer, the scheduler, the
+  tagger, compaction, the ingress) are unchanged and every process sees the same values. A row's
+  `revision` moves only when its values change. Settings screens keep their routes and shapes;
+  each writes through `project.editing`: under the build lock and one `BEGIN IMMEDIATE`, the
+  document is changed, validated, the rows projected and the file renamed into place before the
+  commit, so the file and the rows never disagree. A build file with an error refuses Settings
+  writes (409 with the problems) rather than overwrite a half-finished edit.
+- **Migration (one time, clean cutover).** The first open of a workspace without
+  `config/build.json` writes it, moving `config/modules.yaml` into `modules` (the YAML is then
+  removed; `modules.py` reads it only to migrate). The first projection takes the settings the
+  file does not mention from the existing rows. Browser preferences (`kitty.theme`,
+  `kitty.dock`, `kitty.graph.look`, `kitty.graph.default-layout`, `kitty.atlas.physics`,
+  `kitty.atlas.hidden`, `kitty.notes.pen-only`, `kitty.coding-agent`) move once per workspace
+  through `POST /api/build/local`, which fills only keys the build does not set; every browser
+  then deletes those keys. No localStorage fallback remains.
+- **Live (Q9).** The live channel moved from the workspace module to the always-on core
+  (`/api/live/session`, `/api/live/socket`; block transactions still need the workspace
+  module). A watcher (a stat every 250 ms, acting once a file has stood still for one tick)
+  projects each valid save and pushes `{"type": "build", ...}` to every window, whoever saved
+  it: the build editor, a Settings screen, an install, another process or any text editor. An
+  invalid save changes nothing: every window gets the problems, shows a notice with the line and
+  keeps the last good build, which `build_state.applied_text` also keeps across a restart
+  (`startup_modules` starts the server on it). A window whose `hello` names another active build
+  reloads it. Module changes are flagged "restart required" everywhere.
+- **Build editor** (Settings → Build → *Open build editor*, or *Edit build* in Ctrl+K): a pane
+  docked at the right (the workbench narrows beside it), line numbers, marks at problem lines,
+  a problems list that moves the caret, the checked look applied to that window while typing,
+  autosave of valid text and Ctrl+S, and a *changed elsewhere* choice (Reload / Keep mine).
+- **Sharing.** *Export build* downloads the normalized active build as `kitty-build.json`,
+  stamped with this kitty! version. Import takes a file or an `https` link (fetched in the
+  background: https only, public addresses only, at most 3 redirects and each must stay https,
+  256 KB cap, 10 s timeout). The preview lists every change (path, before, after) with *restart*
+  on modules and *privacy/cost* on turning on note AI, choosing an AI model, raising the AI
+  budget and turning on scheduled monitoring; those apply only when *Also apply privacy and cost
+  changes* is ticked, otherwise they are held and listed. Install is one step against the
+  previewed revision (409 if the build changed since), and keeps the replaced build in history;
+  *Roll back to previous build* (or any entry) restores one, keeping the rolled-back one too.
+- **Safe mode:** `kitty-web --safe` (and the desktop app's `--safe`) for every window, `?safe`
+  for one window, Ctrl+Alt+Shift+S to toggle (the URL follows). It applies the base theme only.
+  Its control is mounted outside `#app`, in the top layer, with fixed inline styles, and shows
+  whenever custom style or safe mode is on, so custom CSS cannot hide it (tested against
+  `* { display: none !important }` plus a full-screen overlay).
+- **Security summary:** a stranger's build can change modules (after a restart), settings
+  within their ranges (privacy and cost ones only with consent), the theme and scoped CSS. It
+  cannot run code, load remote resources or exfiltrate through CSS, change keys or credentials,
+  add paired clients or devices, or touch notes or applicant data.
+- **Tests:** `tests/test_builds.py` (schema and defaults, line/column problems, forward
+  compatibility, token values, 11 allowed and 30 refused CSS cases, what an export never holds,
+  the modules.yaml and settings-row migration, projection, invalid file keeping the last good
+  build and starting on it, Settings writes through the file, symlinks refused, diff and holds,
+  atomic install and rollback, a failed write changing nothing, history pruning, link fetching);
+  `tests/test_web_build.py` (two live sockets: editor saves and external edits reach both, an
+  invalid edit keeps the last good build and blocks Settings writes, preferences, the one-time
+  local move, install/rollback, export, https-only links, the build without the workspace
+  module, safe mode, the Tern plugin switch); `web/tests/builds.test.mjs` (pure client logic);
+  `web/tests/builds.browser.test.mjs` (two real windows on a real server: a token edited in the
+  editor and an external save restyle both, invalid saves marked at their line, import diff with
+  restart flag, install, rollback, safe mode by shortcut and URL over hostile CSS).
+- **Smoke (2026-11-02):** `kitty-web --demo` (temporary root, production `web/dist`) with two
+  Chromium windows: the exported `kitty-build.json` held only the documented sections; a token
+  edited in the build editor and a token plus CSS written to the file by an outside process
+  restyled both windows and filled the open editor; a save with a duplicate key showed "Build
+  file error · line 43" in both while the last good look stayed; importing a second build listed
+  the diff (modules flagged *restart*, note AI flagged *privacy/cost* and held back), installed
+  it in both windows and rolled back; Ctrl+Alt+Shift+S in one window and `?safe` in a third
+  dropped the custom look while the other kept it. The smoke found three bugs, fixed with
+  tests: the page answered 400 to `?safe`, Ctrl+Alt (Plan) fired on the way to the safe-mode
+  chord, and a build without a dock height hid the dock.
+- **Not done:** no gallery page (Q8 C); builds do not include Q10 keys by design; a build
+  cannot ship a new theme, only tokens over a built-in base (new built-in themes slot into
+  `theme.base` and the schema's `examples` list); the tag mode of individual tags stays on its
+  tag record (block content, not a build setting); the CLI and TUI have no build commands or
+  screens yet (they read and write the same file through `kitty modules` and the projection);
+  the safe-mode control stays on screen (bottom left) whenever custom style is on and can cover
+  page content there.
 
 ## Verified facts
 

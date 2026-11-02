@@ -77,11 +77,12 @@ source .venv/bin/activate    # then just `kitty ...`
 | Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
-tracker), or `kitty modules enable/disable <id>`. Selection is stored locally:
+tracker), or `kitty modules enable/disable <id>`. The selection is the `modules`
+list of the workspace's build file, stored locally (the build file is described in
+`docs/platform-design.md`, Q8/Q9):
 
-```yaml
-# config/modules.yaml
-enabled: [applyai, workspace, terminal]
+```json
+{"schema": 1, "modules": ["applyai", "workspace", "terminal"]}
 ```
 
 Save, then **quit and restart Kitty** to activate the change. Refresh/reload does
@@ -95,10 +96,33 @@ start. Their data, attachments and configuration are retained for re-enabling.
 ApplyAI reminders work without Workspace; career calendar contributions and
 cross-module results appear only while both modules are enabled.
 
-Existing workspaces without `modules.yaml` retain every module. Fresh CLI and
+Existing workspaces with no module selection retain every module; a pre-build
+`config/modules.yaml` is moved into `config/build.json` on the first open. Fresh CLI and
 desktop workspaces start core-only. The database still uses the existing global
 migrations; disabling does not drop tables or run down-migrations. These are
 built-in modules, not installable third-party extensions.
+
+### Builds
+
+`config/build.json` is the workspace's build (`docs/platform-design.md` Q8, Q9): modules,
+settings, theme tokens, custom CSS and interface preferences (theme, dock, graph look and
+layout, hidden atlas sections, pen mode, coding agent). Every window follows it live:
+a save from Settings, the build editor or any text editor restyles every open window.
+A save with an error changes nothing; every window shows the error's line and keeps the
+last good build. Preferences a browser kept before builds move into the build once.
+
+Settings → Build edits the build's name, author and description, exports it as
+`kitty-build.json`, imports one from a file or an `https` link with a diff of what changes
+(module changes are marked as needing a restart; privacy and cost changes apply only when
+you tick *Also apply privacy and cost changes*), and lists earlier builds with one-click
+rollback. *Open build editor* (or *Edit build* in Ctrl+K) docks the file at the right of
+the window: problems are marked at their lines, theme tokens and CSS show in that window
+as you type, and valid text saves itself (Ctrl+S saves at once).
+
+Safe mode shows kitty! without the build's custom CSS and theme tokens: press
+Ctrl+Alt+Shift+S (again to turn them back on), open a window with `?safe`, or start
+`kitty-web --safe`. A small control outside the styled page says when custom style or
+safe mode is on and switches it.
 
 ### Terminal module
 
