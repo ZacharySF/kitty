@@ -1,6 +1,7 @@
-// Live push from kitty!'s block backend: one WebSocket per window carries every
-// committed change (op_log row), whoever made it, so open views refresh without polling.
-// Protocol: src/kitty/web_blocks.py. The block editor sends its transactions over the
+// The live channel: one WebSocket per window, open for the window's whole life. It carries
+// every committed block change (op_log row), whoever made it, so open views refresh
+// without polling, and every change to the build file (Q8/Q9) so each window restyles at
+// once. Protocol: src/kitty/web_live.py. The block editor sends its transactions over the
 // same socket with `transact` and receives the server's ack or reject.
 import { api } from "./api";
 import type { Op } from "./blockDoc";
@@ -19,8 +20,13 @@ export type BlockChange = {
 };
 /** A change, or null when history was compacted past this window's place: reload everything. */
 export type BlockListener = (change: BlockChange | null) => void;
+/** A whole message of one type (`hello`, `build`), as the server sent it. */
+export type LiveMessage = { type: string } & Record<string, unknown>;
 
 const listeners = new Set<BlockListener>();
+const handlers = new Map<string, Set<(message: LiveMessage) => void>>();
+/** Set by keepLive: the window stays connected even with no block listener. */
+let always = false;
 let socket: WebSocket | null = null;
 let ready = false;
 let connecting = false;
@@ -33,13 +39,29 @@ const replies = new Map<string, (reply: Reply) => void>();
 let waiting: TxnMessage[] = [];
 const OFFLINE_MS = 10_000;
 
+const wanted = () => always || listeners.size > 0;
+
+/** Keep this window's socket open from now on (every window does, for build pushes). */
+export function keepLive(): void {
+  always = true;
+  void connect();
+}
+
+/** Call `handler` for every message of `type` (such as `hello` or `build`) until the returned function is called. */
+export function onLive(type: string, handler: (message: LiveMessage) => void): () => void {
+  const set = handlers.get(type) ?? new Set();
+  handlers.set(type, set);
+  set.add(handler);
+  return () => set.delete(handler);
+}
+
 /** Call `listener` for every committed block change until the returned function is called. */
 export function onBlockChange(listener: BlockListener): () => void {
   listeners.add(listener);
   void connect();
   return () => {
     listeners.delete(listener);
-    if (!listeners.size) disconnect();
+    if (!wanted()) disconnect();
   };
 }
 
@@ -88,7 +110,7 @@ function notify(change: BlockChange | null) {
 }
 
 function receive(raw: string) {
-  const message = JSON.parse(raw) as { type: string; seq?: number; horizon?: number; txn_id?: string; device_id?: string };
+  const message = JSON.parse(raw) as LiveMessage & { seq?: number; horizon?: number; txn_id?: string; device_id?: string };
   if (message.type === "hello") {
     ready = true;
     deviceId = message.device_id ?? deviceId;
@@ -103,13 +125,14 @@ function receive(raw: string) {
     for (const resolve of live) resolve();
   } else if (message.type === "change") {
     lastSeq = Math.max(lastSeq, message.seq ?? 0);
-    notify(message as BlockChange);
+    notify(message as unknown as BlockChange);
   } else if (message.type === "reset") {
     lastSeq = message.horizon ?? lastSeq;
     notify(null);
   } else if ((message.type === "ack" || message.type === "reject") && message.txn_id) {
-    finish(message.txn_id, message as Reply);
+    finish(message.txn_id, message as unknown as Reply);
   }
+  for (const handler of [...(handlers.get(message.type) ?? [])]) handler(message);
 }
 
 function dropReplies() {
@@ -119,11 +142,11 @@ function dropReplies() {
 }
 
 async function connect() {
-  if (socket || connecting || !listeners.size) return;
+  if (socket || connecting || !wanted()) return;
   connecting = true;
   try {
-    const session = await api<{ token: string; socket: string }>("/blocks/session", {});
-    if (!listeners.size) return;
+    const session = await api<{ token: string; socket: string }>("/live/session", {});
+    if (!wanted()) return;
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     const next = new WebSocket(`${scheme}//${location.host}${session.socket}?${new URLSearchParams({ token: session.token })}`);
     socket = next;
@@ -147,7 +170,7 @@ async function connect() {
 }
 
 function retry() {
-  if (!listeners.size || retryTimer !== undefined) return;
+  if (!wanted() || retryTimer !== undefined) return;
   retryTimer = setTimeout(() => {
     retryTimer = undefined;
     void connect();

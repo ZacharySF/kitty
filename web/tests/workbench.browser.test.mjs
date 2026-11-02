@@ -96,7 +96,9 @@ after(async () => {
 });
 
 /** Opens a fresh profile on `hash`. `modules: []` is a core-only workspace. The profile is a
- *  returning user: the first-run welcome guide (covered by its own tests) is already done. */
+ *  returning user: the first-run welcome guide (covered by its own tests) is already done.
+ *  Interface preferences come from the demo's build, but each window's own preference saves
+ *  are answered here, so one test's dock or theme never leaks into the shared backend. */
 async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme } = {}) {
   const context = await browser.newContext({ viewport });
   await context.route("**/api/account", (route) =>
@@ -104,8 +106,14 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme }
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
+  await context.route("**/api/build/preferences", (route) => route.fulfill({ json: { ok: true } }));
   if (dock === "hidden")
-    await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({ mode: "hidden", height: null, shown: "terminal" })));
+    await context.route("**/api/build", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      body.build.ui.dock = { mode: "hidden", height: null, shown: "terminal" };
+      await route.fulfill({ response, json: body });
+    });
   if (modules)
     await context.route("**/api/bootstrap", async (route) => {
       const response = await route.fetch();
@@ -121,8 +129,9 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme }
   if (theme)
     await page.evaluate(async (palette) => {
       const themes = await import("/src/lib/themes.ts");
+      const build = await import("/src/lib/build.svelte.ts");
       themes.THEMES.push(palette);
-      themes.setTheme(palette.id);
+      await build.setTheme(palette.id);
     }, theme);
   return { page, problems, context };
 }

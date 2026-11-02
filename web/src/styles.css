@@ -1514,9 +1514,12 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
 }
 
 /* The dock (Dock.svelte) is fixed to the bottom of the window and publishes the
-   room it takes as --dock-space; the page always ends above it. */
+   room it takes as --dock-space; the page always ends above it. The build editor
+   (BuildEditor.svelte) is docked at the right and publishes --build-editor-space;
+   the workbench narrows beside it. */
 :root body .workbench {
   padding-bottom: calc(10px + var(--dock-space, 0px));
+  margin-right: var(--build-editor-space, 0px);
 }
 /* The herdr view fills its workspace tab above the dock. */
 .herdr-view {

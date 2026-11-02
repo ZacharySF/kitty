@@ -2,12 +2,15 @@
   import { onMount } from "svelte";
   import AgentActivity from "./AgentActivity.svelte";
   import TerminalView from "./TerminalView.svelte";
-  import { DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, clampDockHeight, firstDockHeight, readDock, writeDock, type DockMode } from "./dock";
+  import { DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, clampDockHeight, firstDockHeight } from "./dock";
+  import { buildStore, setPreferences } from "./build.svelte";
+  import type { DockMode } from "./buildCore";
 
   /**
    * The dock (Q3, Q8): kitty!'s herdr terminal, herdr's agent-activity strip, or
    * only a thin handle. It is fixed to the bottom of the window and publishes the
    * space it takes as --dock-space so the page above never sits underneath it.
+   * Its state is the build's `ui.dock`, so every window follows the same choice.
    */
   let { measure, onherdr }: {
     /** Bottom edge (viewport px) of the main panel's content, for the first size. */
@@ -17,27 +20,24 @@
   } = $props();
 
   const KEY_STEP = 16;
-  const saved = readDock(localStorage);
-  let mode = $state<DockMode>(saved.mode);
-  let height = $state<number | null>(saved.height);
-  /** The view the handle brings back after hiding. */
-  let shown = saved.shown;
+  const dock = $derived(buildStore.build.ui.dock);
+  const mode = $derived(dock.mode);
+  /** A height being dragged; saved when the drag ends. */
+  let dragged = $state<number | null>(null);
   let handle = $state<HTMLButtonElement>();
   let viewport = $state(window.innerHeight);
+  const height = $derived(dragged ?? dock.height);
   const size = $derived(height === null ? null : clampDockHeight(height, viewport));
 
-  function remember() {
-    writeDock(localStorage, { mode, height: size, shown });
-  }
   function choose(next: DockMode) {
-    if (next !== "hidden") shown = next;
-    mode = next;
-    if (next !== "hidden" && height === null) height = firstDockHeight(viewport, measure());
-    remember();
+    void setPreferences({ ui: { dock: {
+      mode: next,
+      shown: next === "hidden" ? dock.shown : next,
+      height: size ?? (next !== "hidden" ? firstDockHeight(viewport, measure()) : null),
+    } } });
   }
   function resizeTo(next: number) {
-    height = clampDockHeight(next, viewport);
-    remember();
+    void setPreferences({ ui: { dock: { height: clampDockHeight(next, viewport) } } });
   }
 
   let drag: { pointer: number; start: number; from: number } | null = null;
@@ -49,12 +49,13 @@
   }
   function dragMove(event: PointerEvent) {
     if (drag?.pointer !== event.pointerId) return;
-    height = clampDockHeight(drag.from + drag.start - event.clientY, viewport);
+    dragged = clampDockHeight(drag.from + drag.start - event.clientY, viewport);
   }
   function dragEnd(event: PointerEvent) {
     if (drag?.pointer !== event.pointerId) return;
     drag = null;
-    remember();
+    if (dragged !== null) resizeTo(dragged);
+    dragged = null;
   }
   function dividerKey(event: KeyboardEvent) {
     if (size === null) return;
@@ -72,10 +73,7 @@
   onMount(() => {
     // Wait for the first layout so the empty area below the main panel is real.
     const frame = requestAnimationFrame(() => {
-      if (mode !== "hidden" && height === null) {
-        height = firstDockHeight(viewport, measure());
-        remember();
-      }
+      if (mode !== "hidden" && height === null) resizeTo(firstDockHeight(viewport, measure()));
     });
     const onresize = () => (viewport = window.innerHeight);
     window.addEventListener("resize", onresize);
@@ -88,7 +86,7 @@
 </script>
 
 {#if mode === "hidden"}
-  <button bind:this={handle} class="dock-handle" aria-label="Show dock" title="Show dock" onclick={() => choose(shown)}><span aria-hidden="true"></span></button>
+  <button bind:this={handle} class="dock-handle" aria-label="Show dock" title="Show dock" onclick={() => choose(dock.shown)}><span aria-hidden="true"></span></button>
 {:else if size !== null}
   <section class="dock" data-kitty-panel="dock" tabindex="-1" aria-label="Dock" style:height={`${size}px`}>
     <!-- A focusable separator with a value is the WAI-ARIA window splitter, an interactive widget. -->

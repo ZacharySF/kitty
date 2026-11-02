@@ -2,7 +2,8 @@
 // in-memory stand-in for the block backend (tests/fakeBlockServer.js); every record is synthetic.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import { loadBuild } from "/src/lib/build.svelte.ts";
+import { createBuildStub } from "./buildStub.js";
 import { keysBetween } from "/src/lib/blockKeys.ts";
 import { createBlockServer } from "./fakeBlockServer.js";
 import BlockEditorHarness from "./BlockEditorHarness.svelte";
@@ -27,14 +28,17 @@ const server = createBlockServer({
   ],
 });
 window.WebSocket = server.FakeSocket;
+const build = createBuildStub();
 window.fetch = async (input, init = {}) => {
+  const answer = build.fetch(input, init);
+  if (answer) return answer;
   const url = new URL(String(input), location.href);
   const handled = server.fetch(url, init.method ?? "GET", init.body ? JSON.parse(init.body) : undefined);
   return handled ?? new Response(JSON.stringify({ error: "not in harness" }), { status: 404 });
 };
 
 const opened = [];
-applySavedTheme();
+await loadBuild();
 mount(BlockEditorHarness, { target: document.getElementById("view"), props: { opened } });
 window.blockHarness = {
   server, opened, PAGE, OTHER, id,

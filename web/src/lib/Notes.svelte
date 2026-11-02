@@ -16,6 +16,7 @@
   import MindMapFeedback from "./MindMapFeedback.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import { onBlockChange } from "./live";
+  import { buildStore, setPreferences } from "./build.svelte";
   const pane = useWorkspaceContext();
   let noteMode = $state<"text" | "canvas" | "mindmap">("text");
   let outlineText = $state(""), blockReferences = $state<Record<string,string>>({}), citationCounts = $state<Record<string,number>>({});
@@ -381,16 +382,10 @@
   let ink = $state(CANVAS_INK), paper = $state(CANVAS_PAPER);
   const images = new Map<string, HTMLImageElement>(),
     pointers = new Map<number, Point>();
-  let penOnly = $state(false),
-    penActive: number | null = null,
+  // Pen mode is the build's `ui.notes.pen_only`.
+  const penOnly = $derived(buildStore.build.ui.notes.pen_only);
+  let penActive: number | null = null,
     penGuardUntil = 0;
-  function savePenMode() {
-    try {
-      localStorage.setItem("kitty.notes.pen-only", String(penOnly));
-    } catch {
-      /* The current writing mode still works. */
-    }
-  }
   const activeNotebook = $derived(notebooks.find((n) => n.id === notebookId));
   const selectedElements = $derived(
     doc.elements.filter((e) => selected.includes(e.id)),
@@ -1632,11 +1627,6 @@
     }
   }
   onMount(() => {
-    try {
-      penOnly = localStorage.getItem("kitty.notes.pen-only") === "true";
-    } catch {
-      /* Use normal pointer input when storage is unavailable. */
-    }
     void loadIndex().then(() => { indexReady = true; });
     const openLinkedPage=(event:Event)=>{if(!pane.active)return;const id=(event as CustomEvent).detail?.page_id;if(id)void openPage(Number(id));};
     window.addEventListener("kitty-open-note",openLinkedPage);
@@ -1995,7 +1985,7 @@
         ><button disabled={!redoStack.length} onclick={() => applyUndo(true)}
           >Redo</button
         >
-          <details class="canvas-options"><summary>Canvas options</summary><label class="check"><input type="checkbox" bind:checked={penOnly} onchange={savePenMode}/>Pen mode</label><label class="check"
+          <details class="canvas-options"><summary>Canvas options</summary><label class="check"><input type="checkbox" checked={penOnly} onchange={(event) => void setPreferences({ ui: { notes: { pen_only: event.currentTarget.checked } } })}/>Pen mode</label><label class="check"
           ><input
             type="checkbox"
             checked={doc.grid}

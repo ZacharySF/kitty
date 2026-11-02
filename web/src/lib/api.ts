@@ -111,6 +111,26 @@ export interface TaskRecord {
   error: string | null;
 }
 
+/** A located problem in a build file (line and column are 1-based). */
+export interface Problem {
+  message: string;
+  line: number;
+  column: number;
+  path: string;
+  severity: "error" | "warning";
+}
+
+/** A refused request: the HTTP status, and the build file's problems when it has any. */
+export class ApiError extends Error {
+  status: number;
+  problems: Problem[];
+  constructor(message: string, status: number, problems: Problem[] = []) {
+    super(message);
+    this.status = status;
+    this.problems = problems;
+  }
+}
+
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method: body === undefined ? "GET" : "POST",
@@ -125,7 +145,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
     .json()
     .catch(() => ({ error: `Request failed (${response.status})` }));
   if (!response.ok)
-    throw Object.assign(new Error(data.error || `Request failed (${response.status})`), { status: response.status });
+    throw new ApiError(data.error || `Request failed (${response.status})`, response.status, Array.isArray(data.problems) ? data.problems : []);
   return data as T;
 }
 

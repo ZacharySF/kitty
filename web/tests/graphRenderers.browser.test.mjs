@@ -208,21 +208,29 @@ describe("look switching and preference", () => {
     await page.close();
   });
 
-  test("the look preference defaults to 2D, persists and notifies open graphs", async () => {
+  test("the look preference defaults to 2D, saves to the build, notifies open graphs and reverts when refused", async () => {
     const { page } = await harness();
     const result = await page.evaluate(async () => {
+      const { createBuildStub } = await import("/tests/buildStub.js");
+      const stub = createBuildStub();
+      const serverFetch = window.fetch.bind(window);
+      let refuse = false;
+      window.fetch = (input, init) => (refuse && String(input).endsWith("/build/preferences")
+        ? Promise.resolve(new Response(JSON.stringify({ error: "Synthetic refusal" }), { status: 409 }))
+        : stub.fetch(input, init) ?? serverFetch(input, init));
+      const { loadBuild } = await import("/src/lib/build.svelte.ts");
+      await loadBuild();
       const prefs = await import("/src/lib/graphPreferences.ts");
-      localStorage.clear();
       const initial = prefs.graphLook();
       const heard = [];
       window.addEventListener(prefs.GRAPH_SETTINGS_EVENT, () => heard.push(prefs.graphLook()));
-      prefs.setGraphLook("3d");
+      const saved = await prefs.setGraphLook("3d");
       const stored = prefs.graphLook();
-      localStorage.setItem(prefs.GRAPH_LOOK_KEY, "hologram");
-      const invalid = prefs.graphLook();
-      return { initial, stored, invalid, heard };
+      refuse = true;
+      const refused = await prefs.setGraphLook("2d");
+      return { initial, saved, stored, persisted: stub.build.ui.graph.look, refused, reverted: prefs.graphLook(), heard };
     });
-    assert.deepEqual(result, { initial: "2d", stored: "3d", invalid: "2d", heard: ["3d"] });
+    assert.deepEqual(result, { initial: "2d", saved: true, stored: "3d", persisted: "3d", refused: false, reverted: "3d", heard: ["3d", "2d", "3d"] });
     await page.close();
   });
 });

@@ -9,7 +9,6 @@ import { createServer } from "vite";
 import { chromium } from "playwright-core";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const HIDDEN_KEY = "kitty.atlas.hidden";
 let server;
 let browser;
 let base;
@@ -39,12 +38,8 @@ async function harness() {
   await page.waitForFunction(() => !!window.atlasHarness);
   return { page, problems };
 }
-async function open(page, look, enabled, hidden) {
-  await page.evaluate(([key, hidden]) => {
-    if (hidden) localStorage.setItem(key, JSON.stringify(hidden));
-    else localStorage.removeItem(key);
-  }, [HIDDEN_KEY, hidden]);
-  await page.evaluate(([look, enabled]) => window.atlasHarness.mount({ look, enabled }), [look, enabled]);
+async function open(page, look, enabled, hidden = []) {
+  await page.evaluate(([look, enabled, hidden]) => window.atlasHarness.mount({ look, enabled, hidden }), [look, enabled, hidden]);
   for (const tab of [0, 1]) {
     await page.waitForFunction((tab) => !!window.atlasHarness.point(tab, "view:settings"), tab);
     await settle(page, tab);
@@ -54,7 +49,8 @@ const point = (page, tab, id) => page.evaluate(([tab, id]) => window.atlasHarnes
 const settle = (page, tab) => page.evaluate((tab) => window.atlasHarness.settled(tab, ["view:settings", "view:notes", "view:calendar", "view:flashcards"]), tab);
 const row = (page, tab, label) => page.locator(`.tab-${tab} nav[aria-label="Workspace sections"] li`).filter({ has: page.getByRole("link", { name: label, exact: true }) });
 const dimmed = async (locator) => Number(await locator.evaluate((element) => getComputedStyle(element).opacity)) < 1;
-const stored = (page) => page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "[]"), HIDDEN_KEY);
+/** The hidden sections saved in the build (`ui.atlas.hidden`). */
+const stored = (page) => page.evaluate(() => window.atlasHarness.hidden());
 
 /** Brings a node to the front (3D) through the row's locate control, then returns its screen point. */
 async function reachable(page, tab, label, id) {

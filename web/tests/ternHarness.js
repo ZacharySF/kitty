@@ -2,7 +2,8 @@
 // stand-in kitty! API, so the page never reaches a tern binary or daemon.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import { loadBuild } from "/src/lib/build.svelte.ts";
+import { createBuildStub } from "./buildStub.js";
 import TernView from "/src/lib/TernView.svelte";
 
 const BASE = {
@@ -36,7 +37,10 @@ let state = STATES[new URLSearchParams(location.search).get("state") ?? "stopped
 const replies = {};
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const build = createBuildStub();
 window.fetch = async (url, init = {}) => {
+  const answer = build.fetch(url, init);
+  if (answer) return answer;
   const call = { url: String(url), method: init.method ?? "GET", headers: init.headers ?? {},
                  body: init.body ? JSON.parse(init.body) : undefined };
   calls.push(call);
@@ -50,7 +54,7 @@ window.fetch = async (url, init = {}) => {
   return json({ error: "not in harness" }, 404);
 };
 
-applySavedTheme();
+await loadBuild();
 mount(TernView, { target: document.getElementById("view") });
 
 window.ternHarness = {

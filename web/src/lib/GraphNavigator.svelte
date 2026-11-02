@@ -12,13 +12,10 @@
     type View,
   } from "./workspace";
   import {
-    ATLAS_HIDDEN_KEY,
     ATLAS_NODES_EVENT,
     SECTION_DRAG_TYPE,
     atlasGraph,
     atlasSections,
-    hiddenSections,
-    setSectionHidden,
   } from "./atlasNodes";
   import { activeModules } from "./modules.svelte";
   import {
@@ -26,7 +23,7 @@
     type GraphHandle,
     type GraphNode,
   } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
+  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook, hiddenSections, setSectionHidden } from "./graphPreferences";
   import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
@@ -340,11 +337,9 @@
       void handle?.setLook(look).catch(cause => { notice = (cause as Error).message; });
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
-    // Every atlas, in this window's tabs or another window, follows the same choice.
+    // Every atlas, in this window's tabs or another window, follows the same build.
     const syncHidden = () => { hidden = hiddenSections(); };
-    const syncStorage = (event: StorageEvent) => { if (event.key === ATLAS_HIDDEN_KEY || event.key === null) syncHidden(); };
     window.addEventListener(ATLAS_NODES_EVENT, syncHidden);
-    window.addEventListener("storage", syncStorage);
     // Capture phase: the renderers own the pointer while a node is dragged.
     const trackNodeDrag = (event: PointerEvent) => {
       if (nodeDrag) nodeOverList = overList(event.clientX, event.clientY) ? nodeDrag.label : null;
@@ -387,7 +382,6 @@
       disposed = true;
       window.removeEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
       window.removeEventListener(ATLAS_NODES_EVENT, syncHidden);
-      window.removeEventListener("storage", syncStorage);
       window.removeEventListener("pointermove", trackNodeDrag, true);
       window.removeEventListener("pointerup", endNodeDrag);
       window.removeEventListener("pointercancel", endNodeDrag);

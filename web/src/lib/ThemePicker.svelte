@@ -1,7 +1,8 @@
 <script lang="ts">
   import { Button, Popover } from "@nunera/bracket";
   import { onMount, tick } from "svelte";
-  import { currentTheme, getTheme, setTheme, THEMES, THEME_EVENT, KITTY_BLOSSOM } from "./themes";
+  import { currentTheme, getTheme, THEMES, THEME_EVENT, KITTY_BLOSSOM } from "./themes";
+  import { setTheme } from "./build.svelte";
 
   let open = $state(false);
   let selected = $state(currentTheme());
@@ -31,7 +32,7 @@
     const index = THEMES.findIndex(theme => theme.id === selected);
     const next = event.key === "Home" ? 0 : event.key === "End" ? THEMES.length - 1
       : (index + direction + THEMES.length) % THEMES.length;
-    setTheme(THEMES[next].id);
+    void setTheme(THEMES[next].id);
     root?.querySelector<HTMLElement>(`[data-theme-choice="${THEMES[next].id}"]`)?.focus();
   }
 </script>
@@ -68,7 +69,7 @@
           tabindex={selected === theme.id ? 0 : -1}
           data-theme-choice={theme.id}
           onclick={() => {
-            setTheme(theme.id);
+            void setTheme(theme.id);
             open = false;
             triggerButton?.focus();
           }}

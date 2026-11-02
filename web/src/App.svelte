@@ -19,6 +19,8 @@
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
   import PairingPrompt from "./lib/PairingPrompt.svelte";
+  import BuildEditor from "./lib/BuildEditor.svelte";
+  import { buildStore } from "./lib/build.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -432,6 +434,7 @@
   </main>
 </div>
 {#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock measure={panelBottom} onherdr={() => navigate("herdr")} />{/await}{/if}
+{#if buildStore.editorOpen}<BuildEditor onclose={() => (buildStore.editorOpen = false)} />{/if}
 {#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
 {#if guide && applyai}<dialog
     bind:this={guideDialog}

@@ -3,6 +3,7 @@
   import { Button } from "@nunera/bracket";
   import { api, type Job } from "./api";
   import { navigationGroups, visibleNavigation, type View } from "./workspace";
+  import { buildStore } from "./build.svelte";
   let {
     enabled,
     onclose,
@@ -31,6 +32,7 @@
     ...(applyai ? [{ label: "Add job", run: () => onadd() }] : []),
     { label: "Keyboard shortcuts", run: () => onhelp() },
     { label: "Reload configuration", run: () => onreload() },
+    { label: "Edit build", run: () => { buildStore.editorOpen = true; } },
   ]);
   const choices = $derived(
     [

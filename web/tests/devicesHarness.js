@@ -2,7 +2,8 @@
 // stand-in /api/devices that follows the route contract; no sync listener is involved.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import { loadBuild } from "/src/lib/build.svelte.ts";
+import { createBuildStub } from "./buildStub.js";
 import Devices from "/src/lib/Devices.svelte";
 
 const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -48,7 +49,10 @@ function post(path, body) {
   return json(state);
 }
 
+const build = createBuildStub();
 window.fetch = async (url, init = {}) => {
+  const answer = build.fetch(url, init);
+  if (answer) return answer;
   const path = String(url);
   calls.push({ url: path, method: init.method ?? "GET", headers: init.headers ?? {}, body: init.body ? JSON.parse(init.body) : undefined });
   if (init.method === "POST") return post(path, JSON.parse(init.body));
@@ -59,7 +63,7 @@ const confirms = [];
 let confirmAnswer = true;
 window.confirm = (message) => { confirms.push(message); return confirmAnswer; };
 
-applySavedTheme();
+await loadBuild();
 mount(Devices, { target: document.getElementById("view") });
 window.devicesHarness = {
   state, calls, errors, confirms,

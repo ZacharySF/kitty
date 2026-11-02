@@ -2,7 +2,8 @@
 // stand-in kitty! API and WebSocket so the page never reaches a herdr session.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import { loadBuild } from "/src/lib/build.svelte.ts";
+import { createBuildStub } from "./buildStub.js";
 import { installPanelFullscreen } from "/src/lib/panelFullscreen.ts";
 import Dock from "/src/lib/Dock.svelte";
 
@@ -94,7 +95,10 @@ class FakeSocket {
 window.WebSocket = FakeSocket;
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const build = createBuildStub();
 window.fetch = async (url, init = {}) => {
+  const answer = build.fetch(url, init);
+  if (answer) return answer;
   calls.push({ url: String(url), method: init.method ?? "GET", headers: init.headers ?? {}, body: init.body ? JSON.parse(init.body) : undefined });
   if (url === "/api/terminal/tern") return json(tern);
   if (String(url).startsWith("/api/terminal/tern/") && init.method === "POST") return ternPost(String(url), JSON.parse(init.body));
@@ -106,7 +110,7 @@ window.fetch = async (url, init = {}) => {
   return json({ error: "not in harness" }, 404);
 };
 
-applySavedTheme();
+await loadBuild();
 const fullscreen = installPanelFullscreen(window, document);
 const content = document.getElementById("content");
 mount(Dock, {

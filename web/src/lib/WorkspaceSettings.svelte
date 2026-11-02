@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { api, type ModuleId, type ModulesState } from "./api";
   import ThemePicker from "./ThemePicker.svelte";
@@ -10,14 +10,18 @@
   import Devices from "./Devices.svelte";
   import TagSettings from "./TagSettings.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
-  import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
+  import { GRAPH_LAYOUTS, setGraphSettings } from "./graphPreferences";
   import GraphLookToggle from "./GraphLookToggle.svelte";
-  import { setGraphLook } from "./graphPreferences";
+  import BuildSettings from "./BuildSettings.svelte";
+  import { buildStore, setPreferences } from "./build.svelte";
   import type { View } from "./workspace";
   import { activeModules } from "./modules.svelte";
   let { onview, onchange }: { onview: (view: View) => void; onchange: () => Promise<void> } = $props();
-  let layout = $state(graphLayout());
-  let physics = $state(graphPhysics());
+  // The build's `ui.graph`; a slider being dragged shows its draft until it is saved.
+  const layout = $derived(buildStore.build.ui.graph.layout);
+  let draft = $state<GraphPhysics | null>(null);
+  const physics = $derived(draft ?? buildStore.build.ui.graph.physics);
+  let physicsTimer: ReturnType<typeof setTimeout> | undefined;
   let notice = $state("");
   let error = $state("");
   let modules = $state<ModulesState | null>(null);
@@ -41,7 +45,12 @@
     modules = next;
     selection = [...next.configured];
   }
-  onMount(() => {
+  // The build's modules can change from anywhere (an install, a rollback, an outside editor):
+  // show the saved selection again unless the user is editing it here.
+  const buildModules = $derived(buildStore.build.modules.join(","));
+  $effect(() => {
+    void buildModules;
+    if (untrack(() => modulesDirty || savingModules)) return;
     let cancelled = false;
     api<ModulesState>("/modules")
       .then(next => { if (!cancelled) adopt(next); })
@@ -76,19 +85,25 @@
     spring: "How strongly connected nodes pull together. Lower values leave looser branches.",
     damping: "How quickly node movement slows. Higher values settle the graph sooner.",
   };
-  function save() {
-    try {
-      localStorage.setItem(GRAPH_LAYOUT_KEY, layout);
-      localStorage.setItem(GRAPH_PHYSICS_KEY, JSON.stringify(physics));
-      window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT, { detail: { layout, physics: { ...physics } } }));
-      notice = "Saved · open schemas update immediately";
-      error = "";
-    } catch { error = "This browser could not save local preferences."; }
+  async function saveGraph(save: Promise<boolean>) {
+    const saved = await save;
+    notice = saved ? "Saved to your build · open schemas update immediately" : "";
+    error = saved ? "" : buildStore.error;
+  }
+  function movePhysics(key: keyof GraphPhysics, value: number) {
+    draft = { ...physics, [key]: value };
+    clearTimeout(physicsTimer);
+    physicsTimer = setTimeout(() => {
+      const next = draft;
+      draft = null;
+      if (next) void saveGraph(setGraphSettings(layout, next));
+    }, 250);
   }
 </script>
 <section class="settings-workspace" aria-label="Workspace settings">
   <header><h1>Settings</h1></header>
   <Panel title="Appearance"><div class="setting-row"><span>Theme</span><ThemePicker /></div></Panel>
+  <BuildSettings />
   <DesktopSettings />
   <AccountSettings />
   <ConnectedApps />
@@ -126,11 +141,11 @@
   </div>
   <Panel title="Schemas">
     <div class="setting-row"><span>Graph look · remembered for every graph</span><GraphLookToggle /></div>
-    <label class="setting-row" title="The layout used when you open Home or a section schema">Default layout<select value={layout} onchange={(event) => { layout = event.currentTarget.value as GraphLayout; save(); }}>{#each GRAPH_LAYOUTS as item}<option value={item.id}>{item.label}</option>{/each}</select></label>
+    <label class="setting-row" title="The layout used when you open Home or a section schema">Default layout<select value={layout} onchange={(event) => void saveGraph(setGraphSettings(event.currentTarget.value as GraphLayout, physics))}>{#each GRAPH_LAYOUTS as item}<option value={item.id}>{item.label}</option>{/each}</select></label>
     <div class="physics">{#each Object.keys(PHYSICS_LIMITS) as (keyof GraphPhysics)[] as key}
-      <label title={explanations[key]}><span>{labels[key]}</span><input type="range" aria-label={labels[key]} aria-describedby={`graph-${key}-help`} min={PHYSICS_LIMITS[key].min} max={PHYSICS_LIMITS[key].max} step={PHYSICS_LIMITS[key].step} value={physics[key]} oninput={(event) => { physics[key] = Number(event.currentTarget.value); save(); }} /><output>{physics[key].toFixed(key === "repulsion" ? 0 : 2)}</output><small id={`graph-${key}-help`}>{explanations[key]}</small></label>
+      <label title={explanations[key]}><span>{labels[key]}</span><input type="range" aria-label={labels[key]} aria-describedby={`graph-${key}-help`} min={PHYSICS_LIMITS[key].min} max={PHYSICS_LIMITS[key].max} step={PHYSICS_LIMITS[key].step} value={physics[key]} oninput={(event) => movePhysics(key, Number(event.currentTarget.value))} /><output>{physics[key].toFixed(key === "repulsion" ? 0 : 2)}</output><small id={`graph-${key}-help`}>{explanations[key]}</small></label>
     {/each}</div>
-    <Button size="sm" onclick={() => { layout = "tree"; physics = { ...DEFAULT_PHYSICS }; save(); try { setGraphLook("2d"); } catch { error = "This browser could not save local preferences."; } }}>Reset graph settings</Button>
+    <Button size="sm" onclick={() => { clearTimeout(physicsTimer); draft = null; void saveGraph(setPreferences({ ui: { graph: { look: "2d", layout: "tree", physics: { ...DEFAULT_PHYSICS } } } })); }}>Reset graph settings</Button>
     {#if notice}<p class="muted" role="status">{notice}</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
   </Panel>

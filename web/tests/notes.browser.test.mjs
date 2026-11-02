@@ -197,7 +197,7 @@ test("an unsaved title edit blocks switching pages until it saves", async () => 
 test("an edit saved in another window appears live without a reload", async () => {
   const { page, problems, context } = await notes();
   await page.waitForFunction(() => window.notesHarness.sockets.some((socket) => socket.readyState === 1));
-  assert.match(await page.evaluate(() => window.notesHarness.sockets[0].url), /^ws:\/\/[^/]+\/api\/blocks\/socket\?token=synthetic-token$/);
+  assert.match(await page.evaluate(() => window.notesHarness.sockets[0].url), /^ws:\/\/[^/]+\/api\/live\/socket\?token=synthetic-token$/);
   await page.evaluate(() => window.notesHarness.editElsewhere(1, { title: "Consistent hashing (from window 2)", text: "Edited live in a second window." }));
   // Well under the old 4 s refresh poll: the push itself renders the edit.
   await until(async () => (await block(page, 1).textContent()) === "Edited live in a second window.", "the pushed edit shows");

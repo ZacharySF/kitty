@@ -1,10 +1,18 @@
 // Browser fixture for tests/atlasNodes.browser.test.mjs. Mounts the real atlas
-// (GraphNavigator) in several workspace tabs with synthetic module selections.
+// (GraphNavigator) in several workspace tabs with synthetic module selections. The graph
+// look and hidden sections are the build's (tests/buildStub.js stands in for the server).
 import { mount, unmount, flushSync } from "svelte";
 import "@nunera/bracket/styles.css";
 import "/src/styles.css";
 import { setActiveModules } from "/src/lib/modules.svelte.ts";
+import { loadBuild, setPreferences } from "/src/lib/build.svelte.ts";
+import { createBuildStub } from "./buildStub.js";
 import AtlasHarness from "./AtlasHarness.svelte";
+
+const build = createBuildStub();
+const serverFetch = window.fetch.bind(window);
+window.fetch = (input, init) => build.fetch(input, init) ?? serverFetch(input, init);
+await loadBuild();
 
 const host = document.getElementById("tabs");
 const errors = [];
@@ -16,12 +24,14 @@ const opened = [];
 window.atlasHarness = {
   errors,
   opened,
-  /** Replaces every tab with fresh atlases using the given look and modules. */
-  async mount({ look, enabled, count = 2 }) {
+  /** The hidden sections saved in the build. */
+  hidden: () => build.build.ui.atlas.hidden,
+  /** Replaces every tab with fresh atlases using the given look, modules and hidden sections. */
+  async mount({ look, enabled, hidden = [], count = 2 }) {
     for (const tab of tabs) unmount(tab.instance);
     host.replaceChildren();
     tabs = [];
-    localStorage.setItem("kitty.graph.look", look);
+    await setPreferences({ ui: { graph: { look }, atlas: { hidden } } });
     setActiveModules(enabled);
     for (let index = 0; index < count; index += 1) {
       const target = document.createElement("div");

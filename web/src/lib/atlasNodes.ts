@@ -1,39 +1,13 @@
 import type { GraphLink, GraphNode } from "./graph3d";
 import type { navigation as Navigation, View } from "./workspace";
 
-/**
- * Sections the user removed from the atlas (Q13). Stored as hidden rather than
- * shown so sections added later appear by default. Ids for views whose module is
- * off are kept: turning the module back on must not resurrect them.
- */
-export const ATLAS_HIDDEN_KEY = "kitty.atlas.hidden";
+/** Raised when the atlas's hidden sections (build `ui.atlas.hidden`, graphPreferences.ts) change. */
 export const ATLAS_NODES_EVENT = "kitty:atlas-nodes";
 /** dataTransfer type carried by a Sections row dragged onto the graph. */
 export const SECTION_DRAG_TYPE = "application/x-kitty-atlas-section";
 
 type Section = (typeof Navigation)[number];
 export type AtlasSection = { label: string; items: Section[] };
-
-/** Hidden section ids. Unknown ids are harmless: no section ever matches them. */
-export function hiddenSections(): Set<string> {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(ATLAS_HIDDEN_KEY) || "[]");
-    if (!Array.isArray(value)) return new Set();
-    return new Set(value.filter((item): item is string => typeof item === "string"));
-  } catch {
-    // Invalid local preferences never prevent opening the atlas.
-    return new Set();
-  }
-}
-
-export function setSectionHidden(view: View, hidden: boolean): void {
-  const current = hiddenSections();
-  if (current.has(view) === hidden) return;
-  if (hidden) current.add(view);
-  else current.delete(view);
-  localStorage.setItem(ATLAS_HIDDEN_KEY, JSON.stringify([...current]));
-  window.dispatchEvent(new CustomEvent(ATLAS_NODES_EVENT));
-}
 
 /**
  * The atlas Sections list: every enabled section, shown or hidden. Takes the

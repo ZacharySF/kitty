@@ -1,51 +1,12 @@
-// Q3/Q8 dock state and Q1 terminal view helpers (docs/terminal-dock-design.md).
+// Q3/Q8 dock sizing and Q1 terminal view helpers (docs/terminal-dock-design.md). The dock's
+// state lives in the build (`ui.dock`); its legacy localStorage move is in builds.test.mjs.
 // node --experimental-strip-types --test tests/dock.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, DOCK_STORAGE_KEY,
-  clampDockHeight, firstDockHeight, readDock, writeDock,
-} from '../src/lib/dock.ts';
+import { DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, clampDockHeight, firstDockHeight } from '../src/lib/dock.ts';
 import {
   terminalSocketUrl, terminalTheme, ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, ternTarget,
 } from '../src/lib/terminal.ts';
-
-function memory(initial = {}) {
-  const values = new Map(Object.entries(initial));
-  return {
-    getItem: key => (values.has(key) ? values.get(key) : null),
-    setItem: (key, value) => values.set(key, String(value)),
-    values,
-  };
-}
-
-test('a fresh dock opens on the terminal with no remembered height', () => {
-  assert.deepEqual(readDock(memory()), { mode: 'terminal', height: null, shown: 'terminal' });
-});
-
-test('the dock remembers its state, height and the view the handle brings back', () => {
-  const storage = memory();
-  writeDock(storage, { mode: 'hidden', height: 287, shown: 'activity' });
-  assert.deepEqual(readDock(storage), { mode: 'hidden', height: 287, shown: 'activity' });
-  writeDock(storage, { mode: 'activity', height: 300, shown: 'activity' });
-  assert.deepEqual(readDock(storage), { mode: 'activity', height: 300, shown: 'activity' });
-  // A visible dock always restores to what it shows.
-  storage.setItem(DOCK_STORAGE_KEY, '{"mode":"terminal","height":300,"shown":"activity"}');
-  assert.equal(readDock(storage).shown, 'terminal');
-});
-
-test('corrupt or foreign saved dock state falls back instead of failing', () => {
-  for (const saved of ['not json', '[]', 'null', '{"mode":"drawer","height":"tall"}', '{"mode":"terminal","height":-5}', '{"mode":"hidden","shown":"hidden"}']) {
-    const state = readDock(memory({ [DOCK_STORAGE_KEY]: saved }));
-    assert.ok(['terminal', 'activity', 'hidden'].includes(state.mode), saved);
-    assert.ok(['terminal', 'activity'].includes(state.shown), saved);
-    assert.ok(state.height === null || state.height > 0, saved);
-  }
-  assert.deepEqual(readDock(memory({ [DOCK_STORAGE_KEY]: '{"mode":"activity","height":-5}' })), { mode: 'activity', height: null, shown: 'activity' });
-  const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
-  assert.deepEqual(readDock(broken), { mode: 'terminal', height: null, shown: 'terminal' });
-  assert.doesNotThrow(() => writeDock(broken, { mode: 'hidden', height: 200, shown: 'terminal' }));
-});
 
 test('the first dock size is the empty area below the main panel', () => {
   // Window 900 high, main panel content ends at 540: the dock fills the 360 below it.

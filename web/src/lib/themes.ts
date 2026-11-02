@@ -1,4 +1,5 @@
 import { applyTheme, type Theme } from "@nunera/bracket/theme";
+import { scopedCss, tokenPlan, type BuildTheme } from "./buildCore";
 
 export type ThemeId =
   | "harness"
@@ -271,9 +272,10 @@ export const THEMES: readonly KittyTheme[] = [
 ];
 
 export const DEFAULT_THEME: ThemeId = "harness";
-/** Dispatched on `window` after a theme is applied; `detail` is the ThemeId. */
+/** Dispatched on `window` after the appearance is applied; `detail` is the base ThemeId. */
 export const THEME_EVENT = "kitty:theme";
-const STORAGE_KEY = "kitty.theme";
+/** The `<style>` holding the build's custom CSS (Q9). */
+export const BUILD_CSS_ID = "kitty-build-css";
 
 export function getTheme(id: string | null | undefined): KittyTheme {
   return THEMES.find((theme) => theme.id === id) ?? THEMES[0];
@@ -281,14 +283,6 @@ export function getTheme(id: string | null | undefined): KittyTheme {
 
 export function currentTheme(): ThemeId {
   return getTheme(document.documentElement.dataset.theme).id;
-}
-
-function savedTheme(): ThemeId {
-  try {
-    return getTheme(localStorage.getItem(STORAGE_KEY)).id;
-  } catch {
-    return DEFAULT_THEME;
-  }
 }
 
 /** Surface alpha: panels stay readable while the backdrop shows through. */
@@ -321,21 +315,36 @@ function applyKittyTheme(theme: KittyTheme): void {
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute("content", theme.roles.void);
-  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: theme.id }));
 }
 
-/** Applies a theme instantly and persists it in localStorage (`kitty.theme`). */
-export function setTheme(id: ThemeId): void {
-  const theme = getTheme(id);
-  applyKittyTheme(theme);
-  try {
-    localStorage.setItem(STORAGE_KEY, theme.id);
-  } catch {
-    // Storage can be unavailable (private mode); the theme still applies.
+/** Custom properties the last applied tokens set, removed when they disappear. */
+let tokenProperties: string[] = [];
+
+/**
+ * Applies a build's look to this window (Q9): the base theme with role tokens
+ * overriding its roles, the other tokens as custom properties, and the custom CSS
+ * scoped to #app. Safe mode applies the base theme alone.
+ */
+export function applyAppearance(look: BuildTheme, safe: boolean): void {
+  const root = document.documentElement;
+  const plan = tokenPlan(safe ? {} : look.tokens, tokenProperties);
+  // Stale properties go first: the base theme then restores any it also sets.
+  for (const name of plan.remove) root.style.removeProperty(name);
+  const base = getTheme(look.base);
+  applyKittyTheme({ ...base, roles: { ...base.roles, ...plan.roles } });
+  for (const [name, value] of Object.entries(plan.set)) root.style.setProperty(name, value);
+  tokenProperties = Object.keys(plan.set);
+
+  const css = safe ? "" : scopedCss(look.css);
+  let style = document.getElementById(BUILD_CSS_ID);
+  if (!css) style?.remove();
+  else {
+    if (!style) {
+      style = document.createElement("style");
+      style.id = BUILD_CSS_ID;
+      document.head.append(style);
+    }
+    style.textContent = css;
   }
-}
-
-/** Applies the persisted theme; call once before mounting the app. */
-export function applySavedTheme(): void {
-  applyKittyTheme(getTheme(savedTheme()));
+  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: base.id }));
 }

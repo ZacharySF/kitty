@@ -1,5 +1,5 @@
-// An in-memory stand-in for kitty!'s block backend (src/kitty/web_blocks.py) for browser
-// harnesses: GET /api/blocks/page, the blocks WebSocket (txn → ack/reject, change to
+// An in-memory stand-in for kitty!'s block backend (src/kitty/web_blocks.py, web_live.py) for
+// browser harnesses: GET /api/blocks/page, the live WebSocket (txn → ack/reject, change to
 // every window), history sessions/preview/restore and Trash. Records are synthetic.
 // It applies operations with the editor's own PageDoc; the real server's semantics are
 // covered by the Python tests.
@@ -159,7 +159,7 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
   server.fetch = (url, method, body) => {
     const path = url.pathname;
     const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
-    if (path === "/api/blocks/session" && method === "POST") return json({ token: "synthetic-token", socket: "/api/blocks/socket" });
+    if (path === "/api/live/session" && method === "POST") return json({ token: "synthetic-token", socket: "/api/live/socket" });
     if (path === "/api/blocks/page") {
       const entry = find(url.searchParams);
       return entry ? json(stateOf(entry)) : json({ error: "Page not found" }, 404);

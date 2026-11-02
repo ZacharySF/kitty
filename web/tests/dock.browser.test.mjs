@@ -39,7 +39,8 @@ async function open(page, search = "") {
 }
 const dock = (page) => page.locator('[data-kitty-panel="dock"]');
 const height = async (locator) => Math.round((await locator.boundingBox()).height);
-const saved = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("kitty.dock")));
+/** The dock as saved in the (stand-in) build file: `ui.dock`. */
+const saved = (page) => page.evaluate(() => window.harnessBuild.build.ui.dock);
 const dockSpace = (page) => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--dock-space").trim());
 
 test("opens on herdr's terminal, sized to the empty area below the main panel", async () => {
@@ -182,6 +183,7 @@ test("Agent launch chooses a coding agent, remembers it, and exposes named-sessi
   await page.getByRole("status").filter({ hasText: "Agent tab opened" }).waitFor();
   await page.getByRole("button", { name: "New Agent tab" }).click();
   assert.equal(await chooser.inputValue(), "codex");
+  assert.equal(await page.evaluate(() => window.harnessBuild.build.ui.terminal.coding_agent), "codex");
   await page.getByRole("button", { name: "Attach external agent" }).click();
   const instructions = page.getByRole("region", { name: "External agent attachment" });
   await instructions.waitFor();

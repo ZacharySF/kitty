@@ -4,7 +4,8 @@
 // stand-in, as they live in kitty's block tables; its canvas document lives here.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import { loadBuild } from "/src/lib/build.svelte.ts";
+import { createBuildStub } from "./buildStub.js";
 import { keysBetween } from "/src/lib/blockKeys.ts";
 import { createBlockServer } from "./fakeBlockServer.js";
 import NotesHarness from "./NotesHarness.svelte";
@@ -81,7 +82,10 @@ const outlineResult = (id) => {
     text: item.text, ordering: index, collapsed: false, type: item.type, props: {} })), references: {}, citation_counts: {} };
 };
 
+const build = createBuildStub();
 window.fetch = async (input, init = {}) => {
+  const answer = build.fetch(input, init);
+  if (answer) return answer;
   const url = new URL(String(input), location.href);
   const method = init.method ?? "GET";
   const body = init.body ? JSON.parse(init.body) : undefined;
@@ -124,7 +128,7 @@ harness.sockets = server.sockets;
 
 const params = new URLSearchParams(location.search);
 sessionStorage.setItem("kitty.notes.open-page", params.get("page") ?? "1");
-applySavedTheme();
+await loadBuild();
 mount(NotesHarness, {
   target: document.getElementById("view"),
   props: { initialMode: params.get("mode") === "mindmap" ? "mindmap" : undefined },
