@@ -1,5 +1,6 @@
 <!-- The Brain's View panel: a collapsible, mindcorpus-like column of form, grouping, motion, drawing and colour controls. -->
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { BrainGroup } from "./brainLayout";
   import {
     BRAIN_BACKGROUNDS,
@@ -21,6 +22,7 @@
     onresetcolours,
     onchange,
     onreset,
+    lead,
   }: {
     view: BrainView;
     reducedMotion: boolean;
@@ -34,6 +36,8 @@
     onresetcolours: () => void;
     onchange: (next: BrainView) => void;
     onreset: () => void;
+    /** Controls drawn in View's row, before it (home's look switch). */
+    lead?: Snippet;
   } = $props();
 
   /** The group whose colour picker is open. */
@@ -74,10 +78,13 @@
 {/snippet}
 
 <div class="controls">
-  <button type="button" class="opener" aria-expanded={view.panel} aria-controls={panelId} onclick={() => set({ panel: !view.panel })}>
-    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h7M12 4h2M2 8h2M7 8h7M2 12h9M14 12h0" /><circle cx="10.5" cy="4" r="1.5" /><circle cx="5.5" cy="8" r="1.5" /><circle cx="12.5" cy="12" r="1.5" /></svg>
-    <span>View</span>
-  </button>
+  <div class="bar">
+    {@render lead?.()}
+    <button type="button" class="opener" aria-expanded={view.panel} aria-controls={panelId} onclick={() => set({ panel: !view.panel })}>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h7M12 4h2M2 8h2M7 8h7M2 12h9M14 12h0" /><circle cx="10.5" cy="4" r="1.5" /><circle cx="5.5" cy="8" r="1.5" /><circle cx="12.5" cy="12" r="1.5" /></svg>
+      <span>View</span>
+    </button>
+  </div>
   {#if view.panel}
     <aside id={panelId} class="panel" aria-label="Brain view">
       <section>
@@ -164,6 +171,11 @@
     font: inherit;
     color: inherit;
     cursor: pointer;
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .opener {
     display: inline-flex;

@@ -54,7 +54,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Agents" eyebrow="herdr">
+<HomeWidget {id} title="Agents" eyebrow={spaces.length ? `${working} working · ${blocked} ${blocked === 1 ? "needs" : "need"} you` : ""}>
   {#if error}
     <p class="note" role="alert">{error}</p>
   {:else if !activity}
@@ -65,7 +65,6 @@
   {:else if !spaces.length}
     <p class="note">No herdr workspaces yet.</p>
   {:else}
-    <p class="sum"><b>{working}</b> working · {blocked} {blocked === 1 ? "needs" : "need"} you</p>
     <ul>
       {#each spaces as space (space.id)}
         <li data-state={space.status} class:focused={space.focused}>
@@ -86,14 +85,6 @@
 </HomeWidget>
 
 <style>
-  .sum {
-    margin: 0 0 6px;
-    color: var(--muted);
-    font-size: 11.5px;
-  }
-  .sum b {
-    color: var(--ink);
-  }
   ul {
     display: grid;
     gap: 2px;

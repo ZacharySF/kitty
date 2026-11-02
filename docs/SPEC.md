@@ -423,3 +423,13 @@ Stage 1: done.
   under the toolbar at the default (1280×850) and minimum (760×500) native sizes.
   Checks: `node --test web/tests/notes.browser.test.mjs` (same browser variables as
   above).
+- 2026-11-02: Home holds only widgets (fidelity design Q13): Today and Quick note
+  on the left, Agents and Up next on the right. The Sections list left the rail for a
+  **Sections** popover in the stage's top-left corner (search, grouped list, each
+  row's ⋯: Open, Show on the map, Hide/Show); a 2D node dropped on **Sections** hides
+  it and a dimmed row dragged onto the graph shows it. The Brain/2D switch sits beside
+  **View** in the stage's top-right corner. The right rail folds to an 18px strip by
+  its inner-edge chevron or `]` (`kitty.home.rail`, shared live by every home) and the
+  Brain or 2D atlas refits to the wider stage. Checks:
+  `node --test web/tests/workbench.browser.test.mjs web/tests/brain.browser.test.mjs
+  web/tests/atlasNodes.browser.test.mjs` (same browser variables as above).

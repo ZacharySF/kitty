@@ -46,7 +46,7 @@
     },
   });
 
-  let atlas: { focusSearch: () => void; focusGroup: (label: string) => void } | undefined = $state();
+  let atlas: { focusSearch: () => void; focusGroup: (label: string) => void; handleKey: (event: KeyboardEvent) => boolean } | undefined = $state();
   let jobBrowser: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
   let pipeline: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
   let study: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
@@ -77,6 +77,7 @@
   }
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
     if (!active) return false;
+    if (view === "today") return atlas?.handleKey(event) ?? false;
     if (view === "pipeline") return await pipeline?.handleKey(event) ?? false;
     if (view === "study") return await study?.handleKey(event) ?? false;
     if (["inbox", "jobs", "queue", "applications", "favorites"].includes(view))

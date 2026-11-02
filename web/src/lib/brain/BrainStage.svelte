@@ -1,6 +1,6 @@
 <!-- The Brain look on home: every record and every edit in the workspace as one glowing point. -->
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, type Snippet } from "svelte";
   import { api, type BrainData, type BrainNode } from "../api";
   import { webglAvailable } from "../graph3d";
   import { THEME_EVENT } from "../themes";
@@ -10,7 +10,18 @@
   import BrainControls from "./BrainControls.svelte";
   import Loader from "../Loader.svelte";
 
-  let { active = true, revision = 0 }: { active?: boolean; revision?: number } = $props();
+  let {
+    active = true,
+    revision = 0,
+    start,
+    end,
+  }: {
+    active?: boolean;
+    revision?: number;
+    /** Home's corner controls: `start` top-left, `end` in View's row top-right. */
+    start?: Snippet;
+    end?: Snippet;
+  } = $props();
 
   const LEGEND_LIMIT = 9;
   const reducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -396,7 +407,7 @@
   {:else if status === "missing"}
     <div class="state" role="status">
       <p class="title">The brain needs the newer backend</p>
-      <p>Update kitty to see every record and edit as a point of light. 2D still maps your workspace.</p>
+      <p>Update kitty to see the Brain; 2D still maps your workspace.</p>
     </div>
   {:else if status === "error"}
     <div class="state" role="alert">
@@ -413,10 +424,15 @@
     </div>
   {/if}
 
-  {#if isolatedGroup}
-    <button type="button" class="back" aria-label={`Back to all ${grouping.toLowerCase()}s`} onclick={() => isolate(null)}>
-      <span aria-hidden="true">←</span> All<span class="sep" aria-hidden="true">·</span><i style:background={isolatedGroup.hex}></i>{isolatedGroup.label}
-    </button>
+  {#if start || isolatedGroup}
+    <div class="start">
+      {@render start?.()}
+      {#if isolatedGroup}
+        <button type="button" class="back" aria-label={`Back to all ${grouping.toLowerCase()}s`} onclick={() => isolate(null)}>
+          <span aria-hidden="true">←</span> All<span class="sep" aria-hidden="true">·</span><i style:background={isolatedGroup.hex}></i>{isolatedGroup.label}
+        </button>
+      {/if}
+    </div>
   {/if}
 
   {#if model && view.labels !== "off"}
@@ -487,6 +503,7 @@
     onresetcolours={resetColours}
     onchange={change}
     onreset={reset}
+    lead={end}
   />
 </div>
 
@@ -612,12 +629,17 @@
     font-style: normal;
     opacity: 0.7;
   }
-  /* Back from one isolated group to all of them. */
-  .back {
+  /* Home's corner controls, then the way back from one isolated group to all of them. */
+  .start {
     position: absolute;
     top: 14px;
     left: 14px;
-    z-index: 3;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .back {
     display: inline-flex;
     align-items: center;
     gap: 6px;

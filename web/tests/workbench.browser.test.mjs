@@ -98,8 +98,9 @@ after(async () => {
 
 /** Opens a fresh profile on `hash`. `modules: []` is a core-only workspace. The profile is a
  *  returning user: the first-run welcome guide (covered by its own tests) is already done.
- *  `setup(context)` adds routes or init scripts before the first page load. */
-async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, setup } = {}) {
+ *  `storage` seeds localStorage before the first load; `setup(context)` adds routes or init
+ *  scripts before the first page load. */
+async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, storage, setup } = {}) {
   const context = await browser.newContext({ viewport });
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
@@ -110,6 +111,13 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
     await context.addInitScript((float) => localStorage.setItem("kitty.dock", JSON.stringify({
       mode: float ? "terminal" : "hidden", shown: "terminal", float, step: "m", size: null, offset: { right: 16, bottom: 16 },
     })), dock === "floating");
+  if (storage)
+    await context.addInitScript((entries) => {
+      // Only the first load is seeded: a reload keeps what the page saved since.
+      if (sessionStorage.getItem("seeded")) return;
+      sessionStorage.setItem("seeded", "1");
+      for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value);
+    }, storage);
   if (modules)
     await context.route("**/api/bootstrap", async (route) => {
       const response = await route.fetch();
@@ -168,16 +176,19 @@ async function assertAtlasFits(page, label) {
 }
 
 /**
- * Every control in the sidebar can be focused and is then above the docked dock and
+ * Every home control outside the drawing (both widget rails, the rail's collapse chevron
+ * and the stage's corner controls) can be focused and is then above the docked dock and
  * hit-testable; only a floating dock card, which the user can move or hide, may cover it.
  */
 async function assertSidebarReachable(page, label) {
-  const unreachable = await page.locator(".atlas-panel").evaluate((panel) => {
+  const unreachable = await page.locator(".atlas").evaluate((atlas) => {
     const space = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0;
     const dock = document.querySelector('[data-kitty-panel="dock"][data-float="true"], .dock-pill');
     const missing = [];
-    for (const control of panel.querySelectorAll("a[href], button, input, summary")) {
-      if (!control.getClientRects().length || control.closest("details:not([open]) > :not(summary)")) continue;
+    const controls = atlas.querySelectorAll(":is(.rail, [data-home-corner]) :is(a[href], button, input, textarea, summary), .rail-toggle");
+    if (!atlas.querySelector("[data-home-corner] button")) missing.push("no corner controls");
+    for (const control of controls) {
+      if (!control.getClientRects().length || control.disabled || control.closest("details:not([open]) > :not(summary)")) continue;
       control.focus();
       const box = control.getBoundingClientRect();
       const x = box.left + box.width / 2, y = box.top + box.height / 2;
@@ -187,8 +198,10 @@ async function assertSidebarReachable(page, label) {
     }
     return missing;
   });
-  assert.deepEqual(unreachable, [], `${label}: sidebar controls cannot be reached`);
+  assert.deepEqual(unreachable, [], `${label}: home controls cannot be reached`);
 }
+
+const RAIL_KEY = "kitty.home.rail";
 
 describe("the Brain home fills the window above the dock", () => {
   for (const viewport of [DEFAULT, MINIMUM, SCALED_MINIMUM]) {
@@ -197,12 +210,14 @@ describe("the Brain home fills the window above the dock", () => {
       ["all modules, dock shown", {}],
       ["all modules, dock hidden", { dock: "hidden" }],
       ["all modules, dock floating", { dock: "floating" }],
+      ["all modules, rail collapsed", { storage: { [RAIL_KEY]: "collapsed" } }],
       ["core only", { modules: [] }],
     ]) {
       test(`${size}, ${name}`, async () => {
         const { page, problems, context } = await open("today", { viewport, ...options });
         if (!options.modules && options.dock !== "hidden") await page.locator('[data-kitty-panel="dock"]').waitFor();
         if (options.dock === "floating") assert.equal(await visibleBottom(page), viewport.height, `${size}: the floating card reserves page space`);
+        if (options.storage) await page.locator(".atlas .side.collapsed").waitFor();
         await assertAtlasFits(page, `${size} ${name}`);
         await assertSidebarReachable(page, `${size} ${name}`);
         assert.deepEqual(problems, []);
@@ -1056,10 +1071,10 @@ describe("study streak", () => {
 
 describe("home rails", () => {
   for (const viewport of [DEFAULT, SCALED_MINIMUM]) {
-    test(`home at ${viewport.width}×${viewport.height}: the Brain sits centre between two scrolling widget rails; find and sections stay in reach`, async () => {
+    test(`home at ${viewport.width}×${viewport.height}: widgets only in both rails around the Brain; Sections and the look switch sit in the stage's corner`, async () => {
       const { page, problems, context } = await open("today", { viewport, dock: "hidden" });
       const left = page.getByRole("complementary", { name: "Home widgets" });
-      const right = page.getByRole("complementary", { name: "Workspace" });
+      const right = page.getByRole("complementary", { name: "Activity" });
       const stage = page.locator('[data-kitty-panel="graph"]');
       await Promise.all([left.waitFor(), right.waitFor(), stage.waitFor()]);
       const [l, s, r] = await Promise.all([rect(left), rect(stage), rect(right)]);
@@ -1067,19 +1082,109 @@ describe("home rails", () => {
       assert.ok(s.width > l.width && s.width > r.width, `the atlas (${s.width}px) is not the widest column`);
       for (const [name, box] of [["left", l], ["right", r]])
         assert.ok(Math.abs(box.top - s.top) <= 1 && Math.abs(box.bottom - s.bottom) <= 1, `${name} rail is not as tall as the atlas`);
-      // Each rail scrolls on its own; the page never does.
-      const scrolled = await right.evaluate((rail) => { rail.scrollTop = 200; return rail.scrollTop; });
-      assert.ok(scrolled > 0, "the Workspace rail does not scroll");
-      assert.ok(["auto", "scroll"].includes(await left.evaluate((rail) => getComputedStyle(rail).overflowY)), "the widget rail does not scroll");
+      // The rails hold only widgets: Today and Quick note, Agents and Up next.
+      const titles = (rail) => rail.locator(":scope > section h3").allInnerTexts();
+      assert.deepEqual(await titles(left), ["Today", "Quick note"]);
+      assert.deepEqual(await titles(right), ["Agents", "Up next"]);
+      for (const rail of [left, right]) {
+        assert.equal(await rail.getByRole("searchbox").count(), 0, "a rail still holds the section search");
+        assert.equal(await rail.getByRole("navigation").count(), 0, "a rail still holds the Sections list");
+        assert.ok(["auto", "scroll"].includes(await rail.evaluate((node) => getComputedStyle(node).overflowY)), "a rail does not scroll on its own");
+      }
       assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
-      await right.getByRole("searchbox", { name: /Find a section/ }).fill("Flash");
-      await right.getByRole("list", { name: "Matching nodes" }).getByRole("button", { name: /Flashcards/ }).waitFor();
-      assert.ok(await right.getByRole("navigation", { name: "Workspace sections" }).getByRole("link", { name: "Calendar" }).isVisible());
+
+      // The corner control row: Sections top-left, the Brain/2D switch top-right beside View.
+      const sections = stage.getByRole("button", { name: /^Sections \d/ });
+      const looks = stage.getByRole("group", { name: "Home look" });
+      const view = stage.getByRole("button", { name: "View" });
+      await Promise.all([sections.waitFor(), looks.waitFor(), view.waitFor()]);
+      const [sb, lb, vb] = await Promise.all([rect(sections), rect(looks), rect(view)]);
+      assert.ok(sb.top - s.top <= 20 && sb.left - s.left <= 20, `Sections is not in the stage's top-left corner: ${JSON.stringify(sb)}`);
+      assert.ok(lb.top - s.top <= 20 && lb.right <= vb.left && vb.left - lb.right <= 12, "the look switch is not beside View");
+      assert.ok(Math.abs((lb.top + lb.bottom) / 2 - (vb.top + vb.bottom) / 2) <= 2, "the look switch and View are not one row");
+      for (const box of [sb, lb, vb]) assert.equal(Math.round(box.height), 28, "corner controls are not 28px");
+
+      // "/" opens the Sections popover on its search; the list filters, and each row's ⋯ opens, locates, hides.
+      await page.locator("body").press("/");
+      const popover = page.getByRole("dialog", { name: "Sections" });
+      await popover.waitFor();
+      const find = popover.getByRole("searchbox", { name: "Find a section" });
+      assert.ok(await find.evaluate((node) => node === document.activeElement), "the section search is not focused");
+      assert.ok(await popover.getByRole("link", { name: /^Calendar\b/ }).isVisible());
+      await find.fill("Flash");
+      await popover.getByRole("link", { name: /^Flashcards\b/ }).waitFor();
+      assert.equal(await popover.getByRole("link", { name: /^Calendar\b/ }).count(), 0, "the list does not filter");
+      await popover.getByRole("button", { name: "Flashcards options" }).click();
+      const menu = page.getByRole("menu", { name: "Flashcards options" });
+      assert.deepEqual(await menu.getByRole("menuitem").allInnerTexts(), ["Open", "Show on the map", "Hide from the atlas"]);
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      assert.ok(await popover.isVisible(), "Escape in the row menu closed the Sections popover");
+      await find.press("Escape");
+      await popover.waitFor({ state: "detached" });
       await assertAtlasFits(page, `${viewport.width} rails`);
       assert.deepEqual(problems, []);
       await context.close();
     });
   }
+
+  test("the side rail collapses to an edge strip by its chevron or ], the Brain widens and refits, and the choice is remembered", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    const rail = page.getByRole("complementary", { name: "Activity" });
+    const stage = page.locator('[data-kitty-panel="graph"]');
+    const toggle = page.getByRole("button", { name: "Side widgets" });
+    await Promise.all([rail.waitFor(), toggle.waitFor()]);
+    await assertAtlasFits(page, "expanded");
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+    // The chevron sits on the rail's inner edge, between the stage and the rail.
+    const [railBox, chevron, wide] = await Promise.all([rect(rail), rect(toggle), rect(stage)]);
+    assert.ok(chevron.left >= wide.right - 12 && chevron.right <= railBox.left + 12, `the chevron is not on the rail's inner edge: ${JSON.stringify(chevron)}`);
+    assert.match(await toggle.getAttribute("title"), /\]/, "the chevron's tooltip does not name its shortcut");
+
+    await toggle.click();
+    await rail.waitFor({ state: "detached" });
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+    const strip = await rect(page.locator(".atlas .side"));
+    assert.ok(strip.width > 0 && strip.width <= 24, `the collapsed rail is ${strip.width}px, not a thin strip`);
+    await assertAtlasFits(page, "collapsed");
+    const grown = await rect(stage);
+    assert.ok(grown.width - wide.width >= 150, `the Brain only grew ${grown.width - wide.width}px`);
+    assert.ok(strip.left - grown.right <= 14, "the Brain does not fill the rail's space");
+    assert.equal(await page.evaluate((key) => localStorage.getItem(key), RAIL_KEY), "collapsed");
+
+    await page.reload();
+    await page.locator(".atlas .side.collapsed").waitFor();
+    assert.equal(await rail.count(), 0, "the collapsed rail is not remembered");
+    await assertAtlasFits(page, "collapsed after reload");
+
+    // ] toggles it from anywhere on home except while typing.
+    await page.getByRole("textbox", { name: "Quick note" }).click();
+    await page.keyboard.press("]");
+    assert.equal(await rail.count(), 0, "] typed into a note toggled the rail");
+    await page.getByRole("textbox", { name: "Quick note" }).fill("");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("]");
+    await rail.waitFor();
+    assert.equal(await page.getByRole("button", { name: "Side widgets" }).getAttribute("aria-expanded"), "true");
+    await assertAtlasFits(page, "expanded again");
+    assert.equal(Math.round((await rect(stage)).width), Math.round(wide.width), "the Brain did not return to its width");
+    assert.equal(await page.evaluate((key) => localStorage.getItem(key), RAIL_KEY), "expanded");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Ctrl K still finds every section without the rail list", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await page.locator(".atlas").waitFor();
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    await palette.getByRole("combobox").fill("Calen");
+    await palette.getByRole("option", { name: /Calendar/ }).first().waitFor();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash === "#calendar");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
 });
 
 describe("home widgets", () => {
@@ -1111,10 +1216,10 @@ describe("home widgets", () => {
     const left = page.getByRole("complementary", { name: "Home widgets" });
     const agenda = left.getByRole("region", { name: "Today" });
     const note = left.getByRole("region", { name: "Quick note" });
-    const agents = page.getByRole("complementary", { name: "Workspace" }).getByRole("region", { name: "Agents" });
+    const agents = page.getByRole("complementary", { name: "Activity" }).getByRole("region", { name: "Agents" });
     await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
 
-    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, the eyebrow on the right.
+    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, any tag on the right.
     for (const widget of [agenda, note, agents]) {
       const frame = await widget.evaluate((node) => {
         const style = getComputedStyle(node);
@@ -1122,7 +1227,7 @@ describe("home widgets", () => {
         return {
           fill: style.backgroundColor, top: style.borderTopWidth, sides: [style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
           font: getComputedStyle(title).fontFamily, size: parseFloat(getComputedStyle(title).fontSize),
-          titleRight: title.getBoundingClientRect().right, eyebrowLeft: eyebrow?.getBoundingClientRect().left ?? -1,
+          titleRight: title.getBoundingClientRect().right, eyebrow: !!eyebrow, eyebrowLeft: eyebrow?.getBoundingClientRect().left ?? -1,
           sameRow: eyebrow ? Math.abs(eyebrow.getBoundingClientRect().bottom - title.getBoundingClientRect().bottom) < 6 : false,
         };
       });
@@ -1131,8 +1236,12 @@ describe("home widgets", () => {
       assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
       assert.match(frame.font, /Inter/);
       assert.ok(frame.size <= 14, `title is ${frame.size}px`);
-      assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
+      if (frame.eyebrow) assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
     }
+    // Q9 purpose check: the shortcut is the Save button's tooltip, not a tag; the agents' state is the tag.
+    assert.equal(await note.locator("header .eyebrow").count(), 0, "Quick note still tags itself with its shortcut");
+    assert.match(await note.getByRole("button", { name: "Save" }).getAttribute("title"), /Ctrl/);
+    assert.equal((await agents.locator("header .eyebrow").innerText()).trim(), "1 working · 1 needs you");
 
     // Today agenda: past, live with progress, now-line, then the next event with a countdown.
     const rows = agenda.getByRole("listitem");
@@ -1171,6 +1280,65 @@ describe("home widgets", () => {
 
     await agents.getByRole("button", { name: /Approve/ }).click();
     await page.waitForFunction(() => location.hash === "#herdr");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Up next lists the coming week's deadlines, reminders, tasks and due cards soonest first; a row opens its page", async () => {
+    /** Local midnight `offset` days from today, plus `hour` hours. */
+    const at = (offset, hour = 0) => { const day = new Date(); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() + offset); day.setHours(hour); return day; };
+    const date = (offset) => { const day = at(offset); return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`; };
+    const event = (id, title, start, source_key = null) => ({ id, title, start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString(), all_day: false, calendar_id: "personal", location: "", source_key });
+    let week = {
+      calendars: [{ id: "personal", name: "Personal", color: "#6d5dfc", visible: 1 }],
+      events: [
+        event("e-today", "Seminar today", new Date(Date.now() + 60 * 60_000)),
+        event("e-deadline", "Deadline · Arch problem set", at(1, 17), "opportunity:3:deadline"),
+        event("e-reminder", "Follow_Up · Northwind Labs · Engineer", at(3, 10), "reminder:4"),
+        event("e-far", "Next month", at(12, 9)),
+      ],
+      tasks: [
+        { id: "t-late", title: "Overdue essay", due: at(-1, 12).toISOString(), status: "todo" },
+        { id: "t-next", title: "Finish eigenvalue set", due: date(2), status: "doing" },
+        { id: "t-done", title: "Already done", due: date(1), status: "done" },
+        { id: "t-someday", title: "Someday", due: "", status: "todo" },
+      ],
+      activity: [], reminders: [],
+    };
+    let cards = 31;
+    // The calendar's copy of reminder 4 (event "e-reminder") is the same follow-up: it shows once.
+    let reminders = { due: [], upcoming: [{ id: 4, kind: "followup", due_at: at(3, 10).toISOString(), note: "", job_id: 1, application_id: 1, done_at: null, label: "Northwind Labs — Engineer" }] };
+    const { page, problems, context } = await open("today", {
+      dock: "hidden",
+      setup: async (context) => {
+        await context.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: week }));
+        await context.route((url) => url.pathname === "/api/flashcards", (route) => route.fulfill({ json: { decks: [], types: [], media: [], stats: { due: cards, total: 60 } } }));
+        await context.route((url) => url.pathname === "/api/reminders", (route) => route.fulfill({ json: reminders }));
+      },
+    });
+    const upNext = page.getByRole("complementary", { name: "Activity" }).getByRole("region", { name: "Up next" });
+    await upNext.getByText("Overdue essay").waitFor();
+    const rows = await upNext.getByRole("listitem").allInnerTexts();
+    const order = ["Overdue essay", "Flashcards", "Arch problem set", "Finish eigenvalue set", "Northwind Labs"];
+    assert.deepEqual(rows.map((row) => order.findIndex((title) => row.includes(title))), [0, 1, 2, 3, 4], `Up next order: ${JSON.stringify(rows)}`);
+    // Kinds are mono caps; the text is compared case-blind.
+    assert.match(rows[0], /\btask\b/i);
+    assert.match(rows[0], /overdue/i);
+    assert.match(rows[1], /31 due/);
+    assert.match(rows[2], /deadline/i);
+    assert.match(rows[2], /Tomorrow/);
+    assert.ok(!/deadline · arch/i.test(rows[2]), "the kind is repeated in the title");
+    assert.match(rows[4], /follow-up/i);
+    assert.equal((await upNext.locator("header .eyebrow").innerText()).trim(), "5");
+    await upNext.getByRole("button", { name: /Flashcards/ }).click();
+    await page.waitForFunction(() => location.hash === "#flashcards");
+
+    // Nothing coming: one short empty line.
+    week = { ...week, events: [], tasks: [] };
+    cards = 0;
+    reminders = { due: [], upcoming: [] };
+    await page.goto(new URL("#today", page.url()).href);
+    await upNext.getByText("Nothing due this week.").waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
