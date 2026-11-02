@@ -1261,13 +1261,14 @@ describe("calendar redesign", () => {
     const d = new Date();
     const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const slotButton = (time) => page.getByRole("button", { name: `Create event ${day} ${time}`, exact: true });
-    const editor = page.getByRole("dialog");
+    // A slot (Enter, a click or a drag) prefills the pill's quick add with its time.
+    const quick = page.getByRole("dialog", { name: "Add event or task" });
     await slotButton("14:00").focus();
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await editor.getByRole("heading", { name: "New event" }).waitFor();
+    await quick.getByText("14:30–15:30").waitFor();
     await page.keyboard.press("Escape");
-    await editor.waitFor({ state: "detached" });
+    await quick.waitFor({ state: "detached" });
     await slotButton("16:00").scrollIntoViewIfNeeded();
     const from = await slotButton("15:00").boundingBox();
     const to = await slotButton("16:00").boundingBox();
@@ -1275,9 +1276,9 @@ describe("calendar redesign", () => {
     await page.mouse.down();
     await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 4 });
     await page.mouse.up();
-    await editor.getByRole("heading", { name: "New event" }).waitFor();
+    await quick.getByText("15:00–16:30").waitFor();
     await page.keyboard.press("Escape");
-    await editor.waitFor({ state: "detached" });
+    await quick.waitFor({ state: "detached" });
     const block = page.getByRole("group", { name: "Move me" });
     // Native automated drags are flaky in Chromium (and cancel on the tiny ↔ handle); dispatch the same DOM events.
     const dragOnto = async (source, target) => {
@@ -1356,8 +1357,9 @@ describe("calendar redesign", () => {
     await page.getByRole("region", { name: "Agenda" }).waitFor();
     await page.getByRole("searchbox").fill("dwm");
     assert.equal(await page.getByRole("region", { name: "Agenda" }).count(), 1, "typing in search switched views");
-    await page.getByText("Shortcuts", { exact: true }).click();
-    assert.match(await page.locator(".interaction-help").textContent(), /D\/W\/M\/A[\s\S]*J\/K[\s\S]*T/);
+    // Shortcuts live in tooltips now that the Shortcuts fold-out is gone.
+    assert.equal(await pill.getByRole("button", { name: "Day", exact: true }).getAttribute("title"), "Day (D)");
+    assert.equal(await pill.getByRole("button", { name: "Add event or task" }).getAttribute("aria-keyshortcuts"), "N");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1411,23 +1413,25 @@ describe("calendar redesign", () => {
     await context.close();
   });
 
-  test("a side drawer edits events live and its title understands 'lunch with Mira fri 12:30'", async () => {
+  test("quick add understands 'lunch with Mira fri 12:30' and More opens the new event in the side drawer", async () => {
     const { page, problems, context } = await open("calendar", { dock: "hidden" });
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
-    await page.getByRole("button", { name: "Add event", exact: true }).first().click();
-    const drawer = page.getByRole("dialog", { name: "New event" });
+    await page.getByRole("toolbar", { name: "Calendar range" }).getByRole("button", { name: "Add event or task" }).click();
+    const quick = page.getByRole("dialog", { name: "Add event or task" });
+    await quick.getByRole("textbox", { name: "Add event or task" }).fill("lunch with Mira fri 12:30 at Café Rose");
+    await quick.getByText(/^Fri/).waitFor();
+    await quick.getByText("12:30–13:30").waitFor();
+    await quick.getByRole("button", { name: /^More/ }).click();
+    const drawer = page.getByRole("dialog", { name: "Event details" });
     await drawer.waitFor();
     assert.notEqual(await drawer.getAttribute("aria-modal"), "true", "the drawer should leave the calendar usable");
     const box = await drawer.boundingBox();
     assert.ok(box.x + box.width >= 1280 - 24 && box.width <= 440 && box.height >= 400, `drawer is not a right-hand side drawer: ${JSON.stringify(box)}`);
-    await drawer.getByRole("textbox", { name: "Title" }).fill("lunch with Mira fri 12:30 at Café Rose");
-    const understood = drawer.getByRole("status", { name: "Understood" });
-    await understood.getByText("Lunch with Mira", { exact: true }).waitFor();
-    assert.match(await understood.textContent(), /Fri[\s\S]*12:30–13:30[\s\S]*Café Rose/);
+    assert.equal(await drawer.getByRole("textbox", { name: "Title" }).inputValue(), "Lunch with Mira");
     for (const section of ["Repeat & time settings", "Notes, privacy & custom reminders", "Attendees, attachments & Google properties"])
       assert.equal(await drawer.getByText(section, { exact: false }).count() >= 1, true, `${section} is not reachable`);
     assert.equal(await drawer.getByRole("button", { name: "10 minutes before" }).getAttribute("aria-pressed"), "true");
-    await drawer.getByRole("button", { name: "Add event" }).click();
+    await drawer.getByRole("button", { name: "Close event editor" }).click();
     await drawer.waitFor({ state: "detached" });
     const saved = await page.evaluate(async () => {
       const from = new Date(Date.now() - 864e5).toISOString(), to = new Date(Date.now() + 9 * 864e5).toISOString();

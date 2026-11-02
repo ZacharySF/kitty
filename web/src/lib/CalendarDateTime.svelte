@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Select from "./ui/Select.svelte";
+
   let {
     value = $bindable(""),
     label,
@@ -21,17 +23,15 @@
       value = date ? timed ? `${date}T${time || "09:00"}` : date : "";
     }} /></label>
   {#if timed}
-    <label>{label} time<select value={time || "09:00"} disabled={!value} {required}
-      onchange={(event) => (value = `${value.slice(0, 10)}T${event.currentTarget.value}`)}>
-      {#each choices as choice}<option value={choice}>{choice}</option>{/each}
-    </select></label>
+    <label>{label} time<Select kind="list" label={`${label} time`} value={time || "09:00"} disabled={!value}
+      onchange={(next) => (value = `${value.slice(0, 10)}T${next}`)} options={choices.map((choice) => ({ value: choice, label: choice }))} /></label>
   {/if}
 </div>
 
 <style>
   .date-time-field { display: flex; flex-wrap: wrap; gap: 0.6rem; }
   label { display: flex; flex: 1; min-width: 7rem; flex-direction: column; gap: 0.35rem; }
-  input, select {
+  input {
     min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box;
     font: inherit; color: var(--ink); border: 1px solid var(--border);
     background: var(--surface); border-radius: 0.4rem; padding: 0.5rem;

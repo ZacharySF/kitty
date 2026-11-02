@@ -11,15 +11,18 @@
 </script>
 
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import Icon from "../Icon.svelte";
 
-  /** Glass capsule floating over the bottom of the calendar: range, step, go-to-date and the D W M A Y P views. */
-  let { heading, view, date, flash = "", onview, onstep, ontoday, ondate }: {
+  /** Glass capsule floating over the bottom of the calendar: range, step, go-to-date, the D W M A Y P views and the one +. */
+  let { heading, view, date, flash = "", add, onview, onstep, ontoday, ondate }: {
     heading: string;
     view: string;
     date: string;
     /** Last shortcut key pressed, shown briefly as a key cap. */
     flash?: string;
+    /** The calendar's create control, last in the pill. */
+    add?: Snippet;
     onview: (view: CalendarView) => void;
     onstep: (step: number) => void;
     ontoday: () => void;
@@ -42,6 +45,7 @@
     <button class="letter" class:on={view === v.id} aria-pressed={view === v.id} aria-label={v.label}
       aria-keyshortcuts={v.key} title={`${v.label} (${v.key})`} onclick={() => onview(v.id)}>{v.key}</button>
   {/each}
+  {#if add}<span class="sep" aria-hidden="true"></span>{@render add()}{/if}
   <kbd class="flash" class:show={!!flash} aria-hidden="true">{flash}</kbd>
 </div>
 
