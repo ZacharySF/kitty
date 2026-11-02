@@ -78,9 +78,13 @@
             {/each}
           </ul>
         {:else}<p class="muted">No connected apps.</p>{/if}
+        {#if connected.address}
+          <p class="muted address">Browser extension: paste <code>{connected.address}</code> into the kitty! side panel (an extension cannot read <code>.private/endpoint.json</code>).
+            <Button size="sm" variant="ghost" onclick={() => connected?.address && void navigator.clipboard.writeText(connected.address).catch(() => {})}>Copy address</Button></p>
+        {/if}
       {:else if !error}<p class="muted" role="status">Loading connected apps…</p>{/if}
       <details><summary>How apps connect</summary>
-        <p>While kitty! runs, it writes its current address to the owner-only <code>.private/endpoint.json</code> in your workspace (never a token). An app reads it, asks to pair and shows a code; you approve here. Browser extensions connect from their side panel, popup or background page, not from scripts inside web pages.</p>
+        <p>While kitty! runs, it writes its current address to the owner-only <code>.private/endpoint.json</code> in your workspace (never a token). An app reads it, asks to pair and shows a code; you approve here. A browser extension cannot read files, so you paste the address above into it once. Browser extensions connect from their side panel, sidebar or background page, not from scripts inside web pages.</p>
       </details>
       {#if error}<p role="alert">{error}</p>{/if}
     </div>

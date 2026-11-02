@@ -39,6 +39,7 @@
   import {
     acceptOps, attachedTags, liveSuggestions, mergeSuggestions, rejectOps, suggestionsAt, unnamedTags, type SuggestionItem, type Suggestions,
   } from "./blockTags";
+  import { quoteEdit } from "./mirror";
 
   let {
     target, label = "Page blocks", pages = [], extras, focusBlock = "",
@@ -83,6 +84,8 @@
   let suggestions = $state.raw<Suggestions>({});
   let tagNames = $state.raw<Record<string, string>>({});
   let caretAt = $state<{ id: string; start: number; end: number } | null>(null);
+  /** The block the caret was last in (or the last quote): where a Mirror pane quote goes. */
+  let quoteAnchor: string | null = null;
   let hintBox = $state<{ x: number; y: number } | null>(null);
   const lookedUp = new Set<string>();
   let namesLoading = false;
@@ -203,6 +206,7 @@
     const caret = active && id && root?.contains(active) ? caretOffsets(active) : null;
     const next = caret && id ? { id, ...caret } : null;
     if (next?.id !== caretAt?.id || next?.start !== caretAt?.start || next?.end !== caretAt?.end) caretAt = next;
+    if (next) quoteAnchor = next.id;
   }
 
   function acceptTag(id: string, item: SuggestionItem) {
@@ -523,6 +527,22 @@
     const block = current.local.get(id);
     const edit = change(block.text);
     if (edit) current.commit(replaceOps(block, edit.start, edit.end, edit.text));
+  }
+
+  /**
+   * Write a quote from the Mirror pane (Q11) as one transaction: after the top-level block
+   * the caret was last in, else at the end of the page. The caret stays where it is, and
+   * the next quote follows this one.
+   */
+  export function insertQuote(specs: Spec[]): boolean {
+    const current = sync;
+    if (!current) return false;
+    const edit = quoteEdit(current.local, quoteAnchor, specs, newId);
+    if (!current.commit(edit.ops)) return false;
+    const head = edit.ops[0];
+    if (head.op === "insert") quoteAnchor = head.id;
+    announcement = "Quote added";
+    return true;
   }
 
   function insertPlain(element: HTMLElement, id: string, value: string) {

@@ -16,11 +16,14 @@
   import MindMapFeedback from "./MindMapFeedback.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import { onBlockChange } from "./live";
+  import { followMirrors, mirrors } from "./mirrorStore.svelte";
   import { buildStore, setPreferences } from "./build.svelte";
   const pane = useWorkspaceContext();
   let noteMode = $state<"text" | "canvas" | "mindmap">("text");
   let outlineText = $state(""), blockReferences = $state<Record<string,string>>({}), citationCounts = $state<Record<string,number>>({});
   let historyOpen = $state(false), trashOpen = $state(false);
+  /** The Mirror pane (Q11) beside the writing view: the browser tab the kitty extension mirrors. */
+  let mirrorOpen = $state(false);
   let openTabs = $state<number[]>([]), focusBlock = $state(""), tabDrag = 0;
   let pageMenu = $state<{id:number;x:number;y:number}|null>(null);
   let originals = $state<{id:number;name:string}[]>([]);
@@ -1628,6 +1631,7 @@
   }
   onMount(() => {
     void loadIndex().then(() => { indexReady = true; });
+    followMirrors();
     const openLinkedPage=(event:Event)=>{if(!pane.active)return;const id=(event as CustomEvent).detail?.page_id;if(id)void openPage(Number(id));};
     window.addEventListener("kitty-open-note",openLinkedPage);
     // Live push replaces polling: a change saved in any window refreshes this one now.
@@ -1898,6 +1902,8 @@
           }}>Save</button
         >
         <input type="search" aria-label="Find in page" placeholder="Find in page…" bind:value={pageFind} oninput={()=>{if(pageFind)outline=true;}}/>
+        <Button variant="ghost" size="sm" aria-pressed={mirrorOpen} disabled={noteMode!=="text"} title="Mirror: the browser tab the kitty! extension is mirroring, beside this page"
+          onclick={()=>mirrorOpen=!mirrorOpen}>Mirror{#if mirrors.list.length}<span class="mirror-live" aria-label={`${mirrors.list.length} live`}></span>{/if}</Button>
         <details class="overflow page-actions" bind:open={moreOpen} use:closeOnEscape><summary>More <span aria-hidden="true">▾</span></summary><div class="overflow-menu" role="group" aria-label="More page actions and help">
         {#if noteMode==="text"}
           <p class="muted help">Blocks · / commands · # - [] &gt; Markdown shortcuts · Esc selects blocks · Tab nests · Ctrl+Shift+↑↓ moves · drag ⋮⋮ to reorder or onto a page</p>
@@ -1937,6 +1943,7 @@
       <div hidden={noteMode!=="text"}>
         {#if pageId}{#key pageId}<NoteOutline bind:this={noteOutline} {pageId} references={blockReferences} counts={citationCounts} pages={noteTitles} {focusBlock}
           onpage={value=>void resolveLink(value)} onopen={openBlock} onopenpage={pageBlock=>void openLinkedPage(pageBlock)} oncreatepage={createSubpage}
+          mirror={mirrorOpen} onclosemirror={()=>mirrorOpen=false}
           onrevision={editorRevision} onerror={message=>error=message}/>{/key}{/if}
         <details class="note-import"><summary>Import PDF / Markdown</summary><DocumentImport {notebookId} onimport={id=>{void loadIndex().then(()=>openBlock(id));}}/>{#each originals as original}<a href={`/api/documents/originals/${original.id}`} download>{original.name}</a>{/each}</details>
       </div>
@@ -2449,6 +2456,7 @@
   .page-bar .note-mode { flex-shrink: 0; }
   .page-bar .page-title { flex: 1 1 180px; min-width: 80px; }
   .page-bar > button { flex-shrink: 0; }
+  .mirror-live { display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
   .tools {
     padding: 5px;
     background: var(--chrome);

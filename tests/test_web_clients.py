@@ -94,7 +94,7 @@ def test_a_denied_request_gets_no_token(running):
     assert running.request("/api/clients/deny", {"id": waiting["id"]})[0] == 200
     status, result, _ = call(running, "POST", "/api/ingress/pair/status", {"request": ticket["request"]})
     assert status == 200 and result == {"status": "denied"}
-    assert running.request("/api/clients")[1] == {"clients": [], "requests": []}
+    assert running.request("/api/clients")[1] == {"clients": [], "requests": [], "address": running.server.origin}
 
 
 def test_pairing_requests_are_rate_limited(running):

@@ -12,26 +12,31 @@
   import BlockEditor, { type PageRef } from "./BlockEditor.svelte";
   import NoteBlockText from "./NoteBlockText.svelte";
   import TagPage from "./TagPage.svelte";
+  import MirrorPane from "./MirrorPane.svelte";
   import { createTag, findTag } from "./tags";
   import type { BlockData } from "./blockDoc";
+  import { quoteSpecs, type Mirror } from "./mirror";
 
   // A note page's writing view: kitty!'s block editor plus Notes' reference tools
   // (live ((references)), citation contexts, [[page]] and #tag topics, tag pages, unlinked mentions).
   let {
-    pageId, pages, references, counts, focusBlock = "",
-    onpage, onopen, onopenpage, oncreatepage, onrevision, onerror,
+    pageId, pages, references, counts, focusBlock = "", mirror = false,
+    onpage, onopen, onopenpage, oncreatepage, onrevision, onerror, onclosemirror = () => {},
   }: {
     pageId: number;
     pages: { id: number; title: string }[];
     references: Record<string, string>;
     counts: Record<string, number>;
     focusBlock?: string;
+    /** Show the Mirror pane (Q11) beside the page. */
+    mirror?: boolean;
     onpage: (title: string) => void;
     onopen: (id: number, blockId?: string) => void;
     onopenpage: (pageBlockId: string) => void;
     oncreatepage: () => Promise<{ page: string; title: string } | null>;
     onrevision: (from: number, to: number, own: boolean) => void;
     onerror: (message: string) => void;
+    onclosemirror?: () => void;
   } = $props();
 
   let editor = $state<ReturnType<typeof BlockEditor>>();
@@ -109,6 +114,11 @@
       return null;
     });
   }
+  /** A passage quoted from the Mirror pane becomes a callout and quote in this page. */
+  function quoteMirror(passage: string, source: Mirror) {
+    if (!editor?.insertQuote(quoteSpecs({ passage, title: source.title, url: source.url, at: new Date() })))
+      error = "The page is still loading; quote again in a moment.";
+  }
 </script>
 
 {#snippet extras(block: BlockData)}
@@ -159,6 +169,7 @@
         {/if}
       </aside>
     {/if}
+    {#if mirror}<MirrorPane onquote={quoteMirror} onclose={onclosemirror} />{/if}
   </div>
 </div>
 

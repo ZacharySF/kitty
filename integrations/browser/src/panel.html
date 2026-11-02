@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>kitty!</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header><img src="icons/icon-32.png" alt="" width="20" height="20"><h1>kitty!</h1></header>
+
+  <section aria-labelledby="connection-heading">
+    <h2 id="connection-heading">Connection</h2>
+    <p id="connection" role="status">Checking…</p>
+    <div id="code-box" hidden>
+      <p>In kitty!, approve the request showing this code (the bar at the top of kitty!, or Settings → Connected apps):</p>
+      <p class="code" id="code" aria-label="Pairing code"></p>
+    </div>
+    <form id="address-form">
+      <label for="address">kitty!'s address</label>
+      <div class="row">
+        <input id="address" name="address" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:8765">
+        <button id="connect" type="submit">Connect</button>
+      </div>
+      <p class="hint">Copy it from kitty! → Settings → Connected apps. A browser extension cannot read kitty!'s
+        <code>.private/endpoint.json</code> (extensions have no access to your files), so you paste the address
+        once; <code>kitty-web</code> uses <code>http://127.0.0.1:8765</code> by default and the desktop app shows its own.</p>
+    </form>
+    <button id="forget" type="button" class="quiet" hidden>Forget this connection</button>
+  </section>
+
+  <section aria-labelledby="tab-heading">
+    <h2 id="tab-heading">This tab</h2>
+    <p id="tab-title" class="tab-title"></p>
+    <label class="switch"><input id="mirror" type="checkbox" role="switch"> Mirror this tab to kitty!</label>
+    <p id="tab-notice" class="notice" role="status"></p>
+    <button id="send-selection" type="button">Send selection to kitty! Inbox</button>
+    <p id="send-result" role="status"></p>
+    <p class="hint">While mirroring is on, this tab's address, title, readable text, your selection and a screenshot
+      (every few seconds while the page changes, about once a minute while it is still) go to kitty! on this computer.
+      kitty! keeps only the latest frame, in memory: it is dropped when you switch mirroring off, close the tab, after
+      2.5 minutes without a frame, or when kitty! stops. Only passages you quote into a note are saved.</p>
+  </section>
+
+  <section aria-labelledby="deny-heading">
+    <h2 id="deny-heading">Never mirror</h2>
+    <details>
+      <summary>Always excluded</summary>
+      <p class="hint">Browser pages, files and extension pages; private and incognito windows; banking and payment
+        sites; password managers; sign-in pages; and any page showing a password field.</p>
+    </details>
+    <label for="rules">Your own rules, one per line: <code>example.com</code>, <code>*.example.com</code>,
+      <code>*shop*</code> or <code>example.com/private</code></label>
+    <textarea id="rules" rows="4" spellcheck="false"></textarea>
+    <div class="row"><button id="save-rules" type="button">Save rules</button><span id="rules-result" role="status"></span></div>
+  </section>
+  <script src="panel.js"></script>
+</body>
+</html>

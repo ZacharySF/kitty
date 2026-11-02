@@ -29,6 +29,8 @@ export interface PairingRequest {
 export interface ClientsState {
   clients: PairedClient[];
   requests: PairingRequest[];
+  /** This kitty!'s address, which a person pastes into the browser extension. */
+  address: string | null;
 }
 
 /** Fired after any approval, denial or revocation so every open view refreshes. */

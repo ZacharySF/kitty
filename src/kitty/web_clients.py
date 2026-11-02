@@ -22,11 +22,14 @@ Ingress routes::
     POST /api/ingress/notes         capture: {text, tint?} -> quick note
     POST /api/ingress/inbox         capture: {blocks: [{type?, text}]} -> appended to the Inbox page
     POST /api/ingress/mirror        capture: {url, title, text?, selection?} -> page snapshot in the Inbox
+    POST /api/ingress/mirror/frame  capture: {tab, url, title, text?, selection?, image?} -> live mirror frame
+                                    (memory only, pushed to every window; see kitty.web_mirror)
+    POST /api/ingress/mirror/stop   capture: {tab} -> that tab's mirror is dropped at once
     GET  /api/ingress/recent        read: ?limit=1-50 -> {inbox, pages, tasks} titles
 
 Page routes (behind the normal page guard)::
 
-    GET  /api/clients               {clients, requests}
+    GET  /api/clients               {clients, requests, address}
     POST /api/clients/approve|deny  {id} of a waiting request
     POST /api/clients/revoke        {id} of a paired client
 """
@@ -35,7 +38,8 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 
-from kitty.core import clients, endpoint, ingress
+from kitty import web_mirror
+from kitty.core import clients, endpoint, ingress, mirror
 from kitty.db import connect
 
 INGRESS = "/api/ingress"
@@ -47,9 +51,12 @@ ROUTES: dict[tuple[str, str], str | None] = {
     ("POST", INGRESS + "/notes"): "capture",
     ("POST", INGRESS + "/inbox"): "capture",
     ("POST", INGRESS + "/mirror"): "capture",
+    ("POST", INGRESS + "/mirror/frame"): "capture",
+    ("POST", INGRESS + "/mirror/stop"): "capture",
     ("GET", INGRESS + "/recent"): "read",
 }
 CAPTURES = {INGRESS + "/notes": ingress.note, INGRESS + "/inbox": ingress.append, INGRESS + "/mirror": ingress.mirror}
+MIRROR_FRAMES = {INGRESS + "/mirror/frame": web_mirror.frame, INGRESS + "/mirror/stop": web_mirror.stop_tab}
 #: The request headers a client may send cross-origin.
 CORS_HEADERS = ("Authorization", "Content-Type")
 MAX_BODY = 2 * 1024 * 1024
@@ -72,7 +79,9 @@ def _error(exc: clients.ClientError):
 
 
 def _state(app, conn) -> dict:
-    return {"clients": clients.listing(conn), "requests": app.pairing.waiting()}
+    # The address is what a person pastes into the browser extension, which cannot read
+    # .private/endpoint.json.
+    return {"clients": clients.listing(conn), "requests": app.pairing.waiting(), "address": app.origin}
 
 
 def get(app, conn, path, query):
@@ -93,6 +102,7 @@ def post(app, conn, path, body):
     try:
         if action == "revoke":
             clients.revoke(conn, body["id"])
+            web_mirror.revoked(app, body["id"])
         else:
             app.pairing.decide(body["id"], approve=action == "approve")
     except clients.ClientError as exc:
@@ -147,14 +157,14 @@ def _preflight(handler, app, path: str, origin: str | None) -> None:
     handler.end_headers()
 
 
-def _body(handler) -> dict:
+def _body(handler, limit: int = MAX_BODY) -> dict:
     from kitty.web_server import APIError
 
     kind = handler.headers.get_all("Content-Type", [])
     if len(kind) != 1 or kind[0].partition(";")[0].strip().lower() != "application/json":
         raise APIError(415, "Use application/json")
     lengths = handler.headers.get_all("Content-Length", [])
-    if len(lengths) == 1 and lengths[0].isdigit() and int(lengths[0]) > MAX_BODY:
+    if len(lengths) == 1 and lengths[0].isdigit() and int(lengths[0]) > limit:
         raise APIError(413, "Request body is too large")
     return handler._body()
 
@@ -237,6 +247,11 @@ def ingress_request(handler) -> None:
             handler._json(200, result)
             return
         app._no_query(query)
+        if path in MIRROR_FRAMES:
+            # Live frames stay in memory (kitty.core.mirror): no database, no mutation lock.
+            body = _body(handler, mirror.MAX_FRAME_BODY)
+            handler._json(200, MIRROR_FRAMES[path](app, client, body))
+            return
         body = _body(handler)
         with app.mutation_lock, closing(connect(app.settings.db_path)) as conn:
             result = CAPTURES[path](conn, body)
