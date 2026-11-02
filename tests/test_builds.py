@@ -85,7 +85,7 @@ def test_unknown_keys_and_themes_are_warnings_so_newer_builds_still_load():
     checked = document.check(text)
     assert checked.ok
     warned = {problem.path for problem in checked.warnings}
-    assert warned == {"brain", "settings.tags.fuzzy", "theme.base", "ui.planner", "ui.brain.zoom"}
+    assert warned == {"brain", "settings.tags.fuzzy", "theme.base", "ui.brain.zoom"}, warned
     assert all(problem.line > 1 for problem in checked.warnings)
     build = checked.build
     assert build["theme"]["base"] == "kitty" and build["theme"]["tokens"] == {"glass-blur": "18px"}
@@ -192,7 +192,8 @@ def test_a_build_has_exactly_the_documented_sections():
         "$schema", "schema", "kitty_version", "name", "author", "description", "modules", "settings", "theme", "ui"}
     assert set(document.schema()["properties"]["settings"]["properties"]) == {
         "ai", "notes", "history", "tags", "study", "opportunities", "tern"}
-    assert set(document.schema()["properties"]["ui"]["properties"]) == {"dock", "graph", "atlas", "notes", "terminal"}
+    assert set(document.schema()["properties"]["ui"]["properties"]) == {
+        "dock", "graph", "atlas", "notes", "terminal", "appearance", "home", "brain", "notifications", "flashcards", "study"}
 
 
 def test_export_never_carries_keys_credentials_devices_clients_or_applicant_data(tmp_path):

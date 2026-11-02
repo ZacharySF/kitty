@@ -4,7 +4,9 @@ A page's old concept map was the text and sticky elements joined by connectors o
 its canvas document. `migrate` moves every such map once into a schema map, after
 writing an owner-only JSON export of the affected pages; `revert` removes the maps
 it created so the move can run again. Page documents are never modified: the cards
-stay on the Canvas. `note_page_maps` links a page to its one map either way.
+stay on the Canvas. `note_page_maps` links a page, by its Notes number, to its one
+map either way (migration 042: pages live in the block projection, note_pages is the
+frozen pre-block copy the one-time move reads).
 """
 from __future__ import annotations
 
@@ -175,8 +177,12 @@ def migrate(conn: sqlite3.Connection, exports_dir: Path) -> dict:
                 return result
             stamp = datetime.now(timezone.utc)
             candidates = []
-            for row in conn.execute("""SELECT id,notebook_id,title,revision,document FROM note_pages p
-                    WHERE NOT EXISTS (SELECT 1 FROM note_page_maps m WHERE m.page_id=p.id) ORDER BY id""").fetchall():
+            # Canvas documents are read from note_pages, frozen by the block migration (032/033) at
+            # the content it converted; this one-time move runs on the first start after both.
+            # Only pages still live in the block projection are moved, under their current title.
+            for row in conn.execute("""SELECT p.id,p.notebook_id,i.title,p.revision,p.document FROM note_pages p
+                    JOIN note_page_index i ON i.id = p.id
+                    WHERE NOT EXISTS (SELECT 1 FROM note_page_maps m WHERE m.page_id=p.id) ORDER BY p.id""").fetchall():
                 try:
                     document = json.loads(row["document"])
                 except ValueError:
@@ -231,7 +237,8 @@ def revert(conn: sqlite3.Connection, export_path: Path | str) -> int:
 
 
 def _page(conn: sqlite3.Connection, page_id: int) -> sqlite3.Row:
-    row = conn.execute("SELECT id,title FROM note_pages WHERE id=?", (notes.integer(page_id),)).fetchone()
+    """A live note page by its Notes number, from the block projection (note_pages is frozen)."""
+    row = conn.execute("SELECT id,title FROM note_page_index WHERE id=?", (notes.integer(page_id),)).fetchone()
     if row is None:
         raise notes.NotesError("Page not found", 404)
     return row

@@ -139,7 +139,8 @@ def test_settings_screens_and_the_editor_change_the_same_file(running):
         text = json.loads(pushed["text"])
         assert text["ui"]["graph"] == {"look": "3d"} and text["name"] == "Desk"
         assert running.request("/api/build/preferences", {"theme": {"css": "x"}})[0] == 400
-        assert running.request("/api/build/preferences", {"ui": {"dock": {"height": 3}}})[0] == 400
+        assert running.request("/api/build/preferences", {"ui": {"dock": {"step": "xl"}}})[0] == 400
+        assert running.request("/api/build/preferences", {"ui": {"brain": {"speed": 9}}})[0] == 400
         assert running.request("/api/build/preferences", {"keys": {}})[0] == 400
         revision = running.request("/api/tags")[1]["revision"]
         assert running.request("/api/tags/settings", {"mode": "always", "revision": revision})[0] == 200
@@ -179,22 +180,32 @@ def test_install_with_a_diff_then_roll_back(running):
         assert [entry["reason"] for entry in history] == ["install"]
         assert running.request("/api/build/rollback", {})[0] == 200
         restored = window.build()
-        assert restored["build"]["theme"]["base"] == "harness" and not restored["restart_required"]
+        assert restored["build"]["theme"]["base"] == "kitty" and not restored["restart_required"]
     finally:
         window.close()
 
 
 def test_local_preferences_move_once_and_never_overwrite_the_build(running):
     running.request("/api/build/preferences", {"ui": {"dock": {"mode": "activity"}}})
-    first = running.request("/api/build/local", {"ui": {"dock": {"mode": "hidden", "height": 300}, "graph": {"look": "3d"}},
-                                                 "theme": {"base": "nord"}})
+    first = running.request("/api/build/local", {"ui": {"dock": {"mode": "hidden", "float": True, "step": "l"}, "graph": {"look": "3d"},
+                                                        "appearance": {"density": "comfortable"}, "home": {"look": "2d"},
+                                                        "brain": {"layout": "wheel", "colors": {"section": {"notes": "#aabbcc"}}},
+                                                        "notifications": {"quiet": {"enabled": True, "from": 1380, "to": 420}},
+                                                        "flashcards": {"look": "graph"}, "study": {"plans_view": "days"}},
+                                                 "theme": {"base": "liquid-glass"}})
     assert first == (200, {"moved": True})
     build = running.request("/api/build")[1]
     assert build["local_preferences_moved"] is True
-    assert build["build"]["ui"]["dock"] == {"mode": "activity", "height": 300, "shown": "terminal"}
-    assert build["build"]["ui"]["graph"]["look"] == "3d" and build["build"]["theme"]["base"] == "nord"
+    ui = build["build"]["ui"]
+    assert ui["dock"] == {"mode": "activity", "shown": "terminal", "float": True, "step": "l", "size": None,
+                          "offset": {"right": 16, "bottom": 16}}, "the build's own dock mode wins"
+    assert ui["appearance"]["density"] == "comfortable" and ui["home"] == {"look": "2d"}
+    assert ui["brain"]["layout"] == "wheel" and ui["brain"]["colors"]["section"] == {"notes": "#aabbcc"}
+    assert ui["notifications"]["quiet"] == {"enabled": True, "from": 1380, "to": 420, "let_calendar": True, "digest": True}
+    assert ui["flashcards"] == {"look": "graph"} and ui["study"] == {"guide_view": "columns", "plans_view": "days"}
+    assert build["build"]["ui"]["graph"]["look"] == "3d" and build["build"]["theme"]["base"] == "liquid-glass"
     assert running.request("/api/build/local", {"theme": {"base": "dracula"}})[1] == {"moved": False}
-    assert running.request("/api/build")[1]["build"]["theme"]["base"] == "nord"
+    assert running.request("/api/build")[1]["build"]["theme"]["base"] == "liquid-glass"
 
 
 def test_export_downloads_the_complete_active_build(running):

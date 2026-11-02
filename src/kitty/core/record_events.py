@@ -16,7 +16,10 @@ Not captured: :data:`NON_CONTENT_PREFIXES` (settings, accounts, automation, AI,
 terminals…), :data:`SKIP` routes inside content sections (view state, previews,
 practice and timer controls), mutations that only start a background task, and
 mutations whose core already appends to its own history (``flash_reviews``,
-``status_events``, ``study_sessions``): those logs are their edits.
+``status_events``, ``study_sessions`` and, with the block backend, ``op_log``: every
+Notes, Documents and Quick-notes write is a block transaction): those logs are their
+edits. Block transactions that never pass through ``WebApplication.mutate`` (the
+editor's live-channel ``txn``, peer-sync merges, ingress captures) are in ``op_log`` too.
 """
 from __future__ import annotations
 
@@ -43,6 +46,9 @@ NON_CONTENT_PREFIXES = frozenset({
     "sources", "finder", "reports", "mail", "triage", "postings", "dashboard", "job-options",
     "pipeline", "backlinks", "atlas", "brain", "desktop", "terminal", "extensions", "tasks",
     "bootstrap",
+    # The block backend's own routes (history restore, Trash, tag records) are block
+    # transactions: op_log is their history. Mirror frames live in memory only.
+    "blocks", "tags", "mirror",
 })
 #: Non-content routes inside content sections.
 SKIP = tuple(re.compile(pattern) for pattern in (
@@ -236,9 +242,29 @@ def append(conn: sqlite3.Connection, event: Event, path: str) -> None:
                  (datetime.now(UTC).isoformat(timespec="milliseconds"), *event, path))
 
 
-def capture(conn: sqlite3.Connection, path: str, body: Any, result: Any) -> None:
-    """Record one successful mutation; failures are logged, never raised."""
+def op_log_mark(conn: sqlite3.Connection) -> int | None:
+    """The block backend's newest ``op_log`` sequence (0 when empty), or None without it.
+
+    Taken before a mutation runs and handed to :func:`capture`: a mutation that appended
+    ``op_log`` rows (a Notes, Documents or Quick-notes write, which the block backend turns
+    into transactions) already has its history there, and ``/api/brain`` counts it from
+    ``op_log``, so it is not captured a second time.
+    """
     try:
+        return conn.execute("SELECT COALESCE(MAX(seq), 0) FROM op_log").fetchone()[0]
+    except sqlite3.OperationalError:  # no block backend (before migration 032)
+        return None
+
+
+def capture(conn: sqlite3.Connection, path: str, body: Any, result: Any, *, op_log_before: int | None = None) -> None:
+    """Record one successful mutation; failures are logged, never raised.
+
+    ``op_log_before`` is :func:`op_log_mark` taken before the mutation: when the mutation
+    appended block transactions since, ``op_log`` is its history and nothing is captured.
+    """
+    try:
+        if op_log_before is not None and (op_log_mark(conn) or 0) > op_log_before:
+            return
         event = classify(path, body, result, conn)
         if event is not None:
             append(conn, event, path)

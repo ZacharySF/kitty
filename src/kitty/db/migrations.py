@@ -9,6 +9,13 @@ same transaction as the schema_version record (the function lives in an importab
 module, so frozen builds that bundle only data files under migrations/ still run it).
 `-- python after: package.module:function` runs the function after the statements
 instead, for a conversion that fills the tables the script creates.
+
+Every number is used once (tests/test_migration_numbers.py; 021 was never used). Branches
+built in parallel fill each other's gaps: main's 034-036 shipped before the platform
+stack's block backend (032/033), so a database at main's schema applies 032 and 033
+after 036, then 037 onwards. The stack's own 035-039 were renumbered 037-041 before any
+release; a database migrated with that unreleased numbering is not a supported starting
+point.
 """
 
 from __future__ import annotations

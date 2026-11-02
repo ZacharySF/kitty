@@ -11,7 +11,13 @@ Edits are captured browser mutations (``record_events``) plus the append-only lo
 database already keeps: ``flash_reviews``, ``status_events``, ``study_sessions`` and,
 with the block backend, ``op_log``. ``calendar_history`` contributes the changes made
 before capture began (when migration 034 was applied); captured mutations cover the
-rest, so no change is counted twice.
+rest, so no change is counted twice. Block writes are never captured (record_events
+leaves a mutation that appended op_log rows to op_log), and op_log also holds the edits
+that never pass through a browser POST: the editor's live transactions, peer-sync merges
+and paired captures. Its rows are labelled create, delete, restore or edit from their
+operations on the page's root; the rows the block migrations wrote are conversions
+(migration 043) and are left out; history older than the retention window survives as
+one ``page_snapshots`` row per page per day and counts as one edit.
 
 When the block backend's ``blocks`` table exists it is the source of note pages,
 documents and quick notes (and their blocks); the frozen legacy tables are not read.
@@ -112,6 +118,17 @@ VERBS = {"create": "Created", "save": "Saved", "edit": "Edited", "delete": "Dele
          "tracks": "Changed tracks of", "project": "Started a project from", "items": "Edited items of",
          "project-details": "Edited project of", "calendar": "Scheduled"}
 RATINGS = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
+#: One op_log row's action on its page: its root inserted (create), moved to Trash
+#: (delete) or brought back (restore); anything else edits the page.
+_BLOCK_OPS = "json_each(CAST(o.ops AS TEXT), '$.ops')"
+_BLOCK_ACTION = f"""CASE WHEN NOT json_valid(CAST(o.ops AS TEXT)) THEN 'edit'
+    WHEN EXISTS (SELECT 1 FROM {_BLOCK_OPS} WHERE json_extract(value, '$.id') = o.page_id
+                 AND json_extract(value, '$.op') = 'insert') THEN 'create'
+    WHEN EXISTS (SELECT 1 FROM {_BLOCK_OPS} WHERE json_extract(value, '$.id') = o.page_id
+                 AND json_extract(value, '$.op') = 'delete') THEN 'delete'
+    WHEN EXISTS (SELECT 1 FROM {_BLOCK_OPS} WHERE json_extract(value, '$.id') = o.page_id
+                 AND json_extract(value, '$.op') = 'restore') THEN 'restore'
+    ELSE 'edit' END"""
 
 
 def _api_error(status: int, message: str):
@@ -292,19 +309,30 @@ def _edits(conn, active, limit, records, blocks):
         def section_of(root_type):
             return BLOCK_ROOTS.get(root_type, ("notes", None, "page"))
 
-        for root_type, count in _rows(conn, """SELECT r.type, COUNT(*) FROM op_log o
-                LEFT JOIN blocks r ON r.id = o.page_id GROUP BY r.type"""):
+        # Rows the block migrations wrote are conversions (migration 043); compacted history
+        # (older than the retention window) survives as one snapshot per page per day.
+        migrated = _rows(conn, "SELECT last_seq FROM op_log_migrated") if _table_exists(conn, "op_log_migrated") else []
+        after = migrated[0][0] if migrated else 0
+        for root_type, count in _rows(conn, """SELECT r.type, COUNT(*) FROM (
+                SELECT page_id FROM op_log WHERE seq > ?1 UNION ALL SELECT page_id FROM page_snapshots WHERE seq > ?1) o
+                LEFT JOIN blocks r ON r.id = o.page_id GROUP BY r.type""", (after,)):
             add_counts([(section_of(root_type)[0], count)])
-        for seq, at, root_type, number, deleted in _rows(conn, """SELECT o.seq, o.at, r.type,
-                json_extract(r.properties, '$.number'), r.deleted_at FROM op_log o
-                LEFT JOIN blocks r ON r.id = o.page_id ORDER BY o.seq DESC LIMIT ?""", (limit,)):
+        for ident, at, root_type, number, deleted, action, _ in _rows(conn, f"""SELECT * FROM (
+                SELECT 'op_log:' || o.seq AS ident, o.at, r.type, json_extract(r.properties, '$.number'), r.deleted_at,
+                       {_BLOCK_ACTION} AS action, o.seq AS seq
+                FROM op_log o LEFT JOIN blocks r ON r.id = o.page_id WHERE o.seq > ?1
+                UNION ALL
+                SELECT 'page_snapshots:' || s.page_id || ':' || s.day, s.day || 'T23:59:59+00:00', r.type,
+                       json_extract(r.properties, '$.number'), r.deleted_at, 'edit', s.seq
+                FROM page_snapshots s LEFT JOIN blocks r ON r.id = s.page_id WHERE s.seq > ?1)
+                ORDER BY seq DESC LIMIT ?2""", (after, limit)):
             section, record_type, word = section_of(root_type)
             if section not in active:
                 continue
             record = (records.get(f"{section}.{record_type}:{number}")
                       if record_type and number is not None and deleted is None else None)
-            edits.append(_edit(f"edit:op_log:{seq}", section, "save", _edit_label("edit", word, record), at,
-                               record["id"] if record else None))
+            edits.append(_edit(f"edit:{ident}", section, "save" if action == "edit" else action,
+                               _edit_label(action, word, record), at, record["id"] if record else None))
     edits.sort(key=lambda edit: _moment(edit["at"]), reverse=True)
     return edits, counts
 

@@ -372,8 +372,9 @@ class WebApplication:
         if path == "/api/modules":
             return self.set_modules(body)
         self.guard(path)
+        op_log_before = record_events.op_log_mark(conn)
         result = self._dispatch_mutation(conn, path, body)
-        record_events.capture(conn, path, body, result)
+        record_events.capture(conn, path, body, result, op_log_before=op_log_before)
         return result
 
     def _dispatch_mutation(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
