@@ -399,14 +399,14 @@ describe("home is the Brain or the 2D atlas", () => {
         return Math.abs(box.width - outer.width) <= 2 && Math.abs(box.height - outer.height) <= 2 && Math.abs(canvas.width / canvas.height - box.width / box.height) < 0.02;
       }, null, { timeout: 20_000, polling: 200 }).catch(() => assert.fail(`${label}: the Brain is not fitted to its stage`));
       const area = await page.locator(".atlas .stage").evaluate((node) => node.getBoundingClientRect().toJSON());
-      // The camera reframes: the cat's head stays whole inside the stage once it settles.
-      let head;
+      // The camera reframes: the brain stays whole inside the stage once it settles.
+      let brain;
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        head = await headBox(page);
-        if (within(head, area)) break;
+        brain = await brainBox(page);
+        if (within(brain, area)) break;
         await page.waitForTimeout(150);
       }
-      assert.ok(within(head, area), `${label}: the cat's head ${JSON.stringify(head)} leaves the stage ${JSON.stringify(area)}`);
+      assert.ok(within(brain, area), `${label}: the brain ${JSON.stringify(brain)} leaves the stage ${JSON.stringify(area)}`);
       return area;
     };
     const expanded = await fit("expanded");
