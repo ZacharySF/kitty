@@ -5,7 +5,7 @@
   import { PRESETS, savedAppearance, setAppearance, type Appearance, type Preset } from "./appearance";
   import type { GraphLook } from "./graph3d";
   import { GRAPH_SETTINGS_EVENT, graphLook, homeLook, setGraphLook, setHomeLook, type HomeLook } from "./graphPreferences";
-  import { THEMES, type ThemeId } from "./themeCatalog";
+  import { THEMES, type ThemeId } from "./themes/catalog";
   import { THEME_EVENT, currentTheme, setTheme } from "./themes";
 
   /**
@@ -120,7 +120,7 @@
       {@render segments("Section graph look", "appearance-look", LOOKS, look, (id) => chooseLook(id as GraphLook))}
       <label class="check wide">
         <input type="checkbox" checked={appearance.motif} onchange={(event) => change({ ...appearance, motif: event.currentTarget.checked })} />
-        Blossom motif in icons and the theme picker
+        Theme motif
       </label>
       {#if error}<p class="wide" role="alert">{error}</p>{/if}
     </div>
@@ -153,7 +153,7 @@
     background: color-mix(in srgb, var(--violet) 11%, var(--solid-panel));
   }
   .name {
-    font: 600 16px var(--font-title);
+    font: 600 16px var(--font-ui);
   }
   .blurb {
     color: var(--muted);

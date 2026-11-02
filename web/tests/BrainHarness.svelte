@@ -10,7 +10,7 @@
   let { kind }: { kind: "stage" | "atlas" | "section" | "schema" } = $props();
   let stage: BrainStage | undefined = $state();
   const trail: WorkspaceTrail = { section: null, root: null, nodes: [] };
-  provideWorkspaceContext({ id: "brain-harness", active: true, trail, setTrail: () => {}, clearTrail: () => {} });
+  provideWorkspaceContext({ id: "brain-harness", active: true, trail, setTrail: () => {}, clearTrail: () => {}, status: null, setStatus: () => {} });
   const schemaNodes = ["Alpha", "Beta", "Gamma"].map((label) => ({ id: label.toLowerCase(), label, group: "Schema" }));
 
   export function screenPoint(id: string) {

@@ -2,7 +2,8 @@
 // with an in-memory stand-in for kitty!'s notes API; every record is synthetic.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import "/src/lib/themes/engine.css";
+import { applySavedTheme } from "/src/lib/themes/index.ts";
 import NotesHarness from "./NotesHarness.svelte";
 
 const now = "2026-10-28T12:00:00+00:00";

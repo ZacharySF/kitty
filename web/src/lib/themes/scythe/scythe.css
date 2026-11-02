@@ -1,0 +1,62 @@
+/* ── Scythe theme module ───────────────────────────────────────────────────
+   Engraved frames under a night sky: the engine's frame surfaces gain corner ticks, the
+   section rule becomes a blade, and list dots become crescents. Scoped to
+   :root[data-theme="scythe"]; marks also to :not([data-motif="off"]). */
+
+:root[data-theme="scythe"] {
+  --backdrop:
+    radial-gradient(70vmax 40vmax at 50% 108%, color-mix(in srgb, var(--c2) 16%, transparent), transparent 70%),
+    radial-gradient(40vmax 30vmax at 82% 8%, color-mix(in srgb, var(--c3) 7%, transparent), transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--c1) 5%, transparent), transparent 40%);
+  --crescent: url("./crescent.svg");
+}
+
+/* Corner ticks on outer frames, inside the double rule. */
+:root[data-theme="scythe"]:not([data-motif="off"]) body :is(.br-panel, .br-card):not(:is(.surface, .panel, .br-panel, .br-card) *)::after {
+  --tick: color-mix(in srgb, var(--br-lineHot) 80%, transparent);
+  content: "";
+  position: absolute;
+  inset: 6px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--tick), var(--tick)) top left / 7px 1px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) top left / 1px 7px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) bottom right / 7px 1px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) bottom right / 1px 7px no-repeat;
+}
+
+/* Crescent bullets. */
+:root[data-theme="scythe"]:not([data-motif="off"]) span.dot:not(.kitty-loader .dot) {
+  width: 10px;
+  height: 10px;
+  border-radius: 0;
+  -webkit-mask: var(--crescent) center / contain no-repeat;
+  mask: var(--crescent) center / contain no-repeat;
+}
+
+/* Blade dividers: the rule tapers to points at both ends and thickens in the middle. */
+:root[data-theme="scythe"]:not([data-motif="off"]) .surface-section + .surface-section {
+  border-top-color: transparent;
+}
+:root[data-theme="scythe"]:not([data-motif="off"]) hr.rule {
+  position: relative;
+  height: 6px;
+  margin-block: 6px;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+:root[data-theme="scythe"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1.5px;
+  height: 3px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--br-lineHot) 70%, transparent) 50%, transparent);
+  clip-path: polygon(0 50%, 50% 0, 100% 50%, 50% 100%);
+}
+:root[data-theme="scythe"]:not([data-motif="off"]) hr.rule::before {
+  top: 1.5px;
+}

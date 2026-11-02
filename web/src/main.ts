@@ -6,17 +6,15 @@ import { applySavedAppearance } from "./lib/appearance";
 import "@nunera/bracket/styles.css";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/fraunces/full.css";
-import "@fontsource-variable/space-grotesk";
-import "@fontsource-variable/newsreader/opsz-italic.css";
 import "@fontsource-variable/fredoka";
 import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
-import "./liquidGlass.css";
+import "./lib/themes/engine.css";
 
-applySavedTheme();
 applySavedAppearance();
 
 // `#quick-note[/<id>]` is a standalone floating note, not a workspace view.
 const quickNote = /^#quick-note(\/|$)/.test(window.location.hash);
 if (quickNote) document.documentElement.dataset.surface = "quick-note";
-mount(quickNote ? QuickNoteWindow : App, { target: document.getElementById("app")! });
+// The saved theme's motif module (a small lazy chunk) is in before the first paint.
+void applySavedTheme().finally(() => mount(quickNote ? QuickNoteWindow : App, { target: document.getElementById("app")! }));

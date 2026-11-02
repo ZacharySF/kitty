@@ -1,4 +1,4 @@
-import type { KittyTheme } from "../themeCatalog";
+import type { ThemeTokens } from "../themes/catalog";
 
 /** Relative luminance of a `#rrggbb` colour (WCAG 2). */
 function luminance(hex: string): number {
@@ -59,7 +59,7 @@ export function itemPaint(
  * Text colour for a filled block on `fill` (a `var(--cN)` slot or a `#rrggbb`
  * subject/legacy colour): the theme's dark void when it reads at least as well as ink.
  */
-export function blockText(theme: KittyTheme, fill: string): string {
+export function blockText(theme: ThemeTokens, fill: string): string {
   const slot = /^var\(--c([1-6])\)$/.exec(fill);
   const hex = slot ? theme.graph[Number(slot[1]) - 1] : fill;
   if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return "var(--ink)";

@@ -18,6 +18,8 @@
       trail.nodes = [];
       trail.root = null;
     },
+    status: null,
+    setStatus() {},
   });
 </script>
 

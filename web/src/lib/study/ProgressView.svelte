@@ -282,7 +282,7 @@
   }
   header strong {
     color: var(--ink);
-    font: 600 18px var(--font-title);
+    font: 600 18px var(--font-ui);
   }
   .plot {
     position: relative;
@@ -368,7 +368,7 @@
   }
   .big {
     fill: var(--ink);
-    font: 700 18px var(--font-title);
+    font: 700 18px var(--font-ui);
     text-anchor: middle;
   }
   .small {
@@ -493,7 +493,7 @@
   }
   aside .big {
     color: var(--ink);
-    font: 700 22px var(--font-title);
+    font: 700 22px var(--font-ui);
   }
   .main {
     display: flex;
@@ -575,7 +575,7 @@
   .ring-side strong {
     display: block;
     color: var(--ink);
-    font: 700 17px var(--font-title);
+    font: 700 17px var(--font-ui);
   }
   .ring-side strong small {
     color: var(--muted);

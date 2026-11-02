@@ -92,7 +92,7 @@
   }
   .big {
     fill: var(--ink);
-    font: 700 19px var(--font-title);
+    font: 700 19px var(--font-ui);
     text-anchor: middle;
   }
   .small {

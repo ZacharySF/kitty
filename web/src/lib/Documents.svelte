@@ -252,7 +252,7 @@
   .doc-pill { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; padding: 0 4px 0 10px; border: 1px solid var(--hairline); border-radius: 999px; background: color-mix(in srgb, var(--solid-panel) 40%, transparent); }
   .doc-pill:focus-within { border-color: color-mix(in srgb, var(--violet) 55%, var(--hairline)); }
   /* Outrank the global glass field fill: the title and source sit flush in their chrome. */
-  .documents-view .bar .doc-title { width: clamp(140px, 22vw, 300px); min-width: 0; padding: 4px 0; border: 0; background: none; color: var(--ink); font: 600 13px var(--heading); outline: none; text-overflow: ellipsis; }
+  .documents-view .bar .doc-title { width: clamp(140px, 22vw, 300px); min-width: 0; padding: 4px 0; border: 0; background: none; color: var(--ink); font: 600 13px var(--font-ui); outline: none; text-overflow: ellipsis; }
   .fmt { flex: none; padding: 0 5px; border-radius: 4px; background: var(--wash); color: var(--violet); font: 500 9px/16px var(--font-mono); letter-spacing: 0.08em; }
   .switch { display: inline-flex; }
   .chev { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); }

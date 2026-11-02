@@ -353,13 +353,14 @@ test("the terminal dock opens the full herdr session as a view", async () => {
 test("Agent launch chooses a coding agent, remembers it, and exposes named-session attachment", async () => {
   const { page, problems, context } = await harness();
   await page.getByRole("button", { name: "New Agent tab" }).click();
-  const chooser = page.getByRole("combobox", { name: "Coding agent" });
-  assert.equal(await chooser.inputValue(), "omp");
-  await chooser.selectOption("codex");
+  const chooser = page.getByRole("group", { name: "Coding agent" });
+  const pressed = () => chooser.locator('[aria-pressed="true"]').textContent();
+  assert.equal(await pressed(), "omp");
+  await chooser.getByRole("button", { name: "codex" }).click();
   await page.getByRole("button", { name: "Start agent" }).click();
   await page.getByRole("status").filter({ hasText: "Agent tab opened" }).waitFor();
   await page.getByRole("button", { name: "New Agent tab" }).click();
-  assert.equal(await chooser.inputValue(), "codex");
+  assert.equal(await pressed(), "codex");
   await page.getByRole("button", { name: "Attach external agent" }).click();
   const instructions = page.getByRole("region", { name: "External agent attachment" });
   await instructions.waitFor();

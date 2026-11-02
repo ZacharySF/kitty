@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { api } from "../api";
   import Icon from "../Icon.svelte";
+  import Select from "../ui/Select.svelte";
   import {
     DUPLICATE_WARNING, addCard, checkCard, loadFronts, normalizeFront, preselectDeck, rememberedDeck,
     type DeckOption, type TypeOption,
@@ -102,11 +103,9 @@
     <header>
       <span class="mark" aria-hidden="true"><Icon name="flashcards" size={16} /></span>
       <span class="title">New card</span>
-      <label class="deck"><span class="sr-only">Deck</span><select
-          bind:value={deckId}
-          onchange={() => { confirmed = ""; edited(); }}
-          disabled={busy || !decks.length}
-        >{#each decks as item (item.id)}{#if !item.archived || item.id === deckId}<option value={item.id}>{item.name}</option>{/if}{/each}</select></label>
+      <span class="deck"><Select label="Deck" kind="search" value={String(deckId)} disabled={busy || !decks.length}
+          options={decks.filter((item) => !item.archived || item.id === deckId).map((item) => ({ value: String(item.id), label: item.name }))}
+          onchange={(value) => { deckId = Number(value); confirmed = ""; edited(); }} /></span>
     </header>
     <label class="face"><span>Front</span><textarea
         bind:this={frontField}
@@ -166,17 +165,10 @@
     font: 600 14px var(--font-ui);
   }
   .deck {
+    display: flex;
     margin-left: auto;
     min-width: 0;
-  }
-  .deck select {
     max-width: 220px;
-    padding: 4px 8px;
-    border: 1px solid var(--hairline);
-    border-radius: 999px;
-    color: var(--ink);
-    background: color-mix(in srgb, var(--ink) 5%, transparent);
-    font: 500 12px var(--font-ui);
   }
   .face {
     display: grid;

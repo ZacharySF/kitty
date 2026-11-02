@@ -176,7 +176,7 @@
   header strong {
     overflow: hidden;
     color: var(--ink);
-    font: 600 14px var(--heading);
+    font: 600 14px var(--font-ui);
     text-overflow: ellipsis;
     white-space: nowrap;
   }

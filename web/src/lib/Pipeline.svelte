@@ -448,7 +448,7 @@
     background: color-mix(in srgb, var(--tone) 7%, transparent);
   }
   .lane-head strong {
-    font: 600 14px var(--heading);
+    font: 600 14px var(--font-ui);
     color: var(--ink);
   }
   .lane-head small {
@@ -537,7 +537,7 @@
     min-width: 0;
   }
   .card-top strong {
-    font: 600 13px var(--heading);
+    font: 600 13px var(--font-ui);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -603,7 +603,7 @@
       0 0 24px color-mix(in srgb, var(--violet) 22%, transparent);
   }
   .drag-ghost strong {
-    font: 600 13px var(--heading);
+    font: 600 13px var(--font-ui);
   }
   .drag-ghost span {
     color: var(--muted);

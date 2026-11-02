@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { blockText, contrast, cssColor, itemPaint, calendarPaint, nextSlot, subjectOf } from '../src/lib/calendar/palette.ts';
-import { THEMES } from '../src/lib/themeCatalog.ts';
+import { THEMES } from '../src/lib/themes/catalog.ts';
 
 const subjects = [{ id: 1, name: 'Physics', color: '#31a2bc' }, { id: 2, name: 'Math', color: '#c290ee' }];
 const calendars = [

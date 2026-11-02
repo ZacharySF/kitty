@@ -125,7 +125,7 @@
   }
   .date {
     color: var(--ink);
-    font: 700 15px var(--font-title);
+    font: 700 15px var(--font-ui);
   }
   .load {
     height: 2px;

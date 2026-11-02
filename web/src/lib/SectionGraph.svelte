@@ -15,6 +15,8 @@
   import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
   import { prefersReducedMotion } from "./appearance";
   import GraphLookToggle from "./GraphLookToggle.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import Select from "./ui/Select.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
   const pane = useWorkspaceContext();
@@ -186,6 +188,26 @@
   });
 </script>
 
+{#snippet nodeList()}
+  <label class="search">Find a node<input type="search" bind:value={query} placeholder="Search names or types" /></label>
+  {#if matches.length}
+    <ul aria-label={`${titles[section]} nodes`}>
+      {#each matches.slice(0, listLimit) as node (node.id)}
+        <li>
+          <button class:hub={node.kind === "hub"} class:current={selected?.id === node.id} aria-pressed={selected?.id === node.id} onclick={() => choose(node)}
+            oncontextmenu={(event) => { if (ondelete && !window.getSelection()?.toString()) { event.preventDefault(); void ondelete(node); } }}>
+            <span>{node.label}</span>
+            <small>{node.entity}{node.detail ? ` · ${node.detail}` : ""}</small>
+          </button>
+        </li>
+      {/each}
+    </ul>
+    {#if matches.length > listLimit}
+      <Button size="sm" variant="ghost" onclick={() => listLimit += 60}>Show next {Math.min(60, matches.length - listLimit)} · {listLimit} of {matches.length}</Button>
+    {/if}
+  {:else}<p class="message">No nodes match your search.</p>{/if}
+{/snippet}
+
 <Panel
   title={titles[section]}
   readout={graph ? `${graph.shown} / ${graph.total}` : undefined}
@@ -208,38 +230,23 @@
           <Button size="sm" variant={mode === "list" ? "soft" : "ghost"} aria-pressed={mode === "list"} onclick={() => mode = "list"}>List</Button>
         </div>
         {/if}
-        <label class="layout">Layout
-          <select bind:value={layout} disabled={mode === "list"}>
-            {#each layouts as item}<option value={item.id}>{item.label}</option>{/each}
-          </select>
-        </label>
+        <div class="layout"><span>Layout</span>
+          <Select label="Layout" bind:value={layout} disabled={mode === "list"} options={layouts.map((item) => ({ value: item.id, label: item.label }))} />
+        </div>
         <Button size="sm" variant="ghost" onclick={fit} disabled={mode !== "graph" || !handle}>Fit all</Button>
+        {#if mode === "graph"}
+          <Popover label={`${titles[section]} nodes`} placement="bottom-end" class="node-popover">
+            {#snippet trigger(props)}<button type="button" class="pill" {...props}>Browse ({graph!.shown})</button>{/snippet}
+            {@render nodeList()}
+          </Popover>
+        {/if}
       </div>
       {#if graph!.shown < graph!.total}<p class="counts">{graph!.shown} of {graph!.total} nodes · open a group to explore more</p>{/if}
       {#if notice}<p class="notice" role="status">{notice}</p>{/if}
       {#if mode === "graph"}
         <div class="canvas" style:height={height} bind:this={container} aria-hidden="true"></div>
       {/if}
-      <details class="node-list" open={mode === "list"}>
-        <summary>Browse ({graph!.shown})</summary>
-        <label class="search">Find a node<input type="search" bind:value={query} placeholder="Search names or types" /></label>
-        {#if matches.length}
-          <ul aria-label={`${titles[section]} nodes`}>
-            {#each matches.slice(0, listLimit) as node (node.id)}
-              <li>
-                <button class:hub={node.kind === "hub"} class:current={selected?.id === node.id} aria-pressed={selected?.id === node.id} onclick={() => choose(node)}
-                  oncontextmenu={(event) => { if (ondelete && !window.getSelection()?.toString()) { event.preventDefault(); void ondelete(node); } }}>
-                  <span>{node.label}</span>
-                  <small>{node.entity}{node.detail ? ` · ${node.detail}` : ""}</small>
-                </button>
-              </li>
-            {/each}
-          </ul>
-          {#if matches.length > listLimit}
-            <Button size="sm" variant="ghost" onclick={() => listLimit += 60}>Show next {Math.min(60, matches.length - listLimit)} · {listLimit} of {matches.length}</Button>
-          {/if}
-        {:else}<p class="message">No nodes match your search.</p>{/if}
-      </details>
+      {#if mode === "list"}<div class="node-list">{@render nodeList()}</div>{/if}
     {/if}
   </div>
 </Panel>
@@ -251,21 +258,21 @@
   .counts, .notice, .message { margin: 0; }
   .controls, .view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
   .layout { display: flex; align-items: center; gap: 0.45rem; margin-left: auto; color: var(--muted); font-size: 0.8rem; }
-  select, input { min-width: 0; border: 1px solid var(--border-fine, var(--border)); border-radius: 0.35rem; background: var(--surface); color: var(--ink); font: inherit; padding: 0.4rem 0.55rem; }
+  input { min-width: 0; border: 1px solid var(--border-fine, var(--border)); border-radius: 0.35rem; background: var(--surface); color: var(--ink); font: inherit; padding: 0.4rem 0.55rem; }
   .counts { color: var(--muted); font-size: 0.75rem; line-height: 1.5; }
-  .canvas { height: 330px; width: 100%; min-width: 0; overflow: hidden; border: 1px solid var(--border-fine, var(--border)); border-radius: 0.5rem; background: var(--canvas); }
+  .canvas { height: 330px; width: 100%; min-width: 0; overflow: hidden; border-radius: 0.5rem; background: var(--canvas); }
   .message { padding: 0.7rem 0; color: var(--muted); }
   .error, .notice { color: var(--accent); font-size: 0.85rem; }
-  summary { cursor: pointer; font-size: 0.82rem; padding: 0.4rem 0; }
+  :global(.kitty-popover.node-popover) { width: min(360px, calc(100vw - 16px)); padding: 10px; }
   .search { display: grid; gap: 0.35rem; color: var(--muted); font-size: 0.8rem; margin: 0.5rem 0; }
   ul { list-style: none; padding: 0; margin: 0; max-height: 330px; overflow: auto; display: grid; gap: 0.25rem; }
   li { min-width: 0; }
   li button { display: grid; gap: 0.2rem; width: 100%; text-align: left; border: 1px solid transparent; border-radius: 0.35rem; padding: 0.45rem 0.6rem; background: transparent; color: var(--ink); cursor: pointer; font: inherit; font-size: 0.82rem; overflow-wrap: anywhere; }
-  li button { transition: background-color var(--motion-fast, 140ms), border-color var(--motion-fast, 140ms); }
+  li button { transition: background-color var(--motion-ms, 140ms), border-color var(--motion-ms, 140ms); }
   li button:hover, li button.current { background: var(--surface); border-color: var(--border); }
   li button.hub > span { font-weight: 600; }
   li small { color: var(--muted); font-size: 0.73rem; }
-  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (max-width: 600px) { .canvas { height: 290px; } .layout { margin-left: 0; } }
   @media (prefers-reduced-motion: reduce) { li button { transition: none; } }
 </style>

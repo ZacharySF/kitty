@@ -22,22 +22,38 @@
   --violet: var(--br-structure);
   --font-ui: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
-  /* Type roles: Fraunces page titles (--font-title, below), Space Grotesk mid-level
-     headings, Inter UI/body/numbers, Newsreader italic labels, JetBrains Mono code. */
-  --heading: "Space Grotesk Variable", var(--font-ui);
-  --font-label: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
+  /* Q5: three faces, one job each. Fraunces sets the page title (h1, --font-title
+     below), Inter everything else in the UI, JetBrains Mono the navigation chrome,
+     key caps, code and tabular figures; Fredoka is the wordmark only. */
   --font-wordmark: "Fredoka Variable", var(--font-ui);
   --br-font-ui: var(--font-ui);
-  --br-font-display: var(--heading);
+  --br-font-display: var(--font-ui);
   --br-text-xs: 11px;
   --br-text-sm: 12px;
-  /* Compact scale: 13px body, shorter controls and tighter panels. */
-  --br-control-h: 34px;
+  /* Compact type scale: 13px body; Q4 labels are Inter 600 sentence case at 12px. */
+  --fs-title: 26px;
+  --fs-heading: 16px;
+  --fs-subheading: 13.5px;
+  --fs-label: 12px;
+  --fs-control: 12.5px;
+  --fs-chrome: 10.5px;
+  /* Q1: every control is 28px tall; the one or two primary page actions are 32px.
+     One radius per control type: pills for buttons, toggles, segments and chips;
+     fields for inputs and select triggers; menus and their rows; surfaces. */
+  --control-h: 28px;
+  --control-h-lg: 32px;
+  --r-control: 999px;
+  --r-field: 8px;
+  --r-menu: 12px;
+  --r-item: 7px;
+  --r-chip: 6px;
+  --r-panel: 14px;
+  --br-control-h: var(--control-h);
   --br-panel-p: 14px;
   --br-gap: 9px;
-  --br-radius-sm: 6px;
-  --br-radius-md: 8px;
-  --br-radius-lg: 12px;
+  --br-radius-sm: var(--r-chip);
+  --br-radius-md: var(--r-field);
+  --br-radius-lg: var(--r-menu);
   --on-accent: var(--br-on-signal);
   --overlay-shadow: 0 18px 60px color-mix(in srgb, var(--shadow-tint) 24%, transparent),
     0 3px 12px color-mix(in srgb, var(--shadow-tint) 12%, transparent);
@@ -98,46 +114,44 @@ button:disabled {
 a {
   color: var(--accent);
 }
+/* Timing comes from the theme's motion style (lib/themes/engine.css); focus rings too. */
 button,
 a {
   transition:
-    background-color 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
-}
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
+    background-color var(--motion-ms, 120ms) var(--motion-ease, ease),
+    color var(--motion-ms, 120ms) var(--motion-ease, ease),
+    border-color var(--motion-ms, 120ms) var(--motion-ease, ease);
 }
 input,
 select,
 textarea {
   background: var(--chrome);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-field);
   padding: 8px 10px;
   font-size: 13px;
 }
-/* Native select menus follow the active theme's color scheme. */
+/* Q1: single-line fields sit on the 28px control line. */
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"]),
+select:not([multiple]):not([size]) {
+  height: var(--control-h);
+  min-height: 0;
+  padding-block: 0;
+  line-height: normal;
+}
+/* Native selects are being replaced by lib/ui/Select.svelte (Q7); the ones left
+   in screens still close on the field look and follow the theme's color scheme. */
 select {
   max-width: 100%;
   min-width: 0;
-  min-height: var(--br-control-h);
   color: var(--ink);
-  line-height: 1.45;
-  border-radius: 8px;
   transition: border-color 140ms ease, background-color 140ms ease;
 }
 select:not([multiple]):not([size]),
 select[size="1"]:not([multiple]) {
   appearance: auto;
   -webkit-appearance: auto;
-  padding: 10px 12px;
+  padding-inline: 10px;
   background-color: var(--chrome);
   cursor: pointer;
 }
@@ -178,7 +192,6 @@ select[size]:not([size="1"]) {
     appearance: auto;
     -webkit-appearance: auto;
     background-image: none;
-    padding-right: 12px;
   }
 }
 input::placeholder,
@@ -208,34 +221,30 @@ p {
 h1,
 h2,
 h3 {
-  font-family: var(--heading);
+  font-family: var(--font-ui);
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 svg {
   flex-shrink: 0;
 }
+/* Q2/Q6: a fold-out is a quiet text row with a turning chevron, never a boxed well.
+   Its label takes the Q4 label voice (see the type rules below). */
 summary {
-  min-height: var(--br-control-h);
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--ink);
-  line-height: 1.5;
-  font-weight: 500;
+  min-height: var(--control-h);
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  line-height: 1.3;
   cursor: pointer;
 }
 summary::marker {
-  color: var(--accent);
+  color: var(--subtle);
 }
-summary:hover {
-  border-color: var(--violet);
-  background: var(--surface-raised);
-}
+summary:hover,
 details[open] > summary {
-  border-color: var(--gold-border);
-  background: var(--surface-raised);
+  color: var(--ink);
 }
 .sr-only {
   position: absolute;
@@ -396,11 +405,12 @@ button.schema-tab, .schema-back { cursor: pointer; }
   display: flex;
   align-items: center;
   gap: 12px;
+  height: var(--control-h);
   color: var(--muted);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 7px 12px;
+  border-radius: var(--r-control);
+  padding: 0 12px;
   font-size: 12px;
 }
 .system-command:hover {
@@ -408,11 +418,12 @@ button.schema-tab, .schema-back { cursor: pointer; }
   color: var(--ink);
 }
 .icon-button {
-  width: 36px;
-  height: 36px;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
   display: inline-grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--muted);
 }
@@ -445,34 +456,34 @@ main.atlas-main > [role="tabpanel"]:not([hidden]) {
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-panel);
 }
 .eyebrow {
   color: var(--subtle);
-  font: 11px/1.6 var(--br-font-ui);
-  letter-spacing: 0.06em;
+  font: 600 var(--fs-label) / 1.3 var(--font-ui);
 }
 h1 {
-  font-size: clamp(26px, 2.6vw, 32px);
-  line-height: 1.2;
-  letter-spacing: -0.03em;
+  font-size: var(--fs-title);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
   margin: 12px 0;
 }
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 9px;
-  min-height: 42px;
-  padding: 10px 14px;
-  border-radius: 8px;
+  gap: 7px;
+  height: var(--control-h);
+  padding: 0 12px;
+  border-radius: var(--r-control);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-control);
   font-weight: 500;
   text-decoration: none;
-  line-height: 1.4;
+  line-height: 1;
+  white-space: nowrap;
 }
 .button:hover:not(:disabled) {
   background: var(--wash);
@@ -526,8 +537,8 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 0;
-  min-height: 34px;
+  padding: 0;
+  min-height: var(--control-h);
   background: transparent;
   color: var(--accent);
   font-size: 12px;
@@ -570,7 +581,7 @@ h1 {
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
   border-radius: 10px;
-  font: 15px var(--heading);
+  font: 15px var(--font-ui);
   letter-spacing: 0.5px;
 }
 .company-mark.alternate {
@@ -673,20 +684,22 @@ h1 {
   align-items: center;
   flex: 1;
   min-width: 180px;
-  gap: 10px;
+  gap: 8px;
+  height: var(--control-h);
   background: var(--chrome);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 12px;
+  border-radius: var(--r-field);
+  padding: 0 10px;
   color: var(--muted);
 }
 .search-field input {
   min-width: 0;
   width: 100%;
+  height: 100%;
   background: none;
   border: 0;
-  padding: 12px 0;
-  font-size: 14px;
+  padding: 0;
+  font-size: 13px;
 }
 .search-field:focus-within {
   outline: 2px solid var(--accent);
@@ -1017,9 +1030,6 @@ main .notes-workspace {
     font-size: 11px;
     padding-inline: 4px;
   }
-  .button {
-    min-height: 44px;
-  }
 }
 /* Phone widths (well below the native window's minimum, even with display
    scaling): the atlas stacks and the page scrolls. */
@@ -1074,8 +1084,13 @@ main .notes-workspace {
 .br-control textarea {
   font-size: 13px;
 }
+/* A Bracket field draws its own border; its inner input fills the control line. */
+.br-control :is(input, select) {
+  height: calc(var(--control-h) - 2px);
+  padding-block: 0;
+}
 .br-dialog__title {
-  font-family: var(--heading);
+  font-family: var(--font-ui);
   font-size: 20px;
   font-weight: 600;
 }
@@ -1112,7 +1127,7 @@ main .notes-workspace {
 :root body :is(dialog, [role="dialog"]) > :is(h2, h3),
 :root body :is(dialog, [role="dialog"]) > header :is(h2, h3) {
   color: var(--ink);
-  font-family: var(--heading);
+  font-family: var(--font-ui);
   font-size: 21px;
   line-height: 1.3;
   font-weight: 600;
@@ -1188,9 +1203,9 @@ main > :is(.panel, .br-panel, .br-card) {
   }
   select::picker-icon { color: var(--muted); }
   select option {
-    min-height: 34px;
-    padding: 7px 10px;
-    border-radius: 4px;
+    min-height: var(--control-h);
+    padding: 0 9px;
+    border-radius: var(--r-item);
   }
   select option:hover,
   select option:focus-visible { background: var(--wash); }
@@ -1222,17 +1237,16 @@ main > :is(.panel, .br-panel, .br-card) {
 :root[data-density="comfortable"] {
   --br-text-xs: 12px;
   --br-text-sm: 13px;
-  --br-control-h: 38px;
+  --control-h: 32px;
+  --control-h-lg: 36px;
   --br-panel-p: 16px;
   --br-gap: 11px;
 }
 :root[data-density="comfortable"] body {
   font-size: 14px;
 }
-/* Without the motif an icon's blossom shrinks back to its plain centre dot,
-   and the theme picker's ASCII blossom goes. */
-:root[data-motif="off"] svg .blossom path,
-:root[data-motif="off"] span.blossom {
+/* Without the motif an icon's blossom shrinks back to its plain centre dot. */
+:root[data-motif="off"] svg .blossom path {
   display: none;
 }
 :root[data-motif="off"] svg .blossom circle {
@@ -1240,84 +1254,69 @@ main > :is(.panel, .br-panel, .br-card) {
 }
 
 /* ── LearnHarness look ─────────────────────────────────────────────────────
-   Fraunces titles, Newsreader italic labels, hairlines, pills and glass panels
-   over a soft nebula drawn from the active theme's graph colors. Surfaces are
-   translucent (see GLASS in themes.ts); the desktop window itself is
+   Fraunces page titles, Inter labels, hairlines, pills and glass panels
+   over the theme's backdrop. Surfaces, focus, selection and motion come from the
+   theme (lib/themes/engine.css); the desktop window itself is
    transparent when the shell marks <html data-window="transparent">. */
 :root {
   --font-title: "Fraunces Variable", "Iowan Old Style", Georgia, serif;
   --hairline: color-mix(in srgb, var(--br-line) 62%, transparent);
   --glass: blur(18px) saturate(140%);
-  --nebula:
-    radial-gradient(60vmax 45vmax at 10% 14%, color-mix(in srgb, var(--c1) 14%, transparent), transparent 70%),
-    radial-gradient(48vmax 38vmax at 90% 10%, color-mix(in srgb, var(--c2) 11%, transparent), transparent 70%),
-    radial-gradient(55vmax 45vmax at 80% 90%, color-mix(in srgb, var(--c3) 10%, transparent), transparent 70%),
-    radial-gradient(45vmax 40vmax at 16% 94%, color-mix(in srgb, var(--c4) 8%, transparent), transparent 70%);
-  background: var(--solid-void, var(--br-void));
 }
-/* Appearance → Titles: Plain sets page titles in the heading face. */
+/* Appearance → Titles: Plain sets page titles in Inter. */
 :root[data-title-font="plain"] {
-  --font-title: var(--heading);
+  --font-title: var(--font-ui);
 }
-:root body {
-  background: var(--nebula), var(--solid-void, var(--br-void));
+/* The theme's backdrop (--backdrop, lib/themes/engine.css) is painted on the root, so the
+   theme's art layer and petal drift (z-index -1) show above it; the body stays clear. */
+:root {
+  background: var(--backdrop, none), var(--solid-void, var(--br-void));
   background-attachment: fixed;
 }
-:root[data-window="transparent"] {
+:root body {
   background: transparent;
 }
-:root[data-window="transparent"] body {
-  background: var(--nebula), color-mix(in srgb, var(--solid-void, #141414) 74%, transparent);
+:root[data-window="transparent"] {
+  background: var(--backdrop, none), color-mix(in srgb, var(--solid-void, #141414) 74%, transparent);
 }
-:root[data-window="transparent"][data-surface="quick-note"] body {
+:root[data-window="transparent"][data-surface="quick-note"] {
   background: transparent;
 }
 :root[data-surface="quick-note"] body {
   overflow: hidden;
 }
-/* Petal drift (lib/PetalDrift.svelte) sits at z-index -1, which paints above the
-   root's background but below the body's: the backdrop moves up to the root. */
-:root[data-background="petals"]:not([data-surface="quick-note"]) {
-  background: var(--nebula), var(--solid-void, var(--br-void));
-  background-attachment: fixed;
-}
-:root[data-background="petals"][data-window="transparent"]:not([data-surface="quick-note"]) {
-  background: var(--nebula), color-mix(in srgb, var(--solid-void, #141414) 74%, transparent);
-}
-:root[data-background="petals"]:not([data-surface="quick-note"]) body {
-  background: transparent;
-}
-::selection {
-  background: color-mix(in srgb, var(--br-structure) 34%, transparent);
-}
 
-/* Titles: Fraunces with its soft, rounded terminals. */
-:root body :is(h1, h2, .br-dialog__title),
-:root body :is(dialog, [role="dialog"]) > header :is(h2, h3) {
+/* Q5: Fraunces, with its soft rounded terminals, is the page title's face only. */
+:root body h1 {
   font-family: var(--font-title);
   font-weight: 600;
   font-variation-settings: "SOFT" 100, "WONK" 1;
+  font-size: var(--fs-title);
+  line-height: 1.15;
   letter-spacing: -0.01em;
 }
-:root body h1 {
-  font-size: clamp(24px, 2.4vw, 32px);
-  line-height: 1.15;
+/* Every other heading is Inter: sections, dialogs, drawers, panels, cards and widgets. */
+:root body :is(h2, h3, .br-dialog__title),
+:root body :is(dialog, [role="dialog"]) > header :is(h2, h3) {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-variation-settings: normal;
+  letter-spacing: -0.005em;
 }
-
-/* Mid-level headings: panel, card and widget titles. */
 :root body :is(.br-panel__header, .br-card__title) {
-  font-family: var(--heading);
-  font-size: 13.5px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-subheading);
   font-weight: 600;
   letter-spacing: 0;
 }
-/* Labels: pastel Newsreader italic for eyebrows, section titles, field labels and disclosures. */
+/* Q4: one label voice. Eyebrows, section titles, field labels and fold-out labels
+   are Inter 600 in sentence case at the compact label size; never italic or serif. */
 :root body :is(.eyebrow, .br-section-title, .br-field__label, summary) {
-  font-family: var(--font-label);
-  font-size: 14px;
-  font-style: italic;
-  font-weight: 450;
-  letter-spacing: 0.005em;
+  font-family: var(--font-ui);
+  font-size: var(--fs-label);
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0;
   text-transform: none;
 }
 :root body :is(.eyebrow, .br-section-title) {
@@ -1326,28 +1325,40 @@ main > :is(.panel, .br-panel, .br-card) {
 /* Data chrome stays mono: counts, badges and key caps. */
 :root body :is(.count-pill, .demo-notice .badge, kbd) {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-chrome);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 :root body :is(.br-btn:not([data-variant="link"]), .button, .pill, .text-button, .br-tab) {
   font-family: var(--font-ui);
-  font-size: 12.5px;
+  font-size: var(--fs-control);
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
 }
 
-/* Pills with hairlines; primary is LearnHarness's light-on-dark inversion. */
-:root body :is(.br-btn, .button, .pill, .system-command, .schema-tab, .schema-back, .search-field) {
-  border-radius: 999px;
+/* Q1: every control sits on the 28px line; the one or two primary actions of a page
+   (Bracket size="lg", or .page-action) step up to 32px. One radius per control type:
+   buttons, toggles and segments are pills; fields are --r-field. */
+:root body :is(.br-btn, .br-icon-btn, .button, .pill, .system-command):not(svg *) {
+  height: var(--control-h);
+  white-space: nowrap;
 }
+:root body :is(.br-btn[data-size="lg"], .page-action) {
+  height: var(--control-h-lg);
+  min-height: var(--control-h-lg);
+  padding-inline: 14px;
+}
+:root body :is(.br-btn, .br-icon-btn, .button, .pill, .system-command, .schema-tab, .schema-back, .icon-button) {
+  border-radius: var(--r-control);
+}
+/* Pills with hairlines; primary is LearnHarness's light-on-dark inversion. */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 32px;
-  padding: 6px 14px;
+  min-height: 0;
+  padding: 0 12px;
   border: 1px solid var(--hairline);
   background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
   color: var(--ink);
@@ -1377,11 +1388,11 @@ main > :is(.panel, .br-panel, .br-card) {
 
 /* Toggles that invert when selected keep a complete foreground/background pair
    that the glass fill above cannot split (it would leave on-accent text on glass).
-   The doubled class also outranks a theme's own control fill (liquidGlass.css). */
+   The doubled class also outranks a theme's own control fill (lib/themes/liquid-glass). */
 :root body .button.button[aria-pressed="true"]:not([data-variant="solid"]):not(.primary) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--press-fill, var(--accent));
+  border-color: var(--press-fill, var(--accent));
+  color: var(--press-ink, var(--on-accent));
 }
 
 /* Frame: borderless top bar over a hairline, open main area, glass panels. */
@@ -1422,7 +1433,8 @@ main > :is(.panel, .br-panel, .br-card) {
 }
 :root body .workspace-groups button[aria-current="page"] {
   border-color: transparent;
-  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  background: var(--select-fill, color-mix(in srgb, var(--ink) 12%, transparent));
+  color: var(--select-ink, var(--ink));
 }
 :root body :is(.schema-tab, .schema-back) {
   min-height: 28px;
@@ -1453,13 +1465,54 @@ main > :is(.panel, .br-panel, .br-card) {
 :root body main.atlas-main {
   padding-top: 0;
 }
-:root body :is(.panel, .br-panel, .br-card, .atlas) {
+/* Q2: one surface per page region (a page's main column, a side rail, a drawer).
+   `.surface` is the primitive; the shared panel classes are surfaces too. The theme owns
+   the treatment: lib/themes/engine.css paints every surface's fill, border colour, radius,
+   blur and shadow from the theme's --surface-* tokens and --r-panel. */
+.surface {
+  border: 1px solid var(--surface-border, var(--hairline));
+}
+:root body .atlas {
   border-color: var(--hairline);
+  border-radius: var(--r-panel);
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
 }
-:root body :is(.panel, .br-panel, .br-card, .atlas) {
-  border-radius: 14px;
+/* Inside a region, groups are sections split by a full-width hairline and a label,
+   never another bordered box: a surface nested in a surface drops its box. */
+html:root body :is(.surface, .panel, .br-panel, .br-card) :is(.surface, .panel, .br-panel, .br-card) {
+  --surface-fill: transparent;
+  --surface-border: transparent;
+  --surface-blur: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.surface-section {
+  position: relative;
+  display: grid;
+  gap: var(--br-gap);
+  padding: var(--br-panel-p);
+}
+.surface-section + .surface-section,
+hr.rule {
+  position: relative;
+  border: 0;
+  border-top: 1px solid var(--section-rule, var(--hairline));
+}
+hr.rule {
+  margin: 0;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--muted);
+  font: 600 var(--fs-label) / 1.3 var(--font-ui);
 }
 :root body .atlas {
   background: transparent;

@@ -189,7 +189,7 @@
   }
   .span {
     fill: var(--ink);
-    font: 700 16px var(--font-title);
+    font: 700 16px var(--font-ui);
     text-anchor: middle;
   }
   .sub {
@@ -216,7 +216,7 @@
   h3 {
     margin: 0 0 4px;
     color: var(--ink);
-    font: 600 15px var(--heading);
+    font: 600 15px var(--font-ui);
   }
   .switch-row {
     display: flex;

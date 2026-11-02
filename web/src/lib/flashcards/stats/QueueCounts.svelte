@@ -54,7 +54,7 @@
     gap: 8px;
   }
   .big strong {
-    font: 700 34px/1 var(--font-title);
+    font: 700 34px/1 var(--font-ui);
   }
   .big span,
   .counts small {

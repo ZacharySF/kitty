@@ -48,7 +48,7 @@
   }
   h3 {
     margin: 0 0 4px;
-    font: 700 1.1rem var(--font-title);
+    font: 700 1.1rem var(--font-ui);
   }
   .item {
     display: grid;

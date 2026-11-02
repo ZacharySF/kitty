@@ -2,7 +2,8 @@
 // stand-in kitty! API and WebSocket so the page never reaches a herdr session.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { applySavedTheme } from "/src/lib/themes.ts";
+import "/src/lib/themes/engine.css";
+import { applySavedTheme } from "/src/lib/themes/index.ts";
 import { installPanelFullscreen } from "/src/lib/panelFullscreen.ts";
 import Dock from "/src/lib/Dock.svelte";
 

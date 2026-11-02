@@ -18,16 +18,18 @@
   import ThemePicker from "./lib/ThemePicker.svelte";
   import WorkspacePane from "./lib/WorkspacePane.svelte";
   import WorkspaceTabs from "./lib/WorkspaceTabs.svelte";
-  import type { WorkspaceTrail } from "./lib/workspaceContext.svelte";
+  import type { SaveStatus, WorkspaceTrail } from "./lib/workspaceContext.svelte";
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
   import PetalDrift from "./lib/PetalDrift.svelte";
+  import ThemeLayer from "./lib/themes/ThemeLayer.svelte";
   import { APPEARANCE_EVENT, savedAppearance, type Appearance } from "./lib/appearance";
   import QuickCard from "./lib/flashcards/QuickCard.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
+    saveStatus: () => SaveStatus | null;
     hasUnsavedChanges: () => boolean;
     focusGroup: (label: string) => void;
     focusSearch: () => void;
@@ -74,6 +76,7 @@
     label: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
     icon: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.icon || "atlas",
     tone: navigationGroups.find(group => group.views.includes(tab.view))?.tone ?? "var(--c1)",
+    status: tab.pane?.saveStatus() ?? null,
   })));
   const schemaLabel = $derived(
     ({ jobs: "Jobs", notes: "Notes", flashcards: "Flashcards", opportunities: "Opportunities", schema: "Mind maps" } as Partial<Record<View, string>>)[view] || title,
@@ -360,6 +363,7 @@
 </script>
 
 <svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} />
+<ThemeLayer />
 {#if background === "petals"}<PetalDrift />{/if}
 <svelte:head><title>{title} · kitty!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>

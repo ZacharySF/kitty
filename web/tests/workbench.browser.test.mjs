@@ -124,10 +124,10 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL(`#${hash}`, base).href);
   if (typeof theme === "string")
-    await page.evaluate(async (id) => (await import("/src/lib/themes.ts")).setTheme(id), theme);
+    await page.evaluate(async (id) => (await import("/src/lib/themes/index.ts")).setTheme(id), theme);
   else if (theme)
     await page.evaluate(async (palette) => {
-      const [{ THEMES }, { setTheme }] = await Promise.all([import("/src/lib/themeCatalog.ts"), import("/src/lib/themes.ts")]);
+      const [{ THEMES }, { setTheme }] = await Promise.all([import("/src/lib/themes/catalog.ts"), import("/src/lib/themes/index.ts")]);
       THEMES.push(palette);
       setTheme(palette.id);
     }, theme);
@@ -364,7 +364,7 @@ describe("selected job views stay readable", () => {
 });
 
 describe("type system", () => {
-  test("titles, headings, labels and the wordmark render in their bundled faces at the compact scale", async () => {
+  test("the page title is Fraunces; headings and labels are Inter, never italic; the wordmark is Fredoka", async () => {
     const { page, problems, context } = await open("settings", { dock: "hidden" });
     await page.locator("h1").first().waitFor();
     const type = await page.evaluate(async () => {
@@ -392,13 +392,15 @@ describe("type system", () => {
     });
     assert.equal(type.body, "13px");
     assert.equal(type.title?.family, "Fraunces Variable");
-    assert.equal(type.heading?.family, "Space Grotesk Variable");
-    assert.equal(type.panel?.family, "Space Grotesk Variable");
-    assert.equal(type.label?.family, "Newsreader Variable");
-    assert.equal(type.label?.style, "italic");
+    assert.equal(type.heading?.family, "Inter Variable");
+    assert.equal(type.panel?.family, "Inter Variable");
+    assert.equal(type.label?.family, "Inter Variable");
+    assert.equal(type.label?.style, "normal");
     assert.equal(type.wordmark?.family, "Fredoka Variable");
-    for (const family of ["Fraunces Variable", "Space Grotesk Variable", "Newsreader Variable", "Fredoka Variable", "Inter Variable"])
+    for (const family of ["Fraunces Variable", "Fredoka Variable", "Inter Variable"])
       assert.ok(type.loadedFamilies.includes(family), `${family} was not downloaded and applied (loaded: ${type.loadedFamilies.join(", ")})`);
+    for (const family of ["Space Grotesk Variable", "Newsreader Variable"])
+      assert.ok(!type.loadedFamilies.includes(family), `${family} is still bundled`);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -503,7 +505,7 @@ describe("empty states", () => {
 });
 
 describe("loaders", () => {
-  test("lists load behind shimmering skeleton rows; whole views behind blinking cat eyes", async () => {
+  test("lists load behind shimmering skeleton rows; whole views behind the theme's loader (Kitty: the blinking cat in a petal spinner)", async () => {
     const { page, problems, context } = await open("today", { dock: "hidden" });
     await page.locator(".wordmark").waitFor();
     let release;
@@ -521,7 +523,7 @@ describe("loaders", () => {
     const brainHeld = new Promise((resolve) => (releaseBrain = resolve));
     await page.route((url) => url.pathname === "/api/brain", async (route) => { await brainHeld; await route.continue(); });
     await page.keyboard.press("Control+t");
-    const eyes = page.locator('[role="status"].kitty-loader[data-kind="eyes"]').filter({ hasText: "Waking the brain…" });
+    const eyes = page.locator('[role="status"].kitty-loader[data-kind="view"]').filter({ hasText: "Waking the brain…" });
     await eyes.waitFor();
     assert.equal(await eyes.locator(".eye").count(), 2);
     assert.notEqual(await eyes.locator(".eye").first().evaluate((node) => getComputedStyle(node).animationName), "none", "eyes do not blink");
@@ -688,7 +690,7 @@ describe("Liquid Glass theme", () => {
   test("panels are clear, neutral, lit glass like macOS/iOS, never rainbow-tinted, and their text stays readable", async () => {
     const { page, problems, context } = await open("settings", { dock: "hidden" });
     await page.locator(".br-panel").first().waitFor();
-    await page.evaluate(async () => (await import("/src/lib/themes.ts")).setTheme("liquid-glass"));
+    await page.evaluate(async () => (await import("/src/lib/themes/index.ts")).setTheme("liquid-glass"));
     await page.waitForFunction(() => document.documentElement.dataset.theme === "liquid-glass");
     const glass = await page.evaluate(() => {
       const panel = document.querySelector(".br-panel");
@@ -703,7 +705,7 @@ describe("Liquid Glass theme", () => {
       });
       const painted = [
         rim.backgroundImage, style.backgroundImage, style.boxShadow,
-        getComputedStyle(document.body).backgroundImage,
+        getComputedStyle(document.documentElement).backgroundImage,
         getComputedStyle(document.body, "::before").backgroundImage,
       ].join(" ");
       const chroma = Math.max(0, ...colors(painted).map(([r, g, b]) => Math.max(r, g, b) - Math.min(r, g, b)));
@@ -980,7 +982,7 @@ describe("home widgets", () => {
     const agents = page.getByRole("complementary", { name: "Workspace" }).getByRole("region", { name: "Agents" });
     await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
 
-    // Q19 hairline minimal: no fill or box, a rule above, a small Space Grotesk title, the eyebrow on the right.
+    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, the eyebrow on the right.
     for (const widget of [agenda, note, agents]) {
       const frame = await widget.evaluate((node) => {
         const style = getComputedStyle(node);
@@ -995,7 +997,7 @@ describe("home widgets", () => {
       assert.equal(frame.fill, "rgba(0, 0, 0, 0)", "widget has a fill");
       assert.equal(frame.top, "1px");
       assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
-      assert.match(frame.font, /Space Grotesk/);
+      assert.match(frame.font, /Inter/);
       assert.ok(frame.size <= 14, `title is ${frame.size}px`);
       assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
     }
@@ -1086,14 +1088,14 @@ describe("appearance settings", () => {
     assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "2d");
     await radio("Brain").check();
     assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "brain");
-    assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), true);
+    assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), true);
     assert.match(await titleFont(), /Fraunces/);
     assert.equal(await bodySize(), "13px");
 
     // A preset sets every control at once, the app and the preview follow.
     await panel.getByRole("button", { name: /^Minimal/ }).click();
     for (const name of ["Harness", "Plain", "Compact · 13px", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
-    assert.equal(await panel.getByRole("checkbox", { name: /Blossom motif/ }).isChecked(), false);
+    assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), false);
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "true");
     assert.equal(await root("theme"), "harness");
     assert.doesNotMatch(await titleFont(), /Fraunces/);
@@ -1212,7 +1214,7 @@ describe("calendar redesign", () => {
     });
     return response.json();
   }, body);
-  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/themes.ts")).setTheme(theme), id);
+  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/themes/index.ts")).setTheme(theme), id);
   /** WCAG contrast of an element's text colour against its own background, plus that background's alpha. */
   const textContrast = (locator) => locator.evaluate((node) => {
     const ctx = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
@@ -1809,9 +1811,9 @@ describe("notes canvas background", () => {
       return node?.width > 0 && Math.abs(node.getBoundingClientRect().width - node.closest(".canvas-stage").clientWidth) < 1;
     });
     const kitty = await sample();
-    assert.equal(kitty.void, "#1b151a", "the default theme is not Kitty");
+    assert.equal(kitty.void, "#1a1319", "the default theme is not Kitty");
     assert.deepEqual(kitty.colours, [kitty.void], "the empty canvas is not one flat void colour (grid, dots or nebula showed)");
-    await page.evaluate(async () => (await import("/src/lib/themes.ts")).setTheme("harness"));
+    await page.evaluate(async () => (await import("/src/lib/themes/index.ts")).setTheme("harness"));
     await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim() === "#141414");
     await page.waitForFunction(() => {
       const node = document.querySelector("canvas[aria-label^='Infinite drawing canvas']");
@@ -2453,7 +2455,7 @@ describe("adding flashcards", () => {
     const popover = page.getByRole("dialog", { name: "Quick add card" });
     await popover.waitFor();
     await popover.getByRole("combobox", { name: "Deck" }).waitFor();
-    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] select')?.selectedOptions[0]?.textContent === "Quick deck");
+    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] [role="combobox"]')?.textContent.trim() === "Quick deck");
     const front = popover.getByRole("textbox", { name: "Front" });
     const back = popover.getByRole("textbox", { name: "Back" });
     assert.equal(await focused(front), true, "the front is not focused");
@@ -2487,7 +2489,7 @@ describe("adding flashcards", () => {
     await page.keyboard.press("Enter");
     await popover.waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#calendar", "quick add left the current page");
-    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] select')?.selectedOptions[0]?.textContent === "Quick deck");
+    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] [role="combobox"]')?.textContent.trim() === "Quick deck");
     await page.keyboard.type("Capital of Spain?");
     await popover.getByText(/already in this deck/).waitFor();
     await front.fill("Capital of Italy?");

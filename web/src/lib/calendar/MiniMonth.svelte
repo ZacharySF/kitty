@@ -101,7 +101,7 @@
     justify-content: space-between;
   }
   header strong {
-    font: 700 0.95rem var(--font-title);
+    font: 700 0.95rem var(--font-ui);
   }
   .nav {
     width: 24px;

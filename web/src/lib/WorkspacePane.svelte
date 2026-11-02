@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { provideWorkspaceContext, type WorkspaceTrail } from "./workspaceContext.svelte";
+  import { provideWorkspaceContext, type SaveStatus, type WorkspaceTrail } from "./workspaceContext.svelte";
   import type { Bootstrap } from "./api";
   import { viewEnabled, type View } from "./workspace";
   import { activeModules } from "./modules.svelte";
@@ -24,6 +24,7 @@
     onguide: () => void;
   } = $props();
   const trail = $state<WorkspaceTrail>({ section: null, root: null, nodes: [] });
+  let status = $state<SaveStatus | null>(null);
   provideWorkspaceContext({
     get id() { return tabId; },
     get active() { return active; },
@@ -38,6 +39,10 @@
       trail.section = null;
       trail.root = null;
       trail.nodes = [];
+    },
+    get status() { return status; },
+    setStatus: (next) => {
+      status = next;
     },
   });
 
@@ -55,6 +60,7 @@
   } | undefined = $state();
 
   export function breadcrumbs() { return trail; }
+  export function saveStatus() { return status; }
   export function hasUnsavedChanges(): boolean {
     if (view === "profile") return profile?.hasUnsavedChanges() ?? false;
     if (view === "documents") return documents?.hasUnsavedChanges() ?? false;
@@ -79,7 +85,7 @@
   }
 </script>
 
-{#snippet pending()}<Loader kind="eyes" label="kitty is waking up…" />{/snippet}
+{#snippet pending()}<Loader kind="view" label="kitty is waking up…" />{/snippet}
 {#key `${view}:${epoch}:${initialJobId}`}
   {#if !viewEnabled(view, activeModules.enabled)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
