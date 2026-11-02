@@ -30,6 +30,16 @@ export function setHomeLook(look: HomeLook): void {
   window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
 }
 
+/** Q13: home's side rail of widgets, collapsed to an edge strip so the Brain widens. */
+export const HOME_RAIL_KEY = "kitty.home.rail";
+export function homeRailCollapsed(): boolean {
+  try { return localStorage.getItem(HOME_RAIL_KEY) === "collapsed"; } catch { return false; }
+}
+export function setHomeRailCollapsed(collapsed: boolean): void {
+  localStorage.setItem(HOME_RAIL_KEY, collapsed ? "collapsed" : "expanded");
+  window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
+}
+
 export const GRAPH_LAYOUT_KEY = "kitty.graph.default-layout";
 export const GRAPH_PHYSICS_KEY = "kitty.atlas.physics";
 export const GRAPH_SETTINGS_EVENT = "kitty:graph-settings";

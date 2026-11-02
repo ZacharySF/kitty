@@ -704,17 +704,30 @@ actions and job details have their own expandable advanced controls.
 
 Home is the **Brain** (below), every record and edit in the workspace as a
 glowing point-cloud cat, or the 2D **atlas** of workspace sections; the
-Workspace panel's **Brain | 2D** switch (or Settings → Appearance) chooses, and
-the choice is remembered (`kitty.home.look`; an earlier 3D choice opens the
-Brain). It sits in the centre between two narrow rails that scroll on
-their own. The left rail holds **Today** (today's events with a live now-line,
-the current event's progress and a countdown to the next) and **Quick note**
-(Ctrl+Enter saves; the last three stay visible). The right rail holds **Agents**
-(what each herdr workspace agent is doing; **Approve** opens herdr on a blocked
-one) and **Workspace** with the Brain/2D switch, **Find a section** (`/`, which
-highlights the match in the Brain or on the map) and the Sections list.
-Job-search reminders, deadlines and weekly goals live in **Find jobs**, not on
-home. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
+**Brain | 2D** switch in the stage's top-right corner, beside **View** (or
+Settings → Appearance) chooses, and the choice is remembered (`kitty.home.look`;
+an earlier 3D choice opens the Brain). It sits in the centre between two narrow
+rails of widgets that scroll on their own. The left rail holds **Today** (today's
+events with a live now-line, the current event's progress and a countdown to the
+next) and **Quick note** (Ctrl+Enter saves; the last three stay visible). The
+right rail holds **Agents** (what each herdr workspace agent is doing; **Approve**
+opens herdr on a blocked one) and **Up next**: open dated tasks and job-search
+reminders (overdue ones on top), flashcards due for review, then the next seven
+days of the calendar, where deadlines and follow-ups from every module land (a
+reminder already copied to the calendar shows once); a row opens its page; at most
+six rows show, with the total beside the title.
+The chevron on the right rail's inner edge, or **]**, folds that rail to a thin
+strip so the Brain widens (and unfolds it); every home follows the one remembered
+choice (`kitty.home.rail`).
+**Sections**, in the stage's top-left corner, opens a popover with a section
+search (`/` opens it there; Enter shows the first match in the Brain or on the
+map, Enter again opens it) and the grouped section list. Each row's ⋯ opens the
+section, shows it on the map, or hides it from (or shows it on) the 2D atlas;
+hidden rows stay listed, dimmed. On the 2D atlas, drop a node on **Sections** to
+hide it and drag a dimmed row onto the graph to show it again. Ctrl K also finds
+every section.
+The full job-search brief (reminders, deadlines and weekly goals) lives in **Find
+jobs**. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
 Appearance); every schema starts in Tree, and an explicit layout preference can
 then be changed in **Settings → Workspace**. Home has one Study entry and only
 the Jobs section entry, not separate job-action nodes.

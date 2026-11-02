@@ -97,6 +97,8 @@ export function installPanelFullscreen(win: Window, doc: Document) {
   // targets the graph rather than the enclosing workspace view.
   const focusPanel = (event: PointerEvent) => {
     if (focusContext(event.target) !== "other" || !(event.target instanceof Element)) return;
+    // A popover (top layer) keeps its own focus; clicking inside one must not close it.
+    if (event.target.closest("[popover]")) return;
     if (event.target.closest("button,a,input,summary,[tabindex]") === event.target) return;
     event.target.closest<HTMLElement>(`[${PANEL_ATTRIBUTE}]`)?.focus({ preventScroll: true });
   };

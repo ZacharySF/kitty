@@ -314,7 +314,7 @@ These were established by the read-only audit of v0.3.21 (`origin/main` @ `dcf6a
 
 ## Open threads
 
-- **Q13 rail collapse:** the user asked for a way to hide the right side so the Brain can grow. It is recorded as part of the Q13 decision; the exact shortcut key is chosen in the Home slice.
+- **Q13 rail collapse:** the user asked for a way to hide the right side so the Brain can grow. It is recorded as part of the Q13 decision. The Home slice chose **]** as the shortcut: it is free on home, needs no modifier, and fits the `[`/`]` drawer keys planned for Study (Q24).
 - **Implementation slicing (from the audit):**
   1. Global type, tokens, shared controls (fold-out menu, dropdowns, popover/drawer pattern, status dot).
   2. Theme engine (Q11) + Kitty (Q10).

@@ -350,19 +350,23 @@ describe("brain stage", () => {
 });
 
 describe("home is the Brain or the 2D atlas", () => {
-  test("home opens on the Brain; its switch offers only Brain and 2D, and remembers the choice", async () => {
+  test("home opens on the Brain; its switch offers only Brain and 2D, sits beside View in the corner, and remembers the choice", async () => {
     const { page, problems, context } = await open();
     await mount(page, "atlas");
     await brainReady(page);
     const looks = page.getByRole("group", { name: "Home look" });
     assert.deepEqual(await looks.getByRole("button").allInnerTexts(), ["Brain", "2D"], "home offers no 3D");
     assert.equal(await looks.getByRole("button", { name: "Brain" }).getAttribute("aria-pressed"), "true");
+    const [switchBox, viewBox] = await Promise.all([looks, page.getByRole("button", { name: "View" })].map((locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON())));
+    assert.ok(switchBox.right <= viewBox.left && Math.abs(switchBox.top - viewBox.top) <= 2, "the look switch is not in View's row");
     assert.equal(await page.locator(".atlas .stage > .canvas").evaluate((element) => getComputedStyle(element).visibility), "hidden", "the paused 2D atlas never shows through the transparent brain");
-    // Finding a section highlights it in the Brain.
-    const search = page.getByRole("searchbox", { name: /Find a section/ });
+    // Finding a section from the corner's Sections popover highlights it in the Brain.
+    await page.locator(".atlas .stage").getByRole("button", { name: /^Sections \d/ }).click();
+    const search = page.getByRole("dialog", { name: "Sections" }).getByRole("searchbox", { name: "Find a section" });
     await search.fill("Notes");
     await search.press("Enter");
     await page.waitForFunction(() => document.querySelector('.legend [data-key="notes"]')?.getAttribute("aria-pressed") === "true");
+    await search.press("Escape");
     await looks.getByRole("button", { name: "2D" }).click();
     await page.waitForFunction(() => !document.querySelector("[data-brain-stage]"));
     await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
@@ -374,6 +378,45 @@ describe("home is the Brain or the 2D atlas", () => {
     assert.equal(await page.locator("[data-brain-stage]").count(), 0, "the 2D choice is remembered");
     await looks.getByRole("button", { name: "Brain" }).click();
     await brainReady(page);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("the Brain stays fitted to its stage with the side rail expanded, collapsed and expanded again", async () => {
+    const { page, problems, context } = await open({ settings: { turning: false, panel: false } });
+    await mount(page, "atlas");
+    await brainReady(page);
+    const toggle = page.getByRole("button", { name: "Side widgets" });
+    const fit = async (label) => {
+      await page.waitForFunction(() => {
+        const stage = document.querySelector(".atlas .stage"), canvas = stage?.querySelector("[data-brain-stage] canvas[data-points]");
+        if (!canvas?.width) return false;
+        const box = canvas.getBoundingClientRect(), outer = stage.getBoundingClientRect();
+        return Math.abs(box.width - outer.width) <= 2 && Math.abs(box.height - outer.height) <= 2 && Math.abs(canvas.width / canvas.height - box.width / box.height) < 0.02;
+      }, null, { timeout: 20_000, polling: 200 }).catch(() => assert.fail(`${label}: the Brain is not fitted to its stage`));
+      const area = await page.locator(".atlas .stage").evaluate((node) => node.getBoundingClientRect().toJSON());
+      // The camera reframes: the cat's head stays whole inside the stage once it settles.
+      let head;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        head = await headBox(page);
+        if (within(head, area)) break;
+        await page.waitForTimeout(150);
+      }
+      assert.ok(within(head, area), `${label}: the cat's head ${JSON.stringify(head)} leaves the stage ${JSON.stringify(area)}`);
+      return area;
+    };
+    const expanded = await fit("expanded");
+    await toggle.click();
+    await page.locator(".atlas .side.collapsed").waitFor();
+    const collapsed = await fit("collapsed");
+    assert.ok(collapsed.width - expanded.width >= 150, `the stage only widened ${collapsed.width - expanded.width}px`);
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.rail")), "collapsed");
+    await mount(page, "atlas");
+    await brainReady(page);
+    assert.equal(await page.locator(".atlas .side.collapsed").count(), 1, "the collapsed rail is not remembered");
+    await toggle.click();
+    const again = await fit("expanded again");
+    assert.ok(Math.abs(again.width - expanded.width) <= 1, "the stage did not return to its width");
     assert.deepEqual(problems, []);
     await context.close();
   });
