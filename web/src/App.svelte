@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { api, type Bootstrap } from "./lib/api";
-  import { navigation, navigationGroups, isView, viewEnabled, visibleGroups, type View } from "./lib/workspace";
+  import { navigation, navigationGroups, isView, notePageLink, viewEnabled, visibleGroups, type View } from "./lib/workspace";
   import { setActiveModules } from "./lib/modules.svelte";
   import { Badge, Button } from "@nunera/bracket";
   import Icon from "./lib/Icon.svelte";
@@ -218,7 +218,14 @@
   }
   function readRoute() {
     const hash = window.location.hash.slice(1);
-    let next: View = isView(hash) ? hash : "today";
+    // A link to one page opens Notes on it, the way kitty!'s own links between views do.
+    const linkedPage = notePageLink(hash);
+    if (linkedPage !== null) {
+      try { sessionStorage.setItem("kitty.notes.open-page", String(linkedPage)); } catch { /* The event still opens it. */ }
+      window.history.replaceState(window.history.state, "", "#notes");
+      window.dispatchEvent(new CustomEvent("kitty-open-note", { detail: { page_id: linkedPage } }));
+    }
+    let next: View = linkedPage !== null ? "notes" : isView(hash) ? hash : "today";
     let redirected = false;
     if (workspace && !viewEnabled(next, enabled)) {
       moduleNotice = disabledNotice(next);

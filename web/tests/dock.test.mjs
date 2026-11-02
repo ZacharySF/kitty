@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, clampDockHeight, firstDockHeight } from '../src/lib/dock.ts';
 import {
-  terminalSocketUrl, terminalTheme, ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, ternTarget,
+  terminalSocketUrl, terminalTheme, ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, ternPluginState, ternTarget,
 } from '../src/lib/terminal.ts';
 
 test('the first dock size is the empty area below the main panel', () => {
@@ -89,4 +89,22 @@ test('the Run target is the chosen pane, else the focused pane of the shown tab'
     { id: 5, number: 2, name: null, shown: true, blocks: [pane(6)] },
   ] }] };
   assert.deepEqual(ternPanes(status).map((item) => [item.id, item.shown]), [[3, false], [6, true]]);
+});
+
+test('the Tern plugin panel offers install, update or nothing, and shows problems', () => {
+  const plugin = (fields) => ({
+    available: true, version: '0.1.0', dir: '/w/.private/tern/plugin', installed: false, installed_version: null,
+    current: false, linked_elsewhere: null, tern_status: null, problems: [], enabled: true, ...fields,
+  });
+  assert.deepEqual(ternPluginState(plugin({})), { label: 'Not installed in Tern', action: 'install', problem: null });
+  assert.equal(ternPluginState(plugin({ linked_elsewhere: '/other/.private/tern/plugin' })).label,
+    'Tern uses the plugin of another kitty! workspace');
+  const installed = plugin({ installed: true, installed_version: '0.1.0', current: true, tern_status: 'ready' });
+  assert.deepEqual(ternPluginState(installed), { label: 'Installed (0.1.0)', action: null, problem: null });
+  assert.equal(ternPluginState({ ...installed, current: false }).action, 'update');
+  assert.equal(ternPluginState({ ...installed, tern_status: 'failed: host.luau:1: boom' }).problem,
+    'Tern reports: failed: host.luau:1: boom');
+  assert.equal(ternPluginState(plugin({ problems: ['/x: duplicate id kitty'] })).problem, '/x: duplicate id kitty');
+  assert.equal(ternPluginState(plugin({ enabled: false })).action, null);
+  assert.equal(ternPluginState(plugin({ available: false })).action, null);
 });

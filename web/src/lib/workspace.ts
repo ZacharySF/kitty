@@ -46,6 +46,11 @@ export function viewEnabled(view: View, enabled: Enabled): boolean {
 export function isView(value: string): value is View {
   return navigation.some(item => item.id === value);
 }
+/** `#notes/<number>`: a link to one note page (the kitty! Inbox block in Tern opens these). */
+export function notePageLink(hash: string): number | null {
+  const match = /^notes\/([1-9][0-9]{0,15})$/.exec(hash);
+  return match ? Number(match[1]) : null;
+}
 export function visibleNavigation(enabled: Enabled) {
   return navigation.filter(item => viewEnabled(item.id, enabled));
 }

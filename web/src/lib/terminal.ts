@@ -117,3 +117,34 @@ export function ternEventLabel(event: TernEvent): string {
   if (event.event === "pane_spawned") return `pane ${event.pane} started`;
   return event.status === null ? `pane ${event.pane} exited` : `pane ${event.pane} exited ${event.status}`;
 }
+
+/** GET /api/terminal/tern/plugin (kitty/core/tern_plugin.py): the kitty Tern plugin in the user's Tern. */
+export type TernPluginStatus = {
+  available: boolean;
+  version: string | null;
+  dir: string;
+  installed: boolean;
+  installed_version: string | null;
+  current: boolean;
+  linked_elsewhere: string | null;
+  tern_status: string | null;
+  problems: string[];
+  /** The build's settings.tern.plugin. */
+  enabled: boolean;
+};
+
+/** What the plugin panel says and which action it offers. */
+export function ternPluginState(plugin: TernPluginStatus): {
+  label: string; action: "install" | "update" | null; problem: string | null;
+} {
+  const failed = plugin.tern_status?.startsWith("failed") ? `Tern reports: ${plugin.tern_status}` : null;
+  const problem = plugin.problems[0] ?? failed;
+  if (!plugin.available) return { label: "This kitty! was built without the Tern plugin", action: null, problem };
+  if (!plugin.enabled) return { label: "Turned off in this build (settings.tern.plugin)", action: null, problem };
+  if (!plugin.installed) {
+    const label = plugin.linked_elsewhere ? "Tern uses the plugin of another kitty! workspace" : "Not installed in Tern";
+    return { label, action: "install", problem };
+  }
+  if (!plugin.current) return { label: "Installed; this kitty! ships a newer copy", action: "update", problem };
+  return { label: plugin.version ? `Installed (${plugin.version})` : "Installed", action: null, problem };
+}
