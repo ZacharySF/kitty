@@ -738,7 +738,7 @@ describe("Liquid Glass theme", () => {
   test("panels are clear, neutral, lit glass like macOS/iOS, never rainbow-tinted, and their text stays readable", async () => {
     const { page, problems, context } = await open("settings", { dock: "hidden" });
     await page.locator(".br-panel").first().waitFor();
-    await page.evaluate(async () => (await import("/src/lib/themes/index.ts")).setTheme("liquid-glass"));
+    await page.evaluate(async () => (await import("/src/lib/build.svelte.ts")).setTheme("liquid-glass"));
     await page.waitForFunction(() => document.documentElement.dataset.theme === "liquid-glass");
     const glass = await page.evaluate(() => {
       const panel = document.querySelector(".br-panel");
@@ -1444,7 +1444,7 @@ describe("appearance settings", () => {
     const atMount = await page.evaluate(() => window.__atMount);
     assert.equal(atMount.background, "petals");
     assert.equal(atMount.density, cozy.density);
-    assert.equal(atMount.titleFont, cozy.titleFont);
+    assert.equal(atMount.titleFont, cozy.title_font);
     assert.equal(await panel.getByRole("button", { name: /^Cozy/ }).getAttribute("aria-pressed"), "true");
     assert.deepEqual(problems, []);
     await context.close();
@@ -1577,7 +1577,7 @@ describe("calendar redesign", () => {
     });
     return response.json();
   }, body);
-  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/themes/index.ts")).setTheme(theme), id);
+  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/build.svelte.ts")).setTheme(theme), id);
   /** WCAG contrast of an element's text colour against its own background, plus that background's alpha. */
   const textContrast = (locator) => locator.evaluate((node) => {
     const ctx = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
@@ -1843,8 +1843,11 @@ describe("notes tabs and floating outline", () => {
     assert.deepEqual(await rect(title), before, "opening the library moved the page");
     await page.keyboard.press("Escape");
     await library.waitFor({ state: "hidden" });
-    // Write three blocks; the floating outline lists them and jumps to one.
-    await page.getByRole("button", { name: "Start writing a text note" }).click();
+    // Write three blocks; the floating outline lists them and jumps to one. The block editor
+    // offers "Start writing…" on a page without blocks, else its first block takes the caret.
+    const start = page.getByRole("button", { name: /^Start writing/ });
+    if (await start.count()) await start.click();
+    else await page.getByRole("textbox", { name: "Block 1", exact: true }).click();
     await page.keyboard.type("Alpha: the first idea");
     await page.keyboard.press("Enter");
     await page.keyboard.type("Beta topic, second");
@@ -2192,7 +2195,7 @@ describe("notes canvas background", () => {
     const kitty = await sample();
     assert.equal(kitty.void, "#1a1319", "the default theme is not Kitty");
     assert.deepEqual(kitty.colours, [kitty.void], "the empty canvas is not one flat void colour (grid, dots or nebula showed)");
-    await page.evaluate(async () => (await import("/src/lib/themes/index.ts")).setTheme("harness"));
+    await page.evaluate(async () => (await import("/src/lib/build.svelte.ts")).setTheme("harness"));
     await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim() === "#141414");
     await page.waitForFunction(() => {
       const node = document.querySelector("canvas[aria-label^='Infinite drawing canvas']");
@@ -2590,6 +2593,8 @@ describe("one mind-map editor", () => {
   test("Ctrl K opens a map in the editor by its title and offers New mind map", async () => {
     const { page, problems, context } = await open("calendar", { dock: "hidden" });
     await page.evaluate(async () => { const { api } = await import("/src/lib/api.ts"); await api("/schema/create", { title: "Palette map", mode: "study" }); });
+    // The app mounts once the build (and its theme's motif) has loaded; Ctrl K needs it mounted.
+    await page.locator("#app .workbench").waitFor();
     await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog", { name: "Search kitty!" });
     await palette.getByRole("combobox").fill("palette map");

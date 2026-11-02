@@ -127,7 +127,7 @@ test("opens on herdr's terminal docked at the bottom at a fixed height; the page
   const { page, problems, context } = await harness();
   await dock(page).waitFor();
   await assertDocked(page, DOCKED.height);
-  assert.deepEqual(await saved(page), null, "a fresh dock writes nothing until it changes");
+  assert.deepEqual(await page.evaluate(() => window.harnessBuild.preferences), [], "a fresh dock writes nothing until it changes");
   const terminal = dock(page).locator("[data-kitty-terminal]");
   await terminal.waitFor();
   await page.waitForFunction(() => window.dockHarness.sockets.length === 1);
@@ -252,14 +252,14 @@ test("dragging the header moves the card without re-laying out the page; it stay
   await context.close();
 });
 
-test("a build pushed without a dock height keeps the dock at its first size", async () => {
+test("a build pushed from elsewhere moves the dock to its step, and is not written back", async () => {
   const { page, problems, context } = await harness();
   await dock(page).waitFor();
-  await page.evaluate(() => window.dockHarness.changeBuild({ ui: { dock: { height: null } } }));
-  await page.waitForTimeout(100);
-  assert.equal(await height(dock(page)), 300);
-  assert.equal(await dockSpace(page), "300px");
-  assert.equal((await saved(page)).height, null, "another window's choice is not written back");
+  await page.evaluate(() => window.dockHarness.changeBuild({ ui: { dock: { step: "l" } } }));
+  // Large is 60% of the 800px window.
+  await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--dock-space").trim() === "480px");
+  assert.equal(await height(dock(page)), 480);
+  assert.deepEqual(await page.evaluate(() => window.harnessBuild.preferences), [], "another window's choice is not written back");
   assert.deepEqual(problems, []);
   await context.close();
 });
@@ -388,7 +388,7 @@ test("Agent launch chooses a coding agent, remembers it, and exposes named-sessi
 test("without an installed Tern nothing Tern-related renders in the dock", async () => {
   const { page, problems, context } = await harness();
   await page.getByRole("button", { name: "Agents" }).click();
-  await page.getByRole("list", { name: "herdr agent activity" }).waitFor();
+  await page.getByRole("region", { name: "Agent activity" }).waitFor();
   await page.waitForFunction(() => window.dockHarness.calls.some((call) => call.url === "/api/terminal/tern"));
   assert.equal(await page.getByRole("region", { name: "Tern" }).count(), 0);
   assert.equal(await dock(page).getByText(/tern/i).count(), 0);
@@ -407,7 +407,7 @@ test("an installed Tern lists kitty!'s panes in the dock: run a line, focus, cap
   const panes = tern.getByRole("list", { name: "Tern panes" });
   await panes.waitFor();
   // herdr's agent strip stays; Tern is additive.
-  await page.getByRole("list", { name: "herdr agent activity" }).waitFor();
+  await page.getByRole("region", { name: "Agent activity" }).waitFor();
   assert.match(await panes.getByRole("listitem").filter({ hasText: "cargo test" }).innerText(), /working/i);
   assert.match(await panes.getByRole("listitem").filter({ hasText: "make check" }).innerText(), /exited 3/i);
   assert.match(await tern.getByRole("list", { name: "Recent Tern activity" }).innerText(), /pane 5 exited 3/i);

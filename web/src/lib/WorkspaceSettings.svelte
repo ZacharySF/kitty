@@ -112,7 +112,6 @@
   let draft = $state<GraphPhysics | null>(null);
   const physics = $derived(draft ?? buildStore.build.ui.graph.physics);
   let physicsTimer: ReturnType<typeof setTimeout> | undefined;
-  let notice = $state("");
   let error = $state("");
   let modules = $state<ModulesState | null>(null);
   let selection = $state<ModuleId[]>([]);
@@ -174,10 +173,9 @@
     spring: "How strongly connected nodes pull together. Lower values leave looser branches.",
     damping: "How quickly node movement slows. Higher values settle the graph sooner.",
   };
+  // Graph settings save to the build at once; a refusal is shown here (and by the build's notice).
   async function saveGraph(save: Promise<boolean>) {
-    const saved = await save;
-    notice = saved ? "Saved to your build · open schemas update immediately" : "";
-    error = saved ? "" : buildStore.error;
+    error = (await save) ? "" : buildStore.error;
   }
   function movePhysics(key: keyof GraphPhysics, value: number) {
     draft = { ...physics, [key]: value };
@@ -292,7 +290,6 @@
             {/each}
             <div class="set-row foot"><span class="set-end"><Button size="sm" variant="ghost" onclick={reset}>Reset to defaults</Button></span></div>
           </div>
-          {#if notice}<p class="set-note" role="status">{notice}</p>{/if}
           {#if error}<p class="set-note" role="alert">{error}</p>{/if}
         </Panel>
       {:else if shown === "build"}

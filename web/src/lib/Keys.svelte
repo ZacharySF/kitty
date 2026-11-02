@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Popover from "./ui/Popover.svelte";
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { backendLabel, keyName, loadKeys, moveKey, removeKey, setKey, type KeyStatus, type KeysState } from "./keys";
@@ -41,8 +42,7 @@
   }
 </script>
 
-<section aria-label="Keys">
-  <Panel title="Keys">
+<Panel title="Keys" aria-label="Keys">
     <div class="keys">
       <p class="muted">API keys kitty! and the programs you start with <code>kitty keys run</code> use. kitty! shows only whether a key is set and where it is stored, never its value.</p>
       {#if keysState && !keysState.keyring}
@@ -91,14 +91,14 @@
         {/if}
         <p class="muted">New keys go to {keysState.keyring ? keysState.keyring_label : "an owner-only file"}.</p>
       {:else if !error}<p class="muted" role="status">Loading keys…</p>{/if}
-      <details><summary>Using a key in another program</summary>
+      <Popover label="Using a key in another program" placement="bottom-start" class="explain">
+        {#snippet trigger(props)}<button type="button" class="text-button" {...props}>Using a key in another program</button>{/snippet}
         <p><code>kitty keys run +OPENROUTER -- your-command</code> starts the command with that key in its environment only; nothing else on your system sees it. Keys never go into exports, builds or logs.</p>
-      </details>
+      </Popover>
       {#if notice}<p role="status">{notice}</p>{/if}
       {#if error}<p role="alert">{error}</p>{/if}
     </div>
-  </Panel>
-</section>
+</Panel>
 
 <style>
   .keys { display: grid; gap: .8rem; }
@@ -113,7 +113,6 @@
   .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
   .entry { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; width: 100%; }
   .entry label { display: grid; gap: .2rem; font-size: .8rem; flex: 1; min-width: 12rem; }
-  details { font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: .85rem; line-height: 1.7; }
-  summary { cursor: pointer; color: var(--ink); }
+  :global(.explain) p { margin: 0; max-width: 36rem; font-size: 12px; line-height: 1.7; color: var(--muted); }
   code { overflow-wrap: anywhere; font-size: 11px; }
 </style>

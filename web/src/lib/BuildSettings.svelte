@@ -137,8 +137,7 @@
   };
 </script>
 
-<section aria-label="Build settings">
-  <Panel title="Build">
+<Panel title="Build" aria-label="Build settings">
     <p class="muted">Your build is one file, <code>config/build.json</code>: modules, settings, theme tokens, custom CSS and interface preferences. Changes apply to every window at once.</p>
     {#if fileProblems.length}
       <div class="problem" role="alert">
@@ -233,8 +232,7 @@
         <p class="muted">No earlier builds yet. Installing or rolling back keeps the build it replaces here.</p>
       {/if}
     </div>
-  </Panel>
-</section>
+</Panel>
 
 <style>
   .muted { color: var(--muted); font-size: .8rem; }

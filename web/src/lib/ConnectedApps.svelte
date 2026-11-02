@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Popover from "./ui/Popover.svelte";
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { CLIENTS_EVENT, decide, kindLabel, loadClients, revoke, scopeLabel, type ClientsState, type PairedClient } from "./clients";
@@ -38,8 +39,7 @@
   const when = (value: string | null) => (value ? new Date(value).toLocaleString() : "Never");
 </script>
 
-<section aria-label="Connected apps">
-  <Panel title="Connected apps">
+<Panel title="Connected apps" aria-label="Connected apps">
     <div class="connected">
       <p class="muted">Programs such as the kitty Tern plugin or the kitty browser extension can capture notes and read titles once you approve them here. Each one gets its own token, limited to what it asked for; revoking it ends its access.</p>
       {#if connected?.requests.length}
@@ -83,13 +83,13 @@
             <Button size="sm" variant="ghost" onclick={() => connected?.address && void navigator.clipboard.writeText(connected.address).catch(() => {})}>Copy address</Button></p>
         {/if}
       {:else if !error}<p class="muted" role="status">Loading connected apps…</p>{/if}
-      <details><summary>How apps connect</summary>
+      <Popover label="How apps connect" placement="bottom-start" class="explain">
+        {#snippet trigger(props)}<button type="button" class="text-button" {...props}>How apps connect</button>{/snippet}
         <p>While kitty! runs, it writes its current address to the owner-only <code>.private/endpoint.json</code> in your workspace (never a token). An app reads it, asks to pair and shows a code; you approve here. A browser extension cannot read files, so you paste the address above into it once. Browser extensions connect from their side panel, sidebar or background page, not from scripts inside web pages.</p>
-      </details>
+      </Popover>
       {#if error}<p role="alert">{error}</p>{/if}
     </div>
-  </Panel>
-</section>
+</Panel>
 
 <style>
   .connected { display: grid; gap: .8rem; }
@@ -103,7 +103,6 @@
   .who small { color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
   .code { font-family: var(--font-mono, monospace); font-size: 1.05rem; letter-spacing: .08em; font-variant-numeric: tabular-nums; }
   .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
-  details { font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: .85rem; line-height: 1.7; }
-  summary { cursor: pointer; color: var(--ink); }
+  :global(.explain) p { margin: 0; max-width: 36rem; font-size: 12px; line-height: 1.7; color: var(--muted); }
   code { overflow-wrap: anywhere; font-size: 11px; }
 </style>

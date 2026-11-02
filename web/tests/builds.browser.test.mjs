@@ -39,7 +39,7 @@ async function shot(page, name) {
   } catch { /* Optional evidence only. */ }
 }
 
-async function open(hash = "#settings") {
+async function open(hash = "#settings/build") {
   const page = await context.newPage();
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL(hash, base).href);
@@ -100,7 +100,8 @@ test("an outside editor's save restyles both windows, drops removed tokens and f
     await waitProperty(page, "--probe2", "#abcdef");
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".workbench")).outlineColor === "rgb(0, 255, 0)");
     assert.equal(await property(page, "--probe"), "");
-    assert.equal(await property(page, "--br-ink"), "#e6e6e6");
+    // Back on the default Kitty theme's own ink.
+    assert.equal(await property(page, "--br-ink"), "#f5e8ee");
     assert.equal(await scopedCss(page), `@scope (#app) {\n${css}\n}`);
   }
   // The open editor had no unsaved edits, so it shows the file as written.
@@ -168,7 +169,7 @@ test("importing a build shows the diff with a restart flag, installs it everywhe
   await panel.getByRole("button", { name: "Roll back to previous build" }).click();
   for (const page of [windowA, windowB]) {
     await waitProperty(page, "--probe2", "#abcdef");
-    await page.waitForFunction(() => document.documentElement.dataset.theme === "harness");
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "kitty");
     assert.equal(await property(page, "--probe3"), "");
     assert.equal(await outline(page), "rgb(0, 255, 0)");
   }
@@ -195,7 +196,7 @@ test("safe mode (?safe and Ctrl+Alt+Shift+S) drops custom CSS and tokens; its co
   assert.equal(new URL(windowA.url()).searchParams.has("safe"), true);
   // The chord starts with Ctrl+Alt, which alone opens Plan: it must not do so on the way.
   await windowA.waitForTimeout(300);
-  assert.equal(new URL(windowA.url()).hash, "#settings");
+  assert.equal(new URL(windowA.url()).hash, "#settings/build");
   await control.getByRole("button", { name: "Turn back on" }).click();
   await waitProperty(windowA, "--probe4", "#00ff00");
   assert.match(await scopedCss(windowA), /^@scope \(#app\)/);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Popover from "./ui/Popover.svelte";
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import {
@@ -101,8 +102,7 @@
   const when = (value: string | null) => (value ? new Date(value).toLocaleString() : "Never");
 </script>
 
-<section aria-label="Devices">
-  <Panel title="Devices">
+<Panel title="Devices" aria-label="Devices">
     <div class="devices">
       <p class="muted">Sync your notes between your own devices. Pair each device once with a short code; after that they find each other on the same network, or at an address you set (for example over Tailscale), and sync directly, end-to-end encrypted. Nothing goes through a server.</p>
       <p class="muted">In this version only notes sync. Jobs, applications and the calendar stay on each device.</p>
@@ -210,14 +210,14 @@
           <span><Button size="sm" disabled={busy || device.paused} onclick={() => run(() => syncNow())}>Sync all now</Button></span>
         {:else}<p class="muted">No paired devices yet.</p>{/if}
       {:else if !error}<p class="muted" role="status">Loading devices…</p>{/if}
-      <details><summary>How device sync works</summary>
+      <Popover label="How device sync works" placement="bottom-start" class="explain">
+        {#snippet trigger(props)}<button type="button" class="text-button" {...props}>How device sync works</button>{/snippet}
         <p>Pairing happens once per device: the code proves both devices belong to you, and each remembers the other's key. Devices then connect to each other directly, on your local network or over Tailscale, and every connection is end-to-end encrypted. Both devices need kitty! running at the same time to sync; changes made offline sync the next time they meet.</p>
-      </details>
+      </Popover>
       {#if notice}<p role="status">{notice}</p>{/if}
       {#if error}<p role="alert">{error}</p>{/if}
     </div>
-  </Panel>
-</section>
+</Panel>
 
 <style>
   .devices { display: grid; gap: .8rem; }
@@ -245,6 +245,5 @@
   .mono { font-family: var(--font-mono, monospace); font-variant-numeric: tabular-nums; }
   .nearby { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
   .nearby small { color: var(--muted); }
-  details { font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: .85rem; line-height: 1.7; }
-  summary { cursor: pointer; color: var(--ink); }
+  :global(.explain) p { margin: 0; max-width: 36rem; font-size: 12px; line-height: 1.7; color: var(--muted); }
 </style>

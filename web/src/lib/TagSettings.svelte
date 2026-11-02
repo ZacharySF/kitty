@@ -48,8 +48,7 @@
   }
 </script>
 
-<section aria-label="Tags">
-  <Panel title="Tags">
+<Panel title="Tags" aria-label="Tags">
     <div class="tags">
       <p class="muted">When a block mentions a tag's name, alias or keyword, kitty! can suggest the tag or attach it. Each tag can override this.</p>
       {#if tagsState}
@@ -86,8 +85,7 @@
       {#if notice}<p class="muted" role="status">{notice}</p>{/if}
       {#if error}<p role="alert">{error}</p>{/if}
     </div>
-  </Panel>
-</section>
+</Panel>
 
 <style>
   .tags { display: grid; gap: .75rem; }
