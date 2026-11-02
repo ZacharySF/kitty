@@ -1,0 +1,272 @@
+/* ── half blood (design Q12) ───────────────────────────────────────────────
+   Storybook heraldry in flat bold colour: night-navy panels edged in bone with an inner
+   rule and a hard navy drop, over an ultramarine field of white cloud squiggles, inside a
+   bone filigree window frame (Frame.svelte). Sun-orange actions, grass-green ticks, moon-
+   blue secondary text, red drips on titles, rules and focus. Scoped to
+   :root[data-theme="halfblood"]; marks also to :not([data-motif="off"]). */
+
+:root[data-theme="halfblood"] {
+  --hb-field: #1b2fa0;
+  --hb-navy: #0b1250;
+  --hb-bone: #f7f1e3;
+  --hb-red: #ff4a3d;
+  --hb-title: #ff7a6b;
+  --hb-sun: #ffa31a;
+  --hb-gold: #ffd23a;
+  --hb-green: #5ad23c;
+  --hb-sky: #c9dcff;
+  --backdrop: linear-gradient(var(--hb-field), var(--hb-field));
+  --surface-border: var(--hb-bone);
+  --surface-shadow:
+    inset 0 0 0 3px var(--solid-panel),
+    inset 0 0 0 4px color-mix(in srgb, var(--hb-bone) 32%, transparent),
+    4px 4px 0 #070c38;
+  --hairline: color-mix(in srgb, var(--hb-sky) 34%, transparent);
+  --wash: color-mix(in srgb, var(--hb-sky) 16%, var(--solid-panel));
+  --select-fill: var(--hb-field);
+  --select-edge: inset 0 0 0 1.5px var(--hb-sun), inset 5px 0 0 var(--hb-sun);
+  --sun: url("./sun-mask.svg");
+}
+:root[data-theme="halfblood"] ::selection {
+  background: var(--hb-sun);
+  color: var(--hb-navy);
+}
+:root[data-theme="halfblood"] body :is(.panel, .br-panel, .br-card, .surface):not(:is(.surface, .panel, .br-panel, .br-card) *) {
+  border-width: 2px;
+}
+
+/* ── Chrome: a navy banner edged in bone ── */
+:root[data-theme="halfblood"] body .system-bar {
+  padding: 4px 10px;
+  border: 2px solid var(--hb-bone);
+  border-radius: 10px;
+  background: var(--hb-navy);
+  box-shadow: 0 0 0 3px var(--hb-navy), 0 0 0 4px color-mix(in srgb, var(--hb-bone) 45%, transparent);
+}
+:root[data-theme="halfblood"] body .wordmark .word {
+  position: relative;
+  color: var(--hb-title);
+  text-shadow: 1.5px 1.5px 0 var(--hb-bone);
+}
+:root[data-theme="halfblood"] body .brand-dot {
+  color: var(--hb-sun);
+}
+:root[data-theme="halfblood"] body .brand-mark {
+  border-radius: 6px 6px 50% 50%;
+  background: var(--hb-sun);
+  color: var(--hb-navy);
+  box-shadow: 0 0 0 1.5px var(--hb-bone);
+}
+:root[data-theme="halfblood"] body .workspace-groups {
+  border: 1.5px solid color-mix(in srgb, var(--hb-bone) 60%, transparent);
+  border-radius: 8px;
+  background: var(--hb-navy);
+}
+:root[data-theme="halfblood"] body .workspace-groups button {
+  border-radius: 5px;
+  color: var(--hb-sky);
+}
+:root[data-theme="halfblood"] body .workspace-groups button[aria-current="page"] {
+  background: var(--hb-bone);
+  color: var(--hb-navy);
+}
+:root[data-theme="halfblood"] body :is(.schema-tab, .schema-back, .system-command) {
+  border: 1.5px solid color-mix(in srgb, var(--hb-bone) 60%, transparent);
+  border-radius: 8px;
+  background: var(--hb-navy);
+  color: var(--hb-bone);
+}
+:root[data-theme="halfblood"] body .schema-tab.current-schema {
+  border-color: var(--hb-sun);
+  color: var(--hb-sun);
+}
+:root[data-theme="halfblood"] body .workspace-tabbar {
+  border-bottom: 2px solid var(--hb-bone);
+}
+:root[data-theme="halfblood"] body .workspace-tabbar .tab.active::after {
+  height: 4px;
+  border-radius: 0;
+  background: var(--hb-red);
+  box-shadow: none;
+}
+:root[data-theme="halfblood"] body :is(.demo-notice, .error-banner) {
+  border: 2px solid var(--hb-bone);
+  background: var(--hb-navy);
+  box-shadow: 3px 3px 0 #070c38;
+}
+
+/* ── Controls: bone-edged navy, a sun-orange primary, bone segments ── */
+:root[data-theme="halfblood"] body :is(.button, .br-btn, .pill):not([data-variant="solid"]):not(.primary):not([aria-pressed="true"]):not(.toggle-group *):not([data-variant="ghost"]):not([data-variant="link"]) {
+  border: 1.5px solid color-mix(in srgb, var(--hb-bone) 80%, transparent);
+  background: var(--hb-navy);
+  color: var(--hb-bone);
+}
+:root[data-theme="halfblood"] body :is(.button, .br-btn, .pill):not([data-variant="solid"]):not(.primary):not([aria-pressed="true"]):not(.toggle-group *):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--hb-bone) 16%, var(--hb-navy));
+}
+:root[data-theme="halfblood"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root[data-theme="halfblood"] body .br-btn[data-variant="solid"] {
+  border-color: var(--hb-navy);
+  background: var(--hb-sun);
+  color: var(--hb-navy);
+  box-shadow: 0 0 0 1.5px var(--hb-bone), 3px 3px 0 var(--hb-navy);
+}
+:root[data-theme="halfblood"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary:hover:not(:disabled) {
+  background: var(--hb-gold);
+}
+:root[data-theme="halfblood"] body .toggle-group {
+  border-color: color-mix(in srgb, var(--hb-bone) 70%, transparent);
+  background: var(--hb-navy);
+}
+:root[data-theme="halfblood"] body .toggle-group.toggle-group .br-btn[aria-pressed="true"] {
+  border-color: var(--hb-bone);
+  background: var(--hb-bone);
+  color: var(--hb-navy);
+}
+:root[data-theme="halfblood"] body :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select, .br-input) {
+  border-color: color-mix(in srgb, var(--hb-bone) 55%, transparent);
+  background-color: var(--hb-navy);
+}
+
+/* Overlays: navy, bone edge, hard drop. */
+:root[data-theme="halfblood"] body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root[data-theme="halfblood"] body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  border-color: var(--hb-bone);
+  background: var(--solid-panel);
+}
+
+/* Page titles: red storybook letters on a bone shadow. */
+:root[data-theme="halfblood"] body main :is(h1, .section-header h2) {
+  color: var(--hb-title);
+  text-shadow: 2px 2px 0 var(--hb-navy), 3px 4px 0 var(--hb-bone);
+}
+
+/* Home widgets and Study's columns are heraldic panels too, so the cloud squiggles never run
+   under their text. */
+:root[data-theme="halfblood"] body :is(.home-widget, .study .column:not(.column .column), .study-guide) {
+  border: 2px solid var(--surface-border);
+  border-radius: var(--r-panel);
+  background: var(--solid-panel);
+  box-shadow: var(--surface-shadow);
+}
+:root[data-theme="halfblood"] body .home-widget {
+  padding: 2px 12px 8px;
+}
+
+/* ── Motif marks ── */
+
+/* The frame: the window's content steps inside the filigree. */
+:root[data-theme="halfblood"]:not([data-motif="off"]) body .workbench {
+  padding: 28px 32px calc(24px + var(--dock-space, 0px));
+}
+:root[data-theme="halfblood"]:is([data-motif="off"], [data-panel-fullscreen]) .theme-frame {
+  display: none;
+}
+
+/* Dripping titles and wordmark. */
+:root[data-theme="halfblood"]:not([data-motif="off"]) body main :is(h1, .section-header h2) {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+}
+:root[data-theme="halfblood"]:not([data-motif="off"]) body :is(main :is(h1, .section-header h2), .wordmark .word)::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 8px;
+  top: calc(100% - 5px);
+  height: 11px;
+  pointer-events: none;
+  background: var(--hb-red);
+  -webkit-mask: url("./drip.svg") repeat-x 0 0 / 56px 11px;
+  mask: url("./drip.svg") repeat-x 0 0 / 56px 11px;
+}
+:root[data-theme="halfblood"]:not([data-motif="off"]) body .wordmark .word::after {
+  top: calc(100% - 3px);
+  height: 10px;
+  -webkit-mask-size: 40px 10px;
+  mask-size: 40px 10px;
+}
+
+/* Sun bullets in their own colour. */
+:root[data-theme="halfblood"]:not([data-motif="off"]) span.dot:not(.kitty-loader .dot) {
+  width: 12px;
+  height: 12px;
+  border-radius: 0;
+  -webkit-mask: var(--sun) center / contain no-repeat;
+  mask: var(--sun) center / contain no-repeat;
+}
+
+/* Ticks: a bone-edged square that fills grass green. */
+:root[data-theme="halfblood"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid var(--hb-bone);
+  border-radius: 4px;
+  background: var(--hb-navy);
+  vertical-align: -3px;
+  cursor: pointer;
+}
+:root[data-theme="halfblood"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):checked {
+  background: url("./check.svg") center / 13px no-repeat, var(--hb-green);
+  animation: halfblood-stamp calc(var(--motion-ms) * 2) var(--motion-ease) both;
+}
+:root[data-theme="halfblood"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes halfblood-stamp {
+  from { transform: scale(1.3); }
+  to { transform: scale(1); }
+}
+
+/* Section rules: a bone stitch line with red drips hanging from it. */
+:root[data-theme="halfblood"]:not([data-motif="off"]) .surface-section + .surface-section {
+  border-top-color: transparent;
+}
+:root[data-theme="halfblood"]:not([data-motif="off"]) hr.rule {
+  position: relative;
+  height: 14px;
+  margin-block: 4px;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+:root[data-theme="halfblood"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 14px;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, var(--hb-bone) 0 10px, transparent 10px 14px, var(--hb-bone) 14px 16px, transparent 16px 20px) 0 0 / 100% 2px no-repeat,
+    url("./drip-red.svg") repeat-x 9px 1px / 68px 13px;
+}
+:root[data-theme="halfblood"]:not([data-motif="off"]) hr.rule::before {
+  top: 0;
+}
+
+/* Focus: bone brackets (the engine's), a red drop beading under the ring. */
+:root[data-theme="halfblood"]:not([data-motif="off"]) .theme-focus[data-focus-style="bracket"]::after {
+  content: "";
+  left: calc(50% - 3px);
+  top: calc(100% + var(--focus-out) + 2px);
+  width: 6px;
+  height: 9px;
+  border-radius: 50% 50% 50% 50% / 30% 30% 70% 70%;
+  background: var(--hb-red);
+  box-shadow: 0 0 0 1.5px var(--hb-navy);
+  transform-origin: top;
+  animation: halfblood-bead calc(var(--motion-ms) * 4) var(--motion-ease) both;
+}
+@keyframes halfblood-bead {
+  from { transform: translateY(-6px) scale(0.3); }
+  to { transform: translateY(0) scale(1); }
+}

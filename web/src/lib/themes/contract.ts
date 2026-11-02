@@ -59,7 +59,10 @@ export type ThemeId =
   | "one-dark"
   | "kitty"
   | "scythe"
-  | "liquid-glass";
+  | "liquid-glass"
+  | "pretti"
+  | "bloodluxe"
+  | "halfblood";
 
 export type Palette = Omit<Theme, "name">;
 

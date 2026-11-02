@@ -43,7 +43,7 @@ test('an unknown saved theme falls back to Kitty, a known one is kept', () => {
 });
 
 test('every theme owns a surface, focus, selection and motion style, not just colours', () => {
-  assert.equal(THEMES.length, 10);
+  assert.equal(new Set(THEMES.map((theme) => theme.id)).size, THEMES.length);
   for (const theme of THEMES) {
     assert.ok(SURFACE_STYLES.includes(theme.surface.style), `${theme.id} surface ${theme.surface.style}`);
     assert.ok(FOCUS_STYLES.includes(theme.focus), `${theme.id} focus ${theme.focus}`);
@@ -104,4 +104,59 @@ test('Kitty has a real palette: lifted panels, an accent apart from structure, s
   for (const color of graph) assert.ok(chroma(color) >= 0.06, `${color} is washed out`);
   // Body and secondary text pass AA on the solid panel colour.
   for (const role of ['ink', 'mute', 'dim']) assert.ok(contrast(roles[role], roles.panel) >= 4.5, role);
+});
+
+/* OKLab hue in degrees, for "this colour reads as green / pink / blue" checks. */
+const hue = (hex) => {
+  const [, a, b] = oklab(hex);
+  return (Math.atan2(b, a) * 180) / Math.PI;
+};
+
+test('pretti, BloodLuxe and half blood keep six distinct data colours and AA text on their panels', () => {
+  for (const id of ['pretti', 'bloodluxe', 'halfblood']) {
+    const theme = getTheme(id);
+    assert.equal(theme.id, id, `${id} is in the catalog`);
+    const {roles, graph} = theme;
+    for (let i = 0; i < graph.length; i += 1)
+      for (let j = i + 1; j < graph.length; j += 1)
+        assert.ok(distance(graph[i], graph[j]) >= 0.07, `${id}: data colours ${graph[i]} and ${graph[j]} are too close`);
+    for (const role of ['ink', 'mute', 'dim']) assert.ok(contrast(roles[role], roles.panel) >= 4.5, `${id} ${role} on panel`);
+    // Status colours stay apart (BloodLuxe's accent is itself blood red, so danger may share its hue).
+    for (const [a, b] of [['signal', 'go'], ['go', 'caution'], ['caution', 'danger'], ['go', 'danger']])
+      assert.ok(distance(roles[a], roles[b]) >= 0.08, `${id}: ${a} and ${b} read alike`);
+  }
+});
+
+test('pretti is glossy graffiti glass: acid green accent, magenta and purple data, a dark vignette ground', () => {
+  const {roles, graph, surface, focus, motion, scheme} = getTheme('pretti');
+  assert.equal(scheme, 'dark');
+  assert.equal(surface.style, 'glass');
+  assert.equal(focus, 'glow');
+  assert.equal(motion, 'fluid');
+  assert.ok(hue(roles.signal) > 100 && hue(roles.signal) < 150, `accent ${roles.signal} is acid green`);
+  assert.ok(graph.some((color) => hue(color) > -20 && hue(color) < 10), 'a magenta/pink data colour');
+  assert.ok(graph.some((color) => hue(color) < -50 && hue(color) > -100), 'a purple data colour');
+  assert.ok(luminance(roles.void) < 0.02, 'a dark ground');
+});
+
+test('BloodLuxe is a light luxe theme with readable cream surfaces and red, blue and grass green', () => {
+  const {roles, graph, surface, scheme} = getTheme('bloodluxe');
+  assert.equal(scheme, 'light');
+  // Maximal art behind, but the panels stay nearly solid.
+  for (const role of ['panel', 'inset', 'raised']) assert.ok(surface.alpha[role] >= 88, `${role} alpha ${surface.alpha[role]}`);
+  assert.ok(luminance(roles.panel) > 0.85, 'cream panels');
+  assert.ok(hue(roles.signal) > 0 && hue(roles.signal) < 40, `accent ${roles.signal} is blood red`);
+  assert.ok(graph.some((color) => hue(color) > -110 && hue(color) < -80), 'a royal blue data colour');
+  assert.ok(graph.some((color) => hue(color) > 120 && hue(color) < 150), 'a grass green data colour');
+});
+
+test('half blood is flat heraldic colour on an ultramarine field with a sun-orange accent', () => {
+  const {roles, graph, surface, scheme} = getTheme('halfblood');
+  assert.equal(scheme, 'dark');
+  assert.equal(surface.style, 'flat');
+  assert.deepEqual(surface.alpha, {panel: 100, inset: 100, raised: 100});
+  assert.ok(hue(roles.void) < -70 && hue(roles.void) > -110 && chroma(roles.void) > 0.15, `field ${roles.void} is ultramarine`);
+  assert.ok(hue(roles.signal) > 50 && hue(roles.signal) < 80, `accent ${roles.signal} is sun orange`);
+  assert.ok(graph.some((color) => hue(color) > 120 && hue(color) < 150), 'a grass green data colour');
+  assert.ok(graph.some((color) => hue(color) < -90 && hue(color) > -120 && luminance(color) > 0.4), 'a pale moon blue data colour');
 });
