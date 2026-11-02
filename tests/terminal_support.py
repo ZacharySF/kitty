@@ -322,7 +322,7 @@ class FrameReader:
 def make_root(tmp_path: Path, modules: tuple[str, ...]) -> Settings:
     root = tmp_path / "root"
     (root / "config").mkdir(parents=True)
-    (root / "config" / "modules.yaml").write_text("enabled: [" + ", ".join(modules) + "]\n")
+    (root / "config" / "build.json").write_text(json.dumps({"schema": 1, "modules": list(modules)}))
     return Settings.load(root=root, db_path=root / "data" / "web.db")
 
 

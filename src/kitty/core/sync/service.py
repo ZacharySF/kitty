@@ -200,7 +200,7 @@ class SyncService:
             paused = self._paused(conn)
             head = conn.execute("SELECT COALESCE(MAX(seq),0) FROM op_log").fetchone()[0]
             horizon_limit = conn.execute("SELECT MAX(seq) FROM op_log WHERE at<?",
-                                         ((datetime.now(timezone.utc) - timedelta(days=history.RETENTION_DAYS)).isoformat(),)).fetchone()[0]
+                                         ((datetime.now(timezone.utc) - timedelta(days=history.retention_days(conn))).isoformat(),)).fetchone()[0]
             rows = peers.paired(conn)
             name = peers.device_name(conn)
         seen = {item.device_id: item for item in (self.discovery.seen() if self.discovery else [])}

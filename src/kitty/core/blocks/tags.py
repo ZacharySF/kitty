@@ -17,6 +17,7 @@ import re
 import sqlite3
 import uuid
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Any
 
 from kitty.core.blocks.autotag import MAX_TERM, Tag, Vocabulary, normalize_term
@@ -41,20 +42,22 @@ def _read(conn: sqlite3.Connection):
 # Settings --------------------------------------------------------------------------------
 
 def settings(conn: sqlite3.Connection) -> dict:
-    """The global Tags setting. It moves into the build file once builds exist (Q8)."""
+    """The global Tags setting: build ``settings.tags.mode`` (Q8), projected into tag_settings."""
     row = conn.execute("SELECT mode, revision FROM tag_settings WHERE id=1").fetchone()
     return {"mode": row["mode"], "revision": row["revision"]}
 
 
-def set_mode(conn: sqlite3.Connection, mode: Any, revision: Any) -> dict:
+def set_mode(conn: sqlite3.Connection, root: Path, mode: Any, revision: Any) -> dict:
+    from kitty.core.builds import project, store
+
     if mode not in MODES:
         raise BlockError("The tag mode is suggest or always")
     if type(revision) is not int:
         raise BlockError("Send the settings revision you last saw")
-    with transaction(conn, immediate=True):
-        if conn.execute("UPDATE tag_settings SET mode=?, revision=revision+1 WHERE id=1 AND revision=?",
-                        (mode, revision)).rowcount != 1:
+    with project.editing(conn, root) as build:
+        if conn.execute("SELECT revision FROM tag_settings WHERE id=1").fetchone()[0] != revision:
             raise BlockError("Tag settings changed in another window; reload them", 409)
+        store.section(build, "settings", "tags")["mode"] = mode
     return settings(conn)
 
 

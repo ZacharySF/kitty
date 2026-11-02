@@ -6,7 +6,7 @@ adds the applyai screens on top of it. When applyai is not enabled, `CoreApp`
 launches instead and never imports a job screen, binding or palette provider.
 
 `create_app` picks between them from the module selection the process started
-with; edits to config/modules.yaml wait for the next start.
+with; edits to the build's modules (config/build.json) wait for the next start.
 """
 
 from __future__ import annotations

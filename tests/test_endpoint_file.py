@@ -81,7 +81,7 @@ def _free_port() -> int:
 def test_kitty_web_publishes_its_endpoint_and_removes_it_on_shutdown(tmp_path, stop):
     root = tmp_path / "root"
     (root / "config").mkdir(parents=True)
-    (root / "config" / "modules.yaml").write_text("enabled: [workspace]\n")
+    (root / "config" / "build.json").write_text('{"schema": 1, "modules": ["workspace"]}')
     static = tmp_path / "dist"
     static.mkdir()
     (static / "index.html").write_text("<!doctype html><title>Synthetic</title>")

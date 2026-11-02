@@ -36,7 +36,7 @@ def post(app, conn, path, body):
     if route == 'guide':
         return _call(study.save_guide, conn, body)
     if route == 'settings':
-        return _call(study.save_settings, conn, body)
+        return _call(study.save_settings, conn, body, app.settings.root)
     if route == 'sessions':
         return _call(study.save_session, conn, body)
     if route == 'generate-plan':

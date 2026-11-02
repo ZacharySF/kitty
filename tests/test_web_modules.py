@@ -19,7 +19,7 @@ from kitty.config import load_config
 from kitty.core import applications, backlinks, calendar, jobs, notes, opportunities, schema_maps
 from kitty.core.workspace import open_workspace
 from kitty.db import connect
-from kitty.modules import MODULE_IDS, load_modules
+from kitty.modules import MODULE_IDS, load_modules, save_modules
 from kitty.settings import Settings
 from kitty.web_server import LocalHTTPServer, WebApplication
 
@@ -41,8 +41,8 @@ def make_root(tmp_path: Path, modules: tuple[str, ...] | None, *, careers: bool 
     root = tmp_path / "root"
     (root / "config").mkdir(parents=True, exist_ok=True)
     if modules is not None:
-        (root / "config" / "modules.yaml").write_text(
-            "enabled: [" + ", ".join(modules) + "]\n", encoding="utf-8")
+        (root / "config" / "build.json").write_text(
+            json.dumps({"schema": 1, "modules": list(modules)}), encoding="utf-8")
     if careers if careers is not None else modules is None or "applyai" in modules:
         for name in CAREERS:
             shutil.copy(REPO_ROOT / "config" / f"{name}.yaml.example", root / "config" / f"{name}.yaml")
@@ -158,9 +158,9 @@ def test_workers_and_credentials_belong_only_to_enabled_modules(tmp_path, module
     assert not [t for t in threading.enumerate() if t.name == "kitty-opportunity-schedule"]
 
 
-def test_legacy_workspace_without_modules_file_is_unchanged(tmp_path):
+def test_legacy_workspace_without_a_build_file_is_unchanged(tmp_path):
     settings = make_root(tmp_path, None)
-    assert not (settings.config_dir / "modules.yaml").exists()
+    assert not (settings.config_dir / "build.json").exists()
     with site(settings) as (app, request):
         assert app.modules == MODULE_IDS
         status, boot = request("/api/bootstrap")
@@ -219,22 +219,22 @@ def test_pending_enable_of_applyai_is_neither_read_nor_validated_by_reload(tmp_p
 ])
 def test_modules_post_rejects_invalid_bodies_and_leaves_the_file_alone(tmp_path, body):
     settings = make_root(tmp_path, ("workspace",))
-    path = settings.config_dir / "modules.yaml"
-    before = path.read_text(encoding="utf-8")
+    path = settings.config_dir / "build.json"
     with site(settings) as (app, request):
+        before = path.read_text(encoding="utf-8")  # as the opened workspace settled it
         status, payload = request("/api/modules", body)
         assert status == 400 and "error" in payload
     assert path.read_text(encoding="utf-8") == before
-    assert sorted(p.name for p in settings.config_dir.glob("*modules*")) == ["modules.yaml"]
+    assert sorted(p.name for p in settings.config_dir.glob("build*")) == ["build.json"]
 
 
-def test_modules_post_never_writes_outside_the_modules_file(tmp_path):
+def test_modules_post_never_writes_outside_the_build_file(tmp_path):
     settings = make_root(tmp_path, ("workspace",))
     before = {p.name: p.read_bytes() for p in settings.config_dir.iterdir()}
     with site(settings) as (app, request):
         assert request("/api/modules", {"enabled": []})[0] == 200
     after = {p.name: p.read_bytes() for p in settings.config_dir.iterdir()}
-    assert {k for k in after if after[k] != before.get(k)} == {"modules.yaml"} and set(after) == set(before)
+    assert {k for k in after if after[k] != before.get(k)} == {"build.json"} and set(after) == set(before)
 
 
 def test_restart_activates_the_saved_selection_and_preserves_data(tmp_path):
@@ -270,14 +270,14 @@ def test_disabling_applyai_preserves_careers_rows_and_tracks(tmp_path):
                                      source="manual", source_job_id="kept-1")
             tracks_before = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
         assert tracks_before > 0 and request(f"/api/jobs/{job.id}")[0] == 200
-    (settings.config_dir / "modules.yaml").write_text("enabled: [workspace]\n", encoding="utf-8")
+    save_modules(settings.config_dir, ["workspace"])
     with site(settings) as (app, request):
         assert request(f"/api/jobs/{job.id}")[0] == 403
         assert request("/api/atlas/sections/jobs")[0] == 403
     with db(settings) as conn:
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0] == tracks_before
-    (settings.config_dir / "modules.yaml").write_text("enabled: [applyai]\n", encoding="utf-8")
+    save_modules(settings.config_dir, ["applyai"])
     with site(settings) as (app, request):
         status, detail = request(f"/api/jobs/{job.id}")
         assert status == 200 and detail["title"] == "Kept role"

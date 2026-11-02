@@ -315,23 +315,36 @@ def timer_command(conn, body, *, now=None):
         return response
 
 
-def save_settings(conn, body):
+def settle_idle_timer(conn):
+    """An idle timer takes the current phase's configured length (after a settings change)."""
+    timer = _timer(conn)
+    if timer["status"] == "idle":
+        settings = _settings(conn)
+        timer["duration_seconds"] = PRIMING_SECONDS if timer["phase"] == "priming" else settings[timer["phase"] + "_seconds"]
+        _save_timer(conn, timer)
+
+
+def save_settings(conn, body, root):
+    """Study settings from the Study screen. The timezone belongs to this device and stays in
+    SQLite; the timer lengths, sound and notifications live in the build file (Q8) at
+    ``settings.study`` and reach the row through its projection (kitty.core.builds)."""
+    from kitty.core.builds import project, store
+
     allowed = {"revision", "timezone", "focus_seconds", "short_break_seconds", "sound", "notifications"}
     _fields(body, allowed)
-    with transaction(conn, immediate=True):
+    with project.editing(conn, root) as build:
         current = _settings(conn)
         _revision(current, body.get("revision"))
-        values = {"timezone": zone(body.get("timezone", current["timezone"]))}
+        timezone_name = zone(body.get("timezone", current["timezone"]))
+        values = {}
         for key, low, high in (("focus_seconds", 60, 14400), ("short_break_seconds", 60, 7200)):
             values[key] = integer(body.get(key, current[key]), key, low, high)
         for key in ("sound", "notifications"):
-            values[key] = boolean(body.get(key, current[key]), key)
-        conn.execute("UPDATE study_settings SET " + ",".join(f"{key}=?" for key in values) + ",revision=revision+1 WHERE id=1", list(values.values()))
-        timer = _timer(conn)
-        if timer["status"] == "idle":
-            timer["duration_seconds"] = PRIMING_SECONDS if timer["phase"] == "priming" else values[timer["phase"] + "_seconds"]
-            _save_timer(conn, timer)
-        return {"settings": _settings(conn)}
+            values[key] = bool(boolean(body.get(key, current[key]), key))
+        if timezone_name != current["timezone"]:
+            conn.execute("UPDATE study_settings SET timezone=?, revision=revision+1 WHERE id=1", (timezone_name,))
+        store.section(build, "settings", "study").update(values)
+    return {"settings": _settings(conn)}
 
 
 def _entity_values(conn, kind, body):

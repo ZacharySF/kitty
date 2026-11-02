@@ -46,7 +46,9 @@ def test_selected_workspace_is_reused_without_overwriting(tmp_path):
 
 
 @pytest.fixture
-def backend(tmp_path):
+def backend(tmp_path, request):
+    """The frozen entrypoint; indirect parametrization passes extra arguments (e.g. --safe)."""
+    extra = list(getattr(request, "param", ()))
     root = tmp_path / "workspace"
     bundle = tmp_path / "bundle"
     assets = bundle / "website"
@@ -58,7 +60,7 @@ def backend(tmp_path):
     code = (
         "import runpy, sys; "
         "entry=sys.argv[3]; sys._MEIPASS=sys.argv[1]; "
-        "sys.argv=['kitty-web', '--workspace', sys.argv[2]]; "
+        "sys.argv=['kitty-web', '--workspace', sys.argv[2], *sys.argv[4:]]; "
         "runpy.run_path(entry, run_name='__main__')"
     )
     environment = os.environ.copy()
@@ -66,7 +68,7 @@ def backend(tmp_path):
         environment.pop(key, None)
     environment["PYTHONPATH"] = os.pathsep.join((str(PROJECT), str(PROJECT / "src")))
     process = subprocess.Popen(
-        [sys.executable, "-c", code, str(bundle), str(root), str(PROJECT / "desktop/backend.py")],
+        [sys.executable, "-c", code, str(bundle), str(root), str(PROJECT / "desktop/backend.py"), *extra],
         cwd=tmp_path, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True,
     )
@@ -113,6 +115,14 @@ def test_random_loopback_origin_preserves_same_origin_csrf(backend):
     local_headers.pop("X-Kitty-Request")
     assert request(origin, "POST", "/api/not-a-route", local_headers, "{}")[0] == 403
     assert (root / "data/apply.db").is_file()
+
+
+@pytest.mark.parametrize("backend", [(), ("--safe",)], indirect=True, ids=["normal", "safe"])
+def test_safe_flag_reaches_the_web_application(backend):
+    process, origin, root = backend
+    status, _headers, body = request(origin, path="/api/build", headers={"X-Kitty-Request": "1"})
+    assert status == 200
+    assert json.loads(body)["safe"] is ("--safe" in process.args)
 
 
 def test_owner_quit_leaves_unrelated_process_alive(backend):
@@ -192,7 +202,7 @@ def terminal_workspace(tmp_path, monkeypatch):
         monkeypatch.setenv(key, value)
     config = tmp_path / "workspace" / "config"
     config.mkdir(parents=True)
-    (config / "modules.yaml").write_text("enabled: [terminal]\n")
+    (config / "build.json").write_text('{"schema": 1, "modules": ["terminal"]}')
     try:
         yield fake
     finally:

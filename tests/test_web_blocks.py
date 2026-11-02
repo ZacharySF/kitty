@@ -9,14 +9,14 @@ import pytest
 
 from terminal_support import FrameReader, make_root, send_frame, site, websocket
 
-SOCKET = "/api/blocks/socket"
+SOCKET = "/api/live/socket"
 
 
 class Client:
     """One window's blocks WebSocket."""
 
     def __init__(self, running):
-        status, body = running.request("/api/blocks/session", {})
+        status, body = running.request("/api/live/session", {})
         assert status == 200 and body["socket"] == SOCKET, body
         status, _headers, self.connection, rest = websocket(running.port, f"{SOCKET}?token={body['token']}", {})
         assert status == 101
@@ -141,11 +141,11 @@ def test_a_reconnecting_window_resumes_after_its_last_sequence(running):
         returning.close()
 
 
-def test_the_socket_needs_a_single_use_token_and_the_workspace_module(running, tmp_path):
+def test_the_socket_needs_a_single_use_token_and_is_core(running, tmp_path):
     status, _headers, connection, _rest = websocket(running.port, SOCKET, {})
     connection.close()
     assert status == 403
-    status, body = running.request("/api/blocks/session", {})
+    status, body = running.request("/api/live/session", {})
     token = body["token"]
     status, _headers, connection, _rest = websocket(running.port, f"{SOCKET}?token={token}", {})
     connection.close()
@@ -156,9 +156,10 @@ def test_the_socket_needs_a_single_use_token_and_the_workspace_module(running, t
     status, _headers, connection, _rest = websocket(running.port, f"{SOCKET}?token={token}", {"Origin": "http://evil.invalid"})
     connection.close()
     assert status == 403
-    assert running.request("/api/blocks/session", {}, headers={"X-Kitty-Request": None})[0] == 403
+    assert running.request("/api/live/session", {}, headers={"X-Kitty-Request": None})[0] == 403
     with site(make_root(tmp_path / "terminal-only", ("terminal",))) as other:
-        assert other.request("/api/blocks/session", {})[0] == 403
+        # The live channel is core (builds reach every window); only block messages need workspace.
+        assert other.request("/api/live/session", {})[0] == 200
 
 
 def test_history_preview_restore_and_trash_over_http(running):

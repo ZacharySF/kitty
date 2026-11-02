@@ -69,7 +69,7 @@ def open_workspace(
     """Open the database and config, migrating and syncing by default.
 
     `modules` pins the active module snapshot (a running process passes its own so
-    a pending modules.yaml edit cannot activate); None reads modules.yaml.
+    a pending module selection cannot activate); None reads it from config/build.json.
     Raises ConfigError when a config file of an active module is missing or
     invalid, which the CLI turns into line-pointing messages.
     """
@@ -81,4 +81,23 @@ def open_workspace(
         migrate(conn)
     if sync and not pending_migrations(conn):
         sync_config_to_db(conn, config)
+        sync_build_to_db(conn, resolved)
     return Workspace(settings=resolved, config=config, conn=conn)
+
+
+def sync_build_to_db(conn: sqlite3.Connection, settings: Settings) -> None:
+    """Project config/build.json (Q8) into the settings rows when it changed.
+
+    Writes the build file first when the workspace has none (moving modules.yaml and,
+    once, the settings rows into it). A build with an error changes nothing here: the
+    last good build stays projected and the server and build editor report the error.
+    """
+    from kitty.config import ConfigError, ConfigProblem
+    from kitty.core.builds import project, store
+
+    try:
+        project.sync(conn, settings.root)
+    except store.BuildStoreError as exc:
+        conn.close()
+        raise ConfigError([ConfigProblem(file=str(store.build_path(settings.root)), line=None, location="",
+                                         message=str(exc))]) from exc

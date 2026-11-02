@@ -22,8 +22,8 @@ def prepare_workspace(root: Path, examples: Path, package: str) -> None:
     settings = settings_module.Settings(root=root, db_path=root / "data" / "apply.db", demo=False)
     enabled = bootstrap.initialize_modules(settings)
     for example in examples.glob("*.yaml.example"):
-        if example.name == "modules.yaml.example" or "applyai" not in enabled:
-            continue
+        if "applyai" not in enabled:
+            break
         destination = config / example.name.removesuffix(".example")
         try:
             with destination.open("x", encoding="utf-8") as output:
@@ -35,12 +35,13 @@ def prepare_workspace(root: Path, examples: Path, package: str) -> None:
         (root / directory).mkdir(exist_ok=True, mode=0o700)
 
 
-def serve(root: Path, assets: Path, package: str) -> None:
+def serve(root: Path, assets: Path, package: str, *, safe: bool = False) -> None:
     server_module = importlib.import_module(f"{package}.web_server")
     settings_module = importlib.import_module(f"{package}.settings")
     workspace_module = importlib.import_module(f"{package}.core.workspace")
     desktop_module = importlib.import_module(f"{package}.web_desktop")
     endpoint_module = importlib.import_module(f"{package}.core.endpoint")
+    project_module = importlib.import_module(f"{package}.core.builds.project")
     # Keep the owner pipe private: only owner messages use the original stdout;
     # stray library prints (Python or native) go to /dev/null instead.
     owner_output = os.fdopen(os.dup(1), "w", encoding="utf-8")
@@ -54,8 +55,9 @@ def serve(root: Path, assets: Path, package: str) -> None:
 
     owner = desktop_module.DesktopOwner(send)
     settings = settings_module.Settings.load(root=root)
-    with workspace_module.open_workspace(settings) as workspace:
-        app = server_module.WebApplication(settings, workspace.config, assets, desktop=owner)
+    # A build saved with an error starts on the last good build, as kitty-web does.
+    with workspace_module.open_workspace(settings, modules=project_module.startup_modules(settings)) as workspace:
+        app = server_module.WebApplication(settings, workspace.config, assets, desktop=owner, safe=safe)
 
     class DesktopHTTPServer(server_module.LocalHTTPServer):
         # A quit must drain accepted HTTP mutations before closing SQLite workers.
@@ -109,6 +111,8 @@ def main() -> None:
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", required=True, type=Path)
+    parser.add_argument("--safe", action="store_true",
+                        help="Start every window without the build's custom CSS and theme.")
     args = parser.parse_args()
     bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     assets = bundle / "website"
@@ -124,7 +128,7 @@ def main() -> None:
         except BlockingIOError:
             parser.exit(1, "This workspace already has a desktop backend.\n")
         try:
-            serve(root, assets, package)
+            serve(root, assets, package, safe=args.safe)
         except Exception:
             # Config errors and SDK exceptions can contain secrets; don't print them.
             parser.exit(1, "Unable to open the private workspace; check its configuration.\n")

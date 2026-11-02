@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 
 from kitty.config import CONFIG_FILES, ConfigError, parse_file
-from kitty.modules import MODULES_FILE, load_modules
+from kitty.modules import BUILD_FILE, LEGACY_MODULES_FILE, load_modules
 from kitty.core import keys
 from kitty.core import resumes as resumes_core
 from kitty.core import sources as sources_core
@@ -186,14 +186,17 @@ def check_tracks(conn: sqlite3.Connection) -> list[Check]:
 
 
 def check_modules(settings: Settings) -> tuple[list[Check], tuple[str, ...] | None]:
-    """Validate config/modules.yaml; return the checks and the selection (None if unreadable)."""
-    path = settings.config_path(MODULES_FILE)
+    """Validate the module selection in config/build.json; return the checks and the
+    selection (None if unreadable)."""
+    path = settings.config_path(BUILD_FILE)
+    if not path.exists() and settings.config_path(LEGACY_MODULES_FILE).exists():
+        path = settings.config_path(LEGACY_MODULES_FILE)
     try:
         selection = load_modules(settings.config_dir)
     except ConfigError as exc:
         return [
             Check(
-                name=f"config/{MODULES_FILE}", ok=False,
+                name=f"config/{path.name}", ok=False,
                 detail=f"line {problem.line or '?'}: {problem.location} {problem.message}".strip(),
                 fix=problem.hint,
             )
@@ -201,11 +204,11 @@ def check_modules(settings: Settings) -> tuple[list[Check], tuple[str, ...] | No
         ], None
     if not path.exists():
         return [Check(
-            name=f"config/{MODULES_FILE}", ok=True,
-            detail="not present - every module is enabled (existing workspace)",
+            name=f"config/{BUILD_FILE}", ok=True,
+            detail="not present yet - every module is enabled (existing workspace)",
         )], selection
     enabled = ", ".join(selection) or "none (core only)"
-    return [Check(name=f"config/{MODULES_FILE}", ok=True, detail=f"enabled: {enabled}")], selection
+    return [Check(name=f"config/{path.name}", ok=True, detail=f"modules: {enabled}")], selection
 
 
 def run_all(settings: Settings, conn: sqlite3.Connection | None = None) -> list[Check]:

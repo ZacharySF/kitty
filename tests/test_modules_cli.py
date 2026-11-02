@@ -6,6 +6,7 @@ config, database or credentials are touched.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -80,7 +81,7 @@ def test_help_lists_everything_with_applyai(home, selection):
     assert listed(result) == {*CAREERS_COMMANDS, *CORE_COMMANDS}
 
 
-def test_a_workspace_without_modules_yaml_keeps_every_command(home):
+def test_a_workspace_without_a_build_file_keeps_every_command(home):
     (home / "config").mkdir()
     result = run("--help")
     assert listed(result) == {*CAREERS_COMMANDS, *CORE_COMMANDS}
@@ -89,7 +90,7 @@ def test_a_workspace_without_modules_yaml_keeps_every_command(home):
 def test_unreadable_modules_file_leaves_only_core_commands_in_help(home):
     config = home / "config"
     config.mkdir()
-    (config / "modules.yaml").write_text("enabled: [nope]\n", encoding="utf-8")
+    (config / "build.json").write_text('{"schema": 1, "modules": ["nope"]}', encoding="utf-8")
     assert listed(run("--help")) == set(CORE_COMMANDS)
 
 
@@ -127,11 +128,11 @@ def test_a_disabled_command_does_not_run_even_with_bad_arguments(home):
 def test_unreadable_modules_file_rejects_careers_commands_readably(home):
     config = home / "config"
     config.mkdir()
-    (config / "modules.yaml").write_text("enabled: [applyai, applyai]\n", encoding="utf-8")
+    (config / "build.json").write_text('{"schema": 1,\n "modules": ["applyai", "nope"]}', encoding="utf-8")
     result = run("discover")
     assert result.exit_code == 1
-    assert "Cannot read config/modules.yaml" in flat(result)
-    assert "duplicate" in flat(result)
+    assert "Cannot read config/build.json" in flat(result)
+    assert "build.json:2" in "".join(plain(result).split()) and "nope" in flat(result)
 
 
 def test_unknown_commands_still_fail_normally(home):
@@ -155,7 +156,7 @@ def test_init_is_core_only_and_asks_nothing_about_a_profile(home):
     text = flat(result)
     assert "none (core only)" in text and "Graduation" not in text and "profile.yaml" not in text
     assert load_modules(home / "config") == ()
-    assert (home / "config" / "modules.yaml").read_text(encoding="utf-8") == "enabled: []\n"
+    assert json.loads((home / "config" / "build.json").read_text(encoding="utf-8"))["modules"] == []
     for name in ("tracks", "sources", "profile", "answers", "watchlist"):
         assert not (home / "config" / f"{name}.yaml").exists()
     assert (home / "data" / "apply.db").exists()
@@ -175,7 +176,6 @@ def test_init_in_a_pre_module_workspace_keeps_every_module(home):
     shutil.copy(config / "tracks.yaml.example", config / "tracks.yaml")
     result = run("init", "--yes")
     assert result.exit_code == 0, result.output
-    assert not (config / "modules.yaml").exists()
     assert "applyai, workspace" in flat(result)
 
 
@@ -183,7 +183,7 @@ def test_init_rejects_an_unknown_module_without_writing_anything(home):
     (home / "config").mkdir()
     result = run("init", "--yes", "--module", "nope")
     assert result.exit_code == 2
-    assert not (home / "config" / "modules.yaml").exists()
+    assert not (home / "config" / "build.json").exists()
 
 
 def test_core_only_doctor_does_not_need_careers_config(home):
@@ -243,10 +243,24 @@ def test_changing_a_pre_module_workspace_starts_from_every_module(home):
 
 def test_changing_nothing_does_not_rewrite_the_file(home):
     save_modules(home / "config", ["applyai"])
-    before = (home / "config" / "modules.yaml").stat().st_mtime_ns
+    before = (home / "config" / "build.json").stat().st_mtime_ns
     result = run("modules", "enable", "applyai")
     assert result.exit_code == 0 and "Nothing to change" in flat(result)
-    assert (home / "config" / "modules.yaml").stat().st_mtime_ns == before
+    assert (home / "config" / "build.json").stat().st_mtime_ns == before
+
+
+def test_init_keeps_an_existing_build_file_and_says_so(home):
+    save_modules(home / "config", ["workspace"])
+    result = run("init", "--yes", "--module", "applyai")
+    assert result.exit_code == 0, result.output
+    assert "kept config/build.json" in flat(result)
+    assert load_modules(home / "config") == ("workspace",)
+
+
+def test_modules_commands_say_they_save_the_build(home):
+    save_modules(home / "config", [])
+    result = run("modules", "enable", "workspace")
+    assert "Saved the build's modules in config/build.json: workspace" in flat(result)
 
 
 def test_unknown_module_ids_are_rejected_and_nothing_changes(home):
@@ -259,11 +273,12 @@ def test_unknown_module_ids_are_rejected_and_nothing_changes(home):
 def test_a_malformed_modules_file_is_reported_and_never_overwritten(home):
     config = home / "config"
     config.mkdir()
-    (config / "modules.yaml").write_text("enabled: [nope]\n", encoding="utf-8")
+    broken = '{"schema": 1, "modules": ["nope"]}'
+    (config / "build.json").write_text(broken, encoding="utf-8")
     for args in (("list",), ("enable", "applyai"), ("disable", "applyai")):
         result = run("modules", *args)
         assert result.exit_code == 1 and "Config problems" in flat(result)
-    assert (config / "modules.yaml").read_text(encoding="utf-8") == "enabled: [nope]\n"
+    assert (config / "build.json").read_text(encoding="utf-8") == broken
 
 
 # ------------------------------------------------------- tui and mcp entry

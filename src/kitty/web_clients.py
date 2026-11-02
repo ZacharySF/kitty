@@ -195,6 +195,8 @@ def ingress_request(handler) -> None:
             app._no_query(query)
             body = _body(handler)
             if path == PAIR:
+                if isinstance(body, dict) and body.get("kind") == "tern-plugin":
+                    _require_tern_plugin(app)
                 handler._json(202, app.pairing.request(body, origin))
                 return
             if set(body) != {"request"}:
@@ -213,6 +215,8 @@ def ingress_request(handler) -> None:
             raise unauthorized
         if client["origin"] != origin:
             raise APIError(403, "This token works only from the origin that paired it")
+        if client["kind"] == "tern-plugin":
+            _require_tern_plugin(app)
         if origin is not None:
             _allow(handler, origin)
         route = (handler.command, path)
@@ -242,3 +246,14 @@ def ingress_request(handler) -> None:
         raise _error(exc) from None
     except sqlite3.IntegrityError:
         raise APIError(409, "The request conflicts with saved data; try again") from None
+
+
+def _require_tern_plugin(app) -> None:
+    """The build's ``settings.tern.plugin`` (Q8): off refuses the kitty Tern plugin's pairing
+    and captures, without revoking it, so turning it back on needs no new pairing."""
+    from kitty.core.builds import project
+    from kitty.web_server import APIError
+
+    with closing(connect(app.settings.db_path)) as conn:
+        if not project.tern_plugin_enabled(conn):
+            raise APIError(403, "The kitty Tern plugin is turned off in this kitty!'s build (Settings > Build)")

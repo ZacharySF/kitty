@@ -6,7 +6,7 @@ functions, closes it, and returns plain JSON-able dicts. No business logic here.
 Every tool belongs to the `applyai` module. The module selection is read once when
 the server is built and frozen for the life of the process: with `applyai` disabled
 no tool is advertised, and a direct call is refused before any feature code runs.
-Edits to config/modules.yaml only take effect when the server is started again,
+Edits to the build's modules (config/build.json) only take effect when the server is started again,
 while the other config files are still re-read on every call.
 
 Why open the workspace per call: MCPServer runs sync tools in worker threads,
@@ -153,7 +153,7 @@ class KittyTools:
     def __init__(self, settings: Settings, modules: Sequence[str] | None = None) -> None:
         self.settings = settings
         #: The module selection frozen for this server's lifetime; later edits to
-        #: config/modules.yaml wait for a restart.
+        #: config/build.json's modules wait for a restart.
         self.modules = tuple(modules) if modules is not None else load_modules(settings.config_dir)
 
     def _require_applyai(self) -> None:
@@ -519,7 +519,7 @@ def build_server(settings: Settings, modules: Sequence[str] | None = None) -> MC
 
     Each tool's name is its method name and its description the method's docstring;
     the order here is the order clients list them. `modules` (default: what
-    config/modules.yaml selects right now) is frozen into the server. Every tool belongs
+    config/build.json selects right now) is frozen into the server. Every tool belongs
     to applyai, so with it disabled none is advertised and the server offers only
     instructions saying so.
     """

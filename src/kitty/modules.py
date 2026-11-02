@@ -11,14 +11,17 @@ provider and budget):
   user's installed Stencil Tern when present (kitty.core.tern). Off means no herdr
   or Tern process, socket or terminal route exists.
 
-The selection lives in ``config/modules.yaml``::
+The selection is the ``modules`` list of the workspace's build file,
+``config/build.json`` (kitty.core.builds; docs/platform-design.md, Q8)::
 
-    enabled: [applyai, workspace, terminal]
+    {"schema": 1, "modules": ["applyai", "workspace", "terminal"]}
 
-A workspace without the file keeps every module (existing installs are
-unchanged); ``kitty init`` writes ``enabled: []``. A process reads the selection
-once at start-up and treats it as frozen: edits are persisted but only take
-effect in the next process. Nothing is unloaded at run time.
+A build without the key keeps every module (existing installs are unchanged);
+``kitty init`` writes ``"modules": []``. Before builds the selection lived in
+``config/modules.yaml``; a workspace that still has only that file is read from it
+until the first open writes the build file (kitty.core.builds.store.ensure). A
+process reads the selection once at start-up and treats it as frozen: edits are
+persisted but only take effect in the next process. Nothing is unloaded at run time.
 
 Every function here takes the config directory, never a ``Settings``, so the
 registry stays importable by the CLI, TUI, MCP server and web server alike.
@@ -26,9 +29,6 @@ registry stays importable by the CLI, TUI, MCP server and web server alike.
 
 from __future__ import annotations
 
-import os
-import stat
-import tempfile
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -37,7 +37,9 @@ import yaml
 from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError, field_validator
 
 MODULE_IDS: tuple[str, ...] = ("applyai", "workspace", "terminal")
-MODULES_FILE = "modules.yaml"
+#: Where the selection lives (inside the build) and where it lived before builds.
+BUILD_FILE = "build.json"
+LEGACY_MODULES_FILE = "modules.yaml"
 
 _INFO: dict[str, tuple[str, str]] = {
     "applyai": (
@@ -64,8 +66,8 @@ class ModuleDisabledError(RuntimeError):
     def __init__(self, module: str):
         self.module = module
         super().__init__(
-            f"The '{module}' module is disabled. Enable it in Settings or list it in "
-            f"config/{MODULES_FILE}, then restart kitty! (changes apply on the next start)."
+            f"The '{module}' module is disabled. Enable it in Settings or list it under "
+            f"\"modules\" in config/{BUILD_FILE}, then restart kitty! (changes apply on the next start)."
         )
 
 
@@ -90,7 +92,7 @@ def normalize_modules(selection: Iterable[Any]) -> tuple[str, ...]:
 
 
 class ModulesFile(BaseModel):
-    """config/modules.yaml. Unknown keys, unknown ids and duplicates are errors."""
+    """A pre-build config/modules.yaml. Unknown keys, unknown ids and duplicates are errors."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -119,7 +121,8 @@ def _duplicate_key_problems(path: Path, node: Any) -> list[Any]:
     return problems
 
 
-def _parse(path: Path) -> tuple[str, ...]:
+def parse_legacy_modules(path: Path) -> tuple[str, ...]:
+    """The selection in a pre-build config/modules.yaml (kept only to migrate it)."""
     from kitty.config import ConfigError, ConfigProblem, _hint_for, _yaml_line, load_yaml
 
     data, node = load_yaml(path)
@@ -142,16 +145,36 @@ def _parse(path: Path) -> tuple[str, ...]:
 
 
 def load_modules(config_dir: Path) -> tuple[str, ...]:
-    """The selection persisted in ``config/modules.yaml`` (canonical order).
+    """The selection persisted in the build file (canonical order).
 
-    An absent file means a pre-module workspace: both modules. A malformed file
-    raises ``ConfigError`` pointing at the offending line. Process start-up calls
-    this once; later edits are only a pending selection until restart.
+    No build file and no legacy modules.yaml means a pre-module workspace: every
+    module. A build with an error raises ``ConfigError`` pointing at the offending
+    line. Process start-up calls this once; later edits are only a pending
+    selection until restart.
     """
-    path = Path(config_dir) / MODULES_FILE
-    if not path.exists() and not path.is_symlink():
+    from kitty.config import ConfigError, ConfigProblem
+    from kitty.core.builds import document, store
+
+    root = Path(config_dir).parent
+    path = Path(config_dir) / BUILD_FILE
+    try:
+        text = store.read_text(root)
+    except store.BuildStoreError as exc:
+        raise ConfigError([ConfigProblem(file=str(path), line=None, location="", message=str(exc),
+                                         hint="replace it with a regular file")]) from exc
+    if text is None:
+        legacy = Path(config_dir) / LEGACY_MODULES_FILE
+        if legacy.exists() or legacy.is_symlink():
+            return parse_legacy_modules(legacy)
         return MODULE_IDS
-    return _parse(path)
+    checked = document.check(text)
+    if not checked.ok:
+        raise ConfigError([
+            ConfigProblem(file=str(path), line=problem.line, location=problem.path, message=problem.message,
+                          hint="fix it in Settings > Build or any editor; kitty! checks every save")
+            for problem in checked.errors
+        ])
+    return tuple(checked.build["modules"])  # type: ignore[index]
 
 
 def require_module(config_dir: Path, module: str) -> None:
@@ -163,45 +186,33 @@ def require_module(config_dir: Path, module: str) -> None:
 
 
 def save_modules(config_dir: Path, enabled: Sequence[str]) -> tuple[str, ...]:
-    """Atomically persist a pending selection; return it in canonical order.
+    """Persist a pending selection in the build file; return it in canonical order.
 
-    Only validated ids reach the file. An existing file's permission bits are kept
-    (never widened); a new file is owner-only. Symbolic links are refused rather
-    than followed or replaced.
+    Only validated ids reach the file, which is written atomically and owner-only
+    (kitty.core.builds.store). A build file with an error, or a symbolic link, is
+    refused rather than overwritten.
     """
+    from kitty.core.builds import store
+
     if isinstance(enabled, (str, bytes)):
         raise ValueError("modules must be a list of module ids")
     selection = normalize_modules(enabled)
-    folder = Path(config_dir)
-    folder.mkdir(parents=True, exist_ok=True)
-    target = folder / MODULES_FILE
-    mode = 0o600
-    if target.is_symlink():
-        raise ValueError(f"config/{MODULES_FILE} is a symbolic link; replace it with a regular file")
-    if target.exists():
-        if not target.is_file():
-            raise ValueError(f"config/{MODULES_FILE} is not a regular file")
-        mode = stat.S_IMODE(target.stat().st_mode)
-    body = "enabled: [" + ", ".join(selection) + "]\n"
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{MODULES_FILE}.", dir=folder)
+
+    def choose(build: dict[str, Any]) -> None:
+        build["modules"] = list(selection)
+
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(body)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, mode)
-        os.replace(temporary, target)
-    except BaseException:
-        Path(temporary).unlink(missing_ok=True)
-        raise
+        store.edit(Path(config_dir).parent, choose)
+    except store.BuildStoreError as exc:
+        raise ValueError(str(exc)) from None
     return selection
 
 
 def modules_state(active: Sequence[str], config_dir: Path) -> dict[str, Any]:
     """The ``modules`` object shared by bootstrap and ``/api/modules``.
 
-    ``enabled`` is this process's frozen snapshot; ``configured`` is what the file
-    selects now (applied on restart). An unreadable file never hides the core: the
+    ``enabled`` is this process's frozen snapshot; ``configured`` is what the build
+    file selects now (applied on restart). An unreadable file never hides the core: the
     pending selection falls back to the active one and ``error`` says why.
     """
     from kitty.config import ConfigError

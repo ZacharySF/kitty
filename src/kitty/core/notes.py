@@ -429,14 +429,19 @@ def save_viewport(conn: sqlite3.Connection, page_id: int, revision: Any, value: 
     return {"viewport_revision": rev + 1}
 
 
-def preferences(conn: sqlite3.Connection, revision: Any, allow_ai: Any, retention_days: Any) -> dict:
+def preferences(conn: sqlite3.Connection, root: Path, revision: Any, allow_ai: Any, retention_days: Any) -> dict:
+    """Notes privacy: build settings ``settings.notes`` (Q8), projected into note_preferences."""
+    from kitty.core.builds import project, store
+
     if type(allow_ai) is not bool:
         raise NotesError("AI sharing preference must be boolean")
     rev, days = integer(revision), integer(retention_days, 0, 3650)
-    with transaction(conn):
-        if conn.execute("UPDATE note_preferences SET allow_ai=?,retention_days=?,revision=revision+1 WHERE id=1 AND revision=?", (allow_ai, days, rev)).rowcount != 1:
+    with project.editing(conn, root) as build:
+        if conn.execute("SELECT revision FROM note_preferences WHERE id=1").fetchone()[0] != rev:
             raise NotesError("Privacy settings changed; reload first", 409)
-    return {"allow_ai": allow_ai, "retention_days": days, "revision": rev + 1}
+        store.section(build, "settings", "notes").update(allow_ai=allow_ai, attachment_retention_days=days)
+    prefs = dict(conn.execute("SELECT allow_ai, retention_days, revision FROM note_preferences WHERE id=1").fetchone())
+    return {"allow_ai": bool(prefs["allow_ai"]), "retention_days": prefs["retention_days"], "revision": prefs["revision"]}
 
 
 def delete_page(conn: sqlite3.Connection, page_id: int, revision: Any) -> dict:

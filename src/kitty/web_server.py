@@ -31,6 +31,8 @@ from kitty import web_clients
 from kitty.config import Config, ConfigError
 from kitty.core import endpoint
 from kitty.core.bootstrap import configure_modules
+from kitty.core.builds.project import startup_modules
+from kitty.core.builds.store import BuildStoreError
 from kitty.core.workspace import open_workspace
 from kitty.db import connect
 from kitty.db.connection import transaction
@@ -58,11 +60,14 @@ STATIC_TYPES = {
 
 
 class APIError(Exception):
-    def __init__(self, status: int, message: str, *, headers: dict[str, str] | None = None):
+    def __init__(self, status: int, message: str, *, headers: dict[str, str] | None = None,
+                 problems: list[dict[str, Any]] | None = None):
         super().__init__(message)
         self.status = status
         #: Extra response headers (WWW-Authenticate, Retry-After) for this error.
         self.headers = headers or {}
+        #: Located problems (a build file's line and column) answered beside ``error``.
+        self.problems = problems or []
 
 
 def _integer(value: str, name: str, minimum: int, maximum: int) -> int:
@@ -131,7 +136,9 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     ("/api/terminal", "terminal"),
 ), key=lambda item: -len(item[0])))
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
+#: The live channel starts first and the build second: other extensions read both.
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
+    (None, "web_live"), (None, "web_build"),
     ("applyai", "web_jobs"), ("applyai", "web_automation"), ("applyai", "web_resumes"),
     ("applyai", "web_profile"), ("applyai", "web_insights"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
@@ -161,10 +168,13 @@ class WebApplication:
     selection saved through ``/api/modules`` takes effect in the next process.
     """
 
-    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None):
+    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None, safe: bool = False):
         self.settings = settings
         self.config = config
         self.modules: tuple[str, ...] = tuple(config.modules)
+        #: Safe mode (``--safe``): every window starts without the build's custom CSS and
+        #: theme token overrides (Q9).
+        self.safe = safe
         #: The desktop shell's owner pipe (kitty.web_desktop.DesktopOwner); None for kitty-web.
         self.desktop = desktop
         self.static_dir = static_dir.resolve()
@@ -223,7 +233,7 @@ class WebApplication:
     def reload_config(self) -> None:
         """Refresh validated config after an explicit, serialized settings change.
 
-        The active module snapshot is pinned: a pending modules.yaml edit is neither
+        The active module snapshot is pinned: a pending module edit in the build is neither
         applied nor validated here.
         """
         with open_workspace(self.settings, modules=self.modules) as workspace:
@@ -580,7 +590,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         except APIError as exc:
             self.close_connection = True
             self.response_headers.update(exc.headers)
-            self._json(exc.status, {"error": str(exc)})
+            self._json(exc.status, {"error": str(exc), **({"problems": exc.problems} if exc.problems else {})})
+        except BuildStoreError as exc:
+            # A settings change refused by the build file (it has an error, or is a link).
+            self.close_connection = True
+            self._json(exc.status, {"error": str(exc),
+                                    **({"problems": [problem.as_dict() for problem in exc.problems]} if exc.problems else {})})
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
         except (TimeoutError, sqlite3.OperationalError):
@@ -680,21 +695,23 @@ def _interrupt(*_args: object) -> None:
     raise KeyboardInterrupt
 
 
-def _serve(settings: Settings, static_dir: Path, port: int) -> None:
-    with open_workspace(settings) as workspace:
+def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = False) -> None:
+    # A build file saved with an error starts the server on the last good build (Q9).
+    with open_workspace(settings, modules=startup_modules(settings)) as workspace:
         if settings.demo and workspace.config.enabled("applyai"):
             from kitty.core import demo
 
             demo.seed(workspace.conn, settings, workspace.config)
-        app = WebApplication(settings, workspace.config, static_dir)
+        app = WebApplication(settings, workspace.config, static_dir, safe=safe)
     # A plain `kill` stops kitty-web like Ctrl+C: workers drain and the endpoint file goes.
     signal.signal(signal.SIGTERM, _interrupt)
     with LocalHTTPServer(app, port) as server:
         try:
             # Paired programs find this server through the owner-only endpoint file.
             with endpoint.published(settings.root, server.origin):
-                print(f"kitty! {'synthetic demo ' if settings.demo else ''}website: {server.origin}", flush=True)
+                # A stop signal right after the announcement must still end serving cleanly.
                 try:
+                    print(f"kitty! {'synthetic demo ' if settings.demo else ''}website: {server.origin}", flush=True)
                     server.serve_forever()
                 except KeyboardInterrupt:
                     pass
@@ -708,6 +725,8 @@ def main() -> None:
     parser.add_argument("--root", type=Path, help="kitty! workspace root")
     parser.add_argument("--static-dir", type=Path, help="Built SPA directory (default: web/dist)")
     parser.add_argument("--demo", action="store_true", help="Disposable synthetic workspace; no live discovery")
+    parser.add_argument("--safe", action="store_true",
+                        help="Safe mode: open every window without the build's custom CSS and theme overrides")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
@@ -725,9 +744,9 @@ def main() -> None:
                 for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
                     shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
                 settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
-                _serve(settings, static_dir, args.port)
+                _serve(settings, static_dir, args.port, safe=args.safe)
         else:
-            _serve(Settings.load(root=root), static_dir, args.port)
+            _serve(Settings.load(root=root), static_dir, args.port, safe=args.safe)
     except (ConfigError, OSError, ValueError):
         parser.exit(1, "Unable to open the local website. Check the port, workspace configuration and public example files with the CLI.\n")
 

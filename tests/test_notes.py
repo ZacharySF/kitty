@@ -198,9 +198,9 @@ def test_retention_only_removes_unused_references_and_rejects_stale_privacy(work
     keep = notes.register(conn, root, image_data(), "Keep")[0]
     discard = notes.register(conn, root, image_data(), "Discard")[0]
     notes.save_page(conn, page["id"], 1, document(element("image", attachment=keep["id"])), "Referenced")
-    assert notes.preferences(conn, 1, False, 0)["revision"] == 2
+    assert notes.preferences(conn, workspace.settings.root, 1, False, 0)["revision"] == 2
     with pytest.raises(notes.NotesError) as conflict:
-        notes.preferences(conn, 1, True, 30)
+        notes.preferences(conn, workspace.settings.root, 1, True, 30)
     assert conflict.value.status == 409
     assert notes.cleanup(conn, root) == {"removed": 1}
     assert notes.attachment_bytes(conn, root, keep["id"])

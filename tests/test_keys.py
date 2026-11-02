@@ -337,7 +337,7 @@ def test_secret_service_adapter_refuses_when_no_daemon_answers(monkeypatch):
 
 @pytest.fixture
 def cli_root(root, clean_env, monkeypatch):
-    (root / "config" / "modules.yaml").write_text("enabled: []\n")
+    (root / "config" / "build.json").write_text('{"schema": 1, "modules": []}')
     monkeypatch.setenv("KITTY_HOME", str(root))
     return root
 

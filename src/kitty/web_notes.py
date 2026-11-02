@@ -129,7 +129,7 @@ def post(app, conn, path, body):
             return _local_import(app, "notes-page-restore", lambda local: notes.restore(local, app.settings.data_dir, body["notebook_id"], body["page"]))
         if path == "/api/notes/preferences":
             notes.keys(body, {"revision", "allow_ai", "retention_days"}, {"revision", "allow_ai", "retention_days"})
-            return notes.preferences(conn, body["revision"], body["allow_ai"], body["retention_days"])
+            return notes.preferences(conn, app.settings.root, body["revision"], body["allow_ai"], body["retention_days"])
         if path == "/api/notes/cleanup":
             notes.keys(body, {"confirm"}, {"confirm"})
             if body["confirm"] is not True:

@@ -22,8 +22,12 @@ from kitty.core.blocks.pagedoc import BlockError, OrderedPageDoc, block_id
 from kitty.core.blocks.store import device_id, load_page, replay, transact
 from kitty.db.connection import transaction
 
-#: Every transaction is kept this long (Q20); a setting of the build file once builds exist (Q8).
-RETENTION_DAYS = 30
+
+def retention_days(conn: sqlite3.Connection) -> int:
+    """Every transaction is kept this long (Q20): build ``settings.history.retention_days`` (Q8)."""
+    return conn.execute("SELECT history_retention_days FROM build_state WHERE id=1").fetchone()[0]
+
+
 SESSION_GAP = timedelta(minutes=10)
 
 
@@ -146,10 +150,10 @@ def restore_from_trash(conn: sqlite3.Connection, bid) -> dict:
     return transact(conn, [{"op": "restore", "id": block_id(bid)}])
 
 
-def compact(conn: sqlite3.Connection, now: datetime | None = None, days: int = RETENTION_DAYS) -> dict:
+def compact(conn: sqlite3.Connection, now: datetime | None = None, days: int | None = None) -> dict:
     """Purge expired Trash, then fold op_log rows older than the window into daily snapshots."""
     now = now or datetime.now(timezone.utc)
-    cutoff = (now - timedelta(days=days)).isoformat()
+    cutoff = (now - timedelta(days=retention_days(conn) if days is None else days)).isoformat()
     with (nullcontext() if conn.in_transaction else transaction(conn, immediate=True)):
         expired = [row["id"] for row in conn.execute(
             "SELECT b.id FROM blocks b LEFT JOIN blocks p ON p.id=b.parent_id WHERE b.deleted_at IS NOT NULL "

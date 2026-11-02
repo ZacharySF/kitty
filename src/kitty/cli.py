@@ -30,7 +30,7 @@ from kitty.core import urlmeta
 from kitty.core.workspace import Workspace, open_workspace
 from kitty.dates import now_iso, parse_user_date
 from kitty.models import PIPELINE_STATUSES
-from kitty.modules import MODULE_IDS, available_modules, load_modules
+from kitty.modules import BUILD_FILE, LEGACY_MODULES_FILE, MODULE_IDS, available_modules, load_modules
 from kitty.settings import Settings
 
 #: The module whose commands, screens and tools need the careers config.
@@ -59,15 +59,15 @@ def _module_error(lines: list[str]) -> typer.Exit:
 class _ModuleGroup(TyperGroup):
     """The top-level group: lists and runs only the commands of enabled modules.
 
-    The selection is read from config/modules.yaml when the command line is resolved,
+    The selection is read from config/build.json when the command line is resolved,
     which happens before any feature code, so a disabled command cannot reach it. A
-    modules.yaml that cannot be read leaves only the core commands (doctor and
+    build file that cannot be read leaves only the core commands (doctor and
     modules show what is wrong).
     """
 
     @staticmethod
     def _enabled() -> tuple[str, ...]:
-        """The enabled modules for this process; empty when modules.yaml is unreadable."""
+        """The enabled modules for this process; empty when the build file is unreadable."""
         try:
             return load_modules(Settings.load().config_dir)
         except ConfigError:
@@ -87,7 +87,7 @@ class _ModuleGroup(TyperGroup):
                 enabled = load_modules(Settings.load().config_dir)
             except ConfigError as exc:
                 raise _module_error(
-                    ["[bold red]Cannot read config/modules.yaml:[/bold red]",
+                    ["[bold red]Cannot read config/build.json:[/bold red]",
                      *[f"  {problem}" for problem in exc.problems],
                      "\nFix it, or run [bold]kitty doctor[/bold]."],
                 ) from exc
@@ -172,7 +172,7 @@ def init(
     module: Annotated[Optional[list[str]], typer.Option(
         "--module", "-m",
         help=f"Select this module ({', '.join(MODULE_IDS)}) when the workspace has no "
-             "config/modules.yaml yet; repeat for several. Default for a new workspace: none, core only.",
+             "config/build.json yet; repeat for several. Default for a new workspace: none, core only.",
     )] = None,
 ) -> None:
     """Set up the workspace: modules, config files, the database, and (applyai) your profile."""
@@ -180,7 +180,7 @@ def init(
     console.print(f"[bold]Workspace:[/bold] {settings.root}")
 
     try:
-        before = settings.config_path("modules.yaml").exists()
+        before = any(settings.config_path(name).exists() for name in (BUILD_FILE, LEGACY_MODULES_FILE))
         enabled = bootstrap.initialize_modules(settings, list(module) if module else None)
         results = bootstrap.copy_examples(settings, enabled)
     except ConfigError as exc:
@@ -189,7 +189,7 @@ def init(
         error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
         raise typer.Exit(code=2) from exc
     if module and before:
-        console.print("  kept     config/modules.yaml (change it with `kitty modules enable|disable`)")
+        console.print("  kept     config/build.json (change it with `kitty modules enable|disable`)")
     console.print(f"  modules  {', '.join(enabled) if enabled else 'none (core only)'}")
     for result in results:
         if result.action == "created":
@@ -1513,7 +1513,7 @@ _RESTART_NOTE = (
 
 
 def _configured_modules() -> tuple[Path, tuple[str, ...]]:
-    """The config directory and the modules.yaml selection, or exit with a readable error."""
+    """The config directory and the build's module selection, or exit with a readable error."""
     config_dir = _settings().config_dir
     try:
         return config_dir, load_modules(config_dir)
@@ -1539,15 +1539,15 @@ def _change_modules(ids: list[str], *, enable: bool) -> None:
     try:
         saved = bootstrap.configure_modules(config_dir, selection)
     except (ValueError, OSError) as exc:
-        error_console.print(f"[bold red]Could not save config/modules.yaml:[/bold red] {escape(str(exc))}")
+        error_console.print(f"[bold red]Could not save the modules in config/build.json:[/bold red] {escape(str(exc))}")
         raise typer.Exit(code=1) from exc
-    console.print(f"Saved config/modules.yaml: {', '.join(saved) or 'none (core only)'}.")
+    console.print(f"Saved the build's modules in config/build.json: {', '.join(saved) or 'none (core only)'}.")
     console.print(f"[dim]{_RESTART_NOTE}[/dim]")
 
 
 @modules_app.command("list")
 def modules_list() -> None:
-    """Show each module and whether config/modules.yaml enables it."""
+    """Show each module and whether the build (config/build.json) enables it."""
     _config_dir, enabled = _configured_modules()
     table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
     table.add_column("module")

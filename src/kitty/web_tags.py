@@ -70,7 +70,7 @@ def post(app, conn, path, body):
     try:
         if action == "settings":
             _expect(body, {"mode", "revision"})
-            return tags.set_mode(conn, body["mode"], body["revision"])
+            return tags.set_mode(conn, app.settings.root, body["mode"], body["revision"])
         if action == "create":
             return tags.create(conn, body)
         if action == "update":

@@ -1,9 +1,10 @@
-"""Module registry, strict modules.yaml, module-aware config loading and initialization.
+"""Module registry, the build file's strict module selection, module-aware config loading and initialization.
 
 All workspaces are synthetic temporary directories built from the public examples.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -24,7 +25,20 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CAREERS = ("profile", "tracks", "sources", "watchlist", "answers", "views")
 
 
-def write(config_dir: Path, text: str) -> Path:
+def write(config_dir: Path, modules: list) -> Path:
+    """A build file selecting `modules` (any JSON values, so invalid ids can be written)."""
+    return write_raw(config_dir, json.dumps({"schema": 1, "modules": modules}))
+
+
+def write_raw(config_dir: Path, text: str) -> Path:
+    config_dir.mkdir(parents=True, exist_ok=True)
+    path = config_dir / "build.json"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def write_legacy(config_dir: Path, text: str) -> Path:
+    """A pre-build config/modules.yaml, only read until the first open migrates it."""
     config_dir.mkdir(parents=True, exist_ok=True)
     path = config_dir / "modules.yaml"
     path.write_text(text, encoding="utf-8")
@@ -51,12 +65,12 @@ def test_absent_file_means_every_module_and_selection_is_canonical(tmp_path):
     config_dir = tmp_path / "config"
     # A pre-module workspace (the user's existing one) keeps every module, Terminal included.
     assert load_modules(config_dir) == ("applyai", "workspace", "terminal")
-    write(config_dir, "enabled: [workspace, applyai]\n")
+    write(config_dir, ["workspace", "applyai"])
     assert load_modules(config_dir) == ("applyai", "workspace")
-    write(config_dir, "enabled: []\n")
+    write(config_dir, [])
     assert load_modules(config_dir) == ()
-    write(config_dir, "enabled:\n  - workspace\n")
-    assert load_modules(config_dir) == ("workspace",)
+    write(config_dir, [])
+    assert load_modules(config_dir) == ()
 
 
 @pytest.mark.parametrize("text, fragment", [
@@ -71,17 +85,46 @@ def test_absent_file_means_every_module_and_selection_is_canonical(tmp_path):
     ("- applyai\n", ""),
     ("enabled: [applyai\n", "YAML syntax"),
 ])
-def test_modules_yaml_is_strict(tmp_path, text, fragment):
-    write(tmp_path / "config", text)
+def test_legacy_modules_yaml_is_strict_until_migrated(tmp_path, text, fragment):
+    write_legacy(tmp_path / "config", text)
     with pytest.raises(ConfigError) as caught:
         load_modules(tmp_path / "config")
     assert fragment in str(caught.value)
     assert "modules.yaml" in str(caught.value)
 
 
+@pytest.mark.parametrize("text, line, fragment", [
+    ('{"schema": 1,\n "modules": ["applyai", "careers"]}', 2, "careers"),
+    ('{"schema": 1,\n "modules": ["applyai", "applyai"]}', 2, ""),
+    ('{"schema": 1,\n\n "modules": "applyai"}', 3, ""),
+    ('{"schema": 1,\n "modules": [', None, ""),
+])
+def test_a_malformed_build_file_is_a_config_error_with_its_line(tmp_path, text, line, fragment):
+    write_raw(tmp_path / "config", text)
+    with pytest.raises(ConfigError) as caught:
+        load_modules(tmp_path / "config")
+    assert fragment in str(caught.value) and "build.json" in str(caught.value)
+    if line is not None:
+        assert caught.value.problems[0].line == line
+
+
+def test_a_legacy_modules_yaml_is_read_until_the_first_open_moves_it_into_the_build(tmp_path):
+    root = tmp_path / "root"
+    legacy = write_legacy(root / "config", "enabled: [workspace, terminal]\n")
+    assert load_modules(root / "config") == ("workspace", "terminal")
+    assert not (root / "config" / "build.json").exists()
+    with open_workspace(settings_for(root)) as opened:
+        assert opened.config.modules == ("workspace", "terminal")
+    build = root / "config" / "build.json"
+    assert json.loads(build.read_text(encoding="utf-8"))["modules"] == ["workspace", "terminal"]
+    assert stat.S_IMODE(build.stat().st_mode) == 0o600
+    assert not legacy.exists()
+    assert load_modules(root / "config") == ("workspace", "terminal")
+
+
 def test_require_module_raises_a_readable_error_when_disabled(tmp_path):
     config_dir = tmp_path / "config"
-    write(config_dir, "enabled: [workspace]\n")
+    write(config_dir, ["workspace"])
     require_module(config_dir, "workspace")
     with pytest.raises(ModuleDisabledError) as caught:
         require_module(config_dir, "applyai")
@@ -101,7 +144,7 @@ def test_normalize_rejects_non_ids_and_duplicates():
 def test_save_modules_is_atomic_validated_and_never_widens_permissions(tmp_path):
     config_dir = tmp_path / "config"
     assert save_modules(config_dir, ["workspace"]) == ("workspace",)
-    target = config_dir / "modules.yaml"
+    target = config_dir / "build.json"
     assert load_modules(config_dir) == ("workspace",)
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
@@ -116,15 +159,15 @@ def test_save_modules_is_atomic_validated_and_never_widens_permissions(tmp_path)
         with pytest.raises(ValueError):
             save_modules(config_dir, bad)  # type: ignore[arg-type]
     assert target.read_text(encoding="utf-8") == before
-    assert [p.name for p in config_dir.iterdir()] == ["modules.yaml"]
+    assert [p.name for p in config_dir.iterdir()] == ["build.json"]
 
 
 def test_save_modules_refuses_symlinks(tmp_path):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    outside = tmp_path / "outside.yaml"
+    outside = tmp_path / "outside.json"
     outside.write_text("keep", encoding="utf-8")
-    os.symlink(outside, config_dir / "modules.yaml")
+    os.symlink(outside, config_dir / "build.json")
     with pytest.raises(ValueError):
         save_modules(config_dir, ["workspace"])
     assert outside.read_text(encoding="utf-8") == "keep"
@@ -132,14 +175,14 @@ def test_save_modules_refuses_symlinks(tmp_path):
 
 def test_modules_state_separates_active_from_pending(tmp_path):
     config_dir = tmp_path / "config"
-    write(config_dir, "enabled: [workspace]\n")
+    write(config_dir, ["workspace"])
     state = modules_state(MODULE_IDS, config_dir)
     assert state["enabled"] == ["applyai", "workspace", "terminal"]
     assert state["configured"] == ["workspace"]
     assert state["restart_required"] is True
     assert [item["id"] for item in state["available"]] == list(MODULE_IDS)
     assert modules_state(("workspace",), config_dir)["restart_required"] is False
-    write(config_dir, "enabled: [bogus]\n")
+    write(config_dir, ["bogus"])
     broken = modules_state(("workspace",), config_dir)
     assert broken["configured"] == ["workspace"] and broken["restart_required"] is False
     assert "bogus" in broken["error"]
@@ -151,7 +194,7 @@ def test_core_only_and_workspace_only_load_without_any_careers_yaml(tmp_path):
         config = load_config(config_dir, modules=selection)
         assert config.modules == selection and not config.enabled("applyai")
         assert config.tracks.tracks == [] and config.track_names == []
-    write(config_dir, "enabled: [workspace]\n")
+    write(config_dir, ["workspace"])
     assert load_config(config_dir).modules == ("workspace",)
 
 
@@ -160,7 +203,7 @@ def test_disabled_careers_config_is_neither_read_nor_validated(tmp_path):
     config_dir.mkdir()
     for name in ("profile", "tracks", "sources", "answers", "triage", "apply"):
         (config_dir / f"{name}.yaml").write_text("{{{ not yaml: [", encoding="utf-8")
-    write(config_dir, "enabled: [workspace]\n")
+    write(config_dir, ["workspace"])
     assert load_config(config_dir).modules == ("workspace",)
     with pytest.raises(ConfigError):
         load_config(config_dir, modules=("applyai",))
@@ -169,24 +212,24 @@ def test_disabled_careers_config_is_neither_read_nor_validated(tmp_path):
 def test_applyai_still_requires_its_files_and_both_enabled_matches_legacy(tmp_path):
     config_dir = tmp_path / "config"
     with pytest.raises(ConfigError):
-        load_config(config_dir)  # No modules.yaml: legacy default enables applyai.
+        load_config(config_dir)  # No build file: legacy default enables applyai.
     copy_careers(config_dir)
     legacy = load_config(config_dir)
     assert legacy.modules == MODULE_IDS and legacy.track_names
-    write(config_dir, "enabled: [applyai, workspace]\n")
+    write(config_dir, ["applyai", "workspace"])
     assert load_config(config_dir).track_names == legacy.track_names
 
 
 def test_explicit_snapshot_ignores_a_pending_file(tmp_path):
     config_dir = tmp_path / "config"
     copy_careers(config_dir)
-    write(config_dir, "enabled: []\n")
+    write(config_dir, [])
     assert load_config(config_dir).modules == ()
     frozen = load_config(config_dir, modules=MODULE_IDS)
     assert frozen.modules == MODULE_IDS and frozen.track_names
     # A pending enable of applyai with its files missing must not break a frozen load.
     (config_dir / "tracks.yaml").unlink()
-    write(config_dir, "enabled: [applyai]\n")
+    write(config_dir, ["applyai"])
     assert load_config(config_dir, modules=()).modules == ()
     with pytest.raises(ConfigError):
         load_config(config_dir)
@@ -205,7 +248,7 @@ def test_workspace_only_open_skips_sync_and_keeps_existing_rows(workspace):
 
 def test_core_only_workspace_opens_with_no_careers_files(tmp_path):
     root = tmp_path / "root"
-    write(root / "config", "enabled: []\n")
+    write(root / "config", [])
     with open_workspace(settings_for(root)) as opened:
         assert opened.config.modules == ()
         assert opened.conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0] == 0
@@ -215,9 +258,12 @@ def test_project_root_marker_is_neutral_with_legacy_support(tmp_path, monkeypatc
     monkeypatch.delenv("KITTY_HOME", raising=False)
     neutral = tmp_path / "neutral"
     (neutral / "config").mkdir(parents=True)
-    (neutral / "config" / "modules.yaml").write_text("enabled: []\n", encoding="utf-8")
+    (neutral / "config" / "build.json").write_text('{"schema": 1, "modules": []}', encoding="utf-8")
     (neutral / "a" / "b").mkdir(parents=True)
     assert find_project_root(neutral / "a" / "b") == neutral.resolve()
+    unmigrated = tmp_path / "unmigrated"
+    write_legacy(unmigrated / "config", "enabled: []\n")
+    assert find_project_root(unmigrated / "config") == unmigrated.resolve()
     legacy = tmp_path / "legacy"
     (legacy / "config").mkdir(parents=True)
     (legacy / "config" / "tracks.yaml").write_text("tracks: []\n", encoding="utf-8")
@@ -235,7 +281,7 @@ def example_workspace(root: Path) -> Settings:
 def test_new_init_is_core_only_and_copies_no_careers_examples(tmp_path):
     settings = example_workspace(tmp_path)
     assert bootstrap.initialize_modules(settings) == ()
-    assert (settings.config_dir / "modules.yaml").read_text(encoding="utf-8").strip() == "enabled: []"
+    assert json.loads(settings.config_path("build.json").read_text(encoding="utf-8"))["modules"] == []
     assert bootstrap.copy_examples(settings) == []
     assert not (settings.config_dir / "tracks.yaml").exists()
     assert bootstrap.initialize_modules(settings) == ()  # An existing file is kept.
@@ -253,28 +299,28 @@ def test_init_in_a_legacy_workspace_leaves_the_file_absent(tmp_path):
     settings = example_workspace(tmp_path)
     shutil.copy(settings.config_path("profile.yaml.example"), settings.config_path("profile.yaml"))
     assert bootstrap.initialize_modules(settings) == MODULE_IDS
-    assert not (settings.config_dir / "modules.yaml").exists()
+    assert not (settings.config_dir / "build.json").exists()
     assert {r.action for r in bootstrap.copy_examples(settings)} == {"created", "kept"}
 
 
 def test_doctor_is_module_aware(tmp_path):
     root = tmp_path / "root"
-    write(root / "config", "enabled: [workspace]\n")
+    write(root / "config", ["workspace"])
     settings = settings_for(root)
     open_workspace(settings).close()
     checks = doctor_core.run_all(settings)
     assert doctor_core.failures(checks) == []
     names = {check.name for check in checks}
-    assert "config/modules.yaml" in names and "database" in names
+    assert "config/build.json" in names and "database" in names
     assert not any(name.startswith(("config/profile", "config/tracks", "resume", "source/", "key/")) for name in names)
 
-    write(root / "config", "enabled: [bogus]\n")
+    write(root / "config", ["bogus"])
     broken = doctor_core.failures(doctor_core.run_all(settings))
-    assert [check.name for check in broken] == ["config/modules.yaml"]
+    assert [check.name for check in broken] == ["config/build.json"]
 
 
 def test_doctor_legacy_workspace_still_checks_careers(workspace):
     checks = doctor_core.run_all(workspace.settings, workspace.conn)
     assert doctor_core.failures(checks) == []
     names = {check.name for check in checks}
-    assert "config/tracks.yaml" in names and "config/modules.yaml" in names
+    assert "config/tracks.yaml" in names and "config/build.json" in names

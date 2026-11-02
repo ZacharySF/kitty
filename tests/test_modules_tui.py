@@ -26,7 +26,7 @@ SIZE = (160, 40)
 
 @pytest.fixture
 def core_workspace(tmp_path):
-    """A core-only workspace: modules.yaml selects nothing and there is no careers yaml."""
+    """A core-only workspace: the build selects no module and there is no careers yaml."""
     config_dir = tmp_path / "config"
     save_modules(config_dir, [])
     settings = Settings.load(root=tmp_path, db_path=tmp_path / "data" / "core.db")
@@ -127,10 +127,11 @@ async def test_malformed_modules_file_blocks_changes_and_stays_readable(core_wor
     config_dir = core_workspace.settings.config_dir
     app = create_app(workspace=core_workspace)
     async with app.run_test(size=SIZE) as pilot:
-        (config_dir / "modules.yaml").write_text("enabled: [nope]\n", encoding="utf-8")
+        broken = '{"schema": 1, "modules": ["nope"]}'
+        (config_dir / "build.json").write_text(broken, encoding="utf-8")
         await pilot.press("space")
         await pilot.pause()
-        assert (config_dir / "modules.yaml").read_text(encoding="utf-8") == "enabled: [nope]\n"
+        assert (config_dir / "build.json").read_text(encoding="utf-8") == broken
         assert "cannot be read" in app.screen.note
 
 
@@ -148,7 +149,7 @@ async def test_job_app_opens_modules_with_M_and_goes_back(workspace):
 
 
 async def test_job_app_reload_keeps_the_frozen_selection(workspace):
-    """A pending modules.yaml edit must not change what the running app uses."""
+    """A pending module edit in the build must not change what the running app uses."""
     tracks = workspace.config.track_names
     app = create_app(workspace=workspace)
     async with app.run_test(size=SIZE) as pilot:

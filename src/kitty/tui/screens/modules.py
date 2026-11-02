@@ -1,8 +1,8 @@
 """Modules: which built-in modules this workspace uses.
 
 The core screen. It works whether or not any module is enabled, so a core-only
-workspace always has somewhere to start. Choices are written to
-config/modules.yaml at once, but a module only switches on or off the next time
+workspace always has somewhere to start. Choices are written to the
+build file (config/build.json) at once, but a module only switches on or off the next time
 kitty starts: this process keeps the modules it started with, and the table shows
 both so the difference is never a surprise.
 """
@@ -49,7 +49,7 @@ class ModulesScreen(Screen):
         ("escape", "back", "Back"),
     ]
 
-    #: Why the table cannot be changed right now (an unreadable modules.yaml), else "".
+    #: Why the table cannot be changed right now (an unreadable build file), else "".
     problem: str = ""
 
     def compose(self) -> ComposeResult:
@@ -80,7 +80,7 @@ class ModulesScreen(Screen):
         return self.app.workspace.settings.config_dir                 # type: ignore[attr-defined]
 
     def configured(self) -> tuple[str, ...]:
-        """What config/modules.yaml selects now; the running set when it cannot be read."""
+        """What config/build.json selects now; the running set when it cannot be read."""
         try:
             self.problem = ""
             return load_modules(self.config_dir)
@@ -108,7 +108,7 @@ class ModulesScreen(Screen):
         if table.row_count:
             table.move_cursor(row=min(keep, table.row_count - 1))
         if self.problem:
-            note = f"[bold red]config/modules.yaml cannot be read, so nothing can be changed here:[/] {escape(self.problem)}"
+            note = f"[bold red]config/build.json cannot be read, so nothing can be changed here:[/] {escape(self.problem)}"
         elif configured != self.active:
             note = f"[{GOLD}]* Restart kitty to apply the change.[/]"
         else:
@@ -123,14 +123,14 @@ class ModulesScreen(Screen):
         return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
 
     def action_toggle_module(self) -> None:
-        """Flip the highlighted module in config/modules.yaml (applies on restart)."""
+        """Flip the highlighted module in config/build.json (applies on restart)."""
         module = self.selected_module()
         configured = self.configured()
         if module is None:
             return
         if self.problem:
             self.refresh_data()
-            self.notify("config/modules.yaml cannot be read; fix it first.", severity="error")
+            self.notify("config/build.json cannot be read; fix it first.", severity="error")
             return
         selection = [m for m in configured if m != module] if module in configured else [*configured, module]
         try:

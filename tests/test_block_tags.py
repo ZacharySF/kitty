@@ -49,8 +49,8 @@ def type_(conn, block, text):
     return blocks.transact(conn, [{"op": "text", "id": block, "text": text}], suggest=True)
 
 
-def mode(conn, value):
-    tags.set_mode(conn, value, tags.settings(conn)["revision"])
+def mode(workspace, value):
+    tags.set_mode(workspace.conn, workspace.settings.root, value, tags.settings(workspace.conn)["revision"])
 
 
 # The matcher ------------------------------------------------------------------------------
@@ -96,12 +96,13 @@ def test_inline_tokens_name_tags_by_name_or_alias():
 def test_new_installs_suggest_and_the_mode_is_revision_checked(workspace):
     conn = workspace.conn
     assert tags.settings(conn) == {"mode": "suggest", "revision": 1}
-    assert tags.set_mode(conn, "always", 1) == {"mode": "always", "revision": 2}
+    root = workspace.settings.root
+    assert tags.set_mode(conn, root, "always", 1) == {"mode": "always", "revision": 2}
     with pytest.raises(blocks.BlockError) as stale:
-        tags.set_mode(conn, "suggest", 1)
+        tags.set_mode(conn, root, "suggest", 1)
     assert stale.value.status == 409
     with pytest.raises(blocks.BlockError):
-        tags.set_mode(conn, "sometimes", 2)
+        tags.set_mode(conn, root, "sometimes", 2)
 
 
 def test_suggest_mode_returns_matches_and_attaches_nothing(workspace):
@@ -134,7 +135,7 @@ def test_tab_accepts_and_esc_rejects_for_good(workspace):
     blocks.transact(conn, [{"op": "set", "id": second, "props": {key: "rejected"}}])
     assert rejected(conn) == {(second, tag["id"])}
     assert type_(conn, second, "python two, python again")["suggestions"][second]["items"] == []
-    mode(conn, "always")
+    mode(workspace, "always")
     assert "tagged" not in type_(conn, second, "python, still python")
     assert attached(conn) == {(first, tag["id"]): "accepted"}
     with pytest.raises(blocks.BlockError):
@@ -143,7 +144,7 @@ def test_tab_accepts_and_esc_rejects_for_good(workspace):
 
 def test_always_attach_marks_auto_and_removal_is_never_undone(workspace):
     conn = workspace.conn
-    mode(conn, "always")
+    mode(workspace, "always")
     tag = tags.create(conn, {"name": "Rust", "keywords": ["cargo"]})
     key = tagging.key_of(tag["id"])
     page, block = new_id(), new_id()
@@ -164,7 +165,7 @@ def test_always_attach_marks_auto_and_removal_is_never_undone(workspace):
 
 def test_an_automatic_tag_follows_the_text(workspace):
     conn = workspace.conn
-    mode(conn, "always")
+    mode(workspace, "always")
     tag = tags.create(conn, {"name": "python"})
     page, block = new_id(), new_id()
     blocks.transact(conn, page_ops(page, (block, "")))
@@ -187,7 +188,7 @@ def test_each_tag_overrides_the_global_mode_either_way(workspace):
     result = type_(conn, block, "eager and shy")
     assert attached(conn) == {(block, eager["id"]): "auto"}
     assert [item["tag"] for item in result["suggestions"][block]["items"]] == [shy["id"]]
-    mode(conn, "always")
+    mode(workspace, "always")
     tags.update(conn, shy["id"], {"mode": "suggest"})
     other = new_id()
     result = blocks.transact(conn, [{"op": "insert", "id": other, "type": "text", "parent": page, "text": "eager, shy"}], suggest=True)
@@ -198,7 +199,7 @@ def test_each_tag_overrides_the_global_mode_either_way(workspace):
 
 def test_only_prose_of_note_pages_is_tagged(workspace):
     conn = workspace.conn
-    mode(conn, "always")
+    mode(workspace, "always")
     tag = tags.create(conn, {"name": "python"})
     page, code, heading, other_root = new_id(), new_id(), new_id(), new_id()
     blocks.transact(conn, page_ops(page) + [

@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from kitty.core import keys as keystore
+from kitty.core.builds import project, store
 from kitty.db import connect
 from kitty.db.connection import transaction
 
@@ -381,8 +382,11 @@ def post(app, conn, path, body):
             _write_key(app, body['key'])
         elif body.get('remove_key') is True:
             _remove_key(app)
-        with transaction(conn):
-            conn.execute('UPDATE ai_settings SET model=?,routing=?,max_output_tokens=?,daily_budget_usd=?,revision=revision+1 WHERE id=1', (model, routing, maximum, str(cap)))
+        # Model, routing, output limit and budget live in the build file (Q8, settings.ai);
+        # the key never does (kitty.core.keys).
+        with project.editing(conn, app.settings.root) as build:
+            store.section(build, 'settings', 'ai').update(
+                model=model, routing=routing, max_output_tokens=maximum, daily_budget_usd=float(cap))
         return _status(app, conn)
     if path == '/api/ai/models/refresh':
         _keys(body, {'confirmed'})

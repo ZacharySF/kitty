@@ -212,7 +212,7 @@ def test_compaction_waits_for_every_paired_device_to_acknowledge(kittys):
     a, b = kittys("a", "b")
     page, (block,) = new_page(a, "old")
     pair(a, b)
-    later = datetime.now(timezone.utc) + timedelta(days=history.RETENTION_DAYS + 1)
+    later = datetime.now(timezone.utc) + timedelta(days=history.retention_days(a.conn) + 1)
     assert history.compact(a.conn, now=later)["folded"] == 0, "b has acknowledged nothing yet"
     a.sync.sync_with(a.peer(b))
     acked = a.peer(b)["acked_seq"]
@@ -227,7 +227,7 @@ def test_compaction_waits_for_every_paired_device_to_acknowledge(kittys):
 def test_a_device_paired_after_compaction_gets_a_full_snapshot_transfer(kittys):
     a, b = kittys("a", "b")
     page, (block,) = new_page(a, "kept in snapshots only")
-    later = datetime.now(timezone.utc) + timedelta(days=history.RETENTION_DAYS + 1)
+    later = datetime.now(timezone.utc) + timedelta(days=history.retention_days(a.conn) + 1)
     assert history.compact(a.conn, now=later)["folded"] > 0
     assert a.conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0] == 0
     pair(a, b)
