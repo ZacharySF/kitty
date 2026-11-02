@@ -18,14 +18,12 @@ export type BrainPlacement = {
   births: Float32Array;
   /** Shown group per node; -2 hides the node (outside an isolated group). */
   groups: Float32Array;
-  /** Point size multiplier per node: anatomy draws its packed brain finer, so the lobes keep their colours. */
-  scales: Float32Array;
   /** xyz per shown group: where its label floats. */
   anchors: Float32Array;
   /** Spheres only: xyz + radius per shown group, so hovering anywhere over a sphere finds it. */
   regions: Float32Array | null;
-  /** Anatomy only: the nodes drawn as whiskers and eyes, which take the theme's ink rather than their group's colour. */
-  whiskers: Int32Array;
+  /** Anatomy only: the neural network's filaments. */
+  network: BrainNetwork | null;
   /** Index of each node's parent, or -1. */
   parents: Int32Array;
   center: [number, number, number];
@@ -34,7 +32,7 @@ export type BrainPlacement = {
   turnAxis: "y" | "z";
   /** Home camera direction in radians: anatomy in three-quarter view, spheres from above their ring. */
   view: { azimuth: number; elevation: number };
-  /** Opacity of the Lines web; anatomy's lines converge on the cord, so they are fainter. */
+  /** Opacity of the Lines web; anatomy draws its own network, so its lines are fainter. */
   lineAlpha: number;
 };
 
@@ -345,38 +343,335 @@ function timeRank(indices: number[], times: Float64Array): Map<number, number> {
   return new Map(dated.map((i, rank) => [i, rank / last]));
 }
 
-// ── Anatomy: a standing cat drawn only as its brain and vessels ───────────
-// Axes: x points where the cat faces, y is up, z runs across its body (+z toward the home camera).
-// One unit is about half a head. The cat stands on y = 0 in the pose of a standing cat seen from
-// the side: head up and turned toward the viewer, back level, tail stretched out behind. There is
-// no body: the brain sits in the head and vessels branch from the spinal cord into each region,
-// so the cat's outline is wherever its vessels run.
-const HEAD_AT: Vec = [3.3, 5.5, 0];
-/** The head turns ~70° toward the viewer, so the side view shows both ears and eyes. */
-const HEAD_YAW = 1.2;
-const FACE: Vec = [Math.cos(HEAD_YAW), 0, Math.sin(HEAD_YAW)];
-const ACROSS: Vec = [-Math.sin(HEAD_YAW), 0, Math.cos(HEAD_YAW)];
-/** Head-local (forward, up, across) to cat space. */
-const inHead = (f: number, u: number, s: number): Vec => [HEAD_AT[0] + f * FACE[0] + s * ACROSS[0], HEAD_AT[1] + u, HEAD_AT[2] + f * FACE[2] + s * ACROSS[2]];
-// Brain-local axes (as the cortex is drawn): x across, y up, z forward.
-const CEREBRUM = { rx: 0.95, ry: 0.7, rz: 1.12 };
-const CEREBELLUM = { x: 0, y: -0.34, z: -0.94, rx: 0.56, ry: 0.29, rz: 0.3 };
-const STEM_TOP: Vec = [0, -0.56, -0.8];
-const toCat = (p: Vec): Vec => inHead(p[2] - 0.12, p[1] + 0.14, p[0]);
-/** Centre of the cerebrum, in cat space. */
-export const CAT_BRAIN: Vec = toCat([0, 0, 0]);
+// ── Anatomy: a neural-network brain ───────────────────────────────────────
+// Axes: x points forward, y up, z across (+z is the left hemisphere, which faces the home camera).
+// One unit is about 3 cm. The folded cerebrum surrounds the origin, the cerebellum tucks under its
+// back and the brainstem descends from its middle. Records are neurons in the cortex of their
+// group's region; fibre tracts fan from the thalamic hub out to every region and run between
+// regions, and each group's edits travel its own tracts in time order.
 const distance = (a: Vec, b: Vec) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const lerp = (a: Vec, b: Vec, t: number): Vec => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const add = (a: Vec, b: Vec, scale = 1): Vec => [a[0] + b[0] * scale, a[1] + b[1] * scale, a[2] + b[2] * scale];
+const dot = (a: Vec, b: Vec) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const smooth = (from: number, to: number, x: number) => {
+  const t = clamp01((x - from) / (to - from));
+  return t * t * (3 - 2 * t);
+};
+const jitter = (r: Random, size: number): Vec => {
+  const u = randomUnit(r);
+  return [u[0] * size, u[1] * size, u[2] * size];
+};
+
+/** The brain's regions in a ring (each beside the next), so a group spanning several takes neighbours. */
+export const BRAIN_REGIONS = [
+  "left frontal", "left temporal", "left parietal", "left occipital", "left cerebellum", "brainstem",
+  "right cerebellum", "right occipital", "right parietal", "right temporal", "right frontal",
+];
+/** Each region's room for nodes, relative to the others (roughly its share of the cortex). */
+const REGION_WEIGHTS = [1.4, 0.95, 1.15, 0.75, 0.6, 0.35, 0.6, 0.75, 1.15, 0.95, 1.4];
+/** Region of each lobe (frontal, temporal, parietal, occipital) on the left (+z) and on the right. */
+const LOBE_REGIONS = [[0, 1, 2, 3], [10, 9, 8, 7]];
+const CEREBELLUM_REGIONS = [4, 6];
+const STEM_REGION = 5;
+/** The thalamus: projection fibres fan out from here to every region. */
+export const BRAIN_HUB: Vec = [-0.25, -0.3, 0];
+/** Farthest reach from the hub: the brain builds itself from the hub outward over this distance. */
+export const BRAIN_REACH = 3.4;
+const birthAt = (p: Vec) => clamp01(0.03 + (0.9 * distance(p, BRAIN_HUB)) / BRAIN_REACH);
+
+/**
+ * A smooth random field of fixed sine waves in random directions, about unit variance. Its zero set is
+ * a meandering labyrinth of lines about half a wavelength apart: the sulci, with the gyri between them.
+ */
+const WAVES = (() => {
+  const r = stream(0x2545f491);
+  return Array.from({ length: 14 }, () => {
+    const d = randomUnit(r);
+    const k = 5.2 + 2.4 * r();
+    return [d[0] * k, d[1] * k, d[2] * k, 2 * Math.PI * r()];
+  });
+})();
+function gyral(p: Vec): number {
+  // A gentle warp keeps the folds from repeating like a wave pattern.
+  const q = add(p, [Math.sin(1.7 * p[1] + 1), Math.sin(1.9 * p[2] + 2), Math.sin(1.3 * p[0] + 3)], 0.25);
+  let sum = 0;
+  for (const [a, b, c, phase] of WAVES) sum += Math.sin(a * q[0] + b * q[1] + c * q[2] + phase);
+  return sum / Math.sqrt(WAVES.length / 2);
+}
+/** 1 on a gyral crown, 0 at the floor of a sulcus. */
+function crown(p: Vec): number {
+  const f = gyral(p);
+  return 1 - Math.exp(-1.6 * f * f);
+}
+/** Roughly how far `p` is from the floor of the nearest sulcus, in layout units: the field over its gradient. */
+function sulcusDistance(p: Vec): number {
+  const h = 0.005;
+  const at = gyral(p);
+  const slope = Math.hypot(gyral(add(p, [h, 0, 0])) - at, gyral(add(p, [0, h, 0])) - at, gyral(add(p, [0, 0, h])) - at) / h;
+  return Math.min(0.5, Math.abs(at) / Math.max(slope, 1e-3));
+}
+
+/** Distance from the centre to the unfolded cerebrum in unit direction `d`; `groove` 0 leaves out the fissure. */
+function cerebrumRadius(d: Vec, groove = 1): number {
+  const [x, y, z] = d;
+  // The temporal lobes hang low at the sides; the underside is flat at the front and lifts over the cerebellum at the back.
+  const temporal = Math.exp(-(((x - 0.1) / 0.32) ** 2)) * smooth(0.35, 0.75, Math.abs(z));
+  const below = (1.15 + 0.6 * temporal) * (1 - 0.22 * smooth(0.3, 0.8, x)) * (1 - 0.38 * smooth(0.15, 0.65, -x) * (1 - temporal));
+  const rx = x >= 0 ? 2.7 : 2.85;
+  const ry = y >= 0 ? 1.9 : below;
+  const rz = 2.25 * (1 - 0.12 * smooth(0.25, 0.9, x)) * (1 - 0.1 * smooth(0.45, 0.95, -x));
+  // The longitudinal fissure between the hemispheres, deepest on top.
+  const fissure = 1 - groove * 0.14 * Math.exp(-((z / 0.055) ** 2)) * smooth(-0.6, 0.1, y);
+  return fissure / Math.hypot(x / rx, y / ry, z / rz);
+}
+/** Height of the Sylvian fissure (the temporal lobe below it) at `x`. */
+const sylvian = (x: number) => -0.2 - 0.38 * (x - 0.3);
+/** Where the central sulcus (frontal lobe in front, parietal behind) crosses height `y`. */
+const central = (y: number) => 0.3 - 0.32 * y;
+/** The folded cortex in unit direction `d`: gyri, with the deeper Sylvian fissure and central sulcus. */
+function cortexSurface(d: Vec): Vec {
+  const r = cerebrumRadius(d);
+  const p: Vec = [d[0] * r, d[1] * r, d[2] * r];
+  const lateral = smooth(0.45, 0.7, Math.abs(d[2]));
+  const fissure = lateral * smooth(-1.5, -0.7, p[0]) * (1 - smooth(1.0, 1.5, p[0])) * Math.exp(-(((p[1] - sylvian(p[0])) / 0.1) ** 2));
+  const sulcus = smooth(-0.2, 0.5, p[1]) * Math.exp(-(((p[0] - central(p[1])) / 0.07) ** 2));
+  const fold = 1 + 0.05 * (crown(p) - 0.7) - 0.05 * fissure - 0.025 * sulcus;
+  // The hemispheres stand a little apart across the fissure.
+  return [p[0] * fold, p[1] * fold, p[2] * fold + 0.07 * Math.tanh(p[2] / 0.02)];
+}
+/** 0 frontal, 1 temporal, 2 parietal, 3 occipital. */
+function lobeAt(p: Vec): number {
+  if (p[0] < -1.85 + 0.3 * p[1]) return 3;
+  if (p[1] < sylvian(p[0]) && p[0] > -1.9 && Math.abs(p[2]) > 0.45) return 1;
+  return p[0] > central(p[1]) ? 0 : 2;
+}
+
+const CEREBELLUM = { c: [-2.05, -1.42, 0] as Vec, r: [0.95, 0.72, 1.5] as Vec };
+/** The cerebellum's surface in direction `u` of its own ellipsoid: a notch for the vermis, and fine folia. */
+function cerebellumSurface(u: Vec): Vec {
+  const vermis = 1 - 0.1 * Math.exp(-((u[2] / 0.16) ** 2)) * smooth(-0.3, 0.5, -u[0]);
+  const f = vermis * (1 + 0.028 * Math.cos(26 * Math.atan2(u[1], -u[0])));
+  const { c, r } = CEREBELLUM;
+  return [c[0] + u[0] * r[0] * f, c[1] + u[1] * r[1] * f, c[2] + u[2] * r[2] * f];
+}
+const STEM_TOP: Vec = [-0.4, -0.7, 0];
+const STEM_BOTTOM: Vec = [-0.85, -3.0, 0];
+const STEM_LENGTH = distance(STEM_TOP, STEM_BOTTOM);
+const STEM_AXIS = normalise([STEM_BOTTOM[0] - STEM_TOP[0], STEM_BOTTOM[1] - STEM_TOP[1], 0]);
+/** Forward, square to the brainstem. */
+const STEM_FRONT: Vec = [-STEM_AXIS[1], STEM_AXIS[0], 0];
+/** The brainstem's radius `t` of the way down; the pons bulges near the top. */
+const stemRadius = (t: number) => 0.4 - 0.12 * t + 0.1 * Math.exp(-(((t - 0.32) / 0.12) ** 2));
+function stemSurface(t: number, angle: number): Vec {
+  const r = stemRadius(t);
+  const centre = lerp(STEM_TOP, STEM_BOTTOM, t);
+  return [centre[0] + STEM_FRONT[0] * Math.cos(angle) * r, centre[1] + STEM_FRONT[1] * Math.cos(angle) * r, Math.sin(angle) * r];
+}
+const stemAt = (p: Vec) => dot([p[0] - STEM_TOP[0], p[1] - STEM_TOP[1], p[2]], STEM_AXIS) / STEM_LENGTH;
+
+/** Index into BRAIN_REGIONS of the structure a point lies in or nearest the surface of. */
+export function brainRegionAt(p: Vec): number {
+  const cerebrum = Math.hypot(p[0], p[1], p[2]) / cerebrumRadius(normalise(p));
+  const { c, r } = CEREBELLUM;
+  const cerebellum = Math.hypot((p[0] - c[0]) / r[0], (p[1] - c[1]) / r[1], (p[2] - c[2]) / r[2]);
+  const t = stemAt(p);
+  const stem = t < 0 || t > 1.1 ? Infinity : distance(p, lerp(STEM_TOP, STEM_BOTTOM, t)) / stemRadius(Math.min(1, t));
+  if (cerebellum < cerebrum && cerebellum <= stem) return CEREBELLUM_REGIONS[p[2] >= 0 ? 0 : 1];
+  if (stem < cerebrum) return STEM_REGION;
+  return LOBE_REGIONS[p[2] >= 0 ? 0 : 1][lobeAt(p)];
+}
+
+type Area = {
+  /** A random point on the region's surface. */
+  draw: (r: Random) => Vec;
+  /** The surface point over `p`, and the point depth below it is measured toward. */
+  surface: (p: Vec) => Vec;
+  core: (p: Vec) => Vec;
+  /** Orders a region's points along the ring of regions, so neighbouring groups meet at its edges. */
+  key: (p: Vec) => number;
+  /** Sorted keys of a sample of the region's surface: their quantiles split a shared region between groups. */
+  keys: number[];
+};
+const fibonacci = (i: number, n: number): Vec => {
+  const y = 1 - (2 * (i + 0.5)) / n;
+  const ring = Math.sqrt(1 - y * y);
+  return [ring * Math.cos(i * GOLDEN), y, ring * Math.sin(i * GOLDEN)];
+};
+const AREAS: Area[] = (() => {
+  // Each lobe's cone of directions, from an even scan of the cortex.
+  const members: Vec[][] = BRAIN_REGIONS.map(() => []);
+  for (let i = 0; i < 4000; i += 1) {
+    const d = fibonacci(i, 4000);
+    members[brainRegionAt(cortexSurface(d))].push(d);
+  }
+  /** Up to 24 draws until one lands in the region; the last otherwise. */
+  const until = (region: number, candidate: () => Vec) => () => {
+    let p = candidate();
+    for (let attempt = 0; attempt < 24 && brainRegionAt(p) !== region; attempt += 1) p = candidate();
+    return p;
+  };
+  const origin: Vec = [0, 0, 0];
+  return BRAIN_REGIONS.map((name, region) => {
+    let area: Omit<Area, "keys">;
+    if (region === STEM_REGION) {
+      const angle = (p: Vec) => Math.atan2(p[2], dot([p[0] - STEM_TOP[0], p[1] - STEM_TOP[1], 0], STEM_FRONT));
+      area = {
+        draw: (r) => until(region, () => stemSurface(0.22 + 0.78 * r(), 2 * Math.PI * r()))(),
+        surface: (p) => stemSurface(clamp01(stemAt(p)), angle(p)),
+        core: (p) => lerp(STEM_TOP, STEM_BOTTOM, clamp01(stemAt(p))),
+        key: (p) => -p[2],
+      };
+    } else if (CEREBELLUM_REGIONS.includes(region)) {
+      const side = region === CEREBELLUM_REGIONS[0] ? 1 : -1;
+      const { c, r: radii } = CEREBELLUM;
+      area = {
+        draw: (r) => until(region, () => {
+          const u = randomUnit(r);
+          return cerebellumSurface([u[0], u[1], Math.abs(u[2]) * side]);
+        })(),
+        // Its ellipsoid without the folia: paths wandering under it stay smooth.
+        surface: (p) => {
+          const u = normalise([(p[0] - c[0]) / radii[0], (p[1] - c[1]) / radii[1], (p[2] - c[2]) / radii[2]]);
+          return [c[0] + u[0] * radii[0], c[1] + u[1] * radii[1], c[2] + u[2] * radii[2]];
+        },
+        core: () => c,
+        key: (p) => -p[2],
+      };
+    } else {
+      const list = members[region];
+      const dir = normalise(list.reduce((sum, d) => add(sum, d), [0, 0, 0] as Vec));
+      const spread = Math.min(Math.PI, Math.max(...list.map((d) => Math.acos(Math.min(1, dot(d, dir))))) + 0.05);
+      const left = LOBE_REGIONS[0].includes(region);
+      area = {
+        draw: (r) => until(region, () => cortexSurface(capDirection(dir, spread, r)))(),
+        // The unfolded surface without its fissure: paths wandering under it stay smooth.
+        surface: (p) => {
+          const d = normalise(p);
+          const r = cerebrumRadius(d, 0);
+          return [d[0] * r, d[1] * r, d[2] * r];
+        },
+        core: () => origin,
+        key: (p) => (left ? -p[0] : p[0]),
+      };
+    }
+    const r = stream(hash32(`area:${name}`));
+    return { ...area, keys: Array.from({ length: 300 }, () => area.key(area.draw(r))).sort((a, b) => a - b) };
+  });
+})();
+/** `p` moved to `depth` below its region's surface. */
+function deepen(region: number, p: Vec, depth: number): Vec {
+  const area = AREAS[region];
+  const top = area.surface(p);
+  const core = area.core(p);
+  return lerp(top, core, Math.min(0.9, depth / (distance(top, core) || 1)));
+}
+
+type Owner = { group: number; nodes: number };
+/** A group's slice of a shared region: the range of the region's keys it holds. */
+type Patch = { group: number; lo: number; hi: number };
+/** Counts summing to `total`, proportional to `weights`, each at least one (largest remainder). */
+function apportion(weights: number[], total: number): number[] {
+  const sum = weights.reduce((a, b) => a + b, 0) || 1;
+  const counts = weights.map(() => 1);
+  for (let left = total - weights.length; left > 0; left -= 1) {
+    let best = 0;
+    weights.forEach((weight, k) => {
+      if ((weight / sum) * total - counts[k] > (weights[best] / sum) * total - counts[best]) best = k;
+    });
+    counts[best] += 1;
+  }
+  return counts;
+}
+/**
+ * Which groups own each region, and how many of their nodes it holds. The groups are laid end to
+ * end around the ring of regions, each over a stretch as long as its share of the nodes, so every
+ * region holds nodes in proportion to its room: a large group spans a run of neighbouring regions,
+ * small neighbours share one. A sliver of a group at a region's edge folds back into its other regions.
+ */
+function territories(model: BrainModel): Owner[][] {
+  const owners: Owner[][] = BRAIN_REGIONS.map(() => []);
+  const nodes = model.groups.map((group) => group.edits + group.records);
+  const total = nodes.reduce((a, b) => a + b, 0);
+  if (!total) {
+    if (nodes.length) owners.forEach((own) => own.push({ group: 0, nodes: 0 }));
+    return owners;
+  }
+  const capacity = REGION_WEIGHTS.reduce((a, b) => a + b, 0);
+  const spans: { region: number; overlap: number }[][] = nodes.map(() => []);
+  let start = 0;
+  nodes.forEach((count, g) => {
+    const end = start + (count / total) * capacity;
+    let edge = 0;
+    REGION_WEIGHTS.forEach((weight, region) => {
+      const overlap = Math.min(end, edge + weight) - Math.max(start, edge);
+      if (overlap > 1e-9 || (count === 0 && start >= edge && start < edge + weight)) spans[g].push({ region, overlap: Math.max(overlap, 1e-9) });
+      edge += weight;
+    });
+    start = end;
+  });
+  spans.forEach((span, g) => {
+    // Keep the group's slivers only where it is a region's main owner.
+    const main = (region: number) => !spans.some((other, h) => h !== g && other.some((s) => s.region === region && s.overlap > span.find((own) => own.region === region)!.overlap));
+    const kept = span.filter((s) => s.overlap >= 0.12 * REGION_WEIGHTS[s.region] || main(s.region));
+    const use = kept.length ? kept : [span.reduce((a, b) => (b.overlap > a.overlap ? b : a))];
+    const sum = use.reduce((a, s) => a + s.overlap, 0);
+    for (const s of use) owners[s.region].push({ group: g, nodes: (nodes[g] * s.overlap) / sum });
+  });
+  return owners;
+}
+/** Each owner's slice of a region, as a range of the region's keys: owners in ring order, sized by their nodes. */
+function patches(region: number, owners: Owner[]): Patch[] {
+  const keys = AREAS[region].keys;
+  const total = owners.reduce((sum, owner) => sum + owner.nodes, 0);
+  const share = (owner: Owner) => owner.nodes + total * 0.02 + 1e-9;
+  const sum = owners.reduce((a, owner) => a + share(owner), 0);
+  const quantile = (f: number) => (f <= 1e-9 ? -Infinity : f >= 1 - 1e-9 ? Infinity : keys[Math.min(keys.length - 1, Math.floor(f * keys.length))]);
+  let run = 0;
+  return [...owners].sort((a, b) => a.group - b.group).map((owner) => {
+    const lo = quantile(run / sum);
+    run += share(owner);
+    return { group: owner.group, lo, hi: quantile(run / sum) };
+  });
+}
+/** A point on region `region`'s surface inside `patch`; folded regions favour the gyral crowns. */
+function drawIn(region: number, patch: Patch, r: Random, folded: boolean): Vec {
+  const area = AREAS[region];
+  let best = area.draw(r);
+  let miss = Infinity;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const p = attempt ? area.draw(r) : best;
+    const key = area.key(p);
+    const off = key < patch.lo ? patch.lo - key : key > patch.hi ? key - patch.hi : 0;
+    if (off === 0 && (!folded || r() < 0.15 + 0.85 * crown(p) ** 2)) return p;
+    if (off < miss) {
+      best = p;
+      miss = off;
+    }
+  }
+  return best;
+}
+const ownerAt = (region: number, slices: Patch[], p: Vec) => {
+  const key = AREAS[region].key(p);
+  return (slices.find((patch) => key >= patch.lo && key <= patch.hi) ?? slices[key < slices[0].lo ? 0 : slices.length - 1]).group;
+};
 
 type Path = { points: Vec[]; lengths: number[]; total: number };
-/** A Catmull-Rom curve through `knots`, sampled densely so points can be placed by arc length. */
-function curve(knots: Vec[], steps = 48): Path {
+/** A centripetal Catmull-Rom curve through `knots` (no cusps or loops, however unevenly they are spaced), sampled densely so points can be placed by arc length. */
+function curve(knots: Vec[], steps: number): Path {
   const points: Vec[] = [];
-  for (let k = 0; k < knots.length - 1; k += 1) {
-    const p0 = knots[Math.max(0, k - 1)], p1 = knots[k], p2 = knots[k + 1], p3 = knots[Math.min(knots.length - 1, k + 2)];
+  const last = knots.length - 1;
+  for (let k = 0; k < last; k += 1) {
+    const p1 = knots[k], p2 = knots[k + 1];
+    // Beyond the ends, mirrored phantom knots.
+    const p0 = k > 0 ? knots[k - 1] : add(p1, add(p2, p1, -1), -1);
+    const p3 = k + 2 <= last ? knots[k + 2] : add(p2, add(p2, p1, -1));
+    const t1 = Math.sqrt(distance(p0, p1)) || 1e-6;
+    const t2 = t1 + (Math.sqrt(distance(p1, p2)) || 1e-6);
+    const t3 = t2 + (Math.sqrt(distance(p2, p3)) || 1e-6);
     for (let step = 0; step < steps; step += 1) {
-      const t = step / steps, t2 = t * t, t3 = t2 * t;
-      points.push([0, 1, 2].map((c) => 0.5 * (2 * p1[c] + (p2[c] - p0[c]) * t + (2 * p0[c] - 5 * p1[c] + 4 * p2[c] - p3[c]) * t2 + (3 * p1[c] - p0[c] - 3 * p2[c] + p3[c]) * t3)) as Vec);
+      const t = t1 + ((t2 - t1) * step) / steps;
+      const a1 = lerp(p0, p1, t / t1), a2 = lerp(p1, p2, (t - t1) / (t2 - t1)), a3 = lerp(p2, p3, (t - t2) / (t3 - t2));
+      points.push(lerp(lerp(a1, a2, t / t2), lerp(a2, a3, (t - t1) / (t3 - t1)), (t - t1) / (t2 - t1)));
     }
   }
   points.push(knots[knots.length - 1]);
@@ -396,467 +691,422 @@ function along(path: Path, s: number): Vec {
   const span = path.lengths[hi] - path.lengths[lo] || 1;
   return lerp(path.points[lo], path.points[hi], (goal - path.lengths[lo]) / span);
 }
-const arcAt = (path: Path, knot: number, steps = 48) => path.lengths[knot * steps] / path.total;
-
-// The spinal cord leaves the brainstem, runs along the level back to the sacrum and out along the
-// tail, which is held out behind the cat and lifts a little at its tip.
-const CORD = curve([
-  toCat(STEM_TOP), [2.55, 5.05, -0.22], [1.85, 5.15, 0], [0.6, 5.4, 0], [-0.4, 5.32, 0], [-1.35, 5.1, 0],
-  [-2.25, 4.85, -0.03], [-3.2, 4.66, -0.06], [-4.2, 4.62, -0.1], [-5.0, 4.85, -0.12], [-5.5, 5.3, -0.1], [-5.62, 5.62, -0.06],
-]);
-const WITHERS = arcAt(CORD, 2);
-const SACRUM = arcAt(CORD, 5);
-const TAIL_ROOT = arcAt(CORD, 6);
-/** A limb's nerve, from the cord out to the shoulder or hip and down to the floor, on the near (+z) or far side. */
-const limb = (root: number, knots: Vec[], side: number) => ({ root, path: curve([along(CORD, root), ...knots.map(([x, y, z]) => [x, y, z * side] as Vec)], 24) });
-// Fore: shoulder, elbow, wrist, paw; the far foreleg reaches back in mid-stride.
-const FORELEGS = [
-  limb(WITHERS * 0.8, [[2.75, 4.5, 0.38], [3.35, 3.85, 0.42], [3.5, 2.65, 0.42], [3.7, 0.8, 0.42], [3.82, 0.14, 0.42]], 1),
-  limb(WITHERS * 0.8, [[2.6, 4.5, 0.38], [2.85, 3.85, 0.42], [2.85, 2.7, 0.42], [2.0, 0.85, 0.42], [1.7, 0.14, 0.42]], -1),
-];
-// Hind: hip, knee, hock (the backward-pointing heel), foot and the base of the toes.
-const HINDLEGS = [
-  limb(SACRUM * 0.93, [[-1.0, 4.3, 0.5], [-0.75, 2.8, 0.52], [-1.65, 1.6, 0.5], [-1.0, 0.55, 0.5], [-0.45, 0.12, 0.5]], 1),
-  limb(SACRUM * 0.93, [[-0.8, 4.3, 0.5], [-0.35, 2.9, 0.52], [-1.0, 1.7, 0.5], [-0.75, 0.5, 0.5], [-0.5, 0.12, 0.5]], -1),
-];
-const WRIST = FORELEGS.map((leg) => arcAt(leg.path, 4, 24));
-const HOCK = HINDLEGS.map((leg) => arcAt(leg.path, 3, 24));
-/** Four toes fanning forward from the end of a leg. */
-const toesOf = (leg: Path) => {
-  const end = leg.points[leg.points.length - 1];
-  return [0, 1, 2, 3].map((k) => {
-    const spread = (k - 1.5) * 0.075;
-    return curve([end, [end[0] + 0.14, end[1] - 0.04, end[2] + spread * 0.5], [end[0] + 0.3, 0.04, end[2] + spread]], 6);
-  });
-};
-const CHEST = curve([along(CORD, 0.03), [3.0, 4.55, 0], [3.75, 3.9, 0], [3.78, 3.1, 0], [3.2, 2.72, 0]], 16);
-const BELLY = curve([[3.2, 2.72, 0], [2.2, 3.02, 0], [1.0, 3.18, 0], [-0.1, 3.3, 0], [-0.75, 3.55, 0]], 16);
-
-/** A point on an ellipsoid's surface, only where `keep` allows (given the unit direction). */
-function onEllipsoid(c: Vec, radii: Vec, r: Random, keep: (u: Vec) => boolean = () => true): Vec {
-  let u = randomUnit(r);
-  for (let attempt = 0; attempt < 16 && !keep(u); attempt += 1) u = randomUnit(r);
-  return [c[0] + u[0] * radii[0], c[1] + u[1] * radii[1], c[2] + u[2] * radii[2]];
-}
-/** A point on a tube of radius `radius(s)` around part of a path (a leg or the tail). */
-function onTube(path: Path, from: number, to: number, radius: (s: number) => number, r: Random): Vec {
-  const s = from + (to - from) * r();
-  const centre = along(path, s);
-  const ahead = along(path, Math.min(1, s + 0.01)), behind = along(path, Math.max(0, s - 0.01));
-  const tangent = normalise([ahead[0] - behind[0], ahead[1] - behind[1], ahead[2] - behind[2]]);
-  const d = randomUnit(r);
-  const dot = d[0] * tangent[0] + d[1] * tangent[1] + d[2] * tangent[2];
-  const out = normalise([d[0] - dot * tangent[0], d[1] - dot * tangent[1], d[2] - dot * tangent[2]]);
-  const width = radius(s);
-  return [centre[0] + out[0] * width, centre[1] + out[1] * width, centre[2] + out[2] * width];
-}
-
-/** One vessel: a polyline with its path distance from the brain and its width at every point. */
-export type CatVessel = { region: number; group: number; level: number; points: Vec[]; dist: number[]; width: number[] };
-/** Part of a path as a vessel; `base` is the path distance from the brain where the path starts. */
-function section(path: Path, from: number, to: number, base: number, width: [number, number]): Omit<CatVessel, "region" | "group"> {
-  const count = Math.max(2, Math.ceil(((to - from) * path.total) / 0.05) + 1);
-  const points: Vec[] = [], dist: number[] = [], widths: number[] = [];
-  for (let k = 0; k < count; k += 1) {
-    const t = k / (count - 1);
-    const s = from + (to - from) * t;
-    points.push(along(path, s));
-    dist.push(base + s * path.total);
-    widths.push(width[0] + (width[1] - width[0]) * t);
-  }
-  return { level: 0, points, dist, width: widths };
-}
-const cordAt = (s: number) => s * CORD.total;
-const cord = (from: number, to: number, width: [number, number]) => section(CORD, from, to, 0, width);
-const legSection = (leg: { root: number; path: Path }, from: number, to: number, width: [number, number]) => section(leg.path, from, to, cordAt(leg.root), width);
-const legEnd = (leg: { root: number; path: Path }) => cordAt(leg.root) + leg.path.total;
-
-type Region = {
-  name: string;
-  /** Its share of the vessel nodes, relative to the other regions. */
-  weight: number;
-  /** Branches off the trunks even with no data, so an empty region still draws its part of the cat. */
-  min: number;
-  /** How far from its trunk a branch aims before turning to the nearest surface: short twigs on legs and tail, long fans over the torso. */
-  reach: number;
-  /** The fixed vessels the branches grow from; `nodes` lets the flank add ribs as it fills. */
-  trunks: (nodes: number) => Omit<CatVessel, "region" | "group">[];
-  /** A point on the region's outer surface: where branches end, so the outline emerges from them. */
-  target: (r: Random) => Vec;
-};
-const side = (r: Random) => (r() < 0.5 ? 0 : 1);
-/** The cat's regions in anatomical order, front to back: a group that spans several takes a run of them. */
-const CAT: Region[] = [
-  { name: "withers", weight: 0.8, min: 3, reach: 0.9,
-    trunks: () => [cord(0, WITHERS, [0.085, 0.075]), ...[-1, 1].map((z) => section(curve([along(CORD, WITHERS * 0.9), [2.3, 4.75, 0.72 * z], [2.95, 4.15, 0.62 * z]], 12), 0, 1, cordAt(WITHERS * 0.9), [0.04, 0.025]))],
-    target: (r) => onEllipsoid([2.15, 4.85, 0], [0.75, 0.55, 0.8], r, (u) => u[1] > -0.4) },
-  { name: "chest", weight: 1.2, min: 3, reach: 1,
-    trunks: () => [section(CHEST, 0, 1, cordAt(0.03), [0.05, 0.04])],
-    target: (r) => onEllipsoid([3.45, 3.75, 0], [0.82, 1.0, 0.72], r, (u) => u[0] > -0.3) },
-  { name: "forelegs", weight: 1, min: 2, reach: 0.3,
-    trunks: () => FORELEGS.map((leg, k) => legSection(leg, 0, WRIST[k], [0.05, 0.04])),
-    target: (r) => { const k = side(r); return onTube(FORELEGS[k].path, 0.2, WRIST[k], (s) => 0.24 - 0.1 * s, r); } },
-  { name: "paws", weight: 0.3, min: 2, reach: 0.25,
-    trunks: () => FORELEGS.flatMap((leg, k) => [legSection(leg, WRIST[k], 1, [0.04, 0.035]), ...toesOf(leg.path).map((toe) => section(toe, 0, 1, legEnd(leg), [0.03, 0.018]))]),
-    target: (r) => { const k = side(r); return onTube(FORELEGS[k].path, WRIST[k], 1, () => 0.13, r); } },
-  { name: "back", weight: 1, min: 3, reach: 0.9,
-    trunks: () => [cord(WITHERS, SACRUM, [0.075, 0.07])],
-    target: (r) => onEllipsoid([0.45, 5.15, 0], [1.45, 0.62, 0.85], r, (u) => u[1] > -0.2) },
-  { name: "flank", weight: 2, min: 2, reach: 1.1,
-    // Ribs: intercostal vessels arching down each side from the cord, more of them as the flank fills.
-    trunks: (nodes) => {
-      const count = Math.min(6, 3 + Math.floor(nodes / 400));
-      return [-1, 1].flatMap((z) => Array.from({ length: count }, (_, k) => {
-        const s = WITHERS + (SACRUM - WITHERS) * (0.12 + (0.76 * k) / (count - 1));
-        const [x, y] = along(CORD, s);
-        return section(curve([along(CORD, s), [x - 0.1, y - 0.3, 0.8 * z], [x - 0.25, 4.05, 0.98 * z], [x - 0.35, 3.4, 0.6 * z]], 10), 0, 1, cordAt(s), [0.035, 0.022]);
-      }));
-    },
-    target: (r) => onEllipsoid([0.55, 4.25, 0], [1.55, 1.0, 0.98], r, (u) => Math.abs(u[2]) > 0.45) },
-  { name: "belly", weight: 1, min: 3, reach: 0.9,
-    trunks: () => [section(BELLY, 0, 1, cordAt(0.03) + CHEST.total, [0.045, 0.035])],
-    target: (r) => onEllipsoid([1.15, 3.42, 0], [1.75, 0.38, 0.72], r, (u) => u[1] < 0.3) },
-  { name: "rump", weight: 1.2, min: 2, reach: 1,
-    trunks: () => [-1, 1].map((z) => section(curve([along(CORD, SACRUM * 1.03), [-1.75, 4.9, 0.42 * z], [-2.0, 4.15, 0.55 * z], [-1.75, 3.35, 0.45 * z]], 12), 0, 1, cordAt(SACRUM * 1.03), [0.045, 0.03])),
-    target: (r) => onEllipsoid([-1.15, 4.25, 0], [0.82, 1.1, 0.82], r) },
-  { name: "hindlegs", weight: 1.2, min: 2, reach: 0.35,
-    trunks: () => HINDLEGS.map((leg, k) => legSection(leg, 0, HOCK[k] - 0.035, [0.055, 0.04])),
-    target: (r) => { const k = side(r); return onTube(HINDLEGS[k].path, 0.15, HOCK[k] - 0.04, (s) => 0.36 - (0.2 * s) / HOCK[k], r); } },
-  { name: "hock", weight: 0.2, min: 2, reach: 0.2,
-    trunks: () => HINDLEGS.map((leg, k) => legSection(leg, HOCK[k] - 0.035, HOCK[k] + 0.05, [0.04, 0.035])),
-    target: (r) => { const k = side(r); return onTube(HINDLEGS[k].path, HOCK[k] - 0.035, HOCK[k] + 0.05, () => 0.15, r); } },
-  { name: "feet", weight: 0.4, min: 2, reach: 0.25,
-    trunks: () => HINDLEGS.map((leg, k) => legSection(leg, HOCK[k] + 0.05, 1, [0.035, 0.03])),
-    target: (r) => { const k = side(r); return onTube(HINDLEGS[k].path, HOCK[k] + 0.05, 1, () => 0.12, r); } },
-  { name: "toes", weight: 0.2, min: 2, reach: 0.2,
-    trunks: () => HINDLEGS.flatMap((leg) => toesOf(leg.path).map((toe) => section(toe, 0, 1, legEnd(leg), [0.03, 0.018]))),
-    target: (r) => { const end = HINDLEGS[side(r)].path.points.at(-1)!; return onEllipsoid([end[0] + 0.2, 0.1, end[2]], [0.2, 0.07, 0.16], r); } },
-  { name: "tail base", weight: 0.4, min: 2, reach: 0.3,
-    trunks: () => [cord(SACRUM, TAIL_ROOT, [0.07, 0.06])],
-    target: (r) => onTube(CORD, SACRUM, TAIL_ROOT, () => 0.24, r) },
-  { name: "tail", weight: 0.7, min: 3, reach: 0.3,
-    trunks: () => [cord(TAIL_ROOT, 1, [0.06, 0.03])],
-    target: (r) => onTube(CORD, TAIL_ROOT, 1, (s) => 0.2 - (0.12 * (s - TAIL_ROOT)) / (1 - TAIL_ROOT), r) },
-];
-export const CAT_REGIONS = CAT.map((region) => region.name);
-/** Share of records drawn as beads on their group's vessels; the rest form the brain, ears, eyes and whiskers. */
-const RECORD_VESSELS = 0.06;
-/** Brain points are drawn this much smaller: thousands share the small cortex, and full-size glows would add up to white. */
-const BRAIN_POINT = 0.8;
-
-/** Counts summing to `total`, proportional to `weights`, each at least one (largest remainder). */
-function apportion(weights: number[], total: number): number[] {
-  const sum = weights.reduce((a, b) => a + b, 0) || 1;
-  const counts = weights.map(() => 1);
-  for (let left = total - weights.length; left > 0; left -= 1) {
-    let best = 0;
-    weights.forEach((weight, k) => {
-      if ((weight / sum) * total - counts[k] > (weights[best] / sum) * total - counts[best]) best = k;
-    });
-    counts[best] += 1;
-  }
-  return counts;
-}
-/**
- * Which groups own each region, and how many of their vessel nodes it holds. The groups are laid
- * end to end along the regions (front to back), each over a stretch as long as its share of the
- * nodes, so every region holds nodes in proportion to its room: a large group spans a run of
- * regions, small neighbours share one. A sliver of a group at a region's edge folds back into
- * the group's other regions.
- */
-function territories(model: BrainModel): { group: number; nodes: number }[][] {
-  const owners: { group: number; nodes: number }[][] = CAT.map(() => []);
-  const nodes = model.groups.map((group) => group.edits + group.records * RECORD_VESSELS);
-  const total = nodes.reduce((a, b) => a + b, 0);
-  if (!total) {
-    if (nodes.length) CAT.forEach((_, index) => owners[index].push({ group: 0, nodes: 0 }));
-    return owners;
-  }
-  const capacity = CAT.reduce((sum, region) => sum + region.weight, 0);
-  const spans: { region: number; overlap: number }[][] = nodes.map(() => []);
-  let start = 0;
-  nodes.forEach((count, g) => {
-    const end = start + (count / total) * capacity;
-    let edge = 0;
-    CAT.forEach((region, index) => {
-      const overlap = Math.min(end, edge + region.weight) - Math.max(start, edge);
-      if (overlap > 1e-9 || (count === 0 && start >= edge && start < edge + region.weight)) spans[g].push({ region: index, overlap: Math.max(overlap, 1e-9) });
-      edge += region.weight;
-    });
-    start = end;
-  });
-  spans.forEach((span, g) => {
-    // Keep the group's slivers only where it is a region's main owner.
-    const main = (index: number) => !spans.some((other, h) => h !== g && other.some((s) => s.region === index && s.overlap > span.find((own) => own.region === index)!.overlap));
-    const kept = span.filter((s) => s.overlap >= 0.12 * CAT[s.region].weight || main(s.region));
-    const use = kept.length ? kept : [span.reduce((a, b) => (b.overlap > a.overlap ? b : a))];
-    const sum = use.reduce((a, s) => a + s.overlap, 0);
-    for (const s of use) owners[s.region].push({ group: g, nodes: (nodes[g] * s.overlap) / sum });
-  });
-  // The region's main owner leads it (its trunks are drawn from that group).
-  for (const own of owners) own.sort((a, b) => b.nodes - a.nodes || a.group - b.group);
-  return owners;
-}
-
-const BRANCH_WIDTH = [0, 0.032, 0.022, 0.015];
-/** Vessel nodes per unit of vessel length a region grows toward, so every region glows about as densely. */
-const NODES_PER_UNIT = 40;
-const MOST_TREES = 90;
-/**
- * Branching trees off a region's trunks, more and deeper as the region holds more nodes: each
- * branch runs from a trunk to the region's surface and forks into finer twigs ending near it.
- * Each tree has its own seed, so adding data adds trees and never moves the existing ones.
- */
-function grow(region: Region, nodes: number, trunks: Omit<CatVessel, "region" | "group">[], least: number) {
-  const depth = nodes < 80 ? 1 : nodes < 1200 ? 2 : 3;
-  const lengths = trunks.map((trunk) => trunk.dist[trunk.dist.length - 1] - trunk.dist[0]);
-  const sum = lengths.reduce((a, b) => a + b, 0);
-  const goal = nodes / NODES_PER_UNIT;
-  let grown = sum;
-  const trees: Omit<CatVessel, "region" | "group">[][] = [];
-  for (let b = 0; b < MOST_TREES && (b < Math.max(least, region.min) || grown < goal); b += 1) {
-    const r = stream(hash32(`vessel:${region.name}:${b}`));
-    let roll = r() * sum, pick = 0;
-    while (pick < trunks.length - 1 && (roll -= lengths[pick]) > 0) pick += 1;
-    const trunk = trunks[pick];
-    const at = Math.round((0.08 + 0.84 * r()) * (trunk.points.length - 1));
-    const start = trunk.points[at];
-    // The surface point nearest to where the branch aims: a twig hugging a leg, or a fan across the torso.
-    const near = (aim: Vec, tries: number) => {
-      let best = region.target(r);
-      for (let k = 1; k < tries; k += 1) {
-        const candidate = region.target(r);
-        if (distance(candidate, aim) < distance(best, aim)) best = candidate;
-      }
-      return best;
-    };
-    const tree: Omit<CatVessel, "region" | "group">[] = [];
-    const branch = (from: Vec, base: number, target: Vec, level: number) => {
-      const span = distance(from, target);
-      const bend = randomUnit(r);
-      const mid: Vec = [0, 1, 2].map((c) => (from[c] + target[c]) / 2 + bend[c] * span * 0.16) as Vec;
-      const path = curve([from, mid, target], Math.max(2, Math.ceil(span / 0.1)));
-      const width = BRANCH_WIDTH[level];
-      const vessel = { level, points: path.points, dist: path.lengths.map((length) => base + length), width: path.lengths.map((length) => width * (1 - (0.45 * length) / (path.total || 1))) };
-      tree.push(vessel);
-      grown += path.total;
-      if (level >= depth) return;
-      for (let child = 0; child < 2; child += 1) {
-        const k = Math.round((0.35 + 0.5 * r()) * (path.points.length - 1));
-        const offset = randomUnit(r);
-        branch(path.points[k], vessel.dist[k], near([0, 1, 2].map((c) => target[c] + offset[c] * span * 0.5) as Vec, 3), level + 1);
-      }
-    };
-    const aim = randomUnit(r);
-    branch(start, trunk.dist[at], near([0, 1, 2].map((c) => start[c] + aim[c] * region.reach) as Vec, 6), 1);
-    trees.push(tree);
-  }
-  return trees;
-}
-
-/**
- * The cat as vessels: each region's trunks and branching trees, each vessel owned by a group.
- * Depends only on the groups and their sizes, so the layout and the scaffold always agree.
- */
-export function catAnatomy(model: BrainModel): { regions: { name: string; groups: number[] }[]; vessels: CatVessel[] } {
-  const owners = territories(model);
-  const vessels: CatVessel[] = [];
-  CAT.forEach((region, index) => {
-    const own = owners[index];
-    const nodes = own.reduce((sum, owner) => sum + owner.nodes, 0);
-    const lead = own[0]?.group ?? -1;
-    const trunks = region.trunks(nodes);
-    for (const trunk of trunks) vessels.push({ ...trunk, region: index, group: lead });
-    // A shared region deals its trees to its groups by size, at least one each.
-    const trees = grow(region, nodes, trunks, own.length);
-    const deal = own.length ? apportion(own.map((owner) => owner.nodes), trees.length) : [trees.length];
-    let next = 0;
-    deal.forEach((count, k) => {
-      for (const tree of trees.slice(next, next + count)) for (const vessel of tree) vessels.push({ ...vessel, region: index, group: own[k]?.group ?? -1 });
-      next += count;
-    });
-  });
-  return { regions: CAT.map((region, index) => ({ name: region.name, groups: owners[index].map((owner) => owner.group) })), vessels };
-}
-
-/**
- * Picks points on vessels by quantile of their path distance from the brain (0: nearest), with
- * thicker vessels holding more points. Returns the point, jittered within the vessel, and its distance.
- */
-function vesselSampler(vessels: CatVessel[]) {
-  const segments: { a: Vec; b: Vec; width: number; dist: number; weight: number }[] = [];
-  for (const vessel of vessels)
-    for (let k = 0; k < vessel.points.length - 1; k += 1) {
-      const width = (vessel.width[k] + vessel.width[k + 1]) / 2;
-      const length = distance(vessel.points[k], vessel.points[k + 1]);
-      segments.push({ a: vessel.points[k], b: vessel.points[k + 1], width, dist: (vessel.dist[k] + vessel.dist[k + 1]) / 2, weight: length * (0.3 + width / 0.05) });
-    }
-  segments.sort((x, y) => x.dist - y.dist);
-  const cumulative = new Float64Array(segments.length);
-  let total = 0;
-  segments.forEach((segment, k) => (cumulative[k] = total += segment.weight));
-  return (q: number, r: Random): { p: Vec; dist: number } => {
-    if (!segments.length) return { p: CAT_BRAIN, dist: 0 };
-    const goal = clamp01(q) * total;
-    let lo = 0, hi = segments.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (cumulative[mid] < goal) lo = mid + 1;
-      else hi = mid;
-    }
-    const { a, b, width, dist } = segments[lo];
-    const p = lerp(a, b, r());
-    const spread = width * 0.35;
-    return { p: [p[0] + gauss(r) * spread, p[1] + gauss(r) * spread, p[2] + gauss(r) * spread], dist };
+/** Longest straight piece of a filament: short enough to read as a smooth curve. */
+const STEP = 0.075;
+/** A smooth spline through `knots`, in even pieces of at most STEP (and at least four). */
+function spline(knots: Vec[]): Vec[] {
+  // Longer runs of knots first lose their kinks to two passes of a moving average (the ends stay put).
+  if (knots.length >= 4)
+    for (let pass = 0; pass < 2; pass += 1)
+      for (let k = knots.length - 2; k > 0; k -= 1) knots[k] = lerp(lerp(knots[k - 1], knots[k + 1], 0.5), knots[k], 0.5);
+  const path = curve(knots, 16);
+  const pieces = Math.max(5, Math.ceil(path.total / STEP));
+  const points = Array.from({ length: pieces + 1 }, (_, k) => along(path, k / pieces));
+  // Where knots still meet at a corner, relax the samples around it until no bend exceeds ~20°.
+  const sharp = (k: number) => {
+    const u = add(points[k], points[k - 1], -1), v = add(points[k + 1], points[k], -1);
+    return dot(u, v) < 0.94 * Math.hypot(...u) * Math.hypot(...v);
   };
+  for (let pass = 0; pass < 40; pass += 1) {
+    const corners = points.slice(1, -1).flatMap((_, k) => (sharp(k + 1) ? [k + 1] : []));
+    if (!corners.length) break;
+    for (const corner of corners)
+      for (let k = Math.max(1, corner - 2); k <= Math.min(points.length - 2, corner + 2); k += 1) points[k] = lerp(lerp(points[k - 1], points[k + 1], 0.5), points[k], 0.5);
+  }
+  return points;
+}
+/** A smooth path wandering `length` under region `region`'s surface from `from`, rising steadily to `depth` below it. */
+function wander(region: number, from: Vec, length: number, depth: number, r: Random): Vec[] {
+  const area = AREAS[region];
+  const tangent = (p: Vec, v: Vec) => {
+    const n = normalise(add(area.surface(p), area.core(p), -1));
+    return normalise(add(v, n, -dot(v, n)));
+  };
+  const start = distance(area.surface(from), from);
+  const steps = Math.max(2, Math.round(length / 0.12));
+  const knots: Vec[] = [from];
+  let p = from;
+  let heading = tangent(p, randomUnit(r));
+  for (let k = 1; k <= steps; k += 1) {
+    heading = tangent(p, add(heading, randomUnit(r), 0.25));
+    p = deepen(region, add(p, heading, length / steps), start + ((depth - start) * k) / steps);
+    knots.push(p);
+  }
+  return spline(knots);
 }
 
-/** Whiskers: three bright lines fanning out from each side of the muzzle. */
-function whiskerPoint(r: Random): Vec {
-  const across = r() < 0.5 ? -1 : 1;
-  const row = Math.floor(r() * 3);
-  const t = r();
-  const p = inHead(1.12 + 0.3 * t, -0.5 - 0.07 * row + t * (0.14 - 0.14 * row) - 0.16 * t * t, across * (0.26 + 0.95 * t));
-  return [p[0] + gauss(r) * 0.006, p[1] + gauss(r) * 0.006, p[2] + gauss(r) * 0.006];
-}
-/** Two small bright eyes just in front of the brain. */
-function eyePoint(r: Random): Vec {
-  const p = inHead(1.1, -0.18, r() < 0.5 ? -0.42 : 0.42);
-  return [p[0] + gauss(r) * 0.03, p[1] + gauss(r) * 0.03, p[2] + gauss(r) * 0.03];
-}
-// Each ear is its veins: a front and a back edge meeting at the tip, and a midrib up its middle.
-const EARS = [-1, 1].flatMap((s) => {
-  const front = inHead(0.2, 0.74, 0.6 * s), back = inHead(-0.55, 0.66, 0.88 * s), tip = inHead(-0.25, 1.75, 1.15 * s), root = inHead(-0.2, 0.7, 0.74 * s);
-  const bow = (a: Vec, b: Vec, out: number): Vec => { const m = lerp(a, b, 0.5); return [m[0] + ACROSS[0] * out * s, m[1], m[2] + ACROSS[2] * out * s]; };
-  return [curve([front, bow(front, tip, 0.05), tip], 8), curve([back, bow(back, tip, 0.06), tip], 8), curve([root, lerp(root, tip, 0.8)], 8)];
-});
-const EAR_LENGTH = EARS.reduce((sum, ear) => sum + ear.total, 0);
-function earPoint(r: Random): Vec {
-  let roll = r() * EAR_LENGTH, pick = 0;
-  while (pick < EARS.length - 1 && (roll -= EARS[pick].total) > 0) pick += 1;
-  const p = along(EARS[pick], r());
-  return [p[0] + gauss(r) * 0.012, p[1] + gauss(r) * 0.012, p[2] + gauss(r) * 0.012];
-}
-
-/** Ridges of a folded cortex, in roughly [-1, 1]. */
-function gyri(d: Vec): number {
-  return 0.6 * Math.sin(9 * d[0] + 4 * Math.sin(5 * d[2])) * Math.cos(8 * d[1] + 3 * Math.sin(6 * d[0]))
-    + 0.4 * Math.sin(13 * d[2] + 7 * d[1] + 2 * Math.cos(9 * d[0]));
-}
-/** Lobe centres spread over the upper ~70% of the cerebrum, one per group that has records. */
-function lobes(model: BrainModel) {
-  const records = model.groups.reduce((sum, group) => sum + group.records, 0) || 1;
-  const count = model.groups.length;
-  return model.groups.map((group, index) => {
-    const y = 1 - ((index + 0.5) / count) * 1.32;
-    const ring = Math.sqrt(1 - y * y);
-    const angle = index * GOLDEN + 0.6;
-    const share = group.records / records;
-    const angleSpan = group.records ? Math.min(1.6, Math.max(0.24, Math.acos(Math.max(-1, 1 - 2 * share * 0.75)))) : 1e-3;
-    return { dir: [ring * Math.cos(angle), y, ring * Math.sin(angle)] as Vec, angle: angleSpan };
-  });
-}
-/** A point on the folded cortex, brain-local. */
-function cortexPoint(dir: Vec, r: Random): Vec {
-  let d = dir;
-  if (d[1] < -0.45) d = normalise([d[0], -0.45 - (d[1] + 0.45) * 0.25, d[2]]);
-  const fold = gyri(d);
-  const depth = (1 - 0.14 * Math.pow(r(), 2.4)) * (1 + 0.05 * fold);
-  const side = d[0] >= 0 ? 1 : -1;
-  const y = d[1] * CEREBRUM.ry * depth;
-  return [side * 0.035 + d[0] * CEREBRUM.rx * depth, y < 0 ? y * 0.82 : y, d[2] * CEREBRUM.rz * depth];
-}
-/** A point on the folded cerebellum tucked behind the cerebrum, brain-local. */
-function cerebellumPoint(r: Random): Vec {
-  const d = randomUnit(r);
-  const depth = 0.84 + 0.16 * r();
-  const folia = 0.022 * Math.sin(Math.atan2(d[1], d[2]) * 24);
-  return [CEREBELLUM.x + d[0] * CEREBELLUM.rx * depth, CEREBELLUM.y + d[1] * CEREBELLUM.ry * depth + folia, CEREBELLUM.z + d[2] * CEREBELLUM.rz * depth];
-}
-/** The lobe a cortex direction belongs to: nearest centre, scaled by each lobe's size (a weighted Voronoi). */
-function lobeAt(d: Vec, lobeOf: { dir: Vec; angle: number }[]) {
-  let best = 0;
-  let bestScore = Infinity;
-  lobeOf.forEach((lobe, index) => {
-    const score = Math.acos(Math.max(-1, Math.min(1, d[0] * lobe.dir[0] + d[1] * lobe.dir[1] + d[2] * lobe.dir[2]))) / lobe.angle;
-    if (score < bestScore) {
-      best = index;
-      bestScore = score;
+/** One filament of the network: a smooth polyline with its width at each end, colour and pulse phase. */
+type Filament = { points: Vec[]; width: [number, number]; group: number; other: number; base: number; seed: number };
+/**
+ * The network as segments (instanced by the renderer): xyz at each end, width and path distance at each
+ * end (pulses travel along it), a pulse phase, and the two groups whose colours blend (`mixes`: 0 to 1) along it.
+ */
+export type BrainNetwork = {
+  count: number;
+  starts: Float32Array;
+  ends: Float32Array;
+  widths: Float32Array;
+  dists: Float32Array;
+  seeds: Float32Array;
+  groups: Float32Array;
+  others: Float32Array;
+  mixes: Float32Array;
+};
+function pack(filaments: Filament[]): BrainNetwork {
+  const count = filaments.reduce((sum, filament) => sum + filament.points.length - 1, 0);
+  const network: BrainNetwork = {
+    count,
+    starts: new Float32Array(count * 3), ends: new Float32Array(count * 3), widths: new Float32Array(count * 2), dists: new Float32Array(count * 2),
+    seeds: new Float32Array(count), groups: new Float32Array(count), others: new Float32Array(count), mixes: new Float32Array(count),
+  };
+  let k = 0;
+  for (const { points, width, group, other, base, seed } of filaments) {
+    const pieces = points.length - 1;
+    let run = base;
+    for (let j = 0; j < pieces; j += 1, k += 1) {
+      network.starts.set(points[j], k * 3);
+      network.ends.set(points[j + 1], k * 3);
+      network.widths[k * 2] = width[0] + ((width[1] - width[0]) * j) / pieces;
+      network.widths[k * 2 + 1] = width[0] + ((width[1] - width[0]) * (j + 1)) / pieces;
+      network.dists[k * 2] = run;
+      run += distance(points[j], points[j + 1]);
+      network.dists[k * 2 + 1] = run;
+      network.seeds[k] = seed;
+      network.groups[k] = group;
+      network.others[k] = other;
+      network.mixes[k] = (j + 0.5) / pieces;
     }
-  });
-  return best;
+  }
+  return network;
 }
-function anatomy(data: BrainData, model: BrainModel, times: Float64Array, out: Float32Array, births: Float32Array, scales: Float32Array) {
-  const cat = catAnatomy(model);
-  const lobeOf = lobes(model);
-  const farthest = Math.max(1, ...cat.vessels.map((vessel) => vessel.dist[vessel.dist.length - 1]));
-  const onVessels: number[][] = model.groups.map(() => []);
-  const inked: number[] = [];
+const runLength = (points: Vec[], upTo = points.length - 1) => {
+  let sum = 0;
+  for (let k = 0; k < upTo; k += 1) sum += distance(points[k], points[k + 1]);
+  return sum;
+};
+
+/** Where a projection fibre to `end` (deep in `region`) leaves the hub and the knots it bends through. */
+function projection(region: number, end: Vec, r: Random): Vec[] {
+  if (region === STEM_REGION) {
+    const start = add(lerp(STEM_TOP, BRAIN_HUB, 0.5), jitter(r, 0.05));
+    return [start, add(lerp(start, end, 0.5), jitter(r, 0.06)), end];
+  }
+  if (CEREBELLUM_REGIONS.includes(region)) {
+    // Through the cerebellar peduncles from the pons.
+    const side = region === CEREBELLUM_REGIONS[0] ? 1 : -1;
+    return [add(lerp(STEM_TOP, STEM_BOTTOM, 0.3), jitter(r, 0.06)), add([-1.35, -1.35, 0.5 * side], jitter(r, 0.1)), end];
+  }
+  // Each fibre leaves the side of its hemisphere's thalamus that faces its target, so they fan rather than meet in a point.
+  const thalamus: Vec = [BRAIN_HUB[0], BRAIN_HUB[1], end[2] >= 0 ? 0.3 : -0.3];
+  const toward = normalise(add(end, thalamus, -1));
+  const start = add(add(thalamus, [toward[0] * 0.32, toward[1] * 0.2, toward[2] * 0.14]), jitter(r, 0.07));
+  const bend = 0.1 * Math.min(1, distance(start, end) / 2);
+  return [start, add(lerp(start, end, 0.35), add([0, bend, 0], jitter(r, bend))), add(lerp(start, end, 0.7), jitter(r, bend)), end];
+}
+/** Long association tracts within each hemisphere: from one region to another through `knots` (left side; z mirrors). */
+const TRACTS: { from: number; to: number; hints: [Vec, Vec]; knots: Vec[] }[] = [
+  // Arcuate fasciculus: frontal around the Sylvian fissure to temporal.
+  { from: 0, to: 1, hints: [[1.3, 0.3, 1.5], [-0.3, -0.9, 1.7]], knots: [[0.6, 0.15, 1.45], [-0.3, 0.5, 1.5], [-1.05, 0.3, 1.45], [-1.25, -0.2, 1.45], [-0.9, -0.6, 1.5]] },
+  // Superior longitudinal fasciculus: frontal over to occipital.
+  { from: 0, to: 3, hints: [[1.5, 0.9, 1.2], [-2.3, 0.4, 0.9]], knots: [[0.9, 0.85, 1.25], [-0.5, 1.05, 1.2], [-1.6, 0.7, 1.0]] },
+  // Inferior longitudinal fasciculus: temporal to occipital.
+  { from: 1, to: 3, hints: [[0.6, -1.0, 1.6], [-2.4, -0.3, 1.0]], knots: [[-0.3, -0.75, 1.35], [-1.3, -0.55, 1.15]] },
+  // Uncinate fasciculus: the underside of the frontal lobe hooked to the temporal pole.
+  { from: 0, to: 1, hints: [[1.8, -0.4, 0.8], [1.1, -1.1, 1.6]], knots: [[1.15, -0.5, 0.95], [0.95, -0.8, 1.3]] },
+  // Cingulum: along the medial wall, frontal to parietal.
+  { from: 0, to: 2, hints: [[1.6, 0.7, 0.4], [-1.2, 1.1, 0.4]], knots: [[1.0, 0.85, 0.32], [-0.2, 1.05, 0.3], [-1.0, 0.95, 0.32]] },
+  // Cerebellar peduncle: brainstem to cerebellum.
+  { from: -1, to: -2, hints: [[-0.65, -1.6, 0.15], [-2.2, -1.3, 0.9]], knots: [[-0.95, -1.55, 0.3], [-1.3, -1.45, 0.6]] },
+];
+/** Commissures between the hemispheres: the corpus callosum (frontal, parietal, occipital) and the anterior commissure (temporal). */
+const COMMISSURES: { lobe: number; hint: Vec; knots: Vec[] }[] = [
+  { lobe: 0, hint: [1.4, 0.9, 1.0], knots: [[0.9, 0.5, 0.6], [0.9, 0.68, 0], [0.9, 0.5, -0.6]] },
+  { lobe: 2, hint: [-0.7, 1.3, 1.0], knots: [[-0.4, 0.55, 0.6], [-0.4, 0.72, 0], [-0.4, 0.55, -0.6]] },
+  { lobe: 3, hint: [-2.3, 0.4, 0.8], knots: [[-1.3, 0.4, 0.6], [-1.3, 0.55, 0], [-1.3, 0.4, -0.6]] },
+  { lobe: 1, hint: [0.6, -0.9, 1.6], knots: [[0.3, -0.4, 0.7], [0.3, -0.3, 0], [0.3, -0.4, -0.7]] },
+];
+const mirror = (p: Vec, side: number): Vec => [p[0], p[1], p[2] * side];
+/** Most fibres in one tract, and most neuron-to-neuron and record links drawn. */
+const MOST_FIBRES = 8;
+const MOST_LOCAL = 4000;
+const MOST_LINKS = 900;
+
+function anatomy(data: BrainData, model: BrainModel, times: Float64Array, parents: Int32Array, out: Float32Array, births: Float32Array) {
+  const owners = territories(model);
+  const slices = owners.map((own, region) => (own.length ? patches(region, own) : []));
+  const regionsOf = model.groups.map((_, g) => owners.flatMap((own, region) => own.filter((owner) => owner.group === g).map((owner) => ({ region, nodes: owner.nodes }))));
+  const total = data.nodes.length;
+  const filaments: Filament[] = [];
+  const branches = total < 600 ? 2 : total < 3000 ? 3 : 4;
+  const twigs = total < 300 ? 0 : total < 1500 ? 1 : 2;
+  /** Fine branches spreading under the cortex from near the end of `fibre`, in `group`'s colour. */
+  const arbor = (region: number, fibre: Vec[], base: number, group: number, count: number, r: Random) => {
+    const fork = Math.max(0, fibre.length - 3);
+    const forkDist = base + runLength(fibre, fork);
+    for (let b = 0; b < count; b += 1) {
+      const points = wander(region, fibre[fork], 0.3 + 0.35 * r(), 0.07, r);
+      filaments.push({ points, width: [0.011, 0.006], group, other: group, base: forkDist, seed: r() });
+      for (let t = 0; t < twigs; t += 1) {
+        const k = Math.floor((0.35 + 0.5 * r()) * (points.length - 1));
+        filaments.push({ points: wander(region, points[k], 0.15 + 0.2 * r(), 0.04, r), width: [0.006, 0.0035], group, other: group, base: forkDist + runLength(points, k), seed: r() });
+      }
+    }
+  };
+
+  // Projection fibres from the hub to every region, dealt to its groups by size.
+  owners.forEach((own, region) => {
+    if (!own.length) return;
+    const nodes = own.reduce((sum, owner) => sum + owner.nodes, 0);
+    const deal = apportion(own.map((owner) => owner.nodes || 1), Math.max(own.length, Math.min(12, 2 + Math.floor(nodes / 220))));
+    let f = 0;
+    own.forEach((owner, k) => {
+      for (let n = 0; n < deal[k]; n += 1, f += 1) {
+        const r = stream(hash32(`fibre:${BRAIN_REGIONS[region]}:${f}`));
+        const end = deepen(region, drawIn(region, slices[region].find((patch) => patch.group === owner.group)!, r, false), 0.28);
+        const points = spline(projection(region, end, r));
+        filaments.push({ points, width: [0.024, 0.012], group: owner.group, other: owner.group, base: 0, seed: r() });
+        arbor(region, points, 0, owner.group, branches, r);
+      }
+    });
+  });
+  // Association tracts within each hemisphere and commissures across: bundles of fibres between regions.
+  const bundle = Math.min(MOST_FIBRES, 2 + Math.floor(total / 800));
+  /** The region point (deep in its white matter) nearest to `hint` among a few draws. */
+  const endIn = (region: number, hint: Vec, r: Random) => {
+    let best = AREAS[region].draw(r);
+    for (let k = 0; k < 5; k += 1) {
+      const p = AREAS[region].draw(r);
+      if (distance(p, hint) < distance(best, hint)) best = p;
+    }
+    return deepen(region, best, 0.3);
+  };
+  const tract = (name: string, a: number, b: number, hints: [Vec, Vec], knots: Vec[]) => {
+    if (!slices[a].length || !slices[b].length) return;
+    for (let n = 0; n < bundle; n += 1) {
+      const r = stream(hash32(`tract:${name}:${n}`));
+      const from = endIn(a, hints[0], r), to = endIn(b, hints[1], r);
+      const offset = jitter(r, 0.12);
+      const points = spline([from, ...knots.map((knot) => add(add(knot, offset), jitter(r, 0.04))), to]);
+      const [g, h] = [ownerAt(a, slices[a], from), ownerAt(b, slices[b], to)];
+      filaments.push({ points, width: [0.018, 0.014], group: g, other: h, base: 0, seed: r() });
+      arbor(b, points, 0, h, 1, r);
+      arbor(a, [...points].reverse(), 0, g, 1, r);
+    }
+  };
+  [1, -1].forEach((side, s) => {
+    const lobes = LOBE_REGIONS[s];
+    const regionOf = (index: number) => (index === -1 ? STEM_REGION : index === -2 ? CEREBELLUM_REGIONS[s] : lobes[index]);
+    TRACTS.forEach((t, k) => tract(`${side}:${k}`, regionOf(t.from), regionOf(t.to), [mirror(t.hints[0], side), mirror(t.hints[1], side)], t.knots.map((knot) => mirror(knot, side))));
+  });
+  COMMISSURES.forEach((c, k) => tract(`commissure:${k}`, LOBE_REGIONS[0][c.lobe], LOBE_REGIONS[1][c.lobe], [c.hint, mirror(c.hint, -1)], c.knots));
+
+  // Neurons: each record in the cortex of one of its group's regions, on the gyral crowns of its group's patch.
+  const somata: number[][] = BRAIN_REGIONS.map(() => []);
+  const regionOfNode = new Int16Array(total).fill(-1);
+  const edits: number[][] = model.groups.map(() => []);
   data.nodes.forEach((node, i) => {
     const g = model.groupOf[i];
     if (node.kind === "edit") {
-      onVessels[g].push(i);
+      edits[g].push(i);
       return;
     }
     const r = stream(hash32(node.id));
-    const roll = r();
-    let p: Vec;
-    if (roll < 0.035) {
-      p = whiskerPoint(r);
-      births[i] = 0.2 + 0.06 * r();
-      inked.push(i);
-    } else if (roll < 0.045) {
-      p = eyePoint(r);
-      births[i] = 0.18 + 0.04 * r();
-      inked.push(i);
-    } else if (roll < 0.105) {
-      p = earPoint(r);
-      births[i] = 0.14 + 0.1 * r();
-    } else if (roll < 0.105 + RECORD_VESSELS) {
-      onVessels[g].push(i);
-      return;
-    } else {
-      if (roll < 0.3) p = toCat(cerebellumPoint(r));
-      else {
-        // Each group owns a coloured lobe; draws are kept inside it and favour the ridges of the folds.
-        const lobe = lobeOf[g];
-        const spread = Math.min(Math.PI, Math.max(0.36, lobe.angle * 1.5));
-        let d = capDirection(lobe.dir, spread, r);
-        for (let attempt = 0; attempt < 12; attempt += 1) {
-          if (lobeAt(d, lobeOf) === g && (gyri(d) + 1) / 2 >= r() * 0.8) break;
-          d = capDirection(lobe.dir, spread, r);
-        }
-        p = toCat(cortexPoint(d, r));
-      }
-      // The brain lights first, from its centre out.
-      births[i] = 0.02 + 0.16 * clamp01(distance(p, CAT_BRAIN) / 1.0);
-      scales[i] = BRAIN_POINT;
-    }
+    const mine = regionsOf[g];
+    let roll = r() * mine.reduce((sum, own) => sum + own.nodes + 1e-9, 0), pick = 0;
+    while (pick < mine.length - 1 && (roll -= mine[pick].nodes + 1e-9) > 0) pick += 1;
+    const region = mine[pick].region;
+    // In the cortical layers just under the folded surface.
+    const top = drawIn(region, slices[region].find((patch) => patch.group === g)!, r, region !== STEM_REGION && !CEREBELLUM_REGIONS.includes(region));
+    const core = AREAS[region].core(top);
+    const p = lerp(top, core, (0.02 + 0.22 * r() ** 1.6) / (distance(top, core) || 1));
     out.set(p, i * 3);
+    births[i] = birthAt(p);
+    somata[region].push(i);
+    regionOfNode[i] = region;
   });
-  // A group's edits (and a few of its records) glow along its vessels in time order: the newest
-  // nearest the brain, the oldest out at the tips. They light up from the brain outward.
-  onVessels.forEach((members, g) => {
-    const sample = vesselSampler(cat.vessels.filter((vessel) => vessel.group === g));
+  const position = (i: number): Vec => [out[i * 3], out[i * 3 + 1], out[i * 3 + 2]];
+  // Edits travel their group's own fibres (projections and the arbors they fan into) in time order:
+  // the newest nearest the hub, the oldest out at the finest branches under the cortex.
+  const own = model.groups.map(() => [] as Filament[]);
+  for (const filament of filaments) if (filament.group === filament.other && filament.group >= 0) own[filament.group].push(filament);
+  edits.forEach((members, g) => {
+    const pieces: { a: Vec; b: Vec; dist: number; length: number }[] = [];
+    for (const { points, base } of own[g]) {
+      let run = base;
+      for (let k = 0; k + 1 < points.length; k += 1) {
+        const length = distance(points[k], points[k + 1]);
+        pieces.push({ a: points[k], b: points[k + 1], dist: run + length / 2, length });
+        run += length;
+      }
+    }
+    if (!pieces.length) return;
+    pieces.sort((x, y) => x.dist - y.dist);
+    const cumulative = new Float64Array(pieces.length);
+    let sum = 0;
+    pieces.forEach((piece, k) => (cumulative[k] = sum += piece.length));
     const rank = timeRank(members, times);
     for (const i of members) {
       const r = stream(hash32(data.nodes[i].id) ^ 0x5bd1e995);
       const age = 1 - (rank.get(i) ?? r());
-      const { p, dist } = sample(age * 0.94 + r() * 0.06, r);
-      out.set(p, i * 3);
-      births[i] = clamp01(0.24 + (0.74 * dist) / farthest);
+      const goal = clamp01(0.04 + 0.92 * age + 0.04 * (r() - 0.5)) * sum;
+      let lo = 0, hi = pieces.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cumulative[mid] < goal) lo = mid + 1;
+        else hi = mid;
+      }
+      const p = lerp(pieces[lo].a, pieces[lo].b, r());
+      const spread = 0.012;
+      const placed: Vec = [p[0] + gauss(r) * spread, p[1] + gauss(r) * spread, p[2] + gauss(r) * spread];
+      out.set(placed, i * 3);
+      births[i] = birthAt(placed);
     }
   });
-  // Labels float over each group's own region; a group without vessels is labelled off its lobe.
-  const anchors = new Float32Array(model.groups.length * 3);
-  model.groups.forEach((_, g) => {
-    const points = cat.vessels.filter((vessel) => vessel.group === g && vessel.level > 0).flatMap((vessel) => vessel.points);
-    const own = points.length ? points : cat.vessels.filter((vessel) => vessel.group === g).flatMap((vessel) => vessel.points);
-    if (own.length) anchors.set([0, 1, 2].map((c) => own.reduce((sum, p) => sum + p[c], 0) / own.length), g * 3);
-    else anchors.set(toCat(cortexPoint(lobeOf[g].dir, () => 0).map((value) => value * 1.5) as Vec), g * 3);
+  // Local circuits: each neuron reaches its nearest neighbour in the same region along a short curved dendrite.
+  const cell = 0.5;
+  const pairs = new Set<string>();
+  let local = 0;
+  somata.forEach((members, region) => {
+    const grid = new Map<string, number[]>();
+    const cellOf = (p: Vec) => p.map((value) => Math.floor(value / cell));
+    for (const i of members) {
+      const key = cellOf(position(i)).join(",");
+      grid.set(key, [...(grid.get(key) ?? []), i]);
+    }
+    for (const i of members) {
+      if (local >= MOST_LOCAL) return;
+      const a = position(i);
+      const [cx, cy, cz] = cellOf(a);
+      let best = -1, bestDistance = cell;
+      for (let dx = -1; dx <= 1; dx += 1)
+        for (let dy = -1; dy <= 1; dy += 1)
+          for (let dz = -1; dz <= 1; dz += 1)
+            for (const j of grid.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? []) {
+              const d = distance(a, position(j));
+              if (j !== i && d < bestDistance) {
+                best = j;
+                bestDistance = d;
+              }
+            }
+      const key = `${Math.min(i, best)}:${Math.max(i, best)}`;
+      if (best < 0 || pairs.has(key)) continue;
+      pairs.add(key);
+      local += 1;
+      const r = stream(hash32(`local:${data.nodes[i].id}`));
+      const b = position(best);
+      const mid = lerp(a, b, 0.5);
+      const inward = normalise(add(AREAS[region].core(mid), AREAS[region].surface(mid), -1));
+      const points = spline([a, add(add(mid, inward, 0.08 * bestDistance), jitter(r, 0.03 * bestDistance)), b]);
+      filaments.push({ points, width: [0.005, 0.005], group: model.groupOf[i], other: model.groupOf[best], base: 0, seed: r() });
+    }
   });
-  // Framed a little low, so the cat stands above the legend; the open View panel reframes it (scene inset).
-  return { anchors, regions: null, whiskers: Int32Array.from(inked), center: [0, 2.9, 0] as Vec, radius: 5.4 };
+  // The records' own links (a page in its notebook, a card in its deck): arcs through the white matter.
+  const linked = data.nodes.flatMap((_, i) => (regionOfNode[i] >= 0 && parents[i] >= 0 && regionOfNode[parents[i]] >= 0 ? [i] : []));
+  const stride = Math.max(1, linked.length / MOST_LINKS);
+  for (let n = 0; n < Math.min(linked.length, MOST_LINKS); n += 1) {
+    const i = linked[Math.floor(n * stride)];
+    const a = position(i), b = position(parents[i]);
+    const span = distance(a, b);
+    if (span < 1e-4) continue;
+    const mid = lerp(a, b, 0.5);
+    const sag = span * (0.12 + 0.13 * Math.min(1, span / 2.5));
+    const points = spline([a, add(mid, normalise(add(BRAIN_HUB, mid, -1)), sag), b]);
+    filaments.push({ points, width: [0.008, 0.008], group: model.groupOf[i], other: model.groupOf[parents[i]], base: 0, seed: stream(hash32(`link:${data.nodes[i].id}`))() });
+  }
+
+  // Labels float just outside the brain, over each group's own stretch of cortex.
+  const anchors = new Float32Array(model.groups.length * 3);
+  const middle: Vec = [-0.2, -0.4, 0];
+  const { c: bulb, r: bulbRadii } = CEREBELLUM;
+  const inside = (p: Vec) => {
+    const t = stemAt(p);
+    return Math.hypot(p[0], p[1], p[2]) < cerebrumRadius(normalise(p), 0) * 1.04
+      || Math.hypot((p[0] - bulb[0]) / bulbRadii[0], (p[1] - bulb[1]) / bulbRadii[1], (p[2] - bulb[2]) / bulbRadii[2]) < 1.06
+      || (t >= 0 && t <= 1 && distance(p, lerp(STEM_TOP, STEM_BOTTOM, t)) < stemRadius(t) * 1.1);
+  };
+  model.groups.forEach((_, g) => {
+    const neurons = data.nodes.flatMap((_, i) => (model.groupOf[i] === g && regionOfNode[i] >= 0 ? [position(i)] : []));
+    const points = neurons.length ? neurons : own[g].map((filament) => filament.points[filament.points.length - 1]);
+    if (!points.length) return;
+    const centre: Vec = [0, 1, 2].map((c) => points.reduce((sum, p) => sum + p[c], 0) / points.length) as Vec;
+    const out = normalise(add(centre, middle, -1));
+    let anchor = centre;
+    for (let step = 0; step < 40 && inside(anchor); step += 1) anchor = add(anchor, out, 0.1);
+    anchors.set(add(anchor, out, 0.12), g * 3);
+  });
+  return { anchors, regions: null, network: pack(filaments), center: [-0.1, -0.5, 0] as Vec, radius: 3.4 };
+}
+
+/** Each region and the groups that own it (largest first). */
+export function brainAnatomy(model: BrainModel): { regions: { name: string; groups: number[] }[] } {
+  return { regions: territories(model).map((own, region) => ({ name: BRAIN_REGIONS[region], groups: [...own].sort((a, b) => b.nodes - a.nodes || a.group - b.group).map((owner) => owner.group) })) };
+}
+
+/**
+ * The brain's folded surface: a triangle mesh, its normals taken from the unfolded surface (so its rim
+ * is one clean silhouette) and, per vertex, how far it is from the floor of the nearest sulcus.
+ */
+export type BrainSurface = { positions: Float32Array; normals: Float32Array; indices: Uint32Array; sulci: Float32Array };
+let shell: BrainSurface | null = null;
+/** The brain's folded surface as a triangle mesh (cerebrum, cerebellum, brainstem), for its rim of light and traced sulci. */
+export function brainShell(): BrainSurface {
+  if (shell) return shell;
+  const positions: number[] = [];
+  const unfolded: number[] = [];
+  const indices: number[] = [];
+  const sulci: number[] = [];
+  /** A closed ring grid of `rows` × `columns`: `at` gives each vertex's folded and unfolded place and its sulcus distance. */
+  const grid = (rows: number, columns: number, at: (u: number, v: number) => [Vec, Vec, number]) => {
+    const base = positions.length / 3;
+    for (let i = 0; i <= rows; i += 1)
+      for (let j = 0; j < columns; j += 1) {
+        const [p, smooth, sulcus] = at(i / rows, j / columns);
+        positions.push(...p);
+        unfolded.push(...smooth);
+        sulci.push(sulcus);
+      }
+    for (let i = 0; i < rows; i += 1)
+      for (let j = 0; j < columns; j += 1) {
+        const a = base + i * columns + j, b = base + i * columns + ((j + 1) % columns);
+        indices.push(a, a + columns, b, b, a + columns, b + columns);
+      }
+  };
+  // Poles front and back, so a ring of vertices runs exactly along the fissure.
+  const around = (u: number, v: number): Vec => [Math.cos(Math.PI * u), Math.sin(Math.PI * u) * Math.cos(2 * Math.PI * v), Math.sin(Math.PI * u) * Math.sin(2 * Math.PI * v)];
+  grid(220, 288, (u, v) => {
+    const d = around(u, v);
+    const r = cerebrumRadius(d);
+    // Normals from the hemispheres without their fissure: the rim follows the outline alone.
+    const smooth = cerebrumRadius(d, 0);
+    return [cortexSurface(d), [d[0] * smooth, d[1] * smooth, d[2] * smooth], sulcusDistance([d[0] * r, d[1] * r, d[2] * r])];
+  });
+  const { c, r: radii } = CEREBELLUM;
+  grid(64, 96, (u, v) => {
+    const d = around(u, v);
+    // The folia: 26 ridges around the cerebellum's side.
+    const phase = (26 * Math.atan2(d[1], -d[0])) / (2 * Math.PI);
+    const sulcus = (Math.abs(phase - Math.floor(phase) - 0.5) * 2 * Math.PI * 0.8) / 26;
+    return [cerebellumSurface(d), [c[0] + d[0] * radii[0], c[1] + d[1] * radii[1], c[2] + d[2] * radii[2]], sulcus];
+  });
+  grid(24, 28, (u, v) => {
+    const p = stemSurface(0.12 + 0.88 * u, -2 * Math.PI * v);
+    return [p, p, 0.5];
+  });
+  // Area-weighted vertex normals of the unfolded surface.
+  const normals = new Float32Array(unfolded.length);
+  const corner = (v: number): Vec => [unfolded[v * 3], unfolded[v * 3 + 1], unfolded[v * 3 + 2]];
+  for (let k = 0; k < indices.length; k += 3) {
+    const [a, b, c3] = [corner(indices[k]), corner(indices[k + 1]), corner(indices[k + 2])];
+    const u = add(c3, b, -1), w = add(a, b, -1);
+    const n: Vec = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+    for (let j = 0; j < 3; j += 1) for (let axis = 0; axis < 3; axis += 1) normals[indices[k + j] * 3 + axis] += n[axis];
+  }
+  for (let v = 0; v < normals.length; v += 3) {
+    const n = normalise([normals[v], normals[v + 1], normals[v + 2]]);
+    normals.set(n, v);
+  }
+  shell = { positions: Float32Array.from(positions), normals, indices: Uint32Array.from(indices), sulci: Float32Array.from(sulci) };
+  return shell;
 }
 
 // ── Spheres ────────────────────────────────────────────────────────────────
@@ -893,7 +1143,7 @@ function spheres(data: BrainData, model: BrainModel, out: Float32Array, births: 
     anchors.set([c[0], c[1] + radii[g] + 0.2, c[2]], g * 3);
     regions.set([c[0], c[1], c[2], radii[g]], g * 4);
   });
-  return { anchors, regions, whiskers: new Int32Array(0), center: [0, 0, 0] as Vec, radius: ring + Math.max(...radii, 0.5) };
+  return { anchors, regions, network: null, center: [0, 0, 0] as Vec, radius: ring + Math.max(...radii, 0.5) };
 }
 
 // ── Wheel ──────────────────────────────────────────────────────────────────
@@ -930,21 +1180,20 @@ function wheel(data: BrainData, model: BrainModel, times: Float64Array, out: Flo
     const angle = sector.start - sector.span / 2;
     anchors.set([Math.cos(angle) * (outer + 0.32), Math.sin(angle) * (outer + 0.32), 0], g * 3);
   });
-  return { anchors, regions: null, whiskers: new Int32Array(0), center: [0, 0, 0] as Vec, radius: outer + 0.5 };
+  return { anchors, regions: null, network: null, center: [0, 0, 0] as Vec, radius: outer + 0.5 };
 }
 
 function placeAll(data: BrainData, model: BrainModel, layout: BrainLayout) {
   const { parents, times } = nodeIndex(data);
   const positions = new Float32Array(data.nodes.length * 3);
   const births = new Float32Array(data.nodes.length);
-  const scales = new Float32Array(data.nodes.length).fill(1);
   const placed =
-    layout === "anatomy" ? anatomy(data, model, times, positions, births, scales)
+    layout === "anatomy" ? anatomy(data, model, times, parents, positions, births)
     : layout === "spheres" ? spheres(data, model, positions, births)
     : wheel(data, model, times, positions, births);
-  const view = layout === "anatomy" ? { azimuth: 0.15, elevation: 0.08 } : layout === "spheres" ? { azimuth: 0, elevation: 0.62 } : { azimuth: 0, elevation: 0 };
+  const view = layout === "anatomy" ? { azimuth: 0.55, elevation: 0.22 } : layout === "spheres" ? { azimuth: 0, elevation: 0.62 } : { azimuth: 0, elevation: 0 };
   const turnAxis: "y" | "z" = layout === "wheel" ? "z" : "y";
-  return { positions, births, scales, parents, groups: Float32Array.from(model.groupOf), ...placed, turnAxis, view, lineAlpha: layout === "anatomy" ? 0.022 : 0.08 };
+  return { positions, births, parents, groups: Float32Array.from(model.groupOf), ...placed, turnAxis, view, lineAlpha: layout === "anatomy" ? 0.022 : 0.08 };
 }
 
 /**
@@ -965,15 +1214,13 @@ export function layoutBrain(data: BrainData, model: BrainModel, layout: BrainLay
   const positions = full.positions.slice();
   const births = new Float32Array(data.nodes.length).fill(1);
   const groups = new Float32Array(data.nodes.length).fill(-2);
-  const scales = new Float32Array(data.nodes.length).fill(1);
   members.forEach((i, j) => {
     positions.set(sub.positions.subarray(j * 3, j * 3 + 3), i * 3);
     births[i] = sub.births[j];
     groups[i] = sub.groups[j];
-    scales[i] = sub.scales[j];
   });
   const parents = full.parents.map((parent, i) => (memberOf.has(i) && memberOf.has(parent) ? parent : -1));
-  return { ...sub, positions, births, groups, scales, parents, whiskers: sub.whiskers.map((j) => members[j]) };
+  return { ...sub, positions, births, groups, parents };
 }
 
 const MAX_LINES = 6000;
@@ -999,19 +1246,21 @@ export function brainLines(placement: BrainPlacement, colors: Float32Array) {
   return { positions: lines, colors: tints };
 }
 
-/** A faint, non-interactive frame giving each layout its shape: the cat's vessels and brain, sphere outlines, wheel rings. */
+/** A faint, non-interactive frame giving each layout its shape: the brain's folded cortex, sphere outlines, wheel rings. */
 export function brainScaffold(layout: BrainLayout, model: BrainModel): Float32Array {
   const points: number[] = [];
   const r = stream(hash32(`scaffold:${layout}`));
   if (layout === "anatomy") {
-    // Every vessel of the cat, even ones with no nodes yet, plus the brain, ears, eyes and whiskers: no skin.
-    const sample = vesselSampler(catAnatomy(model).vessels);
-    for (let n = 0; n < 6500; n += 1) points.push(...sample(r(), r).p);
-    for (let n = 0; n < 1500; n += 1) points.push(...toCat(cortexPoint(randomUnit(r), r)));
-    for (let n = 0; n < 250; n += 1) points.push(...toCat(cerebellumPoint(r)));
-    for (let n = 0; n < 300; n += 1) points.push(...earPoint(r));
-    for (let n = 0; n < 120; n += 1) points.push(...whiskerPoint(r));
-    for (let n = 0; n < 40; n += 1) points.push(...eyePoint(r));
+    // The cortex's gyral crowns, the cerebellum's folia and the brainstem: the brain reads even with few records.
+    for (let n = 0; n < 6500; ) {
+      const p = cortexSurface(randomUnit(r));
+      if (r() < crown(p) ** 3) {
+        points.push(...p);
+        n += 1;
+      }
+    }
+    for (let n = 0; n < 1400; n += 1) points.push(...cerebellumSurface(randomUnit(r)));
+    for (let n = 0; n < 350; n += 1) points.push(...stemSurface(0.12 + 0.88 * r(), 2 * Math.PI * r()));
   } else if (layout === "spheres") {
     const { radii, centres, ring } = sphereFrames(model);
     centres.forEach((c, g) => {

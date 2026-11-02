@@ -21,7 +21,7 @@ export type BrainView = {
 
 export const BRAIN_VIEW_KEY = "kitty.brain.view";
 export const BRAIN_LAYOUTS: { id: BrainLayout; label: string }[] = [
-  { id: "anatomy", label: "Anatomy" }, { id: "spheres", label: "Spheres" }, { id: "wheel", label: "Wheel" },
+  { id: "anatomy", label: "Brain" }, { id: "spheres", label: "Spheres" }, { id: "wheel", label: "Wheel" },
 ];
 export const BRAIN_GROUPINGS: { id: BrainGroupBy; label: string }[] = [
   { id: "section", label: "Section" }, { id: "group", label: "Group" }, { id: "type", label: "Type" },

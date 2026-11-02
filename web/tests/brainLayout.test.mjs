@@ -1,4 +1,4 @@
-// Brain layouts and view settings: deterministic, one point per node; anatomy is a standing cat drawn only as its brain and vessels.
+// Brain layouts and view settings: deterministic, one point per node; anatomy is a neural-network brain.
 // node --experimental-strip-types --test tests/brainLayout.test.mjs
 import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +11,7 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
   clear: () => store.clear(),
 };
-const { brainGroups, layoutBrain, brainStyle, brainScaffold, catAnatomy, CAT_BRAIN, CAT_REGIONS, expandPalette, isolateModel, BRAIN_PALETTE } = await import("../src/lib/brain/brainLayout.ts");
+const { brainGroups, layoutBrain, brainStyle, brainScaffold, brainAnatomy, brainRegionAt, brainShell, BRAIN_HUB, BRAIN_REGIONS, expandPalette, isolateModel, BRAIN_PALETTE } = await import("../src/lib/brain/brainLayout.ts");
 const { BRAIN_COLOURS_KEY, BRAIN_VIEW_KEY, DEFAULT_BRAIN_VIEW, loadBrainColours, loadBrainView, saveBrainColours, saveBrainView } = await import("../src/lib/brain/brainSettings.ts");
 
 const data = syntheticBrain({ total: 4000 });
@@ -79,123 +79,171 @@ function nearness(points, radius) {
   };
 }
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-const REGION_NAMES = ["chest", "withers", "back", "flank", "belly", "rump", "tail base", "tail", "forelegs", "paws", "hindlegs", "hock", "feet", "toes"];
-/** Reach of the brain (cerebrum and cerebellum) and of the whole head (ears, eyes, whiskers) from the brain's centre. */
-const BRAIN = 1.25;
-const HEAD = 2.6;
+const REGION_NAMES = [
+  "left frontal", "left temporal", "left parietal", "left occipital", "left cerebellum", "brainstem",
+  "right cerebellum", "right occipital", "right parietal", "right temporal", "right frontal",
+];
+const turn = (a, b, c) => {
+  const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
+  const cos = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (Math.hypot(...u) * Math.hypot(...v) || 1);
+  return Math.acos(Math.max(-1, Math.min(1, cos)));
+};
+const segment = (network, k) => [network.starts.subarray(k * 3, k * 3 + 3), network.ends.subarray(k * 3, k * 3 + 3)].map((p) => [...p]);
+const recordsOf = (nodes) => nodes.flatMap((node, i) => (node.kind === "record" ? [i] : []));
+const mean = (list) => list.reduce((a, b) => a + b, 0) / list.length;
 
-test("anatomy: every region of the cat is vessels made of one group's nodes, with no body shell", () => {
+test("brain: two hemispheres split by a longitudinal fissure, four lobes each, a cerebellum below and behind, a brainstem", () => {
+  assert.deepEqual(BRAIN_REGIONS, REGION_NAMES);
   const model = brainGroups(data, "section");
-  const cat = catAnatomy(model);
-  assert.deepEqual([...CAT_REGIONS].sort(), [...REGION_NAMES].sort());
-  assert.deepEqual(cat.regions.map((region) => region.name), CAT_REGIONS);
-  cat.regions.forEach((region, index) => {
-    const vessels = cat.vessels.filter((vessel) => vessel.region === index);
-    assert.ok(vessels.length >= 1, `${region.name} has vessels`);
-    assert.ok(region.groups.length >= 1, `${region.name} is a group's`);
-    assert.ok(vessels.every((vessel) => region.groups.includes(vessel.group)), `${region.name}'s vessels belong to its groups`);
-  });
-  model.groups.forEach((group, g) => assert.ok(cat.vessels.some((vessel) => vessel.group === g), `${group.label} owns vessels`));
-  assert.ok(cat.vessels.some((vessel) => vessel.level >= 2), "vessels fork into finer branches");
-  // Each edit glows on one of its own group's vessels.
   const { positions } = layoutBrain(data, model, "anatomy");
-  const onVessels = model.groups.map((_, g) => nearness(cat.vessels.filter((vessel) => vessel.group === g).flatMap((vessel) => vessel.points), 0.22));
-  const edits = data.nodes.flatMap((node, i) => (node.kind === "edit" ? [i] : []));
-  const astray = edits.filter((i) => !onVessels[model.groupOf[i]](at(positions, i)));
-  assert.ok(astray.length < edits.length * 0.01, `${astray.length} edits lie off their group's vessels`);
-  // The faint scaffold traces the same vessels and the brain: no skin, no silhouette.
-  const scaffold = brainScaffold("anatomy", model);
-  const vessels = nearness(cat.vessels.flatMap((vessel) => vessel.points), 0.25);
-  let shell = 0;
-  for (let i = 0; i < scaffold.length; i += 3) {
-    const p = [scaffold[i], scaffold[i + 1], scaffold[i + 2]];
-    if (!vessels(p) && distance(p, CAT_BRAIN) > HEAD) shell += 1;
+  const records = recordsOf(data.nodes).map((i) => at(positions, i));
+  const left = records.filter((p) => p[2] > 0.1).length / records.length;
+  const right = records.filter((p) => p[2] < -0.1).length / records.length;
+  assert.ok(left > 0.3 && right > 0.3, `both hemispheres hold neurons (${left.toFixed(2)} / ${right.toFixed(2)})`);
+  assert.ok(records.filter((p) => Math.abs(p[2]) < 0.06 && p[1] > 0.6).length < records.length * 0.01, "no neurons in the fissure between the hemispheres");
+  // The surface dips along the top midline: the longitudinal fissure.
+  const shell = brainShell();
+  const top = [];
+  for (let i = 0; i < shell.positions.length; i += 3) {
+    const p = [shell.positions[i], shell.positions[i + 1], shell.positions[i + 2]];
+    if (Math.abs(p[0]) < 1 && p[1] > 0.8) top.push(p);
   }
-  assert.equal(shell, 0, "every scaffold point is a vessel or part of the head");
+  const midline = mean(top.filter((p) => Math.abs(p[2]) < 0.06).map((p) => p[1]));
+  const beside = mean(top.filter((p) => Math.abs(p[2]) > 0.3 && Math.abs(p[2]) < 0.6).map((p) => p[1]));
+  assert.ok(beside - midline > 0.12, `the fissure dips ${(beside - midline).toFixed(2)} below the hemispheres`);
+  // Every region is where anatomy puts it.
+  const centre = (name) => {
+    const index = REGION_NAMES.indexOf(name);
+    const inside = records.filter((p) => brainRegionAt(p) === index);
+    assert.ok(inside.length, `${name} holds neurons`);
+    return [0, 1, 2].map((axis) => mean(inside.map((p) => p[axis])));
+  };
+  for (const side of ["left", "right"]) {
+    const [frontal, parietal, temporal, occipital, cerebellum] = ["frontal", "parietal", "temporal", "occipital", "cerebellum"].map((lobe) => centre(`${side} ${lobe}`));
+    assert.ok(frontal[0] > parietal[0] && parietal[0] > occipital[0], `${side}: frontal, parietal, occipital from front to back`);
+    assert.ok(temporal[1] < parietal[1] && temporal[1] < frontal[1], `${side}: the temporal lobe lies low`);
+    assert.ok(cerebellum[1] < occipital[1] - 0.6 && cerebellum[0] < parietal[0], `${side}: the cerebellum sits below and behind`);
+    assert.ok(side === "left" ? frontal[2] > 0.3 : frontal[2] < -0.3, `${side} hemisphere on its side`);
+  }
+  const stem = centre("brainstem");
+  assert.ok(records.every((p) => p[1] >= stem[1] - 1.5) && stem[1] < centre("left cerebellum")[1], "the brainstem is lowest");
 });
 
-test("anatomy: the brain is the focal point, the densest cluster, in the head between two ears", () => {
+test("brain: the cortex is folded into gyri and sulci", () => {
+  const { positions, indices, sulci } = brainShell();
+  assert.ok(indices.length >= 3 && indices.length % 3 === 0);
+  const count = positions.length / 3;
+  assert.equal(sulci.length, count);
+  // Sulci are a labyrinth of narrow lines over the cortex, not a stripe or a blanket.
+  const inSulcus = Array.from(sulci).filter((value) => value < 0.015).length / count;
+  assert.ok(inSulcus > 0.03 && inSulcus < 0.25, `${(inSulcus * 100).toFixed(1)}% of the surface lies in a sulcus`);
+  // Each sulcus is a groove: lower than the surface around it, while the gyral crowns stand proud.
+  const sum = new Float64Array(count), seen = new Uint16Array(count);
+  const radius = (v) => Math.hypot(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]);
+  for (let k = 0; k < indices.length; k += 3)
+    for (const [a, b] of [[0, 1], [1, 2], [2, 0]]) {
+      const u = indices[k + a], v = indices[k + b];
+      sum[u] += radius(v); seen[u] += 1;
+      sum[v] += radius(u); seen[v] += 1;
+    }
+  const relief = (keep) => mean(Array.from({ length: count }, (_, v) => v).filter((v) => seen[v] && keep(sulci[v])).map((v) => radius(v) - sum[v] / seen[v]));
+  const pits = relief((value) => value < 0.015), crowns = relief((value) => value > 0.12);
+  assert.ok(pits < -0.003 && crowns > pits + 0.004, `sulci sink ${pits.toFixed(4)} against the crowns' ${crowns.toFixed(4)}`);
   const model = brainGroups(data, "section");
-  const { positions } = layoutBrain(data, model, "anatomy");
-  const count = data.nodes.length;
-  const inBrain = Array.from({ length: count }, (_, i) => i).filter((i) => distance(at(positions, i), CAT_BRAIN) < BRAIN);
-  assert.ok(inBrain.length > count * 0.15, `the brain holds ${inBrain.length} of ${count} points`);
-  const records = data.nodes.flatMap((node, i) => (node.kind === "record" ? [i] : []));
-  assert.ok(records.filter((i) => distance(at(positions, i), CAT_BRAIN) < BRAIN).length > records.length * 0.7, "most records form the brain");
-  // No ball of the brain's size anywhere in the body holds nearly as many points: the brain is the densest cluster.
-  const ball = (centre) => Array.from({ length: count }, (_, i) => i).filter((i) => distance(at(positions, i), centre) < BRAIN).length;
-  let body = 0;
-  for (let i = 0; i < count; i += 10) if (distance(at(positions, i), CAT_BRAIN) > 2 * BRAIN) body = Math.max(body, ball(at(positions, i)));
-  assert.ok(inBrain.length > body * 1.25, `the brain's ${inBrain.length} points outshine the densest body cluster's ${body}`);
-  // Two ears rise above the brain, apart (seen from the side the head turns toward the viewer).
-  const head = records.filter((i) => distance(at(positions, i), CAT_BRAIN) < HEAD);
-  const top = Math.max(...head.map((i) => positions[i * 3 + 1]));
-  const tips = head.filter((i) => positions[i * 3 + 1] > top - 0.45).map((i) => positions[i * 3]).sort((a, b) => a - b);
-  assert.ok(tips.length >= 10, "the ears hold points");
-  assert.ok(top > CAT_BRAIN[1] + 0.9, "the ears stand above the brain");
-  const gaps = tips.slice(1).map((x, k) => x - tips[k]);
-  assert.ok(Math.max(...gaps) > 0.5, "a gap between the two ears");
+  assert.ok(brainScaffold("anatomy", model).length / 3 > 3000, "the faint cortex shell");
 });
 
-test("anatomy: the reference pose: head up, facing right, tail out behind, four legs down to the floor", () => {
-  const model = brainGroups(data, "section");
-  const cat = catAnatomy(model);
-  const points = (name) => cat.vessels.filter((vessel) => cat.regions[vessel.region].name === name).flatMap((vessel) => vessel.points);
-  const mean = (name, axis) => { const list = points(name); return list.reduce((sum, p) => sum + p[axis], 0) / list.length; };
-  const least = (name, axis) => Math.min(...points(name).map((p) => p[axis]));
-  const most = (name, axis) => Math.max(...points(name).map((p) => p[axis]));
-  assert.ok(CAT_BRAIN[1] > most("withers", 1), "the head is held above the withers");
-  // Like the reference, the head sits over the front of the chest: both lead, then flank, rump and tail.
-  assert.ok(CAT_BRAIN[0] > mean("withers", 0) && mean("chest", 0) > mean("flank", 0) && mean("flank", 0) > mean("rump", 0) && mean("rump", 0) > mean("tail", 0), "head and chest, flank, rump and tail run from right to left: the cat faces right");
-  assert.ok(least("tail", 0) < least("rump", 0) - 2.5, "the tail extends well behind the rump");
-  assert.ok(mean("tail", 1) > mean("belly", 1), "the tail is held out, not dragged on the floor");
-  assert.ok(mean("back", 1) > mean("flank", 1) && mean("flank", 1) > mean("belly", 1), "back over flank over belly");
-  assert.ok(mean("forelegs", 0) > mean("hindlegs", 0), "forelegs in front of the hind legs");
-  for (const low of ["paws", "toes"]) assert.ok(least(low, 1) < 0.2, `${low} reach the floor`);
-  for (const name of CAT_REGIONS.filter((name) => !["paws", "toes", "feet", "hock", "forelegs", "hindlegs"].includes(name)))
-    assert.ok(least(name, 1) > 1.5, `${name} is off the floor`);
-  assert.ok(mean("feet", 1) < mean("hock", 1) && mean("hock", 1) < mean("hindlegs", 1), "hindleg, hock, foot in order down the leg");
-  // Four leg ends on the floor: front and back, near and far.
-  const ends = [...points("paws"), ...points("toes")].filter((p) => p[1] < 0.25);
-  const quarters = new Set(ends.map((p) => `${p[0] > 1 ? "front" : "back"}:${p[2] > 0 ? "near" : "far"}`));
-  assert.equal(quarters.size, 4, `four feet on the floor: ${[...quarters]}`);
-});
-
-test("anatomy: the vessels grow with the data, and a tiny workspace still draws the whole cat", () => {
-  const length = (cat) => cat.vessels.reduce((sum, vessel) => sum + vessel.points.slice(1).reduce((run, p, k) => run + distance(p, vessel.points[k]), 0), 0);
-  const big = catAnatomy(brainGroups(syntheticBrain({ total: 20000 }), "section"));
-  const tiny = catAnatomy(brainGroups(syntheticBrain({ total: 200 }), "section"));
-  assert.ok(length(big) > length(tiny) * 2, `20k nodes branch further (${length(big).toFixed(0)}) than 200 (${length(tiny).toFixed(0)})`);
-  assert.ok(big.vessels.length > tiny.vessels.length * 2, "and into more vessels");
-  tiny.regions.forEach((region, index) => assert.ok(tiny.vessels.some((vessel) => vessel.region === index), `200 nodes still draw the ${region.name}`));
-  // Fewer groups than regions: groups span several regions; more groups than regions: regions are shared.
-  for (const by of ["group", "type"]) {
+test("brain: each group is a region; big groups span adjacent regions, small ones share; neurons sit in their group's regions", () => {
+  for (const by of ["section", "group", "type"]) {
     const model = brainGroups(data, by);
-    const cat = catAnatomy(model);
-    cat.regions.forEach((region, index) => assert.ok(region.groups.length >= 1 && cat.vessels.some((vessel) => vessel.region === index), `${by}: ${region.name}`));
-    model.groups.forEach((group, g) => assert.ok(cat.vessels.some((vessel) => vessel.group === g), `${by}: ${group.label} owns vessels`));
+    const { regions } = brainAnatomy(model);
+    assert.deepEqual(regions.map((region) => region.name), REGION_NAMES);
+    regions.forEach((region) => assert.ok(region.groups.length >= 1, `${by}: ${region.name} belongs to a group`));
+    const owned = model.groups.map((_, g) => regions.flatMap((region, index) => (region.groups.includes(g) ? [index] : [])));
+    model.groups.forEach((group, g) => assert.ok(owned[g].length >= 1, `${by}: ${group.label} has a region`));
+    const { positions } = layoutBrain(data, model, "anatomy");
+    const records = recordsOf(data.nodes);
+    const astray = records.filter((i) => !owned[model.groupOf[i]].includes(brainRegionAt(at(positions, i))));
+    assert.ok(astray.length < records.length * 0.05, `${by}: ${astray.length} of ${records.length} neurons lie outside their group's regions`);
+    if (by === "group") {
+      const biggest = owned[0];
+      assert.ok(biggest.length >= 2, "the largest group spans several regions");
+      biggest.slice(1).forEach((index, k) => assert.equal((index - biggest[k] + REGION_NAMES.length) % REGION_NAMES.length, 1, "adjacent ones"));
+    }
+    if (by === "type") assert.ok(regions.some((region) => region.groups.length > 1), "with many groups, regions are shared");
   }
-  const model = brainGroups(data, "section");
-  assert.deepEqual(catAnatomy(model), catAnatomy(model), "deterministic");
 });
 
-test("anatomy: newer edits sit nearer the brain along their vessels; the cat builds from the brain outward", () => {
+test("brain: a neural network of smooth spline filaments, with long tracts, local branches and the records' own links", () => {
+  for (const total of [200, 4000, 20000]) {
+    const brain = syntheticBrain({ total });
+    const { network } = layoutBrain(brain, brainGroups(brain, "section"), "anatomy");
+    assert.ok(network && network.count > 0, `${total}: a network`);
+    let worst = 0, longest = 0;
+    for (let k = 0; k < network.count; k += 1) {
+      const [a, b] = segment(network, k);
+      longest = Math.max(longest, distance(a, b));
+      if (k + 1 < network.count) {
+        const [c, d] = segment(network, k + 1);
+        // Consecutive pieces of one filament (same pulse phase) that join.
+        if (distance(b, c) < 1e-6 && network.seeds[k] === network.seeds[k + 1]) worst = Math.max(worst, turn(a, b, d));
+      }
+    }
+    assert.ok(worst < (24 * Math.PI) / 180, `${total}: sharpest bend ${((worst * 180) / Math.PI).toFixed(1)}°`);
+    assert.ok(longest <= 0.09, `${total}: longest straight piece ${longest.toFixed(3)}`);
+    assert.ok(network.widths.every((width) => width > 0 && width < 0.08), `${total}: thin filaments`);
+    assert.ok(network.dists.every(Number.isFinite) && network.seeds.every(Number.isFinite), `${total}: pulse phases`);
+  }
+  // Long-range tracts (between hemispheres) and records' own parent links appear as connections.
   const model = brainGroups(data, "section");
-  const { positions, births } = layoutBrain(data, model, "anatomy");
-  const cat = catAnatomy(model);
-  const tail = cat.regions.find((region) => region.name === "tail").groups[0];
+  const { network, positions } = layoutBrain(data, model, "anatomy");
+  let crossings = 0;
+  for (let k = 0; k < network.count; k += 1) if (network.starts[k * 3 + 2] > 0.05 !== network.ends[k * 3 + 2] > 0.05) crossings += 1;
+  assert.ok(crossings >= 20, `${crossings} fibres cross the corpus callosum`);
+  const ends = nearness(Array.from({ length: network.count }, (_, k) => segment(network, k)).flat(), 0.03);
+  const ids = new Map(data.nodes.map((node, i) => [node.id, i]));
+  const linked = data.nodes.flatMap((node, i) => (node.kind === "record" && node.parent && data.nodes[ids.get(node.parent)]?.kind === "record" ? [i] : []));
+  assert.ok(linked.length > 10, "the fixture links records");
+  for (const i of linked.slice(0, 200)) {
+    assert.ok(ends(at(positions, i)), `record ${data.nodes[i].id} has a connection`);
+    assert.ok(ends(at(positions, ids.get(data.nodes[i].parent))), "to its parent");
+  }
+});
+
+test("brain: the network grows with the data, and 200 nodes still draw every region", () => {
+  const big = syntheticBrain({ total: 20000 });
+  const tiny = syntheticBrain({ total: 200 });
+  const bigNet = layoutBrain(big, brainGroups(big, "section"), "anatomy").network;
+  const tinyNet = layoutBrain(tiny, brainGroups(tiny, "section"), "anatomy").network;
+  assert.ok(bigNet.count > tinyNet.count * 3, `20k nodes branch further (${bigNet.count}) than 200 (${tinyNet.count})`);
+  const covered = new Set(Array.from({ length: tinyNet.count }, (_, k) => brainRegionAt(segment(tinyNet, k)[1])));
+  REGION_NAMES.forEach((name, index) => assert.ok(covered.has(index), `200 nodes still wire the ${name}`));
+  const model = brainGroups(data, "section");
+  assert.deepEqual(layoutBrain(data, model, "anatomy"), layoutBrain(data, model, "anatomy"), "deterministic");
+});
+
+test("brain: edits ride their group's tracts by time, newest nearest the hub; the brain lights from the hub outward", () => {
+  const model = brainGroups(data, "section");
+  const { positions, births, network } = layoutBrain(data, model, "anatomy");
+  const onFibres = model.groups.map((_, g) => {
+    const points = [];
+    for (let k = 0; k < network.count; k += 1) if (network.groups[k] === g) points.push(...segment(network, k));
+    return nearness(points, 0.15);
+  });
+  const edits = data.nodes.flatMap((node, i) => (node.kind === "edit" ? [i] : []));
+  const astray = edits.filter((i) => !onFibres[model.groupOf[i]](at(positions, i)));
+  assert.ok(astray.length < edits.length * 0.01, `${astray.length} edits lie off their group's fibres`);
   // The fixture lists edits newest first.
-  const edits = data.nodes.flatMap((node, i) => (node.kind === "edit" && model.groupOf[i] === tail ? [i] : []));
-  const tenth = Math.floor(edits.length / 10);
-  const newest = edits.slice(0, tenth);
-  const oldest = edits.slice(-tenth);
-  const mean = (list, values) => list.reduce((sum, i) => sum + values(i), 0) / list.length;
-  const reach = (i) => distance(at(positions, i), CAT_BRAIN);
-  assert.ok(mean(oldest, reach) > mean(newest, reach) + 1, "time flows out from the brain to the vessel tips");
-  assert.ok(mean(oldest, (i) => births[i]) > mean(newest, (i) => births[i]), "and the newest are born first");
-  const brain = data.nodes.flatMap((_, i) => (distance(at(positions, i), CAT_BRAIN) < BRAIN ? [i] : []));
-  const body = data.nodes.flatMap((_, i) => (distance(at(positions, i), CAT_BRAIN) > 3 ? [i] : []));
-  assert.ok(mean(brain, (i) => births[i]) < 0.3 && mean(body, (i) => births[i]) > 0.45, "the brain lights first, then the vessels outward");
+  const notes = model.groups.findIndex((group) => group.key === "notes");
+  const own = edits.filter((i) => model.groupOf[i] === notes);
+  const tenth = Math.floor(own.length / 10);
+  const reach = (i) => distance(at(positions, i), BRAIN_HUB);
+  const newest = own.slice(0, tenth), oldest = own.slice(-tenth);
+  assert.ok(mean(oldest.map(reach)) > mean(newest.map(reach)) + 0.6, "time flows out from the hub along the tracts");
+  assert.ok(mean(oldest.map((i) => births[i])) > mean(newest.map((i) => births[i])), "and the newest are born first");
+  const all = data.nodes.map((_, i) => i);
+  const inner = all.filter((i) => reach(i) < 1.2), outer = all.filter((i) => reach(i) > 2.4);
+  assert.ok(mean(inner.map((i) => births[i])) < mean(outer.map((i) => births[i])) - 0.2, "the brain builds from its hub outward");
 });
 
 test("style: kinds of things differ in colour; edits are dimmer and warmer", () => {

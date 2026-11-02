@@ -5,7 +5,7 @@
   import { webglAvailable } from "../graph3d";
   import { THEME_EVENT } from "../themes";
   import type { BrainBackdrop, BrainScene } from "./brainScene";
-  import { brainGroups, brainLines, brainScaffold, brainStyle, BRAIN_PALETTE, expandPalette, isolateModel, layoutBrain, mixColours, type BrainPalette } from "./brainLayout";
+  import { brainGroups, brainLines, brainScaffold, brainShell, brainStyle, BRAIN_HUB, BRAIN_PALETTE, BRAIN_REACH, expandPalette, isolateModel, layoutBrain, mixColours, type BrainPalette, type Rgb } from "./brainLayout";
   import { BRAIN_GROUPINGS, DEFAULT_BRAIN_VIEW, loadBrainColours, loadBrainView, saveBrainColours, saveBrainView, type BrainView } from "./brainSettings";
   import BrainControls from "./BrainControls.svelte";
   import Loader from "../Loader.svelte";
@@ -61,13 +61,27 @@
   const model = $derived(allGroups && isolated >= 0 ? isolateModel(allGroups, isolated, data!) : allGroups);
   const placement = $derived(data && structure ? layoutBrain(data, structure, layout, isolated >= 0 ? isolated : null) : null);
   const style = $derived(data && allGroups ? brainStyle(data, allGroups) : null);
-  /** Point colours: each kind's shade, with whiskers in the theme's ink. */
-  const colours = $derived.by(() => {
-    if (!style || !placement) return null;
-    if (!placement.whiskers.length) return style.colors;
-    const out = style.colors.slice();
-    const ink = backdropTone.cover > 0.5 ? backdropTone.ink : backdropTone.ink.map((value) => Math.min(1, (value / 0.68) * 0.95));
-    for (const i of placement.whiskers) out.set(ink, i * 3);
+  const colours = $derived(style?.colors ?? null);
+  /** The brain's rim and its group-less filaments: its groups' colours blended (by records) and lifted toward white; dark ink on a light backdrop. */
+  const rimColour = $derived.by((): Rgb => {
+    if (backdropTone.cover > 0.5) return backdropTone.ink;
+    const groups = model?.groups ?? [];
+    const weight = groups.reduce((sum, group) => sum + group.records + group.edits * 0.2, 0) || 1;
+    const mean = [0, 1, 2].map((c) => groups.reduce((sum, group) => sum + group.rgb[c] * (group.records + group.edits * 0.2), 0) / weight);
+    return mean.map((value) => value + (1 - value) * 0.4) as Rgb;
+  });
+  /** Each network segment in its group's colour, blending toward the group at its far end. */
+  const networkColours = $derived.by(() => {
+    const network = placement?.network;
+    if (!network || !model) return null;
+    const tone = (group: number) => model.groups[group]?.rgb ?? rimColour;
+    const out = new Float32Array(network.count * 3);
+    for (let k = 0; k < network.count; k += 1) {
+      const from = tone(network.groups[k]), to = tone(network.others[k]), t = network.mixes[k];
+      out[k * 3] = from[0] + (to[0] - from[0]) * t;
+      out[k * 3 + 1] = from[1] + (to[1] - from[1]) * t;
+      out[k * 3 + 2] = from[2] + (to[2] - from[2]) * t;
+    }
     return out;
   });
   /** Swatches offered by the colour editor: the theme's colours stretched to a dozen. */
@@ -260,7 +274,7 @@
     }
   }
 
-  /** The open View panel covers the stage's right edge: the scene frames the cat left of it. */
+  /** The open View panel covers the stage's right edge: the scene frames the brain left of it. */
   function measureInset() {
     if (!scene || !root) return;
     const panel = view.panel ? root.querySelector(".controls .panel") : null;
@@ -327,7 +341,7 @@
       {
         positions: placement.positions,
         colors: colours!,
-        sizes: style.sizes.map((size, i) => size * placement!.scales[i]),
+        sizes: style.sizes,
         seeds: style.seeds,
         births: placement.births,
         groups: placement.groups,
@@ -347,6 +361,14 @@
   $effect(() => {
     if (!scene || !model) return;
     scene.setScaffold(view.scaffold ? brainScaffold(layout, model) : null);
+  });
+  $effect(() => {
+    if (!scene) return;
+    scene.setNetwork(placement?.network && networkColours ? { network: placement.network, colors: networkColours, hub: BRAIN_HUB, reach: BRAIN_REACH } : null);
+  });
+  $effect(() => {
+    if (!scene) return;
+    scene.setShell(layout === "anatomy" && view.scaffold ? { ...brainShell(), color: rimColour } : null);
   });
   $effect(() => { scene?.setFocus(focusIndex >= 0 ? focusIndex : null); });
   $effect(() => { scene?.setHover(hoverGroup); });
@@ -397,7 +419,7 @@
   data-hover-group={hoverKey ?? undefined}
 >
   <p class="sr-only">
-    Every record and every edit in your workspace drawn as a point in a standing cat made only of its brain and veins: records form its brain, one lobe per {grouping.toLowerCase()}; each {grouping.toLowerCase()}'s edits are the veins of one region of its body, newest nearest the brain.
+    Every record and every edit in your workspace drawn as a point of light in a brain made of a glowing neural network: records are its neurons, folded into one region of the cortex per {grouping.toLowerCase()}; each {grouping.toLowerCase()}'s edits travel the fibre tracts into its region, newest nearest the brain's centre.
     Drag to rotate, scroll to zoom, click a group to open it on its own and press Escape to return. The legend below highlights one {grouping.toLowerCase()} at a time.
   </p>
   <div class="canvas" bind:this={host}></div>

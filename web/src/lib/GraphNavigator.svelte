@@ -96,6 +96,11 @@
   }
   /** Q13: the side rail folds to an edge strip so the Brain widens; every home follows one choice. */
   let collapsed = $state(homeRailCollapsed());
+  /** "Open module settings" lands on Settings' Modules page (`#settings/modules`). */
+  function openModuleSettings() {
+    onview("settings");
+    if (location.hash === "#settings") history.replaceState(history.state, "", "#settings/modules");
+  }
   function toggleRail() {
     try {
       setHomeRailCollapsed(!collapsed);
@@ -380,7 +385,7 @@
     onpointerdowncapture={stagePointerDown}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      {#if look === "brain"}Every record and every edit in your workspace as a point of light in a cat drawn as its brain and veins. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto Sections to hide it; each section's options menu shows or hides it.{/if}
+      {#if look === "brain"}Every record and every edit in your workspace as a point of light in a glowing neural-network brain. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto Sections to hide it; each section's options menu shows or hides it.{/if}
     </p>
     <!-- Hidden under the Brain, whose stage is transparent. -->
     <div class="canvas" class:behind={look === "brain"} bind:this={container}></div>
@@ -437,7 +442,7 @@
           {#if !enabled.length}
             <HomeWidget id={`${atlasId}-modules`} title="Modules are off">
               <p class="note">Turn on modules in Settings; they start after a restart.</p>
-              <Button intent="primary" size="sm" onclick={() => onview("settings")}>Open module settings <Icon name="arrow" size={14} /></Button>
+              <Button intent="primary" size="sm" onclick={openModuleSettings}>Open module settings <Icon name="arrow" size={14} /></Button>
             </HomeWidget>
           {/if}
         </aside>
