@@ -156,7 +156,7 @@ class JobActions:
         if not ids:
             self.notify("Select a job first.", severity="warning")
             return
-        self.notify(f"Filling {len(ids)} application(s) in the kitty browser...")  # type: ignore[attr-defined]
+        self.notify(f"Filling {len(ids)} application(s) in the rika! browser...")  # type: ignore[attr-defined]
 
         def fill(workspace, watch, to_ui) -> None:
             from kitty.core.apply.filler import fill_jobs
@@ -177,7 +177,7 @@ class JobActions:
         """
         track = self.active_track()
         where = f"{track} " if track else ""
-        self.notify(f"Autofill: filling your {where}favorites in background tabs of the kitty browser...")  # type: ignore[attr-defined]
+        self.notify(f"Autofill: filling your {where}favorites in background tabs of the rika! browser...")  # type: ignore[attr-defined]
 
         def fill(workspace, watch, to_ui) -> None:
             from kitty.core.apply.autofill import run_autofill, summary
@@ -255,7 +255,7 @@ class JobActions:
         """Stop the fill worker: it ends its Firefox session; the tabs stay open."""
         app = self.app                                              # type: ignore[attr-defined]
         if app.workers.cancel_group(app, "fill-applications"):
-            self.notify("Stopped watching the kitty browser tabs.")  # type: ignore[attr-defined]
+            self.notify("Stopped watching the rika! browser tabs.")  # type: ignore[attr-defined]
         else:
             self.notify("Not watching anything.")                    # type: ignore[attr-defined]
 

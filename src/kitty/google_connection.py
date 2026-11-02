@@ -109,10 +109,10 @@ class GoogleConnection:
                         attempt["stop"].set()
                 except (ValueError, KeyError):
                     accepted = False
-                text = ("Google sign-in finished. Return to kitty! You may close this tab." if accepted
-                        else "This sign-in link is invalid or expired. Start again in kitty!.")
+                text = ("Google sign-in finished. Return to rika! You may close this tab." if accepted
+                        else "This sign-in link is invalid or expired. Start again in rika!.")
                 body = ("<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-                        "<title>Return to kitty!</title><h1>kitty!</h1><p>" + text + "</p></html>").encode()
+                        "<title>Return to rika!</title><h1>rika!</h1><p>" + text + "</p></html>").encode()
                 self.send_response(200 if accepted else 400)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))

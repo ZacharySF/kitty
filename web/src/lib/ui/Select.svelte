@@ -32,7 +32,7 @@
   import Popover from "./Popover.svelte";
 
   /**
-   * Q7: kitty!'s one dropdown. Four or fewer choices become segments (Bracket's
+   * Q7: rika!'s one dropdown. Four or fewer choices become segments (Bracket's
    * ToggleGroup); longer lists open the themed glass listbox; `search` adds a filter
    * field (and an optional create row) for lists that grow, such as decks and
    * notebooks; `timezone` is the searchable list of IANA zones. The browser's own

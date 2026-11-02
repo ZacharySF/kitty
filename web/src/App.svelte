@@ -73,7 +73,7 @@
   const title = $derived(navigation.find(item => item.id === view)?.label || "Workspace");
   const tabLabels = $derived(tabs.map(tab => ({
     id: tab.id,
-    label: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
+    label: tab.view === "today" ? "rika!" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
     icon: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.icon || "atlas",
     tone: navigationGroups.find(group => group.views.includes(tab.view))?.tone ?? "var(--c1)",
     status: tab.pane?.saveStatus() ?? null,
@@ -369,15 +369,15 @@
 <svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} />
 <ThemeLayer />
 {#if background === "petals"}<PetalDrift />{/if}
-<svelte:head><title>{title} · kitty!</title></svelte:head>
+<svelte:head><title>{title} · rika!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>
 <div class="workbench" class:atlas-home={view === "today"}>
   <div class="workbench-top" bind:this={topBar}>
   <header class="system-bar" role="group" aria-label="Workspace controls" oncontextmenu={(event) => tabBar?.openMenu(event)}>
-    {#if view !== "today"}<button class="schema-back" onclick={schemaBack} aria-label={schemaNodes.length ? "Back to parent schema" : "Back to kitty schema"} title="Back to parent schema">←</button>{/if}
-    <a class="wordmark" class:current-schema={view === "today"} href="#today" aria-label="kitty home" aria-current={view === "today" ? "page" : undefined} title="Main kitty schema" onclick={(event) => { event.preventDefault(); navigate("today"); }}>
+    {#if view !== "today"}<button class="schema-back" onclick={schemaBack} aria-label={schemaNodes.length ? "Back to parent schema" : "Back to rika! schema"} title="Back to parent schema">←</button>{/if}
+    <a class="wordmark" class:current-schema={view === "today"} href="#today" aria-label="rika! home" aria-current={view === "today" ? "page" : undefined} title="Main rika! schema" onclick={(event) => { event.preventDefault(); navigate("today"); }}>
       <span class="brand-mark" aria-hidden="true"><Icon name="kitty" size={22} /></span>
-      <span class="word">kitty<span class="brand-dot">!</span></span>
+      <span class="word">rika<span class="brand-dot">!</span></span>
     </a>
     <nav class="breadcrumb" aria-label="Schema tabs">
       {#if view !== "today"}
@@ -427,7 +427,7 @@
         <button class="icon-button" aria-label="Dismiss demo notice" onclick={() => (demoHidden = true)}>×</button>
       </div>{/if}
     {#if workspace?.modules.restart_required && view !== "settings"}<div class="demo-notice" role="status">
-        Module changes are saved but not active yet. Restart kitty to apply them.
+        Module changes are saved but not active yet. Restart rika! to apply them.
         <button class="text-button" onclick={openModuleSettings}>Review in Settings</button>
       </div>{/if}
     {#if moduleNotice}<div class="demo-notice" role="status">

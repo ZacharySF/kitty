@@ -443,12 +443,25 @@ describe("flashcard view switcher", () => {
   }
 });
 
+describe("product name", () => {
+  test("the wordmark, home link and document title say rika!; the Kitty theme keeps its name", async () => {
+    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    await page.locator(".wordmark .word").waitFor();
+    assert.equal((await page.locator(".wordmark .word").textContent())?.trim(), "rika!");
+    assert.equal(await page.locator(".wordmark").getAttribute("aria-label"), "rika! home");
+    await page.waitForFunction(() => document.title.endsWith(" · rika!"));
+    assert.ok(!/kitty!/i.test(await page.locator("body").innerText()), "kitty! still shows on the page");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
 describe("command palette", () => {
   test("Spotlight palette: empty until you type, six results with a top hit, Enter opens it, Escape closes", async () => {
     const { page, problems, context } = await open("today", { dock: "hidden" });
     await page.locator(".wordmark").waitFor();
     await page.keyboard.press("Control+k");
-    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    const palette = page.getByRole("dialog", { name: "Search rika!" });
     await palette.waitFor();
     const field = palette.getByRole("combobox");
     assert.equal(await field.evaluate((node) => node === document.activeElement), true, "search field is not focused");
@@ -466,7 +479,7 @@ describe("command palette", () => {
     await page.keyboard.press("Control+k");
     await palette.waitFor();
     await page.keyboard.press("Escape");
-    await page.waitForFunction(() => !document.querySelector('dialog[aria-label="Search kitty!"]'));
+    await page.waitForFunction(() => !document.querySelector('dialog[aria-label="Search rika!"]'));
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1177,7 +1190,7 @@ describe("home rails", () => {
     const { page, problems, context } = await open("today", { dock: "hidden" });
     await page.locator(".atlas").waitFor();
     await page.keyboard.press("Control+k");
-    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    const palette = page.getByRole("dialog", { name: "Search rika!" });
     await palette.getByRole("combobox").fill("Calen");
     await palette.getByRole("option", { name: /Calendar/ }).first().waitFor();
     await page.keyboard.press("Enter");
@@ -2579,7 +2592,7 @@ describe("one mind-map editor", () => {
     const { page, problems, context } = await open("calendar", { dock: "hidden" });
     await page.evaluate(async () => { const { api } = await import("/src/lib/api.ts"); await api("/schema/create", { title: "Palette map", mode: "study" }); });
     await page.keyboard.press("Control+k");
-    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    const palette = page.getByRole("dialog", { name: "Search rika!" });
     await palette.getByRole("combobox").fill("palette map");
     await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Palette map"));
     await page.keyboard.press("Enter");
@@ -2964,7 +2977,7 @@ describe("adding flashcards", () => {
     await page.evaluate(() => { location.hash = "#calendar"; });
     await page.waitForFunction(() => location.hash === "#calendar");
     await page.keyboard.press("Control+k");
-    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    const palette = page.getByRole("dialog", { name: "Search rika!" });
     await palette.getByRole("combobox").fill("new card");
     await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("New card"));
     await page.keyboard.press("Enter");
@@ -3310,7 +3323,7 @@ describe("job-search report", () => {
 });
 
 describe("Google calendar conflicts", () => {
-  test("both versions sit on the day grid, kitty's solid and Google's dashed; picking one strikes out what is lost", async () => {
+  test("both versions sit on the day grid, rika's solid and Google's dashed; picking one strikes out what is lost", async () => {
     const event = (fields) => ({ title: "Linear algebra lecture", start: "2026-11-02T09:00:00+00:00", end: "2026-11-02T10:30:00+00:00", all_day: false,
       timezone: "UTC", location: "Hall B", description: "Bring problem set 6", reminders: [15], rrule: "", ...fields });
     const resolved = [];
@@ -3336,7 +3349,7 @@ describe("Google calendar conflicts", () => {
     const conflict = page.getByRole("article", { name: "Conflict: Linear algebra lecture" });
     await conflict.waitFor();
     assert.equal(await page.locator("pre").filter({ hasText: '"summary": "raw"' }).count(), 0, "raw JSON is still shown");
-    const mine = conflict.getByRole("button", { name: /^kitty's version/ });
+    const mine = conflict.getByRole("button", { name: /^rika's version/ });
     const google = conflict.getByRole("button", { name: /^Google's version/ });
     const style = (locator) => locator.evaluate((node) => getComputedStyle(node).borderTopStyle);
     assert.equal(await style(mine), "solid");
@@ -3349,7 +3362,7 @@ describe("Google calendar conflicts", () => {
     assert.equal(await keep.isDisabled(), true);
     await google.click();
     assert.equal(await google.getAttribute("aria-pressed"), "true");
-    // Choosing Google's version loses kitty's values.
+    // Choosing Google's version loses rika's values.
     assert.equal(await changes.locator('[data-side="local"].lost').count(), 3);
     assert.equal(await changes.locator('[data-side="remote"].lost').count(), 0);
     assert.equal(await changes.locator('[data-side="local"]').first().evaluate((node) => getComputedStyle(node).textDecorationLine), "line-through");

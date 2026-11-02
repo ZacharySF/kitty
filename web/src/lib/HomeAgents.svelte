@@ -60,7 +60,7 @@
   {:else if !activity}
     <p class="note" role="status">Reading herdr's agent states…</p>
   {:else if !activity.running}
-    <p class="note">kitty!'s herdr session is not running.</p>
+    <p class="note">rika!'s herdr session is not running.</p>
     <button class="text-button" onclick={() => onview("herdr")}>Open herdr</button>
   {:else if !spaces.length}
     <p class="note">No herdr workspaces yet.</p>

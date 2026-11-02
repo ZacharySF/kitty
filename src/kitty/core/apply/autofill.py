@@ -125,7 +125,7 @@ def summary(result: AutofillResult) -> str:
             lines.append(f"{report.job_id} {report.company} - {report.title}: {report.status}, "
                          f"{len(report.filled)} field(s) filled{blanks}{note}")
         if result.reports:
-            lines.append("Nothing was submitted: review each tab in the kitty Firefox and click submit.")
+            lines.append("Nothing was submitted: review each tab in the rika! Firefox and click submit.")
     for left in result.plan.left:
         lines.append(f"skipped {left.job_id} {left.company} - {left.title}: {left.reason}")
     if not result.plan.job_ids and not result.plan.left:

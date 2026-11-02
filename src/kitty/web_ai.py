@@ -256,7 +256,7 @@ def _completion(app, review_id, plan, key):
     try:
         with httpx.Client(timeout=90, follow_redirects=False) as client:
             response = client.post(BASE_URL + '/chat/completions',
-                headers={'Authorization': 'Bearer ' + key, 'X-OpenRouter-Title': 'kitty!'},
+                headers={'Authorization': 'Bearer ' + key, 'X-OpenRouter-Title': 'rika!'},
                 json={'model': plan['model'], 'messages': [{'role': 'system', 'content': plan['system_prompt']}, {'role': 'user', 'content': plan['text']}],
                       'max_tokens': plan['max_output_tokens'], 'stream': False,
                       'provider': {'sort': plan['routing'], 'data_collection': 'deny', 'require_parameters': True,

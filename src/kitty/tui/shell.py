@@ -31,7 +31,7 @@ APPLYAI = "applyai"
 class ModulesCommands(Provider):
     """Command palette: open the Modules screen (core, always available)."""
 
-    HELP = "Choose which modules kitty uses; changes apply on the next start"
+    HELP = "Choose which modules rika! uses; changes apply on the next start"
 
     async def discover(self) -> Hits:
         yield DiscoveryHit("Modules", partial(self.app.action_goto, "modules"), help=self.HELP)
@@ -47,7 +47,7 @@ class ShellApp(App):
     """Workspace, theme, help and the Modules screen: the parts that need no module."""
 
     CSS_PATH = "styles.tcss"
-    TITLE = "kitty"
+    TITLE = "rika!"
     COMMANDS = App.COMMANDS | {ModulesCommands}
 
     #: The screen the app opens on, and where Esc on Modules goes back to.

@@ -1,7 +1,7 @@
 [package]
 name = "kitty-workspace"
-version = "0.3.28"
-description = "kitty! private Linux desktop workspace"
+version = "0.3.29"
+description = "rika! private Linux desktop workspace"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"

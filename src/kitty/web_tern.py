@@ -1,12 +1,12 @@
-"""Terminal module: Stencil Tern beside kitty!'s herdr (kitty.core.tern).
+"""Terminal module: Stencil Tern beside rika!'s herdr (kitty.core.tern).
 
 GET  /api/terminal/tern  ->  status
     {install_url, installed, path, source, override, version, problem, workspace,
      socket, running, windows, sessions: [{id, name, shown, tabs: [{id, number, name,
      shown, blocks: [{id, title, cwd, program, cols, rows, focused, live, exited,
      working}]}]}]}
-    Reading never starts Tern; ``running`` is false until kitty!'s daemon runs.
-POST /api/terminal/tern/start     {}  ->  status   (kitty!'s daemon and session)
+    Reading never starts Tern; ``running`` is false until rika!'s daemon runs.
+POST /api/terminal/tern/start     {}  ->  status   (rika!'s daemon and session)
 POST /api/terminal/tern/open      {}  ->  status   (plus a native Tern window on it)
 POST /api/terminal/tern/settings  {"path": "/abs/tern" | "" | null}  ->  status
     Header-protected like every mutation. Without a usable ``tern`` start/open
@@ -67,5 +67,5 @@ def post(app, conn, path, body):
     except TernUnavailable as exc:
         raise _error(503, str(exc)) from None
     except OSError:
-        raise _error(503, "kitty!'s Tern daemon could not start") from None
+        raise _error(503, "rika!'s Tern daemon could not start") from None
     return _status(app)

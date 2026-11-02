@@ -404,7 +404,7 @@
           </ol>
         {:else}
           <p class="muted">
-            Apply on the employer’s website, then record it here. kitty! never
+            Apply on the employer’s website, then record it here. rika! never
             submits for you.
           </p>
           <label class="confirm"

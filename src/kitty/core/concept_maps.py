@@ -218,7 +218,7 @@ def revert(conn: sqlite3.Connection, export_path: Path | str) -> int:
     if (not isinstance(payload, dict) or payload.get("format") != EXPORT_FORMAT
             or type(payload.get("version")) is not int or payload["version"] != 1
             or not isinstance(payload.get("pages"), list)):
-        raise ValueError("Not a kitty concept-map export")
+        raise ValueError("Not a rika! concept-map export")
     page_ids = [page["id"] for page in payload["pages"] if isinstance(page, dict) and type(page.get("id")) is int]
     removed = 0
     with transaction(conn, immediate=True):

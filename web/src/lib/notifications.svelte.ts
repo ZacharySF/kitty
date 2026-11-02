@@ -84,7 +84,7 @@ class Notifier {
     const title = toast.notice ? toast.notice.title : "Morning digest";
     const body = toast.notice ? toast.notice.body : `Held during quiet hours: ${digestLine(toast.digest ?? [])}`;
     try {
-      new Notification(`kitty! · ${title}`, { body, tag: toast.notice?.key ?? "kitty-digest" });
+      new Notification(`rika! · ${title}`, { body, tag: toast.notice?.key ?? "kitty-digest" });
     } catch {
       this.error = "System notifications are unavailable here.";
     }

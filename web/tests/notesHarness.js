@@ -1,5 +1,5 @@
 // Browser fixture for tests/notes.browser.test.mjs. Mounts the real Notes view
-// with an in-memory stand-in for kitty!'s notes API; every record is synthetic.
+// with an in-memory stand-in for rika!'s notes API; every record is synthetic.
 import { mount } from "svelte";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";

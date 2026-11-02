@@ -88,13 +88,13 @@ jobs:
           tauriScript: ${{ github.workspace }}/web/node_modules/.bin/tauri
           args: --bundles appimage,deb -- --locked
           tagName: ${{ steps.version.outputs.tag }}
-          releaseName: kitty! ${{ steps.version.outputs.tag }} (Linux x86_64)
+          releaseName: rika! ${{ steps.version.outputs.tag }} (Linux x86_64)
           releaseBody: |
             Download the .deb for Ubuntu 22.04+ / compatible Debian-based desktops, or the AppImage for other compatible Linux desktops.
-            Install once, then launch kitty! from your application menu. The native tray menu checks for signed updates.
+            Install once, then launch rika! from your application menu. The native tray menu checks for signed updates.
             Application updates preserve the separate local workspace; do not delete that workspace when replacing the application.
             AppImage users: keep the file in a writable directory and enable its executable permission in your file manager.
-            Only installers, signatures and updater metadata are published here; Kitty source remains private. Bundles include LearnHarness's corresponding source and licenses.
+            Only installers, signatures and updater metadata are published here; rika! source remains private. Bundles include LearnHarness's corresponding source and licenses.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: false
@@ -115,18 +115,19 @@ jobs:
             --tag "$RELEASE_TAG" --assets release-assets --release release-assets-info.json
           test "$(dpkg-deb --field release-assets/*.deb Version)" = "${RELEASE_TAG#v}"
           test "$(dpkg-deb --field release-assets/*.deb Architecture)" = amd64
-          # Never replace the unrelated kitty terminal package.
-          test "$(dpkg-deb --field release-assets/*.deb Package)" = kitty-workspace
+          # Never replace the unrelated kitty terminal package; Tauri names the package after productName,
+          # and it Conflicts/Replaces the pre-rename kitty-workspace package (desktop/tauri.conf.json).
+          test "$(dpkg-deb --field release-assets/*.deb Package)" = rika-workspace
           # The Terminal module ships exactly the pinned herdr, with its Apache-2.0 licence.
           pinned="$(uv run --no-project python -c 'import runpy; print(runpy.run_path("desktop/fetch_herdr.py")["PINS"]["x86_64-unknown-linux-gnu"][1])')"
           dpkg-deb -x release-assets/*.deb release-deb
           test "$(sha256sum release-deb/usr/bin/kitty-herdr | cut -d ' ' -f 1)" = "$pinned"
-          cmp release-deb/usr/lib/kitty!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
+          cmp release-deb/usr/lib/rika!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
           chmod +x release-assets/*.AppImage
           appimage="$(realpath release-assets/*.AppImage)"
           (mkdir release-appimage && cd release-appimage && "$appimage" --appimage-extract >/dev/null)
           test "$(sha256sum release-appimage/squashfs-root/usr/bin/kitty-herdr | cut -d ' ' -f 1)" = "$pinned"
-          cmp release-appimage/squashfs-root/usr/lib/kitty!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
+          cmp release-appimage/squashfs-root/usr/lib/rika!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
       - name: Publish validated release and updater feed
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}

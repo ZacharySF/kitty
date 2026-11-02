@@ -24,7 +24,7 @@
 </script>
 
 <div class="understood" role="status" aria-label="Understood">
-  <span class="eyebrow">kitty! read</span>
+  <span class="eyebrow">rika! read</span>
   <div class="ribbon" aria-hidden="true">
     {#each segments as segment, i (i)}<span class="seg {segment.kind}">{segment.text}</span>{/each}
   </div>

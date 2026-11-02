@@ -1,5 +1,5 @@
 // Browser fixture for tests/dock.browser.test.mjs. Mounts the real dock with a
-// stand-in kitty! API and WebSocket so the page never reaches a herdr session.
+// stand-in rika! API and WebSocket so the page never reaches a herdr session.
 import { mount } from "svelte";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";

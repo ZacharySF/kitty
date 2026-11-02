@@ -23,8 +23,8 @@ from kitty.tui.helpers import muted
 from kitty.tui.theme import GOLD, MOSS
 
 _PURPOSE = (
-    "Choose which modules kitty uses. enter or space switches one; changes apply the "
-    "next time kitty starts. Your data is kept either way."
+    "Choose which modules rika! uses. enter or space switches one; changes apply the "
+    "next time rika! starts. Your data is kept either way."
 )
 
 
@@ -110,7 +110,7 @@ class ModulesScreen(Screen):
         if self.problem:
             note = f"[bold red]config/modules.yaml cannot be read, so nothing can be changed here:[/] {escape(self.problem)}"
         elif configured != self.active:
-            note = f"[{GOLD}]* Restart kitty to apply the change.[/]"
+            note = f"[{GOLD}]* Restart rika! to apply the change.[/]"
         else:
             note = muted("No pending change.")
         self.note = note
@@ -143,7 +143,7 @@ class ModulesScreen(Screen):
         if saved == self.active:
             self.notify(f"{module} {state}: same as what is running now.")
         else:
-            self.notify(f"{module} {state} for the next start. Restart kitty to apply it.")
+            self.notify(f"{module} {state} for the next start. Restart rika! to apply it.")
 
     @on(DataTable.RowSelected, "#modules-table")
     def _row_selected(self, event: DataTable.RowSelected) -> None:

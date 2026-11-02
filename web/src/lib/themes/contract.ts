@@ -46,7 +46,7 @@ import type { Theme } from "@nunera/bracket/theme";
  *   stays quiet enough that `ink`, `mute` and `dim` text, selected and pressed controls
  *   pass WCAG AA on every surface over the brightest backdrop pixel
  *   (tests/themes.browser.test.mjs checks each theme).
- * - **Original art only.** Motifs are drawn for kitty!, as CSS and SVG; never traced.
+ * - **Original art only.** Motifs are drawn for rika!, as CSS and SVG; never traced.
  */
 
 export type ThemeId =

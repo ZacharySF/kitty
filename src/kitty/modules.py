@@ -7,7 +7,7 @@ provider and budget):
   preparation, recovery, applications, follow-ups, mail and career reports;
 * ``workspace`` - notes, documents, canvas, schema, backlinks, flashcards, study,
   calendar, tasks and opportunities;
-* ``terminal``  - kitty!'s own bundled herdr session (kitty.core.terminal), plus the
+* ``terminal``  - rika!'s own bundled herdr session (kitty.core.terminal), plus the
   user's installed Stencil Tern when present (kitty.core.tern). Off means no herdr
   or Tern process, socket or terminal route exists.
 
@@ -52,7 +52,7 @@ _INFO: dict[str, tuple[str, str]] = {
     ),
     "terminal": (
         "Terminal",
-        "kitty!'s own herdr terminal session: workspaces, tabs, splits and agents, "
+        "rika!'s own herdr terminal session: workspaces, tabs, splits and agents, "
         "streamed into the window; plus your installed Stencil Tern, if any.",
     ),
 }
@@ -65,7 +65,7 @@ class ModuleDisabledError(RuntimeError):
         self.module = module
         super().__init__(
             f"The '{module}' module is disabled. Enable it in Settings or list it in "
-            f"config/{MODULES_FILE}, then restart kitty! (changes apply on the next start)."
+            f"config/{MODULES_FILE}, then restart rika! (changes apply on the next start)."
         )
 
 

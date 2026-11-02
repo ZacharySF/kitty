@@ -76,7 +76,7 @@
     </ul>
     {#if notifier.error}<p class="error" role="status">{notifier.error}</p>{/if}
     <footer>
-      <span>Checks while kitty is open</span>
+      <span>Checks while rika! is open</span>
       <button class="link" aria-pressed={notifier.system} onclick={() => notifier.toggleSystem()}
         >{notifier.system ? "System alerts on" : "System alerts off"}</button
       >

@@ -1,4 +1,4 @@
-// kitty!'s shared controls (design Q1–Q8) in a real browser on synthetic data
+// rika!'s shared controls (design Q1–Q8) in a real browser on synthetic data
 // (tests/controls-harness.html): one control height and radius per control type,
 // the Inter sentence-case label voice, one surface per region with hairline sections,
 // the status dot, the themed Select, the ⋯ menu, anchored popovers, quick-add and the

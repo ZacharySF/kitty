@@ -5,7 +5,7 @@
   import { DOCK_STEPS, clampDockOffset, clampDockSize, defaultDockSize, dockedHeight, readDock, writeDock, type DockMode, type DockOffset, type DockSize, type DockStep } from "./dock";
 
   /**
-   * The dock (Q3, Q8, Q56): kitty!'s herdr terminal or herdr's agent cards. Docked
+   * The dock (Q3, Q8, Q56): rika!'s herdr terminal or herdr's agent cards. Docked
    * (the default) it spans the bottom of the window at a fixed height step chosen
    * with S/M/L, never dragged, and publishes the space it takes as --dock-space so
    * the page ends above it; hidden, a thin handle brings it back. Floated, it is a

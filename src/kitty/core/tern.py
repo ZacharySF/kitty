@@ -1,32 +1,32 @@
-"""Stencil Tern (https://stencil.so/tern) as an optional terminal beside kitty!'s herdr.
+"""Stencil Tern (https://stencil.so/tern) as an optional terminal beside rika!'s herdr.
 
-Tern is closed-beta proprietary software: kitty! never bundles it. It runs only the
-``tern`` the user installed, found on PATH or at the path saved in kitty!'s Tern
+Tern is closed-beta proprietary software: rika! never bundles it. It runs only the
+``tern`` the user installed, found on PATH or at the path saved in rika!'s Tern
 settings (``.private/tern/settings.json``), and does nothing at all without it.
 
-kitty! keeps its own Tern session daemon on a private socket,
+rika! keeps its own Tern session daemon on a private socket,
 ``$XDG_RUNTIME_DIR/kitty/tern-<workspace hash>/daemon.sock`` (directory 0700), so
 it never reads or changes the user's own Tern daemon and sessions. Only Tern's
 public commands are used, always with ``TERN_DAEMON_SOCKET`` set to that socket:
 
 * ``tern daemon --socket PATH`` starts the daemon (on demand, never on startup);
-* ``tern new session kitty --cwd WORKSPACE`` gives it kitty!'s session;
+* ``tern new session kitty --cwd WORKSPACE`` gives it rika!'s session;
 * ``tern inspect --json`` reads sessions, panes and attached clients for status;
 * ``tern --dir WORKSPACE`` opens a native Tern window on that daemon; it shows
-  kitty!'s session and only starts a fresh session in the workspace when none exists.
+  rika!'s session and only starts a fresh session in the workspace when none exists.
 
-On NixOS kitty!'s AppImage runs inside appimage-run's FHS sandbox (bubblewrap), whose
+On NixOS rika!'s AppImage runs inside appimage-run's FHS sandbox (bubblewrap), whose
 own ``/etc/profile`` and ``/usr`` stand in for the system's. Tern starts every pane as
 a login shell, which there finds none of the user's programs (no git, nix or python3).
 So inside such a sandbox the daemon and the windows run outside it, as transient
 systemd user services (``systemd-run --user --wait``) in the user's session
-environment plus kitty!'s socket, Tern and display variables (by name, never values
-on a command line); without ``systemd-run`` they run as kitty!'s children, as
-elsewhere. Status and session commands are socket clients and stay kitty!'s children.
+environment plus rika!'s socket, Tern and display variables (by name, never values
+on a command line); without ``systemd-run`` they run as rika!'s children, as
+elsewhere. Status and session commands are socket clients and stay rika!'s children.
 
-Tern's web client (``tern web serve``) needs WebGPU, which kitty!'s WebKitGTK view
-does not provide, so kitty! shows status and opens native windows instead of
-embedding a terminal. Quit stops the windows kitty! opened and kitty!'s daemon
+Tern's web client (``tern web serve``) needs WebGPU, which rika!'s WebKitGTK view
+does not provide, so rika! shows status and opens native windows instead of
+embedding a terminal. Quit stops the windows rika! opened and rika!'s daemon
 (Tern keeps the layout in ``daemon.sock.state`` and restores it on the next start),
 but only when this process used Tern.
 """
@@ -55,21 +55,21 @@ READY_TIMEOUT = 15.0
 STOP_TIMEOUT = 10.0
 COMMAND_TIMEOUT = 10.0
 #: Tern variables a user sets for every Tern; everything else TERN_* describes the
-#: pane or window kitty! itself might run in, and would aim commands at it.
+#: pane or window rika! itself might run in, and would aim commands at it.
 _USER_TERN = ("TERN_CONFIG_DIR", "TERN_AUTH_URL", "TERN_BUILD_URL")
-#: The terminal kitty! itself runs in, and bundle library overlays (see
+#: The terminal rika! itself runs in, and bundle library overlays (see
 #: kitty.core.apply.browser._start) that break a separately installed program.
 _OUTER = ("TMUX", "TMUX_PANE", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
           "LD_LIBRARY_PATH", "LD_LIBRARY_PATH_ORIG")
 #: nixpkgs' FHS sandbox (buildFHSEnv, which appimage-run uses) binds the real /etc here.
 FHS_HOST_ETC = Path("/.host-etc")
-#: kitty!'s display a Tern started outside that sandbox keeps; the rest of its
-#: environment is the user's session (the systemd user manager's), not kitty!'s.
+#: rika!'s display a Tern started outside that sandbox keeps; the rest of its
+#: environment is the user's session (the systemd user manager's), not rika!'s.
 _DISPLAY = ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY")
 
 
 class TernUnavailable(RuntimeError):
-    """kitty!'s Tern session cannot be used; the message is safe to show."""
+    """rika!'s Tern session cannot be used; the message is safe to show."""
 
 
 class TernMissing(TernUnavailable):
@@ -77,7 +77,7 @@ class TernMissing(TernUnavailable):
 
 
 def child_environment(environ: Mapping[str, str], daemon_socket: Path) -> dict[str, str]:
-    """Environment for every ``tern`` kitty! runs: aimed at kitty!'s daemon only."""
+    """Environment for every ``tern`` rika! runs: aimed at rika!'s daemon only."""
     result = {key: value for key, value in environ.items()
               if key not in _OUTER and not key.startswith("HERDR_")
               and (not key.startswith("TERN_") or key in _USER_TERN)}
@@ -86,14 +86,14 @@ def child_environment(environ: Mapping[str, str], daemon_socket: Path) -> dict[s
 
 
 def _host_launcher(environ: Mapping[str, str]) -> str | None:
-    """``systemd-run``, when kitty! runs in an FHS sandbox that Tern has to run outside."""
+    """``systemd-run``, when rika! runs in an FHS sandbox that Tern has to run outside."""
     if not FHS_HOST_ETC.is_dir():
         return None
     return shutil.which("systemd-run", path=environ.get("PATH", ""))
 
 
 class _Child:
-    """A detached Tern process: kitty!'s own child, or a transient systemd user service
+    """A detached Tern process: rika!'s own child, or a transient systemd user service
     whose `process` is the ``systemd-run --wait`` that lasts exactly as long as it."""
 
     def __init__(self, process: subprocess.Popen, stop_service: list[str] | None):
@@ -127,7 +127,7 @@ def _write_private(path: Path, text: str) -> None:
 
 
 def _owner_only_directory(path: Path) -> None:
-    """Create `path` 0700 (parents too), or tighten kitty!'s existing directory to 0700."""
+    """Create `path` 0700 (parents too), or tighten rika!'s existing directory to 0700."""
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
@@ -171,7 +171,7 @@ def _running(pid: int) -> bool:
 
 
 def _terminate_group(process: subprocess.Popen) -> None:
-    """Stop a window kitty! started in its own process group."""
+    """Stop a window rika! started in its own process group."""
     if process.poll() is not None:
         return
     for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -195,7 +195,7 @@ def _block(block: dict, working: set) -> dict:
 
 
 class TernRuntime:
-    """Detection, settings and kitty!'s own Tern daemon for one workspace."""
+    """Detection, settings and rika!'s own Tern daemon for one workspace."""
 
     def __init__(self, workspace: Path, private_dir: Path, environ: Mapping[str, str] | None = None):
         self.workspace = workspace
@@ -245,7 +245,7 @@ class TernRuntime:
         return self._versions[key]
 
     def detect(self) -> dict:
-        """Which ``tern`` kitty! would run: the saved override, else PATH's."""
+        """Which ``tern`` rika! would run: the saved override, else PATH's."""
         override = self.override()
         found = {"override": override, "installed": False, "path": None, "source": None,
                  "version": None, "problem": None}
@@ -271,10 +271,10 @@ class TernRuntime:
         found = self.detect()
         if not found["installed"]:
             raise TernMissing((found["problem"] + ". " if found["problem"] else "Tern is not installed. ")
-                              + f"Install Stencil Tern from {INSTALL_URL} or set its path in kitty!'s Tern view.")
+                              + f"Install Stencil Tern from {INSTALL_URL} or set its path in rika!'s Tern view.")
         return found["path"]
 
-    # kitty!'s daemon ---------------------------------------------------------
+    # rika!'s daemon ---------------------------------------------------------
 
     @property
     def socket_path(self) -> Path:
@@ -324,13 +324,13 @@ class TernRuntime:
                 raise ValueError
             return found
         except (TernUnavailable, ValueError, AttributeError):
-            raise TernUnavailable("kitty!'s Tern daemon did not report its sessions") from None
+            raise TernUnavailable("rika!'s Tern daemon did not report its sessions") from None
 
     def _verify_private(self) -> None:
         path = self.socket_path
         info = path.lstat()
         if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-            raise TernUnavailable(f"Tern's socket {path} has unsafe permissions; kitty! stopped it")
+            raise TernUnavailable(f"Tern's socket {path} has unsafe permissions; rika! stopped it")
 
     def _start_locked(self) -> str:
         binary = self._binary()
@@ -347,7 +347,7 @@ class TernRuntime:
             while not _listening(path):
                 if not self._daemon.running() or time.monotonic() > deadline:
                     self._stop_daemon()
-                    raise TernUnavailable("kitty!'s Tern daemon did not start")
+                    raise TernUnavailable("rika!'s Tern daemon did not start")
                 time.sleep(0.05)
         try:
             self._verify_private()
@@ -358,16 +358,16 @@ class TernRuntime:
             self._stop_daemon()
             if isinstance(exc, TernUnavailable):
                 raise
-            raise TernUnavailable("kitty!'s Tern daemon could not be checked") from None
+            raise TernUnavailable("rika!'s Tern daemon could not be checked") from None
         return binary
 
     def start(self) -> None:
-        """Start kitty!'s daemon and session if needed; never touches another daemon."""
+        """Start rika!'s daemon and session if needed; never touches another daemon."""
         with self._lock:
             self._start_locked()
 
     def open_window(self) -> None:
-        """A native Tern window on kitty!'s daemon, showing kitty!'s session."""
+        """A native Tern window on rika!'s daemon, showing rika!'s session."""
         with self._lock:
             binary = self._start_locked()
             self._windows = [window for window in self._windows if window.running()]
@@ -378,7 +378,7 @@ class TernRuntime:
                 raise TernUnavailable("Tern's window could not start") from None
 
     def status(self) -> dict:
-        """Detection plus kitty!'s session; reading never starts anything."""
+        """Detection plus rika!'s session; reading never starts anything."""
         found = self.detect()
         result = {"install_url": INSTALL_URL, **found, "workspace": str(self.workspace),
                   "socket": str(self.socket_path), "running": False, "windows": 0, "sessions": []}
@@ -396,13 +396,13 @@ class TernRuntime:
                              for tab in session.get("tabs") or []],
                 } for session in report["sessions"]])
         except (KeyError, TypeError, AttributeError):
-            raise TernUnavailable("kitty!'s Tern daemon did not report its sessions") from None
+            raise TernUnavailable("rika!'s Tern daemon did not report its sessions") from None
         return result
 
     # Quit --------------------------------------------------------------------
 
     def _stop_daemon(self) -> None:
-        """Stop the daemon on kitty!'s private socket (and the one this process spawned)."""
+        """Stop the daemon on rika!'s private socket (and the one this process spawned)."""
         spawned, self._daemon = self._daemon, None
         if spawned is not None:
             spawned.stop_service()
@@ -429,7 +429,7 @@ class TernRuntime:
             spawned.process.wait()
 
     def stop(self) -> None:
-        """Quit: close kitty!'s Tern windows, then its daemon, if this process used Tern."""
+        """Quit: close rika!'s Tern windows, then its daemon, if this process used Tern."""
         with self._lock:
             used, self._used = self._used, False
             windows, self._windows = self._windows, []

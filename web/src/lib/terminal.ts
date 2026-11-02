@@ -9,7 +9,7 @@ export type ThemeRoles = {
 
 /**
  * Q1: a transparent terminal (the page's glass shows through) drawn in theme
- * roles. kitty!'s herdr config uses the same Harness roles for its own chrome.
+ * roles. rika!'s herdr config uses the same Harness roles for its own chrome.
  */
 export function terminalTheme(roles: ThemeRoles): ITheme {
   return {
@@ -64,7 +64,7 @@ export type TerminalActivity = {
   }[];
 };
 
-/** GET /api/terminal/tern (kitty/web_tern.py): the installed Tern and kitty!'s own session. */
+/** GET /api/terminal/tern (kitty/web_tern.py): the installed Tern and rika!'s own session. */
 export type TernBlock = {
   id: number; title: string; cwd: string | null; program: string | null; cols: number | null; rows: number | null;
   focused: boolean; live: boolean; exited: number | null; working: boolean;

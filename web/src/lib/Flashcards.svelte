@@ -1471,7 +1471,7 @@
     {:else if view === "transfer"}
       <h2>Import / export</h2>
       <div class="toolbar">
-        <span class="picker" title="APKG keeps kitty scheduling and Anki FSRS memory; CSV/TSV follow one note type's field order, then tags. Uploads up to 11 MiB."
+        <span class="picker" title="APKG keeps rika! scheduling and Anki FSRS memory; CSV/TSV follow one note type's field order, then tags. Uploads up to 11 MiB."
           ><span>Format</span><Select label="Format" options={formatOptions} bind:value={format} /></span>
         {#if format !== "apkg"}<span class="picker" title={`Field order: ${selectedType?.fields.join(" → ") ?? ""}`}
           ><span>Card format</span><Select label="CSV / TSV card format" kind="list" options={typeOptions} value={String(typeId)}

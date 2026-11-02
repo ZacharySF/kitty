@@ -134,7 +134,7 @@
       }
       if (!notified && result.settings?.notifications && "Notification" in window && Notification.permission === "granted") {
         try {
-          new Notification("kitty! study", { body: alert, tag: "kitty-study-phase" });
+          new Notification("rika! study", { body: alert, tag: "kitty-study-phase" });
           try { localStorage.setItem("kitty-study-last-notification", key); } catch { /* Optional storage. */ }
         } catch {
           error = "Desktop notifications are unavailable. Visual phase alerts remain active.";

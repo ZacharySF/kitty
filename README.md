@@ -1,11 +1,11 @@
-# kitty!
+# rika!
 
 A local-first desktop workspace. Notes, documents, study tools and planning live
 in one SQLite database on your machine and are connected in a navigable
 knowledge atlas. A bundled terminal and an optional job-application assistant
 plug in as modules.
 
-![kitty! demo: the atlas home, writing a note and finding it again](docs/media/demo.gif)
+![rika! demo: the atlas home, writing a note and finding it again](docs/media/demo.gif)
 
 **[Download for Linux](https://github.com/ZacharySF/kitty-releases/releases/latest)**
 (signed AppImage and .deb with in-app updates) ·
@@ -104,7 +104,7 @@ CI runs the Python tests, the frontend check and the web unit tests on every pul
 
 ## Built on
 
-kitty! integrates these projects rather than reimplementing them; credit for
+rika! integrates these projects rather than reimplementing them; credit for
 their features belongs to their authors.
 
 - [herdr](https://github.com/herdrdev/herdr) (Apache-2.0): the terminal

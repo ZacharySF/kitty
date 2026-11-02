@@ -121,7 +121,7 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
         let label = format!("quick-note-{}", state.next_note.fetch_add(1, Ordering::SeqCst));
         let origin = state.origin.clone();
         let _ = WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
-            .title("kitty! quick note").inner_size(380.0, 460.0).min_inner_size(260.0, 220.0)
+            .title("rika! quick note").inner_size(380.0, 460.0).min_inner_size(260.0, 220.0)
             .transparent(true).decorations(false).always_on_top(true)
             .initialization_script(TRANSPARENT_MARKER)
             .devtools(cfg!(debug_assertions))
@@ -153,7 +153,7 @@ fn start_backend(root: &Path) -> Result<(Backend, Url, mpsc::Receiver<owner::Com
     let binary = sidecar(directory, "kitty-web", staging.as_deref())
         .ok_or("The bundled kitty-web executable is missing")?;
     let mut command = Command::new(binary);
-    // The Terminal module runs only kitty!'s pinned herdr, never one from the environment.
+    // The Terminal module runs only rika!'s pinned herdr, never one from the environment.
     command.env_remove("KITTY_HERDR");
     if let Some(herdr) = sidecar(directory, "kitty-herdr", staging.as_deref()) { command.env("KITTY_HERDR", herdr); }
     let child = command.arg("--workspace").arg(root)
@@ -293,13 +293,13 @@ fn main() {
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                 .and_then(|value| value["background"].as_bool()).unwrap_or(false);
             let (backend, origin, commands) = start_backend(&root)?;
-            let show_item = MenuItem::with_id(app, "show", "Show kitty!", true, None::<&str>)?;
+            let show_item = MenuItem::with_id(app, "show", "Show rika!", true, None::<&str>)?;
             let note_item = MenuItem::with_id(app, "quick-note", "New quick note", true, None::<&str>)?;
             let background_item = CheckMenuItem::with_id(app, "background", "Keep running on close (monitoring / reminders)", true, background, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit kitty! (save and stop workers)", true, Some("Ctrl+Shift+Q"))?;
+            let quit = MenuItem::with_id(app, "quit", "Quit rika! (save and stop workers)", true, Some("Ctrl+Shift+Q"))?;
             let update = MenuItem::with_id(app, "updates", "Check for updates…", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &note_item, &background_item, &update, &quit])?;
-            let tray = TrayIconBuilder::new().tooltip("kitty!").menu(&menu)
+            let tray = TrayIconBuilder::new().tooltip("rika!").menu(&menu)
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?).build(app);
             let background_available = tray.is_ok();
             if !background_available {
@@ -319,7 +319,7 @@ fn main() {
             let note_origin = origin.clone();
             let note_app = app.handle().clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin))
-                .title("kitty!").inner_size(1280.0, 850.0).min_inner_size(760.0, 500.0)
+                .title("rika!").inner_size(1280.0, 850.0).min_inner_size(760.0, 500.0)
                 .transparent(true)
                 .initialization_script(TRANSPARENT_MARKER)
                 .devtools(cfg!(debug_assertions))
@@ -382,7 +382,7 @@ fn main() {
             _ => {},
         })
         .build(tauri::generate_context!())
-        .expect("Unable to start kitty!: verify the packaged backend and local workspace");
+        .expect("Unable to start rika!: verify the packaged backend and local workspace");
     app.run(|app, event| {
         if let RunEvent::ExitRequested { api, .. } = event {
             if let Some(state) = app.try_state::<Desktop>() {

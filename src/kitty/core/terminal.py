@@ -1,7 +1,7 @@
-"""kitty!'s own herdr runtime: one named session with a private config and socket.
+"""rika!'s own herdr runtime: one named session with a private config and socket.
 
 herdr (https://github.com/herdrdev/herdr, Apache-2.0) is bundled at the version
-pinned in ``desktop/fetch_herdr.py``; kitty! never runs a herdr found on PATH and
+pinned in ``desktop/fetch_herdr.py``; rika! never runs a herdr found on PATH and
 never uses herdr's ``default`` session. Only herdr's public commands are used:
 
 * ``herdr --session NAME`` starts the session's server when it is not running (as a
@@ -10,9 +10,9 @@ never uses herdr's ``default`` session. Only herdr's public commands are used:
 
 The session's sockets live where herdr keeps every named session,
 ``$XDG_CONFIG_HOME/herdr/sessions/NAME`` (default ``~/.config/herdr``), so agents
-can reach it with ``herdr --session NAME``. kitty! creates that directory owner-only
+can reach it with ``herdr --session NAME``. rika! creates that directory owner-only
 and refuses a session whose sockets are readable by anyone else. The Harness theme
-lives in kitty!'s own ``.private/herdr/config.toml`` (``HERDR_CONFIG_PATH``), so the
+lives in rika!'s own ``.private/herdr/config.toml`` (``HERDR_CONFIG_PATH``), so the
 user's own herdr configuration is never read or changed.
 
 Nothing here starts until a page attaches; ``stop`` stops the session only when this
@@ -40,7 +40,7 @@ from pathlib import Path
 SOCKET_PATH_MAX = 107
 READY_TIMEOUT = 15.0
 STOP_TIMEOUT = 30.0
-#: Variables describing the terminal kitty! itself runs in. The pty kitty! creates is
+#: Variables describing the terminal rika! itself runs in. The pty rika! creates is
 #: none of these; herdr refuses nested launches while HERDR_ENV=1 is inherited.
 _OUTER_TERMINAL = ("TMUX", "TMUX_PANE", "TERM_PROGRAM", "TERM_PROGRAM_VERSION")
 _SESSION_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -54,11 +54,11 @@ _CHROME = re.compile(r"[\u2500-\u259f\u2800-\u28ff]+")
 #: Agents with a native startup-instruction option; the executable stays user-installed.
 CODING_AGENTS = ("omp", "claude", "codex")
 
-#: herdr config for kitty!'s session: the Harness palette (web/src/lib/themes.ts) on
+#: herdr config for rika!'s session: the Harness palette (web/src/lib/themes.ts) on
 #: herdr's terminal base, with transparent panels so the page's surface shows through.
-#: Updates arrive only with kitty!'s signed releases, so herdr's own checks are off.
+#: Updates arrive only with rika!'s signed releases, so herdr's own checks are off.
 HARNESS_CONFIG = """\
-# Written by kitty! for its own herdr session; replaced whenever kitty! starts it.
+# Written by rika! for its own herdr session; replaced whenever rika! starts it.
 onboarding = false
 
 [theme]
@@ -92,7 +92,7 @@ manifest_check = false
 
 
 class TerminalUnavailable(RuntimeError):
-    """kitty!'s herdr session cannot be used; the message is safe to show."""
+    """rika!'s herdr session cannot be used; the message is safe to show."""
 
 
 class TerminalNotRunning(TerminalUnavailable):
@@ -116,7 +116,7 @@ def herdr_config_dir(environ: Mapping[str, str]) -> Path:
 
 
 def child_environment(environ: Mapping[str, str], config_path: Path) -> dict[str, str]:
-    """Environment for kitty!'s herdr: nothing from an outer herdr or terminal."""
+    """Environment for rika!'s herdr: nothing from an outer herdr or terminal."""
     result = {key: value for key, value in environ.items()
               if not key.startswith("HERDR_") and key not in _OUTER_TERMINAL}
     result.update(HERDR_CONFIG_PATH=str(config_path), TERM="xterm-256color", COLORTERM="truecolor")
@@ -136,7 +136,7 @@ def _write_private(path: Path, text: str) -> None:
 
 
 def _owner_only_directory(path: Path) -> None:
-    """Create `path` 0700, or tighten kitty!'s existing directory to 0700."""
+    """Create `path` 0700, or tighten rika!'s existing directory to 0700."""
     path.mkdir(mode=0o700, exist_ok=True)
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
@@ -183,7 +183,7 @@ class TerminalClient:
 
 
 class HerdrRuntime:
-    """kitty!'s named herdr session; clients attach lazily, ``stop`` ends it."""
+    """rika!'s named herdr session; clients attach lazily, ``stop`` ends it."""
 
     def __init__(self, binary: str | None, session: str, private_dir: Path,
                  environ: Mapping[str, str] | None = None):
@@ -207,7 +207,7 @@ class HerdrRuntime:
     def _session_folder(self) -> Path:
         """Where herdr keeps this session's sockets, once the runtime and name are valid."""
         if not self.binary or not os.access(self.binary, os.X_OK) or not Path(self.binary).is_file():
-            raise TerminalUnavailable("The bundled herdr runtime is missing; reinstall kitty!")
+            raise TerminalUnavailable("The bundled herdr runtime is missing; reinstall rika!")
         validate_session_name(self.session)
         return herdr_config_dir(self.environ) / "sessions" / self.session
 
@@ -231,7 +231,7 @@ class HerdrRuntime:
         for name in ("herdr.sock", "herdr-client.sock"):
             info = (folder / name).lstat()
             if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise TerminalUnavailable(f"herdr socket {folder / name} has unsafe permissions; kitty! stopped it")
+                raise TerminalUnavailable(f"herdr socket {folder / name} has unsafe permissions; rika! stopped it")
 
     def attach(self, cols: int, rows: int) -> TerminalClient:
         """Start the session if needed and attach a new client of the given size."""
@@ -254,7 +254,7 @@ class HerdrRuntime:
                 deadline = time.monotonic() + READY_TIMEOUT
                 while not _listening(folder / "herdr-client.sock"):
                     if process.poll() is not None or time.monotonic() > deadline:
-                        raise TerminalUnavailable("kitty!'s herdr session did not start")
+                        raise TerminalUnavailable("rika!'s herdr session did not start")
                     time.sleep(0.02)
                 self._verify_private(folder)
             except BaseException:
@@ -270,10 +270,10 @@ class HerdrRuntime:
                 self.environ, self.config_path), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, timeout=STOP_TIMEOUT, check=False)
         except (OSError, subprocess.TimeoutExpired):
-            pass  # Nothing else may stop it: kitty! never signals a herdr it did not spawn.
+            pass  # Nothing else may stop it: rika! never signals a herdr it did not spawn.
 
     def _read(self, *arguments: str) -> dict:
-        """One read-only herdr CLI call against kitty!'s running session."""
+        """One read-only herdr CLI call against rika!'s running session."""
         try:
             result = subprocess.run(
                 self._command(*arguments), env=child_environment(self.environ, self.config_path),
@@ -282,7 +282,7 @@ class HerdrRuntime:
                 raise ValueError(result.returncode)
             return json.loads(result.stdout)["result"]
         except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
-            raise TerminalUnavailable("kitty!'s herdr session did not report its agent states") from None
+            raise TerminalUnavailable("rika!'s herdr session did not report its agent states") from None
 
     def _last_line(self, pane: str) -> str:
         """The pane's last line of real output: blank lines and box-drawing chrome skipped."""
@@ -341,7 +341,7 @@ class HerdrRuntime:
                 "agents": [card(agent) for agent in agents if agent.get("workspace_id") == space["workspace_id"]],
             } for space in workspaces]}
         except (KeyError, TypeError, AttributeError):
-            raise TerminalUnavailable("kitty!'s herdr session did not report its agent states") from None
+            raise TerminalUnavailable("rika!'s herdr session did not report its agent states") from None
         with self._states_lock:
             self._states = seen
         return result

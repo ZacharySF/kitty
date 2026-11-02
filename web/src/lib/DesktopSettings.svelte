@@ -26,7 +26,7 @@
 
   async function command(value: DesktopCommand) {
     if (pending || !desktop?.available) return;
-    if (value === "quit" && !window.confirm("Quit kitty! and stop its workers? Your saved data is kept.")) return;
+    if (value === "quit" && !window.confirm("Quit rika! and stop its workers? Your saved data is kept.")) return;
     pending = true;
     error = "";
     notice = "";
@@ -42,8 +42,8 @@
   const keepRunningHint = $derived(!desktop?.keep_running_available
     ? "Needs a system tray on this desktop"
     : desktop.keep_running
-      ? "Closing the window keeps kitty! running in the system tray for monitoring and reminders"
-      : "Closing the window quits kitty! and stops workers");
+      ? "Closing the window keeps rika! running in the system tray for monitoring and reminders"
+      : "Closing the window quits rika! and stops workers");
 </script>
 
 <Panel title="Desktop" aria-label="Desktop">
@@ -68,12 +68,12 @@
         <span class="set-label">Window</span>
         <span class="set-end">
           <Button size="sm" disabled={pending} onclick={() => command("new-quick-note")}>New quick note</Button>
-          <Button size="sm" disabled={pending} onclick={() => command("quit")} title="Saves your workspace and stops workers">Quit kitty!</Button>
+          <Button size="sm" disabled={pending} onclick={() => command("quit")} title="Saves your workspace and stops workers">Quit rika!</Button>
         </span>
       </div>
     </div>
   {:else if desktop}
-    <p class="set-note">These controls live in the kitty! desktop app.</p>
+    <p class="set-note">These controls live in the rika! desktop app.</p>
   {:else if !error}
     <p class="set-note" role="status">Loading desktop settings…</p>
   {/if}

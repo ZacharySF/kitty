@@ -159,7 +159,7 @@
 
 <article class="quick-note {variant}" data-tint={tint} class:pinned aria-label={`Quick note: ${noteTitle(body)}`}>
   <header>
-    <span class="meta">{variant === "window" ? "kitty! · quick note" : pinned ? "pinned" : since(current?.updated_at)}</span>
+    <span class="meta">{variant === "window" ? "rika! · quick note" : pinned ? "pinned" : since(current?.updated_at)}</span>
     <div class="tools">
       <div class="tints" role="radiogroup" aria-label="Note color">
         {#each TINTS as option}

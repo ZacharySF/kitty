@@ -4,9 +4,9 @@
 #              preparation, recovery, applications, follow-ups, mail, career reports
 #   workspace  notes, documents, canvas, schema, backlinks, flashcards, study,
 #              calendar, tasks, opportunities
-#   terminal   kitty!'s own bundled herdr terminal session; off means no herdr
+#   terminal   rika!'s own bundled herdr terminal session; off means no herdr
 #              process, socket or terminal route
 #
 # The shell, settings and AI provider/budget always remain. A workspace without
-# this file keeps every module. Changes apply the next time kitty! starts.
+# this file keeps every module. Changes apply the next time rika! starts.
 enabled: [applyai, workspace, terminal]

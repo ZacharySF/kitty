@@ -38,7 +38,7 @@
       <a href={url} target="_blank" rel="noopener noreferrer">Open in new tab</a>
     </div>
   </header>
-  <p class="boundary">External app · separate learning data and provider settings. Kitty never sends resumes,
+  <p class="boundary">External app · separate learning data and provider settings. rika! never sends resumes,
     applicant records or AI keys. Provider logins should use the new tab; model requests require your own
     LearnHarness provider key or connection and may incur costs.</p>
   {#if error}<p role="alert">{error}</p>{/if}
@@ -48,7 +48,7 @@
         sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
         onerror={() => { available = false; }}></iframe>
     {/key}
-    <small>The bundled learning server stops when this Kitty instance quits; learning records persist.
+    <small>The bundled learning server stops when this rika! instance quits; learning records persist.
       An independently started LearnHarness server is never stopped by Kitty.</small>
   {:else if !checking}
     <Panel title="LearnHarness is unavailable">
@@ -60,7 +60,7 @@
   <details>
     <summary>Learning data and provider setup</summary>
     <p>The bundled app stores learning records and provider connections in this workspace's
-      separate <code>data/learnharness/</code> directory. Kitty does not copy credentials or learning
+      separate <code>data/learnharness/</code> directory. rika! does not copy credentials or learning
       records from an existing upstream checkout. Demo workspace learning records are disposable;
       an independently started server keeps its own data.</p>
     <p>No provider is configured automatically. Use LearnHarness settings to connect your provider

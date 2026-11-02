@@ -30,7 +30,7 @@ export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): Tutori
       tip: "Turning a module off keeps its data. Settings is always available.",
       view: "settings", selector: '[data-tutorial="modules"]' },
     { id: "providers", title: "AI is optional, and you hold the budget.",
-      text: "kitty works without any AI provider. If you want AI help, connect your own OpenRouter key here and set a daily budget. Paid requests are billed to you by the provider, and each one is shown for review before it runs.",
+      text: "rika! works without any AI provider. If you want AI help, connect your own OpenRouter key here and set a daily budget. Paid requests are billed to you by the provider, and each one is shown for review before it runs.",
       tip: "No key, no cost. Google sign-in never turns on AI or other paid services.",
       view: "ai", selector: ".ai-panel" },
     { id: "atlas", title: "Your ideas have a place.",
@@ -39,7 +39,7 @@ export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): Tutori
       view: "today", selector: ".atlas" },
     { id: "quick-notes", title: "Catch the thought. Keep moving.",
       text: workspace ? "Quick notes are a small place for the thought you don't want to lose. Create a note here; in the desktop app, open a floating note from the tray."
-        : "Quick notes live in the Study & planning module. It is off in this session. Enable it here, then restart kitty when you are ready; this tour won't change your modules.",
+        : "Quick notes live in the Study & planning module. It is off in this session. Enable it here, then restart rika! when you are ready; this tour won't change your modules.",
       tip: "Quick notes stay on this device. No account or cloud upload is needed.",
       view: workspace ? "quick-notes" : "settings", selector: workspace ? '[data-kitty-panel="view"]:not([hidden])' : '[data-tutorial="modules"]', unavailable: !workspace },
     { id: "study", title: "A little focus goes a long way.",

@@ -1,4 +1,4 @@
-"""Stage kitty!'s pinned herdr release binary as the desktop bundle's kitty-herdr sidecar.
+"""Stage rika!'s pinned herdr release binary as the desktop bundle's kitty-herdr sidecar.
 
 herdr is Apache-2.0 (desktop/third_party/herdr/LICENSE ships in the bundle; the
 upstream release has no NOTICE file). Only a binary whose SHA-256 matches the pin

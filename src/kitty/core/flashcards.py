@@ -958,14 +958,14 @@ def import_apkg(conn, payload):
                 custom = {}
                 if "kitty_card_state" in tables:
                     custom = {r["id"]: json.loads(r["state"]) for r in source.execute("SELECT * FROM kitty_card_state")}
-                    if any(not isinstance(state, dict) for state in custom.values()): raise ValueError("Invalid kitty scheduling metadata")
+                    if any(not isinstance(state, dict) for state in custom.values()): raise ValueError("Invalid rika! scheduling metadata")
                 metadata = {}
                 if "kitty_metadata" in tables:
                     metadata = {r["key"]: json.loads(r["value"]) for r in source.execute("SELECT * FROM kitty_metadata")}
                     for key in ("decks", "notes"):
                         values = metadata.get(key, {})
                         if not isinstance(values, dict) or any(not isinstance(value, dict) for value in values.values()):
-                            raise ValueError("Invalid kitty deck/note metadata")
+                            raise ValueError("Invalid rika! deck/note metadata")
                 with transaction(conn):
                     modern = collection == "collection.anki21b"
                     media = _anki_media(_decompress(archive.read("media")), modern) if "media" in names else []
@@ -1055,7 +1055,7 @@ def import_apkg(conn, payload):
                             columns = list(values)
                             conn.execute("UPDATE flash_cards SET " + ",".join(k+"=?" for k in columns) + " WHERE id=?", (*[values[k] for k in columns], ident))
                         imported += 1
-                return {"imported": imported, "duplicates": duplicate, "skipped_unsafe_media": skipped, "warning": "Anki FSRS memory is preserved when present; older schedules use interval-based stability estimates. kitty exports retain exact FSRS state."}
+                return {"imported": imported, "duplicates": duplicate, "skipped_unsafe_media": skipped, "warning": "Anki FSRS memory is preserved when present; older schedules use interval-based stability estimates. rika! exports retain exact FSRS state."}
             finally:
                 source.close()
 
