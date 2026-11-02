@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "./api";
   import { buildStore, setPreferences } from "./build.svelte";
+  import Select from "./ui/Select.svelte";
 
   type AgentInfo = { binary: string | null; session: string; cwd: string; default: string; kinds: string[] };
   let info = $state<AgentInfo | null>(null);
@@ -54,11 +55,9 @@
   </div>
   {#if choosing && info}
     <form onsubmit={(event) => { event.preventDefault(); void launch(); }}>
-      <label>Coding agent
-        <select bind:value={kind} disabled={busy}>
-          {#each info.kinds as option}<option value={option}>{option}</option>{/each}
-        </select>
-      </label>
+      <div class="field"><span>Coding agent</span>
+        <Select label="Coding agent" bind:value={kind} disabled={busy} options={info.kinds.map((option) => ({ value: option, label: option }))} />
+      </div>
       <button class="text-button" disabled={busy || !info.binary}>{busy ? "Starting agent…" : "Start agent"}</button>
       <span>Own Agent tab · herdr skill · workspace directory · installed agent required</span>
     </form>
@@ -79,9 +78,8 @@
 
 <style>
   .agent-tools { flex: none; padding: 3px 8px; border-bottom: 1px solid var(--hairline); font: 10.5px var(--font-mono); color: var(--muted); }
-  .agent-actions, form, label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .agent-actions, form, .field { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   form { padding: 4px 0; }
-  select { background: var(--solid-panel, #1c1c1c); color: var(--ink); border: 1px solid var(--hairline); border-radius: 6px; padding: 2px 8px; font: inherit; }
   p { margin: 4px 0; }
   [role="alert"] { color: var(--br-caution, #e8c872); }
   .external { max-height: 180px; overflow: auto; padding: 6px 0; }

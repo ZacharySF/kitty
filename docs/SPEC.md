@@ -313,10 +313,13 @@ Stage 1: done.
   processes, but their data and configuration remain. Existing global migrations
   stay in place.
 - Terminal dock (`docs/terminal-dock-design.md` Q1, Q3, Q8, Q10): a window-bottom
-  dock shows herdr's real client (transparent, Harness colours), herdr's own
-  per-workspace agent states, or only a thin handle; its state and draggable height
-  are kept in the build (`ui.dock` of `config/build.json`), and its first size is the
-  empty area below the main panel. The herdr view is an atlas node under Plan that opens the full
+  dock shows herdr's real client (transparent, Harness colours) or herdr's own
+  per-workspace agent states at a fixed S/M/L height the page ends above (no
+  dragged height); hidden, only a thin handle. Float turns it into a bottom-right
+  glass card that takes no page space (header drag, corner-grip resize, committed
+  on release; hidden, a small pill). Its view, height step, float choice, card
+  size and position are kept in the build (`ui.dock` of `config/build.json`). The herdr view is an
+  atlas node under Plan that opens the full
   session in a workspace tab. Reading agent states never starts herdr.
 - Agents in kitty! (`docs/terminal-dock-design.md` Q2, Q9): either terminal surface
   can open a labelled Agent tab running the chosen installed coding agent (omp by
@@ -422,3 +425,13 @@ Stage 1: done.
   under the toolbar at the default (1280×850) and minimum (760×500) native sizes.
   Checks: `node --test web/tests/notes.browser.test.mjs` (same browser variables as
   above).
+- 2026-11-02: Home holds only widgets (fidelity design Q13): Today and Quick note
+  on the left, Agents and Up next on the right. The Sections list left the rail for a
+  **Sections** popover in the stage's top-left corner (search, grouped list, each
+  row's ⋯: Open, Show on the map, Hide/Show); a 2D node dropped on **Sections** hides
+  it and a dimmed row dragged onto the graph shows it. The Brain/2D switch sits beside
+  **View** in the stage's top-right corner. The right rail folds to an 18px strip by
+  its inner-edge chevron or `]` (`kitty.home.rail`, shared live by every home) and the
+  Brain or 2D atlas refits to the wider stage. Checks:
+  `node --test web/tests/workbench.browser.test.mjs web/tests/brain.browser.test.mjs
+  web/tests/atlasNodes.browser.test.mjs` (same browser variables as above).

@@ -67,7 +67,7 @@ def page_history(conn: sqlite3.Connection, page_id: str) -> dict:
     horizon = conn.execute("SELECT horizon_seq FROM block_history WHERE id=1").fetchone()[0]
     try:  # merged sessions carry the paired device that made them
         devices = {row[0]: row[1] for row in conn.execute("SELECT device_id, name FROM peers")}
-    except sqlite3.OperationalError:  # before migration 038
+    except sqlite3.OperationalError:  # before migration 040
         devices = {}
     return {"page_id": page_id, "horizon_seq": horizon, "sessions": sessions[::-1], "snapshots": snapshots, "devices": devices}
 
@@ -195,7 +195,7 @@ def _acknowledged(conn: sqlite3.Connection) -> int | None:
     """The highest sequence every paired device has acknowledged; None without paired devices."""
     try:
         count, lowest = conn.execute("SELECT COUNT(*), MIN(acked_seq) FROM peers").fetchone()
-    except sqlite3.OperationalError:  # before migration 038
+    except sqlite3.OperationalError:  # before migration 040
         return None
     return lowest if count else None
 
@@ -205,7 +205,7 @@ def _cover_crdt(conn: sqlite3.Connection, horizon: int, last: int, at: str) -> N
     try:
         rows = conn.execute("SELECT c.page_id FROM page_crdt c WHERE c.snapshot_seq<? AND EXISTS (SELECT 1 FROM op_log o "
                             "WHERE o.page_id=c.page_id AND o.seq>? AND o.seq<=? AND o.crdt IS NOT NULL)", (last, horizon, last)).fetchall()
-    except sqlite3.OperationalError:  # before migration 038
+    except sqlite3.OperationalError:  # before migration 040
         return
     peer = crdt.peer_of(device_id(conn))
     for (page_id,) in rows:

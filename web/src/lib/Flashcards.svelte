@@ -1,9 +1,23 @@
 <script lang="ts">
+  import { buildStore, setPreferences } from "./build.svelte";
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
   import AIReview from "./AIReview.svelte";
+  import EmptyState from "./EmptyState.svelte";
   import SectionGraph, { type SectionNode } from "./SectionGraph.svelte";
+  import GradeKeys, { GRADES, type HeldKey } from "./flashcards/GradeKeys.svelte";
+  import ReviewStack, { FLY_MS } from "./flashcards/ReviewStack.svelte";
+  import DeckTiles from "./flashcards/DeckTiles.svelte";
+  import MemoryStats from "./flashcards/stats/MemoryStats.svelte";
+  import CardDetail, { STATE_COLOR, isBuried } from "./flashcards/CardDetail.svelte";
+  import Select, { type SelectOption } from "./ui/Select.svelte";
+  import OverflowMenu, { type OverflowItem } from "./ui/OverflowMenu.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import {
+    DUPLICATE_WARNING, addCard, checkCard, loadFronts, normalizeFront, preselectDeck, rememberDeck, rememberedDeck,
+  } from "./flashcards/newCard";
+  import { focusContext } from "./panelFullscreen";
   import type { Crumb } from "./breadcrumb.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
@@ -29,6 +43,9 @@
     revision: number;
     due: number;
     new: number;
+    learning: number;
+    review: number;
+    recall: number | null;
   };
   type Template = { name: string; front: string; back: string };
   type NoteType = {
@@ -83,7 +100,6 @@
       streak: number;
       suspended: number;
       leeches: number;
-      days: { day: string; reviews: number; again: number; seconds: number }[];
     };
   };
   let overview = $state<Overview | null>(null),
@@ -91,7 +107,7 @@
     total = $state(0);
   let deckId = $state(0),
     typeId = $state(0),
-    view = $state("schema"),
+    view = $state("decks"),
     search = $state(""),
     offset = $state(0);
   let error = $state(""),
@@ -120,6 +136,9 @@
     started = $state(0);
   let revealed = $state(false);
   let answerFace = $state(false);
+  let held = $state<HeldKey>(null);
+  let heldToken = 0;
+  let flying = $state(0);
   let studyId = $state<string | null>(null),
     practiceResume = $state<{
       study_id: string;
@@ -154,32 +173,37 @@
   type Reference = { kind: string; id: number | string; title: string; snippet: string; shared_terms: string[]; score: number; view: string };
   let references = $state<Record<string, Reference[]>>({linked: [], unlinked: [], related: []});
   let referenceError = $state("");
-  let graphFocus = $state<string | null>(null);
+  /** How the Decks view draws the collection: due-ring tiles or the deck → note graph (build: ui.flashcards.look). */
+  const look = $derived(buildStore.build.ui.flashcards.look);
+  function setLook(next: "tiles" | "graph") {
+    void setPreferences({ ui: { flashcards: { look: next } } });
+  }
+  let graphFocus = $derived(deckId ? `deck:${deckId}` : null);
   let graphRevision = $state(0);
+  /** Bumped after every overview load so the memory stats refresh with it. */
+  let loads = $state(0);
   let noteRequest = 0;
-  function rootSchema() {
+  function allDecks() {
     noteRequest += 1;
-    graphFocus = null;
     editing = null;
     deckId = 0;
     search = "";
     offset = 0;
     error = "";
-    view = "schema";
+    view = "decks";
     graphRevision += 1;
   }
-  function deckSchema(id: number) {
+  function focusDeck(id: number) {
     noteRequest += 1;
     deckId = id;
-    graphFocus = `deck:${id}`;
     editing = null;
     error = "";
-    view = "schema";
+    view = "decks";
   }
   async function selectGraphNode(node: SectionNode) {
     if (!pane.active || typeof node.ref !== "number") return;
     if (node.entity === "deck") {
-      deckSchema(node.ref);
+      focusDeck(node.ref);
     } else if (node.entity === "flashcard_note") {
       const request = ++noteRequest;
       error = "";
@@ -202,9 +226,7 @@
     } catch (cause) { failure(cause); }
   }
   $effect(() => {
-    const id = view === "schema"
-      ? (graphFocus ? Number(graphFocus.slice(5)) : 0)
-      : view === "deck-editor" ? deckEditing?.id || 0 : deckId;
+    const id = view === "deck-editor" ? deckEditing?.id || 0 : deckId;
     const byId = new Map((overview?.decks ?? []).map(deck => [deck.id, deck]));
     const chain: Deck[] = [];
     const seen = new Set<number>();
@@ -216,11 +238,11 @@
     }
     const crumbs: Crumb[] = chain.map(deck => ({
       label: deck.name.split("::").at(-1) || deck.name,
-      onclick: () => deckSchema(deck.id),
+      onclick: () => focusDeck(deck.id),
     }));
     if (view === "editor") crumbs.push({label: editing ? `Card ${editing.id}` : "New card"});
     if (view === "review" && review?.note_id) crumbs.push({label: `Note ${review.note_id}`});
-    pane.setTrail("flashcards", crumbs, rootSchema);
+    pane.setTrail("flashcards", crumbs, allDecks);
     return () => pane.clearTrail("flashcards");
   });
   $effect(() => {
@@ -267,12 +289,59 @@
   let selectedDeck = $derived(overview?.decks.find((deck) => deck.id === deckId));
   let scopeLabel = $derived(selectedDeck?.name || "All decks");
   let editorView = $derived(["editor", "deck-editor", "type-editor"].includes(view));
+  /** Whether any deck can take a new card. */
+  let canAdd = $derived(!!overview?.decks.some((deck) => !deck.archived));
+  const deckOption = (deck: Deck, index: number): SelectOption => ({
+    value: String(deck.id),
+    label: deck.name.replaceAll("::", " › "),
+    color: `var(--c${(index % 6) + 1})`,
+    hint: deck.archived ? "archived" : undefined,
+  });
+  /** Q16: the header chip — All decks, then every deck with today's load (due + new, as on the tiles). */
+  let scopeOptions = $derived<SelectOption[]>([
+    { value: "0", label: "All decks", count: `${(overview?.stats.due ?? 0) + (overview?.stats.new ?? 0)} due` },
+    ...(overview?.decks ?? []).map((deck, index) => ({ ...deckOption(deck, index), count: `${deck.due + deck.new} due` })),
+  ]);
+  let editorDeckOptions = $derived((overview?.decks ?? []).map(deckOption));
+  let addDeckOptions = $derived(editorDeckOptions.filter((option) => !option.hint));
+  let typeOptions = $derived<SelectOption[]>((overview?.types ?? []).map((typ) => ({ value: String(typ.id), label: typ.name })));
+  const kindOptions: SelectOption[] = [
+    { value: "template", label: "Custom" }, { value: "basic", label: "Basic" }, { value: "reversed", label: "Reversed" }, { value: "cloze", label: "Cloze" },
+  ];
+  const modeOptions: SelectOption[] = [
+    { value: "regular", label: "Scheduled" }, { value: "filtered", label: "Filtered practice" }, { value: "cram", label: "Cram" },
+  ];
+  const formatOptions: SelectOption[] = [{ value: "apkg", label: "Anki .apkg" }, { value: "csv", label: "CSV" }, { value: "tsv", label: "TSV" }];
+  /** Q6: rare tools and note types behind ⋯. */
+  let moreItems = $derived<OverflowItem[]>([
+    { label: "New deck", onselect: () => editDeck() },
+    ...(practiceResume ? [{ label: "Resume last practice queue", onselect: resumePractice }] : []),
+    { label: "Practice & review options", onselect: () => void show("review") },
+    { label: "Review history", onselect: () => void show("history") },
+    { label: "Import / export", onselect: () => void show("transfer") },
+    { label: "AI drafts", onselect: () => void show("generate") },
+    { separator: true },
+    { label: "New note type", onselect: () => editType() },
+    ...(overview?.types ?? []).map((typ) => ({ label: `Edit ${typ.name}`, onselect: () => editType(typ) })),
+  ]);
+  function setScope(id: number) {
+    if (id === deckId) return;
+    if (view === "decks") return focusDeck(id);
+    deckId = id;
+    offset = 0;
+    if (view === "review") resetReview();
+    if (view === "browser") void browse();
+  }
+  /** The one way to start a card: the quick-add popover for the deck in scope (also N). */
+  function quickCard() {
+    window.dispatchEvent(new CustomEvent("kitty-quick-card", { detail: { deck_id: deckId || null } }));
+  }
   function reviewDue() {
     mode = "regular";
     search = "";
     void startReview();
   }
-  const labels = ["Again", "Hard", "Good", "Easy"];
+  const labels = GRADES.map((grade) => grade.label);
   const defaultSettings: Settings = {
     new_limit: 20,
     review_limit: 200,
@@ -290,8 +359,9 @@
   async function load() {
     try {
       overview = await api<Overview>("/flashcards");
-      if (!deckId && view !== "schema") deckId = overview.decks[0]?.id || 0;
+      if (!deckId && view !== "decks") deckId = overview.decks[0]?.id || 0;
       graphRevision += 1;
+      loads += 1;
       if (!typeId) typeId = overview.types[0]?.id || 0;
       if (pane.active) await consumePendingNavigation();
     } catch (e) {
@@ -332,13 +402,97 @@
       );
       notes = r.notes;
       total = r.total;
+      if (!cardRows.some((row) => row.card.id === selectedCard)) selectedCard = cardRows[0]?.card.id || 0;
     } catch (e) {
       failure(e);
     }
   }
+  /** The browser lists cards, not notes: one row per generated card. */
+  let cardRows = $derived(notes.flatMap((note) => note.cards.map((card) => ({ note, card }))));
+  let selectedCard = $state(0);
+  let selectedRow = $derived(cardRows.find((row) => row.card.id === selectedCard));
+  const plain = (text: string) => text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "(empty)";
+  function dueLabel(iso: string) {
+    const days = (new Date(iso).getTime() - Date.now()) / 86400000;
+    if (days < -0.5) return `${Math.round(-days)}d overdue`;
+    if (days < 1) return "due today";
+    if (days < 2) return "due tomorrow";
+    return `due in ${Math.round(days)}d`;
+  }
+  function toggleFilter(term: string) {
+    const terms = search.split(/\s+/).filter(Boolean);
+    search = (terms.includes(term) ? terms.filter((item) => item !== term) : [...terms, term]).join(" ");
+    offset = 0;
+    void browse();
+  }
+  /** Inline add row (Q66): front, Tab, back, Enter saves and readies the next card. */
+  let addFront = $state(""),
+    addBack = $state(""),
+    addPick = $state(0),
+    addFronts = $state<string[]>([]),
+    addProblem = $state(""),
+    addAdded = $state(""),
+    addConfirmed = $state(""),
+    adding = $state(false);
+  let addFrontField = $state<HTMLInputElement>(),
+    addBackField = $state<HTMLInputElement>();
+  /** The scope's deck, or the row's own pick while All decks is in scope. */
+  let addDeck = $derived(deckId || addPick);
+  let addCheck = $derived(checkCard({ front: addFront, back: addBack }, addFronts));
+  $effect(() => {
+    if (overview && !overview.decks.some((deck) => deck.id === addPick && !deck.archived))
+      addPick = preselectDeck(overview.decks, null, rememberedDeck());
+  });
+  $effect(() => {
+    if (pane.active && deckId) rememberDeck(deckId);
+  });
+  $effect(() => {
+    const id = view === "browser" ? addDeck : 0;
+    loads;
+    let current = true;
+    loadFronts(api, id).then((items) => { if (current) addFronts = items; }, (e) => { if (current) failure(e); });
+    return () => { current = false; };
+  });
+  async function addInline() {
+    if (!pane.active || adding || !overview) return;
+    adding = true;
+    addProblem = "";
+    try {
+      const draft = { front: addFront, back: addBack }, deck = addDeck;
+      const result = await addCard(api, { deckId: deck, types: overview.types, draft, fronts: addFronts, allowDuplicate: addConfirmed === normalizeFront(addFront) });
+      if (!result.saved) {
+        if (result.check.problem) {
+          addProblem = result.check.problem;
+          (result.check.field === "back" ? addBackField : addFrontField)?.focus();
+        } else addConfirmed = normalizeFront(addFront);
+        return;
+      }
+      addFronts = [...addFronts, draft.front];
+      addAdded = `Added to ${overview.decks.find((item) => item.id === deck)?.name ?? "the deck"}.`;
+      addFront = addBack = addConfirmed = "";
+      addFrontField?.focus();
+      await load();
+      await browse();
+      const card = notes.find((note) => note.id === result.saved?.id)?.cards[0];
+      if (card) selectedCard = card.id;
+    } catch (e) {
+      addProblem = e instanceof Error ? e.message : String(e);
+    } finally {
+      adding = false;
+    }
+  }
+  function addEdited() {
+    addProblem = "";
+    addAdded = "";
+  }
+  /** A card saved from the quick-add popover shows up here straight away. */
+  async function cardsChanged() {
+    await load();
+    if (view === "browser") await browse();
+  }
   async function show(next: string) {
     noteRequest += 1;
-    if (next === "schema") { rootSchema(); return; }
+    if (next === "decks") { focusDeck(deckId); return; }
     view = next;
     error = "";
     if (next === "browser") await browse();
@@ -410,12 +564,13 @@
       },
     );
   }
-  function editDeck(deck: Deck | null = null) {
+  function editDeck(deck: Deck | null = null, name = "") {
     if (!pane.active) return;
     noteRequest += 1;
     deckEditing = deck;
-    deckName = deck?.name || "";
-    cfg = structuredClone(deck?.settings || defaultSettings);
+    deckName = deck?.name || name;
+    // A snapshot: the deck is reactive state, which structuredClone cannot copy.
+    cfg = structuredClone($state.snapshot(deck?.settings) || defaultSettings);
     learningText = cfg.learning_steps.join(",");
     relearningText = cfg.relearning_steps.join(",");
     view = "deck-editor";
@@ -448,7 +603,7 @@
         if (creating && pane.active) {
           newNote();
           message = `Created “${deck.name}”. Add its first question and answer below.`;
-        } else deckSchema(deck.id);
+        } else focusDeck(deck.id);
       },
     );
   }
@@ -597,11 +752,6 @@
       else await loadHistory();
     });
   }
-  function interval(seconds: number) {
-    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-    if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
-    return `${Math.round(seconds / 86400)}d`;
-  }
   async function loadHistory() {
     try {
       historyRows = (
@@ -624,7 +774,7 @@
       browse,
     );
   }
-  async function cardAction(card: Card, action: string, value = true) {
+  async function cardAction(card: Pick<Card, "id" | "revision">, action: string, value = true) {
     await operate(
       "/flashcards/action",
       { id: card.id, revision: card.revision, action, value },
@@ -838,6 +988,7 @@
   }
   onMount(() => {
     window.addEventListener("kitty-study-text", selectedText);
+    window.addEventListener("kitty-flashcards-changed", cardsChanged);
     void consumePendingNavigation();
     try {
       const saved = JSON.parse(
@@ -854,33 +1005,58 @@
     } catch {
       /* No resumable browser state. */
     }
-    return () => window.removeEventListener("kitty-study-text", selectedText);
+    return () => {
+      window.removeEventListener("kitty-study-text", selectedText);
+      window.removeEventListener("kitty-flashcards-changed", cardsChanged);
+    };
   });
+  /** Sinks `key` on the keyboard strip until `action` settles (at least briefly, so a tap is visible). */
+  async function press(key: HeldKey, action: () => Promise<void>) {
+    if (busy) return;
+    const token = ++heldToken, pressedAt = performance.now();
+    held = key;
+    await action();
+    setTimeout(() => { if (token === heldToken) held = null; }, Math.max(0, 140 - (performance.now() - pressedAt)));
+  }
+  /** Sends the top card off the pile in the grade's direction, then records the grade. */
+  async function sendOff(rating: number) {
+    if (!pane.active || !review || !revealed || busy || flying) return;
+    flying = rating;
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    await new Promise((resolve) => setTimeout(resolve, still ? 0 : FLY_MS));
+    await grade(rating);
+    flying = 0;
+  }
+  function flip() {
+    if (!revealed) void press("space", reveal);
+    else answerFace = !answerFace;
+  }
+  function space() {
+    void press("space", () => (revealed ? sendOff(3) : reveal()));
+  }
   function keydown(event: KeyboardEvent) {
-    if (
-      !pane.active ||
-      view !== "review" ||
-      busy ||
-      event.ctrlKey ||
-      event.altKey ||
-      event.metaKey ||
-      event.repeat ||
-      event.defaultPrevented
-    )
+    if (!pane.active || event.ctrlKey || event.altKey || event.metaKey || event.repeat || event.defaultPrevented) return;
+    // N opens the quick-add popover for the deck in view, outside text fields and dialogs.
+    if (event.key.toLowerCase() === "n" && focusContext(event.target) === "other" && !document.querySelector("dialog[open]")) {
+      event.preventDefault();
+      quickCard();
       return;
+    }
+    if (view !== "review" || busy) return;
     const target = event.target as HTMLElement;
+    // The focused top card of the stack still takes Space and 1–4.
     if (
-      target.closest("input,textarea,select,button,a,[role=button]") ||
+      target.closest("input,textarea,select,button,a,[role=button]:not([data-review-card])") ||
       target.isContentEditable
     )
       return;
     if (event.code === "Space") {
       event.preventDefault();
-      if (!revealed) void reveal();
-      else void grade(3);
+      space();
     } else if (revealed && /^[1-4]$/.test(event.key)) {
       event.preventDefault();
-      void grade(Number(event.key));
+      const rating = Number(event.key);
+      void press(rating, () => sendOff(rating));
     }
   }
 </script>
@@ -911,143 +1087,63 @@
 <svelte:window onkeydown={keydown} />
 <section class="flashcards" aria-label="Flashcards workspace">
   <header>
-    <div>
-      <h1>Flashcards</h1>
-      {#if demo}<p>Demo</p>{/if}
-    </div>
+    <h1>Flashcards</h1>
+    {#if demo}<span class="demo">Demo</span>{/if}
+    {#if overview && !editorView}<span class="deck-chip"><Select kind="search" label="Deck scope" options={scopeOptions} value={String(deckId)}
+      onchange={(next) => setScope(Number(next))} oncreate={(name) => editDeck(null, name)} createAlways
+      createLabel={(name) => (name ? `New deck “${name}”` : "New deck")} /></span>{/if}
     {#if !editorView}<div class="toolbar primary-actions">
-      <Button size="sm" onclick={() => editDeck()} disabled={!overview || busy}>New deck</Button>
-      <Button size="sm" onclick={() => newNote()} disabled={!overview || busy || !overview.decks.some(deck => !deck.archived)}>New card</Button>
+      <Button size="sm" onclick={quickCard} disabled={!overview || busy || !overview.decks.some(deck => !deck.archived)} title="New card · N"
+        >New card <kbd aria-hidden="true">N</kbd></Button>
       <Button intent="primary" onclick={reviewDue} disabled={!overview || busy || !overview.stats.total}>Review due</Button>
     </div>{/if}
   </header>
   {#if !editorView}
     <nav aria-label="Flashcard views">
-      {#each [["schema", "Map"], ["decks", "Decks"], ["browser", "Cards"]] as item}
+      {#each [["decks", "Decks"], ["browser", "Cards"], ["stats", "Stats"]] as item}
         <Button size="sm" variant="ghost" aria-current={view === item[0] ? "page" : undefined} onclick={() => void show(item[0])}>{item[1]}</Button>
       {/each}
-      <details class="tools-menu">
-        <summary>Study tools &amp; more</summary>
-        <div class="toolbar">
-          <Button size="sm" variant="ghost" onclick={() => void show("review")}>Practice &amp; review options</Button>
-          <Button size="sm" variant="ghost" onclick={() => void show("history")}>Review history</Button>
-          <Button size="sm" variant="ghost" onclick={() => void show("transfer")}>Import / export</Button>
-          <Button size="sm" variant="ghost" onclick={() => void show("generate")}>AI drafts</Button>
-        </div>
-      </details>
+      <span class="grow"></span>
+      {#if view === "decks" && overview?.stats.total}<div class="look" role="radiogroup" aria-label="Deck overview look">
+        {#each [["tiles", "Tiles"], ["graph", "Graph"]] as const as [value, label]}
+          <button role="radio" aria-checked={look === value} onclick={() => setLook(value)}>{label}</button>
+        {/each}
+      </div>{/if}
+      <OverflowMenu label="More flashcard actions" items={moreItems} />
     </nav>
   {/if}
   {#if error}<p class="error" role="alert">{error}<button class="icon-button" aria-label="Dismiss flashcard error" onclick={() => (error = "")}>×</button></p>{/if}
   {#if message}<p role="status">{message}<button class="icon-button" aria-label="Dismiss flashcard message" onclick={() => (message = "")}>×</button></p>{/if}
   {#if overview}
-    {#if !editorView}<div class="scope-heading">
-      <div><small>Selected study scope</small><h2>{scopeLabel}</h2></div>
-      <p>{selectedDeck ? `${selectedDeck.due} due · ${selectedDeck.new} new` : `${overview.stats.due} due · ${overview.stats.new} new`}
-        <span>{selectedDeck ? "This deck and its subdecks" : "Your entire collection"}</span>
-      </p>
-    </div>{/if}
-    {#if !["deck-editor", "type-editor"].includes(view)}<div class="scope">
-      <label
-        >{view === "editor" ? "Save card in deck" : "Change deck scope"} <select
-          bind:value={deckId}
-          onchange={(event) => {
-            deckId = Number(event.currentTarget.value);
-            offset = 0;
-            if (view === "review") resetReview();
-            if (view === "schema") {
-              if (deckId) deckSchema(deckId);
-              else rootSchema();
-            }
-            if (view === "browser") void browse();
-          }}
-          >{#if view !== "editor"}<option value={0}>All decks</option>{/if}{#each overview.decks as deck}<option value={deck.id}
-              >{deck.name}{deck.archived ? " (archived)" : ""}</option
-            >{/each}</select
-        ></label
-      >
-    </div>{/if}
-    {#if view === "schema"}
+    {#if view === "decks"}
       {#if !overview.stats.total}
         <Panel>
-          <div class="empty-state">
-            <small>Start with one question</small>
-            <h2>Your first card is a question and an answer.</h2>
-            <p>Keep cards in a deck, write a prompt on the front, then reveal the back when you study. Nothing is saved until you choose Save card.</p>
-            <div class="toolbar">
-              {#if overview.decks.some(deck => !deck.archived)}
-                <Button intent="primary" onclick={() => newNote()}>Create your first card</Button>
-                <Button variant="ghost" onclick={() => editDeck()}>Create a different deck</Button>
-              {:else}
-                <Button intent="primary" onclick={() => editDeck()}>Create your first deck</Button>
-              {/if}
-            </div>
-          </div>
+          <EmptyState eyebrow="Start with one question" title="Your first card is a question and an answer.">
+            <p>{canAdd ? "Press N or New card to write a front and a back." : "Make a deck, then write a front and a back."}</p>
+            {#snippet actions()}
+              <Button intent={canAdd ? undefined : "primary"} variant={canAdd ? "ghost" : undefined} onclick={() => editDeck()}>New deck</Button>
+            {/snippet}
+          </EmptyState>
         </Panel>
       {/if}
-      {#if graphFocus}<Button size="sm" variant="ghost" onclick={rootSchema}>All decks and notes</Button>{/if}
-      <SectionGraph section="flashcards" revision={graphRevision} focus={graphFocus} onselect={selectGraphNode} ondelete={deleteGraphNote} />
-      <p class="hint">Select a deck to focus its tree, or open a card node to edit it. Use Cards for a searchable list.</p>
-    {:else if view === "decks"}
-      <div class="metrics">
-        <span><strong>{overview.stats.total}</strong> cards</span><span
-          ><strong>{overview.stats.due}</strong> due</span
-        ><span><strong>{overview.stats.new}</strong> available new</span><span
-          ><strong>{overview.stats.streak}</strong> day streak</span
-        ><span
-          >{overview.stats.suspended} suspended · {overview.stats.leeches} leeches</span
-        >
-      </div>
-      {#if practiceResume}<Button size="sm" variant="ghost" onclick={resumePractice} disabled={busy}>Resume last practice queue</Button>{/if}
-      {#each overview.decks as deck}<article class="deck" class:selected-deck={deck.id === deckId}>
-          <div>
-            <h2><Button variant="ghost" onclick={() => { deckId = deck.id; }}>{deck.name}</Button>{#if deck.id === deckId}<small class="selected-label">Selected</small>{/if}</h2>
-            <p>
-              {deck.due} due · {deck.new} new · {Math.round(
-                deck.settings.retention * 100,
-              )}% retention · {deck.settings.timezone}{deck.archived
-                ? " · archived"
-                : ""}
-            </p>
-          </div>
-          <div>
-            <button
-              onclick={() => {
-                deckId = deck.id;
-                reviewDue();
-              }}
-              disabled={busy || !!deck.archived}>Review due</button>
-            <Button size="sm" onclick={() => { deckId = deck.id; newNote(); }} disabled={busy || !!deck.archived}>New card</Button>
-            <details><summary>Deck options</summary>
-              <div class="toolbar"><button onclick={() => deckSchema(deck.id)}>Open map</button>
-                <button onclick={() => editDeck(deck)}>Settings</button><button
-              onclick={() => archiveDeck(deck)}
-              disabled={busy}>{deck.archived ? "Restore" : "Archive"}</button></div>
-            </details>
-          </div>
-        </article>{/each}
-      <details><summary>Note types &amp; templates</summary>
-      <div class="toolbar">
-        <Button size="sm" onclick={() => editType()}>New note type</Button>
-        {#each overview.types as typ}<button onclick={() => editType(typ)}
-            >{typ.name}</button
-          >{/each}
-      </div>
-      </details>
-      <details><summary>Review activity · last 90 active days</summary>
-      <div class="graph">
-        {#each [...overview.stats.days].reverse() as day}<div
-            title={`${day.day}: ${day.reviews} reviews, ${day.again} Again, ${Math.round(day.seconds)} seconds`}
-          >
-            <span
-              style={`height:${Math.max(3, Math.min(100, day.reviews * 3))}px`}
-            ></span><small>{day.day.slice(5)}</small>
-          </div>{/each}
-      </div>
-      {#if !overview.stats.days.length}<p>No completed reviews yet.</p>{/if}
-      </details>
+      {#if look === "graph"}
+        <SectionGraph section="flashcards" revision={graphRevision} focus={graphFocus} onselect={selectGraphNode} ondelete={deleteGraphNote} />
+      {:else if overview.stats.total}
+      <DeckTiles
+        decks={overview.decks}
+        selected={deckId}
+        {busy}
+        onselect={(deck) => focusDeck(deck.id === deckId ? 0 : deck.id)}
+        onreview={(deck) => { deckId = deck.id; reviewDue(); }}
+        onsettings={(deck) => editDeck(overview?.decks.find((item) => item.id === deck.id) ?? null)}
+        onarchive={(deck) => { const full = overview?.decks.find((item) => item.id === deck.id); if (full) void archiveDeck(full); }}
+      />
+      {/if}
+    {:else if view === "stats"}
+      <MemoryStats {deckId} revision={loads} />
     {:else if view === "browser"}
       <form
-        class="toolbar"
+        class="toolbar browser-search"
         onsubmit={(e) => {
           e.preventDefault();
           offset = 0;
@@ -1055,103 +1151,132 @@
         }}
       >
         <input
-          aria-label="Search notes"
+          type="search"
+          aria-label="Filter cards"
+          title="is:due/new/review/learning/suspended/leech/archived, tag:name, deck:name"
           bind:value={search}
-          placeholder="Search cards or tag:name"
-        /><Button type="submit" size="sm">Search</Button>
+          placeholder="Filter cards, tag:name or deck:name"
+        /><Button type="submit" size="sm">Filter</Button>
       </form>
-      <p>{total} notes in {scopeLabel}{search ? ` matching “${search}”` : ""}.</p>
-      <details><summary>Advanced search &amp; scheduling</summary><p>Search with is:due/new/review/learning/suspended/leech/archived or deck:name. Editing retains schedules of unchanged card ordinals; deleted templates/clozes remove their cards.</p></details>
-      {#if !total}<Panel><div class="empty-state">
-        <h2>{search ? "No matching cards" : "No cards in this scope yet"}</h2>
-        <p>{search ? "Try a broader search, or create a card in the selected deck." : "Write a question on the front and its answer on the back to start studying."}</p>
-        <Button intent="primary" onclick={() => newNote()} disabled={!overview.decks.some(deck => !deck.archived)}>New card</Button>
-        {#if search}<Button variant="ghost" onclick={() => { search = ""; offset = 0; void browse(); }}>Clear search</Button>{/if}
-      </div></Panel>{/if}
-      {#each notes as note}<article class="note" oncontextmenu={(event) => {
-        if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]') || window.getSelection()?.toString()) return;
-        event.preventDefault(); if (!busy) void noteAction(note, "delete");
-      }}>
-          <div class="note-fields">
-            {#each Object.entries(note.fields) as [name, text]}<p>
-                <strong>{name}</strong>
-                {text.slice(0, 240)}{text.length > 240 ? "…" : ""}
-              </p>{/each}
-          </div>
-          <p>{note.tags.join(" · ")}{note.archived ? " · archived" : ""}</p>
-          <div class="toolbar">
-            <button onclick={() => newNote(note)}>Edit</button><button
-              onclick={() => noteAction(note, "archive", !note.archived)}
-              disabled={busy}>{note.archived ? "Restore" : "Archive"}</button
+      <div class="filters" role="group" aria-label="Quick filters">
+        {#each ["due", "new", "learning", "review", "leech", "suspended"] as filter}
+          {@const on = search.split(/\s+/).includes(`is:${filter}`)}
+          <button aria-pressed={on} onclick={() => toggleFilter(`is:${filter}`)}>{filter}</button>
+        {/each}
+        <span>{total} notes in {scopeLabel}{search ? ` matching “${search}”` : ""}</span>
+      </div>
+      {#if canAdd}<form
+        class="add-row"
+        aria-label="Add a card"
+        onsubmit={(event) => {
+          event.preventDefault();
+          void addInline();
+        }}
+      >
+        <span class="plus" aria-hidden="true">＋</span>
+        {#if deckId}<span class="add-deck" title="New cards go to the deck in scope">{selectedDeck?.name}</span>
+        {:else}<span class="add-deck-pick"><Select label="Deck for the new card" kind="list" options={addDeckOptions} value={String(addPick)}
+          onchange={(next) => (addPick = Number(next))} /></span>{/if}
+        <input
+          bind:this={addFrontField}
+          bind:value={addFront}
+          aria-label="New card front"
+          placeholder="Front — a question or cue"
+          autocomplete="off"
+          oninput={() => { addConfirmed = ""; addEdited(); }}
+          onkeydown={(event) => {
+            // Enter with the back still empty moves on to it, like Tab.
+            if (event.key === "Enter" && !event.isComposing && addFront.trim() && !addBack.trim()) {
+              event.preventDefault();
+              addBackField?.focus();
+            }
+          }}
+        />
+        <input
+          bind:this={addBackField}
+          bind:value={addBack}
+          aria-label="New card back"
+          placeholder="Back — the answer"
+          autocomplete="off"
+          oninput={addEdited}
+        />
+        <Button type="submit" size="sm" disabled={adding}>Add</Button>
+        <p class="add-note" class:problem={addProblem} class:warning={!addProblem && addCheck.duplicate} class:added={!addProblem && !addCheck.duplicate && addAdded} role="status">
+          {addProblem || (addCheck.duplicate ? DUPLICATE_WARNING : addAdded) || "Tab moves to the back · Enter saves and starts the next card"}
+        </p>
+      </form>{/if}
+      {#if !total}<Panel><EmptyState title={search ? "No matching cards" : "No cards in this scope yet"}>
+        <p>{search ? "Try a broader search." : "Write a front and a back in the row above."}</p>
+        {#snippet actions()}
+          {#if search}<Button variant="ghost" onclick={() => { search = ""; offset = 0; void browse(); }}>Clear search</Button>{/if}
+        {/snippet}
+      </EmptyState></Panel>{:else}
+      <div class="split-browser">
+        <div class="card-list">
+          <ul aria-label="Cards">
+            {#each cardRows as { note, card } (card.id)}
+              {@const shown = card.suspended ? "suspended" : card.leech ? "leech" : card.state}
+              <li>
+                <button
+                  class:on={card.id === selectedCard}
+                  aria-current={card.id === selectedCard ? "true" : undefined}
+                  onclick={() => (selectedCard = card.id)}
+                  oncontextmenu={(event) => {
+                    if (window.getSelection()?.toString()) return;
+                    event.preventDefault(); if (!busy) void noteAction(note, "delete");
+                  }}
+                >
+                  <span class="dot" style:background={STATE_COLOR[shown]}></span>
+                  <span class="front">{plain(Object.values(note.fields)[0] || "")}{note.cards.length > 1 ? ` · card ${card.ordinal + 1}` : ""}</span>
+                  <span class="meta">{shown}{shown === "new" || card.suspended ? "" : ` · ${dueLabel(card.due)}`}{isBuried(card.buried_until) ? " · buried" : ""}{note.archived ? " · archived" : ""}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+          <div class="pager">
+            <button
+              disabled={offset === 0}
+              onclick={() => {
+                offset = Math.max(0, offset - 50);
+                void browse();
+              }}>Previous</button
+            ><span>{offset + 1}–{Math.min(offset + 50, total)} / {total} notes</span
             ><button
-              class="danger"
-              onclick={() => noteAction(note, "delete")}
-              disabled={busy}>Delete</button
+              disabled={offset + 50 >= total}
+              onclick={() => {
+                offset += 50;
+                void browse();
+              }}>Next</button
             >
           </div>
-          <details><summary>Card schedules &amp; actions ({note.cards.length})</summary>
-          {#each note.cards as card}<div class="card-row">
-              <span
-                >Card {card.ordinal + 1}: {card.state} · {new Date(
-                  card.due,
-                ).toLocaleString()} · {card.reviews} reviews / {card.lapses} lapses{card.leech
-                  ? " · LEECH"
-                  : ""}{card.buried_until &&
-                new Date(card.buried_until) > new Date()
-                  ? " · buried"
-                  : ""}</span
-              ><button
-                onclick={() => cardAction(card, "suspend", !card.suspended)}
-                disabled={busy}
-                >{card.suspended ? "Unsuspend" : "Suspend"}</button
-              ><button
-                onclick={() =>
-                  cardAction(
-                    card,
-                    "bury",
-                    !card.buried_until ||
-                      new Date(card.buried_until) <= new Date(),
-                  )}
-                disabled={busy}
-                >{card.buried_until && new Date(card.buried_until) > new Date()
-                  ? "Unbury"
-                  : "Bury today"}</button
-              >
-            </div>{/each}
-          </details>
-        </article>{/each}
-      <div class="toolbar">
-        <button
-          disabled={offset === 0}
-          onclick={() => {
-            offset = Math.max(0, offset - 50);
-            void browse();
-          }}>Previous</button
-        ><span>{total ? offset + 1 : 0}–{Math.min(offset + 50, total)} / {total}</span
-        ><button
-          disabled={offset + 50 >= total}
-          onclick={() => {
-            offset += 50;
-            void browse();
-          }}>Next</button
-        >
+        </div>
+        {#if selectedRow}
+          {@const note = selectedRow.note}
+          <CardDetail cardId={selectedRow.card.id} revision={loads} {busy} onaction={(card, action, value) => void cardAction(card, action, value)}>
+            {#snippet noteActions()}
+              <button onclick={() => newNote(note)} disabled={busy}>Edit</button>
+              <button onclick={() => noteAction(note, "archive", !note.archived)} disabled={busy}>{note.archived ? "Restore note" : "Archive note"}</button>
+              <button class="danger" onclick={() => noteAction(note, "delete")} disabled={busy}>Delete note</button>
+            {/snippet}
+          </CardDetail>
+        {/if}
       </div>
+      {/if}
     {:else if view === "editor"}
       <h2>{editing ? "Edit card" : "New card"}</h2>
-      <p>{editing ? "Changes stay local until you save them." : "Write one question and one answer. You can add cloze, images or other card formats under the optional controls."}</p>
       <form
         onsubmit={(e) => {
           e.preventDefault();
           void saveNote();
         }}
       >
-        <details>
-          <summary>Card format · {selectedType?.name || "Choose a format"}</summary>
-          <label>Card format<select bind:value={typeId} onchange={(event) => { typeId = Number(event.currentTarget.value); switchType(); }} disabled={busy}>
-            {#each overview.types as typ}<option value={typ.id}>{typ.name}</option>{/each}
-          </select></label>
-          <p>Basic creates a front/back card. Cloze hides marked text; reversed and custom templates may create several cards from one note. Changing format can add or remove cards when saved; switching back before saving retains your draft fields.</p>
-        </details>
+        <div class="toolbar editor-pickers">
+          <span class="picker"><span>Deck</span><Select label="Save card in deck" kind="search" options={editorDeckOptions} value={String(deckId)}
+            onchange={(next) => (deckId = Number(next))} disabled={busy} /></span>
+          <span class="picker" title="Cloze, reversed and custom formats may create several cards; changing format can add or remove cards when saved."
+            ><span>Format</span><Select label="Card format" kind="list" options={typeOptions} value={String(typeId)}
+            onchange={(next) => { typeId = Number(next); switchType(); }} disabled={busy} /></span>
+        </div>
         {#each selectedType?.fields || [] as field}<label
             >{field === "Front" ? "Front · question" : field === "Back" ? "Back · answer" : field}<textarea
               bind:value={editorFields[field]}
@@ -1160,33 +1285,28 @@
               required={field === selectedType?.fields[0]}
             ></textarea></label
           >{/each}
-        <details>
-          <summary>Tags, images &amp; formatting</summary>
-          <label>Tags (space separated)<input bind:value={editorTags} /></label>
-          <p>Cloze syntax: {"{{c1::answer::hint}}"}. Multiple indices create separate cards. Safe HTML, **bold**, `code`, local images and [sound:filename] are supported. Remote images/scripts are never loaded.</p>
-          <label class="upload">Attach image / audio<input
+        <div class="toolbar editor-extras">
+          <label class="tags">Tags<input bind:value={editorTags} placeholder="space separated"
+            title={"Cloze: {{c1::answer::hint}}. Safe HTML, **bold**, `code`, local images and [sound:file] work."} /></label>
+          <label class="upload" title="Reference it with <img src=&quot;file.png&quot;> or [sound:file]. Uploading does not save the card.">Attach image / audio<input
             type="file"
             accept=".png,.jpg,.jpeg,.gif,.webp,.mp3,.ogg,.wav"
             onchange={upload}
             disabled={busy}
           /></label>
-          <p>Reference an uploaded image with &lt;img src="filename.png"&gt; or audio with [sound:filename]. Uploading media does not save this card.</p>
-        </details>
+          {#if overview.media.length}<Popover label="Local media" placement="bottom-end">
+            {#snippet trigger(props)}<button type="button" class="media-button" {...props}>Media · {overview?.media.length}</button>{/snippet}
+            <ul class="media-list">{#each overview.media as media}<li>{media.name} · {media.mime} · {Math.round(media.size / 1024)} KiB</li>{/each}</ul>
+          </Popover>{/if}
+        </div>
         <div class="toolbar editor-actions">
           <Button type="submit" intent="primary" disabled={busy || !deckId || !selectedType}>{busy ? "Saving…" : editing ? "Save changes" : "Save card"}</Button>
-          <Button type="button" variant="ghost" onclick={() => void show("browser")} disabled={busy}>Cancel — do not save</Button>
+          <Button type="button" variant="ghost" onclick={() => void show("browser")} disabled={busy}>Cancel</Button>
         </div>
       </form>
-      {#if overview.media.length}<details>
-          <summary>Local media ({overview.media.length})</summary
-          >{#each overview.media as media}<p>
-              {media.name} · {media.mime} · {Math.round(media.size / 1024)} KiB
-            </p>{/each}
-        </details>{/if}
       {@render referencePanel()}
     {:else if view === "deck-editor" && cfg}
       <h2>{deckEditing ? "Deck settings" : "New deck"}</h2>
-      <p>{deckEditing ? "Adjust future study sessions for this deck." : "Name your deck, then add its first question and answer. Sensible study defaults are ready to use."}</p>
       <form
         onsubmit={(e) => {
           e.preventDefault();
@@ -1196,11 +1316,10 @@
         <label
           >Deck name<input
             bind:value={deckName}
+            placeholder="Parent::Child makes a subdeck"
             required
           /></label
         >
-        <p class="hint">Use Parent::Child to create a subdeck.</p>
-        <details open={!!deckEditing}><summary>Study limits &amp; advanced scheduling</summary>
         <div class="settings-grid">
           <label
             >New cards per day<input
@@ -1245,18 +1364,13 @@
               bind:value={cfg.leech_threshold}
             /></label
           ><label
-            >IANA timezone<input bind:value={cfg.timezone} required /></label
+            >Time zone<Select kind="timezone" label="Time zone" value={cfg.timezone} onchange={(next) => cfg && (cfg.timezone = next)} /></label
           >
         </div>
-        <label class="check"
+        <label class="check" title="Learning and relearning always bypass daily limits; retention changes affect future reviews only."
           ><input type="checkbox" bind:checked={cfg.bury_siblings} />Bury
           siblings until next local midnight</label
         >
-        <p>
-          Learning/relearning always bypass daily limits. Retention changes
-          affect future reviews, not existing due dates.
-        </p>
-        </details>
         <div class="toolbar editor-actions">
           <Button type="submit" intent="primary" disabled={busy || !deckName.trim()}>{deckEditing ? "Save settings" : "Create deck & add first card"}</Button>
           <Button type="button" variant="ghost" onclick={() => void show("decks")} disabled={busy}>Cancel</Button>
@@ -1270,97 +1384,63 @@
           void saveType();
         }}
       >
-        <label>Name<input bind:value={typeName} required /></label><label
-          >Kind<select bind:value={typeKind}
-            ><option value="template">Custom templates</option><option
-              value="basic">Basic</option
-            ><option value="reversed">Reversed</option><option value="cloze"
-              >Cloze</option
-            ></select
-          ></label
+        <label>Name<input bind:value={typeName} required /></label><span class="picker"
+          ><span>Kind</span><Select label="Kind" options={kindOptions} bind:value={typeKind} /></span
         ><label>Fields (comma separated)<input bind:value={fieldNames} /></label
         ><label
           >Templates JSON<textarea
             bind:value={templateJson}
             rows="12"
             spellcheck="false"
+            title={"Each template has name, front, back. Use {{Field}}, {{FrontSide}}, {{cloze:Text}}, {{#Field}}…{{/Field}} and {{^Field}}…{{/Field}}."}
           ></textarea></label
         >
-        <p>
-          Each template has name, front, back. Use {"{{Field}}"}, {"{{FrontSide}}"},
-          {"{{cloze:Text}}"}, {"{{#Field}}…{{/Field}}"} and {"{{^Field}}…{{/Field}}"}.
-          Field names of in-use types are fixed. Template edits can remove
-          cards; their review history remains but is detached.
-        </p>
+        <p class="hint">Template edits can remove cards; their review history is detached.</p>
         <div class="toolbar"><Button type="submit" intent="primary" disabled={busy}>Save note type</Button><Button type="button" variant="ghost" onclick={() => void show("decks")} disabled={busy}>Cancel</Button></div>
       </form>
     {:else if view === "review"}
       <h2>{mode === "regular" ? "Review due cards" : "Practice cards"}</h2>
-      <details class="review-options"><summary>Study options · {mode === "regular" ? "Scheduled review" : "Practice — no rescheduling"}{search ? " · filtered" : ""}</summary>
-      <div class="toolbar">
-        <label
-          >Study mode<select bind:value={mode} onchange={resetReview}
-            ><option value="regular">Scheduled review</option><option
-              value="filtered">Filtered practice (does not reschedule)</option
-            ><option value="cram">Cram (does not reschedule)</option></select
-          ></label
-        ><label
-          >Filter<input
-            bind:value={search}
-            oninput={resetReview}
-            placeholder="tag:name or search text"
-          /></label
-        ><Button onclick={() => void startReview()} disabled={busy}>Start / refresh</Button>
+      <div class="toolbar review-options">
+        <Select label="Study mode" options={modeOptions} bind:value={mode} onchange={resetReview} />
+        <input
+          aria-label="Filter"
+          bind:value={search}
+          oninput={resetReview}
+          placeholder="Filter: tag:name or text"
+        /><Button size="sm" onclick={() => void startReview()} disabled={busy}>Start / refresh</Button>
+        <label class="check"><input type="checkbox" bind:checked={typedEnabled} />Type your answer</label>
+        <span class="grow"></span>
+        <span class="count">{remaining} eligible cards</span>
+        <Button size="sm" variant="ghost" onclick={undo} disabled={busy}>Undo last review</Button>
       </div>
-      <label class="check"><input type="checkbox" bind:checked={typedEnabled} />Type your answer before revealing (self-graded)</label>
-      {#if practiceResume}<Button size="sm" variant="ghost" onclick={resumePractice} disabled={busy}>Resume last practice queue</Button>{/if}
-      </details>
-      <p>
-        {remaining} eligible cards · {mode === "regular"
-          ? "Scheduled study · ratings update future due dates"
-          : "Practice only: regular due dates unchanged"}
-      </p>
-      <div class="toolbar"><p class="hint">Try to recall the answer, flip the card, then rate how well you remembered.</p>
-        <Button size="sm" variant="ghost" onclick={undo} disabled={busy}>Undo last review</Button></div>
-      {#if review}<article class="review-card" aria-live="polite">
-          <small>{review.state} · {review.mode}</small>
-          <div class="flip-stage"><div class="flip-card" class:flipped={answerFace}>
-            <div class="card-face question-face" aria-hidden={answerFace} inert={answerFace}>
-              <small>Question</small><div class="card-content">{@html review.front}</div>
-            </div>
-            <div class="card-face answer-face" aria-hidden={!answerFace} inert={!answerFace}>
-              <small>Answer</small>{#if revealed}<div class="card-content">{@html back}</div>{/if}
-            </div>
-          </div></div>
+      {#if review}<div class="review-card" aria-live="polite">
+          <ReviewStack
+            token={review.token}
+            front={review.front}
+            {back}
+            caption={`${review.state} · ${review.mode}`}
+            {revealed}
+            {answerFace}
+            {remaining}
+            {flying}
+            onflip={flip}
+            onswipe={(rating) => void press(rating, () => sendOff(rating))}
+          />
           {#if typedEnabled}<label
               >Your answer<input
                 bind:value={typedAnswer}
                 readonly={revealed}
                 autocomplete="off"
               /></label
-            >{/if}{#if revealed}
-            <Button size="sm" variant="ghost" onclick={() => (answerFace = !answerFace)}>{answerFace ? "Show question" : "Show answer"}</Button>
-            {@render referencePanel()}
-            <p class="rating-guide">How well did you remember? Again = missed · Hard = struggled · Good = recalled · Easy = effortless.</p>
-            <div class="grades">
-              {#each labels as label, index}<button
-                  onclick={() => grade(index + 1)}
-                  disabled={busy}
-                  >{index + 1} · {label}{#if intervals[index]}<small
-                      >{interval(intervals[index].seconds)}</small
-                    >{/if}</button
-                >{/each}
-            </div>{:else}<Button intent="primary" onclick={reveal} disabled={busy}>Flip to answer · Space</Button>{/if}
-        </article>{:else}<Panel><div class="empty-state">
-          <h3>{busy ? "Preparing your review…" : "No eligible card right now"}</h3>
-          <p>Learning cards appear at their scheduled time. Daily limits reset at local midnight. Add a card, refresh later, or choose a practice mode under Study options.</p>
-          <div class="toolbar"><Button onclick={() => void startReview()} disabled={busy}>Refresh review</Button>
-            <Button variant="ghost" onclick={() => newNote()} disabled={busy || !overview.decks.some(deck => !deck.archived)}>New card</Button></div>
-        </div></Panel>{/if}
-      <p class="hint">
-        Outside inputs: Space reveals / grades Good; 1–4 grades only after
-        reveal.
-      </p>
+            >{/if}
+          <GradeKeys {revealed} {intervals} {held} ongrade={(rating) => void press(rating, () => sendOff(rating))} onspace={space} />
+          {#if revealed}{@render referencePanel()}{/if}
+        </div>{:else}<Panel><EmptyState level={3} title={busy ? "Preparing your review…" : "No eligible card right now"}>
+          <p>Learning cards return at their scheduled time; limits reset at midnight.</p>
+          {#snippet actions()}
+            <Button onclick={() => void startReview()} disabled={busy}>Refresh review</Button>
+          {/snippet}
+        </EmptyState></Panel>{/if}
     {:else if view === "history"}
       <div class="toolbar">
         <h2>Review history</h2>
@@ -1386,33 +1466,13 @@
       </table>
     {:else if view === "transfer"}
       <h2>Import / export</h2>
-      <p>
-        APKG uses real SQLite collections in ZIP archives. Both older Anki
-        packages and current Zstandard-compressed packages with normalized note
-        types and protobuf media manifests are supported. Existing note GUIDs
-        are skipped. Unsafe executable/SVG media is not imported.
-      </p>
-      <p>
-        CSV/TSV follows the selected note type's field order, optional header,
-        then optional space-separated tags. Export a single note type for CSV;
-        use APKG for mixed collections. APKG retains exact kitty scheduling
-        state on reimport and available Anki FSRS memory; older scheduling uses
-        estimated stability. The web upload limit is 11 MiB; each media file is
-        limited to 8 MiB.
-      </p>
-      <label
-        >Format<select bind:value={format}
-          ><option value="apkg">Anki package (.apkg)</option><option value="csv"
-            >CSV</option
-          ><option value="tsv">TSV</option></select
-        ></label
-      >
-      {#if format !== "apkg"}
-        <label>CSV / TSV card format<select bind:value={typeId}>
-          {#each overview.types as typ}<option value={typ.id}>{typ.name}</option>{/each}
-        </select></label>
-        <p class="hint">Import field order: {selectedType?.fields.join(" → ")}. Choose a destination deck above.</p>
-      {/if}
+      <div class="toolbar">
+        <span class="picker" title="APKG keeps kitty scheduling and Anki FSRS memory; CSV/TSV follow one note type's field order, then tags. Uploads up to 11 MiB."
+          ><span>Format</span><Select label="Format" options={formatOptions} bind:value={format} /></span>
+        {#if format !== "apkg"}<span class="picker" title={`Field order: ${selectedType?.fields.join(" → ") ?? ""}`}
+          ><span>Card format</span><Select label="CSV / TSV card format" kind="list" options={typeOptions} value={String(typeId)}
+          onchange={(next) => (typeId = Number(next))} /></span>{/if}
+      </div>
       <div class="toolbar">
         <label class="upload"
           >Import into selected deck / type<input
@@ -1431,11 +1491,7 @@
       </div>
     {:else if view === "generate"}
       <h2>Generate draft cards from selected notes</h2>
-      <p>
-        Paste notes or select text in Canvas → Make flashcards. AI suggestions
-        are never studied or saved automatically. Review privacy, model and
-        budget before sending, then fact-check and accept each card.
-      </p>
+      <p class="hint">AI drafts are never saved until you fact-check and accept each.</p>
       <label
         >Source notes<textarea bind:value={sourceText} rows="8"
         ></textarea></label
@@ -1484,51 +1540,79 @@
     margin: auto;
     padding: 1.5rem;
   }
-  header,
-  .deck,
-  .toolbar,
-  .scope,
-  .card-row {
+  .toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
     flex-wrap: wrap;
   }
-  .primary-actions,
-  .editor-actions,
-  .empty-state .toolbar,
-  .tools-menu .toolbar {
-    justify-content: flex-start;
-  }
-  .scope-heading {
+  /* Q16 A: title, the deck chip beside it, then the one New card and Review due. */
+  header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
+    gap: 10px;
     flex-wrap: wrap;
-    padding: 1.1rem 1.25rem;
-    border: 1px solid var(--border);
-    border-radius: 0.7rem;
-    background: var(--surface-raised);
   }
-  .scope-heading h2 { margin: 0.3rem 0 0; font-size: 1.25rem; overflow-wrap: anywhere; }
-  .scope-heading p { margin: 0; }
-  .scope-heading span { display: block; margin-top: 0.3rem; font-size: 0.85rem; }
-  .empty-state { padding: 1rem; }
-  .empty-state h2,
-  .empty-state h3 { margin: 0.6rem 0; }
-  .empty-state p { max-width: 65ch; line-height: 1.6; }
-  details { margin: 0.85rem 0; }
-  summary { cursor: pointer; color: var(--ink); font-weight: 600; line-height: 1.5; }
-  details[open] > summary { margin-bottom: 0.7rem; }
-  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .tools-menu { margin: 0; padding: 0.4rem 0.6rem; }
-  .tools-menu .toolbar { margin-bottom: 0.2rem; }
-  .selected-deck { border-color: var(--accent); }
-  .selected-label { display: inline-block; margin-left: 0.5rem; font-size: 0.75rem; color: var(--accent); }
-  .rating-guide { font-size: 0.9rem; line-height: 1.6; }
-  .review-options { padding: 0.8rem 1rem; border: 1px solid var(--border); border-radius: 0.6rem; }
+  header .demo {
+    color: var(--muted);
+    font: 500 10.5px var(--font-mono);
+    text-transform: uppercase;
+  }
+  header .primary-actions {
+    margin: 0 0 0 auto;
+  }
+  .deck-chip :global(.select-trigger) {
+    min-width: 0;
+    max-width: 300px;
+    padding: 0 8px 0 12px;
+    border-radius: 999px;
+    font-weight: 500;
+  }
+  .primary-actions kbd {
+    margin-left: 4px;
+    padding: 0 4px;
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    color: var(--muted);
+    font: 500 10px/14px var(--font-mono);
+  }
+  .primary-actions,
+  .editor-actions {
+    justify-content: flex-start;
+  }
+  .grow { flex: 1; }
+  .picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  .media-list { margin: 0; padding: 8px 12px; list-style: none; font: 12px var(--font-mono); }
+  .media-button { padding: 0 10px; height: var(--control-h); }
+  .look {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+  }
+  .look button {
+    padding: 4px 12px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--muted);
+    font: 500 10.5px var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .look button[aria-checked="true"] {
+    background: var(--wash);
+    color: var(--ink);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--violet) 35%, var(--border));
+  }
+  .review-options .count { color: var(--muted); font: 12px var(--font-mono); }
   .editor-actions { padding-top: 0.8rem; border-top: 1px solid var(--border); }
   header h1 {
     margin: 0;
@@ -1539,19 +1623,18 @@
     color: var(--muted);
   }
   nav,
-  .toolbar,
-  .scope {
+  .toolbar {
     margin: 1rem 0;
   }
   nav {
     display: flex;
+    align-items: center;
     gap: 0.4rem;
     flex-wrap: wrap;
   }
   button,
   input,
-  textarea,
-  select {
+  textarea {
     font: inherit;
   }
   button {
@@ -1562,9 +1645,12 @@
     padding: 0.55rem 0.8rem;
     cursor: pointer;
   }
-  nav :global(button[aria-current="page"]) {
+  /* The app's pressed-toggle look (styles.css): solid accent with its contrasting text.
+     The doubled class outranks a theme's own control fill (lib/themes/liquid-glass). */
+  :global(:root body) nav :global(button.br-btn.br-btn[aria-current="page"]) {
     background: var(--accent);
-    color: var(--surface);
+    border-color: var(--accent);
+    color: var(--on-accent);
   }
   button:disabled {
     opacity: 0.5;
@@ -1575,16 +1661,14 @@
     margin: 0.8rem 0;
   }
   label input:not([type="checkbox"]),
-  label textarea,
-  label select {
+  label textarea {
     display: block;
     width: 100%;
     box-sizing: border-box;
     margin-top: 0.3rem;
   }
   input,
-  textarea,
-  select {
+  textarea {
     color: var(--ink);
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1595,24 +1679,9 @@
     resize: vertical;
     min-height: 4rem;
   }
-  .scope label {
-    flex: 1;
-    min-width: 180px;
-  }
   .toolbar input {
     flex: 1;
     min-width: 180px;
-  }
-  .metrics {
-    display: flex;
-    gap: 1.5rem;
-    flex-wrap: wrap;
-    background: var(--surface-raised);
-    padding: 1rem;
-    border-radius: 0.6rem;
-  }
-  .metrics strong {
-    font-size: 1.5rem;
   }
   article {
     background: var(--surface-raised);
@@ -1621,24 +1690,176 @@
     padding: 1rem;
     margin: 1rem 0;
   }
-  .deck h2 {
-    font-size: 1.1rem;
-    margin: 0;
+  .browser-search { margin-bottom: 0.5rem; }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 0.8rem;
   }
-  .deck p {
-    margin: 0.4rem 0;
+  .filters button {
+    padding: 3px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: none;
+    color: var(--muted);
+    font: 500 10.5px var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
-  .card-row {
-    border-top: 1px solid var(--border);
-    padding: 0.5rem 0;
+  .filters button[aria-pressed="true"] {
+    border-color: var(--violet);
+    background: color-mix(in srgb, var(--violet) 16%, transparent);
+    color: var(--ink);
   }
-  .card-row span {
-    flex: 1;
+  .filters span {
+    margin-left: auto;
+    color: var(--muted);
     font-size: 0.85rem;
   }
-  .note-fields p {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+  /* Q66 inline add row: one line of front, back and Add above the list. */
+  .add-row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0.8rem;
+    padding: 8px 10px 6px;
+    border: 1px dashed color-mix(in srgb, var(--violet) 45%, var(--hairline));
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--violet) 6%, transparent);
+  }
+  .add-row:focus-within {
+    border-style: solid;
+    border-color: var(--violet);
+  }
+  .add-row .plus {
+    color: var(--violet);
+    font-size: 15px;
+  }
+  .add-row .add-deck {
+    max-width: 180px;
+    min-height: 0;
+    margin: 0;
+    padding: 4px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    color: var(--muted);
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+    font: 500 11.5px/1.3 var(--font-ui);
+  }
+  .add-deck-pick :global(.select-trigger) {
+    min-width: 0;
+    max-width: 180px;
+    border-radius: 999px;
+  }
+  span.add-deck {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .add-row input {
+    min-width: 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  /* Beats the frame's glass field rule (styles.css) so the focused face lights up. */
+  :global(:root body) .add-row input:focus-visible {
+    border-color: var(--violet);
+    outline: none;
+  }
+  .add-note {
+    grid-column: 3 / -1;
+    max-width: none;
+    margin: 0;
+    color: var(--subtle);
+    font: 10.5px var(--font-mono);
+  }
+  .add-note.problem { color: var(--error); }
+  .add-note.warning { color: var(--warning); }
+  .add-note.added { color: var(--success); }
+  @media (max-width: 760px) {
+    .add-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .add-row .add-deck, .add-row .add-deck-pick { grid-column: 2 / -1; justify-self: start; }
+    .add-row input:first-of-type, .add-note { grid-column: 2 / -1; }
+    .add-row input:last-of-type { grid-column: 2; }
+  }
+  /* Q42 split browser: the list stays put beside the selected card. */
+  .split-browser {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.3fr);
+    min-height: 420px;
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--solid-panel) 70%, transparent);
+  }
+  .card-list {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    min-width: 0;
+    padding: 10px 8px 10px 10px;
+    border-right: 1px solid var(--hairline);
+  }
+  .card-list ul {
+    max-height: 560px;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+  }
+  .card-list li button {
+    display: grid;
+    grid-template-columns: 7px minmax(0, 1fr);
+    column-gap: 8px;
+    align-items: center;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+  }
+  .card-list li button:hover {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+  }
+  .card-list li button.on {
+    background: color-mix(in srgb, var(--violet) 14%, transparent);
+  }
+  .card-list .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .card-list .front {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-list .meta {
+    grid-column: 2;
+    color: var(--subtle);
+    font: 10px var(--font-mono);
+  }
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding-top: 8px;
+    color: var(--muted);
+    font: 10.5px var(--font-mono);
+  }
+  .pager button {
+    padding: 3px 10px;
+    font-size: 0.8rem;
+  }
+  @media (max-width: 760px) {
+    .split-browser { grid-template-columns: 1fr; }
+    .card-list { border-right: 0; border-bottom: 1px solid var(--hairline); }
+    .card-list ul { max-height: 260px; }
   }
   .danger,
   .error {
@@ -1660,55 +1881,11 @@
     gap: 0.5rem;
   }
   .review-card {
-    max-width: 750px;
-    margin: 1.5rem auto;
-    text-align: center;
-  }
-  .flip-stage { perspective: 1400px; margin: 1rem 0; }
-  .flip-card { display: grid; min-height: 240px; transform-style: preserve-3d; transition: transform .48s cubic-bezier(.2,.65,.25,1); }
-  .flip-card.flipped { transform: rotateY(180deg); }
-  .card-face { grid-area: 1 / 1; padding: 1.5rem; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: 12px; background: var(--surface); backface-visibility: hidden; -webkit-backface-visibility: hidden; align-content: center; }
-  .card-face > small { color: var(--muted); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; }
-  .answer-face { transform: rotateY(180deg); }
-  .card-content {
-    font-size: 1.3rem;
-    overflow-wrap: anywhere;
-    padding: 1.5rem 0;
-  }
-  .card-content :global(img) {
-    max-width: 100%;
-    max-height: 400px;
-  }
-  .card-content :global(audio) {
-    max-width: 100%;
-  }
-  .grades {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.5rem;
-  }
-  .grades small {
-    display: block;
-  }
-  .graph {
-    display: flex;
-    align-items: flex-end;
-    gap: 0.3rem;
-    overflow-x: auto;
-    min-height: 130px;
-    padding: 0.8rem 0;
-  }
-  .graph div {
-    text-align: center;
-    min-width: 35px;
-  }
-  .graph span {
-    display: block;
-    background: var(--accent);
-    border-radius: 0.2rem 0.2rem 0 0;
-  }
-  .graph small {
-    font-size: 0.65rem;
+    gap: 0.9rem;
+    max-width: 640px;
+    margin: 1.5rem auto;
+    overflow: hidden;
   }
   .upload {
     border: 1px dashed var(--border);
@@ -1735,20 +1912,11 @@
   }
   button:focus-visible,
   input:focus-visible,
-  textarea:focus-visible,
-  select:focus-visible {
+  textarea:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   @media (max-width: 600px) {
     .flashcards { padding: 1rem; }
-    .grades { grid-template-columns: repeat(2, 1fr); }
-    .card-face { padding: 1rem; }
-    .card-content { font-size: 1.1rem; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .flip-card { transition: none; transform: none; }
-    .flip-card.flipped, .answer-face { transform: none; }
-    .card-face[aria-hidden="true"] { visibility: hidden; }
   }
 </style>

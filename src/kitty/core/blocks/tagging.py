@@ -13,7 +13,7 @@
   tokens, and refreshes the ``#name`` attachments of tag records that changed.
 
 The vocabulary is cached per database and rebuilt only when ``tag_settings.vocabulary``
-moves (every transaction that changes a tag record moves it). Before migration 037 the
+moves (every transaction that changes a tag record moves it). Before migration 039 the
 tables do not exist and both hooks do nothing.
 """
 from __future__ import annotations
@@ -63,7 +63,7 @@ def _settings(conn: sqlite3.Connection) -> sqlite3.Row | None:
     try:
         return conn.execute("SELECT s.mode, s.vocabulary, h.device_id FROM tag_settings s, block_history h "
                             "WHERE s.id=1 AND h.id=1").fetchone()
-    except sqlite3.OperationalError:  # before migration 037
+    except sqlite3.OperationalError:  # before migration 039
         return None
 
 

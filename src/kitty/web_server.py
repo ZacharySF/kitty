@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from kitty import web_clients
 from kitty.config import Config, ConfigError
-from kitty.core import endpoint
+from kitty.core import endpoint, record_events
 from kitty.core.bootstrap import configure_modules
 from kitty.core.builds.project import startup_modules
 from kitty.core.builds.store import BuildStoreError
@@ -120,7 +120,7 @@ def _pdf_available(settings: Settings, resume: Resume) -> bool:
 
 
 #: API route prefix -> owning module; the longest matching prefix wins. Anything not
-#: listed (tasks, ai status/settings/models, atlas home, bootstrap, modules, reload)
+#: listed (tasks, ai status/settings/models, atlas home, brain, bootstrap, modules, reload)
 #: belongs to the always-on core.
 ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "applyai") for prefix in (
@@ -144,7 +144,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
     (None, "web_ai"),
-    ("workspace", "web_schema"), (None, "web_atlas"), ("workspace", "web_backlinks"),
+    ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
     ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_keys"),
     (None, "web_devices"),
@@ -372,6 +372,11 @@ class WebApplication:
         if path == "/api/modules":
             return self.set_modules(body)
         self.guard(path)
+        result = self._dispatch_mutation(conn, path, body)
+        record_events.capture(conn, path, body, result)
+        return result
+
+    def _dispatch_mutation(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
         for extension in self.extensions:
             result = extension.post(self, conn, path, body)
             if result is not None:
@@ -420,6 +425,9 @@ class WebApplication:
         elif action == "status":
             if not isinstance(value, str) or value not in LATER_STATUSES:
                 raise APIError(400, "Choose a later application status")
+        elif action == "track":
+            if value is not None and (not isinstance(value, str) or value not in self.config.track_names):
+                raise APIError(400, "Choose a configured track or null for none")
         elif action == "resume":
             if value is not None and (type(value) is not int or not 1 <= value <= 2**63 - 1):
                 raise APIError(400, "Resume value must be a registered resume ID or null for the track default")
@@ -436,11 +444,13 @@ class WebApplication:
             with transaction(conn):
                 if action == "notes":
                     jobs.set_notes(conn, job.id, value)
+                elif action in {"status", "track"} and job.application_id is None:
+                    raise APIError(409, "Record your submission before changing application status")
                 elif action == "status":
-                    if job.application_id is None:
-                        raise APIError(409, "Record your submission before changing application status")
                     applications.set_status(conn, job.application_id, value, source="manual",
                                             occurred_at=occurred_at, evidence=note)
+                elif action == "track":
+                    applications.set_track(conn, job.application_id, value)
                 elif action == "resume":
                     if job.application_id is not None:
                         raise APIError(409, "Historical application resume is pinned")

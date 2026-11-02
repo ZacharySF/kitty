@@ -9,21 +9,30 @@
   import AddJob from "./lib/AddJob.svelte";
   import CommandPalette from "./lib/CommandPalette.svelte";
   import KeyboardHelp from "./lib/KeyboardHelp.svelte";
-  import CalendarReminders from "./lib/CalendarReminders.svelte";
+  import NotificationBell from "./lib/NotificationBell.svelte";
+  import NotificationCenter from "./lib/NotificationCenter.svelte";
+  import NotificationToasts from "./lib/NotificationToasts.svelte";
+  import { notifier } from "./lib/notifications.svelte";
+  import type { Notice } from "./lib/notify";
   import StudyFocusBar from "./lib/StudyFocusBar.svelte";
   import ThemePicker from "./lib/ThemePicker.svelte";
   import WorkspacePane from "./lib/WorkspacePane.svelte";
   import WorkspaceTabs from "./lib/WorkspaceTabs.svelte";
-  import type { WorkspaceTrail } from "./lib/workspaceContext.svelte";
+  import type { SaveStatus, WorkspaceTrail } from "./lib/workspaceContext.svelte";
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
   import PairingPrompt from "./lib/PairingPrompt.svelte";
   import BuildEditor from "./lib/BuildEditor.svelte";
   import { buildStore } from "./lib/build.svelte";
+  import PetalDrift from "./lib/PetalDrift.svelte";
+  import ThemeLayer from "./lib/themes/ThemeLayer.svelte";
+  import { APPEARANCE_EVENT, savedAppearance, type Appearance } from "./lib/appearance";
+  import QuickCard from "./lib/flashcards/QuickCard.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
+    saveStatus: () => SaveStatus | null;
     hasUnsavedChanges: () => boolean;
     focusGroup: (label: string) => void;
     focusSearch: () => void;
@@ -59,17 +68,23 @@
   let demoHidden = $state(false);
   let guide = $state(false);
   let addJob = $state(false);
+  /** The quick-add card popover (Q66), opened by N on Flashcards or Ctrl K "New card". */
+  let quickCard = $state<{ deck: number | null } | null>(null);
   let revision = $state(0);
   let guideDialog = $state<HTMLDialogElement>();
   let tabBar: { openMenu: (event: MouseEvent) => void; closeMenu: (restore?: boolean) => void } | undefined = $state();
   const title = $derived(navigation.find(item => item.id === view)?.label || "Workspace");
   const tabLabels = $derived(tabs.map(tab => ({
-    id: tab.id, label: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
+    id: tab.id,
+    label: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
+    icon: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.icon || "atlas",
+    tone: navigationGroups.find(group => group.views.includes(tab.view))?.tone ?? "var(--c1)",
+    status: tab.pane?.saveStatus() ?? null,
   })));
   const schemaLabel = $derived(
     ({ jobs: "Jobs", notes: "Notes", flashcards: "Flashcards", opportunities: "Opportunities", schema: "Mind maps" } as Partial<Record<View, string>>)[view] || title,
   );
-  const ownsTrail = $derived(trail.section === view || (view === "schema" && trail.section === "notes"));
+  const ownsTrail = $derived(trail.section === view);
   const schemaNodes = $derived(ownsTrail ? trail.nodes : []);
   const sectionGroup = $derived(navigationGroups.find(group => group.views.includes(view))?.label ?? "Workspace");
 
@@ -151,6 +166,10 @@
     });
     return true;
   }
+  /** Module notices open Settings on its Modules page (`#settings/modules`). */
+  function openModuleSettings() {
+    if (navigate("settings")) window.history.replaceState(window.history.state, "", "#settings/modules");
+  }
   async function focusGroup(label: string) {
     const id = activeId;
     if (view !== "today" && !navigate("today")) return;
@@ -168,6 +187,18 @@
     else schemaRoot();
   }
   function openJob(id: number) { if (applyai && navigate("jobs")) activeTab.initialJobId = id; }
+  function openNotice(notice: Notice) {
+    if (notice.target.kind === "calendar") navigate("calendar");
+    else if (notice.target.job_id !== null && applyai) openJob(notice.target.job_id);
+    else navigate("reminders");
+  }
+  // Reminder sources the active modules provide; polling restarts only when they change.
+  const notifySources = $derived(workspace && (studyTools || applyai) ? `${studyTools}:${applyai}` : "");
+  $effect(() => {
+    if (!notifySources) return;
+    const [calendar, job] = notifySources.split(":").map(value => value === "true");
+    return untrack(() => notifier.start({ calendar, job }));
+  });
   function studyText(event: Event) {
     if (!studyTools) return;
     const detail = (event as CustomEvent).detail;
@@ -181,15 +212,10 @@
     if (view === "study" || detail?.routed || !navigate("study")) return;
     void tick().then(() => window.dispatchEvent(new CustomEvent("kitty-study-focus", { detail: { ...detail, routed: true } })));
   }
-  function showGuide() { if (applyai) guide = true; }
-  /** Bottom edge of the active view's content: the dock first fills the space below it (Q8). */
-  function panelBottom() {
-    const panel = document.getElementById(`workspace-pane-${activeId}`);
-    if (!panel) return window.innerHeight;
-    let bottom = panel.getBoundingClientRect().top;
-    for (const child of panel.children) bottom = Math.max(bottom, child.getBoundingClientRect().bottom);
-    return bottom;
+  function quickAddCard(event: Event) {
+    if (studyTools) quickCard = { deck: (event as CustomEvent<{ deck_id?: number }>).detail?.deck_id || null };
   }
+  function showGuide() { if (applyai) guide = true; }
   $effect(() => { if (guide && guideDialog && !guideDialog.open) guideDialog.showModal(); });
 
   let bootstrapRequest = 0;
@@ -217,6 +243,7 @@
     finally { loading = false; }
   }
   function readRoute() {
+    // `#<view>/<detail>` (e.g. `#settings/appearance`) opens the view; the view reads its detail.
     const hash = window.location.hash.slice(1);
     // A link to one page opens Notes on it, the way kitty!'s own links between views do.
     const linkedPage = notePageLink(hash);
@@ -225,7 +252,8 @@
       window.history.replaceState(window.history.state, "", "#notes");
       window.dispatchEvent(new CustomEvent("kitty-open-note", { detail: { page_id: linkedPage } }));
     }
-    let next: View = linkedPage !== null ? "notes" : isView(hash) ? hash : "today";
+    const view = hash.split("/")[0];
+    let next: View = linkedPage !== null ? "notes" : isView(view) ? view : "today";
     let redirected = false;
     if (workspace && !viewEnabled(next, enabled)) {
       moduleNotice = disabledNotice(next);
@@ -263,6 +291,8 @@
     });
   });
   let topBar = $state<HTMLElement>();
+  let background = $state(savedAppearance().background);
+  const appearanceChanged = (event: Event) => (background = (event as CustomEvent<Appearance>).detail.background);
   let panelFullscreen: PanelFullscreen | undefined;
   onMount(() => {
     readRoute();
@@ -270,8 +300,10 @@
     panelFullscreen = fullscreen.panels;
     window.addEventListener("kitty-study-text", studyText);
     window.addEventListener("kitty-study-focus", studyFocus);
+    window.addEventListener("kitty-quick-card", quickAddCard);
     // Capture before terminal/editor handlers consume Ctrl+W as word deletion.
     window.addEventListener("keydown", closeTabShortcut, true);
+    window.addEventListener(APPEARANCE_EVENT, appearanceChanged);
     // Page-level sticky panels sit below the pinned bar, whose height wraps responsively.
     const measure = new ResizeObserver(([entry]) =>
       document.documentElement.style.setProperty("--workbench-top", `${Math.ceil(entry.borderBoxSize[0].blockSize)}px`));
@@ -281,7 +313,9 @@
       measure.disconnect();
       window.removeEventListener("kitty-study-text", studyText);
       window.removeEventListener("kitty-study-focus", studyFocus);
+      window.removeEventListener("kitty-quick-card", quickAddCard);
       window.removeEventListener("keydown", closeTabShortcut, true);
+      window.removeEventListener(APPEARANCE_EVENT, appearanceChanged);
     };
   });
   function closeTabShortcut(event: KeyboardEvent) {
@@ -359,6 +393,8 @@
 </script>
 
 <svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} onkeyup={keyboardUp} />
+<ThemeLayer />
+{#if background === "petals"}<PetalDrift />{/if}
 <svelte:head><title>{title} · kitty!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>
 <div class="workbench" class:atlas-home={view === "today"}>
@@ -367,7 +403,7 @@
     {#if view !== "today"}<button class="schema-back" onclick={schemaBack} aria-label={schemaNodes.length ? "Back to parent schema" : "Back to kitty schema"} title="Back to parent schema">←</button>{/if}
     <a class="wordmark" class:current-schema={view === "today"} href="#today" aria-label="kitty home" aria-current={view === "today" ? "page" : undefined} title="Main kitty schema" onclick={(event) => { event.preventDefault(); navigate("today"); }}>
       <span class="brand-mark" aria-hidden="true"><Icon name="kitty" size={22} /></span>
-      <span>kitty<span class="brand-dot">!</span></span>
+      <span class="word">kitty<span class="brand-dot">!</span></span>
     </a>
     <nav class="breadcrumb" aria-label="Schema tabs">
       {#if view !== "today"}
@@ -388,6 +424,8 @@
         title={`${group.label} · Focus its schema node: ${group.shortcut}`}
         onclick={() => navigate(group.views[0])}>{group.label}</button>{/each}
     </nav>
+    {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
+    {#if notifySources}<NotificationBell />{/if}
     <ThemePicker />
     <button
       class="system-command"
@@ -408,8 +446,6 @@
   </header>
   <WorkspaceTabs bind:this={tabBar} tabs={tabLabels} {activeId} onselect={selectTab} onclose={closeTab} onnew={newTab} />
   </div>
-  {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
-  {#if studyTools && view !== "calendar"}<CalendarReminders />{/if}
   <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
     {#if workspace && view !== "settings"}<PairingPrompt onsettings={() => navigate("settings")} />{/if}
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">
@@ -419,11 +455,11 @@
       </div>{/if}
     {#if workspace?.modules.restart_required && view !== "settings"}<div class="demo-notice" role="status">
         Module changes are saved but not active yet. Restart kitty to apply them.
-        <button class="text-button" onclick={() => navigate("settings")}>Review in Settings</button>
+        <button class="text-button" onclick={openModuleSettings}>Review in Settings</button>
       </div>{/if}
     {#if moduleNotice}<div class="demo-notice" role="status">
         {moduleNotice}
-        {#if view !== "settings"}<button class="text-button" onclick={() => navigate("settings")}>Open Settings</button>{/if}
+        {#if view !== "settings"}<button class="text-button" onclick={openModuleSettings}>Open Settings</button>{/if}
         <button class="icon-button" aria-label="Dismiss module message" onclick={() => (moduleNotice = "")}>×</button>
       </div>{/if}
     {#if loading && !workspace && !error}<p class="muted" role="status">Loading workspace…</p>{/if}
@@ -454,7 +490,8 @@
     {/each}
   </main>
 </div>
-{#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock measure={panelBottom} onherdr={() => navigate("herdr")} />{/await}{/if}
+{#if notifySources}<NotificationToasts onopen={openNotice} /><NotificationCenter onopen={openNotice} />{/if}
+{#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock onherdr={() => navigate("herdr")} />{/await}{/if}
 {#if buildStore.editorOpen}<BuildEditor onclose={() => (buildStore.editorOpen = false)} />{/if}
 {#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
 {#if guide && applyai}<dialog
@@ -487,9 +524,11 @@
     onopenjob={openJob}
     onadd={() => { if (applyai) addJob = true; }}
     onhelp={() => (help = true)}
+    onnewcard={studyTools ? () => (quickCard = { deck: null }) : undefined}
     onreload={() => void reload()}
   />{/if}
 {#if help}<KeyboardHelp {enabled} onclose={() => (help = false)} />{/if}
+{#if quickCard && studyTools}<QuickCard deck={quickCard.deck} onclose={() => (quickCard = null)} />{/if}
 {#if addJob && applyai}<AddJob
     {workspace}
     onclose={() => (addJob = false)}

@@ -58,22 +58,21 @@
       <button class="button" onclick={() => (retry += 1)}
         >Refresh operation</button
       >{/if}
-    {#if !compact && current.result !== null}<details open>
-        <summary>Operation result</summary>
+    {#if !compact && current.result !== null}<div class="result">
+        <span class="section-head">Operation result</span>
         <pre>{typeof current.result === "string"
             ? current.result
             : JSON.stringify(current.result, null, 2)}</pre>
-      </details>{/if}
+      </div>{/if}
   </section>
 {/if}
 
 <style>
+  /* Q2: a section inside its page's surface, split off by a hairline, never a nested box. */
   .task-status {
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    padding: 16px;
+    padding: 12px 0 0;
     margin: 16px 0;
-    background: var(--surface-raised);
+    border-top: 1px solid var(--hairline);
     font-size: 13px;
   }
   .task-status.compact { border: 0; padding: 0; margin: 0; background: transparent; }
@@ -89,14 +88,12 @@
     margin: 12px 0 0;
     line-height: 1.6;
   }
-  details {
+  .result {
     margin-top: 12px;
   }
-  summary {
-    cursor: pointer;
-  }
   pre {
-    font: 12px/1.6 monospace;
+    margin: 4px 0 0;
+    font: 12px/1.6 var(--font-mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     max-height: 350px;

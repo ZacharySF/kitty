@@ -80,16 +80,17 @@ def test_a_build_from_a_newer_kitty_or_without_a_version_is_refused_with_a_reaso
 def test_unknown_keys_and_themes_are_warnings_so_newer_builds_still_load():
     text = json.dumps({"schema": 1, "x-gallery": {"id": 4}, "brain": True,
                        "settings": {"tags": {"mode": "always", "fuzzy": True}},
-                       "theme": {"base": "liquid-glass", "tokens": {"glass-blur": "18px"}},
-                       "ui": {"brain": {"zoom": 2}}}, indent=1)
+                       "theme": {"base": "aurora", "tokens": {"glass-blur": "18px"}},
+                       "ui": {"planner": {"zoom": 2}, "brain": {"zoom": 2}}}, indent=1)
     checked = document.check(text)
     assert checked.ok
     warned = {problem.path for problem in checked.warnings}
-    assert warned == {"brain", "settings.tags.fuzzy", "theme.base"}
+    assert warned == {"brain", "settings.tags.fuzzy", "theme.base", "ui.planner", "ui.brain.zoom"}
     assert all(problem.line > 1 for problem in checked.warnings)
     build = checked.build
-    assert build["theme"]["base"] == "harness" and build["theme"]["tokens"] == {"glass-blur": "18px"}
-    assert "brain" not in build and "x-gallery" not in build and "brain" not in build["ui"]
+    assert build["theme"]["base"] == "kitty" and build["theme"]["tokens"] == {"glass-blur": "18px"}
+    assert "brain" not in build and "x-gallery" not in build and "planner" not in build["ui"]
+    assert "zoom" not in build["ui"]["brain"]
     assert build["settings"]["tags"] == {"mode": "always"}
 
 

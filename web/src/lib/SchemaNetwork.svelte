@@ -10,6 +10,7 @@
     type GraphPhysics,
   } from "./graph3d";
   import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
+  import { prefersReducedMotion } from "./appearance";
   import GraphLookToggle from "./GraphLookToggle.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
@@ -125,7 +126,7 @@
           if (!pane.active && n) return;
           hovered = n ? { id: n.id, label: n.label, group: n.group } : null;
         },
-        reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+        reducedMotion: prefersReducedMotion(),
       })
         .then((graph) => {
           if (!alive) {

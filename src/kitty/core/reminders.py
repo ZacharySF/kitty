@@ -7,8 +7,9 @@ the +7/+14/+21 follow-up set automatically when I mark something applied.
 from __future__ import annotations
 
 import sqlite3
+from datetime import timedelta
 
-from kitty.dates import now_iso
+from kitty.dates import now, now_iso, parse, to_iso
 from kitty.models import Reminder
 
 
@@ -73,4 +74,43 @@ def complete_reminder(conn: sqlite3.Connection, reminder_id: int) -> None:
     conn.execute(
         "UPDATE reminders SET done_at = ? WHERE id = ? AND done_at IS NULL",
         (now_iso(), reminder_id),
+    )
+
+
+def update_reminder(
+    conn: sqlite3.Connection, reminder_id: int, *, due_at: str | None = None, note: str | None = None,
+) -> None:
+    """Change a reminder's date and/or note; None leaves that field as it is."""
+    if due_at is not None:
+        conn.execute("UPDATE reminders SET due_at = ? WHERE id = ?", (due_at, reminder_id))
+    if note is not None:
+        conn.execute("UPDATE reminders SET note = ? WHERE id = ?", (note or None, reminder_id))
+
+
+def snooze_reminder(conn: sqlite3.Connection, reminder_id: int) -> tuple[str, str]:
+    """Push a reminder one day past the later of its due date and now.
+
+    Returns (previous due_at, new due_at) so the caller can offer undo.
+    """
+    previous = conn.execute("SELECT due_at FROM reminders WHERE id = ?", (reminder_id,)).fetchone()["due_at"]
+    current = now()
+    base = max(parse(previous) or current, current)
+    due_at = to_iso(base + timedelta(days=1))
+    conn.execute("UPDATE reminders SET due_at = ? WHERE id = ?", (due_at, reminder_id))
+    return previous, due_at
+
+
+def delete_reminder(conn: sqlite3.Connection, reminder_id: int) -> dict:
+    """Delete a reminder and return its full row, which `restore_reminder` puts back."""
+    row = dict(conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone())
+    conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+    return row
+
+
+def restore_reminder(conn: sqlite3.Connection, row: dict) -> None:
+    """Re-insert a deleted reminder exactly as `delete_reminder` returned it."""
+    conn.execute(
+        "INSERT INTO reminders (id, job_id, application_id, kind, due_at, note, done_at, created_at) "
+        "VALUES (:id, :job_id, :application_id, :kind, :due_at, :note, :done_at, :created_at)",
+        row,
     )

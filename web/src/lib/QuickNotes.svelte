@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import EmptyState from "./EmptyState.svelte";
   import QuickNoteCard from "./QuickNoteCard.svelte";
   import { listQuickNotes, popOutQuickNote, type QuickNote } from "./quickNotes";
   import { onBlockChange } from "./live";
@@ -80,11 +81,12 @@
   </div>
 
   {#if !loading && !drafts.length && !visible.length}
-    <div class="empty">
-      <p class="eyebrow">{needle ? "No matches" : "Nothing here yet"}</p>
+    <EmptyState title={needle ? "No matches" : "Nothing here yet"}>
       <p>{needle ? "No quick note contains that text." : "Start a note here, or float one on top of your other windows."}</p>
-      {#if !needle}<button type="button" class="pill primary" onclick={add}>+ New note</button>{/if}
-    </div>
+      {#snippet actions()}
+        {#if !needle}<button type="button" class="pill primary" onclick={add}>+ New note</button>{/if}
+      {/snippet}
+    </EmptyState>
   {/if}
 </section>
 
@@ -101,10 +103,5 @@
     gap: 16px;
     align-items: start;
   }
-  .empty {
-    display: grid; justify-items: center; gap: 6px;
-    padding: 60px 20px; text-align: center; color: var(--muted);
-  }
-  .empty p { margin: 0; }
   .error { display: flex; align-items: center; gap: 10px; color: var(--error); margin: 0; }
 </style>

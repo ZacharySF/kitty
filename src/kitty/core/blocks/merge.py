@@ -213,7 +213,7 @@ def merge(conn: sqlite3.Connection, updates: dict[str, Iterable[bytes]], *, orig
     with (nullcontext() if conn.in_transaction else transaction(conn, immediate=True)):
         work = _store._Transaction(conn, at or _now())
         if not work.crdt:
-            raise RuntimeError("Peer sync needs migration 038")
+            raise RuntimeError("Peer sync needs migration 040")
         merging = _Merge(conn, work)
         for page_id in sorted(updates):
             blobs = [bytes(blob) for blob in updates[page_id] if blob]

@@ -106,6 +106,7 @@ def post(app, conn, path, body):
               '/api/schema/add-node': schema_maps.add_node,
               '/api/schema/save': schema_maps.save, '/api/schema/delete': schema_maps.delete,
               '/api/schema/undo': schema_maps.undo, '/api/schema/import-jobs': schema_maps.import_jobs,
+              '/api/schema/transfer': schema_maps.transfer,
               '/api/schema/backlinks/apply': lambda c, b: backlinks.apply(c, b, applyai=_applyai(app))}
     handler = routes.get(path)
     if handler is None:

@@ -53,7 +53,7 @@ def parse_user_date(value: str) -> str | None:
     offset = text.removeprefix("+").removesuffix("d")
     if offset.isdigit():
         return to_iso(now() + timedelta(days=int(offset)))
-    parsed = parse(text)
+    parsed = parse(value)
     return to_iso(parsed) if parsed else None
 
 

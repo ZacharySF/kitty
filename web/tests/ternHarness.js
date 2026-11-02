@@ -4,6 +4,7 @@ import { mount } from "svelte";
 import "/src/styles.css";
 import { loadBuild } from "/src/lib/build.svelte.ts";
 import { createBuildStub } from "./buildStub.js";
+import "/src/lib/themes/engine.css";
 import TernView from "/src/lib/TernView.svelte";
 
 const BASE = {

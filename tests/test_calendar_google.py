@@ -348,6 +348,24 @@ def test_divergent_edit_review_never_silently_pushes(workspace, provider, choice
         assert any(v['calendar_id'] == 'personal' and v['title'] == 'Local version (local conflict copy)' for v in copies)
 
 
+def test_conflicts_carry_google_version_as_a_calendar_event(workspace, provider):
+    """Q62: the day grid draws Google's side from the same fields as kitty's, not raw JSON."""
+    provider.add_event()
+    cal = linked(workspace)
+    sync(workspace, cal)
+    item = calendar.occurrences(workspace.conn, '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z')[0]
+    edit(workspace, item, title='Local version')
+    provider.add_event(summary='Google version', location='Room 204')
+    sync(workspace, cal, 'both')
+    conflict = google.conflicts(workspace.conn)[0]
+    assert conflict['local']['title'] == 'Local version'
+    assert conflict['remote']['title'] == 'Google version' and conflict['remote']['location'] == 'Room 204'
+    assert conflict['remote']['start'] and conflict['remote']['end'] and 'all_day' in conflict['remote']
+    provider.add_event(status='cancelled')
+    sync(workspace, cal, 'both')
+    assert google.conflicts(workspace.conn)[0]['remote'] is None
+
+
 def test_provider_etag_race_becomes_actionable_conflict(workspace, provider):
     provider.add_event()
     cal = linked(workspace)
@@ -750,3 +768,28 @@ def test_calendar_clear_lists_every_event_and_requires_explicit_confirmation(wor
     assert provider.events == {}
     assert google.preview_operation(workspace.settings, body)['items'] == []
     assert approved(workspace.settings, body)['ok']
+
+
+def test_palette_slots_and_subject_links_stay_local_through_google_sync(workspace, provider):
+    conn = workspace.conn
+    from kitty.core import study
+    physics = study.save_entity(conn, 'subjects', {'name': 'Physics', 'color': '#31a2bc'})['item']['id']
+    provider.add_event()
+    cal = linked(workspace)
+    sync(workspace, cal)
+    cal = calendar._get_calendar(conn, cal['id'])
+    assert cal['color'] == '#123abc'
+    cal = calendar.save_calendar(conn, {'id': cal['id'], 'revision': cal['revision'], 'color': 'c4'})
+    item = calendar.occurrences(conn, '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z')[0]
+    edit(workspace, item, subject_id=physics, color='c2')
+    sync(workspace, cal, 'both')
+    assert provider.subscription['backgroundColor'] == '#123abc', 'Google only stores hex; a palette slot is local'
+    assert not any(call['path'].endswith('/calendarList/remote') for call in provider.writes)
+    provider.add_event(summary='Renamed in Google')
+    sync(workspace, cal)
+    pulled = calendar.get_event(conn, item['id'])
+    assert (pulled['title'], pulled['subject_id'], pulled['color']) == ('Renamed in Google', physics, 'c2')
+    assert calendar._get_calendar(conn, cal['id'])['color'] == 'c4'
+    provider.subscription.update(provider.stamp({**provider.subscription, 'backgroundColor': '#abcdef'}))
+    sync(workspace, cal)
+    assert calendar._get_calendar(conn, cal['id'])['color'] == '#abcdef', 'a colour changed in Google still arrives'

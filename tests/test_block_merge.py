@@ -118,7 +118,7 @@ def test_a_page_written_before_loro_is_seeded_on_first_touch_and_old_rows_still_
     early = tmp_path / "early"
     early.mkdir()
     for migration in available_migrations():
-        if migration.version < 38:
+        if migration.version < next(m.version for m in available_migrations() if m.name == "peer_sync"):
             shutil.copy(migration.path, early / migration.path.name)
     conn = connect(tmp_path / "kitty.db")
     migrate(conn, early)

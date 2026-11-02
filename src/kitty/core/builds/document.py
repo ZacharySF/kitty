@@ -24,7 +24,7 @@ from kitty.core.builds import css as css_check
 
 SCHEMA_VERSION = 1
 MAX_BYTES = 256 * 1024
-#: The roles kitty!'s themes (web/src/lib/themes.ts) define; their tokens must be hex colours.
+#: The roles kitty!'s themes (web/src/lib/themes/catalog.ts) define; their tokens must be hex colours.
 COLOR_TOKENS = (
     "void", "panel", "inset", "raised", "line", "lineHot", "ink", "mute", "dim", "structure",
     "signal", "go", "reference", "caution", "alternate", "danger",

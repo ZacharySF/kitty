@@ -6,7 +6,8 @@
     <title>Dock harness</title>
     <style>
       html, body { margin: 0; background: #141414; color: #e6e6e6; }
-      #view { padding: 0; }
+      /* Like .workbench, the page ends above the docked dock (--dock-space). */
+      #view { padding: 0; height: calc(100vh - var(--dock-space, 0px)); box-sizing: border-box; }
       #content { height: 500px; }
     </style>
   </head>

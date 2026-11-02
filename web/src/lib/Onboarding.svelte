@@ -49,7 +49,7 @@
     const targetView = step.view;
     const selector = step.selector;
     untrack(() => {
-      if (window.location.hash.slice(1) !== targetView) onview(targetView);
+      if (window.location.hash.slice(1).split("/")[0] !== targetView) onview(targetView);
     });
     reveals = 0;
     void tick().then(() => requestAnimationFrame(positionHighlight));
@@ -59,10 +59,11 @@
     const target = document.querySelector(step.selector);
     if (!target) { rect = null; return; }
     // Keep the spotlight on the part of the target that is actually visible between the
-    // workspace header and the dock.
-    const dock = document.querySelector('[data-kitty-panel="dock"]');
-    const floor = dock && !dock.contains(target) ? Math.min(window.innerHeight, dock.getBoundingClientRect().top) : window.innerHeight;
+    // workspace header and the dock, where the dock covers its column.
     let bounds = target.getBoundingClientRect();
+    const dock = document.querySelector('[data-kitty-panel="dock"]');
+    const card = dock && !dock.contains(target) ? dock.getBoundingClientRect() : null;
+    const floor = card && card.left < bounds.right && card.right > bounds.left ? Math.min(window.innerHeight, card.top) : window.innerHeight;
     // Views render after the step changes, so retry a few times until the target is in sight.
     if (reveals < 3) {
       const header = document.querySelector(".workbench-top");
@@ -161,7 +162,7 @@
     welcomeStep = 1; error = "";
   }
   function startTour() {
-    originalView = (window.location.hash.slice(1) || "today") as View;
+    originalView = (window.location.hash.slice(1).split("/")[0] || "today") as View;
     originalScroll = window.scrollY;
     dockPresent = !!document.querySelector(DOCK_SELECTOR);
     stepIndex = 0; error = ""; mode = "tour";
@@ -272,9 +273,9 @@
   .art-center { position: absolute; left: 50%; top: 43%; transform: translate(-50%, -50%); width: 126px; height: 126px; display: grid; place-items: center; border-radius: 36px; color: var(--accent); background: color-mix(in srgb, var(--surface-raised) 75%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: 0 0 70px color-mix(in srgb, var(--accent) 12%, transparent); }
   .art-node { position: absolute; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); background: color-mix(in srgb, var(--surface-raised) 87%, transparent); font-size: 13px; color: var(--muted); }
   .node-notes { left: 9%; top: 20%; transform: rotate(-7deg); }.node-study { right: 5%; top: 52%; transform: rotate(7deg); }.node-atlas { left: 10%; top: 65%; transform: rotate(-4deg); }
-  .art-caption { position: absolute; bottom: 32px; left: 34px; right: 24px; }.art-caption span, .eyebrow, .welcome-footnote { font: 10px var(--font-mono); letter-spacing: .14em; color: var(--muted); }.art-caption p { font: 23px var(--heading); max-width: 240px; margin: 12px 0 0; }
+  .art-caption { position: absolute; bottom: 32px; left: 34px; right: 24px; }.art-caption span, .eyebrow, .welcome-footnote { font: 10px var(--font-mono); letter-spacing: .14em; color: var(--muted); }.art-caption p { font: 23px var(--font-ui); max-width: 240px; margin: 12px 0 0; }
   .welcome-reading { padding: 38px 44px 24px; align-self: center; min-width: 0; }
-  h1 { font: 500 clamp(34px, 4vw, 52px)/1.06 var(--heading); letter-spacing: -.045em; margin: 22px 0; }h1 em { font-style: normal; color: var(--accent); }
+  h1 { font: 500 clamp(34px, 4vw, 52px)/1.06 var(--font-ui); letter-spacing: -.045em; margin: 22px 0; }h1 em { font-style: normal; color: var(--accent); }
   .description { font-size: 14px; line-height: 1.75; color: var(--muted); margin: 0 0 25px; max-width: 43ch; }
   .primary, .google-button { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; padding: 11px 16px; border-radius: 9px; font-weight: 600; text-decoration: none; font-size: 13px; }
   .primary { background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent); }.primary:hover { filter: brightness(1.08); }.google-button { background: var(--surface-raised); border: 1px solid var(--border); color: var(--ink); }.google-g { flex: none; margin-right: auto; }.google-button:disabled .google-g { filter: grayscale(1); opacity: .6; }.google-button > span:last-child { margin-left: auto; }
@@ -284,7 +285,7 @@
   .connected { display: flex; gap: 12px; align-items: center; border: 1px solid var(--border); padding: 16px; border-radius: 10px; }.connected strong { font-size: 13px; }.connected p { margin: 4px 0 0; color: var(--muted); overflow-wrap: anywhere; font-size: 12px; }.connected-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }.connection-wait { padding: 14px; background: var(--wash); border-radius: 8px; font-size: 13px; }.connection-wait p { font-size: 12px; color: var(--muted); margin-bottom: 0; }.completion-mark { color: var(--accent); margin-top: 25px; }
   :global(:root body) .onboarding.tour { position: fixed; inset: 0; width: 100vw; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; overflow: hidden; }:global(:root body) .onboarding.tour::backdrop { background: transparent; backdrop-filter: none; }
   .spotlight { position: fixed; border: 2px solid var(--accent); border-radius: 12px; box-shadow: 0 0 0 9999px color-mix(in srgb, var(--canvas) 76%, transparent); pointer-events: none; }.tour-shade { position: absolute; inset: 0; background: color-mix(in srgb, var(--canvas) 76%, transparent); }
-  .tour-card { position: fixed; bottom: 26px; right: 26px; width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 120px); overflow: auto; padding: 24px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 16px; background: color-mix(in srgb, var(--surface) 96%, transparent); backdrop-filter: blur(24px); box-shadow: var(--overlay-shadow); }.tour-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.tour-top .eyebrow { font-size: 9px; }.progress { display: flex; gap: 5px; margin: 17px 0 22px; }.progress span { flex: 1; height: 3px; background: var(--border); border-radius: 3px; }.progress .done { background: var(--accent); }.step-count { font: 10px var(--font-mono); color: var(--accent); display: flex; justify-content: space-between; }.step-count span { color: var(--muted); font-size: 9px; }h2 { font: 500 27px/1.18 var(--heading); letter-spacing: -.025em; margin: 12px 0 16px; }.tour-card .description { font-size: 13px; margin-bottom: 18px; }.tip { display: flex; gap: 10px; align-items: start; color: var(--muted); font-size: 11px; line-height: 1.6; padding: 13px 0; border-top: 1px solid var(--border); }.tip :global(svg) { flex: none; color: var(--accent); }footer { display: flex; justify-content: space-between; margin-top: 13px; }footer .primary { min-width: 125px; }.error-banner { margin-top: 12px; font-size: 12px; }.guide-retry { position: fixed; bottom: 20px; left: 20px; z-index: 100; padding: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--error); border-radius: 8px; }
+  .tour-card { position: fixed; bottom: 26px; right: 26px; width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 120px); overflow: auto; padding: 24px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 16px; background: color-mix(in srgb, var(--surface) 96%, transparent); backdrop-filter: blur(24px); box-shadow: var(--overlay-shadow); }.tour-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.tour-top .eyebrow { font-size: 9px; }.progress { display: flex; gap: 5px; margin: 17px 0 22px; }.progress span { flex: 1; height: 3px; background: var(--border); border-radius: 3px; }.progress .done { background: var(--accent); }.step-count { font: 10px var(--font-mono); color: var(--accent); display: flex; justify-content: space-between; }.step-count span { color: var(--muted); font-size: 9px; }h2 { font: 500 27px/1.18 var(--font-ui); letter-spacing: -.025em; margin: 12px 0 16px; }.tour-card .description { font-size: 13px; margin-bottom: 18px; }.tip { display: flex; gap: 10px; align-items: start; color: var(--muted); font-size: 11px; line-height: 1.6; padding: 13px 0; border-top: 1px solid var(--border); }.tip :global(svg) { flex: none; color: var(--accent); }footer { display: flex; justify-content: space-between; margin-top: 13px; }footer .primary { min-width: 125px; }.error-banner { margin-top: 12px; font-size: 12px; }.guide-retry { position: fixed; bottom: 20px; left: 20px; z-index: 100; padding: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--error); border-radius: 8px; }
   .tour-card.raised { bottom: auto; top: 76px; }
   @media (max-height: 560px) { .tour-card { padding: 16px 20px; max-height: calc(100dvh - 32px); bottom: 16px; }.tour-card.raised { top: 16px; }.tour-card h2 { font-size: 22px; margin: 4px 0 8px; }.progress { margin: 10px 0 12px; }.tour-card .description { margin-bottom: 10px; line-height: 1.55; }.tip { padding: 8px 0; } }
   @media (max-width: 760px) { :global(:root body) .onboarding:not(.tour) { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); border-radius: 14px; }.welcome-grid { grid-template-columns: 1fr; min-height: 0; }.welcome-art { display: none; }.welcome-reading { padding: 28px 24px; }.welcome-shell > header { padding: 18px; gap: 8px; }h1 { font-size: 40px; }.tour-card { right: 16px; bottom: 16px; padding: 20px; } }

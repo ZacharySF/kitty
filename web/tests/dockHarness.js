@@ -4,17 +4,22 @@ import { mount } from "svelte";
 import "/src/styles.css";
 import { loadBuild, reloadBuild } from "/src/lib/build.svelte.ts";
 import { createBuildStub } from "./buildStub.js";
+import "/src/lib/themes/engine.css";
 import { installPanelFullscreen } from "/src/lib/panelFullscreen.ts";
 import Dock from "/src/lib/Dock.svelte";
 
+const since = Date.now() - 90_000;
 const ACTIVITY = {
   running: true,
   workspaces: [
     { id: "w1", label: "api", status: "working", focused: true, agents: [
-      { pane: "w1:p1", name: "omp", status: "working" },
-      { pane: "w1:p2", name: "Codex", status: "blocked" },
+      { pane: "w1:p1", name: "omp", status: "working", task: "Fix the failing tests", line: "running pytest", revision: 12, since },
+      { pane: "w1:p2", name: "Codex", status: "blocked", task: "Review the diff", line: "needs permission", revision: 4, since },
     ] },
-    { id: "w2", label: "docs", status: "idle", focused: false, agents: [] },
+    { id: "w2", label: "docs", status: "idle", focused: false, agents: [
+      { pane: "w2:p1", name: "claude", status: "idle", task: "", line: "", revision: 0, since },
+    ] },
+    { id: "w3", label: "scratch", status: "idle", focused: false, agents: [] },
   ],
 };
 
@@ -95,7 +100,9 @@ class FakeSocket {
 window.WebSocket = FakeSocket;
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-const build = createBuildStub();
+// tests/dock.browser.test.mjs seeds the build's dock once per tab, before the first load.
+const seed = JSON.parse(sessionStorage.getItem("harness.dock-seed") || "null");
+const build = createBuildStub(seed ? { ui: { dock: seed } } : {});
 window.fetch = async (url, init = {}) => {
   const answer = build.fetch(url, init);
   if (answer) return answer;
@@ -112,13 +119,9 @@ window.fetch = async (url, init = {}) => {
 
 await loadBuild();
 const fullscreen = installPanelFullscreen(window, document);
-const content = document.getElementById("content");
 mount(Dock, {
   target: document.getElementById("dock"),
-  props: {
-    measure: () => content.getBoundingClientRect().bottom,
-    onherdr: () => events.push("open-herdr-view"),
-  },
+  props: { onherdr: () => events.push("open-herdr-view") },
 });
 
 window.dockHarness = {

@@ -9,6 +9,14 @@
   "patternProperties": {
     "^x-": {"description": "Free extension key; kept in the file, ignored by kitty!."}
   },
+  "$defs": {
+    "colorPicks": {
+      "type": "object",
+      "maxProperties": 200,
+      "propertyNames": {"maxLength": 80},
+      "additionalProperties": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}
+    }
+  },
   "properties": {
     "$schema": {"type": "string", "maxLength": 500, "description": "Optional schema URL for editors; ignored."},
     "schema": {"const": 1, "description": "Build file format version. This kitty! reads version 1."},
@@ -94,8 +102,8 @@
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
           "description": "A built-in theme. An unknown name (say, from a newer kitty!) is a warning and falls back to the default.",
-          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "scythe"],
-          "default": "harness"
+          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "scythe", "liquid-glass"],
+          "default": "kitty"
         },
         "tokens": {
           "type": "object",
@@ -125,8 +133,29 @@
           "additionalProperties": false,
           "properties": {
             "mode": {"enum": ["terminal", "activity", "hidden"], "default": "terminal"},
-            "height": {"type": ["integer", "null"], "minimum": 160, "maximum": 10000, "description": "Pixels; null sizes the dock to the space below the main panel.", "default": null},
-            "shown": {"enum": ["terminal", "activity"], "description": "What the handle brings back after hiding.", "default": "terminal"}
+            "shown": {"enum": ["terminal", "activity"], "description": "What the handle or pill brings back after hiding.", "default": "terminal"},
+            "float": {"type": "boolean", "description": "A floating card in the bottom-right corner instead of the bottom panel.", "default": false},
+            "step": {"enum": ["s", "m", "l"], "description": "Docked height: a small, medium or large share of the window.", "default": "m"},
+            "size": {
+              "description": "The floating card's size in pixels; null follows the window.",
+              "anyOf": [
+                {"type": "null"},
+                {"type": "object", "additionalProperties": false, "required": ["width", "height"], "properties": {
+                  "width": {"type": "integer", "minimum": 320, "maximum": 20000},
+                  "height": {"type": "integer", "minimum": 160, "maximum": 20000}
+                }}
+              ],
+              "default": null
+            },
+            "offset": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The floating card's distance in pixels from the window's right and bottom edges.",
+              "properties": {
+                "right": {"type": "integer", "minimum": 0, "maximum": 20000, "default": 16},
+                "bottom": {"type": "integer", "minimum": 0, "maximum": 20000, "default": 16}
+              }
+            }
           }
         },
         "graph": {
@@ -165,6 +194,85 @@
           "additionalProperties": false,
           "properties": {
             "coding_agent": {"enum": ["omp", "claude", "codex"], "default": "omp"}
+          }
+        },
+        "appearance": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Settings → Appearance: the look choices besides the theme.",
+          "properties": {
+            "title_font": {"enum": ["fraunces", "plain"], "default": "fraunces"},
+            "density": {"enum": ["compact", "comfortable"], "default": "compact"},
+            "motion": {"enum": ["full", "reduced"], "default": "full"},
+            "motif": {"type": "boolean", "description": "The theme's motif layer (bullets, ticks, dividers, ornaments).", "default": true},
+            "background": {"enum": ["nebula", "petals"], "default": "nebula"}
+          }
+        },
+        "home": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "look": {"enum": ["brain", "2d"], "description": "Home shows the Brain or the 2D atlas.", "default": "brain"}
+          }
+        },
+        "brain": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Brain view's View panel (whether the panel is open stays on each device).",
+          "properties": {
+            "layout": {"enum": ["anatomy", "spheres", "wheel"], "default": "anatomy"},
+            "group_by": {"enum": ["section", "group", "type"], "default": "section"},
+            "labels": {"enum": ["off", "sections", "hover"], "default": "hover"},
+            "turning": {"type": "boolean", "default": true},
+            "speed": {"type": "number", "minimum": 0, "maximum": 3, "default": 1},
+            "lines": {"type": "boolean", "default": false},
+            "scaffold": {"type": "boolean", "default": true},
+            "point_size": {"type": "number", "minimum": 0.25, "maximum": 3, "default": 1},
+            "background": {"enum": ["transparent", "black"], "default": "transparent"},
+            "colors": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Picked colours per grouping and group key; absent keys follow the theme.",
+              "properties": {
+                "section": {"$ref": "#/$defs/colorPicks"},
+                "group": {"$ref": "#/$defs/colorPicks"},
+                "type": {"$ref": "#/$defs/colorPicks"}
+              },
+              "default": {"section": {}, "group": {}, "type": {}}
+            }
+          }
+        },
+        "notifications": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "quiet": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Quiet hours, in minutes of the local day; from equal to to is an empty window.",
+              "properties": {
+                "enabled": {"type": "boolean", "default": false},
+                "from": {"type": "integer", "minimum": 0, "maximum": 1439, "default": 1320},
+                "to": {"type": "integer", "minimum": 0, "maximum": 1439, "default": 450},
+                "let_calendar": {"type": "boolean", "description": "Calendar reminders still toast during quiet hours.", "default": true},
+                "digest": {"type": "boolean", "description": "Held notices arrive together when quiet hours end.", "default": true}
+              }
+            }
+          }
+        },
+        "flashcards": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "look": {"enum": ["tiles", "graph"], "description": "Decks as due-ring tiles or the deck → note graph.", "default": "tiles"}
+          }
+        },
+        "study": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "guide_view": {"enum": ["columns", "rail"], "default": "columns"},
+            "plans_view": {"enum": ["timeline", "days"], "default": "timeline"}
           }
         }
       }

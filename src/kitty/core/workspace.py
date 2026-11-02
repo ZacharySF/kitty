@@ -14,6 +14,7 @@ from pathlib import Path
 
 from kitty.config import Config, load_config
 from kitty.core import companies as companies_core
+from kitty.core import concept_maps
 from kitty.core import sources as sources_core
 from kitty.core import tracks as tracks_core
 from kitty.db import connect, migrate, pending_migrations
@@ -79,6 +80,8 @@ def open_workspace(
 
     if auto_migrate:
         migrate(conn)
+        if not pending_migrations(conn):
+            concept_maps.migrate(conn, resolved.data_dir / "exports")
     if sync and not pending_migrations(conn):
         sync_config_to_db(conn, config)
         sync_build_to_db(conn, resolved)

@@ -26,12 +26,12 @@ window.atlasHarness = {
   opened,
   /** The hidden sections saved in the build. */
   hidden: () => build.build.ui.atlas.hidden,
-  /** Replaces every tab with fresh atlases using the given look, modules and hidden sections. */
-  async mount({ look, enabled, hidden = [], count = 2 }) {
+  /** Replaces every tab with fresh 2D atlases using the given modules and hidden sections. */
+  async mount({ enabled, hidden = [], count = 2 }) {
     for (const tab of tabs) unmount(tab.instance);
     host.replaceChildren();
     tabs = [];
-    await setPreferences({ ui: { graph: { look }, atlas: { hidden } } });
+    await setPreferences({ ui: { home: { look: "2d" }, atlas: { hidden } } });
     setActiveModules(enabled);
     for (let index = 0; index < count; index += 1) {
       const target = document.createElement("div");

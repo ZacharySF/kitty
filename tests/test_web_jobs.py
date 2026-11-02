@@ -85,6 +85,27 @@ def test_application_history_retains_dates_evidence_and_append_only_undo(app, wo
     assert any(event["undoes_event_id"] for event in after["history"])
 
 
+def test_pipeline_track_moves_leave_status_history_alone(app, workspace):
+    job = posting(workspace, 1)
+    endpoint = f"/api/jobs/{job.id}"
+    first, second = workspace.config.track_names[:2]
+    with pytest.raises(APIError) as refused:
+        app.mutate(workspace.conn, endpoint, {"action": "track", "value": first})
+    assert refused.value.status == 409
+    app.mutate(workspace.conn, endpoint, {"action": "applied", "value": True})
+    app.mutate(workspace.conn, endpoint, {"action": "track", "value": first})
+    history = app.get_json(workspace.conn, endpoint, {})["application"]["history"]
+    app.mutate(workspace.conn, endpoint, {"action": "track", "value": second})
+    lanes = {card["job_id"]: card["track"] for cards in app.get_json(workspace.conn, "/api/pipeline", {})["columns"].values() for card in cards}
+    assert lanes[job.id] == second
+    assert app.get_json(workspace.conn, endpoint, {})["application"]["history"] == history
+    for value in ("not-a-track", 7, ["synthetic"]):
+        with pytest.raises(APIError):
+            app.mutate(workspace.conn, endpoint, {"action": "track", "value": value})
+    app.mutate(workspace.conn, endpoint, {"action": "track", "value": None})
+    assert applications.get_application_for_job(workspace.conn, job.id).track is None
+
+
 def test_applied_job_bulk_state_failure_preserves_every_selected_job(app, workspace):
     first, second = posting(workspace, 1), posting(workspace, 2)
     app.mutate(workspace.conn, f"/api/jobs/{second.id}", {"action": "applied", "value": True})
@@ -167,3 +188,46 @@ def test_explicit_queue_sort_is_not_replaced_by_preparation_priority(app, worksp
     assert [job["id"] for job in explicit["jobs"]] == [high.id, low.id]
     best = app.get_json(workspace.conn, "/api/jobs", {"view": "apply", "order": "best"})
     assert [job["id"] for job in best["jobs"]] == [low.id, high.id]
+
+
+def test_reminders_edit_snooze_delete_and_restore(app, workspace):
+    from datetime import timedelta
+
+    from kitty.dates import now, parse
+    conn = workspace.conn
+    row = lambda ident: conn.execute("SELECT * FROM reminders WHERE id=?", (ident,)).fetchone()
+    ident = app.mutate(conn, "/api/reminders", {"date": "2030-01-05", "note": "Synthetic follow-up"})["id"]
+    app.mutate(conn, f"/api/reminders/{ident}", {"date": "2030-01-07", "note": "Synthetic follow-up, edited"})
+    edited = row(ident)
+    assert edited["due_at"].startswith("2030-01-07") and edited["note"] == "Synthetic follow-up, edited"
+    # Snoozing moves a future reminder one day on and reports where it was, for undo.
+    snoozed = app.mutate(conn, f"/api/reminders/{ident}/snooze", {})
+    assert snoozed["previous"] == edited["due_at"] and parse(snoozed["due_at"]).date().isoformat() == "2030-01-08"
+    app.mutate(conn, f"/api/reminders/{ident}", {"date": snoozed["previous"]})
+    assert row(ident)["due_at"] == edited["due_at"]
+    # An overdue reminder snoozes to a day from now, not a day after its old date.
+    late = app.mutate(conn, "/api/reminders", {"date": "2020-01-01", "note": "Synthetic overdue"})["id"]
+    result = app.mutate(conn, f"/api/reminders/{late}/snooze", {})
+    assert parse(result["due_at"]).date() == (now() + timedelta(days=1)).date()
+    # Delete hands back the row; restoring it brings back the same reminder.
+    before = dict(row(ident))
+    deleted = app.mutate(conn, f"/api/reminders/{ident}/delete", {})
+    assert row(ident) is None
+    app.mutate(conn, "/api/reminders/restore", {"reminder": deleted["reminder"]})
+    assert dict(row(ident)) == before
+    with pytest.raises(APIError) as clash:
+        app.mutate(conn, "/api/reminders/restore", {"reminder": deleted["reminder"]})
+    assert clash.value.status == 409
+    for path, body, status in (
+        ("/api/reminders/999999", {"note": "Synthetic"}, 404),
+        ("/api/reminders/999999/snooze", {}, 404),
+        ("/api/reminders/999999/delete", {}, 404),
+        (f"/api/reminders/{ident}", {"colour": "red"}, 400),
+        (f"/api/reminders/{ident}", {}, 400),
+        (f"/api/reminders/{ident}", {"date": "not a date"}, 400),
+        (f"/api/reminders/{ident}/snooze", {"days": 2}, 400),
+        ("/api/reminders/restore", {"reminder": {**deleted["reminder"], "id": 999998, "kind": "nonsense"}}, 400),
+    ):
+        with pytest.raises(APIError) as refused:
+            app.mutate(conn, path, body)
+        assert refused.value.status == status, (path, body)

@@ -4,6 +4,7 @@
 // stand-in, as they live in kitty's block tables; its canvas document lives here.
 import { mount } from "svelte";
 import "/src/styles.css";
+import "/src/lib/themes/engine.css";
 import { loadBuild } from "/src/lib/build.svelte.ts";
 import { createBuildStub } from "./buildStub.js";
 import { keysBetween } from "/src/lib/blockKeys.ts";
@@ -81,6 +82,11 @@ const outlineResult = (id) => {
   return { revision: state.revision, blocks: state.blocks.map((item, index) => ({ id: item.id, page_id: id, parent_id: item.parent_id === state.page_id ? null : item.parent_id,
     text: item.text, ordering: index, collapsed: false, type: item.type, props: {} })), references: {}, citation_counts: {} };
 };
+let preferences = { allow_ai: false, retention_days: 30, revision: 1 };
+// Map mode: no page has a mind map yet; creating one hands back a fake map id.
+const pageMaps = new Map();
+// `status` is the save state Notes reports to its workspace tab dot (Q3).
+harness.status = null;
 
 const build = createBuildStub();
 window.fetch = async (input, init = {}) => {
@@ -97,7 +103,14 @@ window.fetch = async (input, init = {}) => {
   const id = match ? Number(match[1]) : 0;
   const page = pages.get(id);
   if (path === "/notes" && method === "GET") {
-    return json({ folders: [], notebooks, pages: [...pages.keys()].map(summary), preferences: { allow_ai: false, retention_days: 30, revision: 1 } });
+    return json({ folders: [], notebooks, pages: [...pages.keys()].map(summary), preferences });
+  }
+  if (path === "/notes/preferences" && method === "POST") {
+    preferences = { allow_ai: body.allow_ai, retention_days: body.retention_days, revision: preferences.revision + 1 };
+    return json(preferences);
+  }
+  if (path === "/notes/daily" && method === "POST") {
+    return json(pageOf(1));
   }
   if (match && !page) return json({ error: "Page not found" }, 404);
   if (match && !match[2] && method === "GET") return json(pageOf(id));
@@ -117,6 +130,12 @@ window.fetch = async (input, init = {}) => {
     return json({ viewport_revision: page.viewport_revision });
   }
   if (match?.[2] === "/organize") return json({});
+  if (match?.[2] === "/map" && method === "GET") return json({ map_id: pageMaps.get(page.id) ?? null });
+  if (match?.[2] === "/map" && method === "POST") {
+    pageMaps.set(page.id, 900 + page.id);
+    return json({ map_id: pageMaps.get(page.id) });
+  }
+  if (path === "/schema" && method === "GET") return json({ maps: [], subjects: [] });
   if (path === "/documents/originals") return json({ originals: [] });
   if (path === "/backlinks/related") return json({ linked: [], unlinked: [], related: [] });
   if (path === "/notes/tags") return json({ tags: [] });
@@ -129,8 +148,10 @@ harness.sockets = server.sockets;
 const params = new URLSearchParams(location.search);
 sessionStorage.setItem("kitty.notes.open-page", params.get("page") ?? "1");
 await loadBuild();
+// App.svelte measures its pinned top bar into --workbench-top; the harness's stand-in band is 96px.
+document.documentElement.style.setProperty("--workbench-top", "96px");
+window.notesHarness = harness;
 mount(NotesHarness, {
   target: document.getElementById("view"),
-  props: { initialMode: params.get("mode") === "mindmap" ? "mindmap" : undefined },
+  props: { initialMode: params.get("mode") === "map" ? "map" : undefined },
 });
-window.notesHarness = harness;

@@ -86,8 +86,9 @@ list of the workspace's build file, stored locally (the build file is described 
 ```
 
 Save, then **quit and restart Kitty** to activate the change. Refresh/reload does
-not unload running modules, restart workers or discard drafts. Settings shows
-the active and saved selections separately. CLI invocations are separate
+not unload running modules, restart workers or discard drafts. Settings → Modules
+marks a module whose saved choice differs from the running session with
+**Restart** (its tooltip says whether it starts or stops). CLI invocations are separate
 processes, so the next command uses the saved selection.
 
 Disabled modules disappear from navigation, commands, shortcuts, atlas sections
@@ -147,12 +148,21 @@ after 30 seconds and is issued only by the header-protected `POST
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
 **Dock.** With the module on, the bottom of the window holds the dock: herdr's
-client in a transparent terminal drawn in the Harness colours, herdr's own
-agent-activity strip (working / blocked / done / idle per herdr workspace, read
-from `GET /api/terminal/activity`, which never starts herdr), or nothing but a thin
-handle that brings it back. Drag the divider (or focus it and use the arrow keys) to
-resize it; the state and height are remembered. The first size is the empty area
-below the main panel. **Open herdr view**, or the **herdr** node under Plan in the
+client in a transparent terminal drawn in the Harness colours (**Terminal**) or
+**Agents** (one card per detected herdr agent with its working / blocked / done /
+idle state, read from `GET /api/terminal/activity`, which never starts herdr).
+Docked (the default) it spans the window's width at a fixed height and the page
+ends above it, so nothing is covered. Its height is not dragged: **S**, **M** and
+**L** in its header set a quarter, two fifths or three fifths of the window in one
+step (M at first). **Hide** leaves only a thin handle along the bottom edge; click
+it to bring back what was shown. **Float** detaches the dock into a glass card in
+the bottom-right corner that leaves the page the whole window: drag its header to
+move it and its top-left corner grip to resize it (or focus the grip and use the
+arrow keys); the card previews the move or new outline while you drag and settles
+on release, and always stays on screen. Hidden while floating, it is a small pill
+in the corner; **Dock** puts it back at the bottom. The view, docked height,
+float choice and card size and position are remembered per browser profile;
+notification toasts stack above the dock, handle, card or pill. **Open herdr view**, or the **herdr** node under Plan in the
 atlas, opens the whole session in the workspace tab. In a terminal, bare keys
 (including `f`) go to the shell; **Ctrl+Shift+F** fullscreens the terminal panel and
 **Esc** returns.
@@ -181,8 +191,11 @@ list workspaces, create a separately labelled tab with `tab create --workspace
 <id> --cwd <directory> --label <name> --no-focus`, then target the returned
 `root_pane.pane_id` explicitly. Read herdr's own skill before controlling panes.
 Never rely on another client's focused pane or switch to the `default` session.
-Their tabs appear live in the terminal and herdr view, and detected agent states
-appear in **Agents**. Local CLI/socket access grants full shell access as your user.
+Their tabs appear live in the terminal and herdr view, and **Agents** in the dock
+shows one card per detected agent: its state, task (the pane's title), last output
+line, a 30-second output sparkline and how long it has been working or blocked. A
+blocked agent's **Open pane** focuses that pane and switches the dock to the
+terminal. Local CLI/socket access grants full shell access as your user.
 
 **Tern (optional).** With the module on, the **Tern** node under Plan shows
 [Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the bundled
@@ -194,7 +207,12 @@ kitty!'s own Tern daemon on a private socket,
 `$XDG_RUNTIME_DIR/kitty/tern-<workspace hash>/daemon.sock` (directory 0700, a
 socket others can reach is refused), gives it a `kitty` session in the workspace
 and opens a native Tern window on it (`tern --dir <workspace>`); your own Tern
-daemon and sessions are never read or changed. The view is a status panel (version,
+daemon and sessions are never read or changed. On NixOS the AppImage runs inside
+`appimage-run`'s FHS sandbox, whose `/etc/profile` would hide your programs (git,
+nix, python3, agents) from Tern's login-shell panes, so there kitty! starts the
+daemon and windows outside it as systemd user services (`kitty-tern-<workspace
+hash>`, through `systemd-run --user`) in your session's environment; without
+`systemd-run` they stay kitty!'s children. The view is a status panel (version,
 daemon state, sessions, panes and open windows from `tern inspect --json`, which
 never starts anything): Tern's web client needs WebGPU, which the desktop app's
 WebKitGTK view lacks, so kitty! does not embed it. Scripts reach the session with
@@ -226,11 +244,55 @@ not named `demo.db`, so it cannot wipe real applications.
 ## Local website
 
 The Svelte website uses the same Python core and SQLite database as the CLI/TUI.
-The workbench uses `@nunera/bracket` with self-hosted Inter UI text, Inter Tight
-headings and JetBrains Mono for code. The Theme menu persists Plum, Lavender,
-Ocean, Desktop, Kitty pink or Graphite locally. Plum is a lighter dark purple;
-Lavender and Kitty pink are light themes. Graph nodes and their edges use the
-same purple, blue and white palette. No Rust service is needed: the Python core
+The workbench uses `@nunera/bracket` with a compact 13px type scale and three
+typefaces, each with one job: Fraunces for the page title only, Inter for the rest
+of the interface (headings, labels, buttons, body) and JetBrains Mono for the
+navigation chrome, key caps, code and tabular figures; Fredoka sets only the
+wordmark. Labels, eyebrows and fold-out labels are Inter semibold in sentence case,
+never italic. The Theme menu persists one of ten dark themes locally. A theme is more
+than colours: each one also sets what its surfaces are made of (frosted glass,
+matte paper with grain, flat sheets, or square double-ruled frames), its focus
+ring (a plain ring, a soft glow, petal corners or corner brackets), how selected
+options, tabs and segments look, its motion style (calm, fluid, snappy or none)
+and its backdrop. Typefaces never change with the theme.
+- **Kitty** (the default): frosted pink glass over a soft blossom backdrop, a
+  sakura accent apart from the dusty structural pink, and six distinct data
+  colours (sakura, lavender, sky, mint, peach, butter). Its motif: list dots
+  become blossoms, ticked checkboxes bloom into a sakura, section rules part
+  around a blossom, the active tab and group grow cat ears, keyboard focus shows
+  two petals at the ring's corners, view loaders are the cat inside a petal
+  spinner and empty states a pink sleeping kitty.
+- **Liquid Glass**: clear, neutral glass like macOS/iOS (heavy blur and a white
+  rim lit from the top-left, no tint; in the desktop window your wallpaper shows
+  through), a soft glow on focus, lit selections, a glass-ring loader and a
+  frosted orb for empty states.
+- **Scythe**: engraved frames with corner ticks under a moonlit meadow,
+  crescent bullets, blade dividers, bracket focus and a crescent loader.
+- Harness and Nord are flat, Catppuccin Mocha and Gruvbox are matte paper, and
+  Dracula and Tokyo Night are glass, each with its own focus, selection and motion.
+
+Surfaces turn opaque under reduced transparency, and every theme's text,
+selected and pressed controls stay at WCAG AA contrast over its backdrop. Graph
+nodes and their edges use the active theme's graph palette.
+**Settings** is a left index of short pages, each one surface: **General**
+(Appearance, Desktop, Quiet hours), **Workspace** (Account, Modules, Graphs) and
+**Careers & AI** (Profile & saved answers, AI & privacy, which open their own
+views). **Find a setting** filters the index by name or keyword; Enter opens the
+first match. Every page has its own link, `#settings/<page>` (`appearance`,
+`desktop`, `quiet-hours`, `account`, `modules`, `graphs`), so Back returns to the
+previous page; plain `#settings` opens Appearance. Explanations of individual
+controls, such as the graph physics sliders, are tooltips on their ⓘ.
+**Settings → Appearance** sets the whole look in one panel beside a live
+preview: theme, title font (Fraunces or plain), density (compact 13px or
+comfortable 14px), motion (full or reduced), home (Brain or 2D map), section graph look
+(2D or 3D), the theme motif (turn it off to keep a theme's surfaces without its
+bullets, ticks, dividers and ornaments) and the background (the theme's backdrop,
+or with drifting petals). Reduce motion, here or in the system, stops every theme
+animation and transition. **Cozy**, **Focused** and **Minimal** set all of them
+at once; any single control still changes afterwards. Choices are saved in this
+browser (`kitty.appearance`, plus `kitty.theme` and `kitty.graph.look`) and
+applied before the app draws.
+No Rust service is needed: the Python core
 owns application behavior.
 
 From the project root, with Node 22+ and npm available:
@@ -251,7 +313,8 @@ configuration from disk; saves in My profile reload it automatically.
 The first-run welcome offers **Continue locally** or an optional Google identity
 connection, followed by a skippable guided tour of workspace panels, modules,
 Atlas, quick notes and Study (plus the terminal dock when present). Completion is
-remembered per workspace. Reopen either flow in **Settings → Welcome & account**.
+remembered per workspace. Reopen either flow in **Settings → Account** (**Connect
+Google** or **Take the tour**; **Setup guide** links to the Google setup document).
 Google is not required for local/offline use and does not secure the local API or
 sync data. For the owner-created Desktop OAuth client, `KITTY_GOOGLE_CLIENT_ID`,
 `KITTY_GOOGLE_CLIENT_SECRET`,
@@ -269,6 +332,47 @@ from public examples; edits disappear when the process exits. External discovery
 browser filling, Gmail, notifications and paid operations are disabled. Synthetic
 text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
 be registered inside the disposable workspace.
+
+### Controls and surfaces
+
+- **One control height.** Buttons, fields, dropdowns, segments, menu rows and tabs
+  are 28px tall (32px at the comfortable density); the one or two primary actions
+  of a page are a step taller. Buttons, toggles and segments are pills; fields and
+  dropdowns have softly rounded corners.
+- **One surface per region.** A page's main column, a side rail or a drawer is a
+  single panel; groups inside it are split by a hairline and a label, never by a
+  box inside a box.
+- **Status as a dot.** A view that saves (Notes today) shows a small dot on its
+  workspace tab instead of "Saved" text: neutral when saved, amber with unsaved
+  changes, red when saving failed. Hover it for the detail and the shortcut.
+- **⋯ menus and popovers.** Rarely used actions sit in a ⋯ menu, always the last
+  control of its header; small forms open in a popover anchored to the control.
+  Arrow keys, Home/End and the first letter move through a menu, Enter runs an item
+  and Esc closes it and returns focus.
+- **Dropdowns.** Four or fewer choices are a segmented control. Longer lists open
+  a themed list with a check on the current item (arrow keys, type-ahead, Enter,
+  Esc); decks, notebooks and time zones open with a search field. Section graphs'
+  **Browse** list is such a popover over the graph.
+- **Adding and editing.** New things open a small quick-add popover from their +
+  button: one phrase field and at most two chips; Enter saves, Esc keeps the
+  phrase, **More** opens the full editor. Opening an existing item shows the side
+  drawer with every field (the calendar's event and task drawers are the first).
+
+### Interface copy rules
+
+Text in the interface earns its place:
+
+1. Helper text appears only in an empty state or directly before a consequential
+   or irreversible action (deleting, sending data off this device, spending
+   money), and is at most 12 words.
+2. Every other explanation is deleted if it restates the label or the obvious, or
+   only says where something came from; otherwise it becomes a tooltip on the
+   control it explains.
+3. No implementation detail (IANA, UTC, seconds, file limits, provider names) and
+   no defensive negations ("never", "no … are guessed").
+4. Normal state is silent: status shows only when something is unsaved, failed or
+   offline, and then as a dot with a tooltip. Counts go in badges; zero is hidden.
+5. Sentence case, verb first, second person, no em-dash asides.
 
 ### Quick notes
 
@@ -404,6 +508,24 @@ lives in the database for now (`tag_settings`); it moves into the build file onc
 builds exist. Adding a keyword does not rescan old notes: their mentions are on the
 tag page, ready for **Link all**.
 
+### Brain data (`/api/brain`)
+
+`GET /api/brain?limit=<n>` (default 20,000, at most 50,000) returns the whole
+workspace as one point cloud for the Brain view: every **record** (notebooks,
+pages and their blocks, decks and card notes, calendar events and tasks, study
+subjects, projects, tasks, exams and sessions, quick notes, mind maps, documents,
+opportunities, jobs, applications and reminders) and every **edit** as a node with
+a `parent` link. Edits are the website changes captured in `record_events` plus the
+histories the database already keeps (flashcard reviews, application status
+changes, study sessions, calendar changes made before capture began and the block
+backend's `op_log`). Note pages, documents and quick notes are blocks, so each of
+their saves counts once, from `op_log`, whether it came over HTTP or the live
+socket; the one-time conversion of older notes into blocks is not an edit.
+Labels are titles only, never note bodies, paths or
+URLs; a change to something since deleted reads e.g. *Deleted page*. Sections of
+disabled modules are left out. When the limit is reached, records are kept and the
+newest edits fill the rest (`truncated: true`; `total` counts everything).
+
 ### LearnHarness extension
 
 **Study → LearnHarness → Start LearnHarness** opens the included
@@ -495,9 +617,14 @@ profile and session, not relaunch or replace an owner's running instance.
 
 ### Start here
 
-**How to apply** in the atlas Today panel opens a three-step guide and checks
-whether your name/email and a usable resume PDF are
-saved. These checks describe saved data, not application readiness.
+**Find jobs** has one row on top: the title and count, one segmented control for
+**Map · List · Saved · Applications · Resumes · Sources**, and **Add a job link**.
+Under it, an always-visible **This week** strip lists the next reminders and
+deadlines (click one to open the job or Reminders), the weekly goal as sent/goal,
+and **How to apply**; ⋯ at its end holds stale applications, expected openings,
+search health, per-track progress, rates and rank/state totals. **How to apply**
+opens a three-step guide and checks whether your name/email and a usable resume
+PDF are saved. These checks describe saved data, not application readiness.
 
 1. **My profile → My resumes:** enter your verified details in the ordinary form,
    review the save, then upload a resume PDF. Blank fields stay blank. Basic-form
@@ -505,31 +632,54 @@ saved. These checks describe saved data, not application readiness.
    unsaved profile, configuration or answer draft prompts before discarding it.
 2. **Find jobs:** the list scrolls in 100-row batches; selections persist across
    batches and **Select all matching** covers the whole filter. Sort by best fit,
-   similarity score, newest, job type (track), company or deadline. Jobs opens its
-   own schema, showing only job-type categories at the root. Open a category to
-   see every matching job, without 120-item map pages; its searchable Browse list
-   progressively reveals rows. Uncategorized jobs remain available in List.
+   similarity score, newest, job type (track), company or deadline; **Filters**
+   (a popover) holds rank (hover Rank for what A/B/C mean), saved view, source,
+   eligibility, status, preparation progress and the checkboxes. Map opens Jobs'
+   own schema, filling the page with its 2D/3D, Layout and Fit controls in a
+   bottom-left pill; it shows only job-type categories at the root. Open a
+   category to see every matching job, without 120-item map pages (**All job
+   types** returns). Every job, uncategorized ones included, is in List.
 3. **Select jobs → press Shift+F:** marked jobs (otherwise the opened or focused job) go
    straight to the reviewed autofill plan. Approved preparation opens Firefox and
    fills known fields. Check each form and submit it yourself; kitty! never submits.
 
 **Notes** opens today's dated note, reusing the same page on subsequent visits.
-The library on the left is the one notebook/page navigator: folders, notebooks,
-recent pages, tags and drag-to-reorder. The header row holds persistent page tabs,
-the save state, **Views** (saved maps, the folder/notebook **Library overview**
-schema, Today) and canvas fullscreen. One editor toolbar holds the
-Writing/Canvas/Mind map switch, page title, Save (Ctrl+S) and Find in page;
-**More** holds outline preview, add block, paper, favorite, reload, delete and the
-keyboard help. Escape closes Views and More.
+The library (☰, top left) slides over the page as a drawer and is the one
+notebook/page navigator: folders, notebooks, recent pages, tags and drag-to-reorder;
+opening a page or pressing Escape closes it. The header is one row: ☰, browser-style
+page tabs (a dot in the notebook's colour, × to close, + for a new page), the
+**Write / Canvas / Map** switch, **Find in page** (Ctrl+F) and **⋯**, always last:
+Today's page, Library overview (the folder/notebook schema), Import PDF or
+Markdown…, Favourite, Preview outline, Canvas fullscreen, Privacy & storage…,
+Reload saved and Delete page…. The page title is the large heading at the top of
+the page, under a small line naming the notebook and when it was last edited.
+Pages save as you type (Ctrl+S saves at once); the save state is the dot on the
+workspace tab: neutral when saved, warning while unsaved, red when a save failed,
+with **Retry save** in the error line. While writing, a floating **On this
+page** outline lists the top-level blocks and the word count; click an entry to
+jump to that block, or collapse the outline to a corner pill (remembered).
 Text notes use stable bullet blocks: Enter adds a sibling, Tab/Shift+Tab nests or
 unnests, `[[Title]]` and `#tags` collect topic mentions, and unlinked title mentions
 offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
-The canvas retains paper templates, ink/fill palettes, layers and handwriting.
-**Canvas fullscreen** (⛶) puts only the canvas and compact tools on the laptop screen,
-not the whole application. Its exit control and Escape restore the workspace.
+The canvas retains paper templates, ink/fill palettes, layers and handwriting, and
+fills the window above the dock.
+A page is the theme's flat background colour with no grid; the pill's **⋯ → Paper**
+adds lines, a grid, dots or Cornell margins when you want them.
+Its tools sit in one floating pill at the bottom of the canvas: select, pen,
+highlighter, eraser, text and sticky, your last five colours as round swatches (**+**
+opens all twelve named colours and a hex field), a stroke-size toggle, undo/redo, and
+**⋯** for the other tools, fill, exact stroke and text size, pen mode, snap, zoom,
+paper, the text outline, **Layers…** (a side drawer) and the file actions (import an
+image or PDF, restore a JSON page, export JSON, SVG or PNG). Click the handle on the
+pill's bottom edge to tuck it away to a small tab and again to bring it back
+(remembered); tool keys still work while it is tucked. **Canvas fullscreen** puts
+only the canvas and the same pill on the laptop screen, not the whole application.
+Its exit control and Escape restore the workspace.
 Outside text editing, F fullscreens the focused workspace panel instead.
+**Map** opens the page's own mind map in the one mind-map editor (below), inside the
+page; a page without one offers **Create map**, which starts it from the page's title.
 
 **Connections** automatically compares note and flashcard text locally:
 explicit `[[Page title]]` links, unlinked title mentions and related concepts
@@ -538,49 +688,232 @@ Notebook schemas derive wiki and shared-concept edges without changing your
 documents. Related matches are suggestions, not claims that two concepts are
 identical; no AI, external indexing or network calls are involved.
 
-**Flashcards** opens a deck → note schema. **Add card** is available immediately,
-including from All decks; Review reveals a flip animation before grading.
+**Flashcards** opens Decks: a tile per deck whose ring splits today's load into
+review, learning and new around today's count; hovering a tile shows the split,
+measured recall and Review, and the tile's ⋯ holds Settings and Archive. A Tiles /
+Graph toggle (remembered) swaps the tiles for the deck → note graph. The deck chip
+beside the title ("All decks · 86 due") sets the scope: it opens a searchable deck
+list with due counts and ends in **New deck**. There is one **New card** button
+(or press N); it opens the quick-add popover for the deck in scope. The views
+row's ⋯ holds New deck, practice and review options, Review history, Import /
+export, AI drafts and note types. Review deals the queue as a stacked deck: tap the top card
+(or press Space) to flip it, then swipe it or press a key to send it off in the
+grade's direction (← Again, ↓ Hard, → Good, ↑ Easy). Below the pile a keyboard strip
+shows keycaps 1–4 with each next interval and Space (flip, then Good); they sink as
+you press them.
+**Stats** shows memory statistics for the selected scope: today's queue (learning,
+review and new, with suspended, leech and buried cards and a time estimate), a
+30-day due forecast with overdue cards in today, FSRS forgetting curves for weak,
+medium and strong cards against your target retention with measured recall, a
+maturity donut (new, learning, young under 21 days, mature) and a 26-week daily
+review heatmap with your streak.
+**Cards** is a split browser: a filterable card list (search plus one-click due, new,
+learning, review, leech and suspended filters) beside the selected card's flippable
+preview, its FSRS stability, difficulty and recall now, its last reviews, and
+Suspend, Bury, Edit, Archive and Delete. Its top row adds cards inline: type the
+front, Tab, the back, and Enter saves it into the deck in scope (with All decks in
+scope the row has its own deck picker) and leaves the front ready for the next card.
+**Quick add** works from any page: press N on Flashcards (outside a text field) or
+choose **New card** in Ctrl K to open a small front/back popover over the current
+page with the deck in view, or the last one you used, preselected. Enter or
+Ctrl+Enter saves and readies the next card; Esc closes it. Both refuse an empty
+front or back and flag a front already in that deck; Enter again adds it anyway.
 FSRS scheduling, cloze/reversed cards, media and portable imports are supported.
 This is not full Anki parity: no AnkiWeb sync/add-ons, personalized FSRS optimizer,
 or arbitrary template JavaScript/CSS. Legacy imported schedules are approximated.
 Likewise, Notes implements the workflows above, not the Obsidian plugin ecosystem.
 
-**Study** opens mind maps first. Create Lecture, Chapter or Exam review maps,
-or create one from a subject. Click a node, then Tab adds a child, Enter adds a
-sibling, typing renames, arrows navigate and Space collapses a branch.
-Tree/radial layouts, an outline, linked note cards and links between maps help
-organize material. **Quiz me** hides labels for recall; a branch can produce a
-flashcard draft. **Auto-links** also suggests local sources for node labels;
-accepting references is revision-checked and idempotent. Save graph edits
-explicitly. Kanban is removed; existing stored rows are left untouched.
+**Study** opens focus-first: only the timer, centred, with its session chip and
+**Start session**. Two drawers slide over the page from edge tabs: **Subjects &
+tasks** on the left (press **[**) picks the session's subject and concept and
+quick-adds subjects, concepts and tasks; **Guide & notes** on the right (press
+**]**) shows the current phase's guide steps (‹ › browse the others), session
+notes with **+ Distraction**, and spaced returns due. Each drawer's open state is
+remembered. **Full guide ›** opens all fourteen steps as phase columns or a rail,
+the step notes, the return review and saved reflections; the guide saves itself.
+The ⚙ on the timer opens timer settings: focus and break lengths in 5-minute
+steps, sound and desktop-notification switches and the time zone, each saved as
+you change it and applied from the next phase. The tabs are Session, Progress,
+Exams & plans, Mind map and Tools (History and Helpers). Unsaved notes or a failed
+save show as a dot on the workspace tab.
+
+**Mind maps** have one editor, reached from Notes → **Map** (the page's own map),
+Study → **Mind map** and the **Mind maps** view; Ctrl K finds any map by its title and
+offers **New mind map**. Its slim top bar holds the map switcher (**Maps ▾**, with
+**All maps, merged** for the network of every map), **+** for a new map, the title
+(edit it in place), the linked subject, **Layout ▾** (tree, radial, force), the
+Map/Graph switch and **⋯** (export or import JSON, reload, linked mentions, ask AI
+about the map, import tracked jobs in a jobs map, delete). The canvas fills the rest.
+**+** opens a small popover: type the title, pick a starting template (Blank,
+Lecture, Chapter, Exam review) and category, and press Enter; **More** adds starting
+from a study subject or importing a map file. Topics are compact pills in their
+branch colour around an ink root. Click a node, then Tab adds a child, Enter adds a
+sibling right after it, typing or Ctrl+Enter renames, arrows move between parent,
+children and siblings, Ctrl+↑/↓ reorders siblings and Space collapses a branch.
+The building tools are the Notes canvas pill itself: select, **Connect topics**,
+**Ink**, **+ Child** (or **+ Topic**), **+ Sibling**, the theme's six colours plus
+automatic, undo/redo and **⋯** (outline, quiz, add a linked topic such as a study
+class, link a note page, find a topic, and in Notes the layout and map actions).
+Zoom out, the zoom level, zoom in and **Fit** sit in the corner.
+A small bar rides on the selected topic: its colour (**Whole branch**, **Copy style**
+/ **Paste style**, also Alt+C / Alt+V), **Rename**, **Detach**, **⋯** (Connect to…,
+collapse, Reset position, Split branch into map, Merge into another map, make
+flashcards, quiz this branch, start a session, open a linked page or map, and
+**Details…**, a side drawer with the label, notes, reference URL, parent, linked map,
+source and every connection) and × to delete.
+Drag a topic (its branch travels with it): the topic it would join lights up and the
+branch previews its new place; dropping elsewhere snaps it back. Press **D** mid-drag,
+or **Detach** on the topic bar, to break a branch off as a floating piece that keeps
+its place. Alt-drag places a topic anywhere while keeping its parent; its own children
+are laid out beside it, and **Reset position** puts it back into the automatic layout.
+**Connect topics** (or **Connect to…**) links the selected topic to any other one:
+click (or move to and press Enter on) the other topic, then type the connection's
+label. Connections are dashed curves outside the tree: they never change the layout,
+hide when either end is folded away, and double-clicking one edits its label.
+Shift+arrows, Shift-click or a Shift-drag box on empty space select several topics:
+the colours then recolour them all, dragging one moves every selected branch
+(onto a topic, freely with Alt, or detached with D), and Delete removes them together.
+Edits save by themselves once the map is idle (Ctrl+S saves at once); the save state
+is the dot on the workspace tab. Ctrl+Z undoes every map edit (including drags,
+viewport changes and recolouring); Ctrl+Shift+Z or **Redo** reapplies it, and saving
+keeps the editor's history. A new edit after undo discards the redo branch. After a
+reload, Undo restores the previous saved snapshot.
+**Split branch into map** moves its descendants into a new map with links in both
+directions. To merge, drag a root: the other maps appear as drop targets above the
+canvas; drop it on one (or use **Merge into “…”** in the topic bar's ⋯). Merging back
+replaces the split placeholder; other roots stay in the source map. Transfers save
+both maps atomically; undo/redo restores both sides and refuses if either map changed
+in another window. The emptied source map remains available.
+Mouse, touch and pen share one pointer path: tap selects, drag moves or reparents,
+and a double tap (or double-click) edits a topic (or opens its linked note or map),
+adds a topic on empty space or relabels a connection. With a pen, **Ink** in the
+pill draws pressure-sensitive strokes (a mouse draws too; fingers keep panning).
+Each stroke is smoothed when you lift the pen and sticks to the nearest topic, so it
+moves with that topic, hides when its branch is folded, follows a split or merge,
+and is saved with the map. Hold the pen's barrel button and draw a loop to select
+every topic inside it; flip the pen to its eraser end to rub out ink (topics are
+never erased).
+While the pen hovers or has just been used, touches are treated as a resting palm
+and ignored, and the pen's barrel button never opens the delete prompt.
+**Quiz me** hides labels for recall; a branch can produce a flashcard draft.
+**Linked mentions** suggests local sources for topic labels; accepting references is
+revision-checked and idempotent. Kanban is removed; existing stored rows are left
+untouched.
+
+Notes once had its own concept-map mode (cards joined by connectors on a page's
+canvas). On the first start after updating, kitty! copies each such page's concept
+map into a mind map linked to that page (opened by Map), after first writing an
+owner-only JSON export of those pages to `data/exports/concept-maps-<time>.json`.
+The cards themselves stay on the page's Canvas untouched.
+`kitty.core.concept_maps.revert(conn, path)` removes the migrated maps again.
 
 **Start session** opens the fourteen-step preparation/connection/recall guide
 and a five-minute priming timer, then repeats 25-minute focus / five-minute break
 phases. Start unlocks the audible phase-change cue. Only completed focus and
 explicit manual entries count toward weekly/monthly totals; priming, breaks and
 pauses do not. The guide's checklist and reflections stay with the session.
-**Calendar** opens one week with half-hour slots and a day-plan sidebar.
-Previous/next changes weeks; Month/Day/Agenda remain optional. Click a slot to
-schedule a time, or drag an event/task to another date or time. Drops open the
-editor for review before saving; moving an event preserves its duration.
-All-day items can be moved across the all-day row. Reminder **When** offers
-no reminder, at start, minutes/hours/day/week before, and custom multiple offsets.
+**Progress** stacks each day of the selected week or month in subject colours
+beside a share ring (hover or click a subject to isolate it), tints a month
+calendar by each day's main subject and deepens it by minutes, with a ✓ for each
+week that met the weekly goal (or had any study when no weekly goal is set), and
+draws goal rings for today, this week and today's flashcard reviews.
+The segmented streak ring counts consecutive days from saved study time toward
+the next milestone. **Log today** opens the manual session editor; saving actual
+time fills the segment, rather than adding a cosmetic check-in.
+**Exams & plans**: **Add exam** is a quick-add (title, a date chip and a subject
+chip that can create a subject); **More** or clicking an exam opens the side
+drawer with every field. It shows exam countdown/readiness cards, a two-week timeline
+with an exam lane and a spaced-returns lane, and a twelve-day strip. Select a
+block to mark it done or export it explicitly to Calendar. Drag blocks between
+days (or use Alt+Left/Right); days above 90 planned minutes show a load warning.
+Blocks stay before their exam. **Make a plan** (a popover) saves dated blocks from your own
+dates and durations. Returns are grouped Due / This week / Later: Recalled
+advances through 1, 3, 7, 16 and 35 days; Shaky restarts at one day.
+**Calendar** opens one week with half-hour slots and a day-plan sidebar; events
+are filled blocks in the theme palette. An event or calendar linked to a study
+subject takes that subject's Study colour, shown in the editor as a locked
+**Auto · Subject** chip; unlinked ones pick one of the theme's six palette
+colours (new calendars start on the next one), which recolour with the theme.
+Colours picked before keep their hex, and tasks linked to a subject carry its
+colour too. A floating range pill at the bottom of
+the calendar steps back/forward, returns to today, jumps to a date and switches
+**D**ay, **W**eek, **M**onth, **A**genda, **Y**ear and day **P**lan; each letter's
+tooltip names its key. While the calendar has focus the same letters switch views,
+**J**/**K** step, **T** goes to today and **N** adds. Month shows up to four calendar dots per date; clicking a date fills a
+side day agenda. Year tints every day by booked hours (hover to read, click to
+pin, **Open day** to jump). Plan splits the day's timeline from its open tasks;
+**Plan** drops a task into the next free 30-minute gap (08:00–21:00) as a dashed
+block. The sidebar's mini month shows ISO weeks; hover a week to preview its
+load and click a date to jump there.
+**Adding.** The pill's one **+** opens a quick add: type a phrase such as
+`gym tue 6pm 1h` or `lunch with Mira fri 12:30 at Café Rose every week`, pick
+**Event** or **Task**, and Enter saves it; the chip shows the day and time it
+understood. Clicking an empty slot (or Enter on it) opens the same quick add at
+that time for an hour, dragging across slots or all-day cells prefills the range,
+and **Schedule here** on Availability prefills a free interval. **More** saves
+and opens the new item in its drawer. The Tasks list has its own **+ Add task**.
+**Editing.** Drag an event/task to another date or time; moving an event preserves
+its duration. All-day items can be moved across the all-day row. Clicking an event
+opens a side drawer whose time steppers, calendar, place and reminder chips
+(5m/10m/1h/1d before) update the block live until you save or press Escape; its
+title field still reads natural language to retime the event. Clicking a task opens
+the same side drawer for the task. Repeat rules, time zone, custom reminder offsets
+and Google properties stay in the drawer's expandable sections, with their
+explanations in tooltips. Saving reports through the tab's status dot.
 A task's **＋ Map** action optionally adds it beneath a chosen map node.
+When an event changed both in kitty and in Google Calendar, **Imports & Google**
+draws both versions on a small day grid in the event's colour: kitty's as a solid
+block, Google's as a dashed ghost (a deleted side shows as an empty dashed block).
+Click the block to keep; the list beside it shows each field that differs and
+strikes out the values you would lose.
+**Keep kitty's** waits for a separately confirmed push, **Use Google's** applies
+Google's version, and **Keep both** saves kitty's as a copy. Calendar settings
+conflicts list the differing name, timezone and colour.
 
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
 weeks, 30 days or a custom date picker; no date-syntax memorization is required.
 
-**Documents & PDF** authors portable Markdown or rich headings, emphasis, nested
-lists and quotes, with a live preview and real selectable-text PDF export.
-Choose the notes folder/notebook, then import PDF/Markdown/text as new notes or
+**Notifications.** Due calendar reminders and job-search reminders arrive as one
+stack of glass toasts in the bottom-right corner. Hovering (or tabbing into) the
+stack fans it out and pauses every countdown. **Snooze** brings a calendar
+reminder back in ten minutes and moves a job-search reminder a day; **Open**
+jumps to the calendar, the job or Reminders. A toast that times out is not lost:
+the bell in the top bar counts unread notifications and opens the notification
+center, with All/Unread tabs, a source filter, **Mark all read**, and
+**Dismiss**/**Done** on each item. Its footer switches system alerts on or off.
+**Settings → Quiet hours** sets a window on a 24-hour dial (drag either end, or
+use the arrow keys for 15-minute steps). Inside it nothing toasts; reminders are
+held (shown as Held in the center), calendar events can be let through, and when
+the window ends the held items arrive together as one **Morning digest**.
+kitty checks reminders only while it runs: in the desktop app, **Keep running on
+close** keeps it checking from the system tray; when kitty is fully closed,
+reminders that fell due meanwhile arrive the next time it opens. Read, held and
+snoozed state is remembered per browser profile.
+
+**Documents & PDF** authors portable Markdown (numbered source) or rich headings,
+emphasis, nested lists and quotes beside a live preview that scrolls with the
+source; drag or arrow-key the divider to resize the split (remembered per browser).
+A compact bar switches documents, saves, makes a note page and exports a real
+selectable-text PDF; its settings button chooses the format and notes
+folder/notebook. Below the editor, import PDF/Markdown/text as new notes or
 append extracted content to the saved document. Original files remain downloadable.
 Clipboard files/text and relative Markdown-folder structure are supported.
 Topic matching can stay inside the document or the selected folder, locally;
 scanned-PDF OCR and proprietary notebook formats are not supported.
 
-**Opportunities** has a separate category → source → opportunity schema and a
-List view. Source hubs remain visible when no opportunities have been ingested;
-Discover explicitly fetches enabled public sources, and is disabled in demo.
+**Opportunities & projects** opens on its category → source → opportunity map,
+full-bleed in one surface (2D/3D, layout and Fit float bottom-left). One
+floating row over the map holds search, **Filters** (a popover of source,
+category, status, dates, remote, location, deadline and favorites), **List**,
+**Add** and ⋯. **List** slides the list in as a drawer on the right (remembered
+per browser); filters and search open it to show what matches. **Add** is a
+quick-add popover: type a title or paste a link, pick a category or deadline
+chip, Enter saves; **More** opens the full form. Opening a row or map node edits
+it in the side drawer (fields, project tasks, evidence; ⋯ adds the deadline to
+the calendar, drafts an AI summary or deletes). ⋯ in the row holds **Interests &
+monitor** (profile, opt-in monitoring and public sources) and **Import JSON**;
+**Discover from public sources** appears there outside the demo. Source hubs stay
+on the map when no opportunities have been ingested.
 
 These interactions draw on [MindNode's keyboard map-building](https://www.mindnode.com/support/guides/keyboard-shortcuts),
 [Heptabase's note cards and whiteboards](https://heptabase.com/),
@@ -591,13 +924,38 @@ alone as studying: [retrieval-practice research](https://pubmed.ncbi.nlm.nih.gov
 supports actively recalling material.
 
 **Prepare applications** also lists recommended open, unsubmitted A/B jobs.
-Alternative groups, job limits and browser progress remain under preparation
-options. **More filters** exposes ranking, source and other filters; selected-job
-actions and job details have their own expandable advanced controls.
+**Preparation** (next to Fill) opens a side drawer with alternative groups, job
+limits and browser progress; Fill and Shift+F open it too. With jobs selected,
+**Change selected** sets their progress, rank or category (g and t open it).
 
-Home is the **atlas**, containing workspace sections rather than individual jobs
-or note pages. Every schema starts in Tree; an explicit layout preference can
-then be changed in **Settings → Workspace**. Home has one Study entry and only
+Home is the **Brain** (below), every record and edit in the workspace as a
+point of light in a glowing neural-network brain, or the 2D **atlas** of workspace sections; the
+**Brain | 2D** switch in the stage's top-right corner, beside **View** (or
+Settings → Appearance) chooses, and the choice is remembered (`kitty.home.look`;
+an earlier 3D choice opens the Brain). It sits in the centre between two narrow
+rails of widgets that scroll on their own. The left rail holds **Today** (today's
+events with a live now-line, the current event's progress and a countdown to the
+next) and **Quick note** (Ctrl+Enter saves; the last three stay visible). The
+right rail holds **Agents** (what each herdr workspace agent is doing; **Approve**
+opens herdr on a blocked one) and **Up next**: open dated tasks and job-search
+reminders (overdue ones on top), flashcards due for review, then the next seven
+days of the calendar, where deadlines and follow-ups from every module land (a
+reminder already copied to the calendar shows once); a row opens its page; at most
+six rows show, with the total beside the title.
+The chevron on the right rail's inner edge, or **]**, folds that rail to a thin
+strip so the Brain widens (and unfolds it); every home follows the one remembered
+choice (`kitty.home.rail`).
+**Sections**, in the stage's top-left corner, opens a popover with a section
+search (`/` opens it there; Enter shows the first match in the Brain or on the
+map, Enter again opens it) and the grouped section list. Each row's ⋯ opens the
+section, shows it on the map, or hides it from (or shows it on) the 2D atlas;
+hidden rows stay listed, dimmed. On the 2D atlas, drop a node on **Sections** to
+hide it and drag a dimmed row onto the graph to show it again. Ctrl K also finds
+every section.
+The full job-search brief (reminders, deadlines and weekly goals) lives in **Find
+jobs**. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
+Appearance); every schema starts in Tree, and an explicit layout preference can
+then be changed in **Settings → Graphs**, with the graph physics and **Reset to defaults**. Home has one Study entry and only
 the Jobs section entry, not separate job-action nodes.
 The kitty logo returns home. Clickable schema tabs show section →
 notebook/type → page/job/node; the Back control returns through that hierarchy.
@@ -610,9 +968,46 @@ Browse lists remain available when labels overlap or WebGL is unavailable.
 Left or middle-button drag rotates; the wheel zooms; right-button drag pans.
 Ctrl + Left/Right rotates the visible 3D schema in ten-degree steps, except while
 editing text, selecting text, or using a dialog.
+The **Brain** on home draws every record and every edit from `GET /api/brain` as one
+point of light in a brain made of a glowing neural network, seen three-quarters from the
+front and slowly turnable, over the theme's own backdrop. Its folded surface is a faint
+rim of light with its sulci traced across it: two hemispheres split by the longitudinal
+fissure, each with frontal, parietal, temporal and occipital lobes, a cerebellum tucked
+below and behind and the brainstem. Records are its neurons, glowing in the cortex of
+their group's region (a large group spans several neighbouring regions, small groups
+share one); fibre tracts fan from the brain's centre out to every region and run between
+them (the corpus callosum across the hemispheres, the arcuate and longitudinal fasciculi
+within each), neurons reach their neighbours along short dendrites, and records that
+belong together (a page in its notebook, a card in its deck) are linked by arcs. Each
+group's edits travel its own fibres in time order, newest nearest the centre. Slow pulses
+of light run outward along the network, and the far side of the brain is dimmer than
+the near. The network grows denser and branches further as the workspace grows; even a
+few hundred points still draw the whole brain. It builds itself from the centre outward.
+Colours come from the active
+theme and change with it; inside a group, each
+record type and each kind of edit (save, create, delete, status, review…) has its
+own shade. The **View** button opens its View panel (closed at first; whether it is
+open is remembered, and while it is open the brain is framed beside it). It sets the
+layout (Brain, Spheres, Wheel), grouping
+(section, navigation group or type), labels, turning and speed, edit→record
+lines, the scaffold (the brain's lit surface and folds), the background (Transparent, where the theme's backdrop
+shows through unchanged, or Black for the original
+night sky), point size and colours: pick any group's colour from the theme's
+swatches or a hex value, or Reset colours to follow the theme again (picks are
+remembered per grouping). Reset restores the view; the choices are remembered.
+The legend lists each group's records + edits and, on hover or focus, the kinds
+inside it; click an entry to highlight it. Hovering a sphere, sector or a region of
+the brain
+highlights its group; clicking it opens that group alone, laid out by kind to
+fill the stage, until **← All** or Escape. Labels never overlap; ones without
+room hide. Hovering a point shows its label, section, type and date. Without
+WebGL home is the 2D atlas; a backend without `/api/brain` gets a notice, never
+invented data. Reduced motion skips the build-up, twinkle, pulses and
+turning.
 Theme presets include dark cherry-pink **Cherry cat**, with blossom ASCII,
 and a Scythe palette. Scythe illustration requires the actual supplied artwork;
-no unrelated image is substituted. Motion respects reduced-motion preferences.
+no unrelated image is substituted. Motion respects reduced-motion preferences,
+both the system's and the Appearance setting.
 Top notices and the study timer bar can be dismissed.
 
 **AI settings** provides optional OpenRouter drafts for selected text: summaries,
@@ -633,7 +1028,9 @@ The website supports:
   status/date filters, favorites and selection across pages.
 - Manual posting entry, optional public-page metadata lookup, track/tier decisions,
   deadline overrides, persistent notes, queue/skip/later and durable ineligibility.
-- Pipeline, reminders, explicit recording of an already-submitted application,
+- Pipeline swimlanes by track (drag or Shift+arrows between stages and tracks),
+  reminders you can edit, snooze a day or delete (hover, or swipe right/left, with
+  undo), explicit recording of an already-submitted application,
   configured follow-ups, dated evidence and append-only status undo.
 - Resume registration/upload, vocabulary coaching with posting evidence, audited
   candidate generation, exact diff/fact/PDF review, promotion and rollback.
@@ -654,8 +1051,13 @@ The website supports:
 - Read-only Gmail authorization/checking and explicit status-proposal decisions.
 - Rules-only triage, fresh cost estimates, capped paid immediate/batch runs and
   collection of existing batch results. Paid operations require explicit approval.
-- Outcome reports and formula-safe CSV/ZIP or JSON exports of jobs, applications
-  and status history.
+- Reports open on a summary card that tells this week or this month (toggle) in
+  sentences: applications sent against the weekly target, the streak, an inline
+  sparkline of the last eight weeks, replies, assessments/interviews and offers
+  from confirmed status changes, the track that hears back most, and a next step.
+  Every figure comes from recorded applications and status history. **Show
+  tables** reveals the outcome-rate tables; formula-safe CSV/ZIP or JSON exports
+  of jobs, applications and status history stay below the card.
 
 **Job selection:** Ctrl+F (⌘F on macOS) searches; Space marks focused rows,
 Ctrl-click toggles and Shift-click selects a range. **Save selected** favorites
@@ -946,23 +1348,25 @@ For local verification of release/install tooling:
 uv run --locked pytest -q tests/test_release_packaging.py tests/test_desktop_install.py
 ```
 
-On Linux sessions exposing both Wayland and X11, the app defaults to XWayland.
-This avoids a WebKitGTK native-Wayland scaling failure that can produce a
-negative device-pixel ratio and a blank, compressed page on fractional-scale
-desktops. An explicit `GDK_BACKEND` is respected; Wayland-only sessions are unchanged.
+On Wayland the app runs natively, so text and graphs stay sharp on fractional-scale
+(e.g. 125%) screens; it no longer routes through XWayland, which upscaled the whole
+window. Wayland gives GTK no DPI setting, and WebKitGTK turns that into a negative
+device-pixel ratio (a blank, compressed page), so the app sets a neutral 96 DPI when
+none is present; a DPI you set yourself is kept. An explicit `GDK_BACKEND` is respected.
 The window has no native menu strip. **Settings → Desktop** provides **Check for
-updates**, **Keep running on close (monitoring / reminders)**, **New quick note**,
-and **Quit kitty! (save and stop workers)**. All remain in the system-tray menu,
+updates**, **Keep running on close**, **New quick note** and **Quit kitty!** (which
+saves and stops workers). All remain in the system-tray menu,
 along with **Show kitty!**. Without a system tray, keeping the app running on close
 is unavailable. A browser-only website explains that desktop controls are unavailable.
 The page uses the protected backend API and a fixed command allowlist over the
 shell's private owner pipe; it receives no Tauri IPC permissions.
 
-The main window and quick-note windows are transparent: the default **Harness**
-theme (LearnHarness-style near-black with kitty pink accents) and every other theme
-draw translucent glass panels over a soft glow, so the desktop shows through.
-Browser tabs keep an opaque background. Titles use the bundled CMU Serif Bold
-(SIL OFL, `web/public/fonts/OFL.txt`).
+The main window and quick-note windows are transparent: the theme's backdrop is
+drawn translucent, so the desktop shows through around the surfaces, and through
+them on the glass themes (Kitty, Liquid Glass, Dracula, Tokyo Night).
+Browser tabs keep an opaque background. All typefaces (Fraunces, Inter, Fredoka,
+JetBrains Mono) are SIL OFL fonts bundled from their `@fontsource` packages, so
+no font is fetched from the network.
 
 
 ## Finding jobs (Stage 2)
@@ -1814,6 +2218,13 @@ Two design points worth knowing:
 * `jobs.queue_state` (new / queued / later / skipped / not_eligible / applied) is
   separate from `applications.status`. Skipping a job never creates an
   application row.
+* `record_events` is **append-only** too: every successful content change made in
+  the website (saving a page, creating a quick note or calendar event, editing a
+  deck…) appends one row with only its section, entity, entity id, action and
+  route, never a title or body. Settings, previews, timer and practice controls,
+  background imports and changes already logged elsewhere (`flash_reviews`,
+  `status_events`, `study_sessions`) are not captured; the route lists live in
+  `kitty.core.record_events`.
 
 ## Tests
 

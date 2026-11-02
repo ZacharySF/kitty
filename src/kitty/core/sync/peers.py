@@ -194,6 +194,6 @@ def compaction_limit(conn: sqlite3.Connection) -> int | None:
     """The highest op_log sequence every paired device has acknowledged (None: no paired devices)."""
     try:
         row = conn.execute("SELECT COUNT(*), MIN(acked_seq) FROM peers").fetchone()
-    except sqlite3.OperationalError:  # before migration 038
+    except sqlite3.OperationalError:  # before migration 040
         return None
     return row[1] if row[0] else None

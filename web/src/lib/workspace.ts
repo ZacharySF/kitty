@@ -55,16 +55,19 @@ export function visibleNavigation(enabled: Enabled) {
   return navigation.filter(item => viewEnabled(item.id, enabled));
 }
 
-export const navigationGroups: { label: string; shortcut: string; views: View[] }[] = [
+/** `tone` is the group's graph colour, used to mark its tabs. */
+export const navigationGroups: { label: string; shortcut: string; tone: string; views: View[] }[] = [
   {
     label: "Plan",
     shortcut: "Ctrl + Alt",
+    tone: "var(--c1)",
     views: ["today", "calendar", "opportunities", "reminders", "herdr", "tern"],
   },
-  { label: "Study", shortcut: "Ctrl + X", views: ["study", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
+  { label: "Study", shortcut: "Ctrl + X", tone: "var(--c3)", views: ["study", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
     label: "Job search",
     shortcut: "Ctrl + C",
+    tone: "var(--c4)",
     views: [
       "jobs",
       "inbox",
@@ -81,7 +84,7 @@ export const navigationGroups: { label: string; shortcut: string; views: View[] 
       "reports",
     ],
   },
-  { label: "Settings", shortcut: "Ctrl + V", views: ["settings", "profile", "ai"] },
+  { label: "Settings", shortcut: "Ctrl + V", tone: "var(--c6)", views: ["settings", "profile", "ai"] },
 ];
 /**
  * Groups with their enabled views. A group that would only offer the atlas home
@@ -142,7 +145,7 @@ const shortcutGroups: ShortcutGroup[] = [
       ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
       [
         "Calendar / Study / Notes / Mind maps / AI",
-        "Pick a node on the atlas, use its Sections list, or Ctrl / ⌘ + K",
+        "Pick a node on the atlas, Sections on the stage, or Ctrl / ⌘ + K",
       ],
       ["?", "Show keyboard help"],
       ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
@@ -153,9 +156,11 @@ const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Atlas home",
     shortcuts: [
-      ["/", "Search the atlas and jump to a node"],
-      ["Enter in atlas search", "Focus the first match; Enter again opens it"],
-      ["Drag / scroll / right-drag", "Orbit / zoom / pan the 3D map"],
+      ["/", "Open Sections and find a section"],
+      ["Enter in section search", "Show the first match on the map; Enter again opens it"],
+      ["]", "Hide or show the side widgets"],
+      ["Drag / scroll", "Turn / zoom the Brain, or pan / zoom the 2D map"],
+      ["Click a Brain group", "Open that group on its own; Escape returns to all"],
       ["Ctrl + ← / →", "Rotate the visible 3D schema left / right (outside editors and dialogs)"],
       ["Click a node", "Open that section, item, or job"],
     ],
@@ -167,7 +172,16 @@ const shortcutGroups: ShortcutGroup[] = [
       ["Space / p", "Start, pause, or resume the study timer"],
       ["s / r", "Stop / reset the study timer"],
       ["b", "Skip the current break"],
-      ["Escape", "Leave study focus mode"],
+      ["[ / ]", "Open or close the subjects and guide drawers"],
+    ],
+  },
+  {
+    title: "Flashcards",
+    module: "workspace",
+    shortcuts: [
+      ["n", "Quick-add a card to the deck in view; Ctrl / ⌘ + K → New card does it from any page"],
+      ["Tab / Enter in the add row", "Move to the back / save and start the next card"],
+      ["Enter / Ctrl + Enter · Esc", "Save the quick-add card · close it"],
     ],
   },
   {
@@ -224,7 +238,7 @@ const shortcutGroups: ShortcutGroup[] = [
     shortcuts: [
       ["↑ ↓ ← →", "Move between application cards"],
       ["Enter / s / u / n / o", "Open / status / undo / next action / posting"],
-      ["t", "Cycle track filter"],
+      ["Shift + ← → / ↑ ↓", "Move the card to the next stage / track"],
       ["v / Shift + G", "Review mail proposals"],
       ["r", "Refresh pipeline"],
     ],

@@ -13,14 +13,25 @@
   import BlockTrash from "./BlockTrash.svelte";
   import DocumentImport from "./DocumentImport.svelte";
   import SchemaMaps from "./SchemaMaps.svelte";
-  import MindMapFeedback from "./MindMapFeedback.svelte";
-  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import CanvasPill from "./CanvasPill.svelte";
+  import Icon from "./Icon.svelte";
+  import Select from "./ui/Select.svelte";
+  import OverflowMenu, { type OverflowItem } from "./ui/OverflowMenu.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import EditDrawer from "./ui/EditDrawer.svelte";
+  import { useWorkspaceContext, type SaveStatus } from "./workspaceContext.svelte";
+  import { fitHeight } from "./fitHeight";
   import { onBlockChange } from "./live";
   import { followMirrors, mirrors } from "./mirrorStore.svelte";
   import { buildStore, setPreferences } from "./build.svelte";
+  import type { OutlineBlock } from "./BlockEditor.svelte";
   const pane = useWorkspaceContext();
-  let noteMode = $state<"text" | "canvas" | "mindmap">("text");
+  /** Q17/Q19: a page is written (Write), drawn (Canvas) or mapped in the one mind-map editor (Map). */
+  type NoteMode = "text" | "canvas" | "map";
+  let noteMode = $state<NoteMode>("text");
   let outlineText = $state(""), blockReferences = $state<Record<string,string>>({}), citationCounts = $state<Record<string,number>>({});
+  /** The block editor's text-flow blocks in reading order (the floating outline, find and word count read them). */
+  let outlineBlocks = $state.raw<OutlineBlock[]>([]);
   let historyOpen = $state(false), trashOpen = $state(false);
   /** The Mirror pane (Q11) beside the writing view: the browser tab the kitty extension mirrors. */
   let mirrorOpen = $state(false);
@@ -40,8 +51,7 @@
   }
   async function openBlock(id:number,bid="") {
     focusBlock="";await openPage(id);
-    if(!pane.active||pageId!==id)return;
-    setMode("text");
+    if(!pane.active||pageId!==id||!(await setMode("text")))return;
     // The block editor reveals the block, opening any collapsed parents.
     focusBlock=bid;
   }
@@ -86,13 +96,26 @@
     catch(cause){error=(cause as Error).message;}
   }
   async function deletePageById(id:number) {pageMenu=null;if(id!==pageId){if(!(await beforeSwitch()))return;await openPage(id,false,true);if(pageId!==id)return;}await deletePage();}
-  let presentation = $state<"map" | "editor" | "saved">("map");
-  let savedMapEditor = $state<{beforeLeave: () => boolean; hasUnsavedChanges: () => boolean}>();
+  let presentation = $state<"map" | "editor">("map");
+  /** Map mode's embedded mind-map editor and the save state it reports (merged into the tab dot). */
+  let mapEditor = $state<{flush: () => Promise<boolean>; hasUnsavedChanges: () => boolean}>();
+  let mapStatus = $state<SaveStatus | null>(null);
   let schemaFocus = $state<string | null>(null);
   let relatedOpen = $state(true);
   let linkTitle = $state("");
-  let pageFind = $state("");
-  const toolGlyph: Record<string,string> = {select:"↖",lasso:"◌",pan:"✋",pen:"✎",highlighter:"▰",eraser:"◇",text:"T",sticky:"▧",rectangle:"□",ellipse:"○",line:"╱",arrow:"↗",connector:"⌁"};
+  let pageFind = $state(""), findOpen = $state(false), findFrom = "";
+  /** Write: Enter jumps to the next block containing the find text. Canvas: the text outline filters by it. */
+  function findNext() {
+    const needle = pageFind.trim().toLocaleLowerCase();
+    if (!needle) return;
+    if (noteMode !== "text") { outline = true; return; }
+    const matches = outlineBlocks.filter(block => block.text.toLocaleLowerCase().includes(needle));
+    if (!matches.length) return;
+    const next = matches[(matches.findIndex(block => block.id === findFrom) + 1) % matches.length];
+    findFrom = next.id;
+    focusBlock = "";
+    void revealBlock(next.id);
+  }
   async function rootSchema() { if (await beforeSwitch()) { presentation="map"; schemaFocus=null; } }
   async function notebookSchema(id:number) {
     if (!(await beforeSwitch())) return;
@@ -133,7 +156,6 @@
     if (pane.active) untrack(() => void refreshReferences());
   });
   $effect(() => {
-    if (presentation === "saved") return;
     const book=notebooks.find(n=>n.id===notebookId);
     const crumbs=[];
     if(schemaFocus||presentation==="editor")if(book)crumbs.push({label:book.title,onclick:()=>void notebookSchema(book.id)});
@@ -144,7 +166,6 @@
   import {
     bounds,
     CANVAS_INK,
-    CANVAS_PAPER,
     clone,
     downloadBlob,
     drawingInput,
@@ -160,6 +181,7 @@
     lassoSelection,
     noteTabSwipe,
     noteTabEdge,
+    paperPattern,
     removeElements,
     renderCanvas,
     resizeElement,
@@ -182,7 +204,8 @@
   }: {
     revision?: number;
     demo?: boolean;
-    initialMode?: "mindmap";
+    /** Opens the page in Map mode (the mind-map module). */
+    initialMode?: "map";
     onflashcards?: (text: string, pageId: number) => void;
   } = $props();
   type Page = {
@@ -191,6 +214,7 @@
     title: string;
     revision: number;
     viewport_revision: number;
+    updated_at?: string;
     document: CanvasDocument;
     viewport: Viewport;
   };
@@ -257,41 +281,24 @@
       revealTabs();
     } finally { tabSwitchPending = false; }
   }
-  function setMode(mode: "text" | "canvas" | "mindmap") {
+  const PAGE_MODES = [{ value: "text", label: "Write" }, { value: "canvas", label: "Canvas" }, { value: "map", label: "Map" }];
+  /** The header's Write/Canvas/Map switch; from the library overview it returns to the open page. */
+  async function chooseMode(mode: NoteMode) {
+    if (!pageId || !pane.active) return;
+    if (await setMode(mode)) presentation = "editor";
+  }
+  /** Switches the page mode; leaving Map first saves the map, and stays if it cannot. */
+  async function setMode(mode: NoteMode): Promise<boolean> {
+    if (mode === noteMode) return true;
+    if (noteMode === "map" && mapEditor && !(await mapEditor.flush())) {
+      error ||= "The map could not save. Retry before leaving Map.";
+      return false;
+    }
     finishActiveGesture();
     noteMode = mode;
-    if (mode === "mindmap") tool = "select";
+    if (mode !== "map") mapStatus = null;
+    return true;
   }
-  async function showSavedMaps() {
-    if (await beforeSwitch()) presentation = "saved";
-  }
-  function addConcept(at?: Point) {
-    if (!pageId || !pane.active) return;
-    const layer = doc.layers.find(item => item.id === layerId);
-    if (!layer?.visible || layer.locked) { error = "Choose a visible unlocked layer for the concept."; return; }
-    finishActiveGesture();
-    const anchor=selectedElements.length===1&&["text","sticky"].includes(selectedElements[0].kind)?selectedElements[0]:null;
-    at ??= anchor ? [anchor.x+anchor.w+150,anchor.y+anchor.h/2,1] : world(width/2,height/2,view);
-    const element: CanvasElement = {
-      id: uid(), kind: "sticky", layer: layerId, x: at[0] - 110, y: at[1] - 48,
-      w: 220, h: 96, color: "#292438", fill: fillColor, width: 2,
-      text: "New concept", fontSize,
-    };
-    commit({...doc, elements: [...doc.elements, element]});
-    selected = [element.id]; tool = "select";
-    if (anchor) {
-      view={...view,x:width/2-at[0]*view.zoom,y:height/2-at[1]*view.zoom};
-      scheduleView();
-    }
-  }
-  const feedbackGraph = $derived.by(() => {
-    const nodes = doc.elements.filter(element => (element.kind === "text" || element.kind === "sticky") && element.text?.trim())
-      .map(element => ({id: element.id, label: element.text!.trim()}));
-    const ids = new Set(nodes.map(node => node.id));
-    const edges = doc.elements.filter(element => element.kind === "connector" && element.from && element.to && ids.has(element.from) && ids.has(element.to))
-      .map(element => ({from: element.from!, to: element.to!, ...(element.text?.trim() ? {label: element.text.trim()} : {})}));
-    return {nodes, edges};
-  });
   let noteTitles = $state<PageSummary[]>([]);
   let notebooks = $state<Notebook[]>([]),
     pages = $state<PageSummary[]>([]),
@@ -306,28 +313,56 @@
     x: number; y: number; focus: HTMLElement | null;
     scroll: { element: HTMLElement; top: number; left: number }[];
   } | null = null;
-  let fullscreen = $state(false), sidebarOpen = $state(true);
-  // Compact editor toolbar: views and infrequent page actions live in labelled overflow panels.
-  let viewsOpen = $state(false), moreOpen = $state(false);
-  let noteOutline = $state<ReturnType<typeof NoteOutline>>();
-  // Escape closes an open overflow panel and returns focus to its summary.
-  function closeOnEscape(menu: HTMLDetailsElement) {
-    const close = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !menu.open) return;
-      event.preventDefault();
-      event.stopPropagation();
-      menu.open = false;
-      menu.querySelector("summary")?.focus();
-    };
-    menu.addEventListener("keydown", close);
-    return { destroy: () => menu.removeEventListener("keydown", close) };
+  let fullscreen = $state(false);
+  // Q43: the library is a slide-over drawer; the writing view floats an "On this page" outline.
+  let libraryOpen = $state(false), libraryToggle = $state<HTMLButtonElement>(), libraryDrawer = $state<HTMLElement>();
+  let tocOpen = $state(true), tocCurrent = $state("");
+  async function openLibrary(open: boolean) {
+    libraryOpen = open;
+    await tick();
+    if (open) libraryDrawer?.querySelector<HTMLInputElement>("input[type=search]")?.focus();
+    else libraryToggle?.focus();
   }
+  let noteOutline = $state<ReturnType<typeof NoteOutline>>();
+  /** Reveals a block in the editor (opening collapsed parents) even when it is already the focus target. */
+  async function revealBlock(id: string) { focusBlock = ""; await tick(); focusBlock = id; }
+  async function openFromLibrary(id: number) { libraryOpen = false; await openPage(id); }
+  const tocEntries = $derived(outlineBlocks.filter(block => !block.parent_id && block.text.trim())
+    .map(block => ({id: block.id, label: block.text.replace(/[`*#[\]()]/g, "").split(/[:;,.]/)[0].trim() || block.text.trim().slice(0, 40)})));
+  const wordCount = $derived(outlineBlocks.reduce((total, block) => total + (block.text.match(/\S+/g)?.length ?? 0), 0));
+  function topBlock(id: string) {
+    const seen = new Set<string>();
+    let block = outlineBlocks.find(item => item.id === id);
+    while (block?.parent_id && !seen.has(block.id)) { seen.add(block.id); block = outlineBlocks.find(item => item.id === block!.parent_id); }
+    return block?.id ?? "";
+  }
+  async function jumpToBlock(id: string) { focusBlock = ""; await tick(); focusBlock = id; tocCurrent = id; }
+  function toggleToc() {
+    tocOpen = !tocOpen;
+    try { localStorage.setItem("kitty.notes.outline", tocOpen ? "open" : "closed"); } catch { /* The outline still toggles. */ }
+  }
+  // Q6/Q8: rare page actions sit in ⋯; import, privacy and layers open drawers.
+  let importOpen = $state(false), privacyOpen = $state(false), layersOpen = $state(false), cleanupResult = $state("");
   let folderFocus = $state<number | null>(null);
   let notebookId = $state(0),
     pageId = $state(0),
     pageRevision = $state(1),
     viewRevision = $state(1),
-    title = $state("");
+    title = $state(""),
+    pageUpdated = $state("");
+  /** Re-renders the "edited 4 min ago" meta line. */
+  let clock = $state(Date.now());
+  const edited = $derived.by(() => {
+    const at = Date.parse(pageUpdated);
+    if (!Number.isFinite(at)) return "";
+    const minutes = Math.max(0, Math.round((clock - at) / 60000));
+    if (minutes < 1) return "edited just now";
+    if (minutes < 60) return `edited ${minutes} min ago`;
+    if (minutes < 60 * 24) return `edited ${Math.round(minutes / 60)} h ago`;
+    const days = Math.round(minutes / (60 * 24));
+    if (days < 7) return `edited ${days} ${days === 1 ? "day" : "days"} ago`;
+    return `edited ${new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
+  });
   let doc = $state<CanvasDocument>(emptyDocument()),
     view = $state<Viewport>({ x: 0, y: 0, zoom: 1 });
   let tool = $state<Tool>("pen"),
@@ -348,9 +383,17 @@
     dirty = $state(false),
     viewDirty = $state(false),
     blocked = $state(false);
+  /** Q3: the tab's status dot carries the save state; the page and its map merge, failed > unsaved > saved. */
+  const SAVE_RANK = { failed: 2, unsaved: 1, saved: 0 } as const;
+  $effect(() => {
+    const page: SaveStatus = blocked ? { state: "failed", detail: saveStatus } : dirty || viewDirty ? { state: "unsaved", detail: "Unsaved changes · Ctrl S saves" } : { state: "saved" };
+    const map = noteMode === "map" ? mapStatus : null;
+    pane.setStatus(map && SAVE_RANK[map.state as keyof typeof SAVE_RANK] > SAVE_RANK[page.state as keyof typeof SAVE_RANK] ? map : page);
+    return () => pane.setStatus(null);
+  });
   export function hasUnsavedChanges(): boolean {
     return dirty || viewDirty || Boolean(saving) || Boolean(viewSaving) || blocked || Boolean(viewError) ||
-      gesture !== null || Boolean(savedMapEditor?.hasUnsavedChanges()) || Boolean(noteOutline?.pending());
+      gesture !== null || Boolean(mapEditor?.hasUnsavedChanges()) || Boolean(noteOutline?.pending());
   }
   export function isCanvasFullscreen(): boolean {
     return Boolean(stage && document.fullscreenElement === stage);
@@ -359,7 +402,7 @@
     if (!pane.active) return;
     const previous=pageId;
     await createPage();
-    if (pane.active && pageId!==previous && noteMode==="text") setMode("canvas");
+    if (pane.active && pageId!==previous && noteMode==="text") await setMode("canvas");
   }
   let undoStack = $state<CanvasDocument[]>([]),
     redoStack = $state<CanvasDocument[]>([]),
@@ -382,7 +425,8 @@
     searchTimer: ReturnType<typeof setTimeout> | undefined;
   let saving: Promise<void> | null = null,
     viewSaving: Promise<void> | null = null;
-  let ink = $state(CANVAS_INK), paper = $state(CANVAS_PAPER);
+  // Q68: the page is the theme's flat void colour; syncColors follows theme switches.
+  let ink = $state(CANVAS_INK), paper = $state(getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim());
   const images = new Map<string, HTMLImageElement>(),
     pointers = new Map<number, Point>();
   // Pen mode is the build's `ui.notes.pen_only`.
@@ -418,6 +462,31 @@
     { id: "arrow", label: "Arrow", key: "A" },
     { id: "connector", label: "Connect", key: "C" },
   ];
+  // Q46: one floating pill (CanvasPill) at the bottom of the canvas stage; the rest sit in its ⋯.
+  const PILL_TOOLS: Tool[] = ["select", "pen", "highlighter", "eraser", "text", "sticky"];
+  const pillTools = tools.filter(item => PILL_TOOLS.includes(item.id));
+  const moreTools = tools.filter(item => !PILL_TOOLS.includes(item.id));
+  const STROKE_SIZES = [2, 4, 8];
+  const PAPERS = ["blank", "lined", "grid", "dotted", "cornell"].map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }));
+  const TAGS = [
+    { value: "", label: "None" }, { value: "todo", label: "☐ To-do" }, { value: "important", label: "★ Important" },
+    { value: "question", label: "? Question" }, { value: "definition", label: "Definition" },
+  ];
+  function chooseTool(id: Tool) {
+    finishActiveGesture();
+    tool = id;
+  }
+  function moveSelectionToLayer(next: string) {
+    if (doc.layers.find((l) => l.id === next)?.locked) {
+      error = "Target layer is locked.";
+      return;
+    }
+    layerId = next;
+    commit({
+      ...doc,
+      elements: doc.elements.map((v) => selected.includes(v.id) && editable(v, doc) ? { ...v, layer: next } : v),
+    });
+  }
 
   async function loadIndex() {
     try {
@@ -504,6 +573,7 @@
         if (pageId !== id) return;
         pages = pages.map(page => page.id === id ? {...page, title: pageTitle} : page);
         noteTitles = noteTitles.map(page => page.id === id ? {...page, title: pageTitle} : page);
+        pageUpdated = new Date().toISOString();
         if (generation === contentGeneration) {
           dirty = false;
           saveStatus = "Saved locally";
@@ -567,8 +637,11 @@
   }
   async function openPage(id: number, force = false, prepared = false) {
     if (!pane.active) return;
-    if (!prepared && presentation === "saved" && savedMapEditor && !savedMapEditor.beforeLeave()) return;
     if (id === pageId && !force && presentation === "editor") return;
+    if (!prepared && id !== pageId && noteMode === "map" && mapEditor && !(await mapEditor.flush())) {
+      error ||= "The map could not save. Retry before switching pages.";
+      return;
+    }
     if (loading) return;
     finishActiveGesture();
     await saveContent();
@@ -591,6 +664,7 @@
       void api(`/notes/pages/${page.id}/organize`,{visited:true}).catch(()=>{});
       notebookId = page.notebook_id;
       title = page.title;
+      pageUpdated = page.updated_at ?? "";
       pageRevision = page.revision;
       viewRevision = page.viewport_revision;
       doc = page.document;
@@ -638,7 +712,10 @@
   }
   async function beforeSwitch() {
     if (!pane.active || loading || busy) return false;
-    if (presentation === "saved" && savedMapEditor && !savedMapEditor.beforeLeave()) return false;
+    if (noteMode === "map" && mapEditor && !(await mapEditor.flush())) {
+      error ||= "The map could not save. Retry before switching pages.";
+      return false;
+    }
     finishActiveGesture();
     await saveContent();
     await saveView();
@@ -668,7 +745,7 @@
   }
   async function toggleFullscreen() {
     if (!pane.active || fullscreenPending) return;
-    if (document.fullscreenElement !== stage && noteMode === "text") { noteMode="canvas"; await tick(); }
+    if (document.fullscreenElement !== stage && noteMode !== "canvas") { if (!(await setMode("canvas"))) return; await tick(); }
     if (!pane.active) return;
     fullscreenPending = true;
     try {
@@ -919,14 +996,14 @@
     }
     if (mode === "connector") {
       const found = hitTop(doc, p, 6 / view.zoom);
-      if (!found || (noteMode==="mindmap" && !["text","sticky"].includes(found.kind))) return;
+      if (!found) return;
       if (selected.length !== 1 || selected[0] === found.id) {
         selected = [found.id];
         saveStatus = "Choose the second element to connect";
         return;
       }
       const from = doc.elements.find((e) => e.id === selected[0]);
-      if (!from || (noteMode==="mindmap" && !["text","sticky"].includes(from.kind))) { selected=[found.id]; return; }
+      if (!from) { selected=[found.id]; return; }
       const e: CanvasElement = {
         id: uid(),
         kind: "connector",
@@ -965,13 +1042,12 @@
     };
     if (mode === "text" || mode === "sticky") {
       e.w = mode === "sticky" ? 240 : 320;
-      e.h = noteMode==="mindmap" ? 96 : mode === "sticky" ? 180 : 100;
-      e.text = noteMode==="mindmap" ? "New concept" : mode === "sticky" ? "New sticky note" : "New text";
-      if (noteMode==="mindmap" && mode==="sticky") e.color="#292438";
+      e.h = mode === "sticky" ? 180 : 100;
+      e.text = mode === "sticky" ? "New sticky note" : "New text";
       e.fontSize = fontSize;
       commit({ ...doc, elements: [...doc.elements, e] });
       selected = [e.id];
-      if (noteMode==="mindmap") tool="select"; else outline = true;
+      outline = true;
       return;
     }
     e.points = [[0, 0, p[2]]];
@@ -1341,10 +1417,15 @@
     });
   }
   function keydown(event: KeyboardEvent) {
+    // App also blurs a focused search field on Escape; the drawer closes either way.
+    if (pane.active && libraryOpen && event.key === "Escape") {
+      event.preventDefault(); event.stopPropagation(); void openLibrary(false); return;
+    }
     if (!pane.active || presentation !== "editor" || event.defaultPrevented || !(event.target instanceof HTMLElement))
       return;
     if(event.ctrlKey&&event.altKey&&event.key.toLowerCase()==="n"){event.preventDefault();void createPage();return;}
-    if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="s"){event.preventDefault();blocked=false;void saveContent();return;}
+    if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="s"){event.preventDefault();if(noteMode==="map")void mapEditor?.flush();retrySave();return;}
+    if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&!event.altKey&&event.key.toLowerCase()==="f"&&noteMode!=="map"&&pageId){event.preventDefault();findOpen=true;return;}
     const target = event.target as HTMLElement;
     if (
       ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
@@ -1352,7 +1433,7 @@
       target.closest("button, a, summary")
     )
       return;
-    if(noteMode==="text")return;
+    if(noteMode!=="canvas")return;
     if (event.key === " ") {
       space = true;
       event.preventDefault();
@@ -1535,7 +1616,7 @@
           `${name}.kitty.json`,
         );
       } else {
-        const svg = await exportSVG(doc);
+        const svg = await exportSVG(doc, paper);
         downloadBlob(
           kind === "svg"
             ? new Blob([svg], { type: "image/svg+xml" })
@@ -1612,6 +1693,37 @@
       error = (cause as Error).message;
     }
   }
+  function retrySave() {
+    blocked = false;
+    error = "";
+    void saveContent();
+  }
+  function reloadSaved() {
+    if (dirty && !confirm("Discard local edits and reload the saved page?")) return;
+    dirty = false;
+    blocked = false;
+    try {
+      sessionStorage.removeItem(recoveryKey());
+    } catch {
+      /* best effort */
+    }
+    void openPage(pageId, true);
+  }
+  const favourite = $derived(Boolean((pages.find(p=>p.id===pageId) as PageSummary & {favorite?:boolean|number})?.favorite));
+  /** Q6: the page header's ⋯, its last control. */
+  const pageActions = $derived<OverflowItem[]>([
+    { label: "Today's page", onselect: () => void dailyNote() },
+    { label: "Library overview", onselect: () => void rootSchema(), disabled: presentation === "map" },
+    { label: "Import PDF or Markdown…", onselect: () => { importOpen = true; } },
+    { label: favourite ? "Unfavourite" : "Favourite", onselect: () => void favoritePage(), disabled: !pageId },
+    { label: "Page history…", onselect: () => { historyOpen = true; }, disabled: !pageId },
+    { label: "Trash…", onselect: () => { trashOpen = true; } },
+    ...(noteMode === "canvas" ? [{ label: "Canvas fullscreen", onselect: () => void toggleFullscreen(), disabled: !pageId || presentation !== "editor" }] : []),
+    { label: "Privacy & storage…", onselect: () => { cleanupResult = ""; privacyOpen = true; } },
+    { label: "Reload saved", onselect: reloadSaved, disabled: !pageId || loading },
+    { separator: true },
+    { label: "Delete page…", onselect: () => void deletePage(), danger: true, disabled: !pageId || busy },
+  ]);
   async function cleanup() {
     if (
       !pane.active ||
@@ -1624,12 +1736,19 @@
       const result = await api<{ removed: number }>("/notes/cleanup", {
         confirm: true,
       });
-      saveStatus = `Removed ${result.removed} unused local references`;
+      cleanupResult = `Removed ${result.removed} unused ${result.removed === 1 ? "reference" : "references"}`;
     } catch (cause) {
       error = (cause as Error).message;
     }
   }
   onMount(() => {
+    // The floating outline's open state is device state (pen mode is the build's `ui.notes.pen_only`).
+    try {
+      const outlinePreference = localStorage.getItem("kitty.notes.outline");
+      tocOpen = outlinePreference ? outlinePreference === "open" : innerWidth >= 1100;
+    } catch {
+      tocOpen = innerWidth >= 1100;
+    }
     void loadIndex().then(() => { indexReady = true; });
     followMirrors();
     const openLinkedPage=(event:Event)=>{if(!pane.active)return;const id=(event as CustomEvent).detail?.page_id;if(id)void openPage(Number(id));};
@@ -1641,11 +1760,12 @@
       clearTimeout(indexTimer);indexTimer=setTimeout(()=>void loadIndex(),250);
       if(!change||change.root?.number===pageId)void refreshReferences();
     });
+    const clockTimer=setInterval(()=>clock=Date.now(),30000);
     window.addEventListener("focus",refreshReferences);
     const syncColors=()=>{
       const previous=ink,style=getComputedStyle(document.documentElement);
       ink=style.getPropertyValue("--ink").trim()||CANVAS_INK;
-      paper=style.getPropertyValue("--canvas").trim()||CANVAS_PAPER;
+      paper=style.getPropertyValue("--solid-void").trim();
       if(color===previous||color===CANVAS_INK)color=ink;
     };
     syncColors();window.addEventListener("kitty:theme",syncColors);
@@ -1693,6 +1813,7 @@
       observer.disconnect();
       stopLive();
       clearTimeout(indexTimer);
+      clearInterval(clockTimer);
       window.removeEventListener("focus",refreshReferences);
       window.removeEventListener("kitty-open-note",openLinkedPage);
       window.removeEventListener("kitty:theme",syncColors);
@@ -1721,7 +1842,7 @@
     }
     if (!indexReady || pageInitialized) return;
     pageInitialized = true;
-    if (initialMode === "mindmap") setMode("mindmap");
+    if (initialMode === "map") noteMode = "map";
     let requested = 0;
     try {
       const stored = JSON.parse(localStorage.getItem("kitty.notes.tabs") || "[]");
@@ -1750,7 +1871,7 @@
   });
   $effect(() => {
     imageEpoch;
-    if (pane.active && canvas && presentation === "editor" && noteMode !== "text")
+    if (pane.active && canvas && presentation === "editor" && noteMode === "canvas")
       renderCanvas(
         canvas,
         doc,
@@ -1775,96 +1896,76 @@
 {#snippet pageTabs()}
   <nav class="note-tabs" aria-label="Open note pages">
     {#each openTabs as id (id)}
+      {@const summary = pages.find(page=>page.id===id)}
+      {@const book = notebooks.findIndex(notebook=>notebook.id===(id===pageId?notebookId:summary?.notebook_id))}
       <div class:active={id===pageId && presentation==="editor"} class="note-tab">
         <button aria-current={id===pageId && presentation==="editor"?"page":undefined} draggable={!fullscreen}
           ondragstart={()=>tabDrag=id} ondragover={event=>event.preventDefault()} ondrop={event=>{event.preventDefault();const ids=blockDrag(event);if(ids)void moveBlocksToPage(id,ids);else reorderTab(id);}}
           oncontextmenu={event=>{event.preventDefault();if(!fullscreen)pageMenu={id,x:event.clientX,y:event.clientY};}}
-          onclick={()=>void openPage(id)}>{id===pageId?title:pages.find(page=>page.id===id)?.title||`Page ${id}`}</button>
-        <button aria-label={`Close ${pages.find(page=>page.id===id)?.title||"page"} tab`} onclick={()=>void closeTab(id)}>×</button>
+          onclick={()=>void openPage(id)}><i class="tab-dot" aria-hidden="true" style:background={book<0?"var(--subtle)":`var(--c${book%6+1})`}></i><span>{id===pageId?title||"Untitled":summary?.title||`Page ${id}`}</span></button>
+        <button class="tab-close" aria-label={`Close ${summary?.title||"page"} tab`} onclick={()=>void closeTab(id)}><Icon name="close" size={12}/></button>
       </div>
     {/each}
-    <Button variant="ghost" size="sm" disabled={!notebookId||busy||loading} onclick={createPage}>+ New page</Button>
+    <button class="icon-button tab-new" aria-label="New page" title="New page · Ctrl Alt N" disabled={!notebookId||busy||loading} onclick={createPage}><Icon name="plus" size={14}/></button>
   </nav>
 {/snippet}
-<section class="notes-workspace" class:sidebar-hidden={!sidebarOpen} aria-label="Notes workspace">
+<section class="notes-workspace" aria-label="Notes workspace">
+  <!-- Q17: one row. Library, the open pages, the page mode, Find and ⋯ (always last). -->
   <header class="notes-heading">
-    <Button variant="ghost" size="sm" aria-label={sidebarOpen ? "Hide notes library" : "Show notes library"} aria-pressed={sidebarOpen} onclick={() => sidebarOpen = !sidebarOpen}>☰</Button>
-    <h2 title={`My notes${activeNotebook ? ` / ${activeNotebook.title}` : ""}`}>Notes</h2>
-    {#if !fullscreen}{@render pageTabs()}{/if}
-    <span role="status" class="save-status" class:unsaved={dirty} title={saveStatus}>{saveStatus}</span>
-    <details class="overflow notes-views" bind:open={viewsOpen} use:closeOnEscape>
-      <summary>Views <span aria-hidden="true">▾</span></summary>
-      <div class="overflow-menu" role="group" aria-label="Notes views">
-        <Button variant="ghost" size="sm" aria-pressed={presentation==="saved"} onclick={() => { viewsOpen = false; void showSavedMaps(); }}>Saved maps</Button>
-        <Button variant="ghost" size="sm" aria-pressed={presentation==="map"} onclick={() => { viewsOpen = false; void rootSchema(); }}>Library overview</Button>
-        <Button variant="ghost" size="sm" onclick={() => { viewsOpen = false; void dailyNote(); }}>Today</Button>
-      </div>
-    </details>
-    <Button variant="outline" size="sm" onclick={toggleFullscreen} disabled={!pageId || presentation !== "editor"} aria-label="Open canvas fullscreen" title="Canvas fullscreen">⛶</Button>
+    <button bind:this={libraryToggle} class="icon-button library-toggle" aria-label="Open library" aria-expanded={libraryOpen} aria-controls={`${pane.id}-notes-library`} title="Library" onclick={() => void openLibrary(!libraryOpen)}><Icon name="menu" size={16}/></button>
+    {#if fullscreen}<span class="note-tabs"></span>{:else}{@render pageTabs()}{/if}
+    <Select kind="segments" label="Page mode" options={PAGE_MODES} disabled={!pageId}
+      bind:value={() => noteMode, (next: string) => void chooseMode(next as NoteMode)} />
+    <Popover bind:open={findOpen} label="Find in page" placement="bottom-end" class="notes-find">
+      {#snippet trigger(props)}
+        <button class="icon-button" aria-label="Find in page" title="Find in page · Ctrl F" disabled={!pageId || noteMode === "map" || presentation !== "editor"} {...props}><Icon name="jobs" size={15}/></button>
+      {/snippet}
+      <input class="find-field" type="search" aria-label="Find text" placeholder="Find in page…" bind:value={pageFind}
+        oninput={() => { findFrom = ""; if (pageFind && noteMode === "canvas") outline = true; }}
+        onkeydown={(event) => { if (event.key === "Enter") { event.preventDefault(); findNext(); } }} />
+    </Popover>
+    <button class="icon-button mirror-toggle" aria-pressed={mirrorOpen} disabled={!pageId || noteMode!=="text" || presentation!=="editor"}
+      aria-label={mirrors.list.length ? `Mirror (${mirrors.list.length} live)` : "Mirror"}
+      title="Mirror: the browser tab the kitty! extension is mirroring, beside this page"
+      onclick={()=>mirrorOpen=!mirrorOpen}><Icon name="external" size={15}/>{#if mirrors.list.length}<span class="mirror-live" aria-hidden="true"></span>{/if}</button>
+    <OverflowMenu items={pageActions} label="More page actions" />
   </header>
-  {#if operationStatus}<p class="muted" role="status">{operationStatus}</p>{/if}
-  {#if error}<div class="error-banner" role="alert">
-      {error}<button
-        onclick={() => (error = "")}
-        aria-label="Dismiss notes error">×</button
-      >
+  {#if operationStatus}<p class="op-status" role="status">{operationStatus}</p>{/if}
+  {#if error || blocked}<div class="error-banner" role="alert">
+      <span>{error || "This page could not save. Your edits are kept here."}</span>
+      {#if blocked}<button class="button" onclick={retrySave}>Retry save</button>{/if}
+      {#if error}<button class="icon-button" onclick={() => (error = "")} aria-label="Dismiss notes error"><Icon name="close" size={12}/></button>{/if}
     </div>{/if}
   {#if viewError}<p class="error-banner" role="alert">
       Viewport: {viewError}. Content saves independently.
       <button
+        class="button"
         onclick={() => {
           viewError = "";
           void saveView();
         }}>Retry viewport</button
       >
     </p>{/if}
-  <div class="notebook-layout">
-    <aside class="notebook-sidebar" aria-label="Notebook navigation">
+  <div class="notebook-layout" use:fitHeight>
+    {#if libraryOpen}<button class="library-scrim" tabindex="-1" aria-label="Close library" onclick={() => void openLibrary(false)}></button>{/if}
+    <aside bind:this={libraryDrawer} id={`${pane.id}-notes-library`} class="notebook-sidebar" aria-label="Notes library" hidden={!libraryOpen}>
       <NotesLibrary {folders} {notebooks} {pages} {notebookId} {pageId} {search} {folderFocus}
-        busy={loading || busy} onrefresh={loadIndex} onopenpage={openPage} onselectnotebook={notebookSchema}
-        onnewpage={createPage} onbeforeswitch={beforeSwitch} onerror={message => error = message} ondeletepage={deletePageById}
+        busy={loading || busy} onrefresh={loadIndex} onopenpage={openFromLibrary} onselectnotebook={notebookSchema}
+        onnewpage={async () => { libraryOpen = false; await createPage(); }} onbeforeswitch={beforeSwitch} onerror={message => error = message} ondeletepage={deletePageById}
         onblocksdrop={(page, event) => { const ids = blockDrag(event); if (ids) void moveBlocksToPage(page, ids); return !!ids; }}
         onsearch={value => { search = value; clearTimeout(searchTimer); searchTimer = setTimeout(() => void loadIndex(), 250); }} />
-      <details>
-        <summary>Local privacy & retention</summary>
-        <p class="muted">
-          Stored only in the local database and private reference directory.
-          Unsaved recovery stays in this browser session. No full notebook is
-          sent to AI.
-        </p>
-        <label class="check"
-          ><input type="checkbox" bind:checked={prefs.allow_ai} />Allow explicit
-          selected-text AI sharing</label
-        ><label
-          >Unused reference retention (days)<input
-            type="number"
-            min="0"
-            max="3650"
-            bind:value={prefs.retention_days}
-          /></label
-        >
-        <p class="muted">
-          0 removes unused references immediately when you choose cleanup. Pages
-          and used references are kept until you delete them.
-        </p>
-        <button class="button" onclick={savePrivacy}>Save privacy</button
-        ><button class="button" onclick={cleanup}
-          >Clean unused references</button
-        >
-      </details>
       {#if presentation==="editor"}
-        <form class="wiki-link" onsubmit={event=>{event.preventDefault();void resolveLink();}}>
+        <form class="wiki-link" onsubmit={event=>{event.preventDefault();libraryOpen=false;void resolveLink();}}>
           <label for={`${pane.id}-note-link`}>[[ Link a page ]]</label>
           <input id={`${pane.id}-note-link`} bind:value={linkTitle} list={`${pane.id}-note-pages`} placeholder="Page title…" />
           <datalist id={`${pane.id}-note-pages`}>{#each pages as page}<option value={page.title}></option>{/each}</datalist>
           <Button size="sm" type="submit" disabled={!linkTitle.trim()}>Open / create</Button>
         </form>
         <Button size="sm" variant="ghost" aria-pressed={relatedOpen} onclick={()=>relatedOpen=!relatedOpen}>Connections</Button>
-        {#if relatedOpen && noteMode!=="text"}<NoteReferences pageId={pageId} text={`${title}\n${textElements.map(e=>e.text||"").join("\n")}\n${outlineText}`} onopen={id=>void openPage(id)} onlink={linkMention}/>{/if}
+        {#if relatedOpen && noteMode!=="text"}<NoteReferences pageId={pageId} text={`${title}\n${textElements.map(e=>e.text||"").join("\n")}\n${outlineText}`} onopen={id=>void openFromLibrary(id)} onlink={linkMention}/>{/if}
       {/if}
     </aside>
     <div class="canvas-main">
-      {#if presentation==="saved"}<SchemaMaps bind:this={savedMapEditor} embedded {revision} {demo}/>{/if}
       {#if presentation==="map" && pane.active}
         <SectionGraph section="notes" {revision} focus={schemaFocus} onselect={selectGraphNode}/>
         <div class="actions">
@@ -1873,198 +1974,61 @@
         </div>
       {/if}
       <div class="editor-shell" hidden={presentation!=="editor"} inert={loading}>
-      <div class="page-bar">
-        <div class="note-mode" role="group" aria-label="Page mode">
-          <Button variant="ghost" size="sm" aria-pressed={noteMode==="text"} onclick={()=>setMode("text")}>Writing</Button>
-          <Button variant="ghost" size="sm" aria-pressed={noteMode==="canvas"} onclick={()=>setMode("canvas")}>Canvas</Button>
-          <Button variant="ghost" size="sm" aria-pressed={noteMode==="mindmap"} onclick={()=>setMode("mindmap")}>Mind map</Button>
+      <div class="writing-view" hidden={noteMode!=="text"}>
+        <div class="writing" class:toc-open={tocOpen && tocEntries.length>0} class:mirror-open={mirrorOpen} onfocusin={event=>{const id=(event.target as HTMLElement).closest<HTMLElement>("[data-block-id]")?.dataset.blockId;if(id)tocCurrent=topBlock(id);}}>
+          <div class="page-column">
+            {#if pageId}<p class="page-meta">{[activeNotebook?.title, edited].filter(Boolean).join(" · ")}</p>{/if}
+            <!-- Q17: the title is the page's H1, set in the title face; the field is its content. -->
+            <!-- svelte-ignore a11y_missing_content -->
+            <h1 class="page-h1"><input
+              class="title-input"
+              aria-label="Page title"
+              placeholder="Untitled"
+              disabled={!pageId}
+              value={title}
+              maxlength="200"
+              oninput={(e) => {
+                title = e.currentTarget.value;
+                scheduleContent();
+              }}
+            /></h1>
+            {#if pageId}{#key pageId}<NoteOutline bind:this={noteOutline} {pageId} references={blockReferences} counts={citationCounts} pages={noteTitles} {focusBlock}
+              onpage={value=>void resolveLink(value)} onopen={openBlock} onopenpage={pageBlock=>void openLinkedPage(pageBlock)} oncreatepage={createSubpage}
+              mirror={mirrorOpen} onclosemirror={()=>mirrorOpen=false} onblocks={list=>outlineBlocks=list}
+              onrevision={editorRevision} onerror={message=>error=message}/>{/key}{/if}
+          </div>
+          {#if tocEntries.length}
+            <nav class="page-toc" class:open={tocOpen} aria-label="On this page">
+              <button class="toc-head" aria-expanded={tocOpen} onclick={toggleToc}><span class="eyebrow">On this page</span></button>
+              {#if tocOpen}
+                <ol>{#each tocEntries as entry (entry.id)}<li><button class:on={tocCurrent===entry.id} aria-current={tocCurrent===entry.id?"location":undefined} onclick={()=>void jumpToBlock(entry.id)}>{entry.label}</button></li>{/each}</ol>
+                <span class="toc-words">{wordCount} {wordCount===1?"word":"words"}</span>
+              {/if}
+            </nav>
+          {/if}
         </div>
-        <input
-          class="page-title"
-          aria-label="Page title"
-          placeholder="Untitled page"
-          disabled={!pageId}
-          value={title}
-          maxlength="200"
-          oninput={(e) => {
-            title = e.currentTarget.value;
-            scheduleContent();
-          }}
-        /><button
-          class="button"
-          aria-label="Save / retry"
-          title="Save / retry (Ctrl+S)"
-          disabled={!dirty || busy}
-          onclick={() => {
-            blocked = false;
-            error = "";
-            void saveContent();
-          }}>Save</button
-        >
-        <input type="search" aria-label="Find in page" placeholder="Find in page…" bind:value={pageFind} oninput={()=>{if(pageFind)outline=true;}}/>
-        <Button variant="ghost" size="sm" aria-pressed={mirrorOpen} disabled={noteMode!=="text"} title="Mirror: the browser tab the kitty! extension is mirroring, beside this page"
-          onclick={()=>mirrorOpen=!mirrorOpen}>Mirror{#if mirrors.list.length}<span class="mirror-live" aria-label={`${mirrors.list.length} live`}></span>{/if}</Button>
-        <details class="overflow page-actions" bind:open={moreOpen} use:closeOnEscape><summary>More <span aria-hidden="true">▾</span></summary><div class="overflow-menu" role="group" aria-label="More page actions and help">
-        {#if noteMode==="text"}
-          <p class="muted help">Blocks · / commands · # - [] &gt; Markdown shortcuts · Esc selects blocks · Tab nests · Ctrl+Shift+↑↓ moves · drag ⋮⋮ to reorder or onto a page</p>
-        {:else}
-          <p class="muted help">{tools.map(item=>`${item.key} ${item.label}`).join(" · ")} · Space+drag pan · Ctrl+Z undo · Esc clear selection</p>
-        {/if}
-        <p class="muted help">Ctrl+S save · Ctrl+Alt+N new page</p>
-        <label>Paper<select value={doc.background||"dotted"} onchange={event=>commit({...doc,background:event.currentTarget.value as CanvasDocument["background"]})}>
-          {#each ["blank","lined","grid","dotted","cornell"] as pattern}<option value={pattern}>{pattern}</option>{/each}
-        </select></label>
-        <Button size="sm" onclick={favoritePage}>☆ Favorite</Button>
-        <Button size="sm" disabled={!pageId} onclick={()=>{moreOpen=false;historyOpen=true;}}>History</Button>
-        <Button size="sm" onclick={()=>{moreOpen=false;trashOpen=true;}}>Trash</Button>
-        <button
-          class="button"
-          disabled={!pageId || loading}
-          onclick={() => {
-            if (
-              !dirty ||
-              confirm("Discard local edits and reload the saved page?")
-            ) {
-              dirty = false;
-              blocked = false;
-              try {
-                sessionStorage.removeItem(recoveryKey());
-              } catch {
-                /* best effort */
-              }
-              void openPage(pageId, true);
-            }
-          }}>Reload saved</button
-        ><button class="button" disabled={!pageId || busy} onclick={deletePage}
-          >Delete page</button
-        >
-        </div></details>
-      </div>
-      <div hidden={noteMode!=="text"}>
-        {#if pageId}{#key pageId}<NoteOutline bind:this={noteOutline} {pageId} references={blockReferences} counts={citationCounts} pages={noteTitles} {focusBlock}
-          onpage={value=>void resolveLink(value)} onopen={openBlock} onopenpage={pageBlock=>void openLinkedPage(pageBlock)} oncreatepage={createSubpage}
-          mirror={mirrorOpen} onclosemirror={()=>mirrorOpen=false}
-          onrevision={editorRevision} onerror={message=>error=message}/>{/key}{/if}
-        <details class="note-import"><summary>Import PDF / Markdown</summary><DocumentImport {notebookId} onimport={id=>{void loadIndex().then(()=>openBlock(id));}}/>{#each originals as original}<a href={`/api/documents/originals/${original.id}`} download>{original.name}</a>{/each}</details>
-      </div>
       {#if historyOpen && pageId}<BlockHistory page={{type:"page",number:pageId}} title={title} onclose={()=>historyOpen=false}/>{/if}
       {#if trashOpen}<BlockTrash onclose={()=>trashOpen=false} onopen={id=>{trashOpen=false;void loadIndex().then(()=>openPage(id));}}/>{/if}
-      <div class="canvas-panel" hidden={noteMode==="text"}>
-      <div class="tools" role="toolbar" aria-label="Drawing tools">
-        {#each tools.filter(item=>(noteMode==="mindmap"?["select","sticky","connector","pen","eraser"]:["select","pen","highlighter","eraser","text","sticky"]).includes(item.id)) as item}<Button variant="ghost" size="sm"
-            aria-label={item.label}
-            aria-pressed={tool === item.id}
-            title={`${item.label} (${item.key})`}
-            disabled={!pageId}
-            onclick={() => {
-              finishActiveGesture();
-              tool = item.id;
-            }}>{toolGlyph[item.id]||item.label.slice(0,1)}</Button
-          >{/each}
-        {#if noteMode==="mindmap"}<Button size="sm" onclick={()=>addConcept()}>+ Concept</Button>{/if}
-        <details class="shape-menu"><summary aria-label="More drawing tools">□ ▾</summary><div>
-          {#each tools.filter(item=>!(noteMode==="mindmap"?["select","sticky","connector","pen","eraser"]:["select","pen","highlighter","eraser","text","sticky"]).includes(item.id)) as item}
-            <Button size="sm" variant="ghost" aria-pressed={tool===item.id} onclick={()=>{finishActiveGesture();tool=item.id;}}>{item.label}</Button>
-          {/each}
-        </div></details>
       </div>
-      <div class="canvas-controls">
-        {#if tool!=="select" && tool!=="pan" && tool!=="lasso"}<CanvasColorMenu label="Ink" bind:value={color}/>{/if}
-        {#if ["sticky","rect","ellipse"].includes(tool)}<CanvasColorMenu label={noteMode==="mindmap"?"Card":"Fill"} bind:value={fillColor}/>{/if}
-        <details class="stroke-options"><summary>Stroke {lineWidth}</summary><label
-          >{tool === "eraser"
-            ? "Eraser radius (screen px)"
-            : "Stroke width"}<input
-            type="range"
-            min="1"
-            max="60"
-            bind:value={lineWidth}
-          /><span>{lineWidth}</span></label
-        ><label
-          >Text size<input
-            type="number"
-            min="8"
-            max="120"
-            bind:value={fontSize}
-          /></label></details
-        ><button disabled={!undoStack.length} onclick={() => applyUndo()}
-          >Undo</button
-        ><button disabled={!redoStack.length} onclick={() => applyUndo(true)}
-          >Redo</button
-        >
-          <details class="canvas-options"><summary>Canvas options</summary><label class="check"><input type="checkbox" checked={penOnly} onchange={(event) => void setPreferences({ ui: { notes: { pen_only: event.currentTarget.checked } } })}/>Pen mode</label><label class="check"
-          ><input
-            type="checkbox"
-            checked={doc.grid}
-            onchange={(e) => commit({ ...doc, grid: e.currentTarget.checked })}
-          />Grid</label
-        ><label class="check"
-          ><input
-            type="checkbox"
-            checked={doc.snap}
-            onchange={(e) => commit({ ...doc, snap: e.currentTarget.checked })}
-          />Snap</label
-        ><button
-          onclick={() => {
-            view = zoomAt(view, width / 2, height / 2, 0.8);
-            scheduleView();
-          }}>−</button
-        ><output>{Math.round(view.zoom * 100)}%</output><button
-          onclick={() => {
-            view = zoomAt(view, width / 2, height / 2, 1.25);
-            scheduleView();
-          }}>＋</button
-        ><button
-          onclick={() => {
-            view = { x: 0, y: 0, zoom: 1 };
-            scheduleView();
-          }}>Reset (0)</button
-        ><button
-          onclick={() => {
-            view = fit(doc.elements, width, height);
-            scheduleView();
-          }}>Fit</button
-        ><button aria-pressed={outline} onclick={() => (outline = !outline)}
-          >Text outline</button
-        >
-        </details>
-      </div>
+      {#if noteMode==="map" && pageId}
+        <!-- Q19: Map is the one mind-map editor, full-bleed in the stage; it loads the page's own map. -->
+        <div class="map-stage" role="region" aria-label="Page map">
+          <SchemaMaps bind:this={mapEditor} embedded pageId={pageId} {revision} {demo} onstatus={(status) => mapStatus = status} />
+        </div>
+      {/if}
+      <div class="canvas-panel" hidden={noteMode!=="canvas"}>
       <div class="canvas-stage" bind:this={stage} onpointerdowncapture={event=>{if(event.pointerType==="touch")revealTabs();}}>
         {#if fullscreen}
           <div class="focus-tab-dock" class:revealed={tabsRevealed} onpointerenter={revealTabs} role="group" aria-label="Fullscreen page navigation">
             <button class="focus-tab-handle" aria-label="Show note page tabs" onclick={revealTabs} onfocus={revealTabs}>Pages ▾</button>
             <div class="focus-tab-strip">{@render pageTabs()}</div>
           </div>
-          <div class="focus-tools" role="toolbar" aria-label="Fullscreen drawing tools">
-            {#each tools.filter(item => (noteMode==="mindmap" ? ["select", "sticky", "connector", "pen", "eraser", "pan"] : ["select", "pen", "highlighter", "eraser", "pan"]).includes(item.id)) as item}
-              <Button variant="ghost" size="sm" aria-label={item.label} aria-pressed={tool === item.id} title={item.label} onclick={() => { if (gesture) for (const id of [...pointers.keys()]) finishPointer(id); tool = item.id; }}>{toolGlyph[item.id]}</Button>
-            {/each}
-            {#if noteMode==="mindmap"}<Button size="sm" onclick={()=>addConcept()}>+ Concept</Button>{/if}
-            <CanvasColorMenu label="Ink" bind:value={color} />
-            <label class="focus-width">Width<input aria-label="Stroke width" type="range" min="1" max="60" bind:value={lineWidth} /></label>
-            <button disabled={!undoStack.length} onclick={() => applyUndo()}>Undo</button>
-            <button disabled={!redoStack.length} onclick={() => applyUndo(true)}>Redo</button>
-            <button onclick={() => { blocked = false; void saveContent(); }} title={saveStatus} aria-label={`Save note: ${saveStatus}`}>Save</button>
+          <div class="focus-corner">
+            <button class="button focus-exit" onclick={toggleFullscreen} aria-label="Exit canvas fullscreen">Exit fullscreen · Esc</button>
             <span class="focus-save" role="status" aria-live="polite">{saveStatus}</span>
+            <button class="button" onclick={retrySave} title={saveStatus} aria-label={`Save note: ${saveStatus}`}>Save</button>
           </div>
-          <button class="focus-exit" onclick={toggleFullscreen} aria-label="Exit canvas fullscreen">Exit fullscreen · Esc</button>
           {#if error}<div class="focus-error" role="alert">{error}</div>{/if}
-        {/if}
-        {#if noteMode==="mindmap" && selectedElements.length===1}
-          {@const element = selectedElements[0]}
-          {#if ["text","sticky"].includes(element.kind)}
-            <aside class="concept-inspector" aria-label="Selected concept">
-              <label>Concept
-                <textarea rows="2" maxlength="20000" readonly={!editable(element,doc)} value={element.text||""} oninput={event=>patchText(element.id,event.currentTarget.value)}></textarea>
-              </label>
-              <div class="concept-actions">
-                <CanvasColorMenu label="Ink" bind:value={()=>element.color,(value:string)=>patchCanvasElement(element.id,{color:value})}/>
-                {#if element.kind==="sticky"}<CanvasColorMenu label="Card" bind:value={()=>element.fill,(value:string)=>patchCanvasElement(element.id,{fill:value})}/>{/if}
-                <Button size="sm" variant="ghost" disabled={!editable(element,doc)} onclick={deleteSelected}>Delete</Button>
-                <Button size="sm" variant="ghost" aria-label="Close concept editor" onclick={()=>selected=[]}>×</Button>
-              </div>
-            </aside>
-          {/if}
         {/if}
         <canvas
           bind:this={canvas}
@@ -2094,67 +2058,83 @@
               cancelGesture();
           }}
           onwheel={wheel}
-          ondblclick={event=>{
-            if(noteMode!=="mindmap"||tool!=="select"||!pane.active)return;
-            const rect=canvas!.getBoundingClientRect(), point=world(event.clientX-rect.left,event.clientY-rect.top,view);
-            const found=hitTop(doc,point,5/view.zoom);
-            if(found)selected=[found.id];else addConcept(point);
-          }}
           oncontextmenu={contextDeleteDrawing}
         ></canvas>
         {#if !pageId}<div class="canvas-empty">
             <h3>A place for your next idea</h3>
             <p>Create a notebook and page to start drawing.</p>
           </div>{/if}
+        <CanvasPill label="Drawing tools" id={`${pane.id}-drawing-tools`} storageKey="kitty.notes.canvas-tools" moreLabel="More canvas tools" menuLabel="Canvas options" stageHeight={height} disabled={!pageId}>
+          {#each pillTools as item (item.id)}
+            <button class="pill-btn" aria-label={item.label} aria-keyshortcuts={item.key} aria-pressed={tool === item.id} title={`${item.label} (${item.key})`} disabled={!pageId} onclick={() => chooseTool(item.id)}><Icon name={`tool-${item.id}`} size={18}/></button>
+          {/each}
+          <span class="pill-rule" aria-hidden="true"></span>
+          <CanvasColorMenu label="Ink" bind:value={color}/>
+          <span class="pill-rule" aria-hidden="true"></span>
+          <button class="pill-btn" aria-label={`Stroke size ${lineWidth}`} title="Stroke size: click for the next size" onclick={() => lineWidth = STROKE_SIZES.find(size => size > lineWidth) ?? STROKE_SIZES[0]}><span class="stroke-dot" style:width={`${Math.min(lineWidth, 12) + 2}px`} style:height={`${Math.min(lineWidth, 12) + 2}px`}></span></button>
+          <span class="pill-rule" aria-hidden="true"></span>
+          <button class="pill-btn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!undoStack.length} onclick={() => applyUndo()}><Icon name="undo" size={17}/></button>
+          <button class="pill-btn" aria-label="Redo" title="Redo (Ctrl+Y)" disabled={!redoStack.length} onclick={() => applyUndo(true)}><Icon name="redo" size={17}/></button>
+          {#snippet more(close)}
+            <span class="eyebrow">Tools</span>
+            <div class="pill-menu-tools">
+              {#each moreTools as item (item.id)}
+                <button aria-label={item.label} aria-keyshortcuts={item.key} aria-pressed={tool === item.id} disabled={!pageId} onclick={() => { chooseTool(item.id); close(); }}><Icon name={`tool-${item.id}`} size={16}/>{item.label}<kbd aria-hidden="true">{item.key}</kbd></button>
+              {/each}
+            </div>
+            {#if ["sticky","rect","ellipse"].includes(tool)}
+              <span class="eyebrow">Fill</span>
+              <CanvasColorMenu label="Fill" placement="inline" bind:value={fillColor}/>
+            {/if}
+            <span class="eyebrow">Stroke &amp; text</span>
+            <label class="pill-range">{tool === "eraser" ? "Eraser radius" : "Stroke width"}<span><input type="range" min="1" max="60" bind:value={lineWidth}/><output>{lineWidth}</output></span></label>
+            <label class="pill-range">Text size<span><input type="number" min="8" max="120" bind:value={fontSize}/></span></label>
+            <span class="eyebrow">Canvas</span>
+            <div class="pill-menu-row">
+              <label class="check" title="Only a pen draws; touch pans"><input type="checkbox" checked={penOnly} onchange={(event) => void setPreferences({ ui: { notes: { pen_only: event.currentTarget.checked } } })}/>Pen mode</label>
+              <label class="check"><input type="checkbox" checked={doc.snap} onchange={(e) => commit({ ...doc, snap: e.currentTarget.checked })}/>Snap</label>
+            </div>
+            <div class="pill-menu-row zoom-row">
+              <button class="pill-menu-item" aria-label="Zoom out" onclick={() => { view = zoomAt(view, width / 2, height / 2, 0.8); scheduleView(); }}>−</button>
+              <output>{Math.round(view.zoom * 100)}%</output>
+              <button class="pill-menu-item" aria-label="Zoom in" onclick={() => { view = zoomAt(view, width / 2, height / 2, 1.25); scheduleView(); }}>＋</button>
+              <button class="pill-menu-item" title="Reset zoom (0)" onclick={() => { view = { x: 0, y: 0, zoom: 1 }; scheduleView(); }}>Reset</button>
+              <button class="pill-menu-item" onclick={() => { view = fit(doc.elements, width, height); scheduleView(); }}>Fit</button>
+            </div>
+            <div class="pill-range">Paper<Select label="Paper" kind="list" options={PAPERS} disabled={!pageId}
+              bind:value={() => paperPattern(doc), (next: string) => commit({...doc, background: next as CanvasDocument["background"]})} /></div>
+            <button class="pill-menu-item" aria-pressed={outline} onclick={() => (outline = !outline)}>Text outline</button>
+            <button class="pill-menu-item" onclick={() => { close(); layersOpen = true; }}>Layers…<kbd aria-hidden="true">{doc.layers.length}</kbd></button>
+            <span class="eyebrow">File</span>
+            <label class="pill-menu-item file-button" title="PDFs up to 20 pages are rasterized locally">Import image or PDF<input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,application/pdf"
+                disabled={!pageId || busy}
+                onchange={importReference}
+              /></label>
+            <label class="pill-menu-item file-button">Restore JSON page<input
+                type="file"
+                accept="application/json,.json"
+                disabled={(!restoreNotebook && !notebookId) || busy}
+                onchange={importPage}
+              /></label>
+            <label class="check restore-check"><input type="checkbox" bind:checked={restoreNotebook} />Restore into its own notebook</label>
+            <button class="pill-menu-item" disabled={!pageId || busy} onclick={() => exportPage("json")}>Export JSON</button>
+            <button class="pill-menu-item" disabled={!pageId || busy} onclick={() => exportPage("svg")}>Export SVG</button>
+            <button class="pill-menu-item" disabled={!pageId || busy} title="Up to 4096 px" onclick={() => exportPage("png")}>Export PNG</button>
+          {/snippet}
+        </CanvasPill>
       </div>
-      <div class="canvas-footer"><span class="canvas-hint">Space + drag: pan · Scroll: zoom · Two-finger swipe: pages · Fullscreen pen double-tap: middle left/right edge</span><span class="canvas-hint">{doc.elements.length} elements</span></div>
-      {#if noteMode==="mindmap"}
-        <p class="mindmap-hint">Add a concept or double-click empty space. Select to drag and edit; Connect joins two concepts. Pen strokes remain drawings.</p>
-        <MindMapFeedback title={title||"Untitled note map"} graph={feedbackGraph} {demo}/>
-      {/if}
-      {#if selected.length}<div class="selection-actions" aria-label="Selected element actions">
-        <button disabled={!selected.length} onclick={deleteSelected}
-          >Delete selection</button
-        ><button disabled={selected.length < 2} onclick={() => groupSelection()}
-          >Group</button
-        ><button
-          disabled={!selected.length}
-          onclick={() => groupSelection(true)}>Ungroup</button
-        ><button
-          disabled={!selected.length}
-          onclick={() => reorderSelection(true)}>Bring forward</button
-        ><button
-          disabled={!selected.length}
-          onclick={() => reorderSelection(false)}>Send backward</button
-        ><label
-          >Move selection to layer<select
-            disabled={!selected.length}
-            value={layerId}
-            onchange={(e) => {
-              const next = e.currentTarget.value;
-              if (doc.layers.find((l) => l.id === next)?.locked) {
-                error = "Target layer is locked.";
-                return;
-              }
-              layerId = next;
-              commit({
-                ...doc,
-                elements: doc.elements.map((v) =>
-                  selected.includes(v.id) && editable(v, doc)
-                    ? { ...v, layer: next }
-                    : v,
-                ),
-              });
-            }}
-            >{#each doc.layers as layer}<option value={layer.id}
-                >{layer.name}</option
-              >{/each}</select
-          ></label
-        ><button disabled={!selectedText} onclick={makeFlashcards}
-          >Make flashcards from selected text</button
-        ><button disabled={!selectedText} onclick={previewSummary}
-          >Summarize selection…</button
-        >
+      {#if selected.length}<div class="selection-actions" role="group" aria-label="Selected element actions">
+        <button class="button" onclick={deleteSelected}>Delete selection</button>
+        <button class="button" disabled={selected.length < 2} onclick={() => groupSelection()}>Group</button>
+        <button class="button" onclick={() => groupSelection(true)}>Ungroup</button>
+        <button class="button" onclick={() => reorderSelection(true)}>Bring forward</button>
+        <button class="button" onclick={() => reorderSelection(false)}>Send backward</button>
+        <Select label="Move selection to layer" kind="list" options={doc.layers.map(layer => ({ value: layer.id, label: layer.name }))}
+          bind:value={() => layerId, moveSelectionToLayer} />
+        <button class="button" disabled={!selectedText} onclick={makeFlashcards}>Make flashcards from selected text</button>
+        <button class="button" disabled={!selectedText} onclick={previewSummary}>Summarize selection…</button>
       </div>
       {/if}
       {#if summarySelection && prefs.allow_ai}<section
@@ -2170,14 +2150,14 @@
               summary = draft;
               summarySelection = "";
             }}
-          /><button onclick={() => (summarySelection = "")}
+          /><button class="button" onclick={() => (summarySelection = "")}
             >Close summary review</button
           >
         </section>{/if}
       {#if summary}<section class="ai-review">
           <h3>Summary draft — verify before using</h3>
           <pre>{summary}</pre>
-          <button onclick={() => (summary = "")}>Dismiss</button>
+          <button class="button" onclick={() => (summary = "")}>Dismiss</button>
         </section>{/if}
       {#if outline}<section
           class="text-outline"
@@ -2210,520 +2190,312 @@
                 {/each}</div>
               {/if}
               <div class="wiki-links">{#each [...(element.text||"").matchAll(/\[\[([^\]]+)\]\]/g)] as match}<Button size="sm" variant="ghost" onclick={()=>void resolveLink(match[1])}>{match[1]} ↗</Button>{/each}</div>
-              <label>Tag<select value={element.tags?.[0]||""} onchange={event=>setTag(element.id,event.currentTarget.value)}>
-                <option value="">None</option><option value="todo">☐ To-do</option><option value="important">★ Important</option><option value="question">? Question</option><option value="definition">Definition</option>
-              </select></label>
-              <button
-                onclick={() => {
-                  selected = [element.id];
-                  view = fit([element], width, height);
-                  scheduleView();
-                }}>Locate on canvas</button
-              >
-            </article>{/each}{#if !textElements.length}<p>
+              <div class="outline-row">
+                <Select label="Tag" kind="list" options={TAGS} bind:value={() => element.tags?.[0] || "", (next: string) => setTag(element.id, next)} />
+                <button
+                  class="button"
+                  onclick={() => {
+                    selected = [element.id];
+                    view = fit([element], width, height);
+                    scheduleView();
+                  }}>Locate on canvas</button
+                >
+              </div>
+            </article>{/each}{#if !textElements.length}<p class="muted">
               Add Text or Sticky notes anywhere on the canvas.
             </p>{/if}
         </section>{/if}
-      <details class="layers">
-        <summary>Layers ({doc.layers.length})</summary>
-        <p class="muted">
-          Layers are drawn bottom to top. Hidden layers are not exported
-          visually. Locked layers cannot be drawn on, moved, resized, or erased.
-        </p>
-        {#each doc.layers as layer, i}<div class="layer-row">
-            <input
-              type="radio"
-              name={`${pane.id}-notes-layer`}
-              aria-label={`Draw on ${layer.name}`}
-              checked={layerId === layer.id}
-              onchange={() => (layerId = layer.id)}
-            /><input
-              aria-label="Layer name"
-              maxlength="100"
-              value={layer.name}
-              onchange={(e) =>
-                patchLayer(layer.id, { name: e.currentTarget.value })}
-            /><label class="check"
-              ><input
-                type="checkbox"
-                checked={layer.visible}
-                onchange={(e) =>
-                  patchLayer(layer.id, { visible: e.currentTarget.checked })}
-              />Show</label
-            ><label class="check"
-              ><input
-                type="checkbox"
-                checked={layer.locked}
-                onchange={(e) =>
-                  patchLayer(layer.id, { locked: e.currentTarget.checked })}
-              />Lock</label
-            ><button
-              disabled={i === 0}
-              onclick={() => reorderLayer(layer.id, -1)}>Lower</button
-            ><button
-              disabled={i === doc.layers.length - 1}
-              onclick={() => reorderLayer(layer.id, 1)}>Raise</button
-            >
-          </div>{/each}
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            if (doc.layers.length >= 32) return;
-            const id = uid();
-            commit({
-              ...doc,
-              layers: [
-                ...doc.layers,
-                {
-                  id,
-                  name: newLayer || "New layer",
-                  visible: true,
-                  locked: false,
-                },
-              ],
-            });
-            layerId = id;
-            newLayer = "";
-          }}
-        >
-          <input
-            aria-label="New layer name"
-            maxlength="100"
-            bind:value={newLayer}
-          /><button disabled={doc.layers.length >= 32 || !pageId}
-            >Add layer</button
-          >
-        </form>
-      </details>
-      <details class="imports"><summary>Import & export</summary>
-      <div class="export-actions">
-        <label class="file-button"
-          >Import image / PDF<input
-            type="file"
-            accept="image/png,image/jpeg,image/webp,application/pdf"
-            disabled={!pageId || busy}
-            onchange={importReference}
-          /></label
-        ><label class="check"
-          ><input type="checkbox" bind:checked={restoreNotebook} />Restore
-          original notebook & links in a new notebook</label
-        ><label class="file-button"
-          >Restore JSON page<input
-            type="file"
-            accept="application/json,.json"
-            disabled={(!restoreNotebook && !notebookId) || busy}
-            onchange={importPage}
-          /></label
-        ><button disabled={!pageId || busy} onclick={() => exportPage("json")}
-          >Export portable JSON</button
-        ><button disabled={!pageId || busy} onclick={() => exportPage("svg")}
-          >Export SVG</button
-        ><button disabled={!pageId || busy} onclick={() => exportPage("png")}
-          >Export PNG</button
-        ><span class="muted"
-          >PDF: up to 20 pages, rasterized locally for safe annotation. PNG
-          export bounded to 4096 px.</span
-        >
-      </div>
-      </details>
       </div>
       </div>
     </div>
   </div>
 </section>
-{#if pageMenu}<div class="note-page-menu" role="menu" style:left={`${Math.min(pageMenu.x,window.innerWidth-180)}px`} style:top={`${Math.min(pageMenu.y,window.innerHeight-70)}px`}><button role="menuitem" onclick={()=>pageMenu&&void deletePageById(pageMenu.id)}>Delete page…</button><button role="menuitem" onclick={()=>pageMenu=null}>Cancel</button></div>{/if}
+{#if pageMenu}<div class="note-page-menu" role="menu" style:left={`${Math.min(pageMenu.x,window.innerWidth-180)}px`} style:top={`${Math.min(pageMenu.y,window.innerHeight-70)}px`}><button class="button" role="menuitem" onclick={()=>pageMenu&&void deletePageById(pageMenu.id)}>Delete page…</button><button class="button" role="menuitem" onclick={()=>pageMenu=null}>Cancel</button></div>{/if}
+{#if importOpen}
+  <EditDrawer title="Import PDF or Markdown" meta={activeNotebook?.title ?? ""} onclose={() => (importOpen = false)}>
+    <DocumentImport {notebookId} onimport={id=>{importOpen=false;void loadIndex().then(()=>openBlock(id));}}/>
+    {#if originals.length}
+      <div class="drawer-group">
+        <span class="eyebrow">Originals</span>
+        {#each originals as original}<a href={`/api/documents/originals/${original.id}`} download>{original.name}</a>{/each}
+      </div>
+    {/if}
+  </EditDrawer>
+{/if}
+{#if privacyOpen}
+  <EditDrawer title="Privacy & storage" onclose={() => (privacyOpen = false)}>
+    <div class="drawer-group">
+      <label class="drawer-check" title="Only text you select is ever sent; whole notebooks never are"><input type="checkbox" bind:checked={prefs.allow_ai} />Allow selected-text AI sharing</label>
+      <label class="drawer-field" title="0 removes unused references as soon as you clean up">Unused reference retention (days)<input type="number" min="0" max="3650" bind:value={prefs.retention_days} /></label>
+    </div>
+    <div class="drawer-group">
+      <p class="drawer-note">Deletes unused image and PDF copies older than the retention.</p>
+      <div class="drawer-row"><button class="button" onclick={cleanup}>Clean unused references</button>{#if cleanupResult}<span class="drawer-result" role="status">{cleanupResult}</span>{/if}</div>
+    </div>
+    {#snippet footer()}<button class="button" onclick={() => void savePrivacy()}>Save</button>{/snippet}
+  </EditDrawer>
+{/if}
+{#if layersOpen}
+  <EditDrawer title="Layers" meta="Drawn bottom to top" onclose={() => (layersOpen = false)}>
+    <div class="drawer-group">
+      {#each doc.layers as layer, i (layer.id)}<div class="layer-row">
+          <input
+            type="radio"
+            name={`${pane.id}-notes-layer`}
+            aria-label={`Draw on ${layer.name}`}
+            title="Draw on this layer"
+            checked={layerId === layer.id}
+            onchange={() => (layerId = layer.id)}
+          /><input
+            aria-label="Layer name"
+            maxlength="100"
+            value={layer.name}
+            onchange={(e) =>
+              patchLayer(layer.id, { name: e.currentTarget.value })}
+          /><label class="drawer-check" title="Hidden layers are left out of exports"
+            ><input
+              type="checkbox"
+              checked={layer.visible}
+              onchange={(e) =>
+                patchLayer(layer.id, { visible: e.currentTarget.checked })}
+            />Show</label
+          ><label class="drawer-check" title="Locked layers cannot be drawn on, moved or erased"
+            ><input
+              type="checkbox"
+              checked={layer.locked}
+              onchange={(e) =>
+                patchLayer(layer.id, { locked: e.currentTarget.checked })}
+            />Lock</label
+          ><button class="icon-button" aria-label={`Lower ${layer.name}`} title="Lower"
+            disabled={i === 0}
+            onclick={() => reorderLayer(layer.id, -1)}>↓</button
+          ><button class="icon-button" aria-label={`Raise ${layer.name}`} title="Raise"
+            disabled={i === doc.layers.length - 1}
+            onclick={() => reorderLayer(layer.id, 1)}>↑</button
+          >
+        </div>{/each}
+    </div>
+    <form
+      class="drawer-row"
+      onsubmit={(e) => {
+        e.preventDefault();
+        if (doc.layers.length >= 32) return;
+        const id = uid();
+        commit({
+          ...doc,
+          layers: [
+            ...doc.layers,
+            {
+              id,
+              name: newLayer || "New layer",
+              visible: true,
+              locked: false,
+            },
+          ],
+        });
+        layerId = id;
+        newLayer = "";
+      }}
+    >
+      <input
+        aria-label="New layer name"
+        placeholder="New layer"
+        maxlength="100"
+        bind:value={newLayer}
+      /><button class="button" disabled={doc.layers.length >= 32 || !pageId}
+        >Add layer</button
+      >
+    </form>
+  </EditDrawer>
+{/if}
 
 <style>
-  .note-tabs{display:flex;overflow:auto;gap:2px;padding:6px 8px 0;background:var(--chrome);border-bottom:1px solid var(--border)}
-  .note-tab{display:flex;flex-shrink:0;border:1px solid transparent;border-radius:6px 6px 0 0;font-size:12px;color:var(--muted)}
-  .note-tab.active{background:var(--surface);border-color:var(--border);color:var(--ink)}
-  .note-tab button,.note-mode button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:8px}
-  .note-tab button:first-child{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .note-mode{display:flex;align-items:center;background:var(--chrome);border-radius:5px}
-  .note-mode :global(button[aria-pressed="true"]){background:var(--surface-raised);color:var(--accent)}
-  .note-import{padding:12px 24px;border-top:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap}
-  .note-page-menu{position:fixed;z-index:90;background:var(--surface);border:1px solid var(--border);box-shadow:0 8px 20px #0003;padding:8px;display:flex;gap:8px}
-  .canvas-panel[hidden]{display:none}
-  .notes-heading .note-tabs{flex:1 1 auto;min-width:0;padding:0;background:none;border:0;align-items:center}
-  .notes-heading .note-tab{border-radius:6px}
-  .notes-heading .note-tab button{padding:6px 8px}
-  .focus-tab-dock{position:absolute;inset:0 180px auto 0;height:20px;z-index:5}
-  .focus-tab-strip{transform:translateY(calc(-100% - 2px));opacity:0;transition:transform .16s ease,opacity .16s ease;pointer-events:none;background:var(--chrome);box-shadow:0 4px 18px #0003}
-  .focus-tab-dock:hover .focus-tab-strip,.focus-tab-dock:focus-within .focus-tab-strip,.focus-tab-dock.revealed .focus-tab-strip{transform:translateY(0);opacity:1;pointer-events:auto}
-  .focus-tab-handle{position:absolute;top:0;left:50%;transform:translateX(-50%);font-size:10px!important;padding:2px 12px!important;border-radius:0 0 7px 7px!important;white-space:nowrap}
-  .focus-tab-dock:hover .focus-tab-handle,.focus-tab-dock:focus-within .focus-tab-handle,.focus-tab-dock.revealed .focus-tab-handle{opacity:0}
-  .focus-tab-strip .note-tabs{padding:5px;min-height:40px;align-items:center;border:0}
-  .concept-inspector{position:absolute;right:16px;top:16px;z-index:2;width:min(270px,calc(100% - 60px));padding:12px;box-sizing:border-box;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:0 6px 24px #0002;display:grid;gap:10px}
-  .canvas-stage:fullscreen .concept-inspector{top:118px}
-  .concept-inspector textarea{width:100%;box-sizing:border-box;resize:vertical;max-height:25vh}
-  .concept-actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
-  .concept-actions :global(details.color-menu){border:0;padding:0}
-  .mindmap-hint{font-size:12px;line-height:1.6;color:var(--muted);margin:8px 0}
-  .note-tabs :global(.br-btn){white-space:nowrap;flex-shrink:0}
-  @media(prefers-reduced-motion:reduce){.focus-tab-strip{transition:none}}
+  /* Q2: the workspace is one surface; header, page and stage are split by hairlines only. */
   .notes-workspace {
     background: var(--surface);
     color: var(--ink);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-panel);
+    /* clip, not hidden: hidden would make this the sticky outline's scroll container. */
+    overflow: clip;
     display: flex;
     flex-direction: column;
-    min-height: 720px;
   }
+  /* Q17: one row. ☰, the open pages, then the page mode, Find and ⋯ on the right. */
   .notes-heading {
     display: flex;
     align-items: center;
-    gap: 8px;
-    min-height: 44px;
-    padding: 4px 10px;
+    gap: 6px;
+    height: 44px;
+    padding: 0 10px 0 8px;
     box-sizing: border-box;
-    background: var(--chrome);
+    border-bottom: 1px solid var(--hairline);
   }
-  .notes-heading h2 { margin: 0; font-size: 18px; flex-shrink: 0; }
-  .save-status { font-size: 11px; color: var(--muted); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
-  .unsaved {
-    color: var(--warning);
-  }
-  .notebook-layout {
-    display: grid;
-    grid-template-columns: 255px minmax(0, 1fr);
-    border-top: 1px solid var(--border);
-    flex: 1;
-    min-height: 0;
-  }
-  .sidebar-hidden .notebook-layout { grid-template-columns: minmax(0, 1fr); }
-  .sidebar-hidden .notebook-sidebar { display: none; }
+  .notes-heading > :global(*) { flex-shrink: 0; }
+  .notes-heading .note-tabs { flex: 1 1 auto; }
+  .library-toggle[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+  :global(.kitty-popover.notes-find) { width: 260px; padding: 8px; }
+  .find-field { width: 100%; box-sizing: border-box; }
+
+  /* Q43: the open pages as pill tabs on the control line. */
+  .note-tabs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .note-tab { display: flex; align-items: center; flex-shrink: 0; max-width: 200px; height: var(--control-h); padding: 0 4px 0 12px; box-sizing: border-box; border-radius: var(--r-control); font-size: var(--fs-control); color: var(--muted); }
+  .note-tab:hover { background: var(--wash); color: var(--ink); }
+  .note-tab.active { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+  .note-tab > button:first-child { display: flex; align-items: center; gap: 7px; min-width: 0; height: 100%; padding: 0; background: none; color: inherit; font: inherit; }
+  .note-tab > button:first-child span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .tab-close { display: grid; place-items: center; width: 20px; height: 20px; margin-left: 4px; padding: 0; border-radius: var(--r-control); background: none; color: var(--subtle); opacity: 0; }
+  .note-tab:hover .tab-close, .note-tab.active .tab-close, .tab-close:focus-visible { opacity: 1; }
+  .tab-close:hover { background: var(--wash); color: var(--ink); }
+  .note-tabs .tab-new { flex-shrink: 0; margin-left: 2px; }
+  .note-page-menu { position: fixed; z-index: 90; display: flex; gap: 8px; padding: 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r-menu); box-shadow: var(--overlay-shadow); }
+
+  .op-status { margin: 6px 14px 0; color: var(--muted); font-size: 12px; }
+  .error-banner { display: flex; align-items: center; gap: 8px; margin: 8px 12px 0; padding: 6px 6px 6px 12px; border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent); border-radius: var(--r-field); color: var(--warning); font-size: 12.5px; overflow-wrap: anywhere; }
+  .error-banner > span { flex: 1; }
+
+  /* The canvas and map fill the window above the dock under whatever sits above the page (fitHeight). */
+  .notebook-layout { --stage-h: var(--fit-h, 480px); position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .notebook-layout > .canvas-main { flex: 1; }
+  /* Q43: the library slides over the page instead of taking a column. */
+  .library-scrim { position: absolute; inset: 0; z-index: 20; padding: 0; border: 0; cursor: default; background: color-mix(in srgb, var(--shadow-tint) 40%, transparent); }
   .notebook-sidebar {
-    padding: 18px 12px;
-    border-right: 1px solid var(--border);
-    background: var(--chrome);
+    position: absolute;
+    z-index: 21;
+    top: 8px;
+    left: 8px;
+    width: min(280px, calc(100% - 32px));
+    max-height: min(calc(100% - 16px), 82vh);
+    box-sizing: border-box;
+    padding: 14px 12px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-panel);
+    background: color-mix(in srgb, var(--solid-panel) 88%, transparent);
+    backdrop-filter: var(--glass);
+    -webkit-backdrop-filter: var(--glass);
+    box-shadow: var(--overlay-shadow);
     display: flex;
     flex-direction: column;
     gap: 18px;
-    min-height: 0;
     overflow: auto;
+    scrollbar-width: thin;
+    animation: library-slide 180ms ease-out;
   }
+  .notebook-sidebar[hidden] { display: none; }
+  @keyframes library-slide { from { transform: translateX(-14px); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .notebook-sidebar { animation: none; } }
   .notebook-sidebar > :global(*) { flex-shrink: 0; }
-  .canvas-main {
-    position: relative;
-    min-width: 0;
+  .wiki-link { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+  .wiki-link label { font-size: 12px; color: var(--muted); }
+  .wiki-links, .wiki-suggestions { display: flex; gap: 5px; flex-wrap: wrap; }
+
+  .canvas-main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .editor-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .editor-shell[hidden], .writing-view[hidden], .canvas-panel[hidden] { display: none; }
+  /* The Mirror pane (Q11) sits beside the blocks: the column takes the room it needs. */
+  .writing.mirror-open .page-column { max-width: none; }
+  .mirror-toggle { position: relative; }
+  .mirror-live { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+
+  /* Write: the title is the page's H1 with a small meta line, then the blocks. The column
+     reserves room for the floating outline instead of running under it. */
+  .writing { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .writing.toc-open { grid-template-columns: minmax(0, 1fr) auto; }
+  .page-column { min-width: 0; max-width: 780px; padding: 20px 24px 32px; box-sizing: border-box; }
+  .page-meta { margin: 0 0 4px; color: var(--subtle); font: 600 var(--fs-label) / 1.3 var(--font-ui); }
+  .page-h1 { margin: 0 0 12px; }
+  /* Outranks the global themed field (:root body :is(input…)). */
+  :global(:root body) .notes-workspace .page-h1 .title-input {
+    display: block;
+    width: 100%;
+    height: auto;
     min-height: 0;
-    padding: 8px 12px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .notes-workspace details.overflow { position: relative; flex-shrink: 0; padding: 0; border: 0; }
-  .notes-workspace .overflow > summary {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    list-style: none;
-    padding: 6px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 1.3;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-  .overflow > summary::-webkit-details-marker { display: none; }
-  .overflow[open] > summary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
-  .overflow-menu {
-    position: absolute; right: 0; top: calc(100% + 6px); z-index: 10;
-    display: grid; gap: 8px; padding: 10px; min-width: 160px; max-width: min(320px, 80vw);
-    background: color-mix(in srgb, var(--solid-void, #141414) 78%, var(--surface)); border: 1px solid var(--border); border-radius: 8px;
-    box-shadow: 0 8px 24px #0004;
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
-  }
-  .page-actions .overflow-menu { width: 280px; }
-  .overflow-menu .help { margin: 0; }
-  .tools,
-  .canvas-controls,
-  .selection-actions,
-  .export-actions,
-  .layer-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .page-bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .page-bar .note-mode { flex-shrink: 0; }
-  .page-bar .page-title { flex: 1 1 180px; min-width: 80px; }
-  .page-bar > button { flex-shrink: 0; }
-  .mirror-live { display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
-  .tools {
-    padding: 5px;
-    background: var(--chrome);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    gap: 2px;
-  }
-  .tools :global(.br-btn) { min-height: 31px; font-size: 11px; padding: 5px 8px; }
-  .tools :global(.br-btn[aria-pressed="true"]) {
-    background: color-mix(in srgb, var(--accent) 20%, var(--surface));
-    border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-    color: var(--accent);
-  }
-  .canvas-controls button,
-  .selection-actions button,
-  .export-actions button,
-  .layer-row button {
-    font-size: 12px;
-  }
-  .canvas-controls label {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-  }
-  .canvas-controls input[type="number"] {
-    width: 65px;
-  }
-  .canvas-controls input[type="range"] {
-    width: 80px;
-  }
-  .canvas-stage {
-    position: relative;
-    height: clamp(420px, 65vh, 900px);
-    min-width: 0;
-    overflow: hidden;
-    background: var(--canvas);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-  }
-  .canvas-stage:fullscreen {
-    width: 100vw;
-    height: 100dvh;
-    min-width: 0;
-    min-height: 0;
+    padding: 0;
     border: 0;
     border-radius: 0;
-    background: var(--canvas);
+    background: transparent;
+    box-shadow: none;
     color: var(--ink);
+    font: inherit;
+    letter-spacing: inherit;
   }
-  .focus-tools {
-    position: absolute;
-    top: 56px;
-    left: 12px;
-    right: 190px;
-    z-index: 2;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 5px;
-    width: fit-content;
-    max-width: calc(100% - 202px);
-    padding: 6px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--chrome);
-    box-shadow: 0 4px 18px #0003;
-  }
-  .focus-tools .focus-width { display: flex; flex-direction: row; align-items: center; gap: 4px; }
-  .focus-width input { width: 65px; }
-  .focus-tools :global(details.color-menu) { padding: 0; border: 0; }
-  .focus-save { font-size: 11px; color: var(--muted); max-width: 130px; }
-  .notes-workspace .focus-exit {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    z-index: 3;
-    min-height: 40px;
-    box-shadow: 0 4px 18px #0003;
-  }
-  .focus-error { position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 2; padding: 8px; background: var(--surface); color: var(--danger, var(--ink)); }
-  @media (max-width: 700px) {
-    .focus-save, .focus-width { display: none !important; }
-    .focus-tools { right: 12px; max-width: calc(100% - 24px); }
-  }
-  .canvas-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap:wrap; }
-  .page-bar .page-title { font-size: 16px; font-weight: 550; background: transparent; }
-  .selection-actions { padding: 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--chrome); }
-  .export-actions { padding: 12px 0 0; }
-  .canvas-stage canvas {
-    display: block;
-    touch-action: none;
-    cursor: crosshair;
-    outline-offset: -3px;
-  }
-  .canvas-empty {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-  }
-  .canvas-hint {
-    font-size: 12px;
-    color: var(--muted);
-    margin: 0;
-  }
-  .notes-workspace label {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .notes-workspace label.check {
-    flex-direction: row;
-    align-items: center;
-    gap: 6px;
-  }
-  .notes-workspace input,
-  .notes-workspace select,
-  .notes-workspace textarea {
-    color: var(--ink);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 7px;
-    min-width: 0;
-  }
-  .notes-workspace button,
-  .file-button {
-    border: 1px solid var(--border);
-    background: var(--surface-raised);
-    color: var(--ink);
-    border-radius: 6px;
-    padding: 7px 10px;
-    cursor: pointer;
-  }
-  .notes-workspace button:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-  .notes-workspace details {
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: 7px;
-  }
-  .notes-workspace summary {
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .notes-workspace form {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 12px;
-  }
-  .layer-row {
-    padding: 7px 0;
-  }
-  .layer-row > input:not([type]) {
-    flex: 1;
-  }
-  .layer-row input[type="radio"] {
-    width: auto;
-  }
-  .layers form {
-    flex-direction: row;
-  }
-  .text-outline,
-  .ai-review {
-    padding: 16px;
-    background: var(--surface-raised);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-  }
-  .text-outline article {
-    padding: 10px 0;
-    border-top: 1px solid var(--border);
-    display: grid;
-    gap: 8px;
-  }
-  .text-outline textarea {
-    width: 100%;
-    box-sizing: border-box;
-    resize: vertical;
-  }
-  .ai-review pre {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    max-height: 350px;
-    overflow: auto;
-    font-family: inherit;
-    background: var(--surface);
-    padding: 10px;
-  }
-  .file-button {
-    position: relative;
-    overflow: hidden;
-    display: inline-flex !important;
-    font-size: 12px !important;
-  }
-  .file-button input {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    cursor: pointer;
-    width: 100%;
-  }
-  .error-banner {
-    margin: 0 14px 12px;
-    padding: 10px;
-    border: 1px solid var(--warning);
-    background: var(--surface-raised);
-    color: var(--warning);
-    overflow-wrap: anywhere;
-  }
-  .error-banner button {
-    margin-left: 8px;
-  }
-  .muted {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.5;
-  }
-  @media (max-width: 1000px) {
-    .notebook-layout {
-      grid-template-columns: 180px minmax(0, 1fr);
-    }
-    /* Keep the page title readable beside the mode switch at the 760px minimum. */
-    .page-bar { gap: 4px; }
-    .notes-workspace .note-mode :global(.br-btn) { padding-inline: 6px; letter-spacing: 0.02em; }
-    .page-bar .page-title { font-size: 15px; }
-    .notes-workspace .overflow > summary { padding-inline: 8px; }
-    .notes-workspace .page-bar > button { padding-inline: 8px; }
-  }
+  .title-input::placeholder { color: var(--subtle); }
+  :global(:root body) .notes-workspace .page-h1 .title-input:focus-visible { outline: none; box-shadow: 0 1px 0 var(--accent); }
+  .page-toc { position: sticky; top: 12px; z-index: 3; display: grid; gap: 1px; width: 196px; margin: 14px 12px 0 0; padding: 10px; box-sizing: border-box; border: 1px solid var(--hairline); border-radius: var(--r-menu); background: color-mix(in srgb, var(--solid-raised) 55%, transparent); backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass); box-shadow: 0 14px 40px -18px color-mix(in srgb, var(--shadow-tint) 70%, transparent); }
+  /* Collapsed, the outline is a small pill that rides the bottom-right corner instead of taking a column. */
+  .page-toc:not(.open) { top: auto; bottom: 12px; justify-self: end; width: auto; margin: 0 12px 12px 0; padding: 4px 6px; border-radius: var(--r-control); }
+  .page-toc button { box-sizing: border-box; font: inherit; background: none; border: 0; cursor: pointer; }
+  .toc-head { padding: 2px 8px 4px; text-align: left; color: var(--muted); }
+  .page-toc:not(.open) .toc-head { padding: 2px 6px; }
+  .toc-head::after { content: " ▾"; font-size: 9px; }
+  .page-toc:not(.open) .toc-head::after { content: " ▸"; }
+  .toc-head:hover { color: var(--ink); }
+  .page-toc ol { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+  .page-toc li { min-width: 0; }
+  .page-toc li button { position: relative; display: block; width: 100%; padding: 4px 8px 4px 14px; border-radius: var(--r-item); font-size: 12.5px; text-align: left; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .page-toc li button::before { content: ""; position: absolute; left: 4px; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: var(--hairline); }
+  .page-toc li button:hover { color: var(--ink); }
+  .page-toc li button.on { color: var(--ink); background: var(--wash); }
+  .page-toc li button.on::before { background: var(--accent); }
+  .toc-words { margin-top: 6px; padding: 6px 8px 0; border-top: 1px solid var(--hairline); color: var(--subtle); font: 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+
+  /* Map (Q19): the one mind-map editor, full-bleed in the stage. */
+  .map-stage { display: flex; flex-direction: column; height: var(--stage-h); min-height: 0; overflow: hidden; }
+  .map-stage > :global(*) { flex: 1; min-height: 0; }
+
+  /* Canvas: the stage fills the window above the dock; the tools float in its bottom pill. */
+  .canvas-stage { position: relative; height: var(--stage-h); min-width: 0; overflow: hidden; background: var(--solid-void); }
+  .canvas-stage:fullscreen { width: 100vw; height: 100dvh; min-width: 0; min-height: 0; background: var(--solid-void); color: var(--ink); }
+  .canvas-stage canvas { display: block; touch-action: none; cursor: crosshair; outline-offset: -3px; }
+  .canvas-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+  .stroke-dot { display: block; border-radius: 50%; background: currentColor; }
+  .zoom-row { flex-wrap: nowrap; column-gap: 4px; }
+  .pill-range :global(.select-trigger) { min-width: 110px; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .restore-check { padding: 0 8px; }
+  .file-button { position: relative; overflow: hidden; }
+  .file-button input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+  .focus-tab-dock { position: absolute; inset: 0 180px auto 0; height: 20px; z-index: 5; }
+  .focus-tab-strip { transform: translateY(calc(-100% - 2px)); opacity: 0; transition: transform 0.16s ease, opacity 0.16s ease; pointer-events: none; background: var(--chrome); box-shadow: 0 4px 18px #0003; }
+  .focus-tab-dock:hover .focus-tab-strip, .focus-tab-dock:focus-within .focus-tab-strip, .focus-tab-dock.revealed .focus-tab-strip { transform: translateY(0); opacity: 1; pointer-events: auto; }
+  .focus-tab-handle { position: absolute; top: 0; left: 50%; transform: translateX(-50%); padding: 2px 12px; border-radius: 0 0 7px 7px; background: var(--chrome); color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .focus-tab-dock:hover .focus-tab-handle, .focus-tab-dock:focus-within .focus-tab-handle, .focus-tab-dock.revealed .focus-tab-handle { opacity: 0; }
+  .focus-tab-strip .note-tabs { padding: 5px; min-height: 40px; }
+  @media (prefers-reduced-motion: reduce) { .focus-tab-strip { transition: none; } }
+  .focus-corner { position: absolute; top: 12px; right: 12px; z-index: 3; display: grid; grid-template-columns: auto auto; justify-items: end; align-items: center; gap: 6px 8px; }
+  .focus-exit { grid-column: 1 / -1; box-shadow: 0 4px 18px #0003; }
+  .focus-save { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+  .focus-error { position: absolute; bottom: 64px; left: 12px; right: 12px; z-index: 2; padding: 8px; background: var(--surface); color: var(--danger, var(--ink)); }
+  @media (max-width: 700px) { .focus-save { display: none; } }
+
+  /* Under the stage: selection actions, AI review and the text outline, split by hairlines. */
+  .selection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--hairline); }
+  .text-outline, .ai-review { padding: 12px 16px; border-top: 1px solid var(--hairline); }
+  .text-outline h3, .ai-review h3 { margin: 0 0 8px; font-size: var(--fs-subheading); }
+  .text-outline article { display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--hairline); }
+  .text-outline textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+  .outline-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ai-review pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 350px; overflow: auto; font-family: inherit; padding: 10px; }
+  .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+  /* Drawers (Q8): import, privacy and layers. */
+  .drawer-group { display: grid; gap: 10px; padding-bottom: 14px; }
+  .drawer-group + .drawer-group { padding-top: 14px; border-top: 1px solid var(--hairline); }
+  .drawer-group a { font-size: 12.5px; }
+  .drawer-field { display: grid; gap: 5px; font-size: 12px; color: var(--muted); }
+  .drawer-check { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink); }
+  .drawer-note { margin: 0; font-size: 12px; color: var(--muted); }
+  .drawer-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .drawer-row > input { flex: 1; min-width: 0; }
+  .drawer-result { font-size: 12px; color: var(--muted); }
+  .layer-row { display: flex; align-items: center; gap: 6px; }
+  .layer-row > input:not([type]) { flex: 1; min-width: 0; }
+  .layer-row input[type="radio"] { width: auto; }
+
   @media (max-width: 720px) {
-    .notebook-layout {
-      grid-template-columns: 1fr;
-    }
-    .notebook-sidebar {
-      border-right: 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .notes-heading { flex-wrap: wrap; }
-    .notes-heading .note-tabs { order: 1; flex-basis: 100%; }
-    .canvas-stage {
-      height: 480px;
-    }
-    .page-bar { flex-wrap: wrap; }
-    .save-status { display: none; }
-    .notebook-sidebar { max-height: 42vh; }
+    .writing { grid-template-columns: minmax(0, 1fr); }
+    .page-toc { position: static; order: -1; width: auto; margin: 8px 12px 0; }
+    .page-column { padding-inline: 16px; }
   }
-  .editor-shell {display:flex;flex-direction:column;gap:8px;min-height:0;flex:1}
-  .editor-shell[hidden]{display:none}
-  .wiki-link {display:grid;gap:6px;border-top:1px solid var(--border);padding-top:12px}
-  .wiki-link label{font-size:12px;color:var(--muted)}
-  .tools{align-self:center;border-radius:14px;padding:6px;box-shadow:0 5px 20px color-mix(in srgb,var(--ink) 5%,transparent)}
-  .tools :global(.br-btn){font-size:20px;min-width:38px;min-height:36px}
-  .shape-menu,.stroke-options,.canvas-options{position:relative;border:0!important;padding:0!important}
-  .shape-menu summary,.stroke-options summary,.canvas-options summary{padding:8px;cursor:pointer;font-size:12px}
-  .shape-menu>div,.stroke-options[open]>label{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px}
-  .shape-menu>div{position:absolute;top:100%;z-index:12;display:grid;min-width:140px;box-shadow:0 10px 30px color-mix(in srgb,var(--ink) 12%,transparent)}
-  .canvas-options[open]{width:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px!important;background:var(--chrome)}
-  .page-bar>input[type=search]{flex:0 4 150px;min-width:56px;font-size:12px}
-  .wiki-links,.wiki-suggestions{display:flex;gap:5px;flex-wrap:wrap}
 </style>

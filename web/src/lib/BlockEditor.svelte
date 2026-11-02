@@ -3,6 +3,8 @@
   export type PageRef = { page: string } | { type: "page" | "document" | "quick_note"; number: number };
   /** What a block drag carries, so other drop targets (the Notes sidebar, page tabs) can take blocks. */
   export const BLOCK_DRAG_TYPE = "application/x-kitty-block-drag";
+  /** One text-flow block as a page outline sees it: reading order, collapsed children included, top-level blocks have no parent. */
+  export type OutlineBlock = { id: string; type: string; text: string; parent_id: string | null };
   const CLIPBOARD_TYPE = "application/x-kitty-blocks";
   export const BLOCK_TYPES: { type: string; label: string; hint: string; keywords: string }[] = [
     { type: "text", label: "Text", hint: "", keywords: "paragraph plain" },
@@ -43,7 +45,7 @@
 
   let {
     target, label = "Page blocks", pages = [], extras, focusBlock = "",
-    onrevision, onerror, onopenpage, oncreatepage, ontag,
+    onrevision, onerror, onopenpage, oncreatepage, ontag, onblocks,
   }: {
     target: PageRef;
     label?: string;
@@ -60,6 +62,8 @@
     oncreatepage?: () => Promise<{ page: string; title: string } | null>;
     /** Open a tag's page (a tag chip under a block was clicked). */
     ontag?: (tagId: string) => void;
+    /** The page's text-flow blocks after every change, for outlines beside the editor (Notes' "On this page"). */
+    onblocks?: (blocks: OutlineBlock[]) => void;
   } = $props();
 
   let root = $state<HTMLDivElement>();
@@ -266,6 +270,23 @@
   $effect(() => {
     const id = focusBlock;
     if (id && sync) untrack(() => void reveal(id));
+  });
+
+  // Outlines beside the editor follow every local and pushed change.
+  $effect(() => {
+    void version;
+    const current = sync;
+    if (!current || !onblocks) return;
+    const list: OutlineBlock[] = [];
+    const walk = (parent: string) => {
+      for (const block of current.local.children(parent)) {
+        if (!isTextType(block.type)) continue;
+        list.push({ id: block.id, type: block.type, text: block.text, parent_id: parent === current.pageId ? null : parent });
+        walk(block.id);
+      }
+    };
+    walk(current.pageId);
+    untrack(() => onblocks(list));
   });
 
   async function reveal(id: string) {

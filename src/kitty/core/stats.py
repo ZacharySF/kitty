@@ -72,6 +72,57 @@ def streak_days(conn: sqlite3.Connection, *, today: date | None = None) -> int:
     return streak
 
 
+_ADVANCED = frozenset({"oa", "interview", "offer"})
+_REPLIES = _ADVANCED | {"rejected"}
+
+
+def report_summary(conn: sqlite3.Connection, *, today: date | None = None, weeks: int = 8) -> dict:
+    """The figures behind the Reports narrative card: this week and this month so far.
+
+    `weeks` counts applications per Monday-start week, oldest first, ending with this
+    week. Replies, advances and offers count distinct applications with a confirmed,
+    not-undone status change inside the period. Days are UTC dates, like streak_days.
+    """
+    day = today or now().date()
+    monday = day - timedelta(days=day.weekday())
+    first = monday - timedelta(weeks=weeks - 1)
+    month = day.replace(day=1)
+    previous = (month - timedelta(days=1)).replace(day=1)
+    applied = [parsed.date() for row in conn.execute("SELECT applied_at FROM applications")
+               if (parsed := parse(row["applied_at"])) is not None and parsed.date() <= day]
+    per_week = [0] * weeks
+    for when in applied:
+        if when >= first:
+            per_week[(when - first).days // 7] += 1
+    events = [(row["application_id"], row["to_status"], parsed.date()) for row in conn.execute(
+        """
+        SELECT application_id, to_status, occurred_at FROM status_events
+         WHERE state = 'confirmed' AND undoes_event_id IS NULL
+           AND id NOT IN (SELECT undoes_event_id FROM status_events WHERE undoes_event_id IS NOT NULL)
+        """
+    ) if (parsed := parse(row["occurred_at"])) is not None]
+
+    def period(start: date) -> dict:
+        inside = [(app, status) for app, status, when in events if start <= when <= day]
+        return {
+            "start": start.isoformat(),
+            "applied": sum(1 for when in applied if when >= start),
+            "replies": len({app for app, status in inside if status in _REPLIES}),
+            "advanced": len({app for app, status in inside if status in _ADVANCED}),
+            "offers": len({app for app, status in inside if status == "offer"}),
+        }
+
+    return {
+        "weeks": [{"start": (first + timedelta(weeks=index)).isoformat(), "applied": count}
+                  for index, count in enumerate(per_week)],
+        "weekly_total": per_week[-1],
+        "weekly_target": sum(tracks_core.weekly_targets(conn).values()),
+        "streak_days": streak_days(conn, today=day),
+        "week": period(monday),
+        "month": {**period(month), "previous_applied": sum(1 for when in applied if previous <= when < month)},
+    }
+
+
 def counts_by_queue_state(conn: sqlite3.Connection) -> dict[str, int]:
     """How many open jobs sit in each queue state (drives the Inbox badge)."""
     return {

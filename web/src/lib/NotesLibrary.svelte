@@ -8,6 +8,8 @@
   import { untrack } from "svelte";
   import { Button } from "@nunera/bracket";
   import { api } from "./api";
+  import Select from "./ui/Select.svelte";
+  import Popover from "./ui/Popover.svelte";
   import { BLOCK_DRAG_TYPE } from "./BlockEditor.svelte";
   let { folders, notebooks, pages, notebookId, pageId, search, folderFocus = null, busy = false, onsearch, onrefresh, onopenpage, onselectnotebook, onnewpage, onbeforeswitch, onerror, ondeletepage, onblocksdrop }: {
     folders: Folder[]; notebooks: Notebook[]; pages: PageSummary[];
@@ -27,6 +29,8 @@
   let blockTarget = $state(0);
   let tags=$state<{page_id:number;title:string;text:string;tags:string[]}[]>([]);
   let pageMenu=$state<{id:number;x:number;y:number}|null>(null);
+  let recentOpen=$state(false),tagsOpen=$state(false);
+  function openListed(id:number){recentOpen=false;tagsOpen=false;void onopenpage(id);}
   async function drop(event:DragEvent,kind:"pages"|"notebooks"|"folders",id:number) {
     event.preventDefault();
     if(!dragged||dragged.kind!==kind||dragged.id===id)return;
@@ -175,9 +179,19 @@
     <Button variant="ghost" size="sm" onclick={() => begin("folder")} disabled={saving}>＋ Folder</Button>
     <Button variant="ghost" size="sm" onclick={() => begin("notebook")} disabled={saving}>＋ Notebook</Button>
   </div>
-  {#if pages.some(page=>page.favorite)}<details open><summary>Favorites</summary>{#each pages.filter(page=>page.favorite) as page}<button class="tree-item" onclick={()=>void onopenpage(page.id)}>★ {page.title}</button>{/each}</details>{/if}
-  {#if pages.some(page=>page.last_opened)}<details><summary>Recent</summary>{#each [...pages].filter(page=>page.last_opened).sort((a,b)=>(b.last_opened||"").localeCompare(a.last_opened||"")).slice(0,6) as page}<button class="tree-item" onclick={()=>void onopenpage(page.id)}>{page.title}</button>{/each}</details>{/if}
-  <details ontoggle={event=>{if(event.currentTarget.open)void loadTags();}}><summary>Tags</summary>{#each tags as tag}<button class="tree-item" title={tag.text} onclick={()=>void onopenpage(tag.page_id)}>{tag.tags.join(" · ")} · {tag.title}</button>{:else}<small>No tagged notes</small>{/each}</details>
+  <div class="library-actions">
+    {#if pages.some(page=>page.last_opened)}
+      <Popover bind:open={recentOpen} label="Recent pages" class="library-list">
+        {#snippet trigger(props)}<button class="button" {...props}>Recent</button>{/snippet}
+        {#each [...pages].filter(page=>page.last_opened).sort((a,b)=>(b.last_opened||"").localeCompare(a.last_opened||"")).slice(0,6) as page}<button class="tree-item" onclick={()=>openListed(page.id)}>{page.title}</button>{/each}
+      </Popover>
+    {/if}
+    <Popover bind:open={tagsOpen} label="Tagged notes" class="library-list" onopen={()=>void loadTags()}>
+      {#snippet trigger(props)}<button class="button" {...props}>Tags</button>{/snippet}
+      {#each tags as tag}<button class="tree-item" title={tag.text} onclick={()=>openListed(tag.page_id)}>{tag.tags.join(" · ")} · {tag.title}</button>{:else}<small class="empty-branch">No tagged notes</small>{/each}
+    </Popover>
+  </div>
+  {#if pages.some(page=>page.favorite)}<div class="library-group"><span class="eyebrow">Favourites</span>{#each pages.filter(page=>page.favorite) as page}<button class="tree-item" onclick={()=>void onopenpage(page.id)}>★ {page.title}</button>{/each}</div>{/if}
   <button class="root-row" class:chosen={selectedFolder === null} onclick={() => selectedFolder = null}>{@render glyph("folder")}<span>My notes</span><span class="item-count">{notebooks.length}</span></button>
   <nav class="file-tree" aria-label="Folders, notebooks and pages">{@render branch(null)}</nav>
   {#if !notebooks.length && !folders.length}<div class="library-empty"><Button size="sm" onclick={() => begin("notebook")}>Create notebook</Button></div>{/if}
@@ -185,8 +199,9 @@
     <form class="library-editor" onsubmit={e => { e.preventDefault(); void save(); }}>
       <div class="editor-heading"><strong>{editId ? "Edit" : "New"} {editor}</strong><button type="button" class="row-menu" aria-label="Close library editor" onclick={() => editor = null}>×</button></div>
       <label>Name<input aria-label={`${editor === "folder" ? "Folder" : "Notebook"} name`} required maxlength="200" bind:value={name} /></label>
-      <label>{editor === "folder" ? "Parent folder" : "Folder"}<select bind:value={parentId}><option value="">My notes (root)</option>{#each folderOptions as folder}<option value={String(folder.id)}>{folderPath(folder.id)}</option>{/each}</select></label>
-      {#if editor === "notebook"}<details><summary>Subject & project links</summary><div class="link-fields"><label>Subject<input maxlength="200" bind:value={subject} placeholder="e.g. Digital systems" /></label><label>Project<input maxlength="200" bind:value={project} placeholder="Optional project" /></label></div></details>{/if}
+      <div class="field"><span>{editor === "folder" ? "Parent folder" : "Folder"}</span><Select label={editor === "folder" ? "Parent folder" : "Folder"} kind="search" bind:value={parentId}
+        options={[{ value: "", label: "My notes (root)" }, ...folderOptions.map(folder => ({ value: String(folder.id), label: folderPath(folder.id) }))]} /></div>
+      {#if editor === "notebook"}<label>Subject<input maxlength="200" bind:value={subject} placeholder="e.g. Digital systems" /></label><label>Project<input maxlength="200" bind:value={project} placeholder="Optional" /></label>{/if}
       <div class="editor-actions"><Button type="submit" size="sm" disabled={saving}>{saving ? "Saving…" : editId ? "Save changes" : `Create ${editor}`}</Button><Button type="button" variant="ghost" size="sm" onclick={() => editor = null}>Cancel</Button></div>
       {#if editor === "folder" && editId}<button class="delete-folder" type="button" disabled={saving || folders.some(f => f.parent_id === editId) || notebooks.some(n => n.folder_id === editId)} onclick={removeFolder}>Delete empty folder</button>{/if}
     </form>
@@ -226,11 +241,10 @@
   .library-empty {padding:12px 4px;color:var(--muted);font-size:12px;line-height:1.6;}
   .library-editor {padding:12px;border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;gap:12px;background:var(--surface);}
   .editor-heading {font-size:13px;}
-  .library-editor label {display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--muted);}
-  .library-editor input,.library-editor select {width:100%;min-width:0;font-size:13px;padding:8px;border-radius:5px;}
-  .library-editor select {padding-right:30px;}
-  .library-editor details {font-size:11px;}
-  .link-fields {display:grid;gap:10px;padding-top:10px;}
+  .library-editor label,.library-editor .field {display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--muted);}
+  .library-editor input {width:100%;min-width:0;font-size:13px;}
+  .library-group {display:grid;gap:2px;}
+  :global(.kitty-popover.library-list) {display:grid;gap:2px;width:240px;max-height:320px;overflow:auto;padding:6px;}
   .editor-actions {display:flex;flex-wrap:wrap;gap:5px;}
   .delete-folder {font:inherit;font-size:11px;color:var(--error);padding:5px;background:none;border:0;cursor:pointer;}
   .delete-folder:disabled {opacity:.4;cursor:not-allowed;}

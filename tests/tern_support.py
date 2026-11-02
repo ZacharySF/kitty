@@ -24,6 +24,11 @@ The fake mirrors only the Tern 0.9.8 surface kitty! uses:
   an earlier link of that ID) and says on stderr that no daemon runs; ``list`` reads the
   folder, reporting a second package with an ID as a ``duplicate id`` problem.
 
+Beside it, fake ``systemd-run --user --wait`` and ``systemctl --user stop`` stand in
+for the user's systemd manager, which runs a command as a transient service in the
+manager's own environment (``MANAGER``) plus the ``--setenv`` names; killing
+``systemd-run`` leaves the service running, as with the real one.
+
 Every invocation is appended to a JSON-lines log (argv, environment, cwd, pid) so
 tests can prove what ran, against which daemon, and that nothing outlived Quit.
 """
@@ -337,9 +342,88 @@ else:
     sys.exit(2)
 '''
 
+FAKE_SYSTEMD = r'''
+import json, os, signal, subprocess, sys, time
+LOG = {log!r}
+UNITS = {units!r}
+MANAGER = {manager!r}
+name = os.path.basename(sys.argv[0])
+argv = sys.argv[1:]
+with open(LOG, "a") as handle:
+    handle.write(json.dumps({{"argv": [name, *argv], "env": dict(os.environ), "cwd": os.getcwd(), "pid": os.getpid()}}) + "\n")
+
+def alive(pid):
+    try:
+        with open("/proc/%d/stat" % pid) as handle:
+            return handle.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return False
+
+def unit_pid(unit):
+    try:
+        with open(os.path.join(UNITS, unit)) as handle:
+            return int(handle.read())
+    except (OSError, ValueError):
+        return None
+
+if name == "systemctl":
+    if argv[:2] != ["--user", "stop"]:
+        sys.stderr.write("fake systemctl: unsupported arguments %r\n" % (argv,))
+        sys.exit(2)
+    for unit in argv[2:]:
+        pid = unit_pid(unit)
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            if pid is None or not alive(pid):
+                break
+            try:
+                os.killpg(pid, sig)
+            except ProcessLookupError:
+                break
+            deadline = time.monotonic() + 5
+            while alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.02)
+        if pid is not None and not alive(pid):
+            try:
+                os.unlink(os.path.join(UNITS, unit))
+            except FileNotFoundError:
+                pass
+    sys.exit(0)
+
+split = argv.index("--")
+options, command = argv[:split], argv[split + 1:]
+if options[:1] != ["--user"] or "--wait" not in options:
+    sys.stderr.write("fake systemd-run: unsupported options %r\n" % (options,))
+    sys.exit(2)
+unit = cwd = None
+env = dict(MANAGER)
+for option in options:
+    key, _, value = option.partition("=")
+    if key == "--unit":
+        unit = value
+    elif key == "--working-directory":
+        cwd = value
+    elif key == "--setenv":
+        variable, given, text = value.partition("=")
+        env[variable] = text if given else os.environ[variable]
+running = unit_pid(unit)
+if running is not None and alive(running):
+    sys.stderr.write("Unit %s.service was already loaded\n" % unit)
+    sys.exit(1)
+child = subprocess.Popen(command, env=env, cwd=cwd, stdin=subprocess.DEVNULL, start_new_session=True)
+with open(os.path.join(UNITS, unit), "w") as handle:
+    handle.write(str(child.pid))
+signal.signal(signal.SIGTERM, lambda *_: os._exit(143))
+status = child.wait()
+try:
+    os.unlink(os.path.join(UNITS, unit))
+except FileNotFoundError:
+    pass  # stopped by systemctl
+sys.exit(status)
+'''
+
 
 class FakeTern:
-    """An executable fake ``tern`` in its own bin directory, plus a short runtime dir."""
+    """Executable fakes of ``tern`` and the systemd tools in one bin directory, plus a short runtime dir."""
 
     def __init__(self, folder: Path):
         self.folder = folder
@@ -358,6 +442,17 @@ class FakeTern:
         self.runtime = Path(tempfile.mkdtemp(prefix="kt", dir="/tmp"))
         os.chmod(self.runtime, 0o700)
         self._daemons: list[subprocess.Popen] = []
+        # The user's systemd manager: its environment is the desktop session's, not kitty!'s
+        # (nix-ld's variables let this test's interpreter start on NixOS, as they do there).
+        self.units = folder / "systemd-units"
+        self.units.mkdir()
+        self.manager = {"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", "/"), "SYSTEMD_MANAGER_ENV": "1",
+                        **{key: os.environ[key] for key in ("NIX_LD", "NIX_LD_LIBRARY_PATH") if key in os.environ}}
+        systemd = f"#!{sys.executable}\n" + textwrap.dedent(
+            FAKE_SYSTEMD.format(log=str(self.log), units=str(self.units), manager=self.manager))
+        for tool in ("systemd-run", "systemctl"):
+            (self.bin / tool).write_text(systemd)
+            (self.bin / tool).chmod(0o755)
 
     def mode(self, value: str) -> None:
         self.mode_file.write_text(value)
@@ -391,7 +486,10 @@ class FakeTern:
                 process.wait(timeout=5)
         for item in self.invocations():
             if alive(item["pid"]):
-                os.kill(item["pid"], signal.SIGKILL)
+                try:
+                    os.kill(item["pid"], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # exited since (a systemd-run whose service just stopped)
 
 
 def listening(path: Path) -> bool:

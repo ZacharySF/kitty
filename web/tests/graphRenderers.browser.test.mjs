@@ -70,8 +70,15 @@ for (const look of ["2d", "3d"]) {
       await page.mouse.click(point.x, point.y);
       await page.waitForFunction(() => window.graphHarness.events.some(([kind]) => kind === "select"));
       assert.deepEqual((await events(page)).filter(([kind]) => kind === "select"), [["select", "view:notes"]]);
-      const rect = await call(page, "stageRect");
-      await page.mouse.move(rect.left + 3, rect.top + 3, { steps: 4 });
+      // Move to a spot on the stage that no node covers (2D cards are wide, so corners may not be empty).
+      const empty = await page.evaluate(() => {
+        const rect = window.graphHarness.stageRect();
+        for (let y = rect.top + 4; y < rect.bottom; y += 24) for (let x = rect.left + 4; x < rect.right; x += 24)
+          if (window.graphHarness.nodeAt(x, y) === null) return { x, y };
+        return null;
+      });
+      assert.ok(empty, "no empty spot on the stage");
+      await page.mouse.move(empty.x, empty.y, { steps: 4 });
       await page.waitForFunction(() => window.graphHarness.events.at(-1)?.[0] === "hover" && window.graphHarness.events.at(-1)?.[1] === null);
       await page.close();
     });
@@ -231,6 +238,114 @@ describe("look switching and preference", () => {
       return { initial, saved, stored, persisted: stub.build.ui.graph.look, refused, reverted: prefs.graphLook(), heard };
     });
     assert.deepEqual(result, { initial: "2d", saved: true, stored: "3d", persisted: "3d", refused: false, reverted: "3d", heard: ["3d", "2d", "3d"] });
+    await page.close();
+  });
+});
+
+/** Mean colour of four 40px patches in the stage corners, decoded in the page from a screenshot. */
+async function cornerColour(page) {
+  const rect = await call(page, "stageRect");
+  const shot = await page.screenshot({ clip: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } });
+  return page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height });
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const size = 40;
+    const sums = [0, 0, 0];
+    let count = 0;
+    for (const [x, y] of [[0, 0], [image.width - size, 0], [0, image.height - size], [image.width - size, image.height - size]]) {
+      const data = context.getImageData(x, y, size, size).data;
+      for (let index = 0; index < data.length; index += 4) {
+        sums[0] += data[index]; sums[1] += data[index + 1]; sums[2] += data[index + 2]; count += 1;
+      }
+    }
+    return sums.map((sum) => sum / count);
+  }, shot.toString("base64"));
+}
+
+describe("3d atmosphere", () => {
+  test("the 3D graph sits in a pastel nebula sky that follows theme changes", async () => {
+    const { page, problems } = await harness();
+    await call(page, "mount", "3d");
+    // The page behind the stage is #14111b; a transparent 3D background would show exactly that.
+    const before = await cornerColour(page);
+    const page_bg = [0x14, 0x11, 0x1b];
+    assert.ok(before.some((value, index) => Math.abs(value - page_bg[index]) > 2), `corners show the bare page (${before.map(Math.round)})`);
+    await page.evaluate(() => {
+      const stage = document.getElementById("stage");
+      stage.style.setProperty("--c1", "#40ff40");
+      stage.style.setProperty("--c4", "#40ff40");
+      window.dispatchEvent(new CustomEvent("kitty:theme", { detail: "test" }));
+    });
+    await call(page, "settled");
+    const after = await cornerColour(page);
+    assert.ok(after[1] - before[1] > 2, `sky did not take the new theme colours (green ${before[1].toFixed(1)} → ${after[1].toFixed(1)})`);
+    assert.deepEqual(problems, []);
+    await page.close();
+  });
+});
+
+describe("2d cards", () => {
+  test("2D nodes are cards: the whole card is the hit area, and the focused card lifts", async () => {
+    const { page, problems } = await harness();
+    await call(page, "mount", "2d");
+    await call(page, "focus", "view:library");
+    await call(page, "settled");
+    const centre = await call(page, "point", "view:library");
+    // A dot is ~10px across; a card is ~110px wide, so 35px right of centre is still on it.
+    assert.equal(await call(page, "nodeAt", centre.x + 35, centre.y), "view:library", "card body is not hit-testable");
+    assert.equal(await call(page, "nodeAt", centre.x - 35, centre.y + 8), "view:library", "card body is not hit-testable");
+    assert.notEqual(await call(page, "nodeAt", centre.x + 120, centre.y), "view:library", "hit area extends past the card");
+    assert.deepEqual(problems, []);
+    await page.close();
+  });
+});
+
+describe("2d links", () => {
+  test("links at rest are solid, legible lines rather than faint hairlines", async () => {
+    const { page, problems } = await harness();
+    await call(page, "mount", "2d");
+    await call(page, "focus", null);
+    await call(page, "settled");
+    await page.mouse.move(1, 690);
+    // Midpoint of the Study hub → Notes arc, from the renderer's arc formula (linear under zoom).
+    const a = await call(page, "point", "group:Study");
+    const b = await call(page, "point", "view:notes");
+    const c = { x: (a.x + b.x) / 2 - (b.y - a.y) * 0.2, y: (a.y + b.y) / 2 + (b.x - a.x) * 0.2 };
+    const mid = { x: 0.25 * a.x + 0.5 * c.x + 0.25 * b.x, y: 0.25 * a.y + 0.5 * c.y + 0.25 * b.y };
+    const line = await page.evaluate(({ x, y }) => {
+      const canvas = document.querySelector("#stage canvas");
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      const r = Math.round(8 * scale);
+      const cx = Math.round((x - rect.left) * scale), cy = Math.round((y - rect.top) * scale);
+      const pixels = canvas.getContext("2d").getImageData(cx - r, cy - r, 2 * r + 1, 2 * r + 1).data;
+      const bg = [0x14, 0x11, 0x1b];
+      const lum = (rgb) => {
+        const [R, G, B] = rgb.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+        return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+      };
+      const contrastOf = (rgba) => {
+        const alpha = rgba[3] / 255;
+        const over = [0, 1, 2].map((i) => rgba[i] * alpha + bg[i] * (1 - alpha));
+        const [hi, lo] = [lum(over), lum(bg)].sort((m, n) => n - m);
+        return (hi + 0.05) / (lo + 0.05);
+      };
+      let best = 0;
+      const strong = [];
+      for (let i = 0; i < pixels.length; i += 4) strong.push(contrastOf(pixels.slice(i, i + 4)));
+      best = Math.max(...strong);
+      // Line thickness in CSS px: pixels at least half as strong as the core, along one window column/row.
+      const solid = strong.filter((v) => v >= 1 + (best - 1) * 0.5).length;
+      return { contrast: best, solidCssPx2: solid / (scale * scale) };
+    }, mid);
+    const seen = `contrast ${line.contrast.toFixed(2)}, ${line.solidCssPx2.toFixed(1)} solid CSS px² in a 17px window`;
+    assert.ok(line.contrast >= 4.5, `link core is too faint against the background (${seen})`);
+    assert.ok(line.solidCssPx2 >= 24, `link is a hairline (${seen})`);
+    assert.deepEqual(problems, []);
     await page.close();
   });
 });

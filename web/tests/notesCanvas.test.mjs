@@ -1,7 +1,10 @@
 // Run with Node >=22.6: node --experimental-strip-types --test tests/notesCanvas.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {CANVAS_PAPER,clone,displayColor,drawingInput,emptyDocument,endpoints,expandGroups,exportSVG,finishGesture,finishStroke,fit,hit,hitTop,lassoSelection,removeElements,resizeElement,world,zoomAt} from '../src/lib/notesCanvas.ts';
+import {clone,displayColor,drawingInput,emptyDocument,endpoints,expandGroups,exportSVG,finishGesture,finishStroke,fit,hit,hitTop,lassoSelection,paperPattern,removeElements,renderCanvas,resizeElement,world,zoomAt} from '../src/lib/notesCanvas.ts';
+
+// Kitty's flat void colour (Q68); the canvas paper is whatever the theme's --solid-void is.
+const VOID='#1b151a';
 
 const stroke=(id='stroke')=>({id,kind:'pen',layer:'default',x:-100,y:20,w:100,h:50,color:'#344054',fill:'none',width:8,points:[[0,0,.1],[100,50,.9]]});
 const rect=(id,x,y)=>({id,kind:'rect',layer:'default',x,y,w:100,h:100,color:'#344054',fill:'none',width:2});
@@ -106,7 +109,7 @@ test('undo/redo snapshots are independent JSON documents and include layers and 
 test('SVG export contains real pressure geometry and escaped text, not executable content',async()=>{
   const text={...rect('text',40,70),kind:'text',text:'<script>alert("x")</script> & recall',fontSize:20,w:800};
   const doc=document(stroke(),text);
-  const svg=await exportSVG(doc);
+  const svg=await exportSVG(doc,VOID);
   assert.ok(svg.startsWith('<svg '));
   assert.ok(svg.includes('stroke-width="4"'));
   assert.ok(svg.includes('&lt;script&gt;'));
@@ -117,12 +120,27 @@ test('SVG export contains real pressure geometry and escaped text, not executabl
 
 test('dark ink from earlier notes stays legible on the dark paper while sticky text keeps its colour',async()=>{
   const luminance=hex=>{const [r,g,b]=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(c=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4);return .2126*r+.7152*g+.0722*b;};
-  for(const dark of ['#344054','#000000','#1d3a8a']) assert.ok(luminance(displayColor(dark))>luminance(CANVAS_PAPER)+.3,dark);
+  for(const dark of ['#344054','#000000','#1d3a8a']) assert.ok(luminance(displayColor(dark))>luminance(VOID)+.3,dark);
   assert.equal(displayColor('#e7dfef'),'#e7dfef');
   assert.equal(displayColor('#fff2a8'),'#fff2a8');
   const sticky={...rect('sticky',0,0),kind:'sticky',text:'recall',fill:'#fff2a8'};
-  const svg=await exportSVG(document(stroke(),sticky));
-  assert.ok(svg.includes(`fill="${CANVAS_PAPER}"`));
+  const svg=await exportSVG(document(stroke(),sticky),VOID);
   assert.equal(svg.includes('stroke="#344054" stroke-width="4"'),false);
   assert.ok(svg.includes('fill="#344054">'),'sticky text keeps its dark colour on the light sticky');
+});
+
+test('a page is clean by default: no grid or dots unless the user picks a paper pattern',()=>{
+  assert.equal(paperPattern(emptyDocument()),'blank');
+  assert.equal(paperPattern({...emptyDocument(),grid:true}),'blank','the legacy grid flag still draws dots');
+  for(const pattern of ['lined','grid','dotted','cornell']) assert.equal(paperPattern({...emptyDocument(),background:pattern}),pattern);
+});
+
+test('the canvas and its exports are painted in the theme void colour, flat and nothing else',async()=>{
+  const calls=[];
+  const ctx=new Proxy({},{get:(target,key)=>key in target?target[key]:(...args)=>calls.push([key,target.fillStyle,...args]),set:(target,key,value)=>{target[key]=value;return true;}});
+  globalThis.window??={devicePixelRatio:1};
+  renderCanvas({width:0,height:0,getContext:()=>ctx},{...emptyDocument(),grid:true},{x:0,y:0,zoom:1},new Map(),[],[],400,300,'#f5e8ee',VOID);
+  assert.deepEqual(calls.filter(([name])=>!['setTransform','translate','scale'].includes(name)),[['fillRect',VOID,0,0,400,300]]);
+  const svg=await exportSVG(document(stroke()),VOID);
+  assert.ok(svg.includes(`fill="${VOID}"`),'the export background is not the theme void');
 });

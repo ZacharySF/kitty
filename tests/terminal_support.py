@@ -144,6 +144,19 @@ elif rest in (["workspace", "list"], ["agent", "list"]):
         sys.exit(0)
     items = json.loads(activity).get(kind + "s", [])
     print(json.dumps({{"id": "cli:" + kind + ":list", "result": {{"type": kind + "_list", kind + "s": items}}}}))
+elif rest[:2] == ["agent", "read"] or rest[:2] == ["agent", "focus"]:
+    if not listening(api):
+        sys.exit(1)
+    agents = json.load(open(ACTIVITY_FILE)).get("agents", [])
+    agent = next((item for item in agents if item.get("pane_id") == rest[2]), None)
+    if agent is None:
+        print(json.dumps({{"error": {{"code": "agent_not_found", "message": "no agent"}}}}), file=sys.stderr)
+        sys.exit(1)
+    if rest[1] == "read":
+        # The fixture's own "screen" key stands in for the pane's recent output.
+        sys.stdout.write(agent.get("screen", ""))
+    else:
+        print(json.dumps({{"result": {{"agent": agent}}}}))
 else:
     sys.exit(2)
 '''

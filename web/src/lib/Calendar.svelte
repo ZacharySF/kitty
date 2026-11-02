@@ -5,6 +5,24 @@
   import TaskMapAction from "./TaskMapAction.svelte";
   import CalendarDateTime from "./CalendarDateTime.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import { currentTheme, THEME_EVENT } from "./themes";
+  import { getTheme } from "./themes/catalog";
+  import { blockText, calendarPaint, itemPaint, nextSlot, subjectOf, type Subject } from "./calendar/palette";
+  import ColorField from "./calendar/ColorField.svelte";
+  import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";
+  import RangePill, { VIEWS, type CalendarView } from "./calendar/RangePill.svelte";
+  import YearHeatmap from "./calendar/YearHeatmap.svelte";
+  import MiniMonth from "./calendar/MiniMonth.svelte";
+  import DayPlan from "./calendar/DayPlan.svelte";
+  import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START, type DayLoad } from "./calendar/plan";
+  import EditDrawer from "./ui/EditDrawer.svelte";
+  import Select from "./ui/Select.svelte";
+  import CalendarQuickAdd from "./calendar/CalendarQuickAdd.svelte";
+  import { wallAt, type QuickKind, type QuickPlan, type QuickSlot } from "./calendar/quickAdd";
+  import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
+  import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
+  import { notifier } from "./notifications.svelte";
+  import GoogleConflict, { type ConflictEvent } from "./GoogleConflict.svelte";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
@@ -13,7 +31,9 @@
   type Cal = {
     id: string;
     name: string;
+    /** Theme palette slot `c1`..`c6`, or a #rrggbb kept from before slots or from Google. */
     color: string;
+    subject_id?: number | null;
     timezone: string;
     visible: number;
     revision: number;
@@ -51,6 +71,9 @@
     attachments: { title: string; url: string }[];
     event_type: string;
     google_options: Record<string, unknown>;
+    subject_id?: number | null;
+    /** Picked palette slot; null follows the calendar. Ignored while a subject is linked. */
+    color?: string | null;
     undo_id?: number;
   };
   type Task = {
@@ -64,6 +87,7 @@
     status: string;
     tags: string[];
     project: string;
+    subject_id?: number | null;
     calendar_id: string;
     repeat_frequency: string;
     repeat_interval: number;
@@ -75,14 +99,8 @@
     calendars: Cal[];
     events: Event[];
     tasks: Task[];
+    subjects: Subject[];
     activity: Record<string, number | string>[];
-    reminders: {
-      event_id: string;
-      occurrence: string;
-      minutes: number;
-      title: string;
-      due: string;
-    }[];
     conflicts: {
       event_id: string;
       with: string[];
@@ -128,12 +146,12 @@
     calendars: [],
     events: [],
     tasks: [],
+    subjects: [],
     activity: [],
-    reminders: [],
     conflicts: [],
     free: [],
   });
-  let view = $state("week");
+  let view = $state<CalendarView>("week");
   let section = $state("calendar");
   const initialDate = new Date();
   const initialDay = `${initialDate.getFullYear()}-${String(initialDate.getMonth() + 1).padStart(2, "0")}-${String(initialDate.getDate()).padStart(2, "0")}`;
@@ -159,13 +177,18 @@
   let attendeesText = $state("");
   let attachmentsText = $state("");
   let remindersText = $state("10");
-  let reminderPreset = $state("10");
-  const reminderPresets = [
-    ["", "No reminder"], ["0", "At start"], ["5", "5 minutes before"],
-    ["10", "10 minutes before"], ["15", "15 minutes before"],
-    ["30", "30 minutes before"], ["60", "1 hour before"],
-    ["1440", "1 day before"], ["10080", "1 week before"],
+  const reminderChips: [number, string][] = [
+    [5, "5 minutes before"], [10, "10 minutes before"], [60, "1 hour before"], [1440, "1 day before"],
   ];
+  const reminderList = $derived(remindersText.split(",").filter((v) => v.trim()).map(Number));
+  function toggleReminder(minutes: number) {
+    remindersText = (reminderList.includes(minutes)
+      ? reminderList.filter((m) => m !== minutes)
+      : [...reminderList, minutes].sort((a, b) => a - b)).join(",");
+  }
+  /** Raw title text as typed; `editor.title` holds what remains after natural-language parsing. */
+  let titleDraft = $state("");
+  let quick = $state<QuickEvent | null>(null);
   let exdatesText = $state("");
   let calendarEditor = $state<Partial<Cal> | null>(null);
   let rangeStart = $state<string | null>(null);
@@ -178,6 +201,27 @@
   let dragMessage = $state("");
   let suppressClickUntil = 0;
   let taskTrayOpen = $state(true);
+  /** Q20: the pill's quick add; a clicked slot or range prefills its time, else the selected day. */
+  let quickOpen = $state(false);
+  let quickKind = $state<QuickKind>("event");
+  let quickPick = $state<QuickSlot | null>(null);
+  const quickSlot = $derived(quickPick ?? { start: selectedDate });
+  $effect(() => {
+    if (!quickOpen) quickPick = null;
+  });
+  // One drawer at a time: opening an event closes the task drawer and vice versa.
+  $effect.pre(() => {
+    if (editor) untrack(() => (taskEditor = null));
+  });
+  $effect.pre(() => {
+    if (taskEditor) untrack(() => (editor = null));
+  });
+  /** Q3/Q9: saving reports to the tab's status dot instead of "saved locally" notices. */
+  $effect(() => {
+    if (!active) return;
+    pane.setStatus(error ? { state: "failed", detail: error } : pending > 0 ? { state: "unsaved", detail: "Saving…" } : { state: "saved" });
+    return () => pane.setStatus(null);
+  });
   const trayTasks = $derived(data.tasks.filter((task) =>
     task.status !== "done" && task.status !== "cancelled" &&
     (!task.due || task.due.length === 10 || parts(task.due).date === selectedDate),
@@ -205,8 +249,8 @@
     {
       id: number;
       local_revision: number;
-      local: Event;
-      remote_json: Record<string, unknown>;
+      local: Event & { deleted?: boolean };
+      remote: ConflictEvent | null;
     }[]
   >([]);
   let resource = $state("calendarList");
@@ -284,8 +328,10 @@
     }
     return { destroy: () => { if (isActive) previous?.focus(); } };
   }
-  let notifications = $state(false);
-  const statuses = ["todo", "doing", "done", "cancelled"];
+  const statusOptions = [
+    { value: "todo", label: "To do" }, { value: "doing", label: "In progress" },
+    { value: "done", label: "Done" }, { value: "cancelled", label: "Cancelled" },
+  ];
   const hours = Array.from({ length: 48 }, (_, i) => i);
   let focusedSlot = $state(18);
   let clock = $state(new Date().toISOString());
@@ -309,31 +355,28 @@
       ? weekStart(anchor.slice(0, 8) + "01")
       : view === "week"
         ? weekStart(anchor)
-        : anchor,
+        : view === "year"
+          ? anchor.slice(0, 4) + "-01-01"
+          : anchor,
   );
-  let days = $derived(
-    Array.from(
-      {
-        length:
-          view === "month"
-            ? 42
-            : view === "week"
-              ? 7
-              : view === "agenda"
-                ? 31
-                : 1,
-      },
-      (_, i) => addDays(firstDay, i),
-    ),
+  const dayCount = $derived(
+    view === "month" ? 42
+      : view === "week" ? 7
+      : view === "agenda" ? 31
+      : view === "year" ? (Number(anchor.slice(0, 4)) % 4 === 0 && (Number(anchor.slice(0, 4)) % 100 !== 0 || Number(anchor.slice(0, 4)) % 400 === 0) ? 366 : 365)
+      : 1,
   );
+  let days = $derived(Array.from({ length: dayCount }, (_, i) => addDays(firstDay, i)));
   const dateTitle = (day: string, options: Intl.DateTimeFormatOptions) =>
     new Intl.DateTimeFormat(undefined, { ...options, timeZone: "UTC" }).format(dateAt(day));
   const rangeHeading = $derived(
     view === "month"
       ? dateTitle(anchor, { month: "long", year: "numeric" })
-      : view === "day"
-        ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-        : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
+      : view === "year"
+        ? anchor.slice(0, 4)
+        : view === "day" || view === "plan"
+          ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+          : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
   );
   function chooseDate(day: string) {
     if (!day) return;
@@ -387,13 +430,55 @@
         }).format(new Date(value));
   }
   function eventsOn(day: string) {
-    return data.events.filter((e) =>
+    return shownEvents.filter((e) =>
       e.all_day
         ? e.start <= day && e.end > day
         : parts(e.start).date <= day &&
           parts(e.end).date >= day &&
           !(parts(e.end).date === day && parts(e.end).time === "00:00"),
     );
+  }
+  /** Wall time "YYYY-MM-DDTHH:MM" moved by `minutes`. */
+  const shiftWall = (wall: string, minutes: number) =>
+    new Date(Date.parse(`${wall}:00Z`) + minutes * 60000).toISOString().slice(0, 16);
+  /** Events as drawn: the one open in the drawer shows its unsaved title, calendar, place and times. */
+  const shownEvents = $derived.by(() => {
+    const open = editor;
+    const base = originalEditor;
+    if (!open?.id || !base || open.all_day || base.all_day || !startInput || !endInput) return data.events;
+    // Same zone as the saved event, so its UTC offset carries over to the edited wall times.
+    const offset = Date.parse(base.start) - Date.parse(`${localInput(base.start, false, base.timezone)}:00Z`);
+    const start = new Date(Date.parse(`${startInput}:00Z`) + offset).toISOString();
+    const end = new Date(Date.parse(`${endInput}:00Z`) + offset).toISOString();
+    return data.events.map((e) => e.id === open.id && e.occurrence === open.occurrence
+      ? { ...e, title: open.title, calendar_id: open.calendar_id, subject_id: open.subject_id, color: open.color,
+        location: open.location, start, end } : e);
+  });
+  function shiftTime(minutes: number, which: "start" | "end") {
+    if (which === "start") {
+      startInput = shiftWall(startInput, minutes);
+      endInput = shiftWall(endInput, minutes);
+    } else if (Date.parse(`${shiftWall(endInput, minutes)}:00Z`) - Date.parse(`${startInput}:00Z`) >= 15 * 60000)
+      endInput = shiftWall(endInput, minutes);
+  }
+  /** Title typing: recognised day, time, length, place and repeat fill the fields; the rest is the title. */
+  function typeTitle(raw: string) {
+    titleDraft = raw;
+    if (!editor) return;
+    const parsed = parseQuickEvent(raw, today);
+    quick = parsed.spans.length ? parsed : null;
+    editor.title = quick ? parsed.title : raw;
+    if (!quick) return;
+    if (parsed.date !== null || parsed.start !== null) {
+      const length = editor.all_day ? 60 : (Date.parse(`${endInput}:00Z`) - Date.parse(`${startInput}:00Z`)) / 60000 || 60;
+      const start = parsed.start ?? (editor.all_day ? 9 * 60 : Number(startInput.slice(11, 13)) * 60 + Number(startInput.slice(14, 16)));
+      const day = parsed.date ?? startInput.slice(0, 10);
+      editor.all_day = false;
+      startInput = shiftWall(`${day}T00:00`, start);
+      endInput = shiftWall(startInput, parsed.end !== null ? parsed.end - start : parsed.minutes ?? length);
+    } else if (parsed.minutes !== null && !editor.all_day) endInput = shiftWall(startInput, parsed.minutes);
+    if (parsed.where) editor.location = parsed.where;
+    if (parsed.rrule) editor.rrule = parsed.rrule;
   }
   function tasksOn(day: string) {
     return data.tasks.filter(
@@ -464,9 +549,20 @@
     }
     return slots;
   });
-  function color(id: string) {
-    return data.calendars.find((c) => c.id === id)?.color || "var(--accent)";
+  let theme = $state(getTheme(currentTheme()));
+  /** An event's colour: its (or its calendar's) study subject's, else its palette slot, else its calendar's. */
+  const paint = (e: Pick<Event, "calendar_id" | "subject_id" | "color">) => itemPaint(e, data.calendars, data.subjects).color;
+  const calendarColor = (c: Cal) => calendarPaint(c, data.subjects).color;
+  /** A task's colour when it is linked to a study subject; unlinked tasks stay muted. */
+  const taskColor = (t: Task) => subjectOf(t, data.subjects)?.color;
+  /** Filled-block colours for an event and the text that reads on them. */
+  function blockStyle(e: Event) {
+    const fill = paint(e);
+    return `--block:${fill};--block-ink:${blockText(theme, fill)}`;
   }
+  const editorCalendar = $derived(editor ? data.calendars.find((c) => c.id === editor?.calendar_id) : undefined);
+  /** The drawer's "Calendar colour" default: the event's calendar paint. */
+  const calendarDefault = $derived(editorCalendar ? { ...calendarPaint(editorCalendar, data.subjects), name: editorCalendar.name } : null);
   async function load() {
     const serial = ++loadCounter;
     loading = true;
@@ -478,12 +574,77 @@
       const result = await api<Snapshot>(
         `/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&timezone=${encodeURIComponent(tz)}&search=${encodeURIComponent(search)}`,
       );
-      if (serial === loadCounter) data = result;
+      if (serial === loadCounter) {
+        data = result;
+        loadVersion += 1;
+      }
     } catch (e) {
       if (serial === loadCounter) error = String(e);
     } finally {
       if (serial === loadCounter) loading = false;
     }
+  }
+  let loadVersion = $state(0);
+  /** Event counts and booked minutes per local date; timed events split across midnight, all-day ones book no time. */
+  function dayLoad(events: Event[]): DayLoad {
+    const result: DayLoad = {};
+    const add = (day: string, minutes: number, count: number) => {
+      const entry = (result[day] ??= { minutes: 0, events: 0 });
+      entry.minutes += minutes;
+      entry.events += count;
+    };
+    for (const event of events) {
+      if (event.all_day) { add(event.start, 0, 1); continue; }
+      const start = parts(event.start);
+      const end = parts(event.end);
+      const startMinute = start.hour * 60 + start.minute;
+      const endMinute = end.hour * 60 + end.minute;
+      if (start.date === end.date) { add(start.date, endMinute - startMinute, 1); continue; }
+      add(start.date, 1440 - startMinute, 1);
+      for (let day = addDays(start.date, 1); day < end.date; day = addDays(day, 1)) add(day, 1440, 0);
+      if (endMinute) add(end.date, endMinute, 0);
+    }
+    return result;
+  }
+  const yearMinutes = $derived(view === "year"
+    ? Object.fromEntries(Object.entries(dayLoad(data.events)).map(([day, load]) => [day, load.minutes]))
+    : {});
+  async function loadBusy(from: string, to: string) {
+    const start = await resolveTime(from + "T00:00");
+    const end = await resolveTime(to + "T00:00");
+    const result = await api<Snapshot>(
+      `/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&timezone=${encodeURIComponent(tz)}`,
+    );
+    return dayLoad(result.events);
+  }
+  /** Open tasks on the plan day (undated, dated that day, or timed that day), with planned start minute. */
+  const planTasks = $derived(view === "plan"
+    ? data.tasks
+        .filter((t) => t.id && t.status !== "cancelled" &&
+          (!t.due || (t.due.length === 10 ? t.due : parts(t.due).date) === anchor) &&
+          (t.status !== "done" || !!t.due))
+        .map((t) => ({ task: t, at: t.due.length > 10 ? parts(t.due).hour * 60 + parts(t.due).minute : null }))
+    : []);
+  async function planTask(id: string) {
+    const entry = planTasks.find((item) => item.task.id === id);
+    if (!entry) return;
+    const busy: [number, number][] = [
+      ...timedEvents(anchor).map((p): [number, number] => [p.start, p.end]),
+      ...planTasks.filter((item) => item.at !== null).map((item): [number, number] => [item.at!, item.at! + PLAN_LENGTH]),
+    ];
+    const from = Math.max(PLAN_START, anchor === today ? currentMinute : 0);
+    const start = nextFreeGap(busy, from, PLAN_LENGTH);
+    if (start === null) {
+      notice = `No free ${PLAN_LENGTH}-minute gap left before ${String(PLAN_END / 60)}:00.`;
+      return;
+    }
+    const wall = `${anchor}T${String(Math.floor(start / 60)).padStart(2, "0")}:${String(start % 60).padStart(2, "0")}`;
+    await changed(async () =>
+      api<Task>("/calendar/tasks", { id, revision: entry.task.revision, due: await resolveTime(wall, tz) }));
+  }
+  async function unplanTask(id: string) {
+    const entry = planTasks.find((item) => item.task.id === id);
+    if (entry) await changed(() => api<Task>("/calendar/tasks", { id, revision: entry.task.revision, due: anchor }));
   }
   async function run(work: () => Promise<unknown>) {
     error = "";
@@ -510,9 +671,10 @@
     });
   }
   function navigate(step: number) {
-    if (view === "month") {
+    if (view === "month" || view === "year") {
       const d = dateAt(anchor);
-      d.setUTCMonth(d.getUTCMonth() + step, 1);
+      if (view === "year") d.setUTCFullYear(d.getUTCFullYear() + step, d.getUTCMonth(), 1);
+      else d.setUTCMonth(d.getUTCMonth() + step, 1);
       anchor = d.toISOString().slice(0, 10);
     } else
       anchor = addDays(
@@ -521,51 +683,72 @@
       );
     selectedDate = anchor;
   }
-  function newEvent(start: string, end?: string, allDay = false) {
+  function setView(next: CalendarView) {
+    view = next;
+    anchor = selectedDate;
+  }
+  let shortcutFlash = $state("");
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  let calendarLayout = $state<HTMLDivElement>();
+  /** Single-key shortcuts while focus is inside the calendar: D/W/M/A/Y/P views, J/K step, T today, N add. */
+  function calendarKey(event: KeyboardEvent) {
+    const target = event.target as HTMLElement;
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.defaultPrevented ||
+        target.isContentEditable || target.closest("input, textarea, select")) return;
+    const key = event.key.toLowerCase();
+    const hit = VIEWS.find((v) => v.key.toLowerCase() === key);
+    if (hit) setView(hit.id);
+    else if (key === "j") navigate(-1);
+    else if (key === "k") navigate(1);
+    else if (key === "t") chooseDate(today);
+    else if (key === "n") {
+      event.preventDefault();
+      void openQuick(selectedDate);
+      return;
+    }
+    else return;
+    event.preventDefault();
+    shortcutFlash = key.toUpperCase();
+    // The focused cell may vanish with the old view; keep focus in the calendar so keys keep working.
+    void tick().then(() => {
+      if (calendarLayout && !calendarLayout.contains(document.activeElement)) calendarLayout.focus({ preventScroll: true });
+    });
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => (shortcutFlash = ""), 700);
+  }
+  /** Opens the pill's quick add at `start` (a day or a wall time), ending at `end` when a range was picked. */
+  async function openQuick(start: string, end?: string) {
     if (!isActive) return;
     error = "";
+    if (section !== "calendar") {
+      section = "calendar";
+      await tick();
+    }
     selectedDate = start.slice(0, 10);
-    const cal = data.calendars.find((c) => c.visible) || data.calendars[0];
-    editor = {
-      id: "",
-      revision: 0,
-      title: "",
-      calendar_id: cal?.id || "personal",
-      start: "",
-      end: "",
-      timezone: tz,
-      all_day: allDay,
-      occurrence: "",
-      rrule: "",
-      exdates: [],
-      description: "",
-      location: "",
-      url: "",
-      busy: true,
-      privacy: "default",
-      reminders: [10],
-      attendees: [],
-      attachments: [],
-      event_type: "default",
-      google_options: {},
-    };
-    startInput = start;
-    endInput =
-      end ||
-      (allDay
-        ? addDays(start, 1)
-        : new Date(new Date(start + "Z").getTime() + 3600000)
-            .toISOString()
-            .slice(0, 16));
-    editScope = "all";
-    attendeesText = "";
-    attachmentsText = "";
-    exdatesText = "";
-    remindersText = "10";
-    reminderPreset = "10";
-    fold = 0;
-    foldChanged = false;
-    googleOptionsText = "{}";
+    quickPick = { start, end };
+    quickOpen = true;
+  }
+  /** Creates the typed event or task; `more` then opens it in the drawer. */
+  async function quickSave(plan: QuickPlan, kind: QuickKind, more: boolean) {
+    const calendar_id = (data.calendars.find((c) => c.visible) || data.calendars[0])?.id || "personal";
+    const at = (minutes: number) => resolveTime(wallAt(plan.day, minutes), tz);
+    const result = await changed(async () => kind === "task"
+      ? api<Task>("/calendar/tasks", {
+          title: plan.title, description: "", due: plan.start === null ? plan.day : await at(plan.start), timezone: tz,
+          priority: "normal", status: "todo", tags: [], project: "", subject_id: null, calendar_id,
+          repeat_frequency: /^FREQ=(\w+)/.exec(plan.rrule)?.[1] ?? "", repeat_interval: 1, repeat_until: "",
+        })
+      : api<Event>("/calendar/events", {
+          title: plan.title, calendar_id, timezone: tz, all_day: plan.start === null,
+          start: plan.start === null ? plan.day : await at(plan.start),
+          end: plan.start === null ? plan.endDay : await at(plan.end ?? plan.start + 60),
+          description: "", location: plan.where, url: "", rrule: plan.rrule, exdates: [], privacy: "default", busy: true,
+          reminders: [10], attendees: [], attachments: [], event_type: "default", google_options: {}, subject_id: null, color: null,
+        }));
+    if (!result) return false;
+    if (more && kind === "task") taskEditor = { ...(result as Task) };
+    else if (more) openEvent(result as Event);
+    return true;
   }
   function editorFields(e: Event) {
     startInput = localInput(e.start, e.all_day, e.timezone);
@@ -578,8 +761,8 @@
       .join("\n");
     exdatesText = e.exdates.join("\n");
     remindersText = e.reminders.join(",");
-    reminderPreset = reminderPresets.some(([value]) => value === remindersText)
-      ? remindersText : "custom";
+    titleDraft = e.title;
+    quick = null;
     foldChanged = false;
     googleOptionsText = JSON.stringify(e.google_options, null, 2);
   }
@@ -685,32 +868,23 @@
         attachments,
         event_type: e.event_type,
         google_options: JSON.parse(googleOptionsText),
+        subject_id: e.subject_id ?? null,
+        color: e.color ?? null,
       };
-      let patch: Record<string, unknown> = changes;
-      if (e.id) {
-        const base =
-          editScope === "all"
-            ? await api<Event>(`/calendar/events/${e.id}`)
-            : editBase;
-        patch = Object.fromEntries(
-          Object.entries(changes).filter(
-            ([key, value]) =>
-              JSON.stringify(value) !==
-              JSON.stringify(base?.[key as keyof Event]),
-          ),
-        );
-      }
-      const result = e.id
-        ? await api<Event>(`/calendar/events/${e.id}`, {
-            revision: e.revision,
-            scope: editScope,
-            occurrence: e.occurrence,
-            changes: patch,
-            delete: remove,
-          })
-        : await api<Event>("/calendar/events", changes);
+      const base = editScope === "all" ? await api<Event>(`/calendar/events/${e.id}`) : editBase;
+      const patch = Object.fromEntries(
+        Object.entries(changes).filter(
+          ([key, value]) => JSON.stringify(value) !== JSON.stringify(base?.[key as keyof Event] ?? null),
+        ),
+      );
+      const result = await api<Event>(`/calendar/events/${e.id}`, {
+        revision: e.revision,
+        scope: editScope,
+        occurrence: e.occurrence,
+        changes: patch,
+        delete: remove,
+      });
       editor = null;
-      notice = remove ? "Event deleted locally." : "Event saved locally. Google changes require a separately reviewed sync.";
       return result;
     });
   }
@@ -744,13 +918,8 @@
     const [a, b] = [rangeStart, rangeEnd].sort();
     if (rangeAllDay) {
       selectedDate = a;
-      if (a !== b) newEvent(a, addDays(b, 1), true);
-    }
-    else {
-      const d = new Date(b + "Z");
-      d.setUTCMinutes(d.getUTCMinutes() + 30);
-      newEvent(a, d.toISOString().slice(0, 16));
-    }
+      if (a !== b) void openQuick(a, addDays(b, 1));
+    } else void openQuick(a, a === b ? undefined : shiftWall(b, 30));
     rangeStart = null;
     rangeEnd = null;
   }
@@ -820,7 +989,6 @@
         const result = await api<Task>("/calendar/tasks", {
           id: task.id, revision: task.revision, due,
         });
-        notice = `Task scheduled for ${label(due, allDay)}.`;
         return result;
       });
       return;
@@ -850,7 +1018,6 @@
         occurrence: selected.occurrence,
         changes: { start, end },
       });
-      notice = `${selected.rrule ? "This occurrence" : "Event"} ${mode === "resize" ? "resized" : "moved"} locally. Google changes require a separately reviewed sync.`;
       return result;
     });
   }
@@ -912,24 +1079,6 @@
       event.stopImmediatePropagation();
     }
   }
-  function newTask() {
-    if (!isActive) return;
-    error = "";
-    taskEditor = {
-      title: "",
-      description: "",
-      due: selectedDate,
-      timezone: tz,
-      priority: "normal",
-      status: "todo",
-      tags: [],
-      project: "",
-      calendar_id: (data.calendars.find((c) => c.visible) || data.calendars[0])?.id || "personal",
-      repeat_frequency: "",
-      repeat_interval: 1,
-      repeat_until: "",
-    };
-  }
   async function saveTask(remove = false) {
     if (!taskEditor) return;
     const {
@@ -943,6 +1092,7 @@
       status,
       tags,
       project,
+      subject_id,
       calendar_id,
       repeat_frequency,
       repeat_interval,
@@ -967,6 +1117,7 @@
         status,
         tags,
         project,
+        subject_id: subject_id ?? null,
         calendar_id,
         repeat_frequency: repeat_frequency || "",
         repeat_interval: repeat_frequency ? repeat_interval : 1,
@@ -974,7 +1125,6 @@
         delete: remove,
       });
       taskEditor = null;
-      notice = remove ? "Task deleted." : "Task saved.";
       return result;
     });
   }
@@ -1003,7 +1153,6 @@
         revision: task.revision,
         status,
       });
-      notice = status === "done" ? "Task completed." : "Task status updated.";
       return result;
     });
   }
@@ -1086,25 +1235,6 @@
       if (result.review_errors.length) googleResult = result.review_errors;
       await load();
     });
-  }
-  async function dismissReminder(r: Snapshot["reminders"][number]) {
-    await run(async () => {
-      await api("/calendar/reminders/dismiss", r);
-      await load();
-    });
-  }
-  async function enableNotifications() {
-    if (!("Notification" in window)) {
-      error =
-        "Notifications are not supported by this browser; in-app reminders remain available.";
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    notifications = permission === "granted";
-    localStorage.setItem("kitty-calendar-notifications", String(notifications));
-    if (!notifications)
-      notice =
-        "Notification permission not granted. In-app reminders stay enabled.";
   }
   async function loadGoogle() {
     await run(async () => {
@@ -1458,18 +1588,18 @@
   });
   onMount(() => {
     window.addEventListener("click", blockDragClick, true);
+    const syncTheme = () => (theme = getTheme(currentTheme()));
+    window.addEventListener(THEME_EVENT, syncTheme);
     void loadGoogle();
     void loadTaskMaps();
-    notifications =
-      localStorage.getItem("kitty-calendar-notifications") === "true" &&
-      "Notification" in window &&
-      Notification.permission === "granted";
     const timer = setInterval(() => void pollTask(), 1200);
     const clockTimer = setInterval(() => (clock = new Date().toISOString()), 60000);
     return () => {
       window.removeEventListener("click", blockDragClick, true);
+      window.removeEventListener(THEME_EVENT, syncTheme);
       clearInterval(timer);
       clearInterval(clockTimer);
+      clearTimeout(flashTimer);
       pane.clearTrail("calendar");
     };
   });
@@ -1506,15 +1636,10 @@
   }}
 />
 
-<section class="calendar-workspace" aria-label="Calendar workspace">
+<section class="calendar-workspace" class:drawer-open={!!editor} aria-label="Calendar workspace">
   <header class="toolbar">
-    <div>
-      <h1>Calendar</h1>
-      <p><span>{tz}</span></p>
-    </div>
+    <h1 title={`Times in ${tz}`}>Calendar</h1>
     <div class="header-actions">
-      <Button intent="primary" onclick={newTask}>Add task</Button>
-      <Button onclick={() => newEvent(selectedDate + "T09:00", selectedDate + "T10:00")}>Add event</Button>
       {#if undoId}<Button size="sm" disabled={pending > 0}
         onclick={() =>
           run(async () => {
@@ -1525,7 +1650,7 @@
     </div>
   </header>
   <nav class="tabs" aria-label="Calendar sections">
-    {#each [["calendar", "Calendar"], ["tasks", "Task list"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
+    {#each [["calendar", "Calendar"], ["tasks", "Tasks"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
       <Button size="sm" intent={section === key ? "primary" : "neutral"}
         aria-pressed={section === key}
         onclick={() => (section = key)}>{title}</Button>
@@ -1537,44 +1662,19 @@
       >
     </div>{/if}
   {#if notice}<p role="status" class="notice">{notice}</p>{/if}
-  <div class="range-toolbar">
-    <div class="period-navigation" role="group" aria-label="Date navigation">
-      <Button size="sm" aria-label={`Previous ${view === "week" ? "week" : view === "month" ? "month" : view === "day" ? "day" : "period"}`} onclick={() => navigate(-1)}>←</Button>
-      <Button size="sm" onclick={() => chooseDate(parts(new Date().toISOString()).date)}>Today</Button>
-      <Button size="sm" aria-label={`Next ${view === "week" ? "week" : view === "month" ? "month" : view === "day" ? "day" : "period"}`} onclick={() => navigate(1)}>→</Button>
-    </div>
-    <h2 class="range-heading" aria-live="polite">{rangeHeading}</h2>
-    <label class="date-jump">Go to date<input type="date" aria-label="Go to date"
-      value={anchor} onchange={(e) => chooseDate(e.currentTarget.value)} /></label>
-    <label class="view-switch">View
-      <select aria-label="Calendar view" bind:value={view}
-        onchange={() => { section = "calendar"; anchor = selectedDate; }}>
-        <option value="week">Week</option>
-        <option value="month">Month</option>
-        <option value="day">Day</option>
-        <option value="agenda">Agenda</option>
-      </select>
-    </label>
-  </div>
   <div class="search-toolbar">
     <label class="calendar-search"><span>Search</span><input type="search" bind:value={search}
       placeholder="Search events, tasks or tags" /></label>
     <Button size="sm" onclick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</Button>
-    <span class="load-status" role="status">{pending > 0 ? "Saving / updating…" : loading ? "Loading calendar…" : `${data.events.length} events · ${data.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length} pending tasks`}</span>
   </div>
   {#if dragMessage}<p class="drop-status" role="status">{dragMessage}</p>{/if}
   <details class="display-options">
     <summary>Calendars & display settings</summary>
     <div class="controls">
-      <label>Display timezone<input bind:value={tz} list={`${pane.id}-calendar-zones`} placeholder="America/Chicago" /></label>
-      <datalist id={`${pane.id}-calendar-zones`}>
-        <option value="UTC"></option><option value="America/Chicago"></option>
-        <option value="America/New_York"></option><option value="America/Los_Angeles"></option>
-        <option value="Europe/London"></option><option value="Asia/Tokyo"></option>
-      </datalist>
+      <label>Display timezone<Select kind="timezone" label="Display timezone" bind:value={tz} /></label>
     </div>
   <div class="calendars">
-    {#each data.calendars as c}<label style={`--calendar-color:${c.color}`}
+    {#each data.calendars as c}<label style={`--calendar-color:${calendarColor(c)}`}
         ><input
           type="checkbox"
           checked={!!c.visible}
@@ -1587,41 +1687,29 @@
       onclick={() =>
         (calendarEditor = {
           name: "",
-          color: "#6d5dfc",
+          color: nextSlot(data.calendars.length),
+          subject_id: null,
           timezone: tz,
           visible: 1,
         })}>＋ Calendar</button
     >
   </div>
   </details>
-  {#if data.reminders.length}<aside
-      class="reminders"
-      aria-label="Due reminders"
-    >
-      <h2>Reminders</h2>
-      {#each data.reminders as r}<div>
-          <strong>{r.title}</strong><span>{label(r.due)}</span><button
-            onclick={() => dismissReminder(r)}>Dismiss</button
-          >
-        </div>{/each}
-    </aside>{/if}
   {#if section === "calendar"}
-    <details class="interaction-help">
-      <summary>Shortcuts</summary>
-      <p class="hint">Select a date for its day plan. Click or press Enter on a time slot for a short event. Arrow keys move between slots; Home/End jump within a day. Drag or Shift+Enter selects a range. Drag an event to move it, ↔ to resize; changes open for review.</p>
-    </details>
-    <div class="calendar-layout">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="calendar-layout" bind:this={calendarLayout} tabindex="-1" onkeydown={calendarKey}>
     <div class="calendar-main">
     {#if view === "month"}
+      <div class="month-layout">
       <div class="month-grid" role="grid" aria-label="Month calendar">
         {#each days.slice(0, 7) as day}
           <div class="weekday-label" role="columnheader">{dateTitle(day, { weekday: "short" })}</div>
         {/each}
-        {#each days as day}<div
+        {#each days as day}{@const dayEvents = eventsOn(day)}<div
             class="day-cell"
             class:selected={day === selectedDate}
             class:today={day === today}
-            aria-label={dateTitle(day, { weekday: "long", month: "long", day: "numeric" })}
+            aria-label={`${dateTitle(day, { weekday: "long", month: "long", day: "numeric" })}, ${dayEvents.length === 1 ? "1 event" : `${dayEvents.length} events`}`}
             aria-selected={day === selectedDate}
             class:outside={day.slice(0, 7) !== anchor.slice(0, 7)}
             class:selecting={!!rangeStart &&
@@ -1641,47 +1729,38 @@
             ondragover={(e) => allowDrop(day, true, e)}
             ondrop={(e) => dropOn(day, true, e)}
           >
-            <div class="day-cell-heading">
-              <button class="day-head" onclick={() => (selectedDate = day)}
-                aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>
-                <strong>{dateTitle(day, { day: "numeric" })}</strong>
-              </button>
-              <button class="day-add" aria-label={`Add event on ${day}`}
-                onclick={() => newEvent(day + "T09:00", day + "T10:00")}>＋</button>
-            </div>
-            {#each eventsOn(day) as e}<div
-                class="event-chip"
-                style={`--calendar-color:${color(e.calendar_id)}`}
-                draggable="true"
-                ondragstart={(event) => drag(e, event)}
-                ondragend={finishDrag}
-                role="group"
-                aria-label={e.title}
-              >
-                <button onclick={() => openEvent(e)}
-                  oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
-                  >{!e.all_day
-                    ? parts(e.start).time + " "
-                    : ""}{e.title}{e.rrule ? " ↻" : ""}</button
-                ><button
-                  class="resize"
-                  draggable="true"
-                  ondragstart={(event) => {
-                    event.stopPropagation();
-                    drag(e, event, "resize");
-                  }}
-                  aria-label={`Resize ${e.title}`}>↔</button
-                >
-              </div>{/each}{#each tasksOn(day) as t}<button
-                class="task-chip"
-                draggable="true"
-                ondragstart={(event) => dragTask(t, event)}
-                ondragend={finishDrag}
-                oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
-                class:completed={t.status === "done"}
-                onclick={() => (taskEditor = { ...t })}>{t.status === "done" ? "✓" : "☐"} {t.title}</button
-              >{/each}
+            <button class="day-head" onclick={() => (selectedDate = day)}
+              aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
+            <span class="dots" aria-hidden="true">{#each dayEvents.slice(0, 4) as e (e.id + e.occurrence)}<i style:background={paint(e)}></i>{/each}</span>
           </div>{/each}
+      </div>
+      <DayAgenda
+        eyebrow={`${selectedDate === today ? "Today · " : ""}${dateTitle(selectedDate, { weekday: "short", month: "short", day: "numeric" })}`}
+        items={[
+          ...eventsOn(selectedDate).map((e): AgendaItem => ({
+            key: `event:${e.id}:${e.occurrence}`,
+            start: e.all_day ? "All day" : parts(e.start).time,
+            end: e.all_day ? "" : parts(e.end).time,
+            title: e.title + (e.rrule ? " ↻" : ""),
+            place: e.location || data.calendars.find((c) => c.id === e.calendar_id)?.name || "",
+            color: paint(e),
+            open: () => openEvent(e),
+            drag: (event) => drag(e, event),
+            dragend: finishDrag,
+          })),
+          ...tasksOn(selectedDate).map((t): AgendaItem => ({
+            key: `task:${t.id}`,
+            start: t.due.length > 10 ? parts(t.due).time : "Task",
+            end: "",
+            title: t.title,
+            place: t.status === "done" ? "Completed" : t.priority,
+            color: taskColor(t) ?? "var(--muted)",
+            task: true,
+            open: () => (taskEditor = { ...t }),
+            drag: (event) => dragTask(t, event),
+            dragend: finishDrag,
+          })),
+        ]} />
       </div>
     {:else if view === "week" || view === "day"}
       <div class="time-scroll" use:scrollToMorning role="region" aria-label={view === "week" ? "Week calendar" : "Day calendar"}>
@@ -1709,17 +1788,17 @@
                 role="group" aria-label={`All-day events and tasks on ${day}`}
                 ondragover={(event) => allowDrop(day, true, event)}
                 ondrop={(event) => dropOn(day, true, event)}>
-                <button class="all-day-add" onclick={() => newEvent(day, addDays(day, 1), true)}
+                <button class="all-day-add" onclick={() => void openQuick(day, addDays(day, 1))}
                   aria-label={`Create all-day event on ${day}`}>＋</button>
                 <div class="all-day-items">
                   {#each eventsOn(day).filter((e) => e.all_day) as e}
-                    <button class="event-chip all-day-event" style={`--calendar-color:${color(e.calendar_id)}`}
+                    <button class="event-chip all-day-event" style={`--calendar-color:${paint(e)}`}
                       draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
                       oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
                       onclick={() => { selectedDate = day; openEvent(e); }} title={e.title}>{e.title}</button>
                   {/each}
                   {#each tasksOn(day).filter((task) => task.due.length === 10) as t}
-                    <button class="task-chip" class:completed={t.status === "done"}
+                    <button class="task-chip" class:completed={t.status === "done"} style:--task-color={taskColor(t)}
                       draggable="true" ondragstart={(event) => dragTask(t, event)} ondragend={finishDrag}
                       oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
                       onclick={() => { selectedDate = day; taskEditor = { ...t }; }}
@@ -1759,11 +1838,10 @@
                     onpointerenter={() => extendRange(slot(day, halfHour))}
                     onkeydown={(e) => slotKey(day, halfHour, e)}
                     onclick={(e) => {
-                      if (e.detail === 0 && !editor)
-                        newEvent(slot(day, halfHour), slot(day, halfHour + 1));
+                      if (e.detail === 0 && !editor) void openQuick(slot(day, halfHour));
                     }}></button>
                   {#each weekTasks[day][halfHour] as task}
-                    <button class="task-chip timed-task" class:completed={task.status === "done"}
+                    <button class="task-chip timed-task" class:completed={task.status === "done"} style:--task-color={taskColor(task)}
                       style={`top:${parts(task.due).minute % 30 / 30 * 100}%`}
                       draggable="true" ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
                       onclick={() => (taskEditor = { ...task })}
@@ -1775,12 +1853,13 @@
                 </div>
               {/each}
               {#if day === today}
-                <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} aria-hidden="true"></div>
+                <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} role="img"
+                  aria-label={`Now ${parts(clock).time}`}><span class="bloom" aria-hidden="true">✿</span></div>
               {/if}
               {#each weekEvents[day] as placement}
                 {@const e = placement.event}
                 <div class="event-chip timed" draggable="true" role="group" aria-label={e.title}
-                  style={`--calendar-color:${color(e.calendar_id)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
+                  style={`${blockStyle(e)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
                   ondragstart={(event) => drag(e, event)} ondragend={finishDrag}>
                   <button class="timed-content" title={`${e.title} · ${label(e.start)} – ${label(e.end)}`}
                     oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
@@ -1798,14 +1877,29 @@
           {/each}
         </div>
       </div>
+    {:else if view === "year"}
+      <YearHeatmap year={Number(anchor.slice(0, 4))} busy={yearMinutes} {today}
+        onopen={(day) => { chooseDate(day); view = "day"; }} />
+    {:else if view === "plan"}
+      <DayPlan
+        eyebrow={`${anchor === today ? "Today · " : ""}${dateTitle(anchor, { weekday: "short", month: "short", day: "numeric" })}`}
+        now={anchor === today ? currentMinute : null}
+        busy={pending > 0}
+        events={timedEvents(anchor).map((p) => ({ key: `${p.event.id}:${p.event.occurrence}`, title: p.event.title,
+          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event), open: () => openEvent(p.event) }))}
+        tasks={planTasks.map(({ task, at }) => ({ id: task.id!, title: task.title, priority: task.priority,
+          done: task.status === "done", at, color: taskColor(task), open: () => (taskEditor = { ...task }) }))}
+        onplan={(id) => void planTask(id)}
+        onunplan={(id) => void unplanTask(id)}
+        ontoggle={(id) => { const task = data.tasks.find((t) => t.id === id); if (task) void taskStatus(task, task.status === "done" ? "todo" : "done"); }} />
     {:else}
-      <div class="agenda">
+      <div class="agenda" role="region" aria-label="Agenda">
         {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}<section
             >
               <h2><button class="agenda-date" onclick={() => (selectedDate = day)}>{dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}</button></h2>
               {#each eventsOn(day) as e}<button
                   class="agenda-event"
-                  style={`--calendar-color:${color(e.calendar_id)}`}
+                  style={`--calendar-color:${paint(e)}`}
                   onclick={() => openEvent(e)}
                   ><span
                     >{e.all_day
@@ -1814,6 +1908,7 @@
                   ><strong>{e.title}</strong><span>{e.location}</span></button
                 >{/each}{#each tasksOn(day) as t}<button
                   class="agenda-event"
+                  style:--calendar-color={taskColor(t)}
                   onclick={() => (taskEditor = { ...t })}
                   ><span>Task · {t.priority} · {t.status}</span><strong
                     >{t.title}</strong
@@ -1825,18 +1920,24 @@
           </p>{/if}
       </div>
     {/if}
+    <RangePill heading={rangeHeading} {view} date={anchor} flash={shortcutFlash}
+      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate}>
+      {#snippet add()}
+        <CalendarQuickAdd label="Add event or task" round {today} at={quickSlot} bind:kind={quickKind} bind:open={quickOpen} onsave={quickSave} />
+      {/snippet}
+    </RangePill>
     </div>
     <aside class="selected-plan" aria-label="Selected date plan">
+      <MiniMonth selected={selectedDate} {today} refresh={loadVersion} {loadBusy} onpick={chooseDate} />
       <Button size="sm" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
         onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide task tray" : "Open task tray"} · {trayTasks.length}</Button>
       {#if taskTrayOpen}
-        <section id={`${pane.id}-calendar-task-tray`} class="task-tray" aria-label="Tasks to schedule">
+        <section id={`${pane.id}-calendar-task-tray`} class="task-tray" aria-label="Tasks to schedule"
+          title="Drag a task onto a time slot to schedule it">
           <h3>Tasks to schedule</h3>
-          <p class="hint">Drag a task onto a week/day time slot to save its due date and time. Click to edit.</p>
-          <Button size="sm" onclick={newTask}>Add task</Button>
           <div class="tray-list">
             {#each trayTasks as task}
-              <button class="tray-task" draggable="true"
+              <button class="tray-task" draggable="true" style:--task-color={taskColor(task)}
                 ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
                 onclick={() => (taskEditor = { ...task })}>
                 <strong>{task.title}</strong>
@@ -1848,13 +1949,9 @@
       {/if}
       <Panel title={dateTitle(selectedDate, { weekday: "long", month: "short", day: "numeric" })}
         readout="DAY PLAN">
-        <p class="hint">{eventsOn(selectedDate).length} events · {tasksOn(selectedDate).filter((t) => t.status !== "done" && t.status !== "cancelled").length} pending tasks</p>
-        <div class="selected-actions">
-          <Button size="sm" intent="primary" onclick={newTask}>Add task</Button>
-          <Button size="sm" onclick={() => newEvent(selectedDate + "T09:00", selectedDate + "T10:00")}>Add event</Button>
-        </div>
+        {#if view !== "month"}
         {#each eventsOn(selectedDate) as e}
-          <button class="plan-event" style={`--calendar-color:${color(e.calendar_id)}`} onclick={() => openEvent(e)}
+          <button class="plan-event" style={`--calendar-color:${paint(e)}`} onclick={() => openEvent(e)}
             oncontextmenu={(event) => void deleteEventAtPointer(event, e)}>
             <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
             <strong>{e.title}</strong>
@@ -1875,6 +1972,7 @@
         {/each}
         {#if !eventsOn(selectedDate).length && !tasksOn(selectedDate).length}
           <div class="day-empty"><p class="hint">Nothing planned.</p></div>
+        {/if}
         {/if}
       </Panel>
     </aside>
@@ -1907,14 +2005,8 @@
                   class="task-title"
                   oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
                   onclick={() => (taskEditor = { ...t })}>{t.title}</button
-                ><select
-                  aria-label={`Status for ${t.title}`}
-                  disabled={pending > 0}
-                  value={t.status}
-                  onchange={(e) => taskStatus(t, e.currentTarget.value)}
-                  >{#each statuses as s}<option value={s}>{s}</option
-                    >{/each}</select
-                >
+                ><Select kind="list" label={`Status for ${t.title}`} disabled={pending > 0} value={t.status}
+                  options={statusOptions} onchange={(value) => taskStatus(t, value)} />
               </div>
               <p>
                 {t.due ? label(t.due, t.due.length === 10) : "No due date"} · {t.priority}
@@ -1926,17 +2018,12 @@
               <div class="tags">
                 {#each t.tags as tag}<span>{tag}</span>{/each}
               </div>
-            </article>{/each}<button
-            onclick={() => {
-              newTask();
-              if (taskEditor && status !== "all") taskEditor.status = status;
-            }}>＋ Task</button
-          >
+            </article>{/each}
+          <CalendarQuickAdd label="Add task" kind="task" {today} at={{ start: selectedDate }} onsave={quickSave} />
         </section>{/each}
     </div>
   {:else if section === "activity"}
-    <h2>Activity</h2>
-    <p class="hint">From saved records only.</p>
+    <h2 title="From saved records only">Activity</h2>
     <div class="activity-graph">
       {#each data.activity as a}<div class="activity-row">
           <span>{a.date}</span>
@@ -1953,8 +2040,7 @@
         </p>{/if}
     </div>
   {:else if section === "availability"}
-    <h2>Free / busy</h2>
-    <p class="hint">Visible calendars; free events excluded.</p>
+    <h2 title="Visible calendars; free events excluded">Free / busy</h2>
     <h3>Overlaps</h3>
     {#each data.conflicts as c}<p class="conflict">
         {data.events.find((e) => e.id === c.event_id)?.title} overlaps {c.with
@@ -1964,20 +2050,12 @@
     <h3>Free intervals</h3>
     {#each data.free as free}<div class="free-row">
         <span>{label(free.start)} → {label(free.end)}</span><button
-          onclick={() =>
-            newEvent(
-              localInput(free.start, false, tz),
-              localInput(free.end, false, tz),
-            )}>Schedule here</button
+          onclick={() => void openQuick(localInput(free.start, false, tz), localInput(free.end, false, tz))}>Schedule here</button
         >
       </div>{/each}
   {:else if section === "integrations"}
     <section class="panel">
       <h2>Import / export</h2>
-      <p class="hint">
-        CSV headers: <code>title,date</code>; optional
-        <code>job_id,kind,timezone,url,description</code>. Imports are local copies.
-      </p>
       <div class="controls">
         <label class="file"
           >Preview ICS<input
@@ -1985,7 +2063,7 @@
             accept=".ics,text/calendar"
             onchange={(e) => importFile(e.target, "ics")}
           /></label
-        ><label class="file"
+        ><label class="file" title="CSV headers: title,date; optional job_id,kind,timezone,url,description"
           >Preview CSV<input
             type="file"
             accept=".csv,text/csv"
@@ -2024,30 +2102,21 @@
         ><button onclick={() => (importRows = [])}>Cancel</button>{/if}
     </section>
     <section class="panel">
-      <h2>Reminder notifications</h2>
-      <p class="hint">
-        Shown only while kitty is open; not a background alarm.
-      </p>
+      <h2 title="Due reminders arrive as toasts and in the bell while kitty runs; quiet hours live in Settings">Reminder notifications</h2>
       <label
         ><input
           type="checkbox"
-          checked={notifications}
-          onchange={() => {
-            if (!notifications) void enableNotifications();
-            else {
-              notifications = false;
-              localStorage.removeItem("kitty-calendar-notifications");
-            }
+          checked={notifier.system}
+          onchange={(event) => {
+            event.currentTarget.checked = notifier.system;
+            void notifier.toggleSystem();
           }}
-        />Enable system notifications</label
+        />Also show system notifications</label
       >
     </section>
     <section class="panel">
       <h2>Google Calendar · optional</h2>
-      {#if demo}<p class="notice">
-          Demo supports every local action. Real Google authorization and API
-          calls are blocked.
-        </p>{/if}{#if googleStatus}<p>{googleStatus.notice}</p>
+      {#if demo}<p class="notice">Demo mode: Google calls are blocked.</p>{/if}{#if googleStatus}<p>{googleStatus.notice}</p>
         <p>
           Client: {googleStatus.client_present
             ? "stored privately"
@@ -2189,19 +2258,12 @@
           >{/each}
       </div>
       <div class="controls">
-        <label
-          >Direction<select bind:value={syncDirection}
-            ><option value="pull"
-              >Pull from Google (local conflicts reviewed)</option
-            ><option value="both">Pull + push local changes</option></select
-          ></label
-        ><label
-          >Attendee email updates<select bind:value={sendUpdates}
-            ><option value="none">none (Google may still notify)</option><option
-              value="all">all attendees</option
-            ><option value="externalOnly">external attendees only</option
-            ></select
-          ></label
+        <label title="Pull reviews local conflicts; Pull + push also sends local changes"
+          >Direction<Select label="Direction" bind:value={syncDirection}
+            options={[{ value: "pull", label: "Pull from Google" }, { value: "both", label: "Pull + push" }]} /></label
+        ><label title="Google may still notify on its own"
+          >Attendee email updates<Select label="Attendee email updates" bind:value={sendUpdates}
+            options={[{ value: "none", label: "None" }, { value: "all", label: "All attendees" }, { value: "externalOnly", label: "External only" }]} /></label
         >
       </div>
       <button
@@ -2273,10 +2335,13 @@
           class="conflict"
         >
           <h3>Calendar settings conflict</h3>
-          <div class="comparison">
-            <pre>{JSON.stringify(conflict.local, null, 2)}</pre>
-            <pre>{JSON.stringify(conflict.remote.values, null, 2)}</pre>
-          </div>
+          <ul class="setting-diff" aria-label="Settings that differ">
+            {#each [["Name", "name"], ["Timezone", "timezone"], ["Colour", "color"]] as const as [label, key]}
+              {#if conflict.local[key] !== conflict.remote.values[key]}<li>
+                  <span>{label}</span><span>kitty: {conflict.local[key]}</span><span>Google: {conflict.remote.values[key]}</span>
+                </li>{/if}
+            {/each}
+          </ul>
           {#each [["local", "Keep local settings (push later)"], ["remote", "Use Google settings"]] as [choice, title]}
             <button
               disabled={demo || googleTask?.status === "running"}
@@ -2294,52 +2359,30 @@
       {#if googleConflicts.length}<h3>
           Conflicts · never silently overwritten
         </h3>
-        {#each googleConflicts as c}<article class="conflict">
-            <h4>{c.local.title}</h4>
-            <div class="comparison">
-              <pre>{JSON.stringify(c.local, null, 2)}</pre>
-              <pre>{JSON.stringify(c.remote_json, null, 2)}</pre>
-            </div>
-            <div class="controls">
-              {#each [["local", "Keep local (push later)"], ["remote", "Use Google version"], ["duplicate", "Save local copy + use Google"]] as [choice, title]}<button
-                  disabled={demo || googleTask?.status === "running"}
-                  onclick={() => {
-                    if (window.confirm(`Confirm: ${title}?`))
-                      void googleWork("/calendar/google/resolve", {
-                        id: c.id,
-                        revision: c.local.revision,
-                        choice,
-                        confirmed: true,
-                      });
-                  }}>{title}</button
-                >{/each}
-            </div>
-          </article>{/each}{/if}
+        {#each googleConflicts as c (c.id)}{@const fill = paint(c.local)}<GoogleConflict
+            conflict={c}
+            {fill}
+            ink={blockText(theme, fill)}
+            disabled={demo || googleTask?.status === "running"}
+            onresolve={(choice) =>
+              void googleWork("/calendar/google/resolve", {
+                id: c.id,
+                revision: c.local.revision,
+                choice,
+                confirmed: true,
+              })}
+          />{/each}{/if}
       <details class="google-tools">
-        <summary>Google resource editor · exact reviewed API operations</summary
+        <summary title="List or get first, copy the returned ID and ETag, edit exact JSON, then review"
+          >Google resource editor</summary
         >
-        <p>
-          List/get first, copy the returned ID and ETag, edit exact JSON, then
-          review. Resources include calendar
-          creation/timezone/color/subscription, event recurrence/RSVP/attendee
-          updates, Meet, attachment links, reminders, sharing ACL, free/busy and
-          optional Google Tasks. Primary settings are read-only; primary
-          calendar timezone is edited via calendars/update. Focus
-          time/OOO/working location may require eligible accounts. Appointment
-          schedules are not exposed by Google.
-        </p>
         <div class="controls">
           <label
-            >Resource<select bind:value={resource} onchange={template}
-              >{#each Object.keys(resourceActions) as r}<option>{r}</option
-                >{/each}</select
-            ></label
+            >Resource<Select kind="list" label="Resource" bind:value={resource} onchange={template}
+              options={Object.keys(resourceActions).map((r) => ({ value: r, label: r }))} /></label
           ><label
-            >Action<select bind:value={action} onchange={template}
-              >{#each resourceActions[resource] as a}<option value={a}
-                  >{actionLabels[a] || a}</option
-                >{/each}</select
-            ></label
+            >Action<Select kind="list" label="Action" bind:value={action} onchange={template}
+              options={(resourceActions[resource] ?? []).map((a) => ({ value: a, label: actionLabels[a] || a }))} /></label
           ><button onclick={template}>Fill example for resource</button>
         </div>
         <div class="form-grid">
@@ -2371,35 +2414,15 @@
           <button onclick={useGoogleResult}
             >Copy returned ID & ETag into this editor</button
           >{/if}
-        <p class="hint">
-          Move: set params.destination (Calendar) or
-          destinationTasklist/parent/previous (Tasks). Import requires
-          iCalUID/start/end and a normal event. Quick add sends exact data.text
-          to Google's parser. Clear hides completed Tasks, or deletes every
-          event in the primary Calendar; this is not undoable locally. Every
-          change is previewed by kitty's server against live Google state (exact
-          URL, body, ETag, target, recipients, clear listing) and is sent only
-          with that frozen preview after your approval. Resource operations
-          change Google directly; pull again to refresh linked local copies.
-        </p>
-        {#if action === "watch"}<p class="hint">
-            A channel requires your own publicly reachable HTTPS webhook with
-            valid TLS and a verified/authorized receiver. kitty's loopback
-            server is not that receiver. Configure it separately before
-            approving; registrations expire and are not auto-renewed. Use
-            channels/stop with the returned id and resourceId.
-          </p>
+        <p class="hint">Changes are previewed against live Google and sent only after approval.</p>
+        {#if action === "watch"}<p class="hint">Needs your own public HTTPS webhook; channels expire unrenewed.</p>
           <label
             ><input type="checkbox" bind:checked={webhookConfirmed} />
             I control and configured the public HTTPS receiver in data.address and
             reviewed what Google may deliver.</label
           >{/if}
-        {#if resource === "events" && action === "quickAdd"}<p class="hint">
-            Google has no text-parser dry run. This safe quick-add path uses
-            sendUpdates=none and no attendee addresses. Use structured create
-            for invitations, with every recipient explicitly reviewed.
-          </p>{/if}
-        <label
+        {#if resource === "events" && action === "quickAdd"}<p class="hint">Google has no dry run; sent without attendees or notifications.</p>{/if}
+        <label title="Move: params.destination (Calendar) or destinationTasklist/parent/previous (Tasks). Import needs iCalUID, start and end. Clear is not undoable locally."
           >Exact resource data (JSON)<textarea
             rows="10"
             bind:value={remoteData}
@@ -2422,7 +2445,7 @@
         >{#if !googleStatus?.authorized}<p class="hint">
             {demo
               ? "External Google calls are disabled in demo mode."
-              : "Not connected: upload a Desktop OAuth client and authorize Calendar above before using Google resources."}
+              : "Not connected: authorize Calendar above first."}
           </p>{/if}{#if operationReview && operationRequest}<div
             class="review"
             role="group"
@@ -2520,52 +2543,40 @@
   {/if}
 </section>
 
-{#if editor && isActive}<div class="modal-backdrop" role="presentation">
-    <dialog
-      use:modal
-      oncancel={() => (editor = null)}
-      class="dialog"
-      aria-modal="true"
-      aria-labelledby={`${pane.id}-event-editor-title`}
-      tabindex="-1"
-    >
-      <header>
-        <h2 id={`${pane.id}-event-editor-title`}>
-          {editor.id ? "Event details" : "New event"}
-        </h2>
-        <button type="button" onclick={() => (editor = null)} aria-label="Close event editor"
-          >×</button
-        >
-      </header>
-      <p class="hint">Saved locally. Google updates are always reviewed separately.</p>
+{#if editor && isActive}
+  <EditDrawer title="Event details" accent={paint(editor)} closeLabel="Close event editor"
+    meta={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
+    onclose={() => (editor = null)}>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <form
+      <form class="drawer-form"
         onsubmit={(e) => {
           e.preventDefault();
           void saveEvent();
         }}
       >
-        <label
-          >Title<input
-            required
-            bind:value={editor.title}
-            maxlength="500"
-          /></label
-        >
-        {#if editor.id && editor.rrule}
-          <label>Edit recurrence scope<select bind:value={editScope} onchange={changeScope}>
-            <option value="this">This occurrence only</option>
-            <option value="future">This and future occurrences</option>
-            <option value="all">Entire series (original date/time anchors)</option>
-          </select></label>
-          <p class="hint">Choose the scope before editing; changing it reloads saved values.</p>
+        <input class="drawer-title" aria-label="Title" required maxlength="500" value={titleDraft}
+          placeholder="lunch with Mira fri 12:30" spellcheck="false" oninput={(e) => typeTitle(e.currentTarget.value)} />
+        {#if quick}
+          <QuickUnderstood text={titleDraft} spans={quick.spans} title={editor.title}
+            when={`${dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" })}${editor.all_day ? " · all day" : ` · ${startInput.slice(11, 16)}–${endInput.slice(11, 16)}`}`}
+            where={quick.where} repeat={quick.repeat} />
         {/if}
-        <div class="form-grid">
-          <label>Calendar<select bind:value={editor.calendar_id}
-            disabled={!!editor.id && !!editor.rrule && editScope === "this"}>
-            {#each data.calendars as c}<option value={c.id}>{c.name}</option>{/each}
-          </select></label>
-          <label><input type="checkbox" bind:checked={editor.all_day}
+        {#if editor.rrule}
+          <label title="Choose before editing; changing it reloads saved values">Edit recurrence scope<Select label="Edit recurrence scope"
+            bind:value={editScope} onchange={changeScope}
+            options={[{ value: "this", label: "This one" }, { value: "future", label: "This and future" }, { value: "all", label: "Entire series" }]} /></label>
+        {/if}
+        {#if !editor.all_day}
+          <div class="steppers" role="group" aria-label="Time">
+            <span class="stepper"><button type="button" aria-label="Earlier start" onclick={() => shiftTime(-15, "start")}>−</button><b>{startInput.slice(11, 16)}</b><button type="button" aria-label="Later start" onclick={() => shiftTime(15, "start")}>+</button></span>
+            <span class="arrow" aria-hidden="true">→</span>
+            <span class="stepper"><button type="button" aria-label="Earlier end" onclick={() => shiftTime(-15, "end")}>−</button><b>{endInput.slice(11, 16)}</b><button type="button" aria-label="Later end" onclick={() => shiftTime(15, "end")}>+</button></span>
+          </div>
+        {/if}
+        <div class="drawer-dates">
+          <CalendarDateTime label="Start" timed={!editor.all_day} bind:value={startInput} required />
+          <CalendarDateTime label={editor.all_day ? "End (following)" : "End"} timed={!editor.all_day} bind:value={endInput} required />
+          <label class="inline"><input type="checkbox" bind:checked={editor.all_day}
             onchange={() => {
               if (editor) {
                 startInput = editor.all_day ? startInput.slice(0, 10) : startInput + "T09:00";
@@ -2575,70 +2586,71 @@
                   : addDays(endDay, -1) + "T10:00";
               }
             }} />All-day / multi-day</label>
-          <CalendarDateTime label="Start" timed={!editor.all_day} bind:value={startInput} required />
-          <CalendarDateTime label={editor.all_day ? "End (following)" : "End"} timed={!editor.all_day} bind:value={endInput} required />
         </div>
-        <p class="hint">{editor.timezone}{editor.all_day ? " · All-day end is the date after the last included day." : ""}</p>
+        <fieldset class="drawer-field" disabled={!!editor.rrule && editScope === "this"}>
+          <legend class="eyebrow">calendar</legend>
+          <div class="swatches">
+            {#each data.calendars as c (c.id)}
+              <button type="button" class="swatch" style:--sw={calendarColor(c)} title={c.name} aria-label={c.name}
+                aria-pressed={editor.calendar_id === c.id} onclick={() => editor && (editor.calendar_id = c.id)}></button>
+            {/each}
+          </div>
+        </fieldset>
+        <ColorField subjects={data.subjects} bind:subject={editor.subject_id} bind:color={editor.color} inherited={calendarDefault} />
+        <label class="drawer-field"><span class="eyebrow">place</span><input bind:value={editor.location} placeholder="Add a place" /></label>
+        <div class="drawer-field" role="group" aria-label="Remind me">
+          <span class="eyebrow">remind me</span>
+          <div class="chips">
+            {#each reminderChips as [minutes, text] (minutes)}
+              <button type="button" aria-pressed={reminderList.includes(minutes)} aria-label={text}
+                onclick={() => toggleReminder(minutes)}>{text.replace(" minutes", "m").replace(" hour", "h").replace(" day", "d")}</button>
+            {/each}
+          </div>
+        </div>
         <details class="editor-options">
           <summary>Repeat & time settings{editor.rrule ? " · Repeating event" : ""}</summary>
           <div class="form-grid">
             <label>Timezone<input bind:value={editor.timezone} required /></label>
-            <label>DST ambiguous-time occurrence<select bind:value={fold} onchange={() => (foldChanged = true)}>
-              <option value={0}>First occurrence</option><option value={1}>Second occurrence</option>
-            </select></label>
+            <label title="For a fall-back time that happens twice; DST gaps are rejected">DST repeated time<Select label="DST repeated time"
+              value={String(fold)} onchange={(value) => { fold = Number(value); foldChanged = true; }}
+              options={[{ value: "0", label: "First" }, { value: "1", label: "Second" }]} /></label>
           </div>
-          <p class="hint">DST gaps are rejected. Choose the first or second occurrence for repeated fall-back times.</p>
-          <label>Repeat rule (RRULE)<input bind:value={editor.rrule}
-            disabled={!!editor.id && editScope === "this"} placeholder="FREQ=WEEKLY;BYDAY=MO,WE;COUNT=12" /></label>
-          <p class="hint">Leave empty for one event. Use UTC UNTIL, e.g. UNTIL=20271231T235959Z. This/future selection uses the original occurrence, even after moving it.</p>
+          <label title="Empty for one event. UNTIL in UTC, e.g. UNTIL=20271231T235959Z">Repeat rule (RRULE)<input bind:value={editor.rrule}
+            disabled={editScope === "this"} placeholder="FREQ=WEEKLY;BYDAY=MO,WE;COUNT=12" /></label>
           <label>Excluded starts, one per line (date or aware ISO timestamp)<textarea rows="2" bind:value={exdatesText}
-            disabled={!!editor.id && editScope === "this"}></textarea></label>
+            disabled={editScope === "this"}></textarea></label>
         </details>
         <details class="editor-options">
-          <summary>Location, notes & reminders</summary>
+          <summary>Notes, privacy & custom reminders</summary>
           <label>Notes<textarea rows="3" bind:value={editor.description}></textarea></label>
           <div class="form-grid">
-            <label>Location<input bind:value={editor.location} /></label>
             <label>URL<input type="url" bind:value={editor.url} /></label>
-            <label>Privacy<select bind:value={editor.privacy}>
-              {#each ["default", "public", "private", "confidential"] as p}<option>{p}</option>{/each}
-            </select></label>
+            <label>Privacy<Select label="Privacy" kind="list" bind:value={editor.privacy}
+              options={[{ value: "default", label: "Default" }, { value: "public", label: "Public" }, { value: "private", label: "Private" }, { value: "confidential", label: "Confidential" }]} /></label>
             <label><input type="checkbox" bind:checked={editor.busy} />Blocks availability (busy)</label>
           </div>
-          <label>When<select value={reminderPreset} onchange={(event) => {
-            reminderPreset = event.currentTarget.value;
-            if (reminderPreset !== "custom") remindersText = reminderPreset;
-          }}>
-            {#each reminderPresets as [value, title]}<option {value}>{title}</option>{/each}
-            <option value="custom">Custom timings…</option>
-          </select></label>
-          {#if reminderPreset === "custom"}
-            <label>Minutes before start<input bind:value={remindersText} placeholder="10,60,1440" /></label>
-            <p class="hint">Separate multiple reminders with commas.</p>
-          {/if}
+          <label>Reminder minutes before start<input bind:value={remindersText} placeholder="10,60,1440" /></label>
         </details>
         <details class="editor-options">
           <summary>Attendees, attachments & Google properties</summary>
-        <label
+        <label title="RSVP: needsAction, accepted, declined or tentative. Local edits never email anyone."
           >Attendees: email,name,RSVP,optional (true/false) per line<textarea
             rows="3"
             bind:value={attendeesText}
             placeholder="person@example.com,Person,needsAction"
           ></textarea></label
         >
-        <p class="hint">
-          RSVP: needsAction, accepted, declined, tentative. Local edits never
-          email anyone. Google updates require separately approved sync or
-          resource operation.
-        </p>
         <label
           >Attachment links: title | https://URL per line<textarea
             rows="2"
             bind:value={attachmentsText}
           ></textarea></label
         ><label
-          >Google special event type<select
+          title="Special types need an eligible Google account">Google special event type<Select
+            label="Google special event type"
+            kind="list"
             bind:value={editor.event_type}
+            options={[{ value: "default", label: "Normal" }, { value: "focusTime", label: "Focus time" }, { value: "outOfOffice", label: "Out of office" }, { value: "workingLocation", label: "Working location" }]}
             onchange={() => {
               const defaults: Record<string, unknown> = {
                 default: {},
@@ -2664,14 +2676,7 @@
                 2,
               );
             }}
-            ><option value="default">Normal</option><option value="focusTime"
-              >Focus time (eligible Google account)</option
-            ><option value="outOfOffice"
-              >Out of office (eligible Google account)</option
-            ><option value="workingLocation"
-              >Working location (eligible Google account)</option
-            ></select
-          ></label
+          /></label
         >
         <label
           >Google properties (exact JSON; account eligibility applies)<textarea
@@ -2692,136 +2697,98 @@
               >{/if}
           </p>{/if}
         <footer>
-          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : editor.id ? "Save changes" : "Add event"}</Button>
+          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : "Save changes"}</Button>
           <Button type="button" disabled={pending > 0} onclick={() => (editor = null)}>Cancel</Button>
-          {#if editor.id}<Button type="button" disabled={pending > 0} onclick={() => {
+          <Button type="button" disabled={pending > 0} onclick={() => {
             if (window.confirm("Delete the selected occurrence/scope? You can undo if it has not changed.")) void saveEvent(true);
-          }}>Delete selected scope</Button>{/if}
+          }}>Delete selected scope</Button>
         </footer>
       </form>
-    </dialog>
-  </div>{/if}
-{#if taskEditor && isActive}<div class="modal-backdrop" role="presentation">
-    <dialog
-      use:modal
-      oncancel={() => (taskEditor = null)}
-      class="dialog"
-      aria-modal="true"
-      aria-labelledby={`${pane.id}-task-editor-title`}
-      tabindex="-1"
-    >
-      <header>
-        <h2 id={`${pane.id}-task-editor-title`}>
-          {taskEditor.id ? "Edit task" : "New task"}
-        </h2>
-        <button
-          onclick={() => (taskEditor = null)}
-          aria-label="Close task editor" type="button">×</button
-        >
-      </header>
-      {#if taskEditor.id}{@const id = taskEditor.id}<div class="task-map-row">
-          <TaskMapAction task={{ id, title: taskEditor.title }} inMaps={taskMaps[id]}
-            onadded={(m) => mappedTask(id, m)} />
-        </div>{/if}
+  </EditDrawer>{/if}
+{#if taskEditor?.id && isActive}{@const id = taskEditor.id}
+  <EditDrawer title="Task details" accent={taskColor(taskEditor) ?? ""} closeLabel="Close task editor"
+    meta={`${data.calendars.find((c) => c.id === taskEditor?.calendar_id)?.name ?? "Calendar"}${taskDueInput ? ` · ${dateTitle(taskDueInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" })}` : ""}`}
+    onclose={() => (taskEditor = null)}>
+      <div class="task-map-row">
+        <TaskMapAction task={{ id, title: taskEditor.title }} inMaps={taskMaps[id]} onadded={(m) => mappedTask(id, m)} />
+      </div>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <form
+      <form class="drawer-form"
         onsubmit={(e) => {
           e.preventDefault();
           void saveTask();
         }}
       >
-        <label>Task title<input required bind:value={taskEditor.title} placeholder="What needs to get done?" /></label>
-            <label><input type="checkbox" bind:checked={taskDueTimed} onchange={() => {
-              taskDueInput = taskDueInput ? taskDueTimed ? taskDueInput + "T09:00" : taskDueInput.slice(0, 10) : "";
-            }} />Include due time</label>
-        <div class="form-grid">
+        <input class="drawer-title" aria-label="Task title" required bind:value={taskEditor.title} />
+        <label class="inline"><input type="checkbox" bind:checked={taskDueTimed} onchange={() => {
+          taskDueInput = taskDueInput ? taskDueTimed ? taskDueInput + "T09:00" : taskDueInput.slice(0, 10) : "";
+        }} />Include due time</label>
+        <div class="drawer-dates">
           <CalendarDateTime label="Due" timed={taskDueTimed} bind:value={taskDueInput} />
-          <label>Calendar<select bind:value={taskEditor.calendar_id}>
-            {#each data.calendars as c}<option value={c.id}>{c.name}</option>{/each}
-          </select></label>
+        </div>
+        <div class="form-grid">
+          <label>Calendar<Select label="Calendar" kind="list" bind:value={taskEditor.calendar_id}
+            options={data.calendars.map((c) => ({ value: c.id, label: c.name, color: calendarColor(c) }))} /></label>
+          {#if data.subjects.length}<label>Study subject<Select label="Study subject" kind="list" value={String(taskEditor.subject_id ?? "")}
+            onchange={(value) => taskEditor && (taskEditor.subject_id = value ? Number(value) : null)}
+            options={[{ value: "", label: "No subject" }, ...data.subjects.map((s) => ({ value: String(s.id), label: s.name, color: s.color }))]} /></label>{/if}
         </div>
         <details class="editor-options">
-          <summary>More options · notes, priority & repeat</summary>
+          <summary>Notes, priority & repeat</summary>
           <label>Notes<textarea rows="3" bind:value={taskEditor.description}></textarea></label>
           <div class="form-grid">
-            <label>Timezone<input bind:value={taskEditor.timezone} /></label>
-            <label>Priority<select bind:value={taskEditor.priority}>
-              {#each ["low", "normal", "high", "urgent"] as p}<option>{p}</option>{/each}
-            </select></label>
-            <label>Status<select bind:value={taskEditor.status}>
-              {#each statuses as s}<option>{s}</option>{/each}
-            </select></label>
+            <label>Timezone<Select kind="timezone" label="Timezone" bind:value={taskEditor.timezone} /></label>
+            <label>Priority<Select label="Priority" bind:value={taskEditor.priority}
+              options={[{ value: "low", label: "Low" }, { value: "normal", label: "Normal" }, { value: "high", label: "High" }, { value: "urgent", label: "Urgent" }]} /></label>
+            <label>Status<Select label="Status" kind="list" bind:value={taskEditor.status} options={statusOptions} /></label>
             <label>Project<input bind:value={taskEditor.project} /></label>
           </div>
-        <div class="form-grid">
+          <div class="form-grid">
+            <label title={editingCompletedTask ? "Completed history: change repetition on the next pending task"
+              : "Needs a due date. Completing creates the next one; repetition stays local"}
+              >Repeat<Select label="Repeat" kind="list" bind:value={taskEditor.repeat_frequency} disabled={editingCompletedTask}
+                options={[{ value: "", label: "One-off task" }, { value: "DAILY", label: "Daily" }, { value: "WEEKLY", label: "Weekly" }, { value: "MONTHLY", label: "Monthly" }, { value: "YEARLY", label: "Yearly" }]} /></label>
+            {#if taskEditor.repeat_frequency}<label
+                >Every ({repeatUnits[taskEditor.repeat_frequency]}s)<input
+                  type="number"
+                  min="1"
+                  step="1"
+                  bind:value={taskEditor.repeat_interval}
+                  required
+                  disabled={editingCompletedTask}
+                /></label
+              >
+              <label
+                >Repeat until (inclusive; optional)<input
+                  type="date"
+                  bind:value={taskEditor.repeat_until}
+                  disabled={editingCompletedTask}
+                /></label
+              >{/if}
+          </div>
           <label
-            >Repeat<select
-              bind:value={taskEditor.repeat_frequency}
-              disabled={editingCompletedTask}
-            >
-              <option value="">One-off task</option><option value="DAILY"
-                >Daily</option
-              >
-              <option value="WEEKLY">Weekly</option><option value="MONTHLY"
-                >Monthly</option
-              >
-              <option value="YEARLY">Yearly</option></select
-            ></label
+            >Tags (comma-separated)<input
+              value={taskEditor.tags.join(", ")}
+              onchange={(e) => {
+                if (taskEditor)
+                  taskEditor.tags = e.currentTarget.value
+                    .split(",")
+                    .map((t) => t.trim())
+                    .filter(Boolean);
+              }}
+            /></label
           >
-          {#if taskEditor.repeat_frequency}<label
-              >Every ({repeatUnits[taskEditor.repeat_frequency]}s)<input
-                type="number"
-                min="1"
-                step="1"
-                bind:value={taskEditor.repeat_interval}
-                required
-                disabled={editingCompletedTask}
-              /></label
-            >
-            <label
-              >Repeat until (inclusive; optional)<input
-                type="date"
-                bind:value={taskEditor.repeat_until}
-                disabled={editingCompletedTask}
-              /></label
-            >{/if}
-        </div>
-        {#if taskEditor.repeat_frequency}<p class="hint">
-          Needs a due date. Completing creates the next instance; missed dates
-          stay open. Repetition stays local (never sent to Google).
-        </p>{/if}
-        {#if editingCompletedTask && taskEditor.repeat_frequency}<p
-            class="hint"
-          >
-            This is completed history; change repetition on the next pending
-            task instead.
-          </p>{/if}
-        <label
-          >Tags (comma-separated)<input
-            value={taskEditor.tags.join(", ")}
-            onchange={(e) => {
-              if (taskEditor)
-                taskEditor.tags = e.currentTarget.value
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter(Boolean);
-            }}
-          /></label
-        >
         </details>
         <footer>
-          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : taskEditor.id ? "Save changes" : "Add task"}</Button>
+          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : "Save changes"}</Button>
           <Button type="button" disabled={pending > 0} onclick={() => (taskEditor = null)}>Cancel</Button>
-          {#if taskEditor.id}
-            <Button type="button" disabled={pending > 0} onclick={() => {
-              if (taskEditor) { taskEditor.status = taskEditor.status === "done" ? "todo" : "done"; void saveTask(); }
-            }}>{taskEditor.status === "done" ? "Reopen task" : "Complete task"}</Button>
-            <Button type="button" disabled={pending > 0} onclick={() => saveTask(true)}>Delete task</Button>
-          {/if}
+          <Button type="button" disabled={pending > 0} onclick={() => {
+            if (taskEditor) { taskEditor.status = taskEditor.status === "done" ? "todo" : "done"; void saveTask(); }
+          }}>{taskEditor.status === "done" ? "Reopen task" : "Complete task"}</Button>
+          <Button type="button" disabled={pending > 0} onclick={() => saveTask(true)}>Delete task</Button>
         </footer>
       </form>
-    </dialog>
-  </div>{/if}
+  </EditDrawer>{/if}
 {#if calendarEditor && isActive}<div class="modal-backdrop" role="presentation">
     <dialog
       use:modal
@@ -2845,9 +2812,9 @@
         }}
       >
         <label>Name<input bind:value={calendarEditor.name} required /></label
-        ><label
-          >Color<input type="color" bind:value={calendarEditor.color} /></label
-        ><label
+        ><ColorField plain subjects={data.subjects} bind:subject={calendarEditor.subject_id}
+          bind:color={() => calendarEditor?.color, (value) => calendarEditor && (calendarEditor.color = value ?? undefined)} />
+        <label
           >Timezone<input
             bind:value={calendarEditor.timezone}
             required
@@ -2911,7 +2878,6 @@
   }
   button,
   input,
-  select,
   textarea {
     font: inherit;
     color: var(--ink);
@@ -2932,14 +2898,12 @@
   }
   button:focus-visible,
   input:focus-visible,
-  select:focus-visible,
   textarea:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   input,
-  textarea,
-  select {
+  textarea {
     border: 1px solid var(--border);
     background: var(--surface);
     border-radius: 0.4rem;
@@ -2975,12 +2939,10 @@
     gap: 0.55rem;
     flex-wrap: wrap;
   }
-  .toolbar > div:first-child {
+  .toolbar h1 {
     margin-right: auto;
   }
-  .toolbar p,
-  .hint,
-  .toolbar span {
+  .hint {
     color: var(--muted);
     font-size: 0.85rem;
   }
@@ -2989,11 +2951,7 @@
     padding-bottom: 0.6rem;
   }
   .header-actions,
-  .period-navigation,
-  .view-switch,
-  .range-toolbar,
-  .search-toolbar,
-  .selected-actions {
+  .search-toolbar {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -3001,25 +2959,6 @@
   }
   .header-actions {
     margin-left: auto;
-  }
-  .range-toolbar {
-    padding: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 0.8rem;
-    background: var(--surface);
-    gap: 0.8rem;
-  }
-  .range-heading {
-    font-size: 1.25rem;
-    letter-spacing: -0.025em;
-    margin: 0 auto 0 0;
-  }
-  .date-jump {
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-  .view-switch {
-    gap: 0.25rem;
   }
   .calendar-search {
     flex: 1;
@@ -3031,11 +2970,6 @@
     width: 100%;
     min-width: 0;
   }
-  .load-status {
-    color: var(--muted);
-    font-size: 0.78rem;
-    margin-left: auto;
-  }
   .display-options {
     margin: 0;
     border-bottom: 1px solid var(--border);
@@ -3045,15 +2979,6 @@
   .display-options > .controls,
   .display-options > .calendars {
     margin-top: 0.8rem;
-  }
-  .interaction-help {
-    margin: 0;
-    max-width: 36rem;
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-  .interaction-help p {
-    margin-top: 0.5rem;
   }
   .calendar-layout {
     display: grid;
@@ -3066,12 +2991,8 @@
     min-width: 0;
   }
   .calendar-main {
-    overflow: auto;
     border-radius: 0.7rem;
     border: 1px solid var(--border);
-  }
-  .selected-actions {
-    margin-bottom: 0.85rem;
   }
   .plan-event {
     display: flex;
@@ -3148,7 +3069,6 @@
   }
   .error,
   .notice,
-  .reminders,
   .panel {
     padding: 1rem;
     border-radius: 0.65rem;
@@ -3160,75 +3080,74 @@
     display: flex;
     justify-content: space-between;
   }
-  .reminders > div {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    flex-wrap: wrap;
-    margin: 0.4rem 0;
-  }
-  .reminders button {
-    margin-left: auto;
+  .month-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(220px, 1fr);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
   }
   .month-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    min-width: 560px;
+    align-content: start;
+    gap: 2px;
+    padding: 4px 8px 8px;
   }
   .day-cell {
-    min-height: 132px;
-    padding: 0.35rem;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 56px;
     min-width: 0;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .day-cell:hover {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
   }
   .day-cell.selected {
-    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-    box-shadow: inset 0 0 0 1px var(--accent);
+    background: var(--ink);
   }
-  .day-cell.today .day-head strong {
+  .day-cell.selected .day-head {
+    color: var(--solid-void);
+  }
+  .day-cell.today .day-head {
     color: var(--accent);
+    font-weight: 700;
   }
-  .day-cell-heading {
-    display: flex;
-    align-items: center;
-    gap: 0.2rem;
-    margin-bottom: 0.45rem;
-  }
-  .day-add {
-    padding: 0.1rem 0.3rem;
-    border-color: transparent;
-    background: transparent;
-    color: var(--muted);
-  }
-  .outside {
-    opacity: 0.55;
+  .day-cell.selected.today .day-head {
+    color: var(--solid-void);
   }
   .day-head {
-    display: flex;
-    flex: 1;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.2rem;
-    min-width: 0;
-    padding: 0.3rem;
+    padding: 0.15rem 0.4rem;
     border: 0;
     background: transparent;
-    text-align: left;
-    font-size: 0.8rem;
+    color: var(--ink);
+    font: 500 0.82rem var(--font-ui);
+  }
+  .dots {
+    display: flex;
+    gap: 3px;
+    height: 5px;
+    pointer-events: none;
+  }
+  .dots i {
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+  }
+  .outside {
+    opacity: 0.45;
   }
   .weekday-label {
-    padding: 0.65rem 0.4rem;
+    padding: 0.55rem 0.4rem 0.3rem;
     text-align: center;
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--muted);
-    background: var(--surface-raised);
-    border-bottom: 1px solid var(--border);
-  }
-  .day-head strong {
-    font-size: 0.9rem;
+    font: 600 0.7rem var(--font-mono);
+    color: var(--subtle);
   }
   .selecting {
     background: color-mix(
@@ -3271,6 +3190,8 @@
     font-size: 0.75rem;
     margin: 0.25rem 0;
     color: var(--muted);
+    /* A subject-linked task carries its subject colour as a left rule. */
+    box-shadow: inset 3px 0 0 var(--task-color, transparent);
   }
   .time-scroll {
     overflow: auto;
@@ -3421,7 +3342,7 @@
   .task-tray { margin: 0.7rem 0 1rem; padding: 0.8rem; border: 1px solid var(--border); border-radius: 8px; }
   .task-tray h3 { margin: 0; }
   .tray-list { display: grid; gap: 0.4rem; max-height: 320px; overflow-y: auto; margin-top: 0.6rem; }
-  .tray-task { display: grid; gap: 0.25rem; text-align: left; width: 100%; padding: 0.6rem; }
+  .tray-task { display: grid; gap: 0.25rem; text-align: left; width: 100%; padding: 0.6rem; box-shadow: inset 3px 0 0 var(--task-color, transparent); }
   .tray-task span { font-size: 0.75rem; color: var(--muted); }
   .timed-task { position: absolute; z-index: 4; left: 2px; right: 2px; max-width: calc(100% - 4px); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; }
   [draggable="true"] { cursor: grab; }
@@ -3454,9 +3375,11 @@
     z-index: 1;
     margin: 0;
     box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--calendar-color) 50%, var(--border));
-    border-left: 3px solid var(--calendar-color);
-    background: color-mix(in srgb, var(--calendar-color) 22%, var(--surface));
+    border: 0;
+    border-radius: 9px;
+    background: var(--block);
+    color: var(--block-ink);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 25%, transparent) inset;
     overflow: hidden;
     align-items: stretch;
   }
@@ -3469,7 +3392,7 @@
     padding: 0.15rem 0.25rem;
     line-height: 1.15;
     overflow: hidden;
-    color: var(--ink);
+    color: inherit;
   }
   .timed-content strong,
   .timed-content span {
@@ -3483,29 +3406,33 @@
   .timed-content span {
     font-size: 0.65rem;
     margin-top: 0.1rem;
+    opacity: 0.72;
   }
   .timed .resize {
     align-self: flex-end;
     font-size: 0.6rem;
     padding: 0.1rem;
+    color: inherit;
+  }
+  .timed:hover {
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--block) 35%, transparent);
   }
   .now-line {
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 2px solid var(--accent);
+    border-top: 1.5px dashed var(--c1);
     z-index: 3;
     pointer-events: none;
   }
-  .now-line::before {
-    content: "";
+  .now-line .bloom {
     position: absolute;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    left: -3px;
-    top: -4px;
+    left: -6px;
+    top: -9px;
+    color: var(--c1);
+    font-size: 13px;
+    line-height: 1;
+    text-shadow: 0 0 6px var(--c1);
   }
   .agenda section {
     padding: 0.8rem 0;
@@ -3554,10 +3481,6 @@
     font-weight: 600;
     text-align: left;
     margin-right: auto;
-  }
-  .task-card select {
-    max-width: 7rem;
-    font-size: 0.8rem;
   }
   .task-card p {
     font-size: 0.78rem;
@@ -3656,10 +3579,18 @@
     max-height: 28rem;
     overflow: auto;
   }
-  .comparison {
+  .setting-diff {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.7rem;
+    gap: 0.3rem;
+    margin: 0.5rem 0;
+    padding: 0;
+    list-style: none;
+  }
+  .setting-diff li {
+    display: grid;
+    grid-template-columns: 6rem 1fr 1fr;
+    gap: 0.6rem;
+    font-size: 0.85rem;
   }
   .review {
     border: 1px solid var(--accent);
@@ -3739,10 +3670,6 @@
     align-items: stretch;
     margin: 0.8rem 0;
   }
-  .editor-options .hint {
-    line-height: 1.55;
-    margin-top: 0.65rem;
-  }
   .dialog footer {
     margin-top: 1rem;
     position: sticky;
@@ -3755,6 +3682,130 @@
   .danger {
     color: var(--warning);
   }
+  @media (min-width: 900px) {
+    .calendar-workspace.drawer-open {
+      padding-right: calc(min(400px, 100vw - 1.5rem) + 0.75rem);
+    }
+    /* The drawer stands in for the side rail while it is open. */
+    .drawer-open .calendar-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .drawer-open .selected-plan {
+      display: none;
+    }
+  }
+  .drawer-form {
+    display: grid;
+    gap: 10px;
+  }
+  .drawer-form .editor-options {
+    margin: 0;
+  }
+  .drawer-form footer {
+    position: sticky;
+    bottom: -16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.7rem 0 0.2rem;
+    border-top: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--solid-raised) 92%, transparent);
+  }
+  .drawer-title {
+    padding: 0 0 4px;
+    border: 0;
+    border-bottom: 1px solid var(--hairline);
+    border-radius: 0;
+    background: transparent;
+    color: var(--ink);
+    font: 700 1.2rem var(--font-ui);
+  }
+  .drawer-title:focus-visible {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+  .steppers {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+  }
+  .stepper button {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+  }
+  .stepper button:hover {
+    color: var(--ink);
+  }
+  .stepper b {
+    font: 600 0.8rem var(--font-mono);
+  }
+  .steppers .arrow {
+    color: var(--subtle);
+  }
+  .drawer-dates {
+    display: grid;
+    gap: 6px;
+    font-size: 0.8rem;
+  }
+  .drawer-dates .inline {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .drawer-field {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .drawer-field .eyebrow {
+    color: var(--muted);
+    padding: 0;
+  }
+  .swatches,
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .swatch {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: var(--sw);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--solid-void) 30%, transparent);
+  }
+  .swatch[aria-pressed="true"] {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+  .chips button {
+    padding: 2px 9px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .chips button[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--ink);
+  }
   a {
     color: var(--accent);
   }
@@ -3764,11 +3815,10 @@
     }
   }
   @media (max-width: 760px) {
-    .month-grid {
-      grid-template-columns: repeat(7, minmax(80px, 1fr));
+    .month-layout {
+      grid-template-columns: minmax(0, 1fr);
     }
-    .form-grid,
-    .comparison {
+    .form-grid {
       grid-template-columns: 1fr;
     }
     .controls label {
@@ -3782,25 +3832,11 @@
     .toolbar {
       align-items: start;
     }
-    .range-heading {
-      order: -1;
-      flex-basis: 100%;
-    }
-    .view-switch {
-      width: 100%;
-    }
-    .load-status {
-      flex-basis: 100%;
-      margin-left: 0;
-    }
-    .date-jump {
-      margin-left: auto;
-    }
     .header-actions {
       margin-left: 0;
     }
     .day-cell {
-      min-height: 110px;
+      min-height: 44px;
     }
     .modal-backdrop {
       padding: 0.3rem;

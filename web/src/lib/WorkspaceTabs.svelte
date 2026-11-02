@@ -1,8 +1,13 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { Button } from "@nunera/bracket";
+  import Icon from "./Icon.svelte";
+  import StatusDot from "./ui/StatusDot.svelte";
+  import type { SaveStatus } from "./workspaceContext.svelte";
+  /** `tone` is the tab's group colour (navigationGroups); it tints the icon and the active underline.
+   *  `status` is the view's save state (Q3), drawn as a dot on the tab. */
   let { tabs, activeId, onselect, onclose, onnew }: {
-    tabs: { id: string; label: string }[];
+    tabs: { id: string; label: string; icon: string; tone: string; status: SaveStatus | null }[];
     activeId: string;
     onselect: (id: string) => void;
     onclose: (id: string) => void;
@@ -52,14 +57,14 @@
 <nav class="workspace-tabbar" aria-label="Workspace tabs" oncontextmenu={openMenu}>
   <div class="tab-list" role="tablist" aria-label="Open workspaces">
     {#each tabs as tab, index (tab.id)}
-      <div class="tab" class:active={tab.id === activeId} role="presentation">
+      <div class="tab" class:active={tab.id === activeId} role="presentation" style:--tone={tab.tone}>
         <button
           id={`workspace-tab-${tab.id}`} role="tab"
           aria-selected={tab.id === activeId} aria-controls={`workspace-pane-${tab.id}`}
           tabindex={tab.id === activeId ? 0 : -1}
           onclick={() => onselect(tab.id)} onkeydown={event => void tabKey(event, index)}
           title={tab.label}
-        >{tab.label}</button>
+        ><span class="tab-icon" aria-hidden="true"><Icon name={tab.icon} size={14} /></span><span class="tab-name">{tab.label}</span>{#if tab.status}<StatusDot state={tab.status.state} detail={tab.status.detail} />{/if}</button>
         <button class="close-tab" aria-label={`Close ${tab.label} tab`} title="Close tab · Ctrl+W" onclick={() => onclose(tab.id)}>×</button>
       </div>
     {/each}
@@ -73,14 +78,25 @@
 {/if}
 
 <style>
-  .workspace-tabbar { display: flex; align-items: center; gap: .35rem; padding: .35rem .5rem 0; min-width: 0; border-bottom: 1px solid var(--border); }
-  .tab-list { display: flex; align-items: stretch; gap: .25rem; overflow-x: auto; scrollbar-width: thin; min-width: 0; }
-  .tab { display: flex; align-items: center; flex: 0 0 auto; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; color: var(--muted); }
-  .tab.active { color: var(--ink); background: var(--surface-raised); border-color: var(--border); box-shadow: inset 0 2px var(--accent); }
-  .tab > button { appearance: none; border: 0; background: none; color: inherit; font: inherit; font-size: .8rem; padding: .55rem .7rem; cursor: pointer; }
-  .tab > button[role="tab"] { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tab > .close-tab { padding: .35rem .45rem; margin-right: .2rem; font-size: 1rem; border-radius: 4px; }
-  .tab > button:hover, .tab > button:focus-visible { color: var(--ink); background: var(--wash); outline-color: var(--accent); }
+  /* Underline tabs: flat text with a group-coloured icon; the active tab gets a soft glowing underline. */
+  .workspace-tabbar { display: flex; align-items: center; gap: .35rem; padding: .25rem .5rem 0; min-width: 0; border-bottom: 1px solid var(--hairline, var(--border)); }
+  .tab-list { display: flex; align-items: stretch; gap: 2px; overflow-x: auto; scrollbar-width: thin; min-width: 0; }
+  .tab { position: relative; display: flex; align-items: center; flex: 0 0 auto; color: var(--muted); }
+  .tab.active { color: var(--ink); }
+  .tab.active::after {
+    content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0;
+    background: var(--tone); box-shadow: 0 0 10px color-mix(in srgb, var(--tone) 60%, transparent);
+  }
+  .tab > button { appearance: none; border: 0; background: none; color: inherit; cursor: pointer; }
+  .tab > button[role="tab"] { display: inline-flex; align-items: center; gap: 7px; max-width: 14rem; padding: 8px 4px 9px 10px; font: 500 var(--fs-control) var(--font-ui); }
+  .tab-icon { display: inline-grid; place-items: center; color: var(--tone); opacity: .8; }
+  .tab.active .tab-icon { opacity: 1; }
+  .tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab > .close-tab { visibility: hidden; padding: .2rem .4rem; margin-right: 2px; font-size: 1rem; line-height: 1; border-radius: 6px; }
+  .tab:hover > .close-tab, .tab.active > .close-tab, .tab:focus-within > .close-tab { visibility: visible; }
+  .tab > button:hover, .tab > button:focus-visible { color: var(--ink); }
+  .tab > .close-tab:hover, .tab > .close-tab:focus-visible { background: var(--wash); }
+  .tab > button:focus-visible { outline-color: var(--accent); }
   .tab-menu { position: fixed; z-index: 1000; min-width: 190px; padding: .3rem; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); box-shadow: var(--overlay-shadow); }
   .tab-menu button { display: flex; align-items: center; justify-content: space-between; gap: 1rem; width: 100%; border: 0; border-radius: 4px; background: transparent; color: var(--ink); padding: .6rem .7rem; font: inherit; font-size: .85rem; cursor: pointer; }
   .tab-menu button:hover, .tab-menu button:focus-visible { background: var(--wash); outline-color: var(--accent); }

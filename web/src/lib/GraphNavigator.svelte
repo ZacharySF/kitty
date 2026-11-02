@@ -1,9 +1,16 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
-  import { Button, Panel } from "@nunera/bracket";
-  import { api, type Bootstrap } from "./api";
+  import { onMount } from "svelte";
+  import { Button } from "@nunera/bracket";
+  import { api } from "./api";
+  import { prefersReducedMotion } from "./appearance";
   import Icon from "./Icon.svelte";
-  import Dashboard from "./Dashboard.svelte";
+  import HomeAgents from "./HomeAgents.svelte";
+  import HomeQuickNote from "./HomeQuickNote.svelte";
+  import HomeSections from "./HomeSections.svelte";
+  import HomeUpNext from "./HomeUpNext.svelte";
+  import HomeWidget from "./HomeWidget.svelte";
+  import TodayAgenda from "./TodayAgenda.svelte";
+  import Select from "./ui/Select.svelte";
   import {
     navigation,
     viewEnabled,
@@ -20,12 +27,26 @@
   import { activeModules } from "./modules.svelte";
   import {
     mountGraph,
+    webglAvailable,
     type GraphHandle,
     type GraphNode,
   } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook, hiddenSections, setSectionHidden } from "./graphPreferences";
-  import GraphLookToggle from "./GraphLookToggle.svelte";
+  import {
+    GRAPH_SETTINGS_EVENT,
+    HOME_RAIL_KEY,
+    graphLayout,
+    graphPhysics,
+    hiddenSections,
+    homeLook,
+    homeRailCollapsed,
+    setHomeLook,
+    setHomeRailCollapsed,
+    setSectionHidden,
+    type HomeLook,
+  } from "./graphPreferences";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import Loader from "./Loader.svelte";
+  import BrainStage from "./brain/BrainStage.svelte";
 
   const pane = useWorkspaceContext();
 
@@ -34,27 +55,22 @@
   };
 
   let {
-    workspace,
     revision,
     onview,
-    onopenjob,
-    onguide,
   }: {
-    workspace: Bootstrap | null;
     revision: number;
     onview: (view: View) => unknown;
-    onopenjob: (id: number) => void;
-    onguide: () => void;
   } = $props();
 
   const atlasId = `atlas-${pane.id}`;
-  const reducedMotion =
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reducedMotion = prefersReducedMotion();
 
   const enabled = $derived(activeModules.enabled);
-  const applyai = $derived(enabled.includes("applyai"));
   const workspaceTools = $derived(enabled.includes("workspace"));
+  const terminal = $derived(enabled.includes("terminal"));
+  /** Q13: the rails hold only widgets; the right one also carries the modules-off notice. */
+  const upNext = $derived((["calendar", "flashcards", "reminders"] as View[]).some((view) => viewEnabled(view, enabled)));
+  const hasRight = $derived(terminal || upNext || !enabled.length);
   const sections = $derived(atlasSections(visibleGroups(enabled), navigation));
   let hidden = $state(hiddenSections());
   const listed = (view: string): view is View =>
@@ -63,31 +79,48 @@
   let atlas = $state<Atlas | null>(null);
   let atlasError = $state("");
   const layout = graphLayout();
-  let look = $state(graphLook());
+  // Home is the Brain or the 2D atlas. The Brain replaces the stage; the 2D atlas then waits,
+  // paused and hidden, underneath. Without WebGL there is only the 2D atlas.
+  const supportsBrain = webglAvailable();
+  let chosen = $state(homeLook());
+  const look = $derived<HomeLook>(supportsBrain ? chosen : "2d");
+  let lookError = $state("");
+  function chooseLook(next: string) {
+    try {
+      setHomeLook(next as HomeLook);
+      lookError = "";
+    } catch {
+      lookError = "This browser could not save the home look.";
+    }
+  }
+  /** Q13: the side rail folds to an edge strip so the Brain widens; every home follows one choice. */
+  let collapsed = $state(homeRailCollapsed());
+  /** "Open module settings" lands on Settings' Modules page (`#settings/modules`). */
+  function openModuleSettings() {
+    onview("settings");
+    if (location.hash === "#settings") history.replaceState(history.state, "", "#settings/modules");
+  }
+  function toggleRail() {
+    try {
+      setHomeRailCollapsed(!collapsed);
+    } catch {
+      collapsed = !collapsed;
+    }
+  }
+  let brain = $state<BrainStage>();
+  let sectionsControl = $state<HomeSections>();
+  let sectionsOpen = $state(false);
   const physics = graphPhysics();
   let mode = $state<"loading" | "graph" | "list">("loading");
   let notice = $state("");
   let hovered = $state<GraphNode | null>(null);
   let selected = $state<GraphNode | null>(null);
-  let query = $state("");
-  let daily = $state<{
-    events: number | null;
-    focus: number | null;
-    due: number | null;
-    opportunities: number | null;
-  }>({ events: null, focus: null, due: null, opportunities: null });
-  let dailyLoading = $state(false);
   let container: HTMLDivElement;
-  let searchField = $state<HTMLInputElement>();
   let handle = $state.raw<GraphHandle | null>(null);
   let pendingGroup: string | null = null;
-  let sectionsBlock = $state<HTMLElement>();
   let draggedSection = $state<View | null>(null);
   let nodeDrag: { view: View; label: string } | null = null;
   let nodeOverList = $state<string | null>(null);
-  let rowMenu = $state<{ view: View; label: string; x: number; y: number } | null>(null);
-  let rowMenuElement = $state<HTMLDivElement>();
-  let rowMenuReturn: HTMLElement | null = null;
 
   const itemCounts = $derived.by(() => {
     const counts = new Map<View, number>();
@@ -97,54 +130,28 @@
     return counts;
   });
   const graph = $derived(atlasGraph(sections, hidden, visibleRelations(enabled), itemCounts));
-  const matches = $derived.by(() => {
-    const text = query.trim().toLowerCase();
-    if (!text) return [];
-    const rank = (node: GraphNode) =>
-      node.id.startsWith("view:") ? 0 : node.id.startsWith("group:") ? 1 : 2;
-    return graph.nodes
-      .filter((node) => node.label.toLowerCase().includes(text))
-      .sort(
-        (a, b) =>
-          rank(a) - rank(b) ||
-          Number(!a.label.toLowerCase().startsWith(text)) -
-            Number(!b.label.toLowerCase().startsWith(text)) ||
-          a.label.localeCompare(b.label),
-      )
-      .slice(0, 8);
-  });
+  const current = $derived(selected?.id.startsWith("view:") ? (selected.id.slice(5) as View) : null);
 
-  function kindLabel(node: GraphNode) {
-    if (node.id.startsWith("group:")) return "Group";
-    if (node.id.startsWith("view:")) return "Section";
-    return "Section";
+  function sectionNode(view: View) {
+    return graph.nodes.find((node) => node.id === `view:${view}`) ?? null;
   }
-  function openable(node: GraphNode) {
-    return !node.id.startsWith("group:");
-  }
-  function open(node: GraphNode) {
-    if (node.id.startsWith("view:")) {
-      onview(node.id.slice(5) as View);
-      return;
-    }
+  /** The Brain finds any section; the 2D atlas only one it draws. */
+  function locatable(view: View) {
+    return look === "brain" ? listed(view) : mode === "graph" && !!sectionNode(view);
   }
   function locate(node: GraphNode) {
     selected = node;
-    handle?.focus(node.id);
+    if (look === "brain") {
+      if (node.id.startsWith("view:")) brain?.focusSection(node.id.slice(5));
+    } else handle?.focus(node.id);
   }
-  function clearSelection() {
-    selected = null;
-    handle?.focus(null);
-  }
-  function searchKey(event: KeyboardEvent) {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    const first = matches[0];
-    if (!first) return;
-    if (selected?.id === first.id || mode === "list") {
-      if (openable(first)) open(first);
-      else locate(first);
-    } else locate(first);
+  function locateSection(view: View) {
+    const node = sectionNode(view);
+    if (node) locate(node);
+    else if (look === "brain") {
+      selected = null;
+      brain?.focusSection(view);
+    }
   }
   export function focusGroup(label: string) {
     if (!sections.some(group => group.label === label)) return;
@@ -157,35 +164,36 @@
     pendingGroup = null;
     locate(node);
   }
+  /** "/" opens Sections on its search. */
   export function focusSearch() {
-    if (pane.active) searchField?.focus();
+    if (pane.active) void sectionsControl?.focusSearch();
+  }
+  /** Home's own keys: "]" folds or unfolds the side rail. */
+  export function handleKey(event: KeyboardEvent): boolean {
+    if (!pane.active || event.key !== "]" || !hasRight) return false;
+    event.preventDefault();
+    toggleRail();
+    return true;
   }
   /** Screen position of a drawn node, or null when it is not on the atlas. */
   export function nodePoint(id: string) {
     return handle?.nodePoint(id) ?? null;
   }
 
-  /** Q13: a node released over this atlas's Sections list is hidden. */
+  /** Q13: a node released over the Sections control (or its open list) is hidden. */
   function overList(clientX: number, clientY: number) {
-    const target = document.elementFromPoint(clientX, clientY);
-    return !!target && !!sectionsBlock?.contains(target);
+    return !!sectionsControl?.contains(document.elementFromPoint(clientX, clientY));
   }
   function dropOnList(node: GraphNode, point: { clientX: number; clientY: number }) {
     if (!pane.active || !node.id.startsWith("view:")) return;
     const view = node.id.slice(5);
     if (listed(view) && overList(point.clientX, point.clientY)) setSectionHidden(view, true);
   }
-  /** Tracks a pointer pressed on a section node so the list can show it accepts the drop. */
+  /** Tracks a pointer pressed on a section node so the Sections control can show it accepts the drop. */
   function stagePointerDown(event: PointerEvent) {
-    const node = mode === "graph" && pane.active && !event.button ? handle?.nodeAt(event.clientX, event.clientY) : null;
+    const node = mode === "graph" && pane.active && look !== "brain" && !event.button ? handle?.nodeAt(event.clientX, event.clientY) : null;
     const view = node?.id.startsWith("view:") ? node.id.slice(5) : "";
     nodeDrag = listed(view) ? { view, label: node!.label } : null;
-  }
-  function startSectionDrag(event: DragEvent, view: View) {
-    if (!event.dataTransfer) return;
-    event.dataTransfer.setData(SECTION_DRAG_TYPE, view);
-    event.dataTransfer.effectAllowed = "move";
-    draggedSection = view;
   }
   /** Only a hidden section can be dropped onto the graph to show it. */
   function acceptsSection(event: DragEvent) {
@@ -204,48 +212,8 @@
     draggedSection = null;
     if (listed(view)) setSectionHidden(view, false);
   }
-
-  function openRowMenu(event: MouseEvent, view: View, label: string) {
-    event.preventDefault();
-    const trigger = (event.currentTarget as HTMLElement).closest("li")?.querySelector<HTMLElement>(".row-menu");
-    rowMenuReturn = trigger ?? null;
-    const rect = (trigger ?? (event.currentTarget as HTMLElement)).getBoundingClientRect();
-    rowMenu = {
-      view,
-      label,
-      x: Math.max(8, Math.min(event.clientX || rect.left, window.innerWidth - 200)),
-      y: Math.max(8, Math.min(event.clientY || rect.bottom, window.innerHeight - 100)),
-    };
-    void tick().then(() => rowMenuElement?.querySelector<HTMLButtonElement>("button")?.focus());
-  }
-  function closeRowMenu(restoreFocus = true) {
-    rowMenu = null;
-    if (restoreFocus && rowMenuReturn?.isConnected) rowMenuReturn.focus();
-    rowMenuReturn = null;
-  }
-  function rowMenuKey(event: KeyboardEvent) {
-    const items = [...(rowMenuElement?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? [])];
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
-    let next: number;
-    if (event.key === "ArrowDown") next = (index + 1) % items.length;
-    else if (event.key === "ArrowUp") next = (index + items.length - 1) % items.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = items.length - 1;
-    else if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeRowMenu();
-      return;
-    } else {
-      if (event.key === "Tab") closeRowMenu(false);
-      return;
-    }
-    event.preventDefault();
-    items[next]?.focus();
-  }
   function toggleSection(view: View) {
     setSectionHidden(view, !hidden.has(view));
-    closeRowMenu();
   }
 
   let atlasRequest = 0;
@@ -265,53 +233,12 @@
       if (request === atlasRequest) atlasError = (cause as Error).message;
     }
   }
-  let dailyRequest = 0;
-  async function refreshDaily() {
-    const request = ++dailyRequest;
-    if (!workspaceTools) {
-      daily = { events: null, focus: null, due: null, opportunities: null };
-      dailyLoading = false;
-      return;
-    }
-    dailyLoading = true;
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const calendarQuery = new URLSearchParams({
-      start: start.toISOString(),
-      end: end.toISOString(),
-      timezone,
-    });
-    const [calendar, study, flashcards, opportunities] =
-      await Promise.allSettled([
-        api<{ events: unknown[] }>(`/calendar?${calendarQuery}`),
-        api<{ stats: { today_seconds: number } }>("/study"),
-        api<{ stats: { due: number } }>("/flashcards"),
-        api<{ total: number }>("/opportunities"),
-      ]);
-    if (request !== dailyRequest) return;
-    daily = {
-      events:
-        calendar.status === "fulfilled" ? calendar.value.events.length : null,
-      focus:
-        study.status === "fulfilled" ? study.value.stats.today_seconds : null,
-      due:
-        flashcards.status === "fulfilled" ? flashcards.value.stats.due : null,
-      opportunities:
-        opportunities.status === "fulfilled" ? opportunities.value.total : null,
-    };
-    dailyLoading = false;
-  }
-
   let seenRevision: number | undefined;
   $effect(() => {
     const current = revision;
     if (seenRevision === current) return;
     const first = seenRevision === undefined;
     seenRevision = current;
-    void refreshDaily();
     if (!first) void loadAtlas();
   });
   $effect(() => {
@@ -324,7 +251,7 @@
   });
   $effect(() => {
     const active = pane.active;
-    handle?.setActive(active);
+    handle?.setActive(active && look !== "brain");
     if (active && (handle || mode === "list") && pendingGroup) focusGroup(pendingGroup);
   });
 
@@ -333,12 +260,16 @@
     const syncSettings = () => {
       handle?.setLayout(graphLayout());
       handle?.setPhysics(graphPhysics());
-      look = graphLook();
-      void handle?.setLook(look).catch(cause => { notice = (cause as Error).message; });
+      chosen = homeLook();
+      collapsed = homeRailCollapsed();
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     // Every atlas, in this window's tabs or another window, follows the same build.
     const syncHidden = () => { hidden = hiddenSections(); };
+    // The rail's state is this device's (another window of it may toggle it).
+    const syncStorage = (event: StorageEvent) => {
+      if (event.key === HOME_RAIL_KEY || event.key === null) collapsed = homeRailCollapsed();
+    };
     window.addEventListener(ATLAS_NODES_EVENT, syncHidden);
     // Capture phase: the renderers own the pointer while a node is dragged.
     const trackNodeDrag = (event: PointerEvent) => {
@@ -356,12 +287,12 @@
           ...graph,
           layout,
           physics,
-          look: graphLook(),
+          look: "2d",
           reducedMotion,
-          active: pane.active,
+          active: pane.active && look !== "brain",
           onSelect: (node) => {
             if (!pane.active) return;
-            if (openable(node)) open(node);
+            if (node.id.startsWith("view:")) onview(node.id.slice(5) as View);
             else selected = node;
           },
           onHover: (node) => { if (pane.active || !node) hovered = node; },
@@ -375,7 +306,7 @@
         mode = "graph";
       } catch (cause) {
         mode = "list";
-        notice = `${(cause as Error).message} The section list below still opens every page.`;
+        notice = (cause as Error).message;
       }
     })();
     return () => {
@@ -389,305 +320,287 @@
       handle = null;
     };
   });
-
-  const readouts = $derived(
-    [
-      { label: "Events today", value: daily.events, view: "calendar" as View },
-      {
-        label: "Focused today",
-        value:
-          daily.focus === null ? null : `${Math.floor(daily.focus / 60)} min`,
-        view: "study" as View,
-      },
-      { label: "Cards due", value: daily.due, view: "flashcards" as View },
-      {
-        label: "Opportunities",
-        value: daily.opportunities,
-        view: "opportunities" as View,
-      },
-      {
-        label: "Jobs to explore",
-        value: workspace?.counts?.jobs ?? null,
-        view: "jobs" as View,
-      },
-      {
-        label: "In your queue",
-        value: workspace?.counts?.queued ?? null,
-        view: "queue" as View,
-      },
-      {
-        label: "Applications",
-        value: workspace?.counts?.applications ?? null,
-        view: "pipeline" as View,
-      },
-      {
-        label: "Saved jobs",
-        value: workspace?.counts?.favorites ?? null,
-        view: "favorites" as View,
-      },
-    ].filter((readout) => viewEnabled(readout.view, enabled)),
-  );
 </script>
 
-{#snippet sectionList(large: boolean)}
-  <nav class="section-list" class:large aria-label="Workspace sections">
-    {#each sections as group, index}
-      <section aria-labelledby={`${atlasId}-group-${index}${large ? "-l" : ""}`}>
-        <h3 id={`${atlasId}-group-${index}${large ? "-l" : ""}`}>
-          <span class="swatch" style={`--swatch: var(--c${index + 1})`}
-          ></span>{group.label}
-        </h3>
-        <ul>
-          {#each group.items as item}
-            <li
-              class:hidden-section={hidden.has(item.id)}
-              oncontextmenu={(event) => openRowMenu(event, item.id, item.label)}
-            >
-              <a
-                href={`#${item.id}`}
-                draggable="true"
-                ondragstart={(event) => startSectionDrag(event, item.id)}
-                ondragend={() => (draggedSection = null)}
-                onclick={(event) => {
-                  event.preventDefault();
-                  onview(item.id);
-                }}
-                ><Icon name={item.icon} size={15} /><span>{item.label}</span
-                >{#if itemCounts.get(item.id)}<small
-                    aria-label={`${itemCounts.get(item.id)} linked items`}
-                    >{itemCounts.get(item.id)}</small
-                  >{/if}</a
-              >{#if hidden.has(item.id)}<span class="sr-only">Hidden from the atlas</span
-                >{/if}{#if mode === "graph" && graph.nodes.some(node => node.id === `view:${item.id}`)}<button
-                  class="locate"
-                  aria-label={`Show ${item.label} on the map`}
-                  title="Show on the map"
-                  onclick={() =>
-                    locate(
-                      graph.nodes.find(
-                        (node) => node.id === `view:${item.id}`,
-                      )!,
-                    )}>◎</button
-                >{/if}<button
-                class="row-menu"
-                aria-label={`${item.label} options`}
-                aria-haspopup="menu"
-                aria-expanded={rowMenu?.view === item.id}
-                title="Options"
-                onclick={(event) => openRowMenu(event, item.id, item.label)}>⋯</button
-              >
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {/each}
-  </nav>
+{#snippet sectionsButton()}
+  <div class="corner" data-home-corner>
+    <HomeSections
+      bind:this={sectionsControl}
+      bind:open={sectionsOpen}
+      {sections}
+      {hidden}
+      counts={itemCounts}
+      {current}
+      holding={nodeOverList}
+      error={atlasError}
+      {locatable}
+      {onview}
+      onlocate={locateSection}
+      ontoggle={toggleSection}
+      ondrag={(view) => (draggedSection = view)}
+      onretry={loadAtlas}
+    />
+  </div>
 {/snippet}
 
-<div class="atlas" class:list-mode={mode === "list"}>
+{#snippet lookSwitch()}
+  <div class="corner" data-home-corner>
+    {#if lookError}<span class="look-error" role="alert">{lookError}</span>{/if}
+    <Select
+      label="Home look"
+      kind="segments"
+      value={look}
+      options={[{ value: "brain", label: "Brain", disabled: !supportsBrain }, { value: "2d", label: "2D" }]}
+      onchange={chooseLook}
+    />
+  </div>
+{/snippet}
+
+<div
+  class="atlas"
+  class:list-mode={mode === "list"}
+  class:with-left={workspaceTools}
+  class:with-right={hasRight}
+  class:rail-collapsed={hasRight && collapsed}
+>
+  {#if workspaceTools}
+    <aside class="rail" aria-label="Home widgets">
+      <TodayAgenda id={`${atlasId}-agenda`} {revision} {onview} />
+      <HomeQuickNote id={`${atlasId}-note`} {onview} />
+    </aside>
+  {/if}
   <div
     class="stage"
     class:drop-target={!!draggedSection && hidden.has(draggedSection) && mode === "graph"}
     role="region"
     data-kitty-panel="graph"
     tabindex="-1"
-    aria-label={`${look === "2d" ? "2D" : "3D"} atlas of your workspace`}
+    aria-label={look === "brain" ? "Brain of every record and edit in your workspace" : "2D atlas of your workspace"}
     aria-describedby={`${atlasId}-description`}
     ondragover={sectionDragOver}
     ondrop={sectionDrop}
     onpointerdowncapture={stagePointerDown}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      A map of workspace sections. {look === "2d" ? "Drag nodes to move, drag the background to pan" : "Drag to rotate"}, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.
+      {#if look === "brain"}Every record and every edit in your workspace as a point of light in a glowing neural-network brain. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto Sections to hide it; each section's options menu shows or hides it.{/if}
     </p>
-    <div class="canvas" bind:this={container}></div>
-    {#if mode === "list"}
-      <div class="fallback">
-        <p class="notice" role="status">
-          <span aria-hidden="true">!</span>
-          {notice}
-        </p>
-        {@render sectionList(true)}
-      </div>
+    <!-- Hidden under the Brain, whose stage is transparent. -->
+    <div class="canvas" class:behind={look === "brain"} bind:this={container}></div>
+    {#if look === "brain"}
+      <BrainStage bind:this={brain} active={pane.active} {revision} start={sectionsButton} end={lookSwitch} />
     {:else}
-      <div class="stage-caption" aria-hidden="true">
-        <span>{#if draggedSection && hidden.has(draggedSection)}Drop to show {sections.flatMap((group) => group.items).find((item) => item.id === draggedSection)?.label} on the atlas{:else if mode === "graph" && !graph.nodes.length}Every section is hidden · drag one here from Sections to show it{:else}{look === "2d" ? "Drag a node to move · drag background to pan · scroll or pinch to zoom" : "Drag to rotate · scroll to zoom · Ctrl + ← / → to turn"} · drag a node onto Sections to hide it{/if}</span>
+      <div class="corners">
+        {@render sectionsButton()}
+        {@render lookSwitch()}
       </div>
-      {#if mode === "loading"}<p class="stage-loading" role="status">
-          Drawing your atlas…
-        </p>{/if}
-      {#if hovered}<p class="stage-selection" aria-hidden="true">{hovered.label}</p>{/if}
+      {#if mode === "list"}
+        <div class="fallback">
+          <p class="notice" role="status"><span aria-hidden="true">!</span> {notice}</p>
+          <HomeSections
+            inline
+            {sections}
+            {hidden}
+            counts={itemCounts}
+            {locatable}
+            {onview}
+            onlocate={locateSection}
+            ontoggle={toggleSection}
+            ondrag={() => {}}
+            onretry={loadAtlas}
+          />
+        </div>
+      {:else}
+        {#if draggedSection && hidden.has(draggedSection)}
+          <p class="stage-caption" aria-hidden="true">Drop to show {sections.flatMap((group) => group.items).find((item) => item.id === draggedSection)?.label} on the atlas</p>
+        {:else if mode === "graph" && !graph.nodes.length}
+          <p class="stage-caption">Every section is hidden. Drag one here from Sections.</p>
+        {/if}
+        {#if mode === "loading"}<div class="stage-loading"><Loader kind="view" label="Drawing your atlas…" /></div>{/if}
+        {#if hovered}<p class="stage-selection" aria-hidden="true">{hovered.label}</p>{/if}
+      {/if}
     {/if}
   </div>
 
-  <Panel
-    as="aside"
-    class="atlas-panel"
-    title="Workspace"
-    aria-label="Atlas controls and navigation"
-  >
-    <GraphLookToggle />
-
-    <div class="search">
-      <label for={`${atlasId}-search`}>Find a section <kbd>/</kbd></label>
-      <input
-        id={`${atlasId}-search`}
-        type="search"
-        bind:this={searchField}
-        bind:value={query}
-        onkeydown={searchKey}
-        placeholder="Find a section…"
-        autocomplete="off"
-        aria-describedby={`${atlasId}-search-status`}
-      />
-      <p id={`${atlasId}-search-status`} class="sr-only" aria-live="polite">
-        {query.trim() ? `${matches.length} matches` : ""}
-      </p>
-      {#if matches.length}
-        <ul class="matches" aria-label="Matching nodes">
-          {#each matches as node}
-            <li>
-              <button
-                class:current={selected?.id === node.id}
-                onclick={() =>
-                  mode === "graph"
-                    ? locate(node)
-                    : openable(node) && open(node)}
-                ><span>{node.label}</span><small
-                  >{kindLabel(node)} · {node.group}</small
-                ></button
-              >
-            </li>
-          {/each}
-        </ul>
-      {:else if query.trim()}<p class="empty">
-          No node matches “{query.trim()}”.
-        </p>{/if}
-    </div>
-
-    {#if selected}
-      <section class="selected" aria-label="Selected node">
-        <p class="eyebrow">{kindLabel(selected)} · {selected.group}</p>
-        <strong>{selected.label}</strong>
-        {#if selected.detail}<p>{selected.detail}</p>{/if}
-        <div class="row">
-          {#if openable(selected)}<Button
-              intent="primary"
-              size="sm"
-              onclick={() => selected && open(selected)}
-              >Open <Icon name="arrow" size={14} /></Button
-            >{/if}
-          <Button variant="ghost" size="sm" onclick={clearSelection}
-            >Clear</Button
-          >
-        </div>
-      </section>
-    {/if}
-
-    {#if atlasError}<p class="error" role="alert">Linked counts unavailable.
-      <button class="text-button" onclick={loadAtlas}>Retry</button>
-      <button class="icon-button" aria-label="Dismiss linked count message" onclick={() => (atlasError = "")}>×</button>
-    </p>{/if}
-
-    {#if !enabled.length}
-      <section class="selected" aria-label="No modules active">
-        <p class="eyebrow">Modules are off</p>
-        <strong>Turn on Workspace or Apply AI</strong>
-        <p>Only the core shell and settings are active. Choose modules in Settings; they start after you restart kitty.</p>
-        <div class="row">
-          <Button intent="primary" size="sm" onclick={() => onview("settings")}
-            >Open module settings <Icon name="arrow" size={14} /></Button
-          >
-        </div>
-      </section>
-    {/if}
-
-    <details
-      class="block"
-      class:drop-hide={!!nodeOverList}
-      bind:this={sectionsBlock}
-      open={mode === "list" ? undefined : true}
-    >
-      <summary>Sections{#if nodeOverList}<span class="drop-hint">Drop to hide {nodeOverList}</span>{/if}</summary>
-      {#if mode === "list"}<p class="muted small">
-          The full list is shown in the main area.
-        </p>{:else}{@render sectionList(false)}{/if}
-    </details>
-
-    {#if readouts.length}<details class="block">
-      <summary>Today</summary>
-      <div class="readouts" aria-busy={dailyLoading}>
-        {#each readouts as readout}
-          <button onclick={() => onview(readout.view)}
-            ><span>{readout.label}</span><strong
-              >{readout.value === null ? "—" : readout.value}</strong
-            ></button
-          >
-        {/each}
-      </div>
-      <p class="muted small">
-        {dailyLoading
-          ? "Updating your day…"
-          : "Live local totals · — means unavailable, not zero."}
-      </p>
-      {#if applyai}<Button size="sm" onclick={onguide}
-        ><Icon name="questions" size={15} /> How to apply</Button
+  {#if hasRight}
+    <div class="side" class:collapsed>
+      <button
+        type="button"
+        class="rail-toggle"
+        aria-label="Side widgets"
+        aria-expanded={!collapsed}
+        aria-controls={collapsed ? undefined : `${atlasId}-activity`}
+        title={collapsed ? "Show the side widgets (])" : "Hide the side widgets (])"}
+        onclick={toggleRail}><span class="chevron" aria-hidden="true"></span></button
       >
-      <div class="brief">
-        <Dashboard {revision} {onopenjob} onview={(view) => onview(view)} />
-      </div>{/if}
-    </details>{/if}
-  </Panel>
+      {#if !collapsed}
+        <aside id={`${atlasId}-activity`} class="rail" aria-label="Activity">
+          {#if terminal}<HomeAgents id={`${atlasId}-agents`} {onview} />{/if}
+          {#if upNext}<HomeUpNext id={`${atlasId}-next`} {revision} {onview} />{/if}
+          {#if !enabled.length}
+            <HomeWidget id={`${atlasId}-modules`} title="Modules are off">
+              <p class="note">Turn on modules in Settings; they start after a restart.</p>
+              <Button intent="primary" size="sm" onclick={openModuleSettings}>Open module settings <Icon name="arrow" size={14} /></Button>
+            </HomeWidget>
+          {/if}
+        </aside>
+      {/if}
+    </div>
+  {/if}
 </div>
 
-<svelte:window
-  onpointerdown={(event) => {
-    if (rowMenu && event.button !== 2 && !rowMenuElement?.contains(event.target as Node)) closeRowMenu(false);
-  }}
-/>
-{#if rowMenu}
-  {@const menu = rowMenu}
-  <div
-    bind:this={rowMenuElement}
-    class="row-menu-popup"
-    role="menu"
-    tabindex="-1"
-    aria-label={`${menu.label} options`}
-    style:left={`${menu.x}px`}
-    style:top={`${menu.y}px`}
-    onkeydown={rowMenuKey}
-  >
-    <button role="menuitem" tabindex="-1" onclick={() => { closeRowMenu(false); onview(menu.view); }}>Open</button>
-    <button role="menuitem" tabindex="-1" onclick={() => toggleSection(menu.view)}
-      >{hidden.has(menu.view) ? "Show on the atlas" : "Hide from the atlas"}</button
-    >
-  </div>
-{/if}
-
 <style>
-  /* Fills the room App gives it (zero basis: the sidebar never sizes the row);
-     the sidebar scrolls on its own. The floor keeps a cramped graph usable. */
+  /* Q18 (layout C): the atlas in the centre with narrow widget rails that scroll on
+     their own. Fills the room App gives it (zero basis: a rail never sizes the
+     row). The floor keeps a cramped graph usable. Q13: the right rail folds to a
+     thin strip so the stage takes its room. */
   .atlas {
+    --rail-left: clamp(180px, 20vw, 280px);
+    --rail-right: clamp(196px, 22vw, 300px);
+    --rail-strip: 18px;
     flex: 1 1 0px;
     min-height: 120px;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
-    border: 1px solid var(--border-fine, var(--border));
-    background: var(--canvas);
+    gap: 12px;
+  }
+  .atlas.with-left {
+    grid-template-columns: var(--rail-left) minmax(0, 1fr);
+  }
+  .atlas.with-right {
+    grid-template-columns: minmax(0, 1fr) var(--rail-right);
+  }
+  .atlas.with-left.with-right {
+    grid-template-columns: var(--rail-left) minmax(0, 1fr) var(--rail-right);
+  }
+  .atlas.rail-collapsed {
+    --rail-right: var(--rail-strip);
   }
   .stage {
     position: relative;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+    border-radius: 14px;
+    background: var(--canvas);
+  }
+  /* Drawn over the canvas so the canvas still fills the stage edge to edge. */
+  .stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border: 1px solid var(--hairline);
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  /* The Brain on its Transparent background: neither the stage's canvas colour nor the atlas's
+     glass sheet (fill, blur, inner shadow) paints behind it, so the theme's backdrop shows through. */
+  .atlas:has(> .stage > :global([data-brain-stage][data-background="transparent"])) {
+    background: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .stage:has(> :global([data-brain-stage][data-background="transparent"])) {
+    background: none;
+  }
+  .rail {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-right: 2px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline) transparent;
+  }
+  .rail > :global(*) {
+    flex: none;
+  }
+  .side {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  /* Expanded: a small tab in the gap on the rail's inner edge. Collapsed: the whole strip. */
+  .rail-toggle {
+    position: absolute;
+    top: 50%;
+    left: -13px;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    width: 14px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-chip, 6px);
+    background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 70%, transparent);
+    color: var(--muted);
+    transform: translateY(-50%);
+    cursor: pointer;
+  }
+  .rail-toggle:hover,
+  .rail-toggle:focus-visible {
+    border-color: var(--br-lineHot, var(--ink));
+    color: var(--ink);
+  }
+  .side.collapsed .rail-toggle {
+    inset: 0;
+    width: auto;
+    height: auto;
+    transform: none;
+    border-radius: var(--r-panel, 14px);
+    background: transparent;
+  }
+  /* Points the way the rail moves: right to hide it, left to bring it back. */
+  .chevron {
+    width: 6px;
+    height: 6px;
+    margin-left: -3px;
+    border-top: 1.5px solid currentColor;
+    border-right: 1.5px solid currentColor;
+    rotate: 45deg;
+  }
+  .side.collapsed .chevron {
+    margin: 0 -3px 0 0;
+    rotate: -135deg;
   }
   .canvas {
     position: absolute;
     inset: 0;
   }
+  .canvas.behind {
+    visibility: hidden;
+  }
   .list-mode .canvas {
     display: none;
+  }
+  /* The 2D atlas's corner row; the Brain draws the same controls in its own. */
+  .corners {
+    position: absolute;
+    inset: 14px 14px auto;
+    z-index: 3;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    pointer-events: none;
+  }
+  .corner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    pointer-events: auto;
+  }
+  .look-error {
+    color: var(--error);
+    font-size: 11px;
   }
   .stage-caption,
   .stage-loading,
@@ -710,7 +623,7 @@
     transform: translate(-50%, -50%);
   }
   .stage-selection {
-    top: 16px;
+    top: 54px;
     left: 20px;
     max-width: calc(100% - 40px);
     overflow: hidden;
@@ -718,19 +631,11 @@
     white-space: nowrap;
     color: var(--ink);
   }
-  .swatch {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin-right: 7px;
-    background: var(--swatch);
-    border-radius: 50%;
-  }
   .fallback {
     position: relative;
     height: 100%;
     overflow: auto;
-    padding: 28px;
+    padding: 56px 28px 28px;
   }
   .notice {
     margin: 0 0 20px;
@@ -743,193 +648,10 @@
   .notice span {
     color: var(--warning);
   }
-  :global(.atlas-panel) {
-    min-width: 0;
-    min-height: 0;
-    overflow-y: auto;
-    border: 0 !important;
-    border-left: 1px solid var(--border) !important;
-    background: var(--chrome) !important;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
-  }
-  :global(.atlas-panel .br-panel__header) {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--chrome);
-    font-size: 12px;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 10px;
-  }
-  :global(.atlas-panel .br-panel__readout) {
+  .note {
+    margin: 0 0 8px;
     color: var(--muted);
-  }
-  .search label {
-    display: flex;
-    justify-content: space-between;
     font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 6px;
-  }
-  .search input {
-    width: 100%;
-    font-size: 13px;
-  }
-  .matches,
-  .section-list ul {
-    list-style: none;
-    margin: 6px 0 0;
-    padding: 0;
-  }
-  .matches button {
-    width: 100%;
-    display: grid;
-    text-align: left;
-    gap: 2px;
-    padding: 7px 8px;
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--ink);
-    font-size: 12px;
-  }
-  .matches button:hover,
-  .matches button.current {
-    border-color: var(--border);
-    background: var(--surface-raised);
-  }
-  .matches small,
-  .empty,
-  .small {
-    color: var(--subtle);
-    font-size: 10px;
-  }
-  .selected {
-    margin-top: 12px;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--accent);
-    background: var(--surface);
-  }
-  .selected .eyebrow {
-    margin: 0 0 4px;
-    font-size: 10px;
-  }
-  .selected strong {
-    display: block;
-    font-size: 13px;
-    overflow-wrap: anywhere;
-  }
-  .selected p:not(.eyebrow) {
-    margin: 6px 0 0;
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .row {
-    display: flex;
-    gap: 8px;
-    margin-top: 10px;
-  }
-  .block {
-    margin-top: 14px;
-    border-top: 1px solid var(--border);
-    padding-top: 10px;
-  }
-  .block > summary {
-    font: 500 13px var(--br-font-ui);
-    color: var(--ink);
-    cursor: pointer;
-    padding: 2px 0 8px;
-  }
-  .error {
-    font-size: 11px;
-    color: var(--error);
-  }
-  .section-list section + section {
-    margin-top: 10px;
-  }
-  .section-list h3 {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--muted);
-    display: flex;
-    align-items: center;
-  }
-  .section-list li {
-    display: flex;
-    align-items: stretch;
-    gap: 2px;
-  }
-  .section-list a {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 6px 8px;
-    border: 1px solid transparent;
-    color: var(--muted);
-    text-decoration: none;
-    font-size: 12px;
-  }
-  .section-list a > span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .section-list a:hover {
-    color: var(--ink);
-    border-color: var(--border);
-    background: var(--surface-raised);
-  }
-  .section-list small {
-    margin-left: auto;
-    color: var(--accent);
-    font-size: 10px;
-  }
-  .locate {
-    width: 28px;
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--subtle);
-  }
-  .locate:hover {
-    color: var(--violet);
-    border-color: var(--border);
-  }
-  .row-menu {
-    width: 26px;
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--subtle);
-  }
-  .row-menu:hover,
-  .row-menu:focus-visible,
-  .row-menu[aria-expanded="true"] {
-    color: var(--ink);
-    border-color: var(--border);
-  }
-  .section-list li.hidden-section {
-    opacity: 0.45;
-  }
-  .section-list li.hidden-section:hover,
-  .section-list li.hidden-section:focus-within {
-    opacity: 0.8;
-  }
-  .section-list a[draggable="true"] {
-    cursor: grab;
-  }
-  .block.drop-hide {
-    outline: 1px dashed var(--accent);
-    outline-offset: 2px;
-    background: var(--surface);
-  }
-  .drop-hint {
-    margin-left: 8px;
-    color: var(--accent);
-    font-size: 11px;
   }
   .stage.drop-target {
     outline: 1px dashed var(--accent);
@@ -938,111 +660,47 @@
   .stage.drop-target .stage-caption {
     color: var(--ink);
   }
-  .row-menu-popup {
-    position: fixed;
-    z-index: 1000;
-    min-width: 190px;
-    padding: 0.3rem;
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    background: var(--surface-raised);
-    box-shadow: var(--overlay-shadow);
-  }
-  .row-menu-popup button {
-    display: block;
-    width: 100%;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--ink);
-    padding: 0.6rem 0.7rem;
-    font: inherit;
-    font-size: 0.85rem;
-    text-align: left;
-    cursor: pointer;
-  }
-  .row-menu-popup button:hover,
-  .row-menu-popup button:focus-visible {
-    background: var(--wash);
-    outline-color: var(--accent);
-  }
-  .section-list.large {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 18px;
-  }
-  .section-list.large section + section {
-    margin-top: 0;
-  }
-  .section-list.large a {
-    font-size: 13px;
-    padding: 9px 10px;
-  }
-  .readouts {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-  }
-  .readouts button {
-    text-align: left;
-    display: grid;
-    gap: 3px;
-    padding: 8px 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-  }
-  .readouts button:hover {
-    border-color: var(--accent);
-  }
-  .readouts span {
-    font-size: 10px;
-    color: var(--muted);
-  }
-  .readouts strong {
-    font: 17px var(--br-font-display);
-    color: var(--ink);
-  }
-  .brief {
-    margin-top: 12px;
-  }
-  .brief :global(.panel-heading) {
-    padding: 12px 14px;
-  }
-  .brief :global(.panel-heading h2) {
-    font-size: 16px;
-  }
-  /* A short window leaves the graph too little room for the gesture hint. */
-  @media (max-height: 640px) {
-    .stage-caption {
-      display: none;
-    }
-  }
   /* Phone widths stack. The desktop minimum window (760×500) stays side by side
      even when display scaling lays it out narrower in CSS pixels. */
   @media (max-width: 599.98px) {
-    .atlas {
+    .atlas,
+    .atlas.with-left,
+    .atlas.with-right,
+    .atlas.with-left.with-right {
       flex: none;
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: none;
     }
     .stage {
+      order: -1;
       height: 58vh;
       min-height: 320px;
     }
     .list-mode .stage {
       height: auto;
     }
-    :global(.atlas-panel) {
+    .rail {
       overflow: visible;
-      border-left: 0 !important;
-      border-top: 1px solid var(--border) !important;
     }
-    .stage-caption {
-      display: none;
+    .side {
+      gap: 8px;
+    }
+    .rail-toggle,
+    .side.collapsed .rail-toggle {
+      position: static;
+      inset: auto;
+      width: 100%;
+      height: 24px;
+      transform: none;
+    }
+    .chevron {
+      rotate: 135deg;
+    }
+    .side.collapsed .chevron {
+      rotate: -45deg;
     }
     .fallback {
-      padding: 16px;
+      padding: 56px 16px 16px;
     }
   }
 </style>

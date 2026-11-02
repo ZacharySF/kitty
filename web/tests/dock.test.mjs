@@ -3,26 +3,46 @@
 // node --experimental-strip-types --test tests/dock.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DOCK_MIN_HEIGHT, MAIN_MIN_HEIGHT, clampDockHeight, firstDockHeight } from '../src/lib/dock.ts';
+import {
+  DOCK_MARGIN, DOCK_MIN_HEIGHT, DOCK_MIN_WIDTH, DOCK_STEPS, MAIN_MIN_HEIGHT,
+  clampDockOffset, clampDockSize, defaultDockSize, dockedHeight,
+} from '../src/lib/dock.ts';
 import {
   terminalSocketUrl, terminalTheme, ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, ternPluginState, ternTarget,
 } from '../src/lib/terminal.ts';
 
-test('the first dock size is the empty area below the main panel', () => {
-  // Window 900 high, main panel content ends at 540: the dock fills the 360 below it.
-  assert.equal(firstDockHeight(900, 540), 360);
-  // Content taller than the window leaves no empty area: the dock still opens usable.
-  assert.equal(firstDockHeight(900, 1400), DOCK_MIN_HEIGHT);
-  // A nearly empty page cannot push the main panel out of the window.
-  assert.equal(firstDockHeight(900, 40), 900 - MAIN_MIN_HEIGHT);
+test('the docked height is a fixed step of the window, never dragged', () => {
+  assert.deepEqual(DOCK_STEPS, ['s', 'm', 'l']);
+  assert.equal(dockedHeight('m', 1000), 400);
+  assert.equal(dockedHeight('s', 1000), 250);
+  assert.equal(dockedHeight('l', 1000), 600);
+  // Short windows keep the dock usable and the page above it.
+  assert.equal(dockedHeight('s', 500), DOCK_MIN_HEIGHT);
+  assert.equal(dockedHeight('l', 600), 600 - MAIN_MIN_HEIGHT);
+  assert.equal(dockedHeight('m', 500), 500 - MAIN_MIN_HEIGHT);
+  assert.equal(dockedHeight('l', 300), DOCK_MIN_HEIGHT);
 });
 
-test('dragging keeps both the dock and the main panel usable', () => {
-  assert.equal(clampDockHeight(10, 900), DOCK_MIN_HEIGHT);
-  assert.equal(clampDockHeight(5000, 900), 900 - MAIN_MIN_HEIGHT);
-  assert.equal(clampDockHeight(412.6, 900), 413);
-  // A window too short for both favours the dock's minimum.
-  assert.equal(clampDockHeight(400, 200), DOCK_MIN_HEIGHT);
+test('the default card is min(720px, 92vw) wide and min(440px, 60vh) tall', () => {
+  assert.deepEqual(defaultDockSize(1600, 1000), { width: 720, height: 440 });
+  assert.deepEqual(defaultDockSize(600, 500), { width: 552, height: 300 });
+});
+
+test('resizing keeps the card usable and inside the window', () => {
+  assert.deepEqual(clampDockSize({ width: 10, height: 10 }, 1000, 800), { width: DOCK_MIN_WIDTH, height: DOCK_MIN_HEIGHT });
+  assert.deepEqual(clampDockSize({ width: 5000, height: 5000 }, 1000, 800), { width: 1000 - 2 * DOCK_MARGIN, height: 800 - 2 * DOCK_MARGIN });
+  assert.deepEqual(clampDockSize({ width: 600.4, height: 412.6 }, 1000, 800), { width: 600, height: 413 });
+  // A window too small for the minimum favours the minimum.
+  assert.deepEqual(clampDockSize({ width: 400, height: 400 }, 200, 100), { width: DOCK_MIN_WIDTH, height: DOCK_MIN_HEIGHT });
+});
+
+test('moving keeps the whole card on screen', () => {
+  const size = { width: 600, height: 400 };
+  assert.deepEqual(clampDockOffset({ right: -50, bottom: -50 }, size, 1000, 800), { right: DOCK_MARGIN, bottom: DOCK_MARGIN });
+  assert.deepEqual(clampDockOffset({ right: 900, bottom: 900 }, size, 1000, 800), { right: 1000 - 600 - DOCK_MARGIN, bottom: 800 - 400 - DOCK_MARGIN });
+  assert.deepEqual(clampDockOffset({ right: 120.6, bottom: 33.2 }, size, 1000, 800), { right: 121, bottom: 33 });
+  // A card wider than the window stays pinned to the margin.
+  assert.deepEqual(clampDockOffset({ right: 200, bottom: 200 }, size, 500, 300), { right: DOCK_MARGIN, bottom: DOCK_MARGIN });
 });
 
 test('the terminal socket stays on the page origin with ws/wss matching http/https', () => {

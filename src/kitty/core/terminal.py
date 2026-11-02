@@ -47,10 +47,14 @@ _SESSION_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 #: herdr's ``AgentStatus`` values; anything else is shown as ``unknown``.
 AGENT_STATES = ("idle", "working", "blocked", "done", "unknown")
 ACTIVITY_TIMEOUT = 5.0
+#: Longest task title or output line the dock's agent cards receive.
+LINE_MAX = 200
+#: Box-drawing, block and braille glyphs agents use for their own chrome.
+_CHROME = re.compile(r"[\u2500-\u259f\u2800-\u28ff]+")
 #: Agents with a native startup-instruction option; the executable stays user-installed.
 CODING_AGENTS = ("omp", "claude", "codex")
 
-#: herdr config for kitty!'s session: the Harness palette (web/src/lib/themes.ts) on
+#: herdr config for kitty!'s session: the Harness palette (web/src/lib/themes/catalog.ts) on
 #: herdr's terminal base, with transparent panels so the page's surface shows through.
 #: Updates arrive only with kitty!'s signed releases, so herdr's own checks are off.
 HARNESS_CONFIG = """\
@@ -189,6 +193,9 @@ class HerdrRuntime:
         self.environ = os.environ if environ is None else environ
         self._lock = threading.Lock()
         self._used = False
+        #: pane -> (state, epoch ms it was first seen in); the dock cards' running timers.
+        self._states: dict[str, tuple[str, int]] = {}
+        self._states_lock = threading.Lock()
 
     @property
     def config_path(self) -> Path:
@@ -277,8 +284,26 @@ class HerdrRuntime:
         except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
             raise TerminalUnavailable("kitty!'s herdr session did not report its agent states") from None
 
+    def _last_line(self, pane: str) -> str:
+        """The pane's last line of real output: blank lines and box-drawing chrome skipped."""
+        try:
+            result = subprocess.run(
+                self._command("agent", "read", pane, "--source", "recent", "--lines", "40", "--format", "text"),
+                env=child_environment(self.environ, self.config_path), stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=ACTIVITY_TIMEOUT, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if result.returncode:
+            return ""
+        for line in reversed(result.stdout.splitlines()):
+            text = " ".join(_CHROME.sub(" ", line).split())
+            if sum(character.isalnum() for character in text) >= 3:
+                return text[:LINE_MAX]
+        return ""
+
     def activity(self) -> dict:
-        """herdr's own agent states per workspace; never starts the session."""
+        """herdr's own agent states per workspace, with each agent's task, last output
+        line, output revision and when its state began; never starts the session."""
         folder = self._session_folder()
         if not _listening(folder / "herdr.sock"):
             return {"running": False, "workspaces": []}
@@ -287,20 +312,48 @@ class HerdrRuntime:
             value = item.get("agent_status")
             return value if value in AGENT_STATES else "unknown"
 
+        now = int(time.time() * 1000)
+        seen: dict[str, tuple[str, int]] = {}
+
+        def card(agent: dict) -> dict:
+            pane, status = str(agent["pane_id"]), state(agent)
+            with self._states_lock:
+                previous = self._states.get(pane)
+            since = previous[1] if previous and previous[0] == status else now
+            seen[pane] = (status, since)
+            revision = agent.get("revision")
+            return {
+                "pane": pane,
+                "name": str(agent.get("name") or agent.get("display_agent") or agent.get("agent") or "agent"),
+                "status": status,
+                "task": str(agent.get("terminal_title_stripped") or agent.get("terminal_title") or "").strip()[:LINE_MAX],
+                "line": self._last_line(pane),
+                "revision": revision if type(revision) is int else 0,
+                "since": since,
+            }
+
         try:
             workspaces = self._read("workspace", "list")["workspaces"]
             agents = self._read("agent", "list")["agents"]
-            return {"running": True, "workspaces": [{
+            result = {"running": True, "workspaces": [{
                 "id": str(space["workspace_id"]), "label": str(space.get("label") or space["workspace_id"]),
                 "status": state(space), "focused": space.get("focused") is True,
-                "agents": [{
-                    "pane": str(agent["pane_id"]),
-                    "name": str(agent.get("name") or agent.get("display_agent") or agent.get("agent") or "agent"),
-                    "status": state(agent),
-                } for agent in agents if agent.get("workspace_id") == space["workspace_id"]],
+                "agents": [card(agent) for agent in agents if agent.get("workspace_id") == space["workspace_id"]],
             } for space in workspaces]}
         except (KeyError, TypeError, AttributeError):
             raise TerminalUnavailable("kitty!'s herdr session did not report its agent states") from None
+        with self._states_lock:
+            self._states = seen
+        return result
+
+    def focus_agent(self, pane: str) -> None:
+        """Focus one agent pane that herdr currently lists (the dock's Open pane)."""
+        if not _listening(self._session_folder() / "herdr.sock"):
+            raise TerminalNotRunning("Open the terminal before opening an agent's pane")
+        listed = {str(agent.get("pane_id")) for agent in self._read("agent", "list").get("agents", [])}
+        if pane not in listed:
+            raise ValueError("That agent is no longer running")
+        self._agent_command("agent", "focus", pane)
 
     def _agent_command(self, *arguments: str, skill: bool = False):
         """A bounded native herdr command; never replay a potentially applied mutation."""

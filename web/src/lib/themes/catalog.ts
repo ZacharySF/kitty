@@ -1,41 +1,16 @@
-import { applyTheme, type Theme } from "@nunera/bracket/theme";
-import { scopedCss, tokenPlan, type BuildTheme } from "./buildCore";
+import type { Surface, ThemeId, ThemeTokens } from "./contract";
 
-export type ThemeId =
-  | "harness"
-  | "dracula"
-  | "catppuccin-mocha"
-  | "tokyo-night"
-  | "nord"
-  | "gruvbox"
-  | "one-dark"
-  | "kitty"
-  | "scythe";
+/* Theme tokens and lookup only: no DOM, so it loads in Node tests. The contract lives in
+   contract.ts; applying a theme and loading its motif module live in index.ts. */
+export type { Palette, ThemeId, ThemeTokens } from "./contract";
 
-type Palette = Omit<Theme, "name">;
-
-export type KittyTheme = {
-  id: ThemeId;
-  label: string;
-  scheme: "dark" | "light";
-  /** Bracket's 16 semantic roles. */
-  roles: Palette;
-  /** Graph node palette (--c1..--c6), coordinated with the semantic roles. */
-  graph: readonly [string, string, string, string, string, string];
-  /** Tint used for overlay and popover shadows. */
-  shadow: string;
-  /** Optional decorative mark for the picker preview. */
-  motif?: "blossom";
-};
-
-/** Decorative ASCII only; render with aria-hidden, and only for Kitty. */
-export const KITTY_BLOSSOM = " .- .-. -.\n(   .'.   )\n '-.( * ).-'\n    '-' ";
+const OPAQUE: Surface["alpha"] = { panel: 100, inset: 100, raised: 100 };
 
 /**
  * Editor accents/backgrounds follow their upstream palettes; secondary UI text
  * is lifted where editor comment colors would be too dim for small controls.
  */
-export const THEMES: readonly KittyTheme[] = [
+export const THEMES: readonly ThemeTokens[] = [
   {
     // LearnHarness's neutral chrome (#141414 / #1c1c1c / #434343) with kitty's pink accents.
     id: "harness",
@@ -61,6 +36,12 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#deb2c3", "#c9b3e6", "#b3bfe8", "#e8c4d3", "#d6c1ea", "#e6dce1"],
     shadow: "#000000",
+    // Neutral and still: an opaque flat sheet, the plain ring, no motion.
+    surface: { style: "flat", alpha: OPAQUE, radius: 10 },
+    focus: "ring",
+    selection: "wash",
+    motion: "none",
+    backdrop: "plain",
   },
   {
     // https://github.com/dracula/dracula-theme#color-palette-oss
@@ -87,6 +68,11 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#bd93f9", "#8be9fd", "#ff79c6", "#50fa7b", "#f1fa8c", "#ffb86c"],
     shadow: "#14151c",
+    surface: { style: "glass", alpha: { panel: 62, inset: 50, raised: 72 }, radius: 14 },
+    focus: "glow",
+    selection: "bar",
+    motion: "snappy",
+    backdrop: "nebula",
   },
   {
     // https://github.com/catppuccin/palette/blob/main/palette.json (Mocha)
@@ -113,6 +99,12 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#cba6f7", "#89b4fa", "#94e2d5", "#f5c2e7", "#fab387", "#a6e3a1"],
     shadow: "#11111b",
+    // Soft matte paper in Mocha's base, pill selections.
+    surface: { style: "paper", alpha: OPAQUE, radius: 16 },
+    focus: "ring",
+    selection: "pill",
+    motion: "calm",
+    backdrop: "grain",
   },
   {
     // https://github.com/folke/tokyonight.nvim/tree/main/lua/tokyonight/colors
@@ -139,6 +131,11 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#7aa2f7", "#bb9af7", "#7dcfff", "#73daca", "#e0af68", "#f7768e"],
     shadow: "#0c0e14",
+    surface: { style: "glass", alpha: { panel: 58, inset: 50, raised: 70 }, radius: 14 },
+    focus: "glow",
+    selection: "wash",
+    motion: "snappy",
+    backdrop: "nebula",
   },
   {
     // https://github.com/nordtheme/nord/blob/develop/src/nord.scss
@@ -165,6 +162,12 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#88c0d0", "#81a1c1", "#b48ead", "#a3be8c", "#ebcb8b", "#d08770"],
     shadow: "#1b2029",
+    // Frost: opaque, crisp hairlines, a cool glow on focus.
+    surface: { style: "flat", alpha: OPAQUE, radius: 10 },
+    focus: "glow",
+    selection: "bar",
+    motion: "calm",
+    backdrop: "plain",
   },
   {
     // https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim
@@ -191,6 +194,12 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#fabd2f", "#8ec07c", "#83a598", "#d3869b", "#fe8019", "#ebdbb2"],
     shadow: "#181a1b",
+    // Warm retro paper with grain.
+    surface: { style: "paper", alpha: OPAQUE, radius: 12 },
+    focus: "ring",
+    selection: "bar",
+    motion: "snappy",
+    backdrop: "grain",
   },
   {
     // https://github.com/atom/one-dark-syntax/blob/master/styles/colors.less
@@ -217,32 +226,44 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#61afef", "#c678dd", "#56b6c2", "#98c379", "#e5c07b", "#e06c75"],
     shadow: "#17191f",
+    surface: { style: "flat", alpha: OPAQUE, radius: 10 },
+    focus: "ring",
+    selection: "pill",
+    motion: "snappy",
+    backdrop: "plain",
   },
   {
+    // Q10 A+B+C: frosted pink glass over a blossom backdrop (kitty/), a pastel palette
+    // with real roles: sakura accent apart from dusty structure, six distinct data hues.
     id: "kitty",
     label: "Kitty",
     scheme: "dark",
     roles: {
-      void: "#1b151a",
-      panel: "#241c22",
-      inset: "#161115",
-      raised: "#30252d",
-      line: "#5e4655",
-      lineHot: "#d6a6b8",
+      void: "#1a1319",
+      panel: "#33262f",
+      inset: "#1f171d",
+      raised: "#3d2e39",
+      line: "#6e5263",
+      lineHot: "#f29fb8",
       ink: "#f5e8ee",
       mute: "#d9bdca",
-      dim: "#c7a9b8",
-      structure: "#deb2c3",
-      signal: "#e4bdcc",
-      go: "#becbb7",
-      reference: "#d3adbf",
-      caution: "#e1c7ad",
-      alternate: "#c6b5d5",
-      danger: "#e7a7ae",
+      dim: "#cfb3c1",
+      structure: "#b896a8",
+      signal: "#f29fb8",
+      go: "#9fd8b8",
+      reference: "#94c4f0",
+      caution: "#f2d48f",
+      alternate: "#b9a4ec",
+      danger: "#f7766f",
     },
-    graph: ["#deb2c3", "#cba7c0", "#c6b5d5", "#b8c5d6", "#f5e8ee", "#e1c7ad"],
-    shadow: "#181117",
-    motif: "blossom",
+    // Sakura, lavender, sky, mint, peach, butter.
+    graph: ["#f29fb8", "#b9a4ec", "#94c4f0", "#9fd8b8", "#f5b08a", "#ecd77e"],
+    shadow: "#0d0509",
+    surface: { style: "glass", alpha: { panel: 56, inset: 50, raised: 64 }, radius: 16 },
+    focus: "petal",
+    selection: "pill",
+    motion: "calm",
+    backdrop: "nebula",
   },
   {
     id: "scythe",
@@ -268,83 +289,51 @@ export const THEMES: readonly KittyTheme[] = [
     },
     graph: ["#b5a5dc", "#95b3d4", "#ecebf5", "#9b96c9", "#b7c9e3", "#c397ac"],
     shadow: "#06060d",
+    // Engraved frames: square corners and a double hairline (scythe/).
+    surface: { style: "frame", alpha: OPAQUE, radius: 2 },
+    focus: "bracket",
+    selection: "bar",
+    motion: "snappy",
+    backdrop: "nebula",
+  },
+  {
+    // Clear, neutral glass in the manner of macOS/iOS (liquid-glass/): heavy blur, a white
+    // rim lit from the top-left and a soft drop; no tint or rainbow.
+    id: "liquid-glass",
+    label: "Liquid Glass",
+    scheme: "dark",
+    roles: {
+      void: "#0c0e12",
+      panel: "#1e2128",
+      inset: "#111318",
+      raised: "#2a2e37",
+      line: "#535a67",
+      lineHot: "#eef2f8",
+      ink: "#f6f8fb",
+      mute: "#cdd2da",
+      dim: "#aab1bd",
+      structure: "#9cc8ff",
+      signal: "#b4c3ff",
+      go: "#86d9a6",
+      reference: "#9cc8ff",
+      caution: "#ffd27e",
+      alternate: "#c9bcff",
+      danger: "#ff8f8f",
+    },
+    // Apple-like system hues, softened; the glass itself stays clear.
+    graph: ["#7fb6ff", "#a9b1ff", "#76d3e0", "#8edba8", "#ffc37a", "#eef2f8"],
+    shadow: "#000000",
+    surface: { style: "glass", alpha: { panel: 24, inset: 30, raised: 38 }, radius: 16 },
+    focus: "glow",
+    selection: "lit",
+    motion: "fluid",
+    backdrop: "nebula",
   },
 ];
 
-export const DEFAULT_THEME: ThemeId = "harness";
-/** Dispatched on `window` after the appearance is applied; `detail` is the base ThemeId. */
-export const THEME_EVENT = "kitty:theme";
-/** The `<style>` holding the build's custom CSS (Q9). */
-export const BUILD_CSS_ID = "kitty-build-css";
+/** First launch, and any saved id that no longer exists, open on Kitty. */
+export const DEFAULT_THEME: ThemeId = "kitty";
 
-export function getTheme(id: string | null | undefined): KittyTheme {
-  return THEMES.find((theme) => theme.id === id) ?? THEMES[0];
-}
-
-export function currentTheme(): ThemeId {
-  return getTheme(document.documentElement.dataset.theme).id;
-}
-
-/** Surface alpha: panels stay readable while the backdrop shows through. */
-const GLASS: Partial<Record<keyof Palette, number>> = { panel: 62, inset: 50, raised: 72 };
-
-function applyKittyTheme(theme: KittyTheme): void {
-  const root = document.documentElement;
-  applyTheme(
-    { name: `kitty! · ${theme.label}`, ...theme.roles },
-    root,
-    "comfortable",
-  );
-  // Bracket derives contrast from opaque hexes first; translucency is layered after.
-  for (const role of ["void", "panel", "inset", "raised"] as const) {
-    root.style.setProperty(`--solid-${role}`, theme.roles[role]);
-    const alpha = GLASS[role];
-    if (alpha) root.style.setProperty(`--br-${role}`, `color-mix(in srgb, ${theme.roles[role]} ${alpha}%, transparent)`);
-  }
-  theme.graph.forEach((color, index) =>
-    root.style.setProperty(`--c${index + 1}`, color),
-  );
-  root.style.setProperty("--shadow-tint", theme.shadow);
-  root.style.setProperty("--border-fine", `color-mix(in srgb, ${theme.roles.line} 70%, transparent)`);
-  root.style.setProperty("--border-colorful", `color-mix(in srgb, ${theme.roles.reference} 48%, ${theme.roles.line})`);
-  root.style.setProperty("--border-active", theme.roles.lineHot);
-  root.style.setProperty("--motion-fast", "140ms");
-  root.style.colorScheme = theme.scheme;
-  root.dataset.theme = theme.id;
-  root.dataset.scheme = theme.scheme;
-  document
-    .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", theme.roles.void);
-}
-
-/** Custom properties the last applied tokens set, removed when they disappear. */
-let tokenProperties: string[] = [];
-
-/**
- * Applies a build's look to this window (Q9): the base theme with role tokens
- * overriding its roles, the other tokens as custom properties, and the custom CSS
- * scoped to #app. Safe mode applies the base theme alone.
- */
-export function applyAppearance(look: BuildTheme, safe: boolean): void {
-  const root = document.documentElement;
-  const plan = tokenPlan(safe ? {} : look.tokens, tokenProperties);
-  // Stale properties go first: the base theme then restores any it also sets.
-  for (const name of plan.remove) root.style.removeProperty(name);
-  const base = getTheme(look.base);
-  applyKittyTheme({ ...base, roles: { ...base.roles, ...plan.roles } });
-  for (const [name, value] of Object.entries(plan.set)) root.style.setProperty(name, value);
-  tokenProperties = Object.keys(plan.set);
-
-  const css = safe ? "" : scopedCss(look.css);
-  let style = document.getElementById(BUILD_CSS_ID);
-  if (!css) style?.remove();
-  else {
-    if (!style) {
-      style = document.createElement("style");
-      style.id = BUILD_CSS_ID;
-      document.head.append(style);
-    }
-    style.textContent = css;
-  }
-  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: base.id }));
+export function getTheme(id: string | null | undefined): ThemeTokens {
+  return THEMES.find((theme) => theme.id === id) ?? THEMES.find((theme) => theme.id === DEFAULT_THEME)!;
 }

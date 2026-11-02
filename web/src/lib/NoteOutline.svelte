@@ -9,7 +9,7 @@
 </script>
 <script lang="ts">
   import { api } from "./api";
-  import BlockEditor, { type PageRef } from "./BlockEditor.svelte";
+  import BlockEditor, { type OutlineBlock, type PageRef } from "./BlockEditor.svelte";
   import NoteBlockText from "./NoteBlockText.svelte";
   import TagPage from "./TagPage.svelte";
   import MirrorPane from "./MirrorPane.svelte";
@@ -21,7 +21,7 @@
   // (live ((references)), citation contexts, [[page]] and #tag topics, tag pages, unlinked mentions).
   let {
     pageId, pages, references, counts, focusBlock = "", mirror = false,
-    onpage, onopen, onopenpage, oncreatepage, onrevision, onerror, onclosemirror = () => {},
+    onpage, onopen, onopenpage, oncreatepage, onrevision, onerror, onclosemirror = () => {}, onblocks,
   }: {
     pageId: number;
     pages: { id: number; title: string }[];
@@ -37,6 +37,8 @@
     onrevision: (from: number, to: number, own: boolean) => void;
     onerror: (message: string) => void;
     onclosemirror?: () => void;
+    /** The page's text-flow blocks after every change (Notes' floating "On this page" outline, find). */
+    onblocks?: (blocks: OutlineBlock[]) => void;
   } = $props();
 
   let editor = $state<ReturnType<typeof BlockEditor>>();
@@ -138,7 +140,7 @@
     <article class="outline" aria-label="Text note outline">
       <BlockEditor bind:this={editor} target={{ type: "page", number: pageId }} label="Text note blocks"
         pages={pages.filter((page) => page.id !== pageId).map((page) => ({ number: page.id, title: page.title }))}
-        {focusBlock} {extras} {onrevision} {onerror} {onopenpage} {oncreatepage} ontag={openTag} />
+        {focusBlock} {extras} {onrevision} {onerror} {onopenpage} {oncreatepage} {onblocks} ontag={openTag} />
       {#if mentions.length}
         <section class="mentions"><h3>Unlinked title mentions</h3>
           {#each mentions as mention (`${mention.block_id}:${mention.page_id}`)}

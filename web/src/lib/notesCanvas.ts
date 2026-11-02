@@ -71,8 +71,7 @@ export function noteTabEdge(point: Point, width: number, height: number): -1 | 0
 // Documents are bounded JSON. JSON cloning also unwraps Svelte's reactive proxies.
 export const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 export const uid = () => crypto.randomUUID().replaceAll("-", "");
-/** Charcoal paper between black and grey; the default ink is a light lavender. */
-export const CANVAS_PAPER = "#1f1d25";
+/** The default ink is a light lavender; the paper is the theme's flat void colour (Q68). */
 export const CANVAS_INK = "#e7dfef";
 const hexColor = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 /**
@@ -134,6 +133,8 @@ export function displayColor(color: string): string {
 /** Text on a sticky sits on its light fill, so it keeps the stored colour. */
 const inkOf = (e: { kind: string; color: string }) =>
   e.kind === "sticky" ? e.color : displayColor(e.color);
+/** Q68: a page is clean (no grid or dots) unless the user picked a paper pattern. */
+export const paperPattern = (doc: CanvasDocument): NonNullable<CanvasDocument["background"]> => doc.background ?? "blank";
 export const emptyDocument = (): CanvasDocument => ({
   version: 1,
   grid: true,
@@ -519,8 +520,8 @@ export function renderCanvas(
   overlay: Point[],
   cssWidth: number,
   cssHeight: number,
-  ink: string = CANVAS_INK,
-  background: string = CANVAS_PAPER,
+  ink: string,
+  background: string,
 ) {
   const dpr = window.devicePixelRatio || 1;
   if (
@@ -535,7 +536,7 @@ export function renderCanvas(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, cssWidth, cssHeight);
-  const pattern = doc.background || (doc.grid ? "dotted" : "blank");
+  const pattern = paperPattern(doc);
   if (pattern !== "blank" && v.zoom > 0.1) {
     const step = 25 * v.zoom,
       ox = ((v.x % step) + step) % step,
@@ -602,7 +603,8 @@ const escapeXML = (s: string) =>
         "'": "&apos;",
       })[c]!,
   );
-export async function exportSVG(doc: CanvasDocument): Promise<string> {
+/** `background` is the theme's flat void colour the page was drawn on. */
+export async function exportSVG(doc: CanvasDocument, background: string): Promise<string> {
   const b = bounds(ordered(doc)) ?? { x: 0, y: 0, w: 800, h: 600 };
   const view = {
     x: b.x - 30,
@@ -671,7 +673,7 @@ export async function exportSVG(doc: CanvasDocument): Promise<string> {
         : "";
     return `${rect}<text font-family="sans-serif" font-size="${size}" fill="${ink}">${lines.map((line, i) => `<tspan x="${e.x + 8}" y="${e.y + 8 + size + i * size * 1.3}">${escapeXML(line)}</tspan>`).join("")}</text>`;
   });
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${view.w}" height="${view.h}" viewBox="${view.x} ${view.y} ${view.w} ${view.h}"><rect x="${view.x}" y="${view.y}" width="${view.w}" height="${view.h}" fill="${CANVAS_PAPER}"/>${parts.join("")}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${view.w}" height="${view.h}" viewBox="${view.x} ${view.y} ${view.w} ${view.h}"><rect x="${view.x}" y="${view.y}" width="${view.w}" height="${view.h}" fill="${escapeXML(background)}"/>${parts.join("")}</svg>`;
 }
 export async function svgPNG(svg: string): Promise<Blob> {
   const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));

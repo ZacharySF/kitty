@@ -345,7 +345,7 @@ def test_migration_turns_existing_hash_tags_into_tag_records(tmp_path):
     early = tmp_path / "early"
     early.mkdir()
     for migration in available_migrations():
-        if migration.version < 37:
+        if migration.version < next(m.version for m in available_migrations() if m.name == "block_tags"):
             shutil.copy(migration.path, early / migration.path.name)
     conn = connect(tmp_path / "kitty.db")
     migrate(conn, early)
@@ -365,7 +365,7 @@ def test_transactions_before_the_tag_tables_exist_still_work(tmp_path):
     early = tmp_path / "early"
     early.mkdir()
     for migration in available_migrations():
-        if migration.version < 37:
+        if migration.version < next(m.version for m in available_migrations() if m.name == "block_tags"):
             shutil.copy(migration.path, early / migration.path.name)
     conn = connect(tmp_path / "kitty.db")
     migrate(conn, early)
@@ -426,7 +426,7 @@ def test_perf_typing_on_a_2000_block_page_with_a_1000_tag_vocabulary(workspace, 
     build_seconds = time.perf_counter() - started
     conn.execute("UPDATE tag_settings SET vocabulary=vocabulary+1")
     without = []
-    # Baseline: the same keystroke with the hooks bypassed (as on a database before migration 037).
+    # Baseline: the same keystroke with the hooks bypassed (as on a database before migration 039).
     original = tagging._settings
     tagging._settings = lambda conn: None
     try:

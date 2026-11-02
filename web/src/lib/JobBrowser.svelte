@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** Map/List chosen from Saved jobs: the Find jobs view that opens next shows it. */
+  let presentationHandoff: "map" | "list" | null = null;
+</script>
+
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { api, dateLabel, safeUrl, type Bootstrap, type Job } from "./api";
@@ -8,21 +13,31 @@
   import type { View } from "./workspace";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import PostingAvailability from "./PostingAvailability.svelte";
+  import EmptyState from "./EmptyState.svelte";
+  import Loader from "./Loader.svelte";
+  import Dashboard from "./Dashboard.svelte";
+  import Select, { type SelectOption } from "./ui/Select.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import EditDrawer from "./ui/EditDrawer.svelte";
   let {
     view,
     workspace,
+    revision = 0,
     onchange,
     onadd,
     onview,
     onopenjob,
+    onguide,
     initialJobId = null,
   }: {
     view: "today" | "inbox" | "jobs" | "queue" | "applications" | "favorites";
     workspace: Bootstrap | null;
+    revision?: number;
     onchange: () => Promise<void>;
     onadd: () => void;
     onview: (view: View) => void;
     onopenjob?: (id: number) => void;
+    onguide?: () => void;
     initialJobId?: number | null;
   } = $props();
   const pane = useWorkspaceContext();
@@ -72,7 +87,20 @@
   const preparationIds = $derived(
     marked.length ? marked : selected !== null ? [selected] : jobs[cursor] ? [jobs[cursor].id] : [],
   );
-  let presentation = $state<"map" | "list">(untrack(()=>initialJobId ? "list" : view === "jobs" ? "map" : "list"));
+  let presentation = $state<"map" | "list">(untrack(() => {
+    const handoff = presentationHandoff;
+    presentationHandoff = null;
+    return initialJobId ? "list" : view === "jobs" ? (handoff ?? "map") : "list";
+  }));
+  /** Map and List switch presentation here; from Saved jobs they open Find jobs. */
+  function present(next: "map" | "list") {
+    if (view === "jobs") {
+      presentation = next;
+      return;
+    }
+    presentationHandoff = next;
+    onview("jobs");
+  }
   let graphFocus = $state<string | null>(null);
   let graphLabel = $state("");
   function rootSchema() {
@@ -93,6 +121,7 @@
   });
   let graphRevision = $state(0);
   let bulkOptionsOpen = $state(false);
+  let filtersOpen = $state(false);
   let results: HTMLDivElement | undefined = $state();
   const labels: Record<string, string> = {
     eligible: "Meets known requirements",
@@ -148,8 +177,52 @@
     }
   }
   let searchInput: HTMLInputElement | undefined = $state();
-  let bulkAction = $state("favorite");
+  let bulkAction = $state("state");
   let bulkValue = $state("");
+  const RANK_HELP = "A is highest priority, B is worth considering, C is lower priority or filtered out. Read the reason in each job; rank does not guarantee eligibility.";
+  const RANKS: Record<string, string> = { A: "Highest priority", B: "Worth considering", C: "Lower priority / filtered out" };
+  const choices = (values: string[], none?: string): SelectOption[] => [
+    ...(none ? [{ value: "", label: none }] : []),
+    ...values.map((value) => ({ value, label: label(value) })),
+  ];
+  const trackOptions = $derived<SelectOption[]>([
+    { value: "", label: "All job types / tracks" },
+    ...(workspace?.tracks || []).map((item) => ({ value: item.name, label: item.label })),
+  ]);
+  const orderOptions: SelectOption[] = [
+    { value: "best", label: "Best fit" },
+    { value: "score", label: "Saved-job similarity score" },
+    { value: "newest", label: "Newest" },
+    { value: "track", label: "Job type / track" },
+    { value: "company", label: "Company" },
+    { value: "deadline", label: "Deadline" },
+  ];
+  const rankOptions: SelectOption[] = [{ value: "", label: "All" }, ...Object.keys(RANKS).map((value) => ({ value, label: value }))];
+  const savedViewOptions = $derived<SelectOption[]>([
+    { value: "", label: "No saved view" },
+    ...options.views.map((item) => ({ value: String(item.key), label: item.title, hint: String(item.key) })),
+  ]);
+  const sourceOptions = $derived<SelectOption[]>([{ value: "", label: "All sources" }, ...options.sources.map((value) => ({ value, label: value }))]);
+  const eligibilityOptions = choices(["eligible", "boosted", "ambiguous", "unknown", "ineligible"], "All eligibility");
+  const statusOptions = choices(["applied", "oa", "interview", "offer", "rejected", "ghosted", "withdrawn"], "All statuses");
+  const stateOptions = choices(["new", "queued", "later", "skipped", "not_eligible", "applied"], "All states");
+  const bulkActionOptions: SelectOption[] = [
+    { value: "state", label: "Progress" },
+    { value: "tier", label: "Rank" },
+    { value: "add_track", label: "Category" },
+  ];
+  const bulkValueOptions = $derived<SelectOption[]>(
+    bulkAction === "state"
+      ? choices(["new", "queued", "later", "skipped", "not_eligible"])
+      : bulkAction === "tier"
+        ? Object.entries(RANKS).map(([value, hint]) => ({ value, label: `Rank ${value}`, hint }))
+        : (workspace?.tracks || []).map((item) => ({ value: item.name, label: item.label })),
+  );
+  /** Filters set inside the popover, counted on its button. */
+  const activeFilters = $derived(
+    [tier, saved, source, eligibility, status, queueState].filter(Boolean).length +
+      [includeClosed && view !== "queue", onlyFavorites, companyOnly, view === "inbox" && allDates].filter(Boolean).length,
+  );
   const limit = 100;
   const heading = $derived(
     view === "today"
@@ -487,55 +560,42 @@
 {#if message}<p class="action-feedback" role="status">{message}<button class="icon-button" aria-label="Dismiss job message" onclick={() => (message = "")}>×</button></p>{/if}
 <div class="content-grid" class:with-detail={selected !== null}>
   <section class="opportunities panel" aria-label={heading}>
-    <div class="panel-heading">
-      <div>
-        <h2>{heading}<span class="count-pill">{total}</span></h2>
+    {#if view === "today"}
+      <div class="panel-heading">
+        <div>
+          <h2>{heading}<span class="count-pill">{total}</span></h2>
+        </div>
+        <button class="text-button" onclick={() => onview("jobs")}>View all <Icon name="arrow" size={16} /></button>
       </div>
-      {#if view === "today"}<button
-          class="text-button"
-          onclick={() => onview("jobs")}
-          >View all <Icon name="arrow" size={16} /></button
-        >{:else}<button class="button" onclick={onadd}>Add a job link</button
-        >{/if}
-    </div>
+    {:else}
+      <header class="jobs-head">
+        <h1 title={view === "queue" ? "Open, unsubmitted jobs ranked A or B" : undefined}>{heading}</h1>
+        <span class="total" title={`${total.toLocaleString()} matching`}>{total.toLocaleString()}</span>
+        <div class="tools">
+          {#if view === "jobs" && graphFocus}<button type="button" class="text-button all-types" onclick={rootSchema}>All job types</button>{/if}
+          {#if view === "jobs" || view === "favorites"}
+            <nav class="jobs-views" aria-label="Jobs view">
+              <button type="button" aria-pressed={view === "jobs" && presentation === "map"} onclick={() => present("map")}>Map</button>
+              <button type="button" aria-pressed={view === "jobs" && presentation === "list"} onclick={() => present("list")}>List</button>
+              <button type="button" aria-current={view === "favorites" ? "page" : undefined} onclick={() => onview("favorites")}>Saved</button>
+              <button type="button" onclick={() => onview("pipeline")}>Applications</button>
+              <button type="button" onclick={() => onview("resumes")}>Resumes</button>
+              <button type="button" onclick={() => onview("sources")}>Sources</button>
+            </nav>
+          {/if}
+          <button type="button" class="pill primary page-action" onclick={onadd}><Icon name="plus" size={14} />Add a job link</button>
+        </div>
+      </header>
+    {/if}
     {#if view === "jobs"}
-      <nav class="schema-tabs" aria-label="Jobs view">
-        <button class="button" aria-pressed={presentation === "map"} onclick={() => presentation = "map"}>Map</button>
-        <button class="button" aria-pressed={presentation === "list"} onclick={() => presentation = "list"}>List</button>
-        {#if graphFocus}<button class="text-button" onclick={rootSchema}>All job types</button>{/if}
-        <button class="text-button" onclick={() => onview("favorites")}>Saved</button>
-        <button class="text-button" onclick={() => onview("pipeline")}>Applications</button>
-        <button class="text-button" onclick={() => onview("resumes")}>Resumes</button>
-        <button class="text-button" onclick={() => onview("sources")}>Sources</button>
-      </nav>
+      <Dashboard {revision} onopenjob={(id) => onopenjob?.(id)} {onview} {onguide} />
     {/if}
     {#if presentation === "map"}
-      <SectionGraph section="jobs" focus={graphFocus} revision={graphRevision} onselect={selectGraphNode}
-        ondelete={(node) => { if (node.entity === "job" && typeof node.ref === "number") return bulk("delete", true, [node.ref]); }} listToggle={false} />
-      <button class="text-button" onclick={() => { presentation = "list"; }}>Browse {track || "all jobs"} as a list</button>
-    {:else}
-    {#if view === "queue"}
-      <div class="flow-guide">
-        <h3>You stay in charge of every application</h3>
-        <ol>
-          <li>Review jobs and select the ones you want.</li>
-          <li>
-            Prepare selected: review the exact plan, then fill known answers in
-            Firefox.
-          </li>
-          <li>
-            Check each form, answer anything left blank, and submit yourself.
-          </li>
-        </ol>
-        <p>
-          This list shows open, unsubmitted jobs ranked A or B. Prefer your own
-          shortlist?
-        </p>
-        <button class="text-button" onclick={() => onview("favorites")}
-          >Open my saved jobs <Icon name="arrow" size={15} /></button
-        >
+      <div class="map-stage">
+        <SectionGraph bare section="jobs" focus={graphFocus} revision={graphRevision} onselect={selectGraphNode}
+          ondelete={(node) => { if (node.entity === "job" && typeof node.ref === "number") return bulk("delete", true, [node.ref]); }} listToggle={false} />
       </div>
-    {/if}
+    {:else}
     {#if view !== "today"}
       <form
         class="filters"
@@ -555,114 +615,42 @@
             aria-label="Search roles or companies"
           /><kbd>Ctrl F</kbd></label
         >
-        <label class="sr-only" for={fieldId("track-filter")}>Filter by job type or track</label
-        ><select id={fieldId("track-filter")} bind:value={track} onchange={filter}
-          ><option value="">All job types / tracks</option
-          >{#each workspace?.tracks || [] as item}<option value={item.name}
-              >{item.label}</option
-            >{/each}</select
-        >
-        <label class="sr-only" for={fieldId("job-order")}>Sort jobs</label>
-        <select id={fieldId("job-order")} bind:value={order} onchange={filter}>
-          <option value="best">Best fit</option>
-          <option value="score">Saved-job similarity score</option>
-          <option value="newest">Newest</option>
-          <option value="track">Job type / track</option>
-          <option value="company">Company</option>
-          <option value="deadline">Deadline</option>
-        </select>
-        <button class="button" type="submit">Search</button>
+        <Select id={fieldId("track-filter")} label="Filter by job type or track" kind="search" options={trackOptions} bind:value={track} onchange={filter} />
+        <Select id={fieldId("job-order")} label="Sort jobs" kind="list" options={orderOptions} bind:value={order} onchange={filter} />
+        <Popover label="Filters" bind:open={filtersOpen} placement="bottom-end" class="job-filters">
+          {#snippet trigger(props)}
+            <button type="button" class="pill" {...props}>Filters{#if activeFilters}<span class="filter-count">{activeFilters}</span>{/if}</button>
+          {/snippet}
+          <div class="filter-grid">
+            <span class="field-label" title={RANK_HELP}>Rank</span>
+            <Select id={fieldId("tier-filter")} label="Rank" options={rankOptions} bind:value={tier} onchange={filter} />
+            <span class="field-label">Saved view</span>
+            <Select label="Saved view" kind="list" options={savedViewOptions} bind:value={saved} onchange={() => {
+              onlyFavorites = false;
+              void filter();
+            }} />
+            <span class="field-label">Source</span>
+            <Select label="Source" kind={options.sources.length > 8 ? "search" : "list"} options={sourceOptions} bind:value={source} onchange={filter} />
+            <span class="field-label">Eligibility</span>
+            <Select label="Eligibility" kind="list" options={eligibilityOptions} bind:value={eligibility} onchange={filter} />
+            <span class="field-label">Application status</span>
+            <Select label="Application status" kind="list" options={statusOptions} bind:value={status} onchange={filter} />
+            <span class="field-label">Preparation progress</span>
+            <Select label="Preparation progress" kind="list" options={stateOptions} bind:value={queueState} onchange={filter} />
+          </div>
+          <div class="filter-checks">
+            <label class="inline-check"
+              ><input type="checkbox" bind:checked={includeClosed} onchange={filter} disabled={view === "queue"} />Include closed postings</label
+            ><label class="inline-check"
+              ><input type="checkbox" bind:checked={onlyFavorites} onchange={filter} />Saved jobs only</label
+            ><label class="inline-check"
+              ><input type="checkbox" bind:checked={companyOnly} onchange={filter} />Company names only</label
+            >{#if view === "inbox"}<label class="inline-check"
+                ><input type="checkbox" bind:checked={allDates} onchange={filter} />All posting dates <kbd>w</kbd></label
+              >{/if}
+          </div>
+        </Popover>
       </form>
-      <details class="advanced-filters">
-        <summary>More filters</summary>
-        <div class="filter-grid">
-          <label
-            >Rank<select id={fieldId("tier-filter")} bind:value={tier} onchange={filter}>
-              <option value="">All ranks</option>
-              <option value="A">A — Highest priority</option>
-              <option value="B">B — Worth considering</option>
-              <option value="C">C — Lower priority / filtered out</option>
-            </select></label
-          >
-          <label
-            >Saved view<select
-              bind:value={saved}
-              onchange={() => {
-                onlyFavorites = false;
-                void filter();
-              }}
-              ><option value="">No saved view</option
-              >{#each options.views as item}<option value={String(item.key)}
-                  >{item.key} · {item.title}</option
-                >{/each}</select
-            ></label
-          >
-          <label
-            >Source<select bind:value={source} onchange={filter}
-              ><option value="">All sources</option
-              >{#each options.sources as item}<option>{item}</option
-                >{/each}</select
-            ></label
-          >
-          <label
-            >Eligibility<select bind:value={eligibility} onchange={filter}
-              ><option value="">All eligibility</option
-              >{#each ["eligible", "boosted", "ambiguous", "unknown", "ineligible"] as item}<option
-                  value={item}>{label(item)}</option
-                >{/each}</select
-            ></label
-          >
-          <label
-            >Application status<select bind:value={status} onchange={filter}
-              ><option value="">All statuses</option
-              >{#each ["applied", "oa", "interview", "offer", "rejected", "ghosted", "withdrawn"] as item}<option
-                  value={item}>{label(item)}</option
-                >{/each}</select
-            ></label
-          >
-          <label
-            >Preparation progress<select
-              bind:value={queueState}
-              onchange={filter}
-              ><option value="">All states</option
-              >{#each ["new", "queued", "later", "skipped", "not_eligible", "applied"] as item}<option
-                  value={item}>{label(item)}</option
-                >{/each}</select
-            ></label
-          >
-          <label class="inline-check"
-            ><input
-              type="checkbox"
-              bind:checked={includeClosed}
-              onchange={filter}
-              disabled={view === "queue"}
-            />Include closed postings</label
-          ><label class="inline-check"
-            ><input
-              type="checkbox"
-              bind:checked={onlyFavorites}
-              onchange={filter}
-            />Saved jobs only</label
-          ><label class="inline-check"
-            ><input
-              type="checkbox"
-              bind:checked={companyOnly}
-              onchange={filter}
-            />Company names only</label
-          >{#if view === "inbox"}<label class="inline-check"
-              ><input
-                type="checkbox"
-                bind:checked={allDates}
-                onchange={filter}
-              />All posting dates <kbd>w</kbd></label
-            >{/if}
-        </div>
-        <p class="muted">
-          Ranks help you decide what to review first: A is highest priority, B
-          is worth considering, and C is lower priority or filtered out. Read
-          the reason in each job; rank does not guarantee eligibility.
-        </p>
-      </details>
       <div class="selection-toolbar">
         <label class="inline-check"
           ><input
@@ -690,116 +678,60 @@
             class="text-button"
             onclick={() => (marked = [])}>Clear selection</button
           >{/if}
-        <button
-          class="button primary"
-          disabled={busy || loading || (!marked.length && selected === null && !jobs[cursor])}
-          onclick={prepareSelected}
-        >Fill {marked.length ? `${marked.length} selected` : selected !== null ? "opened job" : "focused job"} for review <kbd>Shift+F</kbd></button>
+        <span class="toolbar-gap"></span>
+        {#if marked.length}
+          {#if view !== "favorites"}<button
+              class="button"
+              disabled={busy || loading}
+              onclick={() => bulk("favorite", true)}
+              >Save selected ({marked.length})</button
+            >{/if}
+          <Popover label="Change selected jobs" bind:open={bulkOptionsOpen} placement="bottom-end" class="job-bulk">
+            {#snippet trigger(props)}
+              <button type="button" class="pill" {...props}>Change selected</button>
+            {/snippet}
+            <form
+              class="bulk-form"
+              onsubmit={(event) => {
+                event.preventDefault();
+                void bulk(bulkAction, bulkValue);
+              }}
+            >
+              <div class="bulk-row">
+                <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", true)}>Save <kbd>*</kbd></button>
+                <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", false)}>Remove from saved jobs</button>
+              </div>
+              <div class="bulk-row">
+                <span class="field-label">Set</span>
+                <Select label="Bulk action" options={bulkActionOptions} bind:value={bulkAction} onchange={() => (bulkValue = "")} />
+              </div>
+              <div class="bulk-row">
+                <Select id={fieldId("bulk-value")} label="Bulk value" kind="list" options={bulkValueOptions} bind:value={bulkValue} />
+                <button class="button primary" disabled={busy || !bulkValue}>Apply to {marked.length}</button>
+              </div>
+            </form>
+          </Popover>
+        {/if}
         <PostingAvailability
           jobIds={marked.length ? marked : jobs.map(job => job.id)}
           label={marked.length ? "Check selected" : "Check this batch"}
           demo={workspace?.demo ?? true}
           oncomplete={checkedAvailability}
         />
+        <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Preparation</button>
+        {#if marked.length}<span class="muted">Fill stops before submission; you submit each one.</span>{/if}
+        <button
+          class="button primary"
+          disabled={busy || loading || (!marked.length && selected === null && !jobs[cursor])}
+          onclick={prepareSelected}
+        >Fill {marked.length ? `${marked.length} selected` : selected !== null ? "opened job" : "focused job"} for review <kbd>Shift+F</kbd></button>
       </div>
-      {#if marked.length}
-        <div class="selection-toolbar">
-          {#if view !== "favorites"}<button
-              class="button"
-              class:primary={view !== "queue"}
-              disabled={busy || loading}
-              onclick={() => bulk("favorite", true)}
-              >Save selected ({marked.length})</button
-            >{/if}
-          <span class="muted">Fill stops before submission. Review the plan and submit each application yourself.</span>
-        </div>
-        <details class="advanced-filters" bind:open={bulkOptionsOpen}>
-          <summary>More actions for selected jobs</summary>
-          <form
-            class="bulk-toolbar"
-            onsubmit={(event) => {
-              event.preventDefault();
-              void bulk(
-                bulkAction,
-                bulkAction === "favorite"
-                  ? true
-                  : bulkAction === "unfavorite"
-                    ? false
-                    : bulkValue,
-              );
-            }}
-          >
-            <button
-              class="button"
-              type="button"
-              disabled={busy}
-              onclick={() => bulk("favorite", true)}
-              >Save selected <kbd>*</kbd></button
-            ><button
-              class="button"
-              type="button"
-              disabled={busy}
-              onclick={() => bulk("favorite", false)}
-              >Remove from saved jobs</button
-            >
-            <label class="sr-only" for={fieldId("bulk-action")}>Bulk action</label><select
-              id={fieldId("bulk-action")}
-              bind:value={bulkAction}
-              onchange={() => (bulkValue = "")}
-              ><option value="favorite">Save jobs</option><option value="state"
-                >Preparation progress</option
-              ><option value="tier">Rank</option><option value="add_track"
-                >Add category</option
-              ></select
-            >
-            {#if bulkAction !== "favorite"}<label
-                class="sr-only"
-                for={fieldId("bulk-value")}>Bulk value</label
-              ><select id={fieldId("bulk-value")} bind:value={bulkValue}
-                ><option value="" disabled>Choose…</option
-                >{#if bulkAction === "state"}{#each ["new", "queued", "later", "skipped", "not_eligible"] as value}<option
-                      {value}>{label(value)}</option
-                    >{/each}{:else if bulkAction === "tier"}<option value="A"
-                    >A — Highest priority</option
-                  ><option value="B">B — Worth considering</option><option
-                    value="C">C — Lower priority / filtered out</option
-                  >{:else}{#each workspace?.tracks || [] as value}<option
-                      value={value.name}>{value.label}</option
-                    >{/each}{/if}</select
-              >{/if}<button
-              class="button"
-              disabled={busy || (bulkAction !== "favorite" && !bulkValue)}
-              >Apply to {marked.length}</button
-            >
-          </form>
-        </details>{/if}
-      <p class="shortcut-hint">
-        Shift+F to fill selected, opened or focused jobs for review · ↑ / ↓ to focus · Space to select · Enter to open · Ctrl+F or / to search · Right-click to save · Shift-click checkboxes for a range
-      </p>
-      <details class="advanced-filters" bind:open={preparationOpen}>
-        <summary>Prepare another group or check Firefox progress</summary>
-        <Automation
-          bind:this={automation}
-          jobIds={preparationIds}
-          {track}
-          demo={workspace?.demo ?? true}
-          onchanged={refresh}
-        />
-      </details>
     {/if}
     <div bind:this={results} class="job-list" class:dense={view !== "today"} role="region" aria-label="Job results" aria-busy={loading}>
-      {#if loading}<p class="empty-state" role="status">
-          Loading opportunities…
-        </p>{:else if jobs.length === 0}<div class="empty-state">
-          <h3>No matches in this view.</h3>
-          <p>
-            Change your filters, add a posting, or discover new jobs from Job
-            sources.
-          </p>
-          <button class="button" onclick={() => onview("sources")}
-            >Open Job sources</button
-          >
-        </div>{:else}
+      {#if loading}<Loader label="Loading opportunities…" rows={4} />{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
+          <p>Change your filters, add a posting, or discover new jobs from Job sources.</p>
+          {#snippet actions()}<button class="button" onclick={() => onview("sources")}>Open Job sources</button>{/snippet}
+        </EmptyState>{:else}
         {#each jobs as job, index (job.id)}
           <div class="selectable-job" class:marked={markedSet.has(job.id)} class:focused={cursor === index}>
             {#if view !== "today"}<input
@@ -895,10 +827,111 @@
         }}
         onchange={refresh}
       />{/key}{/if}
+  {#if preparationOpen && view !== "today"}
+    <EditDrawer title="Prepare applications" onclose={() => (preparationOpen = false)}>
+      <!-- Escape in the plan review closes only that dialog, not the drawer. -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="preparation" onkeydown={(event) => { if (event.key === "Escape" && (event.target as HTMLElement).closest("dialog")) event.stopPropagation(); }}>
+        <Automation
+          bind:this={automation}
+          jobIds={preparationIds}
+          {track}
+          demo={workspace?.demo ?? true}
+          onchanged={refresh}
+        />
+      </div>
+    </EditDrawer>
+  {/if}
 </div>
 
 <style>
-  .schema-tabs {display:flex;gap:8px;padding:12px 20px;}
+  /* Q22: one header row: Fraunces title and count, the view segments, Add last. */
+  .jobs-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    min-height: 60px;
+    padding: 10px 14px 10px 20px;
+  }
+  .jobs-head h1 {
+    margin: 0;
+  }
+  .total {
+    margin-top: 4px;
+    color: var(--muted);
+    font: 500 var(--fs-chrome, 10.5px) / 1 var(--font-mono);
+    letter-spacing: 0.06em;
+  }
+  .tools {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-left: auto;
+  }
+  .all-types {
+    font-size: var(--fs-control);
+  }
+  .opportunities > .filters {
+    border-top: 1px solid var(--hairline);
+  }
+  /* One pill of segments, drawn like Select's segments: the pill owns the hairline. */
+  .jobs-views {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 2px;
+    box-sizing: border-box;
+    height: var(--control-h);
+    padding: 2px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-control);
+    background: color-mix(in srgb, var(--solid-inset, #111) 40%, transparent);
+  }
+  :global(:root body) .jobs-views button {
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--muted);
+    font: 500 12px/1 var(--font-ui);
+    white-space: nowrap;
+  }
+  :global(:root body) .jobs-views button:hover {
+    color: var(--ink);
+  }
+  /* The pressed segment takes the theme's pressed-toggle pair: the selection must read at
+     3:1 against its neighbours (--select-fill is a subtler wash, too faint for that here). */
+  :global(:root body) .jobs-views button:is([aria-pressed="true"], [aria-current="page"]) {
+    background: var(--press-fill, var(--accent));
+    color: var(--press-ink, var(--on-accent));
+  }
+  :global(:root body) .jobs-views button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  /* The map fills the page surface below the strip; no box of its own. */
+  .map-stage {
+    position: relative;
+    /* Fits under the top bar, header and strip so the floating controls stay on screen. */
+    height: clamp(320px, calc(100dvh - var(--workbench-top, 0px) - var(--dock-space, 0px) - 230px), 720px);
+    border-top: 1px solid var(--hairline);
+    border-radius: 0 0 var(--r-panel) var(--r-panel);
+    overflow: hidden;
+  }
+  .preparation {
+    display: contents;
+  }
+  .preparation :global(.automation.panel) {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
   .job-list.dense {
     max-height: min(68vh, 880px);
     overflow-y: auto;
@@ -922,20 +955,6 @@
     outline: 1px solid var(--accent);
     outline-offset: -1px;
   }
-  .flow-guide {
-    padding: 0 20px 16px;
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.7;
-  }
-  .flow-guide h3 {
-    color: var(--ink);
-    margin: 0;
-  }
-  .flow-guide ol {
-    margin-bottom: 0;
-    padding-left: 20px;
-  }
   .action-feedback {
     padding: 12px 16px;
     border: 1px solid var(--border);
@@ -944,30 +963,46 @@
     font-size: 12px;
     background: var(--surface);
   }
-  .advanced-filters {
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
+  .filter-count {
+    display: inline-grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ink) 12%, transparent);
+    color: var(--ink);
+    font: 600 10px/1 var(--font-mono);
   }
-  summary {
-    cursor: pointer;
-    color: var(--muted);
-    min-height: 24px;
+  /* The filters popover: label column + control column, then the checkboxes. */
+  :global(.kitty-popover.job-filters) {
+    width: min(380px, calc(100vw - 16px));
   }
   .filter-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    gap: 12px;
-    padding-top: 14px;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px;
+    font-size: var(--fs-control);
   }
-  .filter-grid label {
+  .field-label {
+    color: var(--muted);
+    font: 600 var(--fs-label) / 1.3 var(--font-ui);
+  }
+  .field-label[title] {
+    cursor: help;
+    text-decoration: underline dotted color-mix(in srgb, var(--muted) 60%, transparent);
+    text-underline-offset: 3px;
+  }
+  .filter-grid :global(.select-trigger) {
+    width: 100%;
+  }
+  .filter-checks {
     display: grid;
     gap: 6px;
-    color: var(--muted);
-  }
-  .filter-grid select {
-    width: 100%;
-    min-width: 0;
+    padding: 10px 8px 8px;
+    border-top: 1px solid var(--hairline);
   }
   .inline-check {
     display: flex !important;
@@ -975,8 +1010,7 @@
     gap: 8px;
     font-size: 11px;
   }
-  .selection-toolbar,
-  .bulk-toolbar {
+  .selection-toolbar {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -985,17 +1019,22 @@
     border-bottom: 1px solid var(--border);
     font-size: 11px;
   }
-  .bulk-toolbar select {
-    max-width: 180px;
-    font-size: 11px;
+  .toolbar-gap {
+    flex: 1;
   }
-  .shortcut-hint {
-    margin: 0;
-    padding: 9px 20px;
-    background: var(--chrome);
-    color: var(--muted);
-    font-size: 10px;
-    line-height: 1.7;
+  .bulk-form {
+    display: grid;
+    gap: 8px;
+    padding: 6px;
+  }
+  .bulk-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .bulk-row :global(.select-trigger) {
+    flex: 1;
   }
   .selectable-job {
     display: flex;
@@ -1020,25 +1059,20 @@
     height: 16px;
   }
   @media (max-width: 600px) {
-    .selection-toolbar,
-    .bulk-toolbar,
-    .advanced-filters {
+    .jobs-head {
       padding: 10px 12px;
     }
-    .shortcut-hint {
-      padding: 9px 12px;
+    .selection-toolbar {
+      padding: 10px 12px;
     }
     .row-check {
       margin-left: 10px;
     }
     .filter-grid {
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr;
     }
     .selectable-job .job-row {
       padding-left: 10px;
-    }
-    .bulk-toolbar select {
-      max-width: 130px;
     }
   }
 </style>

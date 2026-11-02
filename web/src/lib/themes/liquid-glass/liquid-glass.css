@@ -1,0 +1,126 @@
+/* ── Liquid Glass theme module ─────────────────────────────────────────────
+   Applies only on :root[data-theme="liquid-glass"]. Clear, neutral glass in the manner
+   of macOS/iOS (and serpantinum's liquid-glass surfaces): heavy blur, a white rim lit
+   from the top-left, an inner shadow and a soft drop. No tint, no rainbow: the glass
+   takes its colour from what is behind it. In the transparent desktop window that is
+   your wallpaper; in a browser tab, a quiet graphite field with soft light (Art.svelte).
+   Rebuilt in CSS so it runs in both Chromium and the desktop app's WebKitGTK. */
+
+:root[data-theme="liquid-glass"] {
+  --lg-light: rgba(255, 255, 255, 0.55);
+  --lg-edge: rgba(255, 255, 255, 0.16);
+  --lg-fill-top: rgba(255, 255, 255, 0.1);
+  --lg-fill-bottom: rgba(255, 255, 255, 0.035);
+  /* Blur hides what is behind; saturation keeps colours alive through it; brightness
+     below 1 keeps white text readable over the brightest part of the aurora. */
+  --glass: blur(30px) saturate(150%) brightness(0.8);
+  --lg-glass-strong: blur(38px) saturate(150%) brightness(0.72);
+  --lg-drop: 0 22px 60px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --lg-shine:
+    inset 0 1px 0 var(--lg-light),
+    inset 1px 0 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 -18px 30px -24px rgba(0, 0, 0, 0.55);
+  --hairline: var(--lg-edge);
+  --backdrop:
+    radial-gradient(60vmax 45vmax at 18% 12%, rgba(255, 255, 255, 0.07), transparent 70%),
+    radial-gradient(50vmax 40vmax at 85% 90%, rgba(255, 255, 255, 0.04), transparent 70%);
+  /* Glass surfaces (engine.css applies them): frosted fill, lit top edge, inner shadow, drop. */
+  --surface-fill:
+    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.12), transparent 55%),
+    linear-gradient(165deg, var(--lg-fill-top), var(--lg-fill-bottom) 46%, rgba(255, 255, 255, 0.02)),
+    color-mix(in srgb, var(--solid-panel) 24%, transparent);
+  --surface-border: var(--lg-edge);
+  --surface-blur: var(--glass);
+  --surface-shadow: var(--lg-shine), var(--lg-drop);
+  /* A pressed toggle is a lit lens: white glass, dark text. */
+  --press-fill: #eef2f8;
+  --press-ink: #0c0e12;
+}
+:root[data-theme="liquid-glass"][data-window="transparent"] {
+  background: var(--backdrop), color-mix(in srgb, var(--solid-void) 42%, transparent);
+}
+
+/* The frame's own glass: the atlas, the top bar and the dock. */
+:root[data-theme="liquid-glass"] body :is(.atlas, .workbench-top, .dock) {
+  background: var(--surface-fill);
+  border-color: var(--surface-border);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
+  box-shadow: var(--surface-shadow);
+}
+:root[data-theme="liquid-glass"] body :is(.panel, .br-panel, .br-card) {
+  isolation: isolate;
+}
+/* The rim: light catches the top-left edge and glances off the bottom-right, white only.
+   Only outer surfaces; one nested inside another is unboxed (Q2). */
+:root[data-theme="liquid-glass"] body :is(.panel, .br-panel, .br-card):not(:is(.surface, .panel, .br-panel, .br-card) *)::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.2px;
+  pointer-events: none;
+  background: linear-gradient(140deg,
+    rgba(255, 255, 255, 0.8) 0%,
+    rgba(255, 255, 255, 0.22) 18%,
+    rgba(255, 255, 255, 0.05) 45%,
+    rgba(255, 255, 255, 0.04) 70%,
+    rgba(255, 255, 255, 0.28) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+
+/* Overlays float above the page: stronger blur, deeper shadow. */
+:root[data-theme="liquid-glass"] body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root[data-theme="liquid-glass"] body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05) 50%),
+    color-mix(in srgb, var(--solid-panel) 46%, transparent);
+  border-color: var(--lg-edge);
+  backdrop-filter: var(--lg-glass-strong);
+  -webkit-backdrop-filter: var(--lg-glass-strong);
+  box-shadow: var(--lg-shine), 0 30px 80px -20px rgba(0, 0, 0, 0.8);
+}
+
+/* Controls: small glass pills that brighten under the pointer and press in. */
+:root[data-theme="liquid-glass"] body :is(.br-btn, .button, .pill, .system-command, .workspace-groups, .search-field):not([data-variant="solid"]):not(.primary) {
+  /* A darkened lens keeps white labels above 4.5:1 even over the aurora's brightest colours. */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)), rgba(0, 0, 0, 0.22);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -1px 0 rgba(0, 0, 0, 0.18), 0 4px 14px -6px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(16px) saturate(150%) brightness(0.8);
+  -webkit-backdrop-filter: blur(16px) saturate(150%) brightness(0.8);
+}
+:root[data-theme="liquid-glass"] body :is(.br-btn[data-variant="ghost"], .br-btn[data-variant="link"]) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-theme="liquid-glass"] body :is(.br-btn, .button, .pill, .system-command):not([data-variant="solid"]):not(.primary):not(:disabled):hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.05)), rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+:root[data-theme="liquid-glass"] body :is(.br-btn, .button, .pill, .system-command):not(:disabled):active {
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.2);
+}
+/* Primary actions: bright glass with dark text, like a lit lens. */
+:root[data-theme="liquid-glass"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root[data-theme="liquid-glass"] body .br-btn[data-variant="solid"] {
+  background: linear-gradient(180deg, #ffffff, #e8ecf2);
+  border-color: rgba(255, 255, 255, 0.9);
+  color: #0c0e12;
+  box-shadow: inset 0 -2px 6px rgba(0, 0, 0, 0.12), 0 6px 20px -8px rgba(0, 0, 0, 0.6);
+}
+/* Fields read as recessed glass. */
+:root[data-theme="liquid-glass"] body :is(input, select, textarea):not([class*="br-"]):not(.quick-note textarea) {
+  background: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+
+@media (forced-colors: active) {
+  :root[data-theme="liquid-glass"] body :is(.panel, .br-panel, .br-card)::after { display: none; }
+}

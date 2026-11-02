@@ -20,6 +20,8 @@ UTC = timezone.utc
 TABLES = {"subjects": "study_subjects", "projects": "study_projects", "targets": "study_targets",
           "tasks": "study_tasks", "exams": "study_exams", "plan": "study_plan_blocks"}
 PRIMING_SECONDS = 300
+# Days until the next spaced return; recalling a return climbs one rung, a shaky one restarts.
+RETURN_LADDER = (1, 3, 7, 16, 35)
 
 
 class StudyConflict(ValueError):
@@ -169,8 +171,18 @@ def _guide(conn, session_id):
     if row is None:
         return None
     result = dict(row)
-    result["state"] = json.loads(result.pop("state_json"))
+    state = json.loads(result.pop("state_json"))
+    # The session's subject and the return's ladder rung are kept by the server
+    # beside the user's guide state; older guides have neither.
+    result["subject_id"] = state.pop("subject_id", None)
+    result["return_step"] = state.pop("return_step", 0)
+    result["state"] = state
     return result
+
+
+def _store_guide(conn, session_id, state, subject_id, return_step):
+    conn.execute("UPDATE study_guides SET state_json=?,revision=revision+1 WHERE id=?",
+                 (json.dumps({**state, "subject_id": subject_id, "return_step": return_step}), session_id))
 
 
 def save_guide(conn, body):
@@ -182,8 +194,28 @@ def save_guide(conn, body):
         if current is None:
             raise ValueError("Study guide not found")
         _revision(current, body.get("revision"))
-        conn.execute("UPDATE study_guides SET state_json=?,revision=revision+1 WHERE id=?",
-                     (json.dumps(state), session_id))
+        _store_guide(conn, session_id, state, current["subject_id"], current["return_step"])
+        return {"guide": _guide(conn, session_id)}
+
+
+def review_return(conn, body, *, now=None):
+    """Grade a spaced return: recalled climbs the ladder, shaky restarts it; both reschedule from today."""
+    _fields(body, {"session_id", "revision", "result"})
+    now = clock(now)
+    session_id = text(body.get("session_id"), "Study session", 100, required=True)
+    if body.get("result") not in {"recalled", "shaky"}:
+        raise ValueError("A return is either recalled or shaky")
+    with transaction(conn, immediate=True):
+        current = _guide(conn, session_id)
+        if current is None:
+            raise ValueError("Study guide not found")
+        _revision(current, body.get("revision"))
+        if not current["state"]["next_review"]:
+            raise ValueError("This session has no spaced return to grade")
+        step = min(len(RETURN_LADDER) - 1, current["return_step"] + 1) if body["result"] == "recalled" else 0
+        today = now.astimezone(ZoneInfo(_settings(conn)["timezone"])).date()
+        state = {**current["state"], "next_review": (today + timedelta(days=RETURN_LADDER[step])).isoformat()}
+        _store_guide(conn, session_id, state, current["subject_id"], step)
         return {"guide": _guide(conn, session_id)}
 
 
@@ -274,7 +306,8 @@ def timer_command(conn, body, *, now=None):
                          completed_phase_id=None, completed_phase=None,
                          timezone=zone(body.get("timezone", settings["timezone"])))
             conn.execute("INSERT INTO study_guides(id,created_at,state_json) VALUES(?,?,?)",
-                         (timer["session_id"], iso(now), json.dumps(_guide_state(body.get("guide")))))
+                         (timer["session_id"], iso(now), json.dumps({**_guide_state(body.get("guide")),
+                                                                     "subject_id": timer["subject_id"], "return_step": 0})))
             _begin_phase(timer, now)
             timer.update(notes=text(body.get("notes", ""), "Notes"),
                          distractions=text(body.get("distractions", ""), "Distractions"))
@@ -401,6 +434,11 @@ def _public_entity(row):
     if "done" in result:
         result["done"] = bool(result["done"])
     return result
+
+
+def subject_colors(conn):
+    """Every study subject with its colour, the single source Study and the calendar paint it with."""
+    return [dict(row) for row in conn.execute("SELECT id,name,color FROM study_subjects ORDER BY name,id")]
 
 
 def save_entity(conn, kind, body):
@@ -530,7 +568,7 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
     start, end, previous, following = _history_range(today, history_period, history_date)
     start_key, end_key = start.isoformat(), end.isoformat()
     history_subjects, history_sessions = {}, []
-    daily, subjects, scopes = {}, {}, {}
+    daily, subjects, scopes, daily_subjects = {}, {}, {}, {}
     completed_days, completed_weeks = set(), set()
     total = 0
     sessions = conn.execute("SELECT * FROM study_sessions ORDER BY ended_at,id").fetchall()
@@ -544,6 +582,8 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
         for raw_start, raw_end in json.loads(row["segments_json"]):
             for local_day, seconds in _split_segment(timestamp(raw_start), timestamp(raw_end), tz):
                 daily[local_day] = daily.get(local_day, 0) + seconds
+                by_subject = daily_subjects.setdefault(local_day, {})
+                by_subject[row["subject_id"]] = by_subject.get(row["subject_id"], 0) + seconds
                 scope = (row["subject_id"], row["project_id"], local_day)
                 scopes[scope] = scopes.get(scope, 0) + seconds
                 if start_key <= local_day < end_key:
@@ -562,13 +602,18 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
                       and (target["subject_id"] is None or subject_id == target["subject_id"])
                       and (target["project_id"] is None or project_id == target["project_id"]))
         goals.append({"id": target["id"], "seconds": seconds, "goal_seconds": target["minutes"] * 60})
-    subject_names = {row["id"]: row["name"] for row in conn.execute("SELECT id,name FROM study_subjects")}
-    colors = {row["id"]: row["color"] for row in conn.execute("SELECT id,color FROM study_subjects")}
-    heatmap = [{"date": (today - timedelta(days=83 - i)).isoformat(),
-                "seconds": daily.get((today - timedelta(days=83 - i)).isoformat(), 0)} for i in range(84)]
-    history_days = [{"date": (start + timedelta(days=i)).isoformat(),
-                     "seconds": daily.get((start + timedelta(days=i)).isoformat(), 0)}
-                    for i in range((end - start).days)]
+    names = {item["id"]: item for item in subject_colors(conn)}
+    subject_names = {key: item["name"] for key, item in names.items()}
+    colors = {key: item["color"] for key, item in names.items()}
+
+    def day_entry(key):
+        # Each day's study split by subject, largest first, so views can tint a
+        # day by its main subject or stack it in subject colours.
+        split = sorted(daily_subjects.get(key, {}).items(), key=lambda item: (-item[1], item[0] is None, item[0] or 0))
+        return {"date": key, "seconds": daily.get(key, 0),
+                "subjects": [{"id": subject_id, "seconds": seconds} for subject_id, seconds in split]}
+
+    history_days = [day_entry((start + timedelta(days=i)).isoformat()) for i in range((end - start).days)]
     history = {"period": history_period, "start": start_key, "end": end_key,
                "previous": previous.isoformat(), "next": following.isoformat(),
                "seconds": sum(item["seconds"] for item in history_days), "days": history_days,
@@ -580,8 +625,8 @@ def statistics(conn, *, timezone_name=None, now=None, history_period="week", his
             "today_seconds": today_seconds, "week_seconds": week_seconds, "month_seconds": month_seconds, "total_seconds": total,
             "daily_streak": _streak(completed_days, today, timedelta(days=1)),
             "weekly_streak": _streak(completed_weeks, monday, timedelta(days=7)),
-            "session_count": len(sessions), "heatmap": heatmap, "history": history,
-            "days": [{"date": key, "seconds": value} for key, value in sorted(daily.items())],
+            "session_count": len(sessions), "history": history,
+            "days": [day_entry(key) for key in sorted(daily)],
             "subjects": [{"id": key, "name": subject_names.get(key, "Unassigned"), "color": colors.get(key, "#7c6fdb"), "seconds": value} for key, value in subjects.items()],
             "goals": goals}
 

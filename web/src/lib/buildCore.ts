@@ -7,19 +7,60 @@ import type { Problem } from "./api";
 
 export type HistoryEntry = { id: string; saved_at: string; reason: string; source: string; name: string; valid: boolean; revision: string };
 export type DockMode = "terminal" | "activity" | "hidden";
-export type DockPreference = { mode: DockMode; height: number | null; shown: Exclude<DockMode, "hidden"> };
+export type DockStep = "s" | "m" | "l";
+export type DockSize = { width: number; height: number };
+export type DockOffset = { right: number; bottom: number };
+export type DockPreference = {
+  mode: DockMode;
+  shown: Exclude<DockMode, "hidden">;
+  float: boolean;
+  step: DockStep;
+  size: DockSize | null;
+  offset: DockOffset;
+};
 export type GraphPreference = {
   look: "2d" | "3d";
   layout: "tree" | "clusters" | "sphere" | "force";
   physics: { repulsion: number; spring: number; damping: number };
 };
 export type BuildTheme = { base: string; tokens: Record<string, string>; css: string };
+/** Settings → Appearance (Q59), mirrored onto <html data-*> by appearance.ts. */
+export type AppearancePreference = {
+  title_font: "fraunces" | "plain";
+  density: "compact" | "comfortable";
+  motion: "full" | "reduced";
+  motif: boolean;
+  background: "nebula" | "petals";
+};
+export type BrainGrouping = "section" | "group" | "type";
+/** The Brain's View panel (brain/brainSettings.ts); whether the panel is open stays per device. */
+export type BrainPreference = {
+  layout: "anatomy" | "spheres" | "wheel";
+  group_by: BrainGrouping;
+  labels: "off" | "sections" | "hover";
+  turning: boolean;
+  speed: number;
+  lines: boolean;
+  scaffold: boolean;
+  point_size: number;
+  background: "transparent" | "black";
+  /** Picked colours per grouping and group key; absent keys follow the theme. */
+  colors: Record<BrainGrouping, Record<string, string>>;
+};
+/** Quiet hours (Q60) in minutes of the local day. */
+export type QuietPreference = { enabled: boolean; from: number; to: number; let_calendar: boolean; digest: boolean };
 export type BuildUi = {
   dock: DockPreference;
   graph: GraphPreference;
   atlas: { hidden: string[] };
   notes: { pen_only: boolean };
   terminal: { coding_agent: "omp" | "claude" | "codex" };
+  appearance: AppearancePreference;
+  home: { look: "brain" | "2d" };
+  brain: BrainPreference;
+  notifications: { quiet: QuietPreference };
+  flashcards: { look: "tiles" | "graph" };
+  study: { guide_view: "columns" | "rail"; plans_view: "timeline" | "days" };
 };
 export type Build = {
   schema: number;
@@ -64,20 +105,29 @@ export const DEFAULT_BUILD: Build = {
   description: "",
   modules: ["applyai", "workspace", "terminal"],
   settings: {},
-  theme: { base: "harness", tokens: {}, css: "" },
+  theme: { base: "kitty", tokens: {}, css: "" },
   ui: {
-    dock: { mode: "terminal", height: null, shown: "terminal" },
+    dock: { mode: "terminal", shown: "terminal", float: false, step: "m", size: null, offset: { right: 16, bottom: 16 } },
     graph: { look: "2d", layout: "tree", physics: { repulsion: 60, spring: 0.5, damping: 0.35 } },
     atlas: { hidden: [] },
     notes: { pen_only: false },
     terminal: { coding_agent: "omp" },
+    appearance: { title_font: "fraunces", density: "compact", motion: "full", motif: true, background: "nebula" },
+    home: { look: "brain" },
+    brain: {
+      layout: "anatomy", group_by: "section", labels: "hover", turning: true, speed: 1, lines: false,
+      scaffold: true, point_size: 1, background: "transparent", colors: { section: {}, group: {}, type: {} },
+    },
+    notifications: { quiet: { enabled: false, from: 1320, to: 450, let_calendar: true, digest: true } },
+    flashcards: { look: "tiles" },
+    study: { guide_view: "columns", plans_view: "timeline" },
   },
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** `patch` merged into a copy of `target`: objects merge key by key; arrays and values replace. */
+/** `patch` merged into a copy of `target`: objects merge key by key; arrays and values (null too) replace. */
 export function deepMerge<T>(target: T, patch: unknown): T {
   if (!isObject(target) || !isObject(patch)) return structuredClone(patch === undefined ? target : patch) as T;
   const result: Record<string, unknown> = { ...target };
@@ -99,10 +149,22 @@ export const LEGACY_KEYS = [
   "kitty.atlas.hidden",
   "kitty.notes.pen-only",
   "kitty.coding-agent",
+  "kitty.appearance",
+  "kitty.home.look",
+  "kitty.brain.view",
+  "kitty.brain.colors",
+  "kitty.notify.quiet",
+  "kitty.flashcards.deck-look",
+  "kitty.study.guide-view",
+  "kitty.study.plan-view",
 ] as const;
 
 type Reader = Pick<Storage, "getItem">;
 const PHYSICS_RANGE = { repulsion: [0, 300], spring: [0, 1], damping: [0.05, 0.95] } as const;
+
+function oneOf<T extends string, F extends T | undefined>(value: unknown, options: readonly T[], fallback: F): T | F {
+  return options.includes(value as T) ? (value as T) : fallback;
+}
 
 function parse(raw: string | null): unknown {
   try { return raw === null ? undefined : JSON.parse(raw); } catch { return undefined; }
@@ -123,13 +185,20 @@ export function collectLegacy(storage: Reader): { patch: { ui?: Record<string, u
 
   const dock = parse(read("kitty.dock"));
   if (isObject(dock)) {
-    const modes = ["terminal", "activity", "hidden"];
-    const mode = modes.includes(dock.mode as string) ? (dock.mode as DockMode) : "terminal";
-    const height = typeof dock.height === "number" && Number.isFinite(dock.height) ? Math.round(dock.height) : null;
+    // Main's dock (docked height steps or a floating card); an old dragged `height` is dropped.
+    const mode = oneOf(dock.mode, ["terminal", "activity", "hidden"] as const, "terminal");
+    const size = isObject(dock.size) ? dock.size : null;
+    const offset = isObject(dock.offset) ? dock.offset : null;
+    const span = (value: unknown, min: number) => typeof value === "number" && Number.isFinite(value) && value >= min && value <= 20000;
     ui.dock = {
       mode,
-      height: height !== null && height >= 160 && height <= 10000 ? height : null,
       shown: mode !== "hidden" ? mode : dock.shown === "activity" ? "activity" : "terminal",
+      float: dock.float === true,
+      step: oneOf(dock.step, ["s", "m", "l"] as const, "m"),
+      size: size && span(size.width, 320) && span(size.height, 160)
+        ? { width: Math.round(size.width as number), height: Math.round(size.height as number) } : null,
+      offset: offset && span(offset.right, 0) && span(offset.bottom, 0)
+        ? { right: Math.round(offset.right as number), bottom: Math.round(offset.bottom as number) } : { right: 16, bottom: 16 },
     };
   }
 
@@ -162,6 +231,74 @@ export function collectLegacy(storage: Reader): { patch: { ui?: Record<string, u
 
   const agent = read("kitty.coding-agent");
   if (agent === "omp" || agent === "claude" || agent === "codex") ui.terminal = { coding_agent: agent };
+
+  const appearance = parse(read("kitty.appearance"));
+  if (isObject(appearance)) {
+    ui.appearance = {
+      title_font: oneOf(appearance.titleFont, ["fraunces", "plain"] as const, "fraunces"),
+      density: oneOf(appearance.density, ["compact", "comfortable"] as const, "compact"),
+      motion: oneOf(appearance.motion, ["full", "reduced"] as const, "full"),
+      motif: typeof appearance.motif === "boolean" ? appearance.motif : true,
+      background: oneOf(appearance.background, ["nebula", "petals"] as const, "nebula"),
+    };
+  }
+
+  // Home's choice used to share the graph look: an old "2d" stays 2D, "3d" becomes the Brain.
+  const home = read("kitty.home.look") ?? (look === "2d" ? "2d" : null);
+  if (home === "brain" || home === "2d") ui.home = { look: home };
+
+  const brain: Record<string, unknown> = {};
+  const view = parse(read("kitty.brain.view"));
+  if (isObject(view)) {
+    // `panel` (whether the View panel is open) stays on this device.
+    const number = (value: unknown, min: number, max: number) =>
+      typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : undefined;
+    Object.assign(brain, Object.fromEntries(Object.entries({
+      layout: oneOf(view.layout, ["anatomy", "spheres", "wheel"] as const, undefined),
+      group_by: oneOf(view.groupBy, ["section", "group", "type"] as const, undefined),
+      labels: oneOf(view.labels, ["off", "sections", "hover"] as const, undefined),
+      turning: typeof view.turning === "boolean" ? view.turning : undefined,
+      speed: number(view.speed, 0, 3),
+      lines: typeof view.lines === "boolean" ? view.lines : undefined,
+      scaffold: typeof view.scaffold === "boolean" ? view.scaffold : undefined,
+      point_size: number(view.pointSize, 0.25, 3),
+      background: oneOf(view.background, ["transparent", "black"] as const, undefined),
+    }).filter(([, value]) => value !== undefined)));
+  }
+  const colours = parse(read("kitty.brain.colors"));
+  if (isObject(colours)) {
+    const picked: Record<string, Record<string, string>> = { section: {}, group: {}, type: {} };
+    for (const by of Object.keys(picked))
+      if (isObject(colours[by]))
+        for (const [key, hex] of Object.entries(colours[by]))
+          if (key.length <= 80 && typeof hex === "string" && /^#[0-9a-f]{6}$/i.test(hex)) picked[by][key] = hex.toLowerCase();
+    brain.colors = picked;
+  }
+  if (Object.keys(brain).length) ui.brain = brain;
+
+  const quiet = parse(read("kitty.notify.quiet"));
+  if (isObject(quiet)) {
+    const minute = (value: unknown, fallback: number) =>
+      typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 1440 ? value : fallback;
+    ui.notifications = {
+      quiet: {
+        enabled: quiet.enabled === true,
+        from: minute(quiet.from, 1320),
+        to: minute(quiet.to, 450),
+        let_calendar: typeof quiet.letCalendar === "boolean" ? quiet.letCalendar : true,
+        digest: typeof quiet.digest === "boolean" ? quiet.digest : true,
+      },
+    };
+  }
+
+  const deckLook = read("kitty.flashcards.deck-look");
+  if (deckLook === "tiles" || deckLook === "graph") ui.flashcards = { look: deckLook };
+  const study: Record<string, unknown> = {};
+  const guide = read("kitty.study.guide-view");
+  if (guide === "columns" || guide === "rail") study.guide_view = guide;
+  const plans = read("kitty.study.plan-view");
+  if (plans === "timeline" || plans === "days") study.plans_view = plans;
+  if (Object.keys(study).length) ui.study = study;
 
   if (Object.keys(ui).length) patch.ui = ui;
   return { patch, keys };

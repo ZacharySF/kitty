@@ -10,7 +10,9 @@ import {
   type Build, type BuildResponse, type BuildSnapshot, type BuildTheme, type HistoryEntry, type PreferencePatch,
 } from "./buildCore";
 import { onLive, type LiveMessage } from "./live";
-import { applyAppearance, type ThemeId } from "./themes";
+import { appearanceOf, applyAppearance } from "./appearance";
+import { applyBuildLook } from "./themes";
+import type { ThemeId } from "./themes/catalog";
 
 class BuildStore {
   /** False until the first load answered (or failed). */
@@ -53,16 +55,25 @@ export function onBuildChange(listener: (next: Build, previous: Build) => void):
 }
 
 let appliedLook = "";
+let lookReady: Promise<void> = Promise.resolve();
 function applyLook() {
+  applyAppearance(appearanceOf(buildStore.build.ui.appearance));
   const look = buildStore.preview ?? buildStore.build.theme;
   const key = JSON.stringify([look, buildStore.safe]);
   if (key === appliedLook) return;
   appliedLook = key;
-  applyAppearance(look, buildStore.safe);
+  lookReady = applyBuildLook(look, buildStore.safe);
+}
+
+/** Settles once the look in effect has its theme's motif module (await before the first paint). */
+export function lookApplied(): Promise<void> {
+  return lookReady;
 }
 
 function effective(next: Build) {
   const previous = buildStore.build;
+  // Every key present, so readers need no fallbacks (a server build always is; this guards drafts).
+  next = deepMerge(DEFAULT_BUILD, next);
   buildStore.build = next;
   applyLook();
   for (const listener of [...changeListeners]) listener(next, previous);

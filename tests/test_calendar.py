@@ -493,3 +493,64 @@ def test_recurring_task_validation_is_atomic(workspace, monkeypatch, changes):
         repeating_task(workspace.conn, **changes)
     assert calendar.tasks(workspace.conn) == []
     assert workspace.conn.execute('SELECT COUNT(*) FROM calendar_history').fetchone()[0] == 0
+
+
+def study_subject(conn, name='Physics', color='#31a2bc'):
+    from kitty.core import study
+    return study.save_entity(conn, 'subjects', {'name': name, 'color': color})['item']['id']
+
+
+def test_new_calendars_take_theme_palette_slots_and_keep_existing_hex(workspace):
+    conn = workspace.conn
+    assert calendar._get_calendar(conn, 'personal')['color'] == 'c1'
+    school = calendar.save_calendar(conn, {'name': 'School'})
+    assert school['color'] == 'c2', 'the next free palette slot, not a fixed hex'
+    picked = calendar.save_calendar(conn, {'id': school['id'], 'revision': school['revision'], 'color': 'c5'})
+    assert picked['color'] == 'c5'
+    assert calendar.save_calendar(conn, {'name': 'Legacy', 'color': '#123abc'})['color'] == '#123abc'
+    for bad in ('c0', 'c7', 'var(--c1)', 'red', '#12345', None):
+        with pytest.raises(APIError, match='palette'):
+            calendar.save_calendar(conn, {'name': 'Bad', 'color': bad})
+    default = conn.execute("SELECT dflt_value FROM pragma_table_info('calendar_calendars') WHERE name='color'").fetchone()[0]
+    assert default == "'c1'"
+
+
+def test_events_tasks_and_calendars_link_study_subjects_or_pick_a_palette_slot(workspace):
+    from types import SimpleNamespace
+    from kitty import web_calendar
+    from kitty.core import study
+    conn = workspace.conn
+    physics = study_subject(conn)
+    linked = event(conn, subject_id=physics)
+    picked = event(conn, title='Lunch', color='c3')
+    plain = event(conn, title='Walk')
+    shown = {e['id']: e for e in occurrences(conn)}
+    assert (shown[linked['id']]['subject_id'], shown[linked['id']]['color']) == (physics, None)
+    assert (shown[picked['id']]['subject_id'], shown[picked['id']]['color']) == (None, 'c3')
+    assert (shown[plain['id']]['subject_id'], shown[plain['id']]['color']) == (None, None)
+    moved = calendar.edit_event(conn, linked['id'], {'revision': linked['revision'], 'changes': {'location': 'Lab'}})
+    assert moved['subject_id'] == physics, 'other edits keep the subject link'
+    unlinked = calendar.edit_event(conn, linked['id'], {'revision': moved['revision'], 'changes': {'subject_id': None, 'color': 'c6'}})
+    assert (unlinked['subject_id'], unlinked['color']) == (None, 'c6')
+    lab = calendar.save_calendar(conn, {'name': 'Physics lab', 'subject_id': physics})
+    assert lab['subject_id'] == physics
+    task = calendar.save_task(conn, {'title': 'Problem set', 'subject_id': physics})
+    assert task['subject_id'] == physics
+    for bad in (999, '1', True, 1.0):
+        with pytest.raises(APIError, match='subject'):
+            event(conn, subject_id=bad)
+        with pytest.raises(APIError, match='subject'):
+            calendar.save_task(conn, {'title': 'Bad', 'subject_id': bad})
+        with pytest.raises(APIError, match='subject'):
+            calendar.save_calendar(conn, {'name': 'Bad', 'subject_id': bad})
+    with pytest.raises(APIError, match='palette'):
+        event(conn, color='#6d5dfc80')
+    app = SimpleNamespace(modules=set())
+    snapshot = web_calendar.get(app, conn, '/api/calendar', {'start': '2026-10-01T00:00:00Z', 'end': '2026-11-01T00:00:00Z'})
+    assert snapshot['subjects'] == [{'id': physics, 'name': 'Physics', 'color': '#31a2bc'}], 'Study’s own subject colours'
+    revision = conn.execute('SELECT revision FROM study_subjects WHERE id=?', (physics,)).fetchone()[0]
+    linked_again = event(conn, title='Revision', subject_id=physics)
+    study.save_entity(conn, 'subjects', {'id': physics, 'revision': revision, 'action': 'delete'})
+    assert calendar.get_event(conn, linked_again['id'])['subject_id'] is None
+    assert calendar._get_calendar(conn, lab['id'])['subject_id'] is None
+    assert [t['subject_id'] for t in calendar.tasks(conn)] == [None]

@@ -4,28 +4,26 @@ import { zoom, zoomIdentity, type ZoomTransform } from "d3-zoom";
 import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphNode, type GraphOptions, type GraphRenderer } from "./graph3d";
 import { harmonize } from "./graphPalette";
 
-type Node = SimulationNodeDatum & { id: string; data: GraphNode; radius: number; color: string; tx: number; ty: number };
+type Node = SimulationNodeDatum & { id: string; data: GraphNode; radius: number; w: number; h: number; color: string; tx: number; ty: number };
 type Link = SimulationLinkDatum<Node> & { directed?: boolean; label?: string; weight?: number };
 type Point = { x: number; y: number };
+type Box = { x: number; y: number; w: number; h: number };
 
-/** Monotone-chain hull of padded node discs, including singleton groups. */
-function region(nodes: Node[]): Point[] {
-  const points: Point[] = [];
-  for (const node of nodes) for (let i = 0; i < 12; i++) {
-    const angle = i * Math.PI / 6;
-    points.push({ x: node.x! + Math.cos(angle) * (node.radius + 28), y: node.y! + Math.sin(angle) * (node.radius + 28) });
-  }
-  points.sort((a, b) => a.x - b.x || a.y - b.y);
-  const cross = (a: Point, b: Point, c: Point) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-  const half = (ordered: Point[]) => {
-    const result: Point[] = [];
-    for (const point of ordered) {
-      while (result.length > 1 && cross(result.at(-2)!, result.at(-1)!, point) <= 0) result.pop();
-      result.push(point);
-    }
-    return result.slice(0, -1);
-  };
-  return [...half(points), ...half([...points].reverse())];
+/** Card size in graph units: hubs are a little larger. */
+const cardSize = (data: GraphNode) => (data.kind === "hub" ? { w: 128, h: 44 } : { w: 112, h: 38 });
+/** How far focus and its neighbours rise (scale and shadow), 0–1. */
+const LIFT = { focus: 1, neighbor: 0.65 };
+/** Below this zoom card text would be under ~7px, so cards go blank and labels move outside. */
+const TEXT_ZOOM = 0.67;
+const LABEL_DIRECTIONS: [number, number][] = [[0, 1], [0, -1], [1, 0], [-1, 0], [0.75, 0.66], [-0.75, 0.66], [0.75, -0.66], [-0.75, -0.66]];
+const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** Mixes two #rrggbb colours; anything else falls back to `a`. */
+function mixHex(a: string, b: string, amount: number): string {
+  const parse = (hex: string) => (/^#[0-9a-f]{6}$/i.test(hex) ? [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)) : null);
+  const [from, to] = [parse(a), parse(b)];
+  if (!from || !to) return a;
+  return `#${from.map((value, i) => Math.round(value + (to[i] - value) * amount).toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** Fresh kitty! Canvas renderer; no LearnHarness source or assets are used. */
@@ -40,7 +38,9 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
   let nodes: Node[] = [];
   let links: Link[] = [];
   let byId = new Map<string, Node>();
-  const groups = new Map<string, { nodes: Node[]; hull: Point[]; color: string }>();
+  /** Links per node, shown on hub cards. */
+  let degree = new Map<string, number>();
+  const groups = new Map<string, { nodes: Node[]; color: string }>();
   const groupOrder: string[] = [];
   let layout = opts.layout;
   const physics = { ...DEFAULT_PHYSICS, ...opts.physics };
@@ -54,9 +54,8 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
   let intersecting = true;
   let destroyed = false;
   let frame = 0;
-  let ink = "", chrome = "", muted = "", font = "";
+  let ink = "", chrome = "", muted = "", font = "", mono = "", raised = "", shadow = "";
   let palette: string[] = [];
-  let dirtyHulls = true;
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const simulation = forceSimulation<Node>().stop().alphaDecay(0.035);
   const selection = select(canvas);
@@ -71,6 +70,9 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
     chrome = style.getPropertyValue("--chrome").trim() || "#0e0c14";
     muted = style.getPropertyValue("--muted").trim() || "#8f86a0";
     font = style.getPropertyValue("--br-font-ui").trim() || "ui-monospace, monospace";
+    mono = style.getPropertyValue("--font-mono").trim() || "ui-monospace, monospace";
+    raised = style.getPropertyValue("--solid-raised").trim() || chrome;
+    shadow = style.getPropertyValue("--shadow-tint").trim() || "#000000";
     for (const [name, group] of groups) {
       group.color = palette[groupOrder.indexOf(name) % palette.length];
       for (const node of group.nodes) node.color = group.color;
@@ -97,7 +99,6 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       if (!visible()) return;
       if (!motion.matches && !opts.reducedMotion && simulation.alpha() > simulation.alphaMin() && !drag) {
         simulation.tick();
-        dirtyHulls = true;
       }
       draw();
       if (!motion.matches && !opts.reducedMotion && simulation.alpha() > simulation.alphaMin()) requestDraw();
@@ -148,28 +149,37 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
   function forces() {
     simulation.force("charge", forceManyBody<Node>().strength(-physics.repulsion * 5).distanceMax(nodes.length >= 400 ? 400 : Infinity))
       .force("link", forceLink<Node, Link>(links).id(node => node.id)
-        .distance(link => layout === "clusters" && (link.source as Node).data.group !== (link.target as Node).data.group ? 180 : 68)
+        .distance(link => layout === "clusters" && (link.source as Node).data.group !== (link.target as Node).data.group ? 240 : 96)
         .strength(link => physics.spring * (layout === "clusters" && (link.source as Node).data.group !== (link.target as Node).data.group ? 0.025 : 0.4)))
       .force("x", forceX<Node>(node => node.tx).strength(layout === "force" ? 0.015 : 0.15))
       .force("y", forceY<Node>(node => node.ty).strength(layout === "force" ? 0.015 : 0.15))
-      .force("collide", forceCollide<Node>(node => node.radius + 12))
+      .force("collide", forceCollide<Node>(node => node.w * 0.56))
       .velocityDecay(physics.damping).alpha(1).stop();
     simulation.tick(240);
     simulation.alpha(0);
-    dirtyHulls = true;
     requestDraw();
   }
   function fit() {
     framed = true;
     if (!nodes.length) { selection.call(behavior.transform, zoomIdentity); return; }
-    const minX = Math.min(...nodes.map(node => node.x!)) - 65;
-    const maxX = Math.max(...nodes.map(node => node.x!)) + 65;
-    const minY = Math.min(...nodes.map(node => node.y!)) - 65;
-    const maxY = Math.max(...nodes.map(node => node.y!)) + 65;
-    // Group pills above and labels below keep their pixel size at any zoom; reserve room for them.
+    // Cards (lifted up to 24%) plus the group labels above them.
+    const minX = Math.min(...nodes.map(node => node.x! - node.w * 0.62));
+    const maxX = Math.max(...nodes.map(node => node.x! + node.w * 0.62));
+    const minY = Math.min(...nodes.map(node => node.y! - node.h * 0.62)) - 30;
+    const maxY = Math.max(...nodes.map(node => node.y! + node.h * 0.62));
+    // Labels outside zoomed-out cards keep their pixel size; reserve room for them.
     const pad = 28;
     const k = Math.max(0.12, Math.min(2, Math.max(1, width - 2 * pad) / (maxX - minX), Math.max(1, height - 2 * pad) / (maxY - minY)) * 0.9);
     selection.call(behavior.transform, zoomIdentity.translate(width / 2, height / 2).scale(k).translate(-(minX + maxX) / 2, -(minY + maxY) / 2));
+  }
+  /** Lift of a node right now: 1 for the focus, 0.65 for its neighbours, else 0. */
+  function liftOf(node: Node, focus: string | null, neighbors: Set<string>) {
+    return node.id === focus ? LIFT.focus : neighbors.has(node.id) ? LIFT.neighbor : 0;
+  }
+  /** Distance from a card's centre to its edge along the unit vector (ux, uy). */
+  function edgeInset(node: Node, scale: number, ux: number, uy: number) {
+    const hw = (node.w * scale) / 2, hh = (node.h * scale) / 2;
+    return Math.min(Math.abs(ux) > 1e-6 ? hw / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? hh / Math.abs(uy) : Infinity);
   }
   function draw() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -181,67 +191,152 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       if (a.id === focus) neighbors.add(b.id);
       if (b.id === focus) neighbors.add(a.id);
     }
-    ctx.save(); ctx.translate(transform.x, transform.y); ctx.scale(transform.k, transform.k);
-    for (const group of groups.values()) {
-      if (dirtyHulls) group.hull = region(group.nodes);
-      const hull = group.hull;
-      if (!hull.length) continue;
-      ctx.beginPath();
-      const last = hull.at(-1)!;
-      ctx.moveTo((last.x + hull[0].x) / 2, (last.y + hull[0].y) / 2);
-      hull.forEach((point, i) => { const next = hull[(i + 1) % hull.length]; ctx.quadraticCurveTo(point.x, point.y, (point.x + next.x) / 2, (point.y + next.y) / 2); });
-      ctx.closePath(); ctx.fillStyle = group.color; ctx.globalAlpha = focus && !group.nodes.some(node => node.id === focus) ? 0.025 : 0.075; ctx.fill();
-      ctx.strokeStyle = group.color; ctx.lineWidth = 1 / transform.k; ctx.globalAlpha *= 2.5; ctx.stroke();
-    }
-    dirtyHulls = false;
+    const scaleOf = (node: Node) => 1 + 0.24 * liftOf(node, focus, neighbors);
+    const k = transform.k;
+    ctx.save(); ctx.translate(transform.x, transform.y); ctx.scale(k, k);
+    // Links: gentle arcs, source-to-target gradient, clipped to the card edges.
+    ctx.lineCap = "round";
     for (const link of links) {
       const a = link.source as Node, b = link.target as Node;
-      ctx.globalAlpha = !focus ? 0.28 : a.id === focus || b.id === focus ? 0.8 : 0.06;
-      ctx.strokeStyle = a.color; ctx.lineWidth = Math.min(2, Math.max(0.6, link.weight ?? 1)) / transform.k;
-      ctx.beginPath(); ctx.moveTo(a.x!, a.y!); ctx.lineTo(b.x!, b.y!); ctx.stroke();
+      const dx = b.x! - a.x!, dy = b.y! - a.y!;
+      const cx = (a.x! + b.x!) / 2 - dy * 0.2, cy = (a.y! + b.y!) / 2 + dx * 0.2;
+      const la = Math.hypot(cx - a.x!, cy - a.y!) || 1, lb = Math.hypot(cx - b.x!, cy - b.y!) || 1;
+      const ua = [(cx - a.x!) / la, (cy - a.y!) / la], ub = [(cx - b.x!) / lb, (cy - b.y!) / lb];
+      const ia = edgeInset(a, scaleOf(a), ua[0], ua[1]) + 2.5, ib = edgeInset(b, scaleOf(b), ub[0], ub[1]) + 2.5;
+      const ax = a.x! + ua[0] * ia, ay = a.y! + ua[1] * ia, bx = b.x! + ub[0] * ib, by = b.y! + ub[1] * ib;
+      const gradient = ctx.createLinearGradient(ax, ay, bx, by);
+      gradient.addColorStop(0, a.color); gradient.addColorStop(1, b.color);
+      // Solid, legible strokes: thin translucent hairlines smear under compositor upscaling
+      // (e.g. XWayland at 125%), so links keep ~1.75 CSS px and strong alpha at rest.
+      const touching = !!focus && (a.id === focus || b.id === focus);
+      ctx.globalAlpha = !focus ? 0.8 : touching ? 1 : 0.14;
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = (touching ? 2.25 : 1.75) * Math.min(1.4, Math.max(1, link.weight ?? 1)) / k;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(cx, cy, bx, by); ctx.stroke();
       if (link.directed) {
-        const angle = Math.atan2(b.y! - a.y!, b.x! - a.x!);
-        const x = b.x! - Math.cos(angle) * (b.radius + 3), y = b.y! - Math.sin(angle) * (b.radius + 3);
-        ctx.beginPath(); ctx.moveTo(x - Math.cos(angle - 0.5) * 8, y - Math.sin(angle - 0.5) * 8); ctx.lineTo(x, y); ctx.lineTo(x - Math.cos(angle + 0.5) * 8, y - Math.sin(angle + 0.5) * 8); ctx.stroke();
+        const angle = Math.atan2(-ub[1], -ub[0]), size = 5.5 / Math.max(0.6, k);
+        ctx.fillStyle = b.color;
+        ctx.beginPath(); ctx.moveTo(bx, by);
+        ctx.lineTo(bx - Math.cos(angle - 0.42) * size, by - Math.sin(angle - 0.42) * size);
+        ctx.lineTo(bx - Math.cos(angle + 0.42) * size, by - Math.sin(angle + 0.42) * size);
+        ctx.closePath(); ctx.fill();
       }
     }
-    for (const node of nodes) {
-      ctx.globalAlpha = !focus || node.id === focus || neighbors.has(node.id) ? 1 : 0.25;
-      ctx.fillStyle = node.color;
-      ctx.beginPath(); ctx.arc(node.x!, node.y!, node.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.lineCap = "butt";
+    // Cards: lifted ones are drawn last, on a deeper shadow.
+    const withText = k >= TEXT_ZOOM;
+    const order = [...nodes].sort((a, b) => liftOf(a, focus, neighbors) - liftOf(b, focus, neighbors));
+    for (const node of order) {
+      const lift = liftOf(node, focus, neighbors), scale = 1 + 0.24 * lift, hub = node.data.kind === "hub";
+      const w = node.w * scale, h = node.h * scale, x = node.x! - w / 2, y = node.y! - h / 2;
+      ctx.globalAlpha = !focus || lift > 0 ? 1 : 0.4;
+      ctx.save();
+      ctx.shadowColor = /^#[0-9a-f]{6}$/i.test(shadow) ? `${shadow}99` : shadow;
+      ctx.shadowBlur = (12 + 14 * lift) * k; ctx.shadowOffsetY = (3 + 5 * lift) * k;
+      ctx.fillStyle = mixHex(raised, node.color, hub ? 0.16 : 0.06);
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill();
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.clip();
+      ctx.fillStyle = node.color; ctx.fillRect(x, y, 3 * scale, h);
+      ctx.restore();
+      const alpha = ctx.globalAlpha;
+      ctx.globalAlpha = alpha * (hub || lift > 0 ? 0.85 : 0.45);
+      ctx.strokeStyle = node.color; ctx.lineWidth = (hub ? 1.25 : 1) / Math.max(1, k * 0.8);
+      ctx.beginPath(); ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 7.5); ctx.stroke();
+      ctx.globalAlpha = alpha;
+      if (withText) {
+        ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+        ctx.font = `600 ${7.5 * scale}px ${mono}`; ctx.letterSpacing = `${0.9 * scale}px`;
+        ctx.fillStyle = node.color;
+        // Eyebrow: the entity kind, or a hub's link count; an unlinked hub has none and centres its title.
+        const count = degree.get(node.id) ?? 0;
+        const eyebrow = node.data.kind && !hub ? node.data.kind : count ? `${count} ${count === 1 ? "link" : "links"}` : "";
+        if (eyebrow) ctx.fillText(eyebrow.toUpperCase().slice(0, 18), x + 11 * scale, y + h * 0.4);
+        ctx.letterSpacing = "0px";
+        ctx.font = hub ? `700 ${12 * scale}px ${font}` : `600 ${10.5 * scale}px ${font}`;
+        ctx.fillStyle = ink;
+        let label = node.data.label;
+        while (ctx.measureText(label).width > w - 20 * scale && label.length > 4) label = `${label.slice(0, -2)}…`;
+        ctx.textBaseline = eyebrow ? "alphabetic" : "middle";
+        ctx.fillText(label, x + 11 * scale, eyebrow ? y + h * 0.78 : y + h / 2);
+      }
     }
     ctx.restore(); ctx.globalAlpha = 1;
-    ctx.font = `500 11px ${font}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    // Group names: tracked mono capitals with a short underline above each cluster; no regions.
+    ctx.font = `650 10px ${mono}`; ctx.letterSpacing = "1.6px"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    const focusGroup = focus ? byId.get(focus)?.data.group : undefined;
+    const cardBoxes: Box[] = nodes.map(node => {
+      const [cx, cy] = transform.apply([node.x!, node.y!]), w = node.w * scaleOf(node) * k, h = node.h * scaleOf(node) * k;
+      return { x: cx - w / 2, y: cy - h / 2, w, h };
+    });
     for (const [name, group] of groups) {
-      if (!group.hull.length) continue;
-      const top = Math.min(...group.hull.map(p => p.y));
-      const x = group.nodes.reduce((sum, node) => sum + node.x!, 0) / group.nodes.length;
-      const point = transform.apply([x, top]);
-      pill(name.toUpperCase(), point[0], point[1] - 10, group.color, 0.85);
+      // A one-card group named like its card would only repeat the title.
+      if (!group.nodes.length || (group.nodes.length === 1 && group.nodes[0].data.label.toLowerCase() === name.toLowerCase())) continue;
+      const top = Math.min(...group.nodes.map(node => node.y! - node.h * scaleOf(node) / 2));
+      const centre = group.nodes.reduce((sum, node) => sum + node.x!, 0) / group.nodes.length;
+      // Group ids carry their kind ("category:quant", "track:swe"); the label is the name alone.
+      const label = name.replace(/^[a-z_]+:/, "").toUpperCase();
+      const w = ctx.measureText(label).width;
+      // Centred over the group, then raised in 14px steps until it clears every card.
+      let [x, y] = transform.apply([centre, top]);
+      for (let step = 0; step < 6 && cardBoxes.some(card => overlaps(card, { x: x - w / 2, y: y - 24, w, h: 16 })); step++) y -= 14;
+      const alpha = focusGroup && focusGroup !== name ? 0.33 : 1;
+      halo(label, x, y - 12, group.color, alpha, 5);
+      ctx.globalAlpha = 0.6 * alpha; ctx.fillStyle = group.color;
+      ctx.beginPath(); ctx.roundRect(x - w / 2, y - 9, Math.min(w, 22), 2, 1); ctx.fill();
     }
-    for (const node of nodes) {
-      const isFocus = node.id === focus;
-      const alpha = isFocus ? 1 : Math.max(0, Math.min(1, (transform.k - 0.3) / 0.55)) * (!focus || neighbors.has(node.id) ? 1 : 0.3);
-      if (alpha <= 0) continue;
-      const point = transform.apply([node.x!, node.y!]);
-      pill(node.data.label, point[0], point[1] + node.radius * transform.k + 15, node.color, alpha);
-    }
-    if (hovered) {
-      const node = byId.get(hovered);
-      if (node) {
-        const [x, y] = transform.apply([node.x!, node.y!]);
-        const halo = ctx.createRadialGradient(x, y, 4, x, y, 24);
-        halo.addColorStop(0, node.color); halo.addColorStop(1, "transparent");
-        ctx.globalAlpha = 0.35; ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(x, y, 24, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
-      }
-    }
+    ctx.letterSpacing = "0px"; ctx.globalAlpha = 1;
+    if (!withText) outsideLabels(focus, neighbors, scaleOf);
   }
-  function pill(text: string, x: number, y: number, color: string, alpha: number) {
-    const label = text.length > 42 ? `${text.slice(0, 41)}…` : text;
-    const w = ctx.measureText(label).width + 16;
-    ctx.globalAlpha = alpha; ctx.fillStyle = chrome; ctx.strokeStyle = color; ctx.lineWidth = 0.7;
-    ctx.beginPath(); ctx.roundRect(x - w / 2, y - 10, w, 20, 9); ctx.fill(); ctx.globalAlpha = alpha * 0.5; ctx.stroke();
-    ctx.globalAlpha = alpha; ctx.fillStyle = ink || muted; ctx.fillText(label, x, y); ctx.globalAlpha = 1;
+  /** Text with a halo in the chrome colour so it stays readable over links. */
+  function halo(text: string, x: number, y: number, color: string, alpha: number, width: number) {
+    ctx.globalAlpha = alpha * 0.9; ctx.lineJoin = "round"; ctx.lineWidth = width; ctx.strokeStyle = chrome;
+    ctx.strokeText(text, x, y);
+    ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText(text, x, y);
+  }
+  /**
+   * Zoomed out, cards carry no text: names sit beside them instead, each in the first
+   * of eight directions (three rings out) that overlaps neither a card nor another
+   * name; displaced names get a leader line. Names with no free spot are skipped.
+   */
+  function outsideLabels(focus: string | null, neighbors: Set<string>, scaleOf: (node: Node) => number) {
+    const k = transform.k;
+    ctx.font = `500 10.5px ${font}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const cards: Box[] = nodes.map(node => {
+      const [x, y] = transform.apply([node.x!, node.y!]), w = node.w * scaleOf(node) * k, h = node.h * scaleOf(node) * k;
+      return { x: x - w / 2 - 2, y: y - h / 2 - 2, w: w + 4, h: h + 4 };
+    });
+    const placed: Box[] = [];
+    const rank = (node: Node) => (node.id === focus ? 2 : 0) + (node.data.kind === "hub" ? 1 : 0);
+    for (const node of [...nodes].sort((a, b) => rank(b) - rank(a))) {
+      const alpha = !focus || node.id === focus || neighbors.has(node.id) ? 1 : 0.35;
+      const text = node.data.label.length > 26 ? `${node.data.label.slice(0, 25)}…` : node.data.label;
+      const w = ctx.measureText(text).width + 12, h = 17;
+      const [nx, ny] = transform.apply([node.x!, node.y!]);
+      const hw = (node.w * scaleOf(node) * k) / 2, hh = (node.h * scaleOf(node) * k) / 2;
+      let spot: Box | null = null, ring = 0;
+      search: for (ring = 0; ring < 3; ring++) for (const [dx, dy] of LABEL_DIRECTIONS) {
+        const gap = 4 + ring * 20;
+        const cx = nx + dx * (hw + gap + w / 2 * Math.abs(dx)), cy = ny + dy * (hh + gap + h / 2 * Math.abs(dy));
+        const box = { x: cx - w / 2, y: cy - h / 2, w, h };
+        if (box.x < 8 || box.y < 8 || box.x + w > width - 8 || box.y + h > height - 8) continue;
+        if (placed.some(other => overlaps(other, box)) || cards.some(other => overlaps(other, box))) continue;
+        spot = box; break search;
+      }
+      if (!spot) continue;
+      placed.push(spot);
+      if (ring > 0) {
+        const lx = Math.max(spot.x, Math.min(nx, spot.x + w)), ly = Math.max(spot.y, Math.min(ny, spot.y + h));
+        ctx.globalAlpha = alpha * 0.7; ctx.strokeStyle = node.color; ctx.lineWidth = 0.9;
+        ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(lx, ly); ctx.stroke();
+      }
+      ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = chrome;
+      ctx.beginPath(); ctx.roundRect(spot.x, spot.y, w, h, 5); ctx.fill();
+      ctx.globalAlpha = alpha; ctx.fillStyle = node.data.kind === "hub" ? ink : muted;
+      ctx.fillText(text, spot.x + w / 2, spot.y + h / 2 + 0.5);
+    }
+    ctx.globalAlpha = 1;
   }
   function hover(node: GraphNode | null) {
     if (hovered === (node?.id ?? null)) return;
@@ -264,7 +359,7 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       if (node && drag.moved) {
         const rect = canvas.getBoundingClientRect();
         const point = transform.invert([event.clientX - rect.left, event.clientY - rect.top]);
-        node.x = node.fx = point[0]; node.y = node.fy = point[1]; dirtyHulls = true; requestDraw();
+        node.x = node.fx = point[0]; node.y = node.fy = point[1]; requestDraw();
       }
     } else hover(handle.nodeAt(event.clientX, event.clientY));
   };
@@ -309,11 +404,13 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       if (!visible()) return null;
       const rect = canvas.getBoundingClientRect();
       if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null;
+      // Cards are hit across their whole face; the nearest centre wins where cards overlap.
       let closest: Node | null = null, distance = Infinity;
       for (const node of nodes) {
         const [px, py] = transform.apply([node.x!, node.y!]);
-        const d = Math.hypot(px + rect.left - x, py + rect.top - y);
-        if (d < Math.max(7, node.radius * transform.k + 3) && d < distance) { closest = node; distance = d; }
+        const dx = Math.abs(px + rect.left - x), dy = Math.abs(py + rect.top - y);
+        const hw = Math.max(7, (node.w * transform.k) / 2 + 2), hh = Math.max(7, (node.h * transform.k) / 2 + 2);
+        if (dx <= hw && dy <= hh && dx + dy < distance) { closest = node; distance = dx + dy; }
       }
       return closest?.data ?? null;
     },
@@ -326,13 +423,15 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
         if (!groupOrder.includes(item.group)) groupOrder.push(item.group);
         const color = palette[groupOrder.indexOf(item.group) % palette.length];
         const previous = old.get(item.id);
-        const node: Node = { id: item.id, data: item, radius: 2.5 + Math.sqrt(Math.min(10, Math.max(0.5, item.size ?? (item.kind === "hub" ? 4 : 1)))) * 2, color, tx: 0, ty: 0, x: previous?.x, y: previous?.y, fx: previous?.fx, fy: previous?.fy };
+        const node: Node = { id: item.id, data: item, radius: 2.5 + Math.sqrt(Math.min(10, Math.max(0.5, item.size ?? (item.kind === "hub" ? 4 : 1)))) * 2, ...cardSize(item), color, tx: 0, ty: 0, x: previous?.x, y: previous?.y, fx: previous?.fx, fy: previous?.fy };
         byId.set(item.id, node);
-        if (!groups.has(item.group)) groups.set(item.group, { nodes: [], hull: [], color });
+        if (!groups.has(item.group)) groups.set(item.group, { nodes: [], color });
         groups.get(item.group)!.nodes.push(node);
       }
       nodes = [...byId.values()];
       links = data.links.filter(link => byId.has(link.source) && byId.has(link.target)).map(link => ({ ...link }));
+      degree = new Map();
+      for (const link of links) for (const id of [link.source as string, link.target as string]) degree.set(id, (degree.get(id) ?? 0) + 1);
       if (selected && !byId.has(selected)) selected = null;
       if (hovered && !byId.has(hovered)) hover(null);
       simulation.force("link", null).nodes(nodes);

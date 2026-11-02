@@ -307,9 +307,12 @@ ACTIVITY = {
     ],
     "agents": [
         {"terminal_id": "t1", "workspace_id": "w1", "tab_id": "w1:t1", "pane_id": "w1:p1", "focused": True,
-         "revision": 3, "agent": "omp", "display_agent": "omp", "name": "Agent", "agent_status": "working"},
+         "revision": 3, "agent": "omp", "display_agent": "omp", "name": "Agent", "agent_status": "working",
+         "terminal_title_stripped": "π > Synthetic task: tidy the fixture",
+         "screen": "earlier output\n  run pytest -k fixture · 4 passed  \n\n╭──────────╮\n│          │\n╰──────────╯\n  \n"},
         {"terminal_id": "t2", "workspace_id": "w1", "tab_id": "w1:t2", "pane_id": "w1:p2", "focused": False,
-         "revision": 1, "agent": "codex", "display_agent": "Codex", "name": None, "agent_status": "blocked"},
+         "revision": 1, "agent": "codex", "display_agent": "Codex", "name": None, "agent_status": "blocked",
+         "screen": "needs permission: read the synthetic notes\n"},
         {"terminal_id": "t3", "workspace_id": "w9", "tab_id": "w9:t1", "pane_id": "w9:p1", "focused": False,
          "revision": 1, "agent": "claude", "agent_status": "done"},
     ],
@@ -340,23 +343,48 @@ def test_activity_reports_herdr_agent_states_per_workspace(tmp_path, herdr):
         status, _headers, connection, rest = running.connect(running.token())
         assert status == 101
         FrameReader(connection, rest).until(b"FAKE-HERDR")
+        before = time.time() * 1000
         status, body = running.request("/api/terminal/activity")
+        again = running.request("/api/terminal/activity")[1]
         connection.close()
     assert status == 200
+    since = [agent.pop("since") for space in body["workspaces"] for agent in space["agents"]]
+    assert all(before - 1000 <= value <= time.time() * 1000 for value in since)
+    # The timer counts from the first sighting of a state, not from each poll.
+    assert [agent["since"] for space in again["workspaces"] for agent in space["agents"]] == since
     assert body == {"running": True, "workspaces": [
         {"id": "w1", "label": "api", "status": "working", "focused": True, "agents": [
-            {"pane": "w1:p1", "name": "Agent", "status": "working"},
-            {"pane": "w1:p2", "name": "Codex", "status": "blocked"},
+            {"pane": "w1:p1", "name": "Agent", "status": "working", "task": "π > Synthetic task: tidy the fixture",
+             "line": "run pytest -k fixture · 4 passed", "revision": 3},
+            {"pane": "w1:p2", "name": "Codex", "status": "blocked", "task": "",
+             "line": "needs permission: read the synthetic notes", "revision": 1},
         ]},
         # herdr states kitty! does not know are shown as unknown, never passed through.
         {"id": "w2", "label": "docs", "status": "unknown", "focused": False, "agents": []},
     ]}
-    reads = [item for item in herdr.invocations() if item["argv"][2:] in (["workspace", "list"], ["agent", "list"])]
-    assert [item["argv"] for item in reads] == [
-        ["--session", SESSION, "workspace", "list"], ["--session", SESSION, "agent", "list"]]
+    reads = [item for item in herdr.invocations() if item["argv"][2:4] in (["workspace", "list"], ["agent", "list"], ["agent", "read"])]
+    assert [item["argv"] for item in reads[:4]] == [
+        ["--session", SESSION, "workspace", "list"], ["--session", SESSION, "agent", "list"],
+        ["--session", SESSION, "agent", "read", "w1:p1", "--source", "recent", "--lines", "40", "--format", "text"],
+        ["--session", SESSION, "agent", "read", "w1:p2", "--source", "recent", "--lines", "40", "--format", "text"]]
     for item in reads:
         for inherited in ("HERDR_ENV", "HERDR_SESSION", "HERDR_SOCKET_PATH", "TMUX"):
             assert inherited not in item["env"], inherited
+
+
+def test_open_pane_focuses_only_a_listed_agent(tmp_path, herdr):
+    herdr.activity_file.write_text(json.dumps(ACTIVITY))
+    settings = make_root(tmp_path, ("terminal",))
+    with site(settings) as running:
+        assert running.request("/api/terminal/focus", {"pane": "w1:p2"})[0] == 409
+        status, _headers, connection, rest = running.connect(running.token())
+        FrameReader(connection, rest).until(b"FAKE-HERDR")
+        assert running.request("/api/terminal/focus", {"pane": "w1:p2"}) == (200, {"ok": True})
+        for body in ({"pane": "w7:p7"}, {"pane": 3}, {"pane": "w1:p2", "extra": 1}, {}):
+            assert running.request("/api/terminal/focus", body)[0] == 400, body
+        connection.close()
+    focused = [item["argv"][2:] for item in herdr.invocations() if item["argv"][2:4] == ["agent", "focus"]]
+    assert focused == [["agent", "focus", "w1:p2"]]
 
 
 def test_unreadable_herdr_activity_is_reported(tmp_path, herdr):

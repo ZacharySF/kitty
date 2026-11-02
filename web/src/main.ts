@@ -2,14 +2,16 @@ import { mount } from "svelte";
 import App from "./App.svelte";
 import QuickNoteWindow from "./QuickNoteWindow.svelte";
 import BuildStatus from "./lib/BuildStatus.svelte";
-import { loadBuild, toggleSafe } from "./lib/build.svelte";
+import { loadBuild, lookApplied, toggleSafe } from "./lib/build.svelte";
 import { isSafeShortcut } from "./lib/buildCore";
 import { keepLive } from "./lib/live";
 import "@nunera/bracket/styles.css";
 import "@fontsource-variable/inter";
-import "@fontsource-variable/inter-tight";
+import "@fontsource-variable/fraunces/full.css";
+import "@fontsource-variable/fredoka";
 import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
+import "./lib/themes/engine.css";
 
 // Safe mode (Q9) answers before anything else, even inside the terminal or an editor.
 window.addEventListener("keydown", (event) => {
@@ -20,8 +22,10 @@ window.addEventListener("keydown", (event) => {
 }, true);
 
 async function start() {
-  // The build carries the theme and interface preferences: load it before the first paint.
+  // The build carries the theme, appearance and interface preferences: load it before the first paint.
   await loadBuild();
+  // The theme's motif module (a small lazy chunk) is in before the first paint too.
+  await lookApplied();
   // Every window stays on the live channel for build pushes.
   keepLive();
   // `#quick-note[/<id>]` is a standalone floating note, not a workspace view.

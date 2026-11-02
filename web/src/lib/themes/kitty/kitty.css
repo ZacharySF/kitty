@@ -1,0 +1,166 @@
+/* ── Kitty (design Q10 A+B+C) ──────────────────────────────────────────────
+   Sakura glass: frosted pink panels lit from the top-left over a soft blossom backdrop.
+   Motif: blossom bullets and ticks that bloom when checked, petal dividers, cat ears on
+   the active tab and group, a petal-ringed cat loader. Everything below is scoped to
+   :root[data-theme="kitty"]; marks also to :not([data-motif="off"]). */
+
+:root[data-theme="kitty"] {
+  --backdrop:
+    radial-gradient(60vmax 45vmax at 12% 14%, color-mix(in srgb, var(--c1) 20%, transparent), transparent 70%),
+    radial-gradient(48vmax 40vmax at 88% 10%, color-mix(in srgb, var(--c2) 17%, transparent), transparent 70%),
+    radial-gradient(55vmax 45vmax at 74% 96%, color-mix(in srgb, var(--c3) 13%, transparent), transparent 70%),
+    radial-gradient(45vmax 40vmax at 24% 92%, color-mix(in srgb, var(--c1) 11%, transparent), transparent 70%);
+  --surface-fill:
+    radial-gradient(120% 70% at 0% 0%, color-mix(in srgb, #ffd9e6 11%, transparent), transparent 55%),
+    linear-gradient(165deg, color-mix(in srgb, #ffe3ec 8%, transparent), color-mix(in srgb, #ffe3ec 2%, transparent) 50%),
+    var(--br-panel);
+  --surface-border: color-mix(in srgb, var(--c1) 20%, transparent);
+  --surface-blur: blur(26px) saturate(150%);
+  --surface-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffd6e4 40%, transparent),
+    inset 1px 0 0 color-mix(in srgb, #ffd6e4 12%, transparent),
+    inset 0 -18px 30px -24px rgba(10, 2, 8, 0.55),
+    0 22px 50px -18px color-mix(in srgb, var(--shadow-tint) 85%, transparent),
+    0 2px 8px rgba(12, 3, 9, 0.35);
+  --hairline: color-mix(in srgb, var(--br-line) 72%, transparent);
+  --blossom: url("./blossom-mask.svg");
+}
+
+/* The rim: pink light catches the top-left edge and glances lavender off the bottom-right.
+   Only outer surfaces; one nested inside another is unboxed (Q2). */
+:root[data-theme="kitty"] body :is(.br-panel, .br-card):not(:is(.surface, .panel, .br-panel, .br-card) *)::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.2px;
+  pointer-events: none;
+  background: linear-gradient(140deg,
+    color-mix(in srgb, var(--c1) 70%, white) 0%,
+    color-mix(in srgb, var(--c1) 28%, transparent) 18%,
+    transparent 45%, transparent 70%,
+    color-mix(in srgb, var(--c2) 32%, transparent) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+
+/* Overlays: the same pink glass, deeper. */
+:root[data-theme="kitty"] body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root[data-theme="kitty"] body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  background:
+    linear-gradient(165deg, color-mix(in srgb, #ffe3ec 10%, transparent), transparent 50%),
+    color-mix(in srgb, var(--solid-panel) 88%, transparent);
+  border-color: color-mix(in srgb, var(--c1) 24%, transparent);
+}
+
+/* Primary actions: a sakura pill with plum text (the accent, apart from structure). */
+:root[data-theme="kitty"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root[data-theme="kitty"] body .br-btn[data-variant="solid"] {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--br-signal) 88%, white), var(--br-signal));
+  border-color: var(--br-signal);
+  color: var(--solid-void);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 6px 18px -8px color-mix(in srgb, var(--br-signal) 70%, transparent);
+}
+
+/* ── Motif marks ── */
+
+/* Blossom bullets: subject and list dots become five-petal blossoms in their own colour. */
+:root[data-theme="kitty"]:not([data-motif="off"]) span.dot:not(.kitty-loader .dot) {
+  width: 11px;
+  height: 11px;
+  border-radius: 0;
+  -webkit-mask: var(--blossom) center / contain no-repeat;
+  mask: var(--blossom) center / contain no-repeat;
+}
+
+/* Blossom ticks: an empty rounded box that blooms into a sakura when checked. */
+:root[data-theme="kitty"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid color-mix(in srgb, var(--br-line) 85%, var(--ink));
+  border-radius: 5px;
+  background: transparent;
+  vertical-align: -3px;
+  cursor: pointer;
+}
+:root[data-theme="kitty"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):checked {
+  border-color: transparent;
+  border-radius: 0;
+  background: var(--br-signal);
+  -webkit-mask: var(--blossom) center / 18px no-repeat;
+  mask: var(--blossom) center / 18px no-repeat;
+  transform-origin: center;
+  animation: kitty-bloom calc(var(--motion-ms) * 1.8) var(--motion-ease) both;
+}
+:root[data-theme="kitty"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes kitty-bloom {
+  0% { transform: scale(0.35) rotate(-60deg); opacity: 0.4; }
+  70% { transform: scale(1.12) rotate(6deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+/* Petal dividers: the hairline between sections parts around a small blossom. */
+:root[data-theme="kitty"]:not([data-motif="off"]) .surface-section + .surface-section {
+  border-top-color: transparent;
+}
+:root[data-theme="kitty"]:not([data-motif="off"]) hr.rule {
+  position: relative;
+  height: 12px;
+  margin-block: 4px;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+:root[data-theme="kitty"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  height: 12px;
+  pointer-events: none;
+  background:
+    url("./blossom.svg") center / 11px 11px no-repeat,
+    linear-gradient(var(--hairline), var(--hairline)) left center / calc(50% - 12px) 1px no-repeat,
+    linear-gradient(var(--hairline), var(--hairline)) right center / calc(50% - 12px) 1px no-repeat;
+}
+:root[data-theme="kitty"]:not([data-motif="off"]) hr.rule::before {
+  top: 0;
+}
+
+/* Cat ears: the active workspace tab's underline and the current group pill grow two ears. */
+:root[data-theme="kitty"]:not([data-motif="off"]) .workspace-tabbar .tab.active::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 1px;
+  width: 14px;
+  height: 5px;
+  transform: translateX(-50%);
+  background: var(--tone, var(--br-signal));
+  clip-path: polygon(0 100%, 18% 0, 40% 100%, 60% 100%, 82% 0, 100% 100%);
+}
+:root[data-theme="kitty"]:not([data-motif="off"]) body .workspace-groups button[aria-current="page"] {
+  position: relative;
+  overflow: visible;
+}
+:root[data-theme="kitty"]:not([data-motif="off"]) body .workspace-groups button[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  width: 16px;
+  height: 5px;
+  transform: translateX(-50%);
+  background: var(--br-signal);
+  clip-path: polygon(0 100%, 18% 0, 40% 100%, 60% 100%, 82% 0, 100% 100%);
+}

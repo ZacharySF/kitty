@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import zipfile
+from zoneinfo import ZoneInfo
 
 from kitty.core import flashcards as flash
 
@@ -55,7 +56,25 @@ def get(app, conn, path, query):
         if path == "/api/flashcards/history":
             if set(query) - {"card_id"}: raise ValueError("Unknown history parameter")
             return flash.history(conn, _id(query.get("card_id"), True))
+        if path == "/api/flashcards/card":
+            if set(query) != {"id"}: raise ValueError("An exact card ID is required")
+            card = flash.card_detail(conn, _id(query["id"]))
+            if card is None: raise _error("That card no longer exists", 404)
+            return {"card": card}
+        if path == "/api/flashcards/fronts":
+            if set(query) != {"deck_id"}: raise ValueError("A deck ID is required")
+            return {"fronts": flash.fronts(conn, _id(query["deck_id"]))}
+        if path == "/api/flashcards/stats":
+            if set(query) - {"deck_id", "timezone"}: raise ValueError("Unknown stats parameter")
+            zone = query.get("timezone", "UTC")
+            try: ZoneInfo(zone)
+            except (ValueError, KeyError): raise ValueError("Unknown IANA timezone") from None
+            deck = _id(query.get("deck_id"), True)
+            if deck: flash.require(conn, "flash_decks", deck)
+            return flash.stats(conn, deck, zone)
         return None
+    except ImportError:
+        raise _error("Install fsrs>=6.3,<7 to see flashcard memory statistics") from None
     except (ValueError, TypeError, sqlite3.IntegrityError) as error:
         raise _error(str(error)) from None
 

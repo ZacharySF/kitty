@@ -19,6 +19,10 @@
       trail.nodes = [];
       trail.root = null;
     },
+    status: null,
+    setStatus(status) {
+      window.notesHarness.status = status;
+    },
   });
 </script>
 
