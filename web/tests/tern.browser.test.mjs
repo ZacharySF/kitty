@@ -122,3 +122,26 @@ test("a failed Open is reported, not hidden", async () => {
   await noTerminal(view);
   await context.close();
 });
+
+test("the kitty! plugin for Tern installs and removes from the Tern view", async () => {
+  const { page, view, context } = await harness("stopped");
+  const state = view.locator("[data-plugin-state]");
+  await view.locator('[data-plugin-state="install"]').waitFor();
+  assert.equal((await state.innerText()).trim(), "Not installed in Tern");
+  await view.getByRole("button", { name: "Install kitty! plugin into Tern" }).click();
+  await view.locator('[data-plugin-state="installed"]').waitFor();
+  assert.equal((await state.innerText()).trim(), "Installed (0.1.0) · Tern reports: ready");
+  await view.getByRole("button", { name: "Remove from Tern" }).click();
+  await view.locator('[data-plugin-state="install"]').waitFor();
+  assert.deepEqual((await posts(page)).map((call) => call.url),
+    ["/api/terminal/tern/plugin/install", "/api/terminal/tern/plugin/remove"]);
+  await context.close();
+});
+
+test("without Tern there is no plugin panel and nothing asks Tern", async () => {
+  const { page, view, context } = await harness("absent");
+  await view.getByText("Tern is not installed").waitFor();
+  assert.equal(await view.getByText("kitty! plugin for Tern").count(), 0);
+  assert.ok(!(await page.evaluate(() => window.ternHarness.calls.some((call) => call.url.includes("/plugin")))));
+  await context.close();
+});

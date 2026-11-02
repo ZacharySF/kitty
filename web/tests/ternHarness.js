@@ -35,6 +35,9 @@ const calls = [];
 let state = STATES[new URLSearchParams(location.search).get("state") ?? "stopped"];
 /** Answers for the next POSTs, by path: a status object or {status, error}. */
 const replies = {};
+/** GET /api/terminal/tern/plugin; install and remove change it. */
+let plugin = { available: true, version: "0.1.0", dir: "/home/user/kitty-workspace/.private/tern/plugin", installed: false,
+               installed_version: null, current: false, linked_elsewhere: null, tern_status: null, problems: [], enabled: true };
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const build = createBuildStub();
@@ -45,6 +48,11 @@ window.fetch = async (url, init = {}) => {
                  body: init.body ? JSON.parse(init.body) : undefined };
   calls.push(call);
   if (call.method === "GET" && call.url === "/api/terminal/tern") return json(state);
+  if (call.url === "/api/terminal/tern/plugin" || call.url.startsWith("/api/terminal/tern/plugin/")) {
+    if (call.url.endsWith("/install")) plugin = { ...plugin, installed: true, installed_version: "0.1.0", current: true, tern_status: "ready" };
+    if (call.url.endsWith("/remove")) plugin = { ...plugin, installed: false, installed_version: null, current: false, tern_status: null };
+    return json(plugin);
+  }
   const reply = replies[call.url];
   if (call.method === "POST" && reply) {
     if (reply.error) return json({ error: reply.error }, reply.status);
