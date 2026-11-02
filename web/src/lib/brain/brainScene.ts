@@ -1,8 +1,10 @@
-// The Brain renderer: one glowing THREE.Points cloud (every record and edit),
-// an optional faint scaffold and edit→record lines, on a transparent canvas so the
+// The Brain renderer: one glowing THREE.Points cloud (every record and edit), the anatomy's
+// neural network as luminous filaments with travelling pulses and its folded surface as a faint
+// rim of light, plus an optional scaffold and edit→record lines, on a transparent canvas so the
 // stage's backdrop shows through. Loaded lazily with three.
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import type { BrainNetwork, BrainSurface } from "./brainLayout";
 
 /** Per-node attributes; positions are in layout units and get centred here. */
 export type BrainCloud = {
@@ -31,6 +33,10 @@ export type BrainFrame = {
  * 1 lays soft opaque dots over it (a light one). `ink` tints the scaffold.
  */
 export type BrainBackdrop = { cover: number; ink: [number, number, number] };
+/** The network as drawn: its segments, an rgb per segment, and where it builds from (layout units). */
+export type BrainFilaments = { network: BrainNetwork; colors: Float32Array; hub: [number, number, number]; reach: number };
+/** The folded surface as a triangle mesh (layout units), lit only at its rim in `color`. */
+export type BrainShell = BrainSurface & { color: [number, number, number] };
 export type BrainSceneOptions = {
   reducedMotion: boolean;
   /** `group` is the shown group under the pointer: the sphere it is over, or the nearest point's. */
@@ -45,6 +51,8 @@ export interface BrainScene {
   setCloud(cloud: BrainCloud, frame: BrainFrame, morph: boolean): void;
   setLines(positions: Float32Array | null, colors: Float32Array | null): void;
   setScaffold(positions: Float32Array | null): void;
+  setNetwork(filaments: BrainFilaments | null): void;
+  setShell(shell: BrainShell | null): void;
   setFocus(group: number | null): void;
   /** Highlights one group (others dim) while the pointer is over it. */
   setHover(group: number | null): void;
@@ -69,7 +77,21 @@ const POINT_WORLD_SIZE = 0.038;
 /** The scaffold is a faint shell, fainter still while a group is focused. */
 const SCAFFOLD_ALPHA = 0.2;
 const SCAFFOLD_FOCUSED_ALPHA = 0.07;
+/** Filament and rim strength, and the rim while a group is focused. */
+const NETWORK_ALPHA = 0.55;
+const RIM_ALPHA = 0.32;
+const RIM_FOCUSED_ALPHA = 0.14;
+/** How much dimmer the far side of the figure is than its near side. */
+const DEPTH_FADE = 0.55;
 
+/** Far-side dimming: 1 at the near side of the figure, 1 - uFade at its far side. */
+const DEPTH = /* glsl */ `
+uniform vec3 uCentre;
+uniform float uDepth;
+uniform float uFade;
+float depthFade(vec4 mv) {
+  return 1.0 - uFade * smoothstep(-0.9, 1.0, (uCentre.z - mv.z) / uDepth);
+}`;
 const VERTEX = /* glsl */ `
 attribute vec3 from;
 attribute vec3 color;
@@ -88,6 +110,7 @@ uniform float uTwinkle;
 uniform float uAlpha;
 varying vec3 vColor;
 varying float vAlpha;
+${DEPTH}
 void main() {
   vec3 p = mix(from, position, uMorph);
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
@@ -104,7 +127,7 @@ void main() {
   float fade = clamp(px / 1.5, 0.0, 1.0);
   gl_PointSize = max(px, 1.5);
   vColor = color;
-  vAlpha = uAlpha * born * flare * focus * hover * shown * twinkle * fade;
+  vAlpha = uAlpha * born * flare * focus * hover * shown * twinkle * fade * depthFade(mv);
 }`;
 // Premultiplied output: with uCover 0 the alpha stays empty and colour adds up like light;
 // with uCover 1 each point is a soft dot that covers (and is a little deeper than) a light backdrop.
@@ -120,16 +143,116 @@ void main() {
   float a = min(1.0, glow * vAlpha);
   gl_FragColor = vec4(vColor * (1.0 - 0.3 * uCover) * a, a * uCover);
 }`;
+// Each segment of the network is an instanced screen-facing quad: a bright core as wide as the
+// filament, inside a soft halo (the bloom). `position.x` picks the segment's end, `position.y` its side.
+const NETWORK_VERTEX = /* glsl */ `
+attribute vec3 iStart;
+attribute vec3 iEnd;
+attribute vec2 iWidth;
+attribute vec2 iDist;
+attribute float iSeed;
+attribute float iGroup;
+attribute vec3 iColor;
+uniform vec2 uViewport;
+uniform float uScale;
+uniform float uTime;
+uniform float uBirth;
+uniform float uMorph;
+uniform float uFocus;
+uniform float uHover;
+uniform float uAlpha;
+uniform vec3 uHub;
+uniform float uReach;
+varying vec3 vColor;
+varying float vAlpha;
+varying float vAcross;
+varying float vPhase;
+${DEPTH}
+void main() {
+  bool atEnd = position.x > 0.5;
+  vec4 a = modelViewMatrix * vec4(iStart, 1.0);
+  vec4 b = modelViewMatrix * vec4(iEnd, 1.0);
+  vec4 ca = projectionMatrix * a;
+  vec4 cb = projectionMatrix * b;
+  vec2 run = (cb.xy / cb.w - ca.xy / ca.w) * uViewport;
+  float span = length(run);
+  vec2 along = span > 1e-5 ? run / span : vec2(1.0, 0.0);
+  vec4 clip = atEnd ? cb : ca;
+  vec4 mv = atEnd ? b : a;
+  float core = max((atEnd ? iWidth.y : iWidth.x) * uScale / max(0.001, -mv.z), 0.6);
+  float halo = core * 3.0 + 1.5;
+  clip.xy += vec2(-along.y, along.x) * position.y * halo / uViewport * clip.w;
+  gl_Position = clip;
+  vAcross = position.y * halo / core;
+  float birth = 0.03 + 0.9 * clamp(distance(atEnd ? iEnd : iStart, uHub) / uReach, 0.0, 1.0);
+  float born = smoothstep(birth, birth + 0.05, uBirth);
+  float focus = (uFocus < 0.0 || iGroup < -0.5 || abs(iGroup - uFocus) < 0.5) ? 1.0 : 0.05;
+  float hover = (uHover < 0.0 || iGroup < -0.5) ? 1.0 : abs(iGroup - uHover) < 0.5 ? 1.35 : 0.3;
+  // Hairlines thinner than a pixel fade rather than shimmer.
+  float thin = clamp(core / 0.9, 0.3, 1.0);
+  vColor = iColor;
+  vAlpha = uAlpha * born * focus * hover * thin * uMorph * uMorph * depthFade(mv);
+  // Pulses run outward along each filament: a phase that rises with distance and falls with time.
+  vPhase = (atEnd ? iDist.y : iDist.x) * 0.5 - uTime * 0.6 + iSeed;
+}`;
+const NETWORK_FRAGMENT = /* glsl */ `
+uniform float uCover;
+uniform float uPulse;
+varying vec3 vColor;
+varying float vAlpha;
+varying float vAcross;
+varying float vPhase;
+void main() {
+  float x = abs(vAcross);
+  float core = 1.0 - smoothstep(0.5, 1.2, x);
+  float glow = exp(-x * x * 0.22);
+  float pulse = uPulse * pow(fract(vPhase), 20.0);
+  float a = min(1.0, (core * 0.7 + glow * 0.3) * (1.0 + 4.0 * pulse) * vAlpha);
+  gl_FragColor = vec4(mix(vColor, vec3(1.0), 0.45 * pulse) * (1.0 - 0.3 * uCover) * a, a * uCover);
+}`;
+// The brain's surface lit only where it turns away from the viewer (a fresnel rim), with its
+// sulci traced as fine lines of light across it.
+const SHELL_VERTEX = /* glsl */ `
+attribute float sulcus;
+varying float vRim;
+varying float vFacing;
+varying float vSulcus;
+varying float vFade;
+${DEPTH}
+void main() {
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  vFacing = abs(dot(normalize(normalMatrix * normal), normalize(-mv.xyz)));
+  vRim = pow(1.0 - vFacing, 4.0);
+  vSulcus = sulcus;
+  vFade = depthFade(mv);
+}`;
+const SHELL_FRAGMENT = /* glsl */ `
+uniform vec3 uColor;
+uniform float uAlpha;
+uniform float uBirth;
+uniform float uMorph;
+uniform float uCover;
+varying float vRim;
+varying float vFacing;
+varying float vSulcus;
+varying float vFade;
+void main() {
+  // A fine line of light along the floor of each sulcus, fading where the surface turns edge-on.
+  float line = 1.0 - smoothstep(0.015, 0.05, vSulcus);
+  float light = vRim + 0.012 + 1.2 * line * vFacing;
+  float a = min(1.0, light * uAlpha * vFade * smoothstep(0.0, 0.25, uBirth) * uMorph);
+  gl_FragColor = vec4(uColor * (1.0 - 0.3 * uCover) * a, a * uCover);
+}`;
 
-function cloudMaterial(alpha: number, twinkle: number) {
+type Uniforms = Record<string, THREE.IUniform>;
+/** Premultiplied, unsorted, see-through: the blending every layer of the brain shares. */
+function glowMaterial(vertexShader: string, fragmentShader: string, uniforms: Uniforms, side: THREE.Side = THREE.DoubleSide) {
   return new THREE.ShaderMaterial({
-    vertexShader: VERTEX,
-    fragmentShader: FRAGMENT,
-    uniforms: {
-      uTime: { value: 0 }, uMorph: { value: 1 }, uBirth: { value: 2 }, uSize: { value: POINT_WORLD_SIZE },
-      uScale: { value: 1 }, uFocus: { value: -1 }, uHover: { value: -1 }, uTwinkle: { value: twinkle }, uAlpha: { value: alpha },
-      uCover: { value: 0 },
-    },
+    vertexShader,
+    fragmentShader,
+    uniforms,
+    side,
     transparent: true,
     premultipliedAlpha: true,
     blending: THREE.CustomBlending,
@@ -154,6 +277,9 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
   canvas.style.cssText = "display:block;width:100%;height:100%;touch-action:none;outline:none";
   canvas.setAttribute("aria-hidden", "true");
   canvas.dataset.clearAlpha = String(renderer.getClearAlpha());
+  // Pulses travel the network unless reduced motion asks for stillness.
+  const pulse = { value: reduced ? 0 : 1 };
+  canvas.dataset.pulses = pulse.value ? "on" : "off";
   host.append(canvas);
 
   const scene = new THREE.Scene();
@@ -167,13 +293,26 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
   controls.rotateSpeed = 0.7;
   controls.zoomSpeed = 0.8;
 
+  // Uniforms every layer reads, shared by reference so one write reaches them all.
+  const shared: Uniforms = {
+    uTime: { value: 0 }, uMorph: { value: 1 }, uBirth: { value: 2 }, uScale: { value: 1 }, uFocus: { value: -1 }, uHover: { value: -1 },
+    uCover: { value: 0 }, uCentre: { value: new THREE.Vector3() }, uDepth: { value: 1 }, uFade: { value: DEPTH_FADE },
+  };
+  const pointSize = { value: POINT_WORLD_SIZE };
+  const viewport = { value: new THREE.Vector2(1, 1) };
+  const cloudMaterial = (alpha: number, twinkle: number) => glowMaterial(VERTEX, FRAGMENT, { ...shared, uSize: pointSize, uTwinkle: { value: twinkle }, uAlpha: { value: alpha } });
   const material = cloudMaterial(0.9, reduced ? 0 : 1);
   const geometry = new THREE.BufferGeometry();
   const points = new THREE.Points(geometry, material);
   points.frustumCulled = false;
   pivot.add(points);
+  /** The anatomy's network and surface, in layout units, offset so the figure's centre sits on the pivot. */
+  const figure = new THREE.Group();
+  pivot.add(figure);
   let scaffold: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial> | null = null;
   let lines: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null = null;
+  let network: THREE.Mesh<THREE.InstancedBufferGeometry, THREE.ShaderMaterial> | null = null;
+  let shell: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | null = null;
 
   let count = 0;
   let target = new Float32Array(0);
@@ -245,9 +384,9 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
     if (shift > 0) camera.setViewOffset(width + shift, height, shift, 0, width, height);
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
-    const scale = renderer.getDrawingBufferSize(new THREE.Vector2()).y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-    material.uniforms.uScale.value = scale;
-    if (scaffold) scaffold.material.uniforms.uScale.value = scale;
+    const buffer = renderer.getDrawingBufferSize(new THREE.Vector2());
+    shared.uScale.value = buffer.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+    viewport.value.set(buffer.x / 2, buffer.y / 2);
     applyCameraLimits();
     invalidate();
   }
@@ -303,6 +442,9 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
     if (lines) lines.material.opacity = (birthDone ? frame.lineAlpha * (1 + 2 * backdrop.cover) : 0) * (focus >= 0 || hoverGroup >= 0 ? 0.35 : 1);
     material.uniforms.uTime.value = reduced ? 0 : now / 1000;
     controls.update();
+    // The figure's centre in view space: depth fade measures near and far from it.
+    camera.updateMatrixWorld();
+    (shared.uCentre.value as THREE.Vector3).set(0, 0, 0).applyMatrix4(camera.matrixWorldInverse);
     renderer.render(scene, camera);
     if (hoverDirty) {
       hoverDirty = false;
@@ -468,7 +610,11 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
       // Opening one group (or returning) reframes: the camera flies in or out along its current direction.
       const reframed = nextFrame.radius !== frame.radius || nextFrame.center.some((value, axis) => value !== frame.center[axis]);
       frame = nextFrame;
+      figure.position.set(-frame.center[0], -frame.center[1], -frame.center[2]);
+      shared.uDepth.value = frame.radius * 0.9;
       count = cloud.births.length;
+      // Tens of thousands of glows add up: a big workspace draws each a little fainter so colours survive.
+      material.uniforms.uAlpha.value = 0.9 * Math.min(1, Math.max(0.6, Math.sqrt(6000 / Math.max(1, count))));
       target = centred(cloud.positions);
       previous = canMorph ? shown : target;
       births = cloud.births;
@@ -540,24 +686,68 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
       }
       if (positions && positions.length) {
         const n = positions.length / 3;
-        const shell = new THREE.BufferGeometry();
-        const centredShell = centred(positions);
-        shell.setAttribute("position", new THREE.BufferAttribute(centredShell, 3));
-        shell.setAttribute("from", new THREE.BufferAttribute(centredShell, 3));
-        shell.setAttribute("color", new THREE.BufferAttribute(shellColours(n), 3));
-        shell.setAttribute("size", new THREE.BufferAttribute(new Float32Array(n).fill(0.9), 1));
-        shell.setAttribute("seed", new THREE.BufferAttribute(Float32Array.from({ length: n }, (_, i) => (i * 0.618034) % 1), 1));
-        shell.setAttribute("birth", new THREE.BufferAttribute(new Float32Array(n).fill(0.95), 1));
-        shell.setAttribute("grp", new THREE.BufferAttribute(new Float32Array(n).fill(-1), 1));
-        const shellMaterial = cloudMaterial(focus >= 0 ? SCAFFOLD_FOCUSED_ALPHA : SCAFFOLD_ALPHA, reduced ? 0 : 0.6);
-        shellMaterial.uniforms.uScale = material.uniforms.uScale;
-        shellMaterial.uniforms.uTime = material.uniforms.uTime;
-        shellMaterial.uniforms.uBirth = material.uniforms.uBirth;
-        shellMaterial.uniforms.uSize = material.uniforms.uSize;
-        shellMaterial.uniforms.uCover = material.uniforms.uCover;
-        scaffold = new THREE.Points(shell, shellMaterial);
+        const dots = new THREE.BufferGeometry();
+        const centredDots = centred(positions);
+        dots.setAttribute("position", new THREE.BufferAttribute(centredDots, 3));
+        dots.setAttribute("from", new THREE.BufferAttribute(centredDots, 3));
+        dots.setAttribute("color", new THREE.BufferAttribute(shellColours(n), 3));
+        dots.setAttribute("size", new THREE.BufferAttribute(new Float32Array(n).fill(0.9), 1));
+        dots.setAttribute("seed", new THREE.BufferAttribute(Float32Array.from({ length: n }, (_, i) => (i * 0.618034) % 1), 1));
+        dots.setAttribute("birth", new THREE.BufferAttribute(new Float32Array(n).fill(0.95), 1));
+        dots.setAttribute("grp", new THREE.BufferAttribute(new Float32Array(n).fill(-1), 1));
+        scaffold = new THREE.Points(dots, cloudMaterial(focus >= 0 ? SCAFFOLD_FOCUSED_ALPHA : SCAFFOLD_ALPHA, reduced ? 0 : 0.6));
         scaffold.frustumCulled = false;
         pivot.add(scaffold);
+      }
+      invalidate();
+    },
+    setNetwork(filaments) {
+      if (network) {
+        figure.remove(network);
+        network.geometry.dispose();
+        network.material.dispose();
+        network = null;
+      }
+      canvas.dataset.filaments = String(filaments?.network.count ?? 0);
+      if (filaments && filaments.network.count) {
+        const { network: segments, colors, hub, reach } = filaments;
+        const quads = new THREE.InstancedBufferGeometry();
+        quads.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, -1, 0, 0, 1, 0, 1, -1, 0, 1, 1, 0]), 3));
+        quads.setIndex([0, 2, 1, 1, 2, 3]);
+        const perSegment = { iStart: [segments.starts, 3], iEnd: [segments.ends, 3], iWidth: [segments.widths, 2], iDist: [segments.dists, 2], iSeed: [segments.seeds, 1], iGroup: [segments.groups, 1], iColor: [colors, 3] } as const;
+        for (const [name, [array, size]] of Object.entries(perSegment)) quads.setAttribute(name, new THREE.InstancedBufferAttribute(array, size));
+        quads.instanceCount = segments.count;
+        network = new THREE.Mesh(quads, glowMaterial(NETWORK_VERTEX, NETWORK_FRAGMENT, {
+          // A denser network glows as a whole, not each strand at full strength, so it never saturates to white.
+          ...shared, uViewport: viewport, uPulse: pulse, uAlpha: { value: NETWORK_ALPHA * Math.min(1, Math.max(0.3, Math.sqrt(5000 / segments.count))) },
+          uHub: { value: new THREE.Vector3(...hub) }, uReach: { value: reach },
+        }));
+        network.frustumCulled = false;
+        figure.add(network);
+      }
+      invalidate();
+    },
+    setShell(next) {
+      if (shell && next && shell.geometry.getAttribute("position").array === next.positions) (shell.material.uniforms.uColor.value as THREE.Vector3).set(...next.color);
+      else {
+        if (shell) {
+          figure.remove(shell);
+          shell.geometry.dispose();
+          shell.material.dispose();
+          shell = null;
+        }
+        if (next) {
+          const surface = new THREE.BufferGeometry();
+          surface.setAttribute("position", new THREE.BufferAttribute(next.positions, 3));
+          surface.setAttribute("sulcus", new THREE.BufferAttribute(next.sulci, 1));
+          surface.setIndex(new THREE.BufferAttribute(next.indices, 1));
+          surface.setAttribute("normal", new THREE.BufferAttribute(next.normals, 3));
+          shell = new THREE.Mesh(surface, glowMaterial(SHELL_VERTEX, SHELL_FRAGMENT, {
+            ...shared, uColor: { value: new THREE.Vector3(...next.color) }, uAlpha: { value: focus >= 0 ? RIM_FOCUSED_ALPHA : RIM_ALPHA },
+          }));
+          shell.frustumCulled = false;
+          figure.add(shell);
+        }
       }
       invalidate();
     },
@@ -565,6 +755,7 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
       focus = group ?? -1;
       material.uniforms.uFocus.value = focus;
       if (scaffold) scaffold.material.uniforms.uAlpha.value = focus >= 0 ? SCAFFOLD_FOCUSED_ALPHA : SCAFFOLD_ALPHA;
+      if (shell) shell.material.uniforms.uAlpha.value = focus >= 0 ? RIM_FOCUSED_ALPHA : RIM_ALPHA;
       hoverDirty = !!pointer;
       invalidate();
     },
@@ -657,9 +848,10 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
         scaffold.geometry.dispose();
         scaffold.material.dispose();
       }
-      if (lines) {
-        lines.geometry.dispose();
-        lines.material.dispose();
+      for (const layer of [lines, network, shell]) {
+        if (!layer) continue;
+        layer.geometry.dispose();
+        layer.material.dispose();
       }
       renderer.dispose();
       renderer.forceContextLoss();

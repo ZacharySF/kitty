@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from "../ui/Select.svelte";
   import { PALETTE, cssColor, isSlot, subjectOf, type Subject } from "./palette";
 
   /**
@@ -21,11 +22,10 @@
 
 {#if subjects.length}
   <label class="field" class:plain><span class:eyebrow={!plain}>{plain ? "Subject" : "subject"}</span>
-    <select aria-label="Study subject" value={own ? String(own.id) : ""}
-      onchange={(e) => (subject = e.currentTarget.value ? Number(e.currentTarget.value) : null)}>
-      <option value="">{inherited?.subject ? `From ${inherited.name} · ${inherited.subject.name}` : "No subject"}</option>
-      {#each subjects as item (item.id)}<option value={String(item.id)}>{item.name}</option>{/each}
-    </select>
+    <Select label="Study subject" kind="list" value={own ? String(own.id) : ""}
+      onchange={(value) => (subject = value ? Number(value) : null)}
+      options={[{ value: "", label: inherited?.subject ? `From ${inherited.name} · ${inherited.subject.name}` : "No subject" },
+        ...subjects.map((item) => ({ value: String(item.id), label: item.name, color: item.color }))]} />
   </label>
 {/if}
 <div class="field" class:plain>
@@ -33,11 +33,10 @@
   {#if linked}
     <p class="locked" title="Subject colours are set in Study">
       <i style:background={linked.color}></i>Auto · {linked.name}
-      <small>matches Study</small>
       <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>
     </p>
   {:else}
-    <div class="swatches" role="radiogroup" aria-label="Colour">
+    <div class="swatches" role="radiogroup" aria-label="Colour" title="Theme colours follow the theme">
       {#if inherited}
         <button type="button" role="radio" class="swatch inherit" style:--sw={inherited.color} aria-checked={!color}
           aria-label="Calendar colour" title={`${inherited.name}'s colour`} onclick={() => (color = null)}></button>
@@ -50,7 +49,6 @@
         <button type="button" role="radio" class="swatch" style:--sw={color} aria-checked="true"
           aria-label={`Custom colour ${color}`} title={`${color} · pick a theme colour to follow the theme`}></button>
       {/if}
-      <small>follows the theme</small>
     </div>
   {/if}
 </div>
@@ -68,9 +66,6 @@
   .eyebrow {
     color: var(--muted);
     padding: 0;
-  }
-  select {
-    width: 100%;
   }
   .swatches {
     display: flex;
@@ -99,13 +94,6 @@
   .swatch:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
-  }
-  small {
-    color: var(--muted);
-    font-size: 0.72rem;
-  }
-  .swatches small {
-    margin-left: 4px;
   }
   .locked {
     display: flex;

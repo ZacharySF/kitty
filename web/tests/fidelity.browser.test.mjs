@@ -166,7 +166,8 @@ describe("shared chrome controls", () => {
     assert.deepEqual(await dot.evaluate((node) => [node.getBoundingClientRect().width, node.getBoundingClientRect().height]), [6, 6]);
     assert.equal(await page.getByText("Saved locally", { exact: true }).count(), 0);
     // Shared components draw themed dropdowns, never the browser's own select.
-    await page.getByText("Import PDF / Markdown", { exact: true }).click();
+    await page.getByRole("button", { name: "More page actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Import PDF or Markdown…", exact: true }).click();
     const importer = page.getByRole("region", { name: "Import documents" });
     await importer.getByRole("combobox", { name: "Destination notebook" }).click();
     await page.getByRole("searchbox", { name: "Search Destination notebook" }).waitFor();

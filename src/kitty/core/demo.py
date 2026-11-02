@@ -13,6 +13,7 @@ from pathlib import Path
 
 from kitty.config import Config
 from kitty.core import applications as applications_core
+from kitty.core import concept_maps
 from kitty.core import jobs as jobs_core
 from kitty.core import questions as questions_core
 from kitty.core import reminders as reminders_core
@@ -244,6 +245,7 @@ def reset_demo(settings: Settings, config: Config) -> dict[str, int]:
     conn = connect(settings.db_path)
     try:
         migrate(conn)
+        concept_maps.migrate(conn, settings.data_dir / "exports")
         sync_config_to_db(conn, config)
         return seed(conn, settings, config)
     finally:

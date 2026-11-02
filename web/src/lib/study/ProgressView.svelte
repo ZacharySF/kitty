@@ -183,7 +183,6 @@
             title={weeklyGoal ? `Weekly goal: ${weeklyGoal.minutes} min` : "A week with study keeps the weekly streak"}>✓</span>
         </div>
       {/each}
-      <p class="muted note">Reports use {data.stats.timezone}; streaks count completed sessions, never logins.</p>
     </div>
     <aside>
       <span class="eyebrow">{short(selected, { weekday: "short", day: "numeric", month: "short" })}{selected === data.stats.today ? " · today" : ""}</span>
@@ -478,10 +477,6 @@
   .week-check.hit {
     color: var(--success);
     opacity: 1;
-  }
-  .note {
-    margin: 10px 0 0;
-    font-size: 11.5px;
   }
   aside {
     display: grid;

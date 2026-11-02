@@ -81,7 +81,7 @@
   const schemaLabel = $derived(
     ({ jobs: "Jobs", notes: "Notes", flashcards: "Flashcards", opportunities: "Opportunities", schema: "Mind maps" } as Partial<Record<View, string>>)[view] || title,
   );
-  const ownsTrail = $derived(trail.section === view || (view === "schema" && trail.section === "notes"));
+  const ownsTrail = $derived(trail.section === view);
   const schemaNodes = $derived(ownsTrail ? trail.nodes : []);
   const sectionGroup = $derived(navigationGroups.find(group => group.views.includes(view))?.label ?? "Workspace");
 
@@ -163,6 +163,10 @@
     });
     return true;
   }
+  /** Module notices open Settings on its Modules page (`#settings/modules`). */
+  function openModuleSettings() {
+    if (navigate("settings")) window.history.replaceState(window.history.state, "", "#settings/modules");
+  }
   async function focusGroup(label: string) {
     const id = activeId;
     if (view !== "today" && !navigate("today")) return;
@@ -236,7 +240,7 @@
     finally { loading = false; }
   }
   function readRoute() {
-    const hash = window.location.hash.slice(1);
+    const hash = window.location.hash.slice(1).split("/")[0];
     let next: View = isView(hash) ? hash : "today";
     let redirected = false;
     if (workspace && !viewEnabled(next, enabled)) {
@@ -424,11 +428,11 @@
       </div>{/if}
     {#if workspace?.modules.restart_required && view !== "settings"}<div class="demo-notice" role="status">
         Module changes are saved but not active yet. Restart kitty to apply them.
-        <button class="text-button" onclick={() => navigate("settings")}>Review in Settings</button>
+        <button class="text-button" onclick={openModuleSettings}>Review in Settings</button>
       </div>{/if}
     {#if moduleNotice}<div class="demo-notice" role="status">
         {moduleNotice}
-        {#if view !== "settings"}<button class="text-button" onclick={() => navigate("settings")}>Open Settings</button>{/if}
+        {#if view !== "settings"}<button class="text-button" onclick={openModuleSettings}>Open Settings</button>{/if}
         <button class="icon-button" aria-label="Dismiss module message" onclick={() => (moduleNotice = "")}>×</button>
       </div>{/if}
     {#if loading && !workspace && !error}<p class="muted" role="status">Loading workspace…</p>{/if}

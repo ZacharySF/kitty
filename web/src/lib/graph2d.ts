@@ -275,7 +275,8 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       if (!group.nodes.length || (group.nodes.length === 1 && group.nodes[0].data.label.toLowerCase() === name.toLowerCase())) continue;
       const top = Math.min(...group.nodes.map(node => node.y! - node.h * scaleOf(node) / 2));
       const centre = group.nodes.reduce((sum, node) => sum + node.x!, 0) / group.nodes.length;
-      const label = name.toUpperCase();
+      // Group ids carry their kind ("category:quant", "track:swe"); the label is the name alone.
+      const label = name.replace(/^[a-z_]+:/, "").toUpperCase();
       const w = ctx.measureText(label).width;
       // Centred over the group, then raised in 14px steps until it clears every card.
       let [x, y] = transform.apply([centre, top]);

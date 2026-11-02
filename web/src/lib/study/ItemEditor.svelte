@@ -1,8 +1,10 @@
 <script lang="ts">
   import { Button } from "@nunera/bracket";
+  import EditDrawer from "../ui/EditDrawer.svelte";
+  import Select from "../ui/Select.svelte";
   import type { Collection, Item, Workspace } from "./types";
 
-  /** Add / edit / delete form for subjects, concepts, goals, tasks and exams. */
+  /** The side drawer that edits (or completes a quick-added) subject, concept, goal, task or exam. */
   let { kind, item, data, disabled, change, ondelete, onclose }: {
     kind: Collection;
     /** The item to edit, or defaults for a new one (id 0). */
@@ -14,10 +16,18 @@
     onclose: () => void;
   } = $props();
 
+  const NOUN: Record<Collection, string> = { subjects: "subject", projects: "concept", targets: "goal", tasks: "task", exams: "exam" };
+  const formId = $props.id();
   // A snapshot of the item: edits stay local until saved.
   // svelte-ignore state_referenced_locally
   let editor = $state<Item>(structuredClone($state.snapshot(item)));
   let checklistText = $state("");
+  const subject = $derived(data.subjects.find((entry) => entry.id === editor.subject_id));
+  /** Select works in strings; the item keeps numeric ids or null. */
+  const idText = (id: number | null | undefined) => (id == null ? "" : String(id));
+  const idValue = (text: string) => (text ? Number(text) : null);
+  const subjects = $derived([{ value: "", label: "Unassigned" }, ...data.subjects.map((entry) => ({ value: String(entry.id), label: entry.name ?? "", color: entry.color }))]);
+  const projects = $derived([{ value: "", label: "None" }, ...data.projects.map((entry) => ({ value: String(entry.id), label: entry.name ?? "" }))]);
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
@@ -37,46 +47,79 @@
   }
 </script>
 
-<div class="editor panel" role="region" aria-label={`Edit ${kind}`}>
-  <form onsubmit={save}>
-    <h3>{editor.id ? "Edit" : "Add"} {kind}</h3>
-    <div class="form-grid">
-      {#if kind === "subjects" || kind === "projects"}<label>Name<input required maxlength="250" bind:value={editor.name} /></label>
-      {:else}<label>Title<input required maxlength="500" bind:value={editor.title} /></label>{/if}
-      {#if kind === "subjects"}<label>Color<input type="color" bind:value={editor.color} /></label>
-      {:else}<label>Subject<select bind:value={editor.subject_id}><option value={null}>Unassigned</option>{#each data.subjects as entry (entry.id)}<option value={entry.id}>{entry.name}</option>{/each}</select></label>{/if}
-      {#if kind === "tasks" || kind === "targets"}<label>Project<select bind:value={editor.project_id}><option value={null}>None</option>{#each data.projects as entry (entry.id)}<option value={entry.id}>{entry.name}</option>{/each}</select></label>{/if}
-      {#if kind === "targets"}
-        <label>Period<select bind:value={editor.period}><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
-        <label>Minutes<input type="number" min="1" max="10080" required bind:value={editor.minutes} /></label>
-      {/if}
-      {#if kind === "tasks"}
-        <label>Priority<select bind:value={editor.priority}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label>
-        <label>Due date<input type="date" bind:value={editor.due_date} /></label>
-      {/if}
-      {#if kind === "exams"}
-        <label>Exam date<input type="date" required bind:value={editor.exam_date} /></label>
-        <label>IANA timezone<input required bind:value={editor.timezone} /></label>
-        <label>Notes<textarea bind:value={editor.notes}></textarea></label>
-      {/if}
-    </div>
+<EditDrawer title={`${editor.id ? "Edit" : "New"} ${NOUN[kind]}`} meta={kind === "subjects" ? "" : subject?.name ?? ""}
+  accent={kind === "subjects" ? editor.color : subject?.color ?? ""} closeLabel={`Close ${NOUN[kind]} editor`} {onclose}>
+  <form id={formId} class="fields" onsubmit={save}>
+    {#if kind === "subjects" || kind === "projects"}<label class="field">Name<input required maxlength="250" bind:value={editor.name} /></label>
+    {:else}<label class="field">Title<input required maxlength="500" bind:value={editor.title} /></label>{/if}
+    {#if kind === "subjects"}<label class="field">Colour<input type="color" bind:value={editor.color} /></label>
+    {:else}<div class="field"><span>Subject</span><Select kind="list" label="Subject" options={subjects} value={idText(editor.subject_id)} onchange={(next) => (editor.subject_id = idValue(next))} /></div>{/if}
+    {#if kind === "tasks" || kind === "targets"}<div class="field"><span>Concept</span><Select kind="list" label="Concept" options={projects} value={idText(editor.project_id)} onchange={(next) => (editor.project_id = idValue(next))} /></div>{/if}
+    {#if kind === "targets"}
+      <div class="field"><span>Period</span><Select label="Period" options={[{ value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }]} bind:value={editor.period as string} /></div>
+      <label class="field">Minutes<input type="number" min="1" max="10080" required bind:value={editor.minutes} /></label>
+    {/if}
     {#if kind === "tasks"}
-      <h4>Checklist</h4>
-      {#each editor.checklist || [] as entry (entry.id)}
-        <div class="row">
-          <label class="check-row"><input type="checkbox" bind:checked={entry.done} />{entry.text}</label>
-          <Button onclick={() => (editor.checklist = editor.checklist?.filter((other) => other.id !== entry.id))}>Remove</Button>
+      <div class="field"><span>Priority</span><Select label="Priority" options={[{ value: "low", label: "Low" }, { value: "normal", label: "Normal" }, { value: "high", label: "High" }]} bind:value={editor.priority as string} /></div>
+      <label class="field">Due date<input type="date" bind:value={editor.due_date} /></label>
+    {/if}
+    {#if kind === "exams"}
+      <label class="field">Exam date<input type="date" required bind:value={editor.exam_date} /></label>
+      <div class="field"><span>Timezone</span><Select kind="timezone" label="Timezone" bind:value={editor.timezone as string} /></div>
+      <label class="field">Notes<textarea rows="3" bind:value={editor.notes}></textarea></label>
+    {/if}
+    {#if kind === "tasks"}
+      <div class="field">
+        <span>Checklist</span>
+        {#each editor.checklist || [] as entry (entry.id)}
+          <div class="check">
+            <label class="check-row"><input type="checkbox" bind:checked={entry.done} />{entry.text}</label>
+            <button type="button" class="icon-button" aria-label={`Remove ${entry.text}`} onclick={() => (editor.checklist = editor.checklist?.filter((other) => other.id !== entry.id))}>×</button>
+          </div>
+        {/each}
+        <div class="check">
+          <input aria-label="New checklist item" placeholder="New item" bind:value={checklistText} maxlength="500"
+            onkeydown={(event) => { if (event.key === "Enter") { event.preventDefault(); addChecklist(); } }} />
+          <Button size="sm" onclick={addChecklist}>Add</Button>
         </div>
-      {/each}
-      <div class="row">
-        <label class="field">New checklist item<input bind:value={checklistText} maxlength="500" /></label>
-        <Button onclick={addChecklist}>Add item</Button>
       </div>
     {/if}
-    <div class="row">
-      <Button type="submit" {disabled}>Save</Button>
-      <Button onclick={onclose}>Cancel</Button>
-      {#if editor.id}<Button intent="danger" {disabled} onclick={async () => { if (await ondelete(kind, item)) onclose(); }}>Delete</Button>{/if}
-    </div>
   </form>
-</div>
+  {#snippet footer()}
+    {#if editor.id}<Button intent="danger" variant="ghost" {disabled} onclick={async () => { if (await ondelete(kind, item)) onclose(); }}>Delete</Button><span class="grow"></span>{/if}
+    <Button onclick={onclose}>Cancel</Button>
+    <Button type="submit" form={formId} variant="solid" intent="primary" {disabled}>Save</Button>
+  {/snippet}
+</EditDrawer>
+
+<style>
+  .fields {
+    display: grid;
+    gap: 12px;
+  }
+  .field {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .field :is(input:not([type="checkbox"]), textarea) {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .check-row {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--ink);
+  }
+  .grow {
+    flex: 1;
+  }
+</style>

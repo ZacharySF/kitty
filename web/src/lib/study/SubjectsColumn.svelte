@@ -1,12 +1,16 @@
 <script lang="ts">
+  import Icon from "../Icon.svelte";
+  import QuickAdd from "../ui/QuickAdd.svelte";
+  import Select from "../ui/Select.svelte";
   import TaskList from "./TaskList.svelte";
   import { minutesLabel, type Collection, type Item, type Workspace } from "./types";
 
   /**
-   * Cockpit left column: what to study. Subjects (with this week's minutes in
-   * their colour) and concepts pick the session focus; tasks sit below.
+   * The left drawer: what to study. Subjects (with this week's minutes in their
+   * colour) and concepts pick the session focus; the next tasks sit below. Each
+   * list adds through a quick-add popover; ✎ opens the full editor.
    */
-  let { data, subjectId = $bindable(), projectId = $bindable(), locked, disabled, onedit, ontoggle, onchecklist }: {
+  let { data, subjectId = $bindable(), projectId = $bindable(), locked, disabled, onedit, oncreate, ontoggle, onchecklist }: {
     data: Workspace;
     subjectId: string;
     projectId: string;
@@ -14,10 +18,12 @@
     locked: boolean;
     disabled: boolean;
     onedit: (kind: Collection, item?: Item, defaults?: Partial<Item>) => void;
+    oncreate: (kind: Collection, fields: Record<string, unknown>) => Promise<boolean>;
     ontoggle: (task: Item) => void;
     onchecklist: (task: Item, checklistId: string) => void;
   } = $props();
 
+  const PALETTE = ["#7c6fdb", "#d05080", "#3a9ad9", "#40a080", "#e0a040", "#c06cd0"];
   /** Seconds per subject since Monday, from the per-day subject split. */
   const week = $derived.by(() => {
     const totals = new Map<number | null, number>();
@@ -29,17 +35,29 @@
   const most = $derived(Math.max(1, ...data.subjects.map((item) => week.get(item.id) || 0)));
   const concepts = $derived(data.projects.filter((item) => !subjectId || item.subject_id === Number(subjectId) || item.subject_id == null));
   const open = $derived(data.tasks.filter((item) => !item.done).length);
+  const subjectOptions = $derived([{ value: "", label: "No subject" }, ...data.subjects.map((item) => ({ value: String(item.id), label: item.name ?? "", color: item.color }))]);
+  let taskSubject = $state("");
+  $effect.pre(() => { taskSubject = subjectId; });
 
   function pick(id: number) {
     subjectId = subjectId === String(id) ? "" : String(id);
     projectId = "";
   }
+  const focusSubject = () => (subjectId ? Number(subjectId) : null);
 </script>
 
-<section class="column subjects-column" aria-label="Subjects & tasks">
+{#snippet plus(label: string, props: Record<string | symbol, unknown>)}
+  <button type="button" class="add" aria-label={label} title={label} {disabled} {...props}><Icon name="plus" size={13} /></button>
+{/snippet}
+
+<div class="subjects-column">
   <header>
     <span class="eyebrow">Subjects · this week</span>
-    <button type="button" class="add" onclick={() => onedit("subjects")}>Add subject</button>
+    <QuickAdd label="Add subject" placeholder="Organic chemistry"
+      onsave={(name) => oncreate("subjects", { name, color: PALETTE[data.subjects.length % PALETTE.length] })}
+      onmore={(name) => onedit("subjects", undefined, { name })}>
+      {#snippet trigger(props)}{@render plus("Add subject", props)}{/snippet}
+    </QuickAdd>
   </header>
   {#if data.subjects.length}
     <ul class="subjects">
@@ -57,11 +75,15 @@
       {/each}
     </ul>
   {:else}
-    <p class="hint">Add a subject to colour your sessions, progress and plans.</p>
+    <p class="hint">Add a subject to colour your sessions.</p>
   {/if}
   <header>
     <span class="eyebrow">Concepts</span>
-    <button type="button" class="add" onclick={() => onedit("projects", undefined, { subject_id: subjectId ? Number(subjectId) : null })}>Add concept</button>
+    <QuickAdd label="Add concept" placeholder="Stereochemistry"
+      onsave={(name) => oncreate("projects", { name, subject_id: focusSubject() })}
+      onmore={(name) => onedit("projects", undefined, { name, subject_id: focusSubject() })}>
+      {#snippet trigger(props)}{@render plus("Add concept", props)}{/snippet}
+    </QuickAdd>
   </header>
   {#if concepts.length}
     <ul class="concepts">
@@ -72,20 +94,21 @@
         </li>
       {/each}
     </ul>
-  {:else}
-    <p class="hint">No concepts{subjectId ? " for this subject" : ""} yet.</p>
   {/if}
-  <hr />
+  <hr class="rule" />
   <header>
-    <span class="eyebrow">Tasks · {open} open</span>
-    <button type="button" class="add" onclick={() => onedit("tasks", undefined, { subject_id: subjectId ? Number(subjectId) : null })}>Add task</button>
+    <span class="eyebrow">Next tasks{#if open} <span class="count">{open}</span>{/if}</span>
+    <QuickAdd label="Add task" placeholder="Redo problem set 4"
+      onsave={(title) => oncreate("tasks", { title, subject_id: taskSubject ? Number(taskSubject) : null, project_id: null, priority: "normal", due_date: null, done: false, checklist: [] })}
+      onmore={(title) => onedit("tasks", undefined, { title, subject_id: taskSubject ? Number(taskSubject) : null })}>
+      {#snippet trigger(props)}{@render plus("Add task", props)}{/snippet}
+      {#snippet chips()}{#if data.subjects.length}<Select kind="list" label="Task subject" options={subjectOptions} bind:value={taskSubject} />{/if}{/snippet}
+    </QuickAdd>
   </header>
   {#if data.tasks.length}
     <TaskList tasks={data.tasks} subjects={data.subjects} {disabled} {ontoggle} {onchecklist} onedit={(task) => onedit("tasks", task)} />
-  {:else}
-    <p class="hint">Make the next step small and specific.</p>
   {/if}
-</section>
+</div>
 
 <style>
   .subjects-column {
@@ -100,12 +123,20 @@
     gap: 8px;
   }
   .add {
-    padding: 2px 8px;
-    border: 1px solid var(--hairline);
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font: 500 11px var(--font-ui);
+  }
+  .count {
+    margin-left: 4px;
+    color: var(--muted);
+    font: 500 10.5px var(--font-mono);
   }
   .add:hover {
     border-color: var(--border);
@@ -235,7 +266,5 @@
   hr {
     width: 100%;
     margin: 4px 0;
-    border: 0;
-    border-top: 1px solid var(--hairline);
   }
 </style>

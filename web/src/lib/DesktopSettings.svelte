@@ -9,6 +9,7 @@
   let pending = $state(false);
   let error = $state("");
   let notice = $state("");
+  const uid = $props.id();
 
   onMount(() => {
     let cancelled = false;
@@ -32,46 +33,56 @@
     try {
       const result = await api<DesktopState | { ok: boolean }>("/desktop/command", { command: value });
       if ("available" in result) desktop = result;
-      if (value === "check-updates") notice = "Update check requested. Follow the desktop dialog.";
-      if (value === "new-quick-note") notice = "New quick note requested in a separate desktop window.";
-      if (value === "quit") notice = "Quit requested. kitty! is saving and stopping workers.";
+      if (value === "check-updates") notice = "Follow the desktop dialog.";
+      if (value === "new-quick-note") notice = "Opened in its own window.";
+      if (value === "quit") notice = "Saving and stopping workers…";
     } catch (cause) { error = (cause as Error).message; }
     finally { pending = false; }
   }
+  const keepRunningHint = $derived(!desktop?.keep_running_available
+    ? "Needs a system tray on this desktop"
+    : desktop.keep_running
+      ? "Closing the window keeps kitty! running in the system tray for monitoring and reminders"
+      : "Closing the window quits kitty! and stops workers");
 </script>
 
-<section aria-label="Desktop settings">
-  <Panel title="Desktop">
-    {#if desktop?.available}
-      <h3>App updates</h3>
-      <p class="muted">Check here for signed updates. kitty! downloads and verifies the update, saves your workspace, then installs and restarts. Your workspace and settings stay in place.</p>
-      <Button size="sm" disabled={pending} onclick={() => command("check-updates")}>Check for updates</Button>
-      <h3>Desktop behavior</h3>
-      <label class="keep-running">
-        <input type="checkbox" checked={desktop.keep_running === true}
-          disabled={pending || !desktop.keep_running_available || desktop.keep_running === null}
-          onchange={(event) => { const checked = event.currentTarget.checked; event.currentTarget.checked = desktop?.keep_running === true; void command(checked ? "keep-running-on" : "keep-running-off"); }} />
-        <span>Keep running on close (monitoring / reminders)</span>
-      </label>
-      <p class="muted">Closing the window {desktop.keep_running ? "keeps kitty! running in the system tray" : "quits kitty! and stops workers"}. Quit always saves and stops workers.</p>
-      {#if !desktop.keep_running_available}<p class="muted">Keep running on close needs a system tray on this desktop.</p>{/if}
-      <div class="actions">
-        <Button size="sm" disabled={pending} onclick={() => command("new-quick-note")}>New quick note</Button>
-        <Button size="sm" disabled={pending} onclick={() => command("quit")}>Quit kitty! (save and stop workers)</Button>
+<Panel title="Desktop" aria-label="Desktop">
+  {#if desktop?.available}
+    <div class="rows">
+      <div class="set-row">
+        <span class="set-label">App updates</span>
+        <span class="set-end">
+          <Button size="sm" disabled={pending} onclick={() => command("check-updates")}
+            title="Downloads and verifies a signed update, saves your workspace, then installs and restarts">Check for updates</Button>
+        </span>
       </div>
-    {:else if desktop}
-      <p class="muted">These controls are available in the kitty! desktop app. This browser website has no desktop shell.</p>
-    {:else if !error}
-      <p class="muted" role="status">Loading desktop settings…</p>
-    {/if}
-    {#if notice}<p class="muted" role="status">{notice}</p>{/if}
-    {#if error}<p role="alert">{error}</p>{/if}
-  </Panel>
-</section>
+      <div class="set-row">
+        <label class="set-label" for={`${uid}-keep`} title={keepRunningHint}>Keep running on close</label>
+        <span class="set-end">
+          <input id={`${uid}-keep`} type="checkbox" role="switch" class="keep" checked={desktop.keep_running === true} title={keepRunningHint}
+            disabled={pending || !desktop.keep_running_available || desktop.keep_running === null}
+            onchange={(event) => { const checked = event.currentTarget.checked; event.currentTarget.checked = desktop?.keep_running === true; void command(checked ? "keep-running-on" : "keep-running-off"); }} />
+        </span>
+      </div>
+      <div class="set-row">
+        <span class="set-label">Window</span>
+        <span class="set-end">
+          <Button size="sm" disabled={pending} onclick={() => command("new-quick-note")}>New quick note</Button>
+          <Button size="sm" disabled={pending} onclick={() => command("quit")} title="Saves your workspace and stops workers">Quit kitty!</Button>
+        </span>
+      </div>
+    </div>
+  {:else if desktop}
+    <p class="set-note">These controls live in the kitty! desktop app.</p>
+  {:else if !error}
+    <p class="set-note" role="status">Loading desktop settings…</p>
+  {/if}
+  {#if notice}<p class="set-note" role="status">{notice}</p>{/if}
+  {#if error}<p class="set-note" role="alert">{error}</p>{/if}
+</Panel>
 
 <style>
-  .keep-running { display: flex; align-items: center; gap: .75rem; padding: .55rem 0; }
-  input { accent-color: var(--accent); }
-  .actions { display: flex; flex-wrap: wrap; gap: .65rem; }
-  .muted { color: var(--muted); font-size: .8rem; line-height: 1.5; }
+  .keep {
+    accent-color: var(--accent);
+  }
 </style>

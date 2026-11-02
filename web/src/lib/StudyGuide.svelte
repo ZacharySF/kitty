@@ -1,9 +1,15 @@
 <script lang="ts">
-  import { Button } from "@nunera/bracket";
+  import OverflowMenu from "./ui/OverflowMenu.svelte";
   type GuideState = { checked: boolean[]; responses: string[]; reflection: string; next_review: string };
-  let { value = $bindable(), phase = "priming", active = false, dirty = false, busy = false, onchange, onsave, onnew }: {
-    value: GuideState; phase?: string; active?: boolean; dirty?: boolean; busy?: boolean;
-    onchange: () => void; onsave: () => void; onnew: () => void;
+  /**
+   * The 14-step guide. `phase` mode (the session drawer) shows only the current
+   * phase's steps with arrows to browse the others and a Full guide link; `full`
+   * mode (its own view) shows every step as phase columns or a rail, the step
+   * notes and the return review.
+   */
+  let { value = $bindable(), mode = "phase", phase = "priming", active = false, busy = false, onchange, onnew, onfull }: {
+    value: GuideState; mode?: "phase" | "full"; phase?: string; active?: boolean; busy?: boolean;
+    onchange: () => void; onnew?: () => void; onfull?: () => void;
   } = $props();
   // The user's image supplies the decision flow; the requested routine names
   // its final practice actions explicitly as spacing and interleaving.
@@ -29,6 +35,16 @@
     { label: "Test, review & return", start: 10, end: 14 },
   ];
   const stage = $derived(!active || phase === "priming" ? 0 : phase === "focus" ? 1 : 2);
+  const done = $derived(value.checked.filter(Boolean).length);
+  const range = (start: number, end: number) => Array.from({ length: end - start }, (_, offset) => start + offset);
+  /** The phase the drawer shows: the timer's, until the arrows browse another. */
+  let browsed = $state<number | null>(null);
+  const shown = $derived(browsed ?? stage);
+  $effect.pre(() => {
+    stage;
+    browsed = null;
+  });
+
   const VIEW_KEY = "kitty.study.guide-view";
   let view = $state<"columns" | "rail">("columns");
   try { if (localStorage.getItem(VIEW_KEY) === "rail") view = "rail"; } catch { /* Columns by default. */ }
@@ -36,8 +52,7 @@
     view = next;
     try { localStorage.setItem(VIEW_KEY, next); } catch { /* The choice still applies in this session. */ }
   }
-  /** Step cards whose hint or note field is open. */
-  let hints = $state<Set<number>>(new Set());
+  /** Step cards whose note field is open. */
   let notes = $state<Set<number>>(new Set());
   const toggle = (set: Set<number>, index: number) => { const next = new Set(set); if (!next.delete(index)) next.add(index); return next; };
   /** In the rail, the current phase is open; others open on click. */
@@ -45,97 +60,115 @@
   const railShown = $derived(railOpen ?? stage);
 </script>
 
-{#snippet step(index: number, compact: boolean)}
+{#snippet step(index: number, withNotes: boolean)}
   {@const item = steps[index]}
   <li class="step" class:done={value.checked[index]}>
     <div class="step-head">
-      <input type="checkbox" id={`guide-step-${index}`} bind:checked={value.checked[index]} onchange={onchange} />
-      <label for={`guide-step-${index}`}><span class="number">{index + 1}</span>{item.label}</label>
-      <button type="button" class="mini" aria-label={`Hint for step ${index + 1}`} aria-pressed={hints.has(index)} onclick={() => (hints = toggle(hints, index))}>?</button>
-      {#if !compact}<button type="button" class="mini" aria-label={`Note for step ${index + 1}`} aria-pressed={notes.has(index) || !!value.responses[index]} onclick={() => (notes = toggle(notes, index))}>✎</button>{/if}
+      <input type="checkbox" id={`guide-${mode}-step-${index}`} bind:checked={value.checked[index]} onchange={onchange} />
+      <label for={`guide-${mode}-step-${index}`} title={item.hint}><span class="number">{index + 1}</span>{item.label}</label>
+      {#if withNotes}<button type="button" class="mini" aria-label={`Note for step ${index + 1}`} title="Note" aria-pressed={notes.has(index) || !!value.responses[index]} onclick={() => (notes = toggle(notes, index))}>✎</button>{/if}
     </div>
-    {#if hints.has(index)}<p class="hint">{item.hint}</p>{/if}
-    {#if !compact && (notes.has(index) || value.responses[index])}
+    {#if withNotes && (notes.has(index) || value.responses[index])}
       <label class="note"><span class="sr-only">Step {index + 1}: {item.label}</span><textarea rows="2" maxlength="4000" bind:value={value.responses[index]} oninput={onchange} placeholder={item.prompt}></textarea></label>
     {/if}
   </li>
 {/snippet}
 
-<section class="study-guide" aria-label="Fourteen-step study guide">
-  <div class="guide-heading">
-    <div><h3>14-step study guide</h3><p>Prepare → connect → test → reflect → return. Your checklist and reflections are saved with this study session.</p></div>
-    <span role="status">{value.checked.filter(Boolean).length}/14 checked{dirty ? " · unsaved" : ""}</span>
-    <div class="view-switch" role="radiogroup" aria-label="Guide layout">
-      <button type="button" role="radio" aria-checked={view === "columns"} onclick={() => setView("columns")}>Columns</button>
-      <button type="button" role="radio" aria-checked={view === "rail"} onclick={() => setView("rail")}>Rail</button>
+{#if mode === "phase"}
+  {@const group = groups[shown]}
+  <section class="current-phase" aria-label="Current phase">
+    <div class="head">
+      <span class="phase-dot" class:on={shown === stage} aria-hidden="true"></span>
+      <span class="eyebrow">{group.label} · {done}/14</span>
+      <span class="arrows">
+        <button type="button" class="mini" aria-label="Previous phase" disabled={shown === 0} onclick={() => (browsed = shown - 1)}>‹</button>
+        <button type="button" class="mini" aria-label="Next phase" disabled={shown === groups.length - 1} onclick={() => (browsed = shown + 1)}>›</button>
+      </span>
     </div>
-    {#if !active}<Button size="sm" onclick={onnew} disabled={busy}>New preparation</Button>{/if}
-  </div>
-  {#if view === "columns"}
-    <div class="columns" data-guide-view="columns">
-      {#each groups as group, groupIndex}
-        <section class:current={stage === groupIndex} aria-label={group.label}>
-          <h4>{group.label}</h4>
-          <span class="count">{value.checked.slice(group.start, group.end).filter(Boolean).length}/{group.end - group.start}</span>
-          <ol>{#each Array.from({ length: group.end - group.start }, (_, offset) => group.start + offset) as index (index)}{@render step(index, false)}{/each}</ol>
-        </section>
-      {/each}
+    <ol>{#each range(group.start, group.end) as index (index)}{@render step(index, false)}{/each}</ol>
+    <button type="button" class="more" onclick={onfull}>Full guide ›</button>
+  </section>
+{:else}
+  <section class="study-guide" aria-label="Fourteen-step study guide">
+    <div class="guide-heading">
+      <h3>Study guide</h3>
+      <span class="count">{done}/14</span>
+      <span class="grow"></span>
+      <div class="view-switch" role="radiogroup" aria-label="Guide layout">
+        <button type="button" role="radio" aria-checked={view === "columns"} onclick={() => setView("columns")}>Columns</button>
+        <button type="button" role="radio" aria-checked={view === "rail"} onclick={() => setView("rail")}>Rail</button>
+      </div>
+      {#if !active && onnew}<OverflowMenu label="Guide actions" items={[{ label: "New preparation", disabled: busy, onselect: onnew }]} />{/if}
     </div>
-  {:else}
-    <ol class="rail" data-guide-view="rail">
-      {#each groups as group, groupIndex}
-        <li class:current={stage === groupIndex} class:open={railShown === groupIndex}>
-          <button type="button" class="rail-head" aria-expanded={railShown === groupIndex} onclick={() => (railOpen = railShown === groupIndex ? -1 : groupIndex)}>
-            <span class="dot" aria-hidden="true"></span>{group.label}
+    {#if view === "columns"}
+      <div class="columns" data-guide-view="columns">
+        {#each groups as group, groupIndex}
+          <section class:current={stage === groupIndex} aria-label={group.label}>
+            <h4>{group.label}</h4>
             <span class="count">{value.checked.slice(group.start, group.end).filter(Boolean).length}/{group.end - group.start}</span>
-          </button>
-          {#if railShown === groupIndex}
-            <ol>{#each Array.from({ length: group.end - group.start }, (_, offset) => group.start + offset) as index (index)}{@render step(index, true)}{/each}</ol>
-          {/if}
-        </li>
-      {/each}
-    </ol>
-  {/if}
-  <details open={active && phase === "short_break"}>
-    <summary>Return review & reflection</summary>
-    <label>What changed in your understanding?<textarea rows="3" maxlength="10000" bind:value={value.reflection} oninput={onchange} placeholder="Outcome versus goal; connections made; confusion explored; test attempt and feedback; one change for next time."></textarea></label>
-    <label>Next spaced review<input type="date" bind:value={value.next_review} onchange={onchange} /></label>
-    <p>Return to the gist and relationships, retrieve before looking, then compare with your source. Interleave related tasks while keeping assessment-like conditions.</p>
-  </details>
-  <Button intent="primary" disabled={busy || !dirty} onclick={onsave}>{dirty ? "Save guide & reflection" : "Guide saved"}</Button>
-  <small>Adapted from your handwritten decision flow and requested fourteen-step routine. The image names its last two checks “Frequency” and “Conditions”; this guide makes spacing and interleaving explicit.</small>
-</section>
+            <ol>{#each range(group.start, group.end) as index (index)}{@render step(index, true)}{/each}</ol>
+          </section>
+        {/each}
+      </div>
+    {:else}
+      <ol class="rail" data-guide-view="rail">
+        {#each groups as group, groupIndex}
+          <li class:current={stage === groupIndex} class:open={railShown === groupIndex}>
+            <button type="button" class="rail-head" aria-expanded={railShown === groupIndex} onclick={() => (railOpen = railShown === groupIndex ? -1 : groupIndex)}>
+              <span class="dot" aria-hidden="true"></span>{group.label}
+              <span class="count">{value.checked.slice(group.start, group.end).filter(Boolean).length}/{group.end - group.start}</span>
+            </button>
+            {#if railShown === groupIndex}
+              <ol>{#each range(group.start, group.end) as index (index)}{@render step(index, true)}{/each}</ol>
+            {/if}
+          </li>
+        {/each}
+      </ol>
+    {/if}
+    <hr class="rule" />
+    <section class="review" aria-label="Return review">
+      <label class="reflection"><span class="eyebrow">What changed in your understanding?</span><textarea rows="3" maxlength="10000" bind:value={value.reflection} oninput={onchange}></textarea></label>
+      <label class="next"><span class="eyebrow">Next spaced review</span><input type="date" bind:value={value.next_review} onchange={onchange} /></label>
+    </section>
+  </section>
+{/if}
 
 <style>
-  .study-guide { container-type: inline-size; display: grid; gap: .85rem; padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--ink); }
-  .guide-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; }
-  .guide-heading > div:first-child { flex: 1 1 280px; }
+  .study-guide { container-type: inline-size; display: grid; gap: .85rem; color: var(--ink); }
+  .guide-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+  .grow { flex: 1; }
   h3, h4 { margin: 0; }
-  p, small { color: var(--muted); line-height: 1.5; }
-  p { margin: .4rem 0 .65rem; }
-  summary { cursor: pointer; font-weight: 600; padding: .5rem 0; }
-  label { display: grid; gap: .4rem; margin: .45rem 0; }
+  label { display: grid; gap: .4rem; }
   input, textarea { box-sizing: border-box; max-width: 100%; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: var(--ink); padding: .6rem; font: inherit; }
   textarea { width: 100%; resize: vertical; }
-  span[role="status"], .count { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .count { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   .view-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--hairline, var(--border)); border-radius: 999px; }
   .view-switch button { padding: 3px 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 12px; }
   .view-switch button[aria-checked="true"] { background: color-mix(in srgb, var(--ink) 12%, transparent); color: var(--ink); }
-  .columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
-  .columns > section { display: grid; align-content: start; grid-template-columns: 1fr auto; gap: .5rem .4rem; padding: .75rem; border: 1px solid var(--hairline, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--surface-raised) 50%, transparent); }
-  .columns > section.current { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: inset 0 2px 0 var(--accent); }
-  .columns ol, .rail ol { grid-column: 1 / -1; display: grid; gap: .4rem; margin: 0; padding: 0; list-style: none; }
-  .step { padding: .45rem .55rem; border: 1px solid var(--hairline, var(--border)); border-radius: 9px; background: var(--surface); }
-  .step.done { opacity: .7; }
-  .step.done .step-head label { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
-  .step-head { display: flex; align-items: center; gap: .45rem; }
+  .columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .columns > section { display: grid; align-content: start; grid-template-columns: 1fr auto; gap: .5rem .4rem; padding: 2px 16px 0; min-width: 0; }
+  .columns > section + section { border-left: 1px solid var(--hairline, var(--border)); }
+  .columns > section.current h4 { color: var(--accent); }
+  .columns ol, .rail ol, .current-phase ol { grid-column: 1 / -1; display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+  .step { padding: 3px 6px; border-radius: 8px; }
+  .step:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .step.done .step-head label { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+  .step-head { display: flex; align-items: center; gap: .5rem; min-height: 24px; }
   .step-head input { width: auto; margin: 0; padding: 0; accent-color: var(--accent); }
-  .step-head label { flex: 1; display: flex; gap: .4rem; align-items: baseline; margin: 0; font-size: 13px; line-height: 1.35; cursor: pointer; }
-  .number { color: var(--subtle, var(--muted)); font: 500 10.5px var(--font-mono); }
-  .mini { flex: none; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); font-size: 12px; }
-  .mini:hover, .mini[aria-pressed="true"] { border-color: var(--hairline, var(--border)); color: var(--ink); }
-  .hint { margin: .4rem 0 .1rem; font-size: 12.5px; }
-  .note { margin: .4rem 0 0; }
+  .step-head label { flex: 1; display: flex; gap: .5rem; align-items: baseline; margin: 0; font-size: 12.5px; line-height: 1.35; cursor: pointer; }
+  .number { width: 14px; flex: none; color: var(--subtle, var(--muted)); font: 500 10px var(--font-mono); text-align: right; }
+  .mini { flex: none; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); font-size: 13px; }
+  .mini:hover:not(:disabled), .mini[aria-pressed="true"] { border-color: var(--hairline, var(--border)); color: var(--ink); }
+  .mini:disabled { opacity: .35; }
+  .note { margin: .3rem 0 .2rem; }
+  .current-phase { display: grid; gap: 4px; }
+  .head { display: flex; align-items: center; gap: 8px; height: 24px; }
+  .arrows { display: flex; margin-left: auto; }
+  .phase-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--subtle, var(--muted)); }
+  .phase-dot.on { background: var(--accent); }
+  .more { justify-self: start; padding: 0 6px; border: 0; background: transparent; color: var(--muted); font: 500 12px/24px var(--font-ui); cursor: pointer; }
+  .more:hover { color: var(--ink); }
+  .review { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
   .rail { display: grid; gap: .4rem; margin: 0; padding: 0 0 0 .4rem; list-style: none; border-left: 2px solid var(--hairline, var(--border)); }
   .rail > li { display: grid; gap: .45rem; padding-left: .8rem; }
   .rail-head { display: flex; align-items: center; gap: .55rem; width: 100%; padding: .35rem 0; border: 0; background: transparent; color: var(--ink); font-weight: 600; text-align: left; }
@@ -143,5 +176,9 @@
   .dot { width: 10px; height: 10px; margin-left: -1.32rem; border: 2px solid var(--hairline, var(--border)); border-radius: 999px; background: var(--surface); }
   .rail > li.current .dot { border-color: var(--accent); background: var(--accent); }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  @container (max-width: 640px) { .columns { grid-template-columns: 1fr; } }
+  @container (max-width: 640px) {
+    .columns { grid-template-columns: 1fr; }
+    .columns > section + section { border-left: 0; border-top: 1px solid var(--hairline, var(--border)); padding-top: 10px; }
+    .review { grid-template-columns: 1fr; }
+  }
 </style>

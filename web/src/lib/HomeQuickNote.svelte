@@ -47,7 +47,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Quick note" eyebrow="Ctrl ↵">
+<HomeWidget {id} title="Quick note">
   <form onsubmit={(event) => { event.preventDefault(); void save(); }}>
     <textarea
       bind:value={text}
@@ -63,7 +63,7 @@
       }}
     ></textarea>
     <span id={`${id}-hint`} class="sr-only">Ctrl+Enter saves the note.</span>
-    <button class="pill primary" disabled={!text.trim()}>Save</button>
+    <button class="pill primary" title="Save (Ctrl+Enter)" disabled={!text.trim()}>Save</button>
   </form>
   {#if error}<p class="note" role="alert">{error}</p>{/if}
   {#if recent.length}

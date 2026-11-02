@@ -28,6 +28,13 @@ test('relative days, pm times, durations, ranges, places and repeats', () => {
   assert.equal(parseQuickEvent('standup every monday 9am', today).rrule, 'FREQ=WEEKLY;BYDAY=MO');
 });
 
+test('a bare length after the time: "gym tue 6pm 1h"', () => {
+  const p = parseQuickEvent('gym tue 6pm 1h', today);
+  assert.deepEqual([p.title, p.date, p.start, p.minutes], ['Gym', '2026-11-03', 18 * 60, 60]);
+  assert.equal(parseQuickEvent('read 45m', today).minutes, 45);
+  assert.equal(parseQuickEvent('room 4 at 2pm', today).minutes, null);
+});
+
 test('plain titles are left alone', () => {
   const p = parseQuickEvent('Team retro', today);
   assert.deepEqual([p.title, p.date, p.start, p.spans.length], ['Team retro', null, null, 0]);

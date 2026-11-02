@@ -21,7 +21,6 @@
       <li>Answer without looking, then compare with your source.</li>
       <li>Mark the gap and revisit it in a later session.</li>
     </ol>
-    <p>No facts are generated here; use your actual course sources.</p>
     <Button onclick={() => ontemplate("Recall question:\nMy answer without looking:\nSource comparison / gap:\nNext practice step:")}>Use recall note template</Button>
   </article>
   <article class="panel">
@@ -32,9 +31,7 @@
 </div>
 <article class="panel">
   <h3>Optional AI study suggestions</h3>
-  <p>
-    Select only material you want to send. Preview is local; the confirmed run sends this text to OpenRouter. Suggestions are not facts and never alter plans automatically.
-  </p>
+  <p class="muted">Running sends this text off-device; suggestions never change plans.</p>
   <label class="field">Selected text<textarea rows="6" bind:value={text} maxlength="100000" placeholder="Paste a passage or requirements you deliberately want to send."></textarea></label>
   <AIReview purpose="study-plan" {text} {demo} {active} {onresult} />
 </article>

@@ -1,15 +1,45 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { Panel, Button, Badge } from "@nunera/bracket";
   import { api, safeUrl } from "./api";
   import SchemaNetwork from "./SchemaNetwork.svelte";
   import type { GraphLayout, GraphLink, GraphNode } from "./graph3d";
-  import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import { useWorkspaceContext, type SaveStatus } from "./workspaceContext.svelte";
   import MindMapFeedback from "./MindMapFeedback.svelte";
   import { activeModules } from "./modules.svelte";
   import { inkOutline, lassoed, nearestBox, penAction, simplify, strokeHit, type InkPoint } from "./mapInk";
-  let { revision = 0, demo = false, section = "schema", embedded = false }: { revision?: number; demo?: boolean; section?: "schema" | "study"; embedded?: boolean } =
-    $props();
+  import Icon from "./Icon.svelte";
+  import CanvasPill from "./CanvasPill.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import OverflowMenu, { type OverflowItem } from "./ui/OverflowMenu.svelte";
+  import Select from "./ui/Select.svelte";
+  import EditDrawer from "./ui/EditDrawer.svelte";
+  import QuickAdd from "./ui/QuickAdd.svelte";
+  import { fitHeight } from "./fitHeight";
+  /**
+   * The one mind-map editor (Q18 D, Q19 A): Notes' Map mode (embedded, the page's own map),
+   * Study's Mind map tab and the Mind maps view (Ctrl K) all open it. Chrome: a slim top bar
+   * (map switcher, title, layout, view, ⋯), the Notes canvas pill for building, a small bar on
+   * the selected topic and a zoom corner; the canvas fills the rest. Edits autosave and the
+   * save state is a dot on the tab.
+   */
+  let {
+    revision = 0,
+    demo = false,
+    section = "schema",
+    embedded = false,
+    pageId = 0,
+    onstatus,
+  }: {
+    revision?: number;
+    demo?: boolean;
+    section?: "schema" | "study";
+    /** Inside Notes' Map mode: no top bar or breadcrumb; the map belongs to `pageId`. */
+    embedded?: boolean;
+    pageId?: number;
+    /** Receives the save state instead of the tab (a host that merges it with its own). */
+    onstatus?: (status: SaveStatus | null) => void;
+  } = $props();
   const pane = useWorkspaceContext();
   // Importing tracked jobs reads Apply AI data; it exists only while that module is active.
   const canImportJobs = $derived(activeModules.enabled.includes("applyai"));
@@ -17,11 +47,16 @@
   function confirm(message: string) {
     return pane.active && window.confirm(message);
   }
-  export function beforeLeave(): boolean {
-    return !dirty || confirm("Leave this map? Unsaved edits remain in its local draft; use Save map to persist them.");
-  }
   export function hasUnsavedChanges(): boolean {
-    return dirty || busy || blocked;
+    return dirty || busy || !!saving || blocked;
+  }
+  /** Saves pending edits now; false when they could not be saved (the host keeps the user here). */
+  export async function flush(): Promise<boolean> {
+    clearTimeout(autosaveTimer);
+    finishInline(false);
+    if (saving) await saving;
+    if (dirty && !blocked) await save();
+    return !dirty && !blocked;
   }
   type Source = { kind: "subject" | "job" | "company" | "calendar_task" | "note_page"; id: number | string };
   type Node = {
@@ -173,32 +208,40 @@
   let current = $state<MapItem | null>(null),
     busy = $state(false),
     dirty = $state(false),
-    blocked = $state(false);
+    blocked = $state(false),
+    /** Counts local edits, so an autosave that lands after a newer edit keeps the map dirty. */
+    edits = $state(0),
+    /** The autosave in flight; edits continue meanwhile. */
+    saving = $state<Promise<void> | null>(null),
+    saveFailed = $state(false);
+  let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Embedded: whether the page's map lookup finished (so the empty state never flashes). */
+  let pageChecked = $state(false);
   /** The first non-loop, non-cross edge into each node is its tree edge; any other edge is drawn as a connection. */
   const treeLinks = $derived([...(current?.graph.edges ?? [])].reverse().filter(e => e.from !== e.to && e.kind !== "cross"));
   const parents = $derived(new Map(treeLinks.map(e => [e.to, e.from])));
   const treeEdges = $derived(new Set([...new Map(treeLinks.map(e => [e.to, e.id])).values()]));
   let error = $state(""),
-    notice = $state(""),
     newTitle = $state(""),
-    mode = $state("study");
+    mode = $state("study"),
+    newSubject = $state("");
   let selected = $state(""),
     selectedEdge = $state(""),
     search = $state(""),
     kind = $state("topic"),
     label = $state(""),
     subjectId = $state("");
-  let edgeFrom = $state(""),
-    edgeTo = $state(""),
-    edgeLabel = $state("relates to");
   let draftLabel = $state(""),
     draftNotes = $state(""),
     draftUrl = $state("");
+  // Q8: the new-map popover (and its full form), the topic details drawer and the ⋯ drawers.
+  let creating = $state(false), creatingFull = $state(false), details = $state(false);
+  let drawer = $state<"" | "links" | "jobs" | "ai">("");
+  let importInput = $state<HTMLInputElement>();
   let history = $state<Snapshot[]>([]),
     future = $state<Snapshot[]>([]),
     stage = $state<SVGSVGElement>();
-  let showJobs = $state(false),
-    jobSearch = $state(""),
+  let jobSearch = $state(""),
     jobs = $state<Job[]>([]),
     jobIds = $state<number[]>([]),
     jobOffset = $state(0),
@@ -252,8 +295,7 @@
     netSelected = $state(""),
     netBusy = $state(false),
     netError = $state("");
-  let showLinks = $state(false),
-    autoLinks = $state<AutoLinks | null>(null),
+  let autoLinks = $state<AutoLinks | null>(null),
     autoPicked = $state<string[]>([]),
     autoBusy = $state(false),
     autoError = $state("");
@@ -355,7 +397,6 @@
   function copyStyle() {
     if (!node) return;
     copiedStyle = node.color ? {color: node.color} : {};
-    notice = "Style copied";
   }
   function pasteStyle() {
     if (!editable || !picked.size || !copiedStyle) return;
@@ -452,7 +493,6 @@
       location.hash = "#flashcards";
     } else {
       recall = true; revealed = current.graph.nodes.filter(n => !ids.has(n.id)).map(n => n.id); outline = true;
-      notice = "Recall the hidden topics and their connections, then reveal each answer.";
     }
   }
   async function startBranchSession() {
@@ -463,10 +503,10 @@
     if (!pane.active || dirty || blocked) return;
     window.dispatchEvent(new CustomEvent("kitty-study-focus", {detail}));
   }
-  async function subjectMap(id: number) {
+  async function subjectMap(id: number, title = "") {
     const subject = subjects.find(s => s.id === id);
     if (!subject) return;
-    const title = `${subject.name} · ${template}`;
+    title ||= `${subject.name} · ${template}`;
     newTitle = title; mode = "study";
     await create();
     if (!current || current.title !== title) return;
@@ -495,7 +535,20 @@
       if (pane.active) stage?.querySelector<SVGGElement>(`[data-node="${CSS.escape(root)}"]`)?.focus();
     }
   }
+  /** Q8: the new-map popover's Enter (or its full form's Create map). */
+  async function startMap(text: string) {
+    const title = text.trim();
+    if (!title) return false;
+    newTitle = title;
+    if (newSubject) await subjectMap(Number(newSubject), title); else await createTemplate();
+    if (!current || current.title !== title) return false;
+    creating = false; creatingFull = false; newSubject = "";
+    // The popover hands focus back to its + when it closes; the new root takes it instead.
+    const root = selected;
+    setTimeout(() => { if (pane.active && root) stage?.querySelector<SVGGElement>(`[data-node="${CSS.escape(root)}"]`)?.focus(); });
+  }
   $effect(() => {
+    if (embedded) return;
     pane.setTrail(section, current ? [
       {label: current.title, onclick: () => {if (pane.active) selected = "";}},
       ...(node ? [{label: name(node), onclick: () => {if (pane.active) focusNode(node.id);}}] : []),
@@ -545,18 +598,23 @@
   function remember() {
     history = [...history.slice(-29), snapshot()];
     future = [];
+    touch();
+  }
+  /** Marks a local edit; the autosave picks it up once the map is idle. */
+  function touch() {
     dirty = true;
-    notice = "Unsaved local edits";
+    saveFailed = false;
+    edits += 1;
   }
   function accepted(item: MapItem, restoreDraft = false, keepHistory = false) {
     current = item;
     dirty = false;
     blocked = false;
+    saveFailed = false;
     if (!keepHistory) { history = []; future = []; }
     selected = "";
     selectedEdge = "";
     editing = "";
-    notice = "Saved locally";
     if (restoreDraft) {
       try {
         const raw = localStorage.getItem(draftKey(item.id));
@@ -564,14 +622,14 @@
           const draft = JSON.parse(raw);
           if (draft.snapshot?.graph?.nodes && draft.snapshot?.graph?.edges) {
             Object.assign(item, draft.snapshot);
-            dirty = true;
+            touch();
             blocked = draft.revision !== item.revision;
-            notice = blocked ? "Recovered local edits; the saved map changed. Export or reload to resolve." : "Recovered unsaved map edits — Save map to keep them.";
+            if (blocked) error = "Recovered edits, but the saved map changed elsewhere.";
           }
         }
       } catch { error = "The local map draft could not be restored."; }
     }
-    try { localStorage.setItem(`kitty.schema.last-map.${section}`, String(item.id)); } catch { /* Map selection is optional; SQLite remains authoritative. */ }
+    if (!embedded) try { localStorage.setItem(`kitty.schema.last-map.${section}`, String(item.id)); } catch { /* Map selection is optional; SQLite remains authoritative. */ }
   }
   function failure(e: unknown) {
     error = e instanceof Error ? e.message : String(e);
@@ -585,15 +643,8 @@
     subjects = data.subjects;
   }
   async function open(id: number, force = false) {
-    if (
-      busy ||
-      (!force &&
-        dirty &&
-        !confirm(
-          "Discard unsaved map edits? Export them first to keep a copy.",
-        ))
-    )
-      return;
+    if (busy) return;
+    if (!force && !(await flush()) && !confirm("Discard unsaved map edits? Export them first to keep a copy.")) return;
     if (force && dirty && !confirm("Discard local edits and reload the saved map?")) return;
     if (force) { try { localStorage.removeItem(draftKey(id)); } catch { /* Optional cache. */ } }
     busy = true;
@@ -606,26 +657,11 @@
       busy = false;
     }
   }
-  async function newMap() {
-    if (busy || (dirty && !confirm("Leave this map? Unsaved edits remain in its local draft; use Save map to persist them."))) return;
-    current = null;
-    selected = "";
-    selectedEdge = "";
-    editing = "";
-    dirty = false;
-    blocked = false;
-    error = "";
-    notice = "";
-    newTitle = "";
-    view = "edit";
-    await tick();
-    if (pane.active) container?.querySelector<HTMLInputElement>(`#${CSS.escape(`${pane.id}-new-map-title`)}`)?.focus();
-  }
   async function create() {
     if (
       busy ||
       !newTitle.trim() ||
-      (dirty && !confirm("Discard unsaved map edits?"))
+      !(await flush() || confirm("Discard unsaved map edits?"))
     )
       return;
     busy = true;
@@ -641,32 +677,37 @@
       busy = false;
     }
   }
-  async function save() {
-    finishInline(false);
-    if (!current || !editable || !dirty) return;
-    const selectedId = selected;
-    busy = true;
-    error = "";
-    try {
-      accepted(
-        await api<MapItem>("/schema/save", {
-          id: current.id,
-          revision: current.revision,
-          title: current.title,
-          graph: current.graph,
-          viewport: current.viewport,
-        }), false, true,
-      );
-      try { localStorage.removeItem(draftKey(current.id)); } catch { /* Saved on server. */ }
-      const activeNode = current.graph.nodes.find(n => n.id === selectedId);
-      if (activeNode) choose(activeNode);
-      await refresh();
-    } catch (e) {
-      failure(e);
-      blocked = error.includes("changed in another window");
-    } finally {
-      busy = false;
-    }
+  /** Saves the open map in the background: editing goes on, and an edit made meanwhile keeps it dirty. */
+  function save(): Promise<void> {
+    if (saving) return saving.then(() => (dirty && !blocked ? save() : undefined));
+    if (!current || !dirty || blocked || busy) return Promise.resolve();
+    clearTimeout(autosaveTimer);
+    const item = current, sent = edits;
+    const body = {id: item.id, revision: item.revision, title: item.title, graph: clone(item.graph), viewport: clone(item.viewport)};
+    const run = (async () => {
+      try {
+        const result = await api<MapItem>("/schema/save", body);
+        if (current !== item) return;
+        item.revision = result.revision;
+        item.can_undo = result.can_undo;
+        item.can_redo = result.can_redo;
+        item.paired_history = result.paired_history;
+        item.live = result.live;
+        if (edits === sent) {
+          dirty = false;
+          try { localStorage.removeItem(draftKey(item.id)); } catch { /* Saved on server. */ }
+        }
+        if (!embedded) void refresh().catch(failure);
+      } catch (e) {
+        failure(e);
+        saveFailed = true;
+        blocked = error.includes("changed in another window");
+      } finally {
+        saving = null;
+      }
+    })();
+    saving = run;
+    return run;
   }
   async function removeMap() {
     if (
@@ -704,12 +745,13 @@
       future = [...future, snapshot()];
       history = history.slice(0, -1);
       Object.assign(current, clone(previous));
-      dirty = true;
+      touch();
       selected = "";
       multi = []; editing = ""; labelling = "";
       selectedEdge = "";
       return;
     }
+    if (saving) await saving;
     if (dirty || !current.can_undo) return;
     busy = true;
     error = "";
@@ -733,6 +775,7 @@
   async function redo() {
     if (!current || !editable) return;
     if (!future.length) {
+      if (saving) await saving;
       if (!current.can_redo || dirty) return;
       busy = true; error = "";
       try {
@@ -747,13 +790,10 @@
     future = future.slice(0, -1);
     editing = ""; labelling = ""; selected = ""; multi = []; selectedEdge = "";
     Object.assign(current, clone(next));
-    dirty = true;
+    touch();
   }
-  let mergeMap = $state("");
   async function transferBranch(nodeId: string, targetId?: number) {
-    if (!current || !editable) return;
-    if (dirty) await save();
-    if (dirty || blocked || !current) return;
+    if (!current || !editable || !(await flush()) || !current) return;
     busy = true; error = "";
     try {
       const target = maps.find(m => m.id === targetId);
@@ -762,7 +802,6 @@
         ...(target ? {target_id: target.id, target_revision: target.revision} : {}),
       }));
       frame();
-      notice = target ? "Root merged into map" : "Branch split into linked map";
       await refresh();
     } catch (e) { failure(e); }
     finally { busy = false; }
@@ -832,8 +871,6 @@
     current.graph.nodes = current.graph.nodes.filter((n) => !gone.has(n.id));
     current.graph.edges = current.graph.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to));
     if (current.graph.strokes) current.graph.strokes = current.graph.strokes.filter((s) => !gone.has(s.node));
-    if (gone.has(edgeFrom)) edgeFrom = "";
-    if (gone.has(edgeTo)) edgeTo = "";
     selected = "";
     multi = [];
   }
@@ -863,9 +900,6 @@
     const id = crypto.randomUUID();
     current.graph.edges.push({id, from, to, label: text, kind: "cross"});
     return id;
-  }
-  function connect() {
-    link(edgeFrom, edgeTo, edgeLabel);
   }
   /** Finishes "Connect to…" on `target`, then asks for the connection's label in place. */
   async function linkTo(target: string) {
@@ -933,6 +967,12 @@
     if (pane.active && current && editable && !gesture && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
       e.preventDefault(); e.stopPropagation();
       if (e.shiftKey) redo(); else void undo();
+      return;
+    }
+    if (pane.active && current && view === "edit" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      finishInline(false);
+      void save();
       return;
     }
     if (pane.active && linking && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); linking = ""; return; }
@@ -1039,7 +1079,7 @@
   function finishInk(drawn: InkPoint[]) {
     if (!current) return;
     const owner = shownById.get(nearestBox(visibleNodes.map(n => ({id: n.id, x: n.x, y: n.y, ...box(n)})), drawn) ?? "");
-    if (!owner) { notice = "Add a topic first: ink sticks to the nearest topic."; return; }
+    if (!owner) { error = "Add a topic first: ink sticks to the nearest topic."; return; }
     if ((current.graph.strokes?.length ?? 0) >= 400) { error = "A map holds at most 400 ink strokes; erase some first."; return; }
     // Ramer–Douglas–Peucker within about a screen pixel, coarser only if the stroke is still too long.
     let tolerance = 0.6 / current.viewport.zoom, points = simplify(drawn, tolerance);
@@ -1166,7 +1206,6 @@
     remember();
     detachBranch(node);
     relayout(false);
-    notice = "Branch detached · save to keep";
   }
   /** Q65 C: a freely placed node rejoins the automatic layout. */
   function resetPosition() {
@@ -1222,8 +1261,7 @@
         const parent = target ? current.graph.nodes.find(n => n.id === target) : undefined;
         if (parent) parent.collapsed = false;
         relayout(false);
-        dirty = true;
-        notice = detaching ? "Branch detached · save to keep" : "Unsaved local edits";
+        touch();
       } else Object.assign(current, clone(gesture.before)); // No target: the branch snaps back into the layout.
     } else if (gesture.node && !gesture.moved) {
       if (multi.length) multi = []; // A plain click picks just that topic.
@@ -1232,8 +1270,7 @@
     } else if (gesture.moved) {
       history = [...history.slice(-29), gesture.before];
       future = [];
-      dirty = true;
-      notice = "Unsaved local edits";
+      touch();
     } else if (!gesture.box && doubleTap("stage", e)) quickAdd("");
     gesture = null;
     dragging = ""; dropTarget = ""; detaching = false; placing = false; marquee = null;
@@ -1560,7 +1597,6 @@
       n.y = clampPosition(point.y);
     }
     frame();
-    notice = "Layout updated · save to keep";
   }
   function degreeOf(id: string) {
     return (
@@ -1798,7 +1834,7 @@
         }),
       );
       jobIds = [];
-      showJobs = false;
+      drawer = "";
       await refresh();
     } catch (e) {
       failure(e);
@@ -1840,7 +1876,6 @@
           node_ids: nodeIds,
         }),
       );
-      notice = "Linked mentions saved";
       autoPicked = [];
       await refresh();
       await loadAutoLinks();
@@ -1863,23 +1898,65 @@
   }
   $effect(() => {
     const id = current?.id ?? 0;
-    if (showLinks && id && autoRequestedFor !== id) void loadAutoLinks();
+    if (drawer === "links" && id && autoRequestedFor !== id) void loadAutoLinks();
   });
   $effect(() => {
     if (!current || !dirty) return;
     const value = {revision: current.revision, snapshot: snapshot()};
-    try {
-      localStorage.setItem(draftKey(current.id), JSON.stringify(value));
-      if (!blocked) notice = "Draft backed up on this device · Save map to persist";
-    }
-    catch { error = "Local draft backup is unavailable. Save map before leaving."; }
+    try { localStorage.setItem(draftKey(current.id), JSON.stringify(value)); }
+    catch { error = "Local draft backup is unavailable; keep this tab open until saved."; }
   });
+  /** Embedded in a Notes page: open the page's own map, if it has one. */
+  async function loadPageMap() {
+    const id = pageId;
+    pageChecked = false;
+    current = null;
+    dirty = false;
+    blocked = false;
+    history = [];
+    future = [];
+    if (!id) { pageChecked = true; return; }
+    try {
+      const { map_id } = await api<{ map_id: number | null }>(`/notes/pages/${id}/map`);
+      if (id !== pageId) return;
+      if (map_id) await open(map_id, true);
+    } catch (e) { failure(e); }
+    finally { if (id === pageId) pageChecked = true; }
+  }
+  async function createPageMap() {
+    if (!pageId || busy) return;
+    busy = true;
+    error = "";
+    let id = 0;
+    try { ({ map_id: id } = await api<{ map_id: number }>(`/notes/pages/${pageId}/map`, {})); }
+    catch (e) { failure(e); }
+    finally { busy = false; }
+    if (!id) return;
+    await open(id, true);
+    const root = current?.graph.nodes[0];
+    if (root) { choose(root); focusOn(root.id); }
+  }
+  /** Ctrl K hands the Mind maps view a map to open (or asks for a new one) through the session. */
+  function handoff() {
+    if (embedded || section !== "schema") return false;
+    let wanted = 0, fresh = false;
+    try {
+      wanted = Number(sessionStorage.getItem("kitty.schema.open-map"));
+      fresh = sessionStorage.getItem("kitty.schema.new-map") === "1";
+      sessionStorage.removeItem("kitty.schema.open-map");
+      sessionStorage.removeItem("kitty.schema.new-map");
+    } catch { /* Nothing handed over. */ }
+    if (wanted && maps.some(m => m.id === wanted)) void open(wanted);
+    else if (fresh) { view = "edit"; creating = true; }
+    return Boolean(wanted || fresh);
+  }
   onMount(() => {
     const fonts = getComputedStyle(document.documentElement);
     uiFont = fonts.getPropertyValue("--font-ui").trim() || uiFont;
     void document.fonts?.ready.then(() => { pillWidths.clear(); fontsReady += 1; });
     void refresh()
       .then(() => {
+        if (embedded || handoff()) return;
         let lastMap = 0;
         try { lastMap = Number(localStorage.getItem(`kitty.schema.last-map.${section}`)); } catch { /* Use the first map if storage is unavailable. */ }
         const first = maps.find(m => m.id === lastMap) ?? maps.find(m => m.mode === "study") ?? maps[0];
@@ -1893,7 +1970,36 @@
       }
     };
     window.addEventListener("beforeunload", guard);
-    return () => { window.removeEventListener("beforeunload", guard); pane.clearTrail(section); };
+    return () => {
+      window.removeEventListener("beforeunload", guard);
+      clearTimeout(autosaveTimer);
+      if (dirty && !blocked) void save();
+      (onstatus ?? pane.setStatus)(null);
+      if (!embedded) pane.clearTrail(section);
+    };
+  });
+  $effect(() => {
+    if (!embedded) return;
+    void pageId;
+    untrack(() => void loadPageMap());
+  });
+  // Autosave: once the map is idle (no drag, stroke or label being typed), shortly after the last edit.
+  $effect(() => {
+    void edits;
+    if (!current || !dirty || blocked || saveFailed || busy || saving || dragging || editing || labelling || inking || lassoLoop) return;
+    autosaveTimer = setTimeout(() => void save(), 600);
+    return () => clearTimeout(autosaveTimer);
+  });
+  /** Q3: the save state is the tab's dot (or the host's, when it merges its own). */
+  const saveState = $derived<SaveStatus | null>(
+    !current ? null
+      : blocked || saveFailed ? { state: "failed", detail: error || "Couldn't save the map" }
+      : dirty || saving ? { state: "unsaved", detail: "Unsaved changes · Ctrl S saves" }
+      : { state: "saved" },
+  );
+  $effect(() => {
+    const state = saveState;
+    untrack(() => (onstatus ?? pane.setStatus)(state));
   });
   let seenRevision: number | undefined;
   $effect(() => {
@@ -1901,1094 +2007,759 @@
     else if (revision !== seenRevision) {
       seenRevision = revision;
       void refresh().catch(failure);
-      if (current && !dirty && !busy) void open(current.id, true);
+      if (current && !dirty && !busy && !saving) void open(current.id, true);
       if (view === "network") void loadNetwork();
     }
   });
+  // Chrome (Q18 D): what the top bar, the pill, the topic bar and their menus offer.
+  const otherMaps = $derived(maps.filter(m => m.id !== current?.id));
+  const subjectName = $derived.by(() => {
+    const n = current?.graph.nodes.find(item => item.source?.kind === "subject");
+    return n ? name(n) : "";
+  });
+  const TEMPLATES = ["Blank", "Lecture", "Chapter", "Exam review"].map(value => ({value, label: value}));
+  const MODES = [{value: "study", label: "Study"}, {value: "general", label: "General"}, {value: "jobs", label: "Jobs"}];
+  const KINDS: Record<string, string> = {topic: "Topic", class: "Study class", idea: "Idea", skill: "Skill or goal", company: "Company", job: "Job note", task: "Task"};
+  const LAYOUTS = [["tree", "Tree"], ["radial", "Radial"], ["force", "Force"]] as const;
+  let switching = $state(false), layoutOpen = $state(false), styleOpen = $state(false), draftTitle = $state("");
+  let ctxWidth = $state(0);
+  const draggedRoot = $derived.by(() => {
+    const n = dragging ? current?.graph.nodes.find(item => item.id === dragging) : undefined;
+    return n && isRoot(n) ? n : undefined;
+  });
+  /** Starts "Connect to…" from the selected topic: the next topic clicked (or Enter on) is the other end. */
+  function startConnect() {
+    if (!node || !editable) return;
+    inkMode = false;
+    linking = node.id;
+    focusOn(node.id);
+  }
+  const mapActions = $derived<OverflowItem[]>(current ? [
+    {label: dirty ? "Export local edits" : "Export JSON", icon: "download", onselect: download},
+    {label: "Import map JSON…", onselect: () => importInput?.click(), disabled: busy},
+    {label: "Reload saved map", icon: "refresh", onselect: () => current && void open(current.id, true), disabled: busy},
+    {separator: true},
+    {label: autoNew ? `Linked mentions · ${autoNew} new` : "Linked mentions…", onselect: () => drawer = "links"},
+    {label: "Ask AI about this map…", icon: "ai", onselect: () => drawer = "ai"},
+    ...(current.mode === "jobs" && canImportJobs ? [{label: "Import tracked jobs…", icon: "jobs", onselect: () => { drawer = "jobs"; void findJobs(); }}] : []),
+    {separator: true},
+    {label: "Delete map…", danger: true, onselect: removeMap, disabled: !editable},
+  ] : [{label: "Import map JSON…", onselect: () => importInput?.click(), disabled: busy}]);
+  const topicActions = $derived<OverflowItem[]>(node && current ? [
+    {label: "Connect to…", icon: "tool-connector", onselect: startConnect, disabled: !editable},
+    {label: node.collapsed ? "Expand branch" : "Collapse branch", kbd: "Space", onselect: () => node && collapse(node)},
+    {label: "Reset position", onselect: resetPosition, disabled: !editable || !node.free},
+    {separator: true},
+    {label: "Split branch into map", onselect: () => node && void transferBranch(node.id), disabled: !editable},
+    ...(isRoot(node) ? otherMaps.slice(0, 8).map((m): OverflowItem => ({label: `Merge into “${m.title}”`, onselect: () => node && void transferBranch(node.id, m.id), disabled: !editable})) : []),
+    {separator: true},
+    {label: "Make flashcards", icon: "flashcards", onselect: () => void studyBranch("flashcards")},
+    {label: "Quiz this branch", icon: "questions", onselect: () => void studyBranch("quiz")},
+    {label: "Start session", icon: "study", onselect: () => void startBranchSession(), disabled: !editable},
+    ...(node.source?.kind === "note_page" || node.map_id ? [{label: node.map_id ? "Open linked map" : "Open note page", icon: "external", onselect: () => node && openCard(node)}] : []),
+    {separator: true},
+    {label: "Details…", onselect: () => details = true},
+  ] : []);
 </script>
 
 <svelte:window onkeydowncapture={dragKey} onpointerdowncapture={(e) => { if (!(e.target as Element).closest?.("svg.stage, .map-outline")) lastTap.key = ""; }} />
-<section class="schema" aria-label="Mental schema maps" bind:this={container}>
-  {#snippet mapControls()}
-    <div class="toolbar">
-      <label
-        >Map<select
-          value={current?.id ?? ""}
-          disabled={busy}
-          onchange={(e) => {
-            if (e.currentTarget.value) void open(Number(e.currentTarget.value));
-          }}
-          ><option value="">Select map</option>{#each maps as m}<option
-              value={m.id}>{m.title}</option
-            >{/each}</select
-        ></label
-      >
-      {#if current}<Button intent="primary" size="sm" onclick={newMap} disabled={busy}>New map</Button>{/if}
-      {#if !current}
-      <form class="toolbar map-create" onsubmit={e => {e.preventDefault(); void createTemplate();}}>
-        <label>New map title<input id={`${pane.id}-new-map-title`} bind:value={newTitle} maxlength="200" placeholder="What are you learning?" required disabled={busy} /></label>
-        <Button type="submit" intent="primary" disabled={busy || !newTitle.trim()}>Create map</Button>
-        <details><summary>Advanced options</summary>
-          <label>Map category<select bind:value={mode} disabled={busy}><option value="study">Study</option><option value="general">General</option><option value="jobs">Jobs</option></select></label>
-          <label>Starting template<select bind:value={template}><option>Blank</option><option>Lecture</option><option>Chapter</option><option>Exam review</option></select></label>
-          <label class="file">Import map JSON<input type="file" accept="application/json,.json" onchange={importFile} disabled={busy} /></label>
-        </details>
-      </form>
-      {/if}
-    </div>
-    {#if subjects.length}<details><summary>Start from a subject</summary><div class="toolbar">
-      {#each subjects as subject}<Button onclick={() => subjectMap(subject.id)} disabled={busy}>{subject.name} +</Button>{/each}
-    </div></details>{/if}
+<section class="schema" class:surface={!embedded} class:embedded aria-label="Mental schema maps" aria-busy={busy} data-save-state={saveState?.state ?? "none"} bind:this={container} use:fitHeight={420}>
+  {#snippet newMapChips()}
+    <Select label="Starting template" kind="segments" bind:value={template} options={TEMPLATES} />
+    <Select label="Map category" kind="segments" bind:value={mode} options={MODES} />
   {/snippet}
-  {#if embedded}
-    {@render mapControls()}
-  {:else}
-    <Panel title="Mind maps" readout="">{@render mapControls()}</Panel>
+  {#snippet newMap(primary: boolean)}
+    <QuickAdd label="New map" placeholder="What are you learning?" bind:open={creating} bind:value={draftTitle} placement="bottom-start"
+      chips={newMapChips} onsave={startMap} onmore={(text) => { draftTitle = text; creatingFull = true; }}>
+      {#snippet trigger(props)}
+        {#if primary}<button type="button" class="pill primary page-action" {...props}><Icon name="plus" size={14} />New map</button>
+        {:else}<button type="button" class="icon-button" aria-label="New map" title="New map" disabled={busy} {...props}><Icon name="plus" size={15} /></button>{/if}
+      {/snippet}
+    </QuickAdd>
+  {/snippet}
+  {#snippet swatches(size: "sm" | "md")}
+    <span class="swatches {size}" role="group" aria-label="Colours">
+      {#each PALETTE as slot, index (slot)}<button class="swatch" style:--dot={`var(--${slot})`} aria-label={`Colour ${index + 1}`} aria-pressed={!!node && node.color === slot}
+        title={`Colour ${index + 1}`} disabled={!editable || !picked.size} onclick={() => paint(slot)}></button>{/each}
+      <button class="swatch auto" aria-label="Automatic colour" aria-pressed={!!node && !node.color} title="Automatic branch colour" disabled={!editable || !picked.size} onclick={() => paint(undefined)}></button>
+    </span>
+  {/snippet}
+
+  {#if !embedded}
+    <header class="top">
+      <Popover bind:open={switching} label="Maps" placement="bottom-start" class="map-switcher">
+        {#snippet trigger(props)}
+          <button type="button" class="switcher" aria-label="Switch map" title="Switch map" disabled={busy} {...props}><Icon name="schema" size={15} /><span>Maps</span><span class="chev" aria-hidden="true">▾</span></button>
+        {/snippet}
+        <div class="switch-list">
+          {#each maps as m (m.id)}
+            <button type="button" class="switch-item" aria-current={m.id === current?.id && view !== "network" ? "true" : undefined}
+              onclick={() => { switching = false; view = "edit"; if (m.id !== current?.id) void open(m.id); }}>{m.title}<small>{m.mode}</small></button>
+          {:else}<p class="hint">No maps yet.</p>{/each}
+        </div>
+        {#if maps.length > 1}
+          <hr class="rule" />
+          <button type="button" class="switch-item" aria-current={view === "network" ? "true" : undefined} onclick={() => { switching = false; view = "network"; }}>All maps, merged</button>
+        {/if}
+      </Popover>
+      {#if current}{@render newMap(false)}{/if}
+      {#if current && view !== "network"}
+        <span class="slash" aria-hidden="true">/</span>
+        <input class="title" aria-label="Map title" value={current.title} maxlength="200" disabled={!editable}
+          oninput={(e) => { remember(); current!.title = e.currentTarget.value; }} />
+        {#if subjectName}<span class="subject" title="Linked study class"><i class="dot" aria-hidden="true"></i>{subjectName}</span>{/if}
+      {/if}
+      <span class="grow"></span>
+      {#if current && view === "edit"}
+        <Popover bind:open={layoutOpen} label="Layout" placement="bottom-end" role="menu" class="layout-menu">
+          {#snippet trigger(props)}
+            <button type="button" class="bar-btn" disabled={!editable} title="Lay the map out again" {...props}><Icon name="tool-connector" size={14} />Layout<span class="chev" aria-hidden="true">▾</span></button>
+          {/snippet}
+          {#each LAYOUTS as [id, text] (id)}<button type="button" role="menuitem" class="menu-item" onclick={() => { layoutOpen = false; arrange(id); }}>{text}</button>{/each}
+        </Popover>
+      {/if}
+      {#if current && view !== "network"}
+        <span class="vr" aria-hidden="true"></span>
+        <Select label="View" kind="segments" value={view} options={[{value: "edit", label: "Map"}, {value: "map3d", label: "Graph"}]} onchange={(value) => view = value as View3D} />
+      {/if}
+      <OverflowMenu label="More map actions" items={mapActions} />
+    </header>
   {/if}
-  {#if error}<div role="alert" class="error">{error}</div>{/if}
-  <div class="toolbar views" role="group" aria-label="Schema view">
-    {#each [["edit", "Mind map"], ["map3d", "Graph"], ["network", "All maps"]] as [id, text]}<Button
-        intent={view === id ? "primary" : "neutral"}
-        aria-pressed={view === id}
-        disabled={id === "map3d" && !current}
-        onclick={() => {
-          view = id as View3D;
-        }}>{text}</Button
-      >{/each}
-  </div>
-  {#if view === "network"}
-    <div class="workspace network-workspace">
-      <aside>
-        <Panel title="[01] Network filters">
-          <label
-            >Mode<select bind:value={netMode} disabled={netBusy}
-              ><option value="">All modes</option><option value="study"
-                >Study</option
-              ><option value="general">General</option><option value="jobs"
-                >Jobs</option
-              ></select
-            ></label
-          >
-          <fieldset class="map-picks">
-            <legend>Maps ({netMaps.length ? netMaps.length : "all"})</legend>
-            <Button
-              onclick={() => {
-                netMaps = [];
-              }}
-              disabled={!netMaps.length}>Use all maps</Button
-            >
-            {#each netChoices as m (m.id)}<label class="check"
-                ><input
-                  type="checkbox"
-                  checked={netMaps.includes(m.id)}
-                  onchange={(e) => {
-                    netMaps = e.currentTarget.checked
-                      ? [...netMaps, m.id]
-                      : netMaps.filter((id) => id !== m.id);
-                  }}
-                />{m.title} <small>{m.mode}</small></label
-              >{:else}<p class="hint">No maps in this mode yet.</p>{/each}
-          </fieldset>
-          <label class="check"
-            ><input type="checkbox" bind:checked={mergeLabels} />Merge unlinked
-            nodes with the same kind + label</label
-          >
-          <p class="hint">
-            Linked classes, jobs and companies always unify across maps. Label
-            merge is off by default so different ideas that share a name stay
-            separate.
-          </p>
-          <label
-            >Color by<select bind:value={colorBy}
-              ><option value="cluster">Cluster (connected group)</option><option
-                value="kind">Node kind</option
-              ><option value="map">Map (shared nodes highlighted)</option
-              ></select
-            ></label
-          >
-          <Button onclick={() => loadNetwork()} disabled={netBusy}
-            >Refresh from saved maps</Button
-          >
-          <p class="hint" role="status">
-            {netBusy
-              ? "Merging maps…"
-              : network
-                ? `${network.maps.length} maps → ${network.nodes.length} nodes, ${network.edges.length} connections, ${network.clusters.length} clusters; ${network.unified} nodes unified across maps or labels.`
-                : ""}{dirty
-              ? " Unsaved edits in the open map are not included."
-              : ""}
-          </p>
-          {#if network?.clusters.length}<ol class="clusters">
-              {#each network.clusters.slice(0, 12) as c (c.id)}<li>
-                  Cluster {c.id + 1}: {c.size} node{c.size === 1 ? "" : "s"},
-                  hub “{c.label}”
-                </li>{/each}
-            </ol>{/if}
-        </Panel>
+
+  {#if error}
+    <div role="alert" class="map-error">
+      <span>{error}</span>
+      {#if blocked && current}
+        <button type="button" class="link" onclick={download}>Export edits</button>
+        <button type="button" class="link" onclick={() => current && void open(current.id, true)}>Reload saved</button>
+      {:else if saveFailed}<button type="button" class="link" onclick={() => { saveFailed = false; error = ""; void save(); }}>Retry</button>{/if}
+      <button type="button" class="icon-button" aria-label="Dismiss" onclick={() => error = ""}><Icon name="close" size={13} /></button>
+    </div>
+  {/if}
+  <input type="file" accept="application/json,.json" hidden bind:this={importInput} onchange={importFile} />
+
+  {#if view === "network" && !embedded}
+    <div class="views network-view">
+      <aside class="side">
+        <span class="eyebrow">Filters</span>
+        <div class="field"><span>Category</span><Select label="Category" kind="list" bind:value={netMode} disabled={netBusy} options={[{value: "", label: "All categories"}, ...MODES]} /></div>
+        <fieldset class="map-picks">
+          <legend>Maps</legend>
+          <button type="button" class="link" onclick={() => netMaps = []} disabled={!netMaps.length}>Use all maps</button>
+          {#each netChoices as m (m.id)}<label class="check"><input type="checkbox" checked={netMaps.includes(m.id)}
+              onchange={(e) => { netMaps = e.currentTarget.checked ? [...netMaps, m.id] : netMaps.filter((id) => id !== m.id); }} />{m.title}</label>
+          {:else}<p class="hint">No maps in this category yet.</p>{/each}
+        </fieldset>
+        <label class="check" title="Linked classes, jobs and companies always unify across maps; this also joins unlinked topics with the same kind and label."><input type="checkbox" bind:checked={mergeLabels} />Merge same-name topics</label>
+        <div class="field"><span>Colour by</span><Select label="Colour by" kind="segments" value={colorBy} onchange={(value) => colorBy = value as typeof colorBy}
+          options={[{value: "cluster", label: "Cluster"}, {value: "kind", label: "Kind"}, {value: "map", label: "Map"}]} /></div>
+        <Button size="sm" onclick={() => loadNetwork()} disabled={netBusy}>Refresh</Button>
+        {#if network}<p class="hint">{network.maps.length} maps · {network.nodes.length} topics · {network.clusters.length} clusters{dirty ? " · open map's unsaved edits not included" : ""}</p>{/if}
+        {#if network?.clusters.length}<ol class="clusters">
+            {#each network.clusters.slice(0, 12) as c (c.id)}<li>Cluster {c.id + 1}: {c.size} topic{c.size === 1 ? "" : "s"}, hub “{c.label}”</li>{/each}
+          </ol>{/if}
       </aside>
       <main class="graph-pane">
-        {#if netError}<div role="alert" class="error">{netError}</div>{/if}
+        {#if netError}<div role="alert" class="map-error">{netError}</div>{/if}
         {#if pane.active}
-        <SchemaNetwork
-          title="Merged schema network"
-          nodes={netGraph.nodes}
-          links={netGraph.links}
-          bind:layout={netLayout}
-          selected={netSelected || null}
-          onSelect={(id) => {
-            netSelected = id;
-          }}
-        />
+          <SchemaNetwork title="Merged schema network" nodes={netGraph.nodes} links={netGraph.links} bind:layout={netLayout}
+            selected={netSelected || null} onSelect={(id) => { netSelected = id; }} />
         {/if}
       </main>
-      <aside>
-        <Panel title="[03] Network inspector">
-          {#if netNode}
-            {@const links = neighbors(netNode.id)}
-            <h2>{netNode.label}</h2>
-            <Badge label={netNode.kind} />
-            <p>
-              Cluster {netNode.cluster + 1} · {netNode.degree} connection{netNode.degree ===
-              1
-                ? ""
-                : "s"}
-            </p>
-            {#if netNode.source}<p>
-                Linked {netNode.source.kind} #{netNode.source.id}
-              </p>
-              {#if netNode.live?.missing}<p class="error">
-                  Source deleted. Unlink the node in each map below.
-                </p>{/if}
-              {#if netNode.kind === "job" && !netNode.live?.missing}<p>
-                  Company: {netNode.live?.company ?? "Unavailable"}
-                </p>
-                <p>
-                  Application: {netNode.live?.status ??
-                    "No application recorded"}
-                </p>
-                <p>
-                  Queue: {netNode.live?.queue_state ?? "Unavailable"}{netNode
-                    .live?.closed_at
-                    ? " / closed"
-                    : ""}
-                </p>{/if}{/if}
-            {#if safeUrl(netNode.url)}<a
-                href={safeUrl(netNode.url)}
-                target="_blank"
-                rel="noopener noreferrer">Open safe source ↗</a
-              >{/if}
-            <h3>Appears in</h3>
-            <ul class="members">
-              {#each netNode.members as m (`${m.map_id}:${m.node_id}`)}<li>
-                  <strong>{mapTitle(m.map_id)}</strong>
-                  <small>as “{m.label}”</small>
-                  {#if m.notes}<p class="notes">{m.notes}</p>{/if}
-                  <Button
-                    onclick={() => editInMap(m.map_id, m.node_id)}
-                    disabled={busy}>Edit in 2D editor</Button
-                  >
-                </li>{/each}
-            </ul>
-            <h3>Connections</h3>
-            <ul class="members">
-              {#each links.out as e (e.id)}<li>
-                  → {e.label || "(unlabeled)"} → {netLabel(e.to)}
-                  <small>×{e.weight} in {e.maps.map(mapTitle).join(", ")}</small
-                  >
-                </li>{/each}
-              {#each links.in as e (e.id)}<li>
-                  ← {e.label || "(unlabeled)"} ← {netLabel(e.from)}
-                  <small>×{e.weight} in {e.maps.map(mapTitle).join(", ")}</small
-                  >
-                </li>{/each}
-              {#if !links.out.length && !links.in.length}<li>
-                  No connections.
-                </li>{/if}
-            </ul>
-          {:else}<p>
-              Select a node in the network or the adjacency table to see
-              which maps it appears in, its live source status, and to jump to
-              editing it.
-            </p>{/if}
-        </Panel>
+      <aside class="side">
+        {#if netNode}
+          {@const links = neighbors(netNode.id)}
+          <h2>{netNode.label}</h2>
+          <Badge label={netNode.kind} />
+          <p class="hint">Cluster {netNode.cluster + 1} · {netNode.degree} connection{netNode.degree === 1 ? "" : "s"}</p>
+          {#if netNode.source}
+            {#if netNode.live?.missing}<p class="hint warn">Source deleted; unlink it in each map below.</p>{/if}
+            {#if netNode.kind === "job" && !netNode.live?.missing}<p class="hint">{netNode.live?.company ?? "Unavailable"} · {netNode.live?.status ?? "No application"} · {netNode.live?.queue_state ?? "Unavailable"}{netNode.live?.closed_at ? " · closed" : ""}</p>{/if}
+          {/if}
+          {#if safeUrl(netNode.url)}<a href={safeUrl(netNode.url)} target="_blank" rel="noopener noreferrer">Open source ↗</a>{/if}
+          <span class="eyebrow">Appears in</span>
+          <ul class="members">
+            {#each netNode.members as m (`${m.map_id}:${m.node_id}`)}<li>
+                <strong>{mapTitle(m.map_id)}</strong> <small>as “{m.label}”</small>
+                {#if m.notes}<p class="notes">{m.notes}</p>{/if}
+                <Button size="sm" onclick={() => editInMap(m.map_id, m.node_id)} disabled={busy}>Edit in map</Button>
+              </li>{/each}
+          </ul>
+          <span class="eyebrow">Connections</span>
+          <ul class="members">
+            {#each links.out as e (e.id)}<li>→ {e.label || "(unlabeled)"} → {netLabel(e.to)} <small>×{e.weight} in {e.maps.map(mapTitle).join(", ")}</small></li>{/each}
+            {#each links.in as e (e.id)}<li>← {e.label || "(unlabeled)"} ← {netLabel(e.from)} <small>×{e.weight} in {e.maps.map(mapTitle).join(", ")}</small></li>{/each}
+            {#if !links.out.length && !links.in.length}<li class="hint">No connections.</li>{/if}
+          </ul>
+        {:else}<p class="hint">Select a topic to see where it appears.</p>{/if}
+      </aside>
+    </div>
+  {:else if current && view === "map3d"}
+    <div class="views graph-view">
+      <main class="graph-pane">
+        {#if pane.active}
+          <SchemaNetwork title={`Map / ${current.title}`} nodes={mapGraph.nodes} links={mapGraph.links} bind:layout={mapLayout}
+            selected={selected || null} onSelect={(id) => { const n = current?.graph.nodes.find((n) => n.id === id); if (n) choose(n); }} />
+        {/if}
+      </main>
+      <aside class="side">
+        {#if node}
+          <h2>{name(node)}</h2>
+          <Badge label={node.kind} />
+          <p class="hint">{degreeOf(node.id)} connections in this map</p>
+          {#if node.source && current.live[node.id]?.missing}<p class="hint warn">Source deleted; unlink it in the map.</p>{/if}
+          {#if node.notes}<p class="notes">{node.notes}</p>{/if}
+          {#if safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)}<a href={safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)} target="_blank" rel="noopener noreferrer">Open source ↗</a>{/if}
+          <span class="eyebrow">Connections</span>
+          <ul class="members">
+            {#each current.graph.edges.filter((e) => e.from === node.id || e.to === node.id) as e (e.id)}
+              {@const other = current.graph.nodes.find((n) => n.id === (e.from === node.id ? e.to : e.from))!}
+              <li>{e.from === node.id ? `→ ${e.label || "(unlabeled)"} → ${e.to === node.id ? "itself" : name(other)}` : `← ${e.label || "(unlabeled)"} ← ${name(other)}`}</li>
+            {:else}<li class="hint">No connections.</li>{/each}
+          </ul>
+          <Button size="sm" onclick={() => editInMap(current!.id, node.id)}>Edit in map</Button>
+        {:else}<p class="hint">Select a topic in the graph.</p>{/if}
       </aside>
     </div>
   {:else if current}
-    <div class="toolbar mapbar">
-      <label
-        >Map title<input
-          value={current.title}
-          maxlength="200"
-          disabled={!editable}
-          oninput={(e) => {
-            remember();
-            current!.title = e.currentTarget.value;
-          }}
-        /></label
-      >
-      <Button intent="primary" onclick={save} disabled={!editable || !dirty}
-        >{dirty ? "Save map · unsaved changes" : "Map saved"}</Button
-      >
-      <Button
-        onclick={undo}
-        disabled={!editable ||
-          (!history.length && (!current.can_undo || dirty))}
-        >Undo {history.length ? "local" : "last save"}</Button
-      >
-      <Button onclick={redo} disabled={!editable || (!future.length && (!current.can_redo || dirty))}>Redo</Button>
-      <details><summary>Advanced map actions</summary><div class="toolbar">
-        <Button onclick={download}>Export {dirty ? "local edits" : "JSON"}</Button>
-        <Button onclick={() => current && open(current.id, true)} disabled={busy}>Reload saved map</Button>
-        <Button aria-pressed={showLinks} onclick={() => showLinks = !showLinks}>Linked mentions{autoNew ? ` / ${autoNew} new` : ""}</Button>
-        <Button onclick={removeMap} disabled={!editable}>Delete map…</Button>
-      </div></details>
-      {#if maps.some(m => m.id !== current!.id)}
-        <div class="toolbar" role="group" aria-label="Merge map drop targets">
-          <span class="hint">Drop a root into:</span>
-          {#each maps.filter(m => m.id !== current!.id) as m}
-            <button type="button" data-merge-map={m.id} disabled={!editable}
-              onclick={() => {if (node && isRoot(node)) void transferBranch(node.id, m.id);}}
-              title="Drop a map root here, or select a root and click to merge">{m.title}</button>
+    <div class="canvas" bind:clientWidth={stageWidth}>
+      {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : placing ? "Placing freely · release to leave it here" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · Alt places it freely · D detaches the branch"}</p>
+      {:else if linking}<p class="drag-hint" role="status">Click a topic to connect “{name(current.graph.nodes.find(n => n.id === linking)!)}” to it · Esc cancels</p>
+      {:else if inkMode}<p class="drag-hint" role="status">Ink sticks to the nearest topic · flip the pen to erase</p>{/if}
+      {#if draggedRoot && otherMaps.length}
+        <div class="merge-targets" role="group" aria-label="Merge map drop targets">
+          <span>Drop into</span>
+          {#each otherMaps.slice(0, 8) as m (m.id)}<button type="button" data-merge-map={m.id}>{m.title}</button>{/each}
+        </div>
+      {/if}
+      {#if recall}
+        <div class="recall-bar" role="toolbar" aria-label="Quiz">
+          <span>Quiz · recall the hidden topics</span>
+          <button type="button" class="cb" disabled={!node} onclick={() => revealed = [...revealed, selected]}>Reveal selected</button>
+          <button type="button" class="cb" onclick={() => revealed = current!.graph.nodes.map(n => n.id)}>Reveal all</button>
+          <button type="button" class="cb" onclick={() => { recall = false; revealed = []; }}>End quiz</button>
+        </div>
+      {/if}
+      {#if outline}
+        <div class="map-outline" role="tree" aria-label="Mind map outline">
+          {#each visibleNodes as n (n.id)}
+            <div style={`padding-left: ${depth(n.id) * 16}px`} role="treeitem" aria-level={depth(n.id) + 1} aria-selected={selected === n.id}>
+              <button type="button" class="fold-toggle" onclick={() => collapse(n)} title="Collapse branch">{n.collapsed ? "▸" : "▾"}</button>
+              <button type="button" class="outline-item" class:active={selected === n.id} oncontextmenu={event => deleteAtPointer(event, n)} onkeydown={e => nodeKey(e, n)} onclick={() => choose(n)} onpointerup={e => { if (doubleTap(`outline:${n.id}`, e)) openCard(n); }}>{hiddenLabel(n) ? "?" : name(n)}</button>
+            </div>
           {/each}
         </div>
       {/if}
-      <span role="status"
-        >{busy
-          ? "Working…"
-          : blocked
-            ? "Edits held safely — export or reload"
-            : notice}</span
-      >
-    </div>
-    {#if showLinks}
-      <div id={`${pane.id}-schema-autolinks`} class="autolinks">
-        <Panel
-          title="[∞] Auto-links / linked mentions"
-          readout={autoBusy
-            ? "SCANNING"
-            : autoView
-              ? `${autoNew} NEW`
-              : "LOCAL"}
-        >
-          <p class="intro">
-            Kitty reads your notes, study items, calendar, flashcards and recent
-            jobs on this machine and finds where each node is mentioned.
-            <code>[[Node label]]</code> in a note is an explicit link. Linking adds
-            a reference node with a “mentioned in” branch — source records stay untouched.
-          </p>
-          <div class="toolbar">
-            <Button onclick={loadAutoLinks} disabled={autoBusy}
-              >{autoBusy ? "Scanning…" : "Rescan"}</Button
-            >
-            <Button
-              intent="primary"
-              onclick={() => applyAutoLinks(autoPicked)}
-              disabled={!editable || dirty || !autoPicked.length}
-              >Link selected ({autoPicked.length})</Button
-            >
-            <Button
-              onclick={() => applyAutoLinks(autoPending)}
-              disabled={!editable || dirty || !autoPending.length}
-              >Auto-link everything ({autoNew})</Button
-            >
-            {#if autoView}<span class="hint"
-                >Scanned {Object.entries(autoView.scanned)
-                  .map(([k, n]) => `${n} ${(REF_KINDS[k] ?? k).toLowerCase()}`)
-                  .join(" · ") || "nothing yet"}</span
-              >{/if}
-          </div>
-          {#if dirty}<p class="error">
-              Save your graph before linking mentions.
-            </p>{/if}
-          {#if autoError}<div role="alert" class="error">{autoError}</div>{/if}
-          {#if autoView && autoView.revision !== current.revision}<p
-              class="hint"
-            >
-              The map changed since this scan — rescan to refresh.
-            </p>{/if}
-          {#if autoView && !autoView.suggestions.length}<p class="hint">
-              No mentions found yet. Use node labels in notes, study tasks or
-              calendar items — or write <code>[[Node label]]</code> in a note.
-            </p>{/if}
-          <ul class="mindmap">
-            {#each autoView?.suggestions ?? [] as s (s.node_id)}
-              {@const fresh = s.references.filter((r) => !r.linked).length}
-              <li class="hub">
-                <div class="hub-head">
-                  <label class="check"
-                    ><input
-                      type="checkbox"
-                      checked={autoPicked.includes(s.node_id)}
-                      disabled={busy || !fresh}
-                      onchange={(e) => {
-                        autoPicked = e.currentTarget.checked
-                          ? [...autoPicked, s.node_id]
-                          : autoPicked.filter((id) => id !== s.node_id);
-                      }}
-                    /><span class="sr-only">Link mentions of {s.label}</span
-                    ></label
-                  >
-                  <button
-                    type="button"
-                    class="hub-node"
-                    onclick={() => focusNode(s.node_id)}>{s.label}</button
-                  >
-                  <Badge
-                    label={fresh
-                      ? `${fresh} new / ${s.references.length}`
-                      : `all ${s.references.length} linked`}
-                  />
-                </div>
-                <ul class="branches">
-                  {#each s.references as r (`${r.kind}:${r.id}`)}
-                    <li class:linked={r.linked} class:explicit={r.match === "wikilink"}>
-                      <a href={`#${r.view}`} onclick={leaveFor}
-                        ><span class="ref-kind"
-                          >{REF_KINDS[r.kind] ?? r.kind}{r.match === "wikilink"
-                            ? " · [[link]]"
-                            : ""}{r.linked ? " · linked" : ""}</span
-                        >{r.title}</a
-                      >
-                      {#if r.snippet}<small>{r.snippet}</small>{/if}
-                    </li>
-                  {/each}
-                </ul>
-              </li>
-            {/each}
-          </ul>
-        </Panel>
-      </div>
-    {/if}
-    {#if view === "map3d"}
-      <div class="workspace map3d-workspace">
-        <main class="graph-pane">
-          {#if pane.active}
-          <SchemaNetwork
-            title={`Map / ${current.title}`}
-            nodes={mapGraph.nodes}
-            links={mapGraph.links}
-            bind:layout={mapLayout}
-            selected={selected || null}
-            onSelect={(id) => {
-              const n = current?.graph.nodes.find((n) => n.id === id);
-              if (n) choose(n);
-            }}
-          />
-          {/if}
-          {#if dirty}<p class="hint">
-              Showing unsaved local edits from the 2D editor.
-            </p>{/if}
-        </main>
-        <aside>
-          <Panel title="[03] Node inspector / read-only">
-            {#if node}
-              <h2>{name(node)}</h2>
-              <Badge label={node.kind} />
-              <p>{degreeOf(node.id)} connections in this map</p>
-              {#if node.source}<p>
-                  Linked {node.source.kind} #{node.source.id}
-                </p>
-                {#if current.live[node.id]?.missing}<p class="error">
-                    Source deleted. Unlink this node in the 2D editor.
-                  </p>{/if}{#if node.kind === "job" && !current.live[node.id]?.missing}<p
-                  >
-                    Company: {current.live[node.id]?.company ?? "Unavailable"}
-                  </p>
-                  <p>
-                    Application: {current.live[node.id]?.status ??
-                      "No application recorded"}
-                  </p>{/if}{/if}
-              {#if node.notes}<p class="notes">{node.notes}</p>{/if}
-              {#if safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)}<a
-                  href={safeUrl(
-                    (node.source ? current.live[node.id]?.url : undefined) ??
-                      node.url,
-                  )}
-                  target="_blank"
-                  rel="noopener noreferrer">Open safe source ↗</a
-                >{/if}
-              <h3>Connections</h3>
-              <ul class="members">
-                {#each current.graph.edges.filter((e) => e.from === node.id || e.to === node.id) as e (e.id)}
-                  {@const other = current.graph.nodes.find(
-                    (n) => n.id === (e.from === node.id ? e.to : e.from),
-                  )!}
-                  <li>
-                    {e.from === node.id
-                      ? `→ ${e.label || "(unlabeled)"} → ${e.to === node.id ? "itself" : name(other)}`
-                      : `← ${e.label || "(unlabeled)"} ← ${name(other)}`}
-                  </li>
-                {:else}<li>No connections.</li>{/each}
-              </ul>
-              <Button
-                intent="primary"
-                onclick={() => editInMap(current!.id, node.id)}
-                >Edit in 2D editor</Button
-              >
-            {:else}<p>
-                Select a node in the graph or the adjacency table. Editing happens in
-                the mind-map editor.
-              </p>{/if}
-          </Panel>
-        </aside>
-      </div>
-    {:else}
-      <div class="workspace editor-workspace">
-        <details><summary>Organize</summary>
-        <aside>
-          <Panel title="[01] Nodes + sources">
-            <label
-              >Node type<select bind:value={kind} disabled={!editable}
-                ><option value="topic">Topic</option><option value="class"
-                  >Existing study class</option
-                ><option value="idea">Idea</option><option value="skill"
-                  >Skill / learning goal</option
-                ><option value="company">Company (unlinked)</option><option
-                  value="job">Job (unlinked note)</option
-                ></select
-              ></label
-            >
-            {#if kind === "class"}<label
-                >Class<select bind:value={subjectId} disabled={!editable}
-                  ><option value="">Choose existing class</option
-                  >{#each subjects as s}<option value={s.id}>{s.name}</option
-                    >{/each}</select
-                ></label
-              >
-              <p class="hint">
-                Classes are linked to Study, never duplicated. Create new
-                classes in Study first.
-              </p>
-            {:else}<label
-                >Label<input
-                  bind:value={label}
-                  maxlength="200"
-                  disabled={!editable}
-                  onkeydown={(e) => {
-                    if (e.key === "Enter") addNode();
-                  }}
-                /></label
-              >{/if}
-            <Button
-              onclick={addNode}
-              disabled={!editable || current.graph.nodes.length >= 300}
-              >Add node</Button
-            >
-            {#if current.mode === "jobs" && canImportJobs}<Button
-                onclick={() => {
-                  showJobs = !showJobs;
-                  if (showJobs) void findJobs();
-                }}
-                disabled={busy}>Import tracked jobs…</Button
-              >
-              <p class="hint">
-                Imports only factual job → at → company links. Add your own
-                skills or connect study classes/topics. No eligibility claims.
-              </p>{/if}
-            <label
-              >Search nodes<input
-                bind:value={search}
-                type="search"
-                placeholder="Class, topic, idea…"
-              /></label
-            >
-            <ul class="node-list">
-              {#each filtered as n}<li>
-                  <button
-                    class:active={selected === n.id}
-                    onclick={() => choose(n)}
-                    oncontextmenu={(event) => deleteAtPointer(event, n)}
-                    ><span>{hiddenLabel(n) ? "?" : name(n)}</span><small
-                      >{n.kind}{n.source ? " / linked" : ""}</small
-                    ></button
-                  >
-                </li>{/each}
-            </ul>
-            <p class="hint">
-              {current.graph.nodes.length}/300 nodes · {current.graph.edges
-                .length}/600 connections
-            </p>
-          </Panel>
-          <details><summary>Add note card</summary>
-            <input aria-label="Find note pages" bind:value={noteSearch} oninput={findNoteCards} type="search" />
-            <Button onclick={findNoteCards}>Find</Button>
-            {#each notePages as page}<Button onclick={() => addNoteCard(page)} disabled={!editable}>{page.title} +</Button>{/each}
-          </details>
-        </aside>
-        </details>
-        <main class="graph-pane" data-kitty-panel="graph" tabindex="-1">
-          <div class="toolbar">
-            <Button onclick={() => arrange("tree")} disabled={!editable}>Tree layout</Button>
-            <Button onclick={() => quickAdd()} disabled={!editable}>{node ? "+ Child" : "+ Topic"}</Button>
-            <Button onclick={() => quickAdd(parents.get(selected) ?? "")} disabled={!editable || !node}>+ Sibling</Button>
-            <Button onclick={() => node && editInline(node)} disabled={!editable || !node}>Rename</Button>
-            <Button onclick={() => outline = !outline} aria-pressed={outline}>Outline</Button>
-            <Button onclick={() => inkMode = !inkMode} aria-pressed={inkMode} disabled={!editable} title="Draw pressure-sensitive ink with a pen or mouse; each stroke sticks to the nearest topic">Ink</Button>
-            <Button onclick={() => {recall = !recall; revealed = [];}} aria-pressed={recall}>{recall ? "End recall" : "Quiz me"}</Button>
-            {#if recall}<Button disabled={!node} onclick={() => revealed = [...revealed, selected]}>Reveal selected answer</Button><Button onclick={() => revealed = current!.graph.nodes.map(n => n.id)}>Reveal all</Button>{/if}
-            <Button onclick={() => zoom(1.2)} disabled={!editable}
-              >Zoom +</Button
-            ><Button onclick={() => zoom(1 / 1.2)} disabled={!editable}
-              >Zoom −</Button
-            ><Button onclick={fit} disabled={!editable}>Fit graph</Button
-            ><details><summary>More layouts</summary><div class="toolbar">
-              <Button onclick={() => arrange("radial")} disabled={!editable}>Radial</Button>
-              <Button onclick={() => arrange("force")} disabled={!editable}>Force</Button>
-            </div></details><span>{Math.round(current.viewport.zoom * 100)}%</span>
-          </div>
-          <p class="hint">Click a topic and type (or Ctrl+Enter) to rename. Tab adds a child; Enter adds a sibling, including while typing. Save map keeps changes in your workspace; draft backup is device-only.</p>
-          {#if outline}
-            <div class="map-outline" role="tree" aria-label="Mind map outline">
-              {#each visibleNodes as n (n.id)}
-                <div style={`padding-left: ${depth(n.id) * 20}px`} role="treeitem" aria-level={depth(n.id) + 1} aria-selected={selected === n.id}>
-                  <Button onclick={() => collapse(n)} title="Collapse branch">{n.collapsed ? "▸" : "▾"}</Button>
-                  <button class:active={selected === n.id} oncontextmenu={event => deleteAtPointer(event, n)} onkeydown={e => nodeKey(e, n)} onclick={() => choose(n)} onpointerup={e => { if (doubleTap(`outline:${n.id}`, e)) openCard(n); }}>{hiddenLabel(n) ? "?" : name(n)}</button>
-                </div>
-              {/each}
+      {#if !current.graph.nodes.length}<p class="canvas-empty">Press + Topic or double-click to add a first topic.</p>{/if}
+      {#if node && !dragging && !editing && !linking && !labelling && editable && visibleNodes.includes(node)}
+        {@const v = current.viewport}
+        {@const top = node.y * v.zoom + v.y + 8}
+        <!-- Q18: a small bar rides on the selected topic (under it near the stage top). -->
+        <div class="ctx-bar" class:below={top < 56} role="toolbar" aria-label="Topic" bind:offsetWidth={ctxWidth}
+          style:left={`${Math.max(8, Math.min(node.x * v.zoom + v.x, stageWidth - ctxWidth - 8))}px`}
+          style:top={`${top < 56 ? top + box(node).h * v.zoom + 8 : top - 8}px`}>
+          {#if picked.size > 1}<span class="count">{picked.size} selected</span><span class="vr" aria-hidden="true"></span>{/if}
+          <Popover bind:open={styleOpen} label="Topic style" placement="bottom-start" class="topic-style">
+            {#snippet trigger(props)}
+              <button type="button" class="cb colour" aria-label="Topic colour" title="Colour and style" {...props}><span class="swatch on" style:--dot={nodeColor(node)}></span><span class="chev" aria-hidden="true">▾</span></button>
+            {/snippet}
+            {@render swatches("md")}
+            <div class="style-row">
+              <button type="button" class="cb" aria-pressed={paintBranch} title="Colour the topic's whole branch" onclick={() => paintBranch = !paintBranch}>Whole branch</button>
+              <button type="button" class="cb" aria-keyshortcuts="Alt+C" title="Copy style (Alt+C)" onclick={copyStyle}>Copy style</button>
+              <button type="button" class="cb" aria-keyshortcuts="Alt+V" title="Paste style (Alt+V)" disabled={!copiedStyle} onclick={pasteStyle}>Paste style</button>
             </div>
+          </Popover>
+          {#if picked.size === 1}
+            <span class="vr" aria-hidden="true"></span>
+            <button type="button" class="cb" title="Rename (Ctrl+Enter, or just type)" onclick={() => node && editInline(node)}>Rename</button>
+            <button type="button" class="cb" title="Break the branch off as a floating piece (D while dragging)" disabled={isRoot(node)} onclick={detachSelected}>Detach</button>
+            <OverflowMenu label="More topic actions" placement="bottom-start" items={topicActions} />
           {/if}
-          <div class="stage-wrap" bind:clientWidth={stageWidth}>
-          {#if dragging}<p class="drag-hint" role="status">{detaching ? "Detached · drop anywhere to leave it floating · D to reattach" : placing ? "Placing freely · release to leave it here" : dropTarget ? `Drop on “${name(current.graph.nodes.find(n => n.id === dropTarget)!)}” to move it there` : "Drop on a topic to move it there · Alt places it freely · D detaches the branch"}</p>
-          {:else if linking}<p class="drag-hint" role="status">Click a topic to connect “{name(current.graph.nodes.find(n => n.id === linking)!)}” to it · Esc cancels</p>
-          {:else if inkMode}<p class="drag-hint" role="status">Ink · each stroke sticks to the nearest topic · flip the pen to erase · fingers still pan</p>{/if}
-          {#if node && !dragging && !editing && !linking && !labelling && editable && visibleNodes.includes(node)}
-            {@const v = current.viewport}
-            {@const top = node.y * v.zoom + v.y + 8}
-            <!-- Q65 D: the selection's swatch row floats above its pill (below it near the stage top). -->
-            <div class="node-style" class:below={top < 56} role="toolbar" aria-label="Node style" bind:offsetWidth={styleWidth}
-              style:left={`${Math.max(8, Math.min(node.x * v.zoom + v.x, stageWidth - styleWidth - 8))}px`}
-              style:top={`${top < 56 ? top + box(node).h * v.zoom + 8 : top - 8}px`}>
-              {#if picked.size > 1}<span class="count">{picked.size} selected</span><span class="rule" aria-hidden="true"></span>{/if}
-              {#each PALETTE as slot, index (slot)}<button class="swatch" style:--dot={`var(--${slot})`} aria-label={`Colour ${index + 1}`} aria-pressed={node.color === slot} title={`Colour ${index + 1}`} onclick={() => paint(slot)}></button>{/each}
-              <button class="swatch auto" aria-label="Automatic colour" aria-pressed={!node.color} title="Automatic branch colour" onclick={() => paint(undefined)}></button>
-              <span class="rule" aria-hidden="true"></span>
-              <button class="word" aria-pressed={paintBranch} title="Colour the node's whole branch" onclick={() => paintBranch = !paintBranch}>Whole branch</button>
-              <span class="rule" aria-hidden="true"></span>
-              <button class="word" aria-keyshortcuts="Alt+C" title="Copy style (Alt+C)" onclick={copyStyle}>Copy style</button>
-              <button class="word" aria-keyshortcuts="Alt+V" title="Paste style (Alt+V)" disabled={!copiedStyle} onclick={pasteStyle}>Paste style</button>
-              {#if picked.size > 1}<span class="rule" aria-hidden="true"></span><button class="word" aria-keyshortcuts="Delete" title="Delete the selected topics (Delete)" onclick={deleteNode}>Delete {picked.size}</button>{/if}
-            </div>
-          {/if}
-          <svg
-            bind:this={stage}
-            class="stage"
-            class:ink-mode={inkMode}
-            aria-label="Schema graph. Drag nodes to reparent, Alt-drag to place freely; drag empty space to pan; double-tap a node to edit it. With a pen: Ink draws, the barrel button lassoes topics, the eraser end erases ink. Use node list and inspector for keyboard editing."
-            role="group"
-            onpointerdown={(e) => down(e)}
-            onpointerover={notePen}
-            onpointerleave={notePen}
-            onpointermove={move}
-            onpointerup={(e) => end(e)}
-            onpointercancel={(e) => end(e, true)}
-            onlostpointercapture={(e) => end(e, true)}
-            onwheel={(e) => {
-              e.preventDefault();
-              zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY);
-            }}
-          >
-            <defs
-              ><marker
-                id={`${pane.id}-schema-arrow`}
-                markerWidth="10"
-                markerHeight="8"
-                refX="9"
-                refY="4"
-                orient="auto"
-                markerUnits="strokeWidth"
-                ><path d="M0,0 L10,4 L0,8 z" fill="var(--violet)" /></marker
-              ><marker
-                id={`${pane.id}-schema-arrow-active`}
-                markerWidth="10"
-                markerHeight="8"
-                refX="9"
-                refY="4"
-                orient="auto"
-                markerUnits="strokeWidth"
-                ><path d="M0,0 L10,4 L0,8 z" fill="var(--accent)" /></marker
-              ></defs
-            >
-            <g
-              transform={`translate(${current.viewport.x},${current.viewport.y}) scale(${current.viewport.zoom})`}
-            >
-              {#each shownEdges.filter(e => !(e.to === dragging && treeEdges.has(e.id) && (detaching || (dropTarget && dropTarget !== e.from)))) as e (e.id)}
-                {@const shape = geometry.get(e.id)}
-                {#if shape}<path
-                    d={shape.d}
-                    class="edge"
-                    class:branch={shape.tree}
-                    class:cross={!shape.tree}
-                    class:active={selectedEdge === e.id}
-                    style:--b={nodeColor(current.graph.nodes.find(n => n.id === e.to)!)}
-                    marker-end={shape.tree ? undefined : selectedEdge === e.id
-                      ? `url(#${pane.id}-schema-arrow-active)`
-                      : `url(#${pane.id}-schema-arrow)`}
-                  /><path d={shape.d} class="edge-hit" data-edge={e.id} />{/if}
-              {/each}
-              {#if dragging && dropTarget}<path class="snap-preview" d={snapPath(dropTarget, dragging)} />{/if}
-              <!-- Labels sit under the pills so a label never blocks a topic. -->
-              {#each shownEdges as e (e.id)}
-                {@const shape = geometry.get(e.id)}
-                {#if shape && e.label && labelling !== e.id}<text
-                    x={shape.lx}
-                    y={shape.ly}
-                    class="edge-label"
-                    class:active={selectedEdge === e.id}
-                    data-edge={e.id}
-                    text-anchor="middle"
-                    >{e.label.length > 32
-                      ? e.label.slice(0, 31) + "…"
-                      : e.label}</text
-                  >{/if}
-              {/each}
-              {#each visibleNodes as n (n.id)}
-                {@const size = box(n)}
-                {@const root = isRoot(n)}
-                {@const folded = hiddenCount(n)}
-                <g
-                  transform={`translate(${n.x},${n.y})`}
-                  data-node={n.id}
-                  id={`${pane.id}-node-${n.id}`}
-                  role="button"
-                  tabindex="0"
-                  aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}${n.free && !root ? ", placed freely" : ""}. Tab child, Enter sibling, arrows move, Control arrows reorder, Control Enter or type to rename, Space collapse.`}
-                  class:selected={picked.has(n.id)}
-                  class:root
-                  class:drop-target={dropTarget === n.id}
-                  class:dragging={dragging === n.id}
-                  class:detaching={detaching && dragging === n.id}
-                  class:painted={!!n.color}
-                  class="graph-node"
-                  style:--b={nodeColor(n)}
-                  onpointerdown={(e) => down(e, n.id)}
-                  onkeydown={(e) => nodeKey(e, n)}
-                  oncontextmenu={(event) => deleteAtPointer(event, n)}
-                >
-                  <rect class="pill" width={size.w} height={size.h} rx={size.h / 2} />
-                  {#if !root}<circle class="dot" cx="16" cy={size.h / 2} r="4" />{/if}
-                  <text class="label" x={root ? (size.w - (folded ? 26 : 0)) / 2 : 28} y={size.h / 2 + 4.5} text-anchor={root ? "middle" : "start"}>{pillText(n)}</text>
-                  {#if folded}<g class="fold" transform={`translate(${size.w - 17},${size.h / 2})`}><circle r="9" /><text y="3.5" text-anchor="middle">{folded > 99 ? "99+" : folded}</text></g>{/if}
-                  {#if editing === n.id}
-                    <foreignObject x="0" y="0" width={Math.max(size.w, 180)} height={size.h}>
-                      <input id={`${pane.id}-map-inline-label`} class="inline-label" aria-label="Node label" bind:value={inlineLabel} maxlength="200"
-                        onpointerdown={e => e.stopPropagation()}
-                        oninput={e => updateInline(e.currentTarget.value)}
-                        onkeydown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === "Escape") {e.preventDefault(); finishInline();}
-                          else if (e.key === "Tab") {e.preventDefault(); finishInline(false); quickAdd(selected);}
-                          else if (e.key === "Enter") {e.preventDefault(); finishInline(false); quickAdd(parents.get(selected) ?? "", selected);}
-                        }} onblur={() => {if (editing === n.id) finishInline(false);}} />
-                    </foreignObject>
-                  {/if}
-                </g>
-              {/each}
-              {#if labelling}
-                {@const e = shownEdges.find(e => e.id === labelling)}
-                {@const shape = e && geometry.get(e.id)}
-                {#if e && shape}
-                  <foreignObject x={shape.lx - 80} y={shape.ly - 17} width="160" height="26">
-                    <input id={`${pane.id}-edge-label`} class="inline-label edge-input" aria-label="Connection label" placeholder="relationship" bind:value={edgeDraft} maxlength="200"
-                      onpointerdown={event => event.stopPropagation()}
-                      onkeydown={(event) => {
-                        event.stopPropagation();
-                        if (event.key === "Enter" || event.key === "Escape") {event.preventDefault(); finishLabel(event.key === "Enter", true);}
-                      }} onblur={() => {if (labelling) finishLabel();}} />
-                  </foreignObject>
-                {/if}
-              {/if}
-              {#if current.graph.strokes?.length || inking}
-                <!-- Q69: ink sits over the pills, each stroke placed at its topic so it moves and folds with it. -->
-                <g class="ink" aria-hidden="true">
-                  {#each current.graph.strokes ?? [] as s (s.id)}
-                    {@const owner = shownById.get(s.node)}
-                    {#if owner}<path transform={`translate(${owner.x},${owner.y})`} d={inkOutline(s.points, INK_WIDTH)} data-stroke={s.id} data-ink-node={s.node} />{/if}
-                  {/each}
-                  {#if inking}<path class="live" d={inkOutline(inking.points, INK_WIDTH)} />{/if}
-                </g>
-              {/if}
-              {#if lassoLoop}<path class="lasso" d={`M${lassoLoop.points.map(p => p.join(",")).join(" L")} Z`} />{/if}
-              {#if marquee}<rect class="marquee" x={marquee.x0} y={marquee.y0} width={marquee.x1 - marquee.x0} height={marquee.y1 - marquee.y0} rx="6" />{/if}
-              <!-- The dragged pill is redrawn on top so it stays visible over the pill it snaps into. -->
-              {#if dragging}<use href={`#${pane.id}-node-${dragging}`} class="drag-ghost" />{/if}
-            </g>
-          </svg>
-          </div>
-          <p class="hint">
-            Tab child · Enter sibling · arrows move · Shift+arrows or Shift-drag select several · Ctrl+↑/↓ reorder · Ctrl+Enter, type or double-tap to rename · Space fold · Alt-drag places freely · Pen: Ink draws, barrel-button loop selects, eraser end erases ink
-          </p>
-          <details><summary>Connections</summary>
-          <Panel title="[02] Directional connections">
-            <div class="toolbar">
-              <label
-                >From<select bind:value={edgeFrom} disabled={!editable}
-                  ><option value="">Choose node</option
-                  >{#each current.graph.nodes as n}<option value={n.id}
-                      >{name(n)}</option
-                    >{/each}</select
-                ></label
-              ><span>→</span><label
-                >To<select bind:value={edgeTo} disabled={!editable}
-                  ><option value="">Choose node</option
-                  >{#each current.graph.nodes as n}<option value={n.id}
-                      >{name(n)}</option
-                    >{/each}</select
-                ></label
-              ><label
-                >Relationship<input
-                  bind:value={edgeLabel}
-                  maxlength="200"
-                  disabled={!editable}
-                /></label
-              ><Button
-                onclick={connect}
-                disabled={!editable || !edgeFrom || !edgeTo}>Connect</Button
-              >
-            </div>
-            <ul class="edges">
-              {#each current.graph.edges as e}<li>
-                  <button
-                    onclick={() => {
-                      selectedEdge = selectedEdge === e.id ? "" : e.id;
-                    }}
-                    >{name(current.graph.nodes.find((n) => n.id === e.from)!)} → {e.label ||
-                      "(unlabeled)"} → {name(
-                      current.graph.nodes.find((n) => n.id === e.to)!,
-                    )}</button
-                  >{#if selectedEdge === e.id}<div class="edge-edit">
-                      <label
-                        >From<select
-                          value={e.from}
-                          onchange={(event) =>
-                            editEdge(e.id, "from", event.currentTarget.value)}
-                          disabled={!editable}
-                          >{#each current.graph.nodes as n}<option value={n.id}
-                              >{name(n)}</option
-                            >{/each}</select
-                        ></label
-                      ><label
-                        >To<select
-                          value={e.to}
-                          onchange={(event) =>
-                            editEdge(e.id, "to", event.currentTarget.value)}
-                          disabled={!editable}
-                          >{#each current.graph.nodes as n}<option value={n.id}
-                              >{name(n)}</option
-                            >{/each}</select
-                        ></label
-                      ><label
-                        >Label<input
-                          value={e.label}
-                          maxlength="200"
-                          onchange={(event) =>
-                            editEdge(e.id, "label", event.currentTarget.value)}
-                          disabled={!editable}
-                        /></label
-                      ><Button
-                        onclick={() => removeEdge(e.id)}
-                        disabled={!editable}>Remove connection</Button
-                      >
-                    </div>{/if}
-                </li>{/each}
-            </ul>
-          </Panel>
-          </details>
-        </main>
-        {#if node && !hiddenLabel(node)}
-        <aside>
-          <Panel title="Node">
-            {#if node}
-              <h2>{name(node)}</h2>
-              <Badge label={node.kind} />
-              <div class="toolbar">
-                <Button onclick={() => collapse(node)}>{node.collapsed ? "Expand" : "Collapse"}</Button>
-                <Button onclick={detachSelected} disabled={!editable || isRoot(node)} title="Break this branch off as a floating piece (or press D while dragging it)">Detach branch</Button>
-                <Button onclick={resetPosition} disabled={!editable || !node.free} title="Put a freely placed node back into the automatic layout">Reset position</Button>
-                <Button onclick={() => {linking = node!.id; focusOn(node!.id);}} disabled={!editable} aria-pressed={linking === node.id} title="Draw a labelled connection to any other topic, outside the tree">Connect to…</Button>
-                <Button onclick={() => transferBranch(node!.id)} disabled={!editable}>Split branch into map</Button>
-                {#if isRoot(node) && maps.some(m => m.id !== current!.id)}
-                  <label>Merge into map<select bind:value={mergeMap}><option value="">Choose map</option>{#each maps.filter(m => m.id !== current!.id) as m}<option value={m.id}>{m.title}</option>{/each}</select></label>
-                  <Button onclick={() => transferBranch(node!.id, Number(mergeMap))} disabled={!editable || !mergeMap}>Merge root</Button>
-                {/if}
-                <Button onclick={() => studyBranch("flashcards")}>Make flashcards</Button>
-                <Button onclick={() => studyBranch("quiz")}>Quiz this branch</Button>
-                <Button onclick={startBranchSession} disabled={!editable}>Start session</Button>
-                {#if node.source?.kind === "note_page" || node.map_id}<Button onclick={() => openCard(node)}>Open ↗</Button>{/if}
-              </div>
-              <label>Move under<select value={parents.get(node.id) ?? ""} disabled={!editable} onchange={e => reparent(e.currentTarget.value)}>
-                <option value="">No parent (root topic)</option>
-                {#each current.graph.nodes.filter(item => !descendants(node.id).has(item.id)) as parent}<option value={parent.id}>{name(parent)}</option>{/each}
-              </select></label>
-              <label>Linked map<select value={node.map_id ?? ""} onchange={e => {remember(); node.map_id = e.currentTarget.value ? Number(e.currentTarget.value) : null;}}><option value="">None</option>{#each maps.filter(m => m.id !== current!.id) as m}<option value={m.id}>{m.title}</option>{/each}</select></label>
-              {#if node.source}<p>
-                  Linked {node.source.kind} #{node.source.id}
-                </p>
-                {#if current.live[node.id]?.missing}<p class="error">
-                    Source deleted. Unlink this node before saving.
-                  </p>{/if}{#if node.kind === "job"}<p>
-                    Company: {current.live[node.id]?.company ?? "Unavailable"}
-                  </p>
-                  <p>
-                    Application: {current.live[node.id]?.status ??
-                      "No application recorded"}
-                  </p>
-                  <p>
-                    Queue: {current.live[node.id]?.queue_state ??
-                      "Unavailable"}{current.live[node.id]?.closed_at
-                      ? " / closed"
-                      : ""}
-                  </p>{/if}
-                <p class="hint">
-                  Source title/status refresh on reload. Map notes do not modify
-                  source records.
-                </p>
-                <Button onclick={unlink} disabled={!editable}
-                  >Unlink / keep as map note</Button
-                >{/if}
-              <label
-                >{node.source ? "Local fallback label" : "Label"}<input
-                  bind:value={draftLabel}
-                  maxlength="200"
-                  disabled={!editable}
-                  oninput={e => {draftLabel = e.currentTarget.value; updateNode();}} /></label
-              >
-              <label
-                >Notes<textarea
-                  bind:value={draftNotes}
-                  maxlength="10000"
-                  rows="7"
-                  disabled={!editable}
-                  oninput={e => {draftNotes = e.currentTarget.value; updateNode();}}></textarea></label
-              >
-              <label
-                >Local reference URL<input
-                  bind:value={draftUrl}
-                  type="url"
-                  maxlength="4000"
-                  disabled={!editable}
-                  placeholder="https://…"
-                  oninput={e => {draftUrl = e.currentTarget.value; updateNode();}} /></label
-              >
-              {#if safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)}<a
-                  href={safeUrl(
-                    (node.source ? current.live[node.id]?.url : undefined) ??
-                      node.url,
-                  )}
-                  target="_blank"
-                  rel="noopener noreferrer">Open safe source ↗</a
-                >{/if}
-              <div class="toolbar">
-                <Button
-                  onclick={() => {
-                    edgeFrom = node.id;
-                  }}
-                  disabled={!editable}>Use as From</Button
-                ><Button
-                  onclick={() => {
-                    edgeTo = node.id;
-                  }}
-                  disabled={!editable}>Use as To</Button
-                >
-              </div>
-              <Button onclick={deleteNode} disabled={!editable}
-                >{picked.size > 1 ? `Delete ${picked.size} nodes + their connections` : "Delete node + its connections"}</Button
-              >
-            {:else}<p>
-                Select a node in the graph or searchable list. Full labels,
-                notes, safe source links and live job status appear here.
-              </p>{/if}
-          </Panel>
-        </aside>
-        {/if}
-      </div>
-    {/if}
-    {#if showJobs && current.mode === "jobs" && canImportJobs}<Panel
-        title="Import selected tracked jobs / factual sources only"
-        ><div class="toolbar">
-          <label
-            >Search title or company<input
-              bind:value={jobSearch}
-              maxlength="200"
-              onkeydown={(e) => {
-                if (e.key === "Enter") void findJobs();
-              }}
-            /></label
-          ><Button onclick={() => findJobs()} disabled={busy}>Search</Button>
+          <span class="vr" aria-hidden="true"></span>
+          <button type="button" class="cb icon" aria-label={picked.size > 1 ? `Delete ${picked.size} topics` : "Delete topic"} aria-keyshortcuts="Delete" title="Delete (Del)" onclick={deleteNode}><Icon name="close" size={13} /></button>
         </div>
-        {#if dirty}<p class="error">
-            Save your graph before importing tracked jobs.
-          </p>{/if}
+      {/if}
+      <svg
+        bind:this={stage}
+        class="stage"
+        class:ink-mode={inkMode}
+        aria-label="Mind map. Drag topics to reparent, Alt-drag to place freely, drag empty space to pan, double-tap a topic to edit it. Tab adds a child, Enter a sibling, arrows move, Shift+arrows select several, Ctrl+arrows reorder, Space folds. With a pen: Ink draws, the barrel button lassoes topics, the eraser end erases ink."
+        role="group"
+        onpointerdown={(e) => down(e)}
+        onpointerover={notePen}
+        onpointerleave={notePen}
+        onpointermove={move}
+        onpointerup={(e) => end(e)}
+        onpointercancel={(e) => end(e, true)}
+        onlostpointercapture={(e) => end(e, true)}
+        onwheel={(e) => {
+          e.preventDefault();
+          zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY);
+        }}
+      >
+        <defs
+          ><marker id={`${pane.id}-schema-arrow`} markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth"
+            ><path d="M0,0 L10,4 L0,8 z" fill="var(--violet)" /></marker
+          ><marker id={`${pane.id}-schema-arrow-active`} markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth"
+            ><path d="M0,0 L10,4 L0,8 z" fill="var(--accent)" /></marker
+          ></defs
+        >
+        <g transform={`translate(${current.viewport.x},${current.viewport.y}) scale(${current.viewport.zoom})`}>
+          {#each shownEdges.filter(e => !(e.to === dragging && treeEdges.has(e.id) && (detaching || (dropTarget && dropTarget !== e.from)))) as e (e.id)}
+            {@const shape = geometry.get(e.id)}
+            {#if shape}<path
+                d={shape.d}
+                class="edge"
+                class:branch={shape.tree}
+                class:cross={!shape.tree}
+                class:active={selectedEdge === e.id}
+                style:--b={nodeColor(current.graph.nodes.find(n => n.id === e.to)!)}
+                marker-end={shape.tree ? undefined : selectedEdge === e.id ? `url(#${pane.id}-schema-arrow-active)` : `url(#${pane.id}-schema-arrow)`}
+              /><path d={shape.d} class="edge-hit" data-edge={e.id} />{/if}
+          {/each}
+          {#if dragging && dropTarget}<path class="snap-preview" d={snapPath(dropTarget, dragging)} />{/if}
+          <!-- Labels sit under the pills so a label never blocks a topic. -->
+          {#each shownEdges as e (e.id)}
+            {@const shape = geometry.get(e.id)}
+            {#if shape && e.label && labelling !== e.id}<text x={shape.lx} y={shape.ly} class="edge-label" class:active={selectedEdge === e.id} data-edge={e.id} text-anchor="middle"
+                >{e.label.length > 32 ? e.label.slice(0, 31) + "…" : e.label}</text
+              >{/if}
+          {/each}
+          {#each visibleNodes as n (n.id)}
+            {@const size = box(n)}
+            {@const root = isRoot(n)}
+            {@const folded = hiddenCount(n)}
+            <g
+              transform={`translate(${n.x},${n.y})`}
+              data-node={n.id}
+              id={`${pane.id}-node-${n.id}`}
+              role="button"
+              tabindex="0"
+              aria-label={`${n.kind}: ${hiddenLabel(n) ? "Recall" : name(n)}${folded ? `, ${folded} hidden` : ""}${n.free && !root ? ", placed freely" : ""}. Tab child, Enter sibling, arrows move, Control arrows reorder, Control Enter or type to rename, Space collapse.`}
+              class:selected={picked.has(n.id)}
+              class:root
+              class:drop-target={dropTarget === n.id}
+              class:dragging={dragging === n.id}
+              class:detaching={detaching && dragging === n.id}
+              class:painted={!!n.color}
+              class="graph-node"
+              style:--b={nodeColor(n)}
+              onpointerdown={(e) => down(e, n.id)}
+              onkeydown={(e) => nodeKey(e, n)}
+              oncontextmenu={(event) => deleteAtPointer(event, n)}
+            >
+              <rect class="pill" width={size.w} height={size.h} rx={size.h / 2} />
+              {#if !root}<circle class="dot" cx="16" cy={size.h / 2} r="4" />{/if}
+              <text class="label" x={root ? (size.w - (folded ? 26 : 0)) / 2 : 28} y={size.h / 2 + 4.5} text-anchor={root ? "middle" : "start"}>{pillText(n)}</text>
+              {#if folded}<g class="fold" transform={`translate(${size.w - 17},${size.h / 2})`}><circle r="9" /><text y="3.5" text-anchor="middle">{folded > 99 ? "99+" : folded}</text></g>{/if}
+              {#if editing === n.id}
+                <foreignObject x="0" y="0" width={Math.max(size.w, 180)} height={size.h}>
+                  <input id={`${pane.id}-map-inline-label`} class="inline-label" aria-label="Node label" bind:value={inlineLabel} maxlength="200"
+                    onpointerdown={e => e.stopPropagation()}
+                    oninput={e => updateInline(e.currentTarget.value)}
+                    onkeydown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Escape") {e.preventDefault(); finishInline();}
+                      else if (e.key === "Tab") {e.preventDefault(); finishInline(false); quickAdd(selected);}
+                      else if (e.key === "Enter") {e.preventDefault(); finishInline(false); quickAdd(parents.get(selected) ?? "", selected);}
+                    }} onblur={() => {if (editing === n.id) finishInline(false);}} />
+                </foreignObject>
+              {/if}
+            </g>
+          {/each}
+          {#if labelling}
+            {@const e = shownEdges.find(e => e.id === labelling)}
+            {@const shape = e && geometry.get(e.id)}
+            {#if e && shape}
+              <foreignObject x={shape.lx - 80} y={shape.ly - 17} width="160" height="26">
+                <input id={`${pane.id}-edge-label`} class="inline-label edge-input" aria-label="Connection label" placeholder="relationship" bind:value={edgeDraft} maxlength="200"
+                  onpointerdown={event => event.stopPropagation()}
+                  onkeydown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter" || event.key === "Escape") {event.preventDefault(); finishLabel(event.key === "Enter", true);}
+                  }} onblur={() => {if (labelling) finishLabel();}} />
+              </foreignObject>
+            {/if}
+          {/if}
+          {#if current.graph.strokes?.length || inking}
+            <!-- Q69: ink sits over the pills, each stroke placed at its topic so it moves and folds with it. -->
+            <g class="ink" aria-hidden="true">
+              {#each current.graph.strokes ?? [] as s (s.id)}
+                {@const owner = shownById.get(s.node)}
+                {#if owner}<path transform={`translate(${owner.x},${owner.y})`} d={inkOutline(s.points, INK_WIDTH)} data-stroke={s.id} data-ink-node={s.node} />{/if}
+              {/each}
+              {#if inking}<path class="live" d={inkOutline(inking.points, INK_WIDTH)} />{/if}
+            </g>
+          {/if}
+          {#if lassoLoop}<path class="lasso" d={`M${lassoLoop.points.map(p => p.join(",")).join(" L")} Z`} />{/if}
+          {#if marquee}<rect class="marquee" x={marquee.x0} y={marquee.y0} width={marquee.x1 - marquee.x0} height={marquee.y1 - marquee.y0} rx="6" />{/if}
+          <!-- The dragged pill is redrawn on top so it stays visible over the pill it snaps into. -->
+          {#if dragging}<use href={`#${pane.id}-node-${dragging}`} class="drag-ghost" />{/if}
+        </g>
+      </svg>
+
+      <!-- Q18 D: the building tools are the Notes canvas pill itself, with map tools swapped in. -->
+      <CanvasPill label="Map tools" id={`${pane.id}-map-tools`} storageKey="kitty.schema.map-tools" moreLabel="More map tools" menuLabel="Map options">
+        <button class="pill-btn" aria-label="Select" title="Select and drag" aria-pressed={!inkMode && !linking} onclick={() => { inkMode = false; linking = ""; }}><Icon name="tool-select" size={18} /></button>
+        <button class="pill-btn" aria-label="Connect topics" title="Connect the selected topic to another" aria-pressed={!!linking} disabled={!editable || !node} onclick={() => linking ? (linking = "") : startConnect()}><Icon name="tool-connector" size={18} /></button>
+        <button class="pill-btn" aria-label="Ink" title="Draw pressure-sensitive ink; each stroke sticks to the nearest topic" aria-pressed={inkMode} disabled={!editable} onclick={() => { inkMode = !inkMode; linking = ""; }}><Icon name="tool-pen" size={18} /></button>
+        <span class="pill-rule" aria-hidden="true"></span>
+        <button class="pill-btn pill-word" title="Add child (Tab)" aria-keyshortcuts="Tab" disabled={!editable} onclick={() => quickAdd()}>{node ? "+ Child" : "+ Topic"}</button>
+        <button class="pill-btn pill-word" title="Add sibling (Enter)" aria-keyshortcuts="Enter" disabled={!editable || !node} onclick={() => quickAdd(parents.get(selected) ?? "", selected)}>+ Sibling</button>
+        <span class="pill-rule" aria-hidden="true"></span>
+        {@render swatches("sm")}
+        <span class="pill-rule" aria-hidden="true"></span>
+        <button class="pill-btn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!editable || (!history.length && (!current.can_undo || dirty))} onclick={() => void undo()}><Icon name="undo" size={17} /></button>
+        <button class="pill-btn" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!editable || (!future.length && (!current.can_redo || dirty))} onclick={() => void redo()}><Icon name="redo" size={17} /></button>
+        {#snippet more(close)}
+          <span class="eyebrow">View</span>
+          <button type="button" class="pill-menu-item" aria-pressed={outline} onclick={() => outline = !outline}><Icon name="menu" size={14} />Outline</button>
+          <button type="button" class="pill-menu-item" aria-pressed={recall} onclick={() => { recall = !recall; revealed = []; close(); }}><Icon name="questions" size={14} />{recall ? "End quiz" : "Quiz me"}</button>
+          <span class="eyebrow">Add</span>
+          <form class="menu-form" onsubmit={(e) => { e.preventDefault(); addNode(); }}>
+            <Select label="Topic type" kind="list" bind:value={kind} options={Object.entries(KINDS).filter(([id]) => id !== "task").map(([value, text]) => ({value, label: text}))} disabled={!editable} />
+            {#if kind === "class"}
+              <Select label="Study class" kind="search" bind:value={subjectId} placeholder="Choose a class" options={subjects.map(s => ({value: String(s.id), label: s.name}))} disabled={!editable} />
+            {:else}
+              <input aria-label="Topic label" placeholder="Label" bind:value={label} maxlength="200" disabled={!editable} />
+            {/if}
+            <button type="submit" class="pill-menu-item" disabled={!editable || (current?.graph.nodes.length ?? 0) >= 300 || (kind === "class" ? !subjectId : !label.trim())}><Icon name="plus" size={14} />Add topic</button>
+          </form>
+          <input type="search" aria-label="Find note pages" placeholder="Link a note page…" bind:value={noteSearch} oninput={findNoteCards} />
+          {#each notePages.slice(0, 6) as page (page.id)}<button type="button" class="pill-menu-item" disabled={!editable} onclick={() => { close(); void addNoteCard(page); }}>▤ {page.title}</button>{/each}
+          {#if current?.mode === "jobs" && canImportJobs}<button type="button" class="pill-menu-item" onclick={() => { close(); drawer = "jobs"; void findJobs(); }}><Icon name="jobs" size={14} />Import tracked jobs…</button>{/if}
+          <span class="eyebrow">Find</span>
+          <input type="search" aria-label="Find a topic" placeholder="Topic, kind or note…" bind:value={search} />
+          {#if search}{#each filtered.slice(0, 8) as n (n.id)}<button type="button" class="pill-menu-item" onclick={() => { close(); choose(n); focusOn(n.id); }}>{hiddenLabel(n) ? "?" : name(n)}</button>{:else}<p class="hint">No topic matches.</p>{/each}{/if}
+          {#if embedded}
+            <span class="eyebrow">Layout</span>
+            <div class="pill-menu-row">
+              {#each LAYOUTS as [id, text] (id)}<button type="button" class="pill-menu-item" disabled={!editable} onclick={() => { close(); arrange(id); }}>{text}</button>{/each}
+            </div>
+            <span class="eyebrow">Map</span>
+            {#each mapActions as item, index (index)}
+              {#if !("separator" in item)}<button type="button" class="pill-menu-item" class:danger={item.danger} disabled={item.disabled} onclick={() => { close(); item.onselect(); }}>{item.label}</button>{/if}
+            {/each}
+          {/if}
+        {/snippet}
+      </CanvasPill>
+
+      <div class="corner" role="group" aria-label="Zoom">
+        <button type="button" class="z" aria-label="Zoom out" disabled={!editable} onclick={() => zoom(1 / 1.2)}>−</button>
+        <span class="pct">{Math.round(current.viewport.zoom * 100)}%</span>
+        <button type="button" class="z" aria-label="Zoom in" disabled={!editable} onclick={() => zoom(1.2)}>+</button>
+        <span class="vr" aria-hidden="true"></span>
+        <button type="button" class="z fit" aria-label="Fit map" title="Fit the map in view" disabled={!editable} onclick={fit}>Fit</button>
+      </div>
+    </div>
+  {:else if embedded}
+    {#if pageChecked}
+      <div class="empty-state">
+        <p>This page has no map yet.</p>
+        <button type="button" class="pill primary page-action" disabled={busy || !pageId} onclick={createPageMap}><Icon name="plus" size={14} />Create map</button>
+      </div>
+    {/if}
+  {:else}
+    <div class="empty-state">
+      <p>{maps.length ? "Open a map from Maps, or start a new one." : "No maps yet. Start one to think in branches."}</p>
+      {@render newMap(true)}
+    </div>
+  {/if}
+
+  {#if creatingFull}
+    <EditDrawer title="New map" closeLabel="Close new map" onclose={() => creatingFull = false}>
+      <form id={`${pane.id}-new-map`} class="drawer-form" onsubmit={(e) => { e.preventDefault(); void startMap(draftTitle); }}>
+        <label class="field">Title<input bind:value={draftTitle} maxlength="200" placeholder="What are you learning?" required /></label>
+        <div class="field"><span>Starting template</span><Select label="Starting template" kind="segments" bind:value={template} options={TEMPLATES} /></div>
+        <div class="field"><span>Category</span><Select label="Map category" kind="segments" bind:value={mode} options={MODES} /></div>
+        {#if subjects.length}<div class="field"><span>Start from a subject</span><Select label="Start from a subject" kind="search" bind:value={newSubject}
+          options={[{value: "", label: "No subject"}, ...subjects.map(s => ({value: String(s.id), label: s.name}))]} /></div>{/if}
+        <button type="button" class="link" onclick={() => importInput?.click()}>Import a map JSON instead…</button>
+      </form>
+      {#snippet footer()}
+        <Button variant="ghost" onclick={() => creatingFull = false}>Cancel</Button>
+        <Button intent="primary" type="submit" form={`${pane.id}-new-map`} disabled={busy || !draftTitle.trim()}>Create map</Button>
+      {/snippet}
+    </EditDrawer>
+  {/if}
+
+  {#if details && node && current}
+    {@const n = node}
+    <EditDrawer title={name(n)} meta={`${KINDS[n.kind] ?? n.kind}${n.source ? " · linked" : ""}`} closeLabel="Close topic details" onclose={() => details = false}>
+      <div class="drawer-form">
+        <label class="field">{n.source ? "Fallback label" : "Label"}<input bind:value={draftLabel} maxlength="200" disabled={!editable}
+          oninput={e => {draftLabel = e.currentTarget.value; updateNode();}} /></label>
+        <label class="field">Notes<textarea bind:value={draftNotes} maxlength="10000" rows="6" disabled={!editable}
+          oninput={e => {draftNotes = e.currentTarget.value; updateNode();}}></textarea></label>
+        <label class="field">Reference URL<input bind:value={draftUrl} type="url" maxlength="4000" disabled={!editable} placeholder="https://…"
+          oninput={e => {draftUrl = e.currentTarget.value; updateNode();}} /></label>
+        {#if safeUrl((n.source ? current.live[n.id]?.url : undefined) ?? n.url)}<a href={safeUrl((n.source ? current.live[n.id]?.url : undefined) ?? n.url)} target="_blank" rel="noopener noreferrer">Open source ↗</a>{/if}
+        <div class="field"><span>Move under</span><Select label="Move under" kind="search" value={parents.get(n.id) ?? ""} disabled={!editable} onchange={reparent}
+          options={[{value: "", label: "No parent (root topic)"}, ...current.graph.nodes.filter(item => !descendants(n.id).has(item.id)).map(item => ({value: item.id, label: name(item)}))]} /></div>
+        {#if otherMaps.length}<div class="field"><span>Linked map</span><Select label="Linked map" kind="list" value={n.map_id ? String(n.map_id) : ""} disabled={!editable}
+          onchange={(value) => { remember(); n.map_id = value ? Number(value) : null; }} options={[{value: "", label: "None"}, ...otherMaps.map(m => ({value: String(m.id), label: m.title}))]} /></div>{/if}
+        {#if n.source}
+          <span class="eyebrow">Linked {n.source.kind.replace("_", " ")}</span>
+          {#if current.live[n.id]?.missing}<p class="hint warn">The source was deleted. Unlink to keep this topic.</p>{/if}
+          {#if n.kind === "job"}<p class="hint">{current.live[n.id]?.company ?? "Unavailable"} · {current.live[n.id]?.status ?? "No application"} · {current.live[n.id]?.queue_state ?? "Unavailable"}{current.live[n.id]?.closed_at ? " · closed" : ""}</p>{/if}
+          <Button size="sm" onclick={unlink} disabled={!editable}>Unlink, keep as a map note</Button>
+        {/if}
+        <span class="eyebrow">Connections</span>
+        <ul class="links">
+          {#each current.graph.edges.filter(e => e.from === n.id || e.to === n.id) as e (e.id)}
+            {@const other = current.graph.nodes.find(item => item.id === (e.from === n.id ? e.to : e.from))}
+            <li>
+              <span>{e.from === n.id ? "→" : "←"} {other ? name(other) : "?"}</span>
+              <input aria-label={`Label of the connection with ${other ? name(other) : "a topic"}`} value={e.label} maxlength="200" placeholder="relationship" disabled={!editable}
+                onchange={(event) => editEdge(e.id, "label", event.currentTarget.value)} />
+              <button type="button" class="icon-button" aria-label={`Remove the connection with ${other ? name(other) : "a topic"}`} disabled={!editable} onclick={() => removeEdge(e.id)}><Icon name="close" size={13} /></button>
+            </li>
+          {:else}<li class="hint">No connections.</li>{/each}
+        </ul>
+      </div>
+      {#snippet footer()}
+        <Button variant="ghost" disabled={!editable} onclick={() => { details = false; deleteNode(); }}>Delete topic</Button>
+      {/snippet}
+    </EditDrawer>
+  {/if}
+
+  {#if drawer === "links" && current}
+    <EditDrawer title="Linked mentions" meta={autoNew ? `${autoNew} new` : ""} closeLabel="Close linked mentions" onclose={() => drawer = ""}>
+      <div class="drawer-form">
+        <div class="row">
+          <Button size="sm" onclick={loadAutoLinks} disabled={autoBusy}>{autoBusy ? "Scanning…" : "Rescan"}</Button>
+          <Button size="sm" intent="primary" onclick={() => applyAutoLinks(autoPicked)} disabled={!editable || dirty || !autoPicked.length}>Link selected ({autoPicked.length})</Button>
+          <Button size="sm" onclick={() => applyAutoLinks(autoPending)} disabled={!editable || dirty || !autoPending.length}>Link all ({autoNew})</Button>
+        </div>
+        {#if autoError}<div role="alert" class="map-error">{autoError}</div>{/if}
+        {#if autoView && autoView.revision !== current.revision}<p class="hint">The map changed since this scan; rescan to refresh.</p>{/if}
+        {#if autoView && !autoView.suggestions.length}<p class="hint">No mentions yet. Write <code>[[Topic]]</code> in a note to link one.</p>{/if}
+        <ul class="mentions">
+          {#each autoView?.suggestions ?? [] as s (s.node_id)}
+            {@const fresh = s.references.filter((r) => !r.linked).length}
+            <li class="hub">
+              <div class="hub-head">
+                <label class="check"><input type="checkbox" checked={autoPicked.includes(s.node_id)} disabled={busy || !fresh}
+                  onchange={(e) => { autoPicked = e.currentTarget.checked ? [...autoPicked, s.node_id] : autoPicked.filter((id) => id !== s.node_id); }}
+                /><span class="sr-only">Link mentions of {s.label}</span></label>
+                <button type="button" class="hub-node" onclick={() => focusNode(s.node_id)}>{s.label}</button>
+                <Badge label={fresh ? `${fresh} new / ${s.references.length}` : `all ${s.references.length} linked`} />
+              </div>
+              <ul class="branches">
+                {#each s.references as r (`${r.kind}:${r.id}`)}
+                  <li class:linked={r.linked} class:explicit={r.match === "wikilink"}>
+                    <a href={`#${r.view}`} onclick={leaveFor}><span class="ref-kind">{REF_KINDS[r.kind] ?? r.kind}{r.match === "wikilink" ? " · [[link]]" : ""}{r.linked ? " · linked" : ""}</span>{r.title}</a>
+                    {#if r.snippet}<small>{r.snippet}</small>{/if}
+                  </li>
+                {/each}
+              </ul>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    </EditDrawer>
+  {/if}
+
+  {#if drawer === "jobs" && current?.mode === "jobs" && canImportJobs}
+    <EditDrawer title="Import tracked jobs" closeLabel="Close job import" onclose={() => drawer = ""}>
+      <div class="drawer-form">
+        <form class="row" onsubmit={(e) => { e.preventDefault(); void findJobs(); }}>
+          <input type="search" aria-label="Search title or company" placeholder="Title or company…" bind:value={jobSearch} maxlength="200" />
+          <Button size="sm" type="submit" disabled={busy}>Search</Button>
+        </form>
         <ul class="jobs">
-          {#each jobs as job}<li>
-              <label
-                ><input
-                  type="checkbox"
-                  checked={jobIds.includes(job.id)}
-                  disabled={busy ||
-                    (!jobIds.includes(job.id) && jobIds.length >= 50)}
-                  onchange={(e) => {
-                    jobIds = e.currentTarget.checked
-                      ? [...jobIds, job.id]
-                      : jobIds.filter((id) => id !== job.id);
-                  }}
-                /><span
-                  >{job.title} / {job.company}<small
-                    >{job.status ?? "No application"} · {job.queue_state}</small
-                  ></span
-                ></label
-              >
+          {#each jobs as job (job.id)}<li>
+              <label class="check"><input type="checkbox" checked={jobIds.includes(job.id)} disabled={busy || (!jobIds.includes(job.id) && jobIds.length >= 50)}
+                onchange={(e) => { jobIds = e.currentTarget.checked ? [...jobIds, job.id] : jobIds.filter((id) => id !== job.id); }}
+              /><span>{job.title} / {job.company}<small>{job.status ?? "No application"} · {job.queue_state}</small></span></label>
             </li>{/each}
         </ul>
-        <div class="toolbar">
-          <Button
-            onclick={() => findJobs(Math.max(0, jobOffset - 50))}
-            disabled={busy || jobOffset === 0}>Previous</Button
-          ><Button
-            onclick={() => findJobs(jobOffset + 50)}
-            disabled={busy || !moreJobs}>Next</Button
-          ><Button
-            intent="primary"
-            onclick={importJobs}
-            disabled={!editable || dirty || !jobIds.length}
-            >Import {jobIds.length} selected jobs</Button
-          >
+        <div class="row">
+          <Button size="sm" onclick={() => findJobs(Math.max(0, jobOffset - 50))} disabled={busy || jobOffset === 0}>Previous</Button>
+          <Button size="sm" onclick={() => findJobs(jobOffset + 50)} disabled={busy || !moreJobs}>Next</Button>
         </div>
-        <p class="hint">
-          Repeated imports reuse the same job/company nodes and “at”
-          connections. Application statuses remain live; skills and requirements
-          are never invented.
-        </p></Panel
-      >{/if}
-  {:else}<p class="empty">
-      Name your map and choose Create map. Select a topic, then add a child or sibling.
-      Type to rename; use Save map to keep your work.
-    </p>{/if}
-  {#if current}
-    <MindMapFeedback
-      title={current.title}
-      graph={{
-        nodes: current.graph.nodes.map(n => ({id: n.id, label: name(n), notes: n.notes})),
-        edges: current.graph.edges.map(e => ({from: e.from, to: e.to, label: e.label})),
-      }}
-      {demo}
-    />
+      </div>
+      {#snippet footer()}
+        <Button intent="primary" onclick={importJobs} disabled={!editable || dirty || !jobIds.length}>Import {jobIds.length} selected</Button>
+      {/snippet}
+    </EditDrawer>
+  {/if}
+
+  {#if drawer === "ai" && current}
+    <EditDrawer title="Ask AI about this map" closeLabel="Close map feedback" onclose={() => drawer = ""}>
+      <MindMapFeedback title={current.title} {demo}
+        graph={{
+          nodes: current.graph.nodes.map(n => ({id: n.id, label: name(n), notes: n.notes})),
+          edges: current.graph.edges.map(e => ({from: e.from, to: e.to, label: e.label})),
+        }} />
+    </EditDrawer>
   {/if}
 </section>
 
 <style>
-  .editor-workspace { display: flex; align-items: flex-start; flex-wrap: wrap; }
-  .editor-workspace > main { flex: 1 1 440px; min-width: 0; }
-  .editor-workspace > details { flex: 0 0 auto; max-width: 250px; }
-  .editor-workspace > aside { flex: 0 1 260px; }
-  .map-outline { max-height: 340px; overflow: auto; padding: 12px; border: 1px solid var(--border); }
-  .map-outline button { color: var(--ink); background: var(--surface); border: 0; padding: 6px; text-align: left; }
-  .map-outline button.active { color: var(--accent); }
+  /* Q18: one surface that fills its tab above the dock (or its host, embedded in Notes). */
   .schema {
-    display: grid;
-    gap: 14px;
-    color: var(--ink);
-    font-family: var(--br-font-ui, monospace);
-  }
-  .intro,
-  .hint {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.65;
-  }
-  .intro {
-    margin: 0 0 12px;
-  }
-  .toolbar {
+    position: relative;
     display: flex;
-    flex-wrap: wrap;
-    align-items: end;
-    gap: 8px;
-  }
-  .mapbar {
-    position: sticky;
-    top: var(--workbench-top, 0px);
-    z-index: 5;
-    padding: 12px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-  }
-  .mapbar span {
-    font-size: 11px;
-    color: var(--muted);
-    align-self: center;
-  }
-  label {
-    display: grid;
-    gap: 5px;
-    font-size: 11px;
-    min-width: 0;
-    color: var(--muted);
-  }
-  input,
-  select,
-  textarea {
-    width: 100%;
-    min-width: 0;
-    border: 1px solid var(--border);
-    border-radius: 0;
-    background: var(--surface);
+    flex-direction: column;
+    height: var(--map-height, var(--fit-h, calc(100dvh - var(--workbench-top, 0px) - var(--dock-space, 0px) - 34px)));
+    min-height: 420px;
+    overflow: hidden;
     color: var(--ink);
-    padding: 8px;
-    font: inherit;
+    font: 400 var(--fs-control) / 1.35 var(--font-ui);
   }
-  textarea {
-    resize: vertical;
+  .schema.embedded {
+    height: 100%;
+    min-height: 0;
   }
-  .workspace {
-    display: grid;
-    grid-template-columns: minmax(200px, 235px) minmax(320px, 1fr) minmax(
-        210px,
-        260px
-      );
+
+  /* ── slim top bar ── */
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    min-height: 46px;
+    padding: 0 10px 0 8px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .top > * { flex-shrink: 0; }
+  .grow { flex: 1; }
+  .switcher,
+  .bar-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: var(--control-h);
+    min-height: 0;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--muted);
+    font: 500 var(--fs-control) / 1 var(--font-ui);
+  }
+  .switcher:hover:not(:disabled),
+  .switcher[aria-expanded="true"],
+  .bar-btn:hover:not(:disabled),
+  .bar-btn[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+  .chev { color: var(--subtle); font-size: 10px; }
+  .slash { color: var(--subtle); }
+  .top .title {
+    flex: 0 1 auto;
+    width: min(36ch, 40%);
+    min-width: 8ch;
+    height: var(--control-h);
+    padding: 0 8px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    box-shadow: none;
+    color: var(--ink);
+    font: 600 14px / 1.2 var(--font-ui);
+    text-overflow: ellipsis;
+  }
+  .top .title:hover:not(:disabled) { border-color: var(--hairline); }
+  .top .title:focus { border-color: var(--accent); outline: none; }
+  .subject { display: inline-flex; align-items: center; gap: 6px; color: var(--subtle); font-size: 12px; white-space: nowrap; }
+  .subject .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--c3); }
+  .vr { flex-shrink: 0; width: 1px; height: 18px; margin: 0 4px; background: var(--hairline); }
+  :global(.kitty-popover.map-switcher) { min-width: 240px; }
+  .switch-list { display: grid; gap: 1px; max-height: 50dvh; overflow: auto; }
+  .switch-item,
+  .menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 12px;
-    align-items: start;
+    width: 100%;
+    min-height: 0;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink);
+    font: 500 var(--fs-control) / 1.3 var(--font-ui);
+    text-align: left;
   }
-  aside {
-    min-width: 0;
-  }
-  aside :global(.br-panel-body) {
-    display: grid;
-    gap: 10px;
-  }
-  aside label {
-    margin: 10px 0;
-  }
-  h2 {
-    font-size: 16px;
-    overflow-wrap: anywhere;
-  }
-  .graph-pane {
-    min-width: 0;
-  }
-  /* Map toolbar toggles (Outline, Ink, Quiz me) invert while on, like the app's other pressed toggles. */
-  .graph-pane > .toolbar :global(.br-btn[aria-pressed="true"]) {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
+  .switch-item small { margin: 0; color: var(--subtle); font: 500 var(--fs-chrome) / 1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
+  .switch-item:hover,
+  .menu-item:hover,
+  .menu-item:focus-visible { background: var(--wash); }
+  .switch-item[aria-current="true"] { color: var(--accent); }
+
+  /* ── canvas ── */
+  .canvas {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    container-type: size;
+    background-color: color-mix(in srgb, var(--solid-void) 55%, transparent);
+    background-image: radial-gradient(color-mix(in srgb, var(--ink) 9%, transparent) 1px, transparent 1px);
+    background-size: 22px 22px;
   }
   .stage {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
-    height: 510px;
-    margin: 8px 0;
-    border: 1px solid var(--border);
-    background-color: var(--surface);
-    background-image: radial-gradient(var(--border) 1px, transparent 1px);
-    background-size: 20px 20px;
+    height: 100%;
     touch-action: none;
     user-select: none;
     cursor: grab;
   }
-  /* Q44: rounded pills with a branch-coloured dot; parentless nodes are inverted ink roots. */
-  .graph-node {
-    cursor: move;
-    outline: none;
+  .canvas-empty,
+  .empty-state p { margin: 0; color: var(--muted); }
+  .canvas-empty {
+    position: absolute;
+    left: 50%;
+    top: 40%;
+    transform: translateX(-50%);
+    pointer-events: none;
   }
+  .empty-state {
+    flex: 1;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 14px;
+    padding: 40px;
+  }
+  .map-error {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    top: 58px;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 6px 6px 12px;
+    border: 1px solid color-mix(in srgb, var(--error) 50%, var(--hairline));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--solid-raised) 92%, var(--error));
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+  .embedded .map-error { top: 12px; }
+  .map-error > span { flex: 1; }
+  .views .map-error,
+  .drawer-form .map-error { position: static; }
+  .link {
+    min-height: 0;
+    padding: 2px 6px;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: 500 var(--fs-control) / 1.3 var(--font-ui);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* Q44: rounded pills with a branch-coloured dot; parentless nodes are inverted ink roots. */
+  .graph-node { cursor: move; outline: none; }
   .graph-node .pill {
     fill: color-mix(in srgb, var(--b) 14%, var(--solid-panel));
     stroke: color-mix(in srgb, var(--b) 55%, transparent);
@@ -3003,11 +2774,7 @@
     filter: drop-shadow(0 0 8px color-mix(in srgb, var(--b) 45%, transparent));
   }
   .graph-node .dot { fill: var(--b); }
-  .graph-node .label {
-    fill: var(--ink);
-    font: 500 12.5px var(--font-ui);
-    pointer-events: none;
-  }
+  .graph-node .label { fill: var(--ink); font: 500 12.5px var(--font-ui); pointer-events: none; }
   .graph-node.root .pill { fill: var(--ink); stroke: none; }
   .graph-node.root:hover .pill { fill: color-mix(in srgb, var(--ink) 88%, var(--solid-void)); }
   .graph-node.root.selected .pill,
@@ -3017,56 +2784,16 @@
   .graph-node.root .fold circle { fill: var(--solid-void); }
   .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-mono); pointer-events: none; }
   .graph-node.root.painted .pill { fill: var(--b); }
-  /* Q65 D: the selection's floating swatch row. */
-  .node-style {
-    position: absolute;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    padding: 4px 6px;
-    border: 1px solid var(--hairline);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--solid-raised) 86%, transparent);
-    backdrop-filter: var(--glass);
-    -webkit-backdrop-filter: var(--glass);
-    box-shadow: 0 10px 26px -16px color-mix(in srgb, var(--shadow-tint) 80%, transparent);
-    transform: translateY(-100%);
-    white-space: nowrap;
+  .graph-node.drop-target .pill {
+    stroke: var(--accent);
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 60%, transparent));
   }
-  .node-style.below { transform: none; }
-  .node-style .swatch {
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border: 2px solid transparent;
-    border-radius: 50%;
-    background: var(--dot) content-box;
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 20%, transparent);
-    cursor: pointer;
-    transition: transform 140ms ease;
-  }
-  .node-style .swatch:hover { transform: scale(1.12); }
-  .node-style .swatch[aria-pressed="true"] { border-color: var(--dot); }
-  .node-style .swatch.auto {
-    --dot: var(--muted);
-    background: conic-gradient(var(--c1), var(--c2), var(--c3), var(--c4), var(--c5), var(--c6), var(--c1)) content-box;
-  }
-  .node-style .rule { width: 1px; height: 16px; margin: 0 3px; background: var(--hairline); }
-  .node-style .word {
-    padding: 3px 8px;
-    border: 0;
-    border-radius: 999px;
-    background: none;
-    color: var(--muted);
-    font: 500 11.5px var(--font-ui);
-    cursor: pointer;
-  }
-  .node-style .word:hover:not(:disabled) { color: var(--ink); }
-  .node-style .word:disabled { opacity: 0.45; cursor: default; }
-  .node-style .word[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
-  .node-style .count { padding: 0 6px; color: var(--ink); font: 600 11.5px var(--font-ui); }
-  /* Q65 F: the Shift-drag selection box. */
+  .graph-node.dragging { opacity: 0.88; cursor: grabbing; }
+  .graph-node.detaching .pill { stroke: var(--b); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .graph-node.root.detaching .pill { stroke: var(--accent); }
+  .snap-preview { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 6 5; pointer-events: none; }
+  .drag-ghost { pointer-events: none; opacity: 0.7; }
   .marquee, .lasso {
     fill: color-mix(in srgb, var(--accent) 10%, transparent);
     stroke: var(--accent);
@@ -3079,7 +2806,6 @@
   .ink { fill: var(--ink); opacity: 0.88; pointer-events: none; }
   .ink .live { opacity: 0.75; }
   .stage.ink-mode { cursor: crosshair; }
-  @media (prefers-reduced-motion: reduce) { .node-style .swatch { transition: none; } }
   .inline-label {
     width: 100%;
     height: 100%;
@@ -3091,351 +2817,295 @@
     background: var(--solid-panel);
     font: 500 12.5px var(--font-ui);
   }
-  /* Q65 B: the pill a drag would snap into lights up; a detached branch shows a dashed outline. */
-  .graph-node.drop-target .pill {
-    stroke: var(--accent);
-    stroke-width: 2.5;
-    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 60%, transparent));
+  .edge { fill: none; stroke: var(--violet); stroke-width: 2; pointer-events: none; }
+  /* Q65 E: cross connections are dashed violet arcs outside the tree. */
+  .edge.cross { stroke-width: 1.6; stroke-dasharray: 6 5; stroke-linecap: round; }
+  .edge-input { padding: 0 10px; border-color: var(--violet); font-size: 11.5px; }
+  .edge.branch { stroke: var(--b); stroke-width: 1.6; stroke-opacity: 0.6; }
+  .edge.active { stroke: var(--accent); stroke-width: 3; }
+  .edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+  .edge-label {
+    fill: var(--ink);
+    font: 10px var(--font-ui);
+    paint-order: stroke;
+    stroke: var(--solid-void);
+    stroke-width: 5px;
+    cursor: pointer;
   }
-  .graph-node.dragging { opacity: 0.88; cursor: grabbing; }
-  .graph-node.detaching .pill { stroke: var(--b); stroke-width: 1.6; stroke-dasharray: 5 4; }
-  .graph-node.root.detaching .pill { stroke: var(--accent); }
-  .snap-preview { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 6 5; pointer-events: none; }
-  .drag-ghost { pointer-events: none; opacity: 0.7; }
-  .stage-wrap { position: relative; }
-  .drag-hint {
+  .edge-label.active { fill: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { .graph-node .pill { transition: none; } }
+
+  /* Floating glass pieces over the canvas. */
+  .drag-hint,
+  .merge-targets,
+  .recall-bar,
+  .ctx-bar,
+  .corner,
+  .map-outline {
     position: absolute;
+    z-index: 2;
+    border: 1px solid var(--hairline);
+    background: color-mix(in srgb, var(--solid-raised) 86%, transparent);
+    backdrop-filter: var(--glass);
+    -webkit-backdrop-filter: var(--glass);
+  }
+  .drag-hint {
     left: 50%;
-    top: 18px;
-    z-index: 1;
+    top: 12px;
     transform: translateX(-50%);
     margin: 0;
     padding: 5px 12px;
-    border: 1px solid var(--hairline);
     border-radius: 999px;
-    background: color-mix(in srgb, var(--solid-raised) 80%, transparent);
     color: var(--muted);
     font-size: 12px;
     white-space: nowrap;
     pointer-events: none;
   }
-  @media (prefers-reduced-motion: reduce) { .graph-node .pill { transition: none; } }
-  .edge {
-    fill: none;
-    stroke: var(--violet);
-    stroke-width: 2;
-    pointer-events: none;
-  }
-  /* Q65 E: cross connections are dashed violet arcs outside the tree. */
-  .edge.cross {
-    stroke-width: 1.6;
-    stroke-dasharray: 6 5;
-    stroke-linecap: round;
-  }
-  .edge-input { padding: 0 10px; border-color: var(--violet); font-size: 11.5px; }
-  .edge.branch {
-    stroke: var(--b);
-    stroke-width: 1.6;
-    stroke-opacity: 0.6;
-  }
-  .edge.active {
-    stroke: var(--accent);
-    stroke-width: 3;
-  }
-  .edge-hit {
-    fill: none;
-    stroke: transparent;
-    stroke-width: 14;
-    pointer-events: stroke;
-    cursor: pointer;
-  }
-  .edge-label {
-    fill: var(--ink);
-    font: 10px var(--br-font-ui, monospace);
-    paint-order: stroke;
-    stroke: var(--surface);
-    stroke-width: 5px;
-    cursor: pointer;
-  }
-  .edge-label.active {
-    fill: var(--accent);
-  }
-  .views {
-    align-items: center;
-  }
-  .map3d-workspace {
-    grid-template-columns: minmax(320px, 1fr) minmax(220px, 280px);
-  }
-  .network-workspace {
-    grid-template-columns: minmax(0, 1fr) minmax(230px, 290px);
-  }
-  .network-workspace > main {
-    grid-column: 1;
-    grid-row: 1 / span 2;
-  }
-  .network-workspace > aside {
-    grid-column: 2;
-  }
-  fieldset {
-    border: 1px solid var(--border);
-    margin: 0;
-    padding: 10px;
-    display: grid;
-    gap: 6px;
-    max-height: 260px;
-    overflow: auto;
-  }
-  legend {
-    font-size: 11px;
-    color: var(--muted);
-    padding: 0 4px;
-  }
-  aside label.check {
+  .merge-targets {
+    left: 50%;
+    top: 52px;
+    z-index: 3;
+    transform: translateX(-50%);
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 0;
-    color: var(--ink);
-  }
-  label.check input {
-    width: auto;
-  }
-  label.check small {
-    display: inline;
-    margin: 0;
-  }
-  h3 {
-    font-size: 12px;
-    color: var(--violet);
-    margin: 12px 0 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .members,
-  .clusters {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: grid;
-    gap: 6px;
-    font-size: 12px;
-    max-height: 340px;
-    overflow: auto;
-  }
-  .clusters {
+    gap: 4px;
+    max-width: calc(100% - 24px);
+    padding: 4px 4px 4px 12px;
+    border-radius: 999px;
     color: var(--muted);
-    font-size: 11px;
+    white-space: nowrap;
+    overflow-x: auto;
   }
-  .members li {
-    border: 1px solid var(--border);
+  .merge-targets button {
+    min-height: 0;
+    height: 26px;
+    padding: 0 12px;
+    border: 1px dashed var(--hairline);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    font: 500 12px / 1 var(--font-ui);
+  }
+  .merge-targets button:hover { border-color: var(--accent); background: var(--wash); }
+  .recall-bar {
+    left: 50%;
+    top: 12px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 4px 3px 12px;
+    border-radius: 999px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .map-outline {
+    left: 12px;
+    top: 12px;
+    display: grid;
+    align-content: start;
+    gap: 1px;
+    width: min(260px, calc(100% - 24px));
+    max-height: calc(100% - 96px);
+    overflow: auto;
     padding: 8px;
-    overflow-wrap: anywhere;
-    display: grid;
-    gap: 6px;
+    border-radius: 12px;
   }
-  .notes {
-    white-space: pre-wrap;
+  .map-outline [role="treeitem"] { display: flex; align-items: center; gap: 2px; }
+  .fold-toggle,
+  .outline-item {
+    min-height: 0;
+    padding: 3px 6px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
     color: var(--muted);
-    font-size: 12px;
-    margin: 4px 0;
-    overflow-wrap: anywhere;
-  }
-  .node-list,
-  .edges,
-  .jobs {
-    list-style: none;
-    padding: 0;
-    margin: 10px 0;
-    max-height: 320px;
-    overflow: auto;
-  }
-  .node-list button,
-  .edges > li > button {
-    width: 100%;
+    font: 500 12.5px / 1.3 var(--font-ui);
     text-align: left;
-    border: 1px solid var(--border);
-    border-radius: 0;
-    background: var(--surface);
-    color: var(--ink);
-    padding: 9px;
-    margin-bottom: 4px;
-    font: inherit;
-    overflow-wrap: anywhere;
-    cursor: pointer;
   }
-  .node-list button.active {
-    border-color: var(--accent);
-  }
-  small {
-    display: block;
-    color: var(--muted);
-    margin-top: 5px;
-    font-size: 10px;
-  }
-  .edge-edit {
-    display: grid;
-    gap: 8px;
-    padding: 10px;
-    border: 1px solid var(--violet);
-    margin-bottom: 10px;
-  }
-  .error {
-    padding: 12px;
-    border: 1px solid var(--accent);
-    color: var(--ink);
-    overflow-wrap: anywhere;
-  }
-  .file input {
-    max-width: 210px;
-  }
-  .jobs li {
-    padding: 7px;
-    border-bottom: 1px solid var(--border);
-  }
-  .jobs label {
-    display: flex;
-    align-items: start;
-    gap: 10px;
-  }
-  .jobs input {
-    width: auto;
-    margin-top: 3px;
-  }
-  a {
-    color: var(--violet);
-    overflow-wrap: anywhere;
-    display: block;
-    margin: 10px 0;
-  }
-  .empty {
-    padding: 40px;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    text-align: center;
-  }
-  .autolinks code {
-    color: var(--violet);
-  }
-  .mindmap {
-    list-style: none;
-    padding: 0;
-    margin: 12px 0 0;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 14px;
-    max-height: 560px;
-    overflow: auto;
-  }
-  .hub {
-    min-width: 0;
-  }
-  .hub-head {
+  .fold-toggle { width: 20px; padding: 3px 0; color: var(--subtle); font-size: 10px; }
+  .outline-item { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .outline-item:hover,
+  .outline-item.active { background: var(--wash); color: var(--ink); }
+
+  /* Q18: the contextual bar on the selected topic. 30px tall, it ends at the topic's top edge and
+     stays clear of the centre of the sibling above, which a tap may still pick. */
+  .ctx-bar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 1px;
+    height: 30px;
+    box-sizing: border-box;
+    padding: 0 4px;
+    border-radius: 999px;
+    box-shadow: 0 10px 26px -14px color-mix(in srgb, var(--shadow-tint) 85%, transparent);
+    transform: translateY(-100%);
+    white-space: nowrap;
   }
-  .hub-head .check {
-    margin: 0;
+  .ctx-bar.below { transform: none; }
+  .ctx-bar .vr { height: 16px; margin: 0 3px; }
+  .ctx-bar :global(.overflow-trigger) { width: 24px; height: 24px; min-height: 0; }
+  .cb {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    min-height: 0;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 12px / 1 var(--font-ui);
+    white-space: nowrap;
   }
-  .hub-head input {
-    width: auto;
+  .cb:hover:not(:disabled),
+  .cb[aria-pressed="true"],
+  .cb[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+  .cb:disabled { opacity: 0.45; cursor: default; }
+  .cb.icon { width: 24px; padding: 0; justify-content: center; }
+  .cb.colour { padding: 0 6px 0 3px; }
+  .count { padding: 0 6px; color: var(--ink); font: 600 12px var(--font-ui); }
+  .style-row { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 6px; }
+  :global(.kitty-popover.topic-style) { padding: 8px; }
+
+  /* Q65 D: round theme-slot swatches (the pill's colour row and the topic style popover). */
+  .swatches { display: inline-flex; align-items: center; gap: 2px; }
+  .swatch {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    min-height: 0;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    background: var(--dot) content-box;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 20%, transparent);
+    cursor: pointer;
+    transition: transform 140ms ease;
   }
+  .swatches.sm .swatch { width: 18px; height: 18px; }
+  span.swatch { display: inline-block; width: 18px; height: 18px; cursor: inherit; }
+  .swatch:hover:not(:disabled) { transform: scale(1.12); }
+  .swatch:disabled { opacity: 0.4; cursor: default; }
+  .swatch[aria-pressed="true"],
+  .swatch.on { border-color: var(--dot); }
+  .swatch.auto {
+    --dot: var(--muted);
+    background: conic-gradient(var(--c1), var(--c2), var(--c3), var(--c4), var(--c5), var(--c6), var(--c1)) content-box;
+  }
+  @media (prefers-reduced-motion: reduce) { .swatch { transition: none; } }
+
+  /* Zoom: a small corner control (the top right when the canvas is narrow, clear of the pill). */
+  .corner {
+    right: 12px;
+    bottom: 12px;
+    display: flex;
+    align-items: center;
+    height: 28px;
+    box-sizing: border-box;
+    padding: 0 3px;
+    border-radius: 999px;
+  }
+  @container (max-width: 980px) { .corner { top: 12px; bottom: auto; } }
+  .z {
+    display: grid;
+    place-items: center;
+    min-width: 22px;
+    height: 22px;
+    min-height: 0;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 14px / 1 var(--font-ui);
+  }
+  .z.fit { padding: 0 7px; font-size: 11.5px; }
+  .z:hover:not(:disabled) { background: var(--wash); color: var(--ink); }
+  .pct { min-width: 38px; color: var(--muted); font: 500 var(--fs-chrome) / 1 var(--font-mono); text-align: center; }
+  .corner .vr { height: 14px; margin: 0 2px; }
+
+  /* The pill's ⋯ panel: small forms and searches. */
+  .menu-form { display: grid; gap: 6px; }
+  :global(.pill-menu) input[type="search"],
+  .menu-form input { width: 100%; box-sizing: border-box; }
+  .pill-menu-item.danger { color: var(--error); }
+  .hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .hint.warn { color: var(--warning); }
+
+  /* Graph and merged-network views: the graph fills the canvas, an inspector rides on the right. */
+  .views {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(230px, 280px);
+  }
+  .network-view { grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(230px, 280px); }
+  .graph-pane { position: relative; min-width: 0; min-height: 0; padding: 0; border: 0; }
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 14px;
+    overflow: auto;
+    border-left: 1px solid var(--hairline);
+  }
+  .network-view .side:first-child { border-left: 0; border-right: 1px solid var(--hairline); }
+  .side h2 { margin: 0; font-size: var(--fs-heading); overflow-wrap: anywhere; }
+  .field { display: grid; gap: 5px; color: var(--muted); font-size: var(--fs-label); }
+  fieldset { display: grid; gap: 6px; max-height: 260px; margin: 0; padding: 0; overflow: auto; border: 0; }
+  legend { padding: 0 0 4px; color: var(--muted); font-size: var(--fs-label); }
+  label.check { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+  label.check input { width: auto; }
+  .members,
+  .clusters,
+  .links,
+  .jobs,
+  .mentions { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+  .clusters { color: var(--muted); font-size: 11px; }
+  .members li { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--hairline); overflow-wrap: anywhere; }
+  .notes { margin: 4px 0; color: var(--muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+  a { display: block; color: var(--violet); overflow-wrap: anywhere; }
+
+  /* Drawers (Q8): every field of a topic, linked mentions, job import, AI feedback, a new map. */
+  .drawer-form { display: grid; gap: 12px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .drawer-form input:not([type="checkbox"]),
+  .drawer-form textarea { width: 100%; box-sizing: border-box; }
+  .drawer-form textarea { resize: vertical; }
+  .links li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+  .links li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .jobs li { padding: 6px 0; border-top: 1px solid var(--hairline); }
+  .jobs label { align-items: start; }
+  .hub-head { display: flex; align-items: center; gap: 8px; }
   .hub-node {
     flex: 1;
     min-width: 0;
+    min-height: 0;
+    padding: 6px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    font: 600 12.5px / 1.3 var(--font-ui);
     text-align: left;
-    border: 2px solid var(--accent);
-    border-radius: 0;
-    background: var(--surface);
-    color: var(--ink);
-    padding: 8px 10px;
-    font: inherit;
-    font-weight: 600;
-    overflow-wrap: anywhere;
-    cursor: pointer;
-  }
-  .branches {
-    list-style: none;
-    margin: 0 0 0 18px;
-    padding: 6px 0 0 14px;
-    border-left: 2px solid var(--violet);
-    display: grid;
-    gap: 6px;
-  }
-  .branches li {
-    position: relative;
-    border: 1px solid var(--border);
-    padding: 7px 9px;
-    background: var(--surface);
     overflow-wrap: anywhere;
   }
-  .branches li::before {
-    content: "";
-    position: absolute;
-    left: -15px;
-    top: 16px;
-    width: 14px;
-    border-top: 2px solid var(--violet);
-  }
-  .branches li.explicit {
-    border-color: var(--violet);
-  }
-  .branches li.linked {
-    opacity: 0.62;
-  }
-  .branches a {
-    display: block;
-    margin: 0;
-    color: var(--ink);
-    font-size: 12px;
-    text-decoration: none;
-  }
+  .branches { display: grid; gap: 6px; margin: 0 0 0 14px; padding: 6px 0 0 12px; border-left: 2px solid var(--violet); list-style: none; }
+  .branches li { padding: 6px 8px; border-radius: 8px; background: var(--wash); overflow-wrap: anywhere; }
+  .branches li.linked { opacity: 0.62; }
+  .branches a { margin: 0; color: var(--ink); text-decoration: none; }
   .branches a:hover,
-  .branches a:focus-visible {
-    color: var(--accent);
-  }
-  .ref-kind {
-    display: block;
-    color: var(--violet);
-    font-size: 9px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 2px;
-  }
-  .branches small {
-    margin-top: 4px;
-    line-height: 1.5;
-  }
-  @media (max-width: 1200px) {
-    .workspace {
-      grid-template-columns: 210px minmax(300px, 1fr);
-    }
-    .map3d-workspace,
-    .network-workspace {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .workspace > aside:last-child {
-      grid-column: 1 / -1;
-    }
-    .network-workspace > aside,
-    .network-workspace > main {
-      grid-column: 1;
-      grid-row: auto;
-    }
-  }
-  @media (max-width: 760px) {
-    .workspace,
-    .network-workspace {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .workspace > aside:last-child,
-    .network-workspace > aside,
-    .network-workspace > main {
-      grid-column: auto;
-      grid-row: auto;
-    }
-    .stage {
-      height: 430px;
-    }
+  .branches a:focus-visible { color: var(--accent); }
+  .ref-kind { display: block; margin-bottom: 2px; color: var(--violet); font: 500 var(--fs-chrome) / 1.2 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+  code { color: var(--violet); }
+  @media (max-width: 900px) {
+    .views,
+    .network-view { grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(320px, auto); overflow: auto; }
+    .side,
+    .network-view .side:first-child { border: 0; border-top: 1px solid var(--hairline); }
   }
 </style>

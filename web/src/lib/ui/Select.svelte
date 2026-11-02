@@ -49,6 +49,7 @@
     disabled = false,
     oncreate,
     createLabel = (query: string) => `Create “${query}”`,
+    createAlways = false,
     onchange,
   }: {
     value?: string;
@@ -65,6 +66,8 @@
     /** Offers "Create “query”" in a searchable list. */
     oncreate?: (query: string) => void;
     createLabel?: (query: string) => string;
+    /** Keeps the create row (e.g. "New deck") even before anything is typed. */
+    createAlways?: boolean;
     onchange?: (value: string) => void;
   } = $props();
 
@@ -87,7 +90,7 @@
     ?? (kind === "timezone" && value ? { value, label: value.replaceAll("_", " ") } : undefined));
   const needle = $derived(query.trim().toLowerCase());
   const shown = $derived(mode === "search" && needle ? all.filter((option) => option.label.toLowerCase().includes(needle) || option.value.toLowerCase().includes(needle)) : all);
-  const creating = $derived(Boolean(oncreate && query.trim() && !all.some((option) => option.label.toLowerCase() === needle)));
+  const creating = $derived(Boolean(oncreate && (createAlways || query.trim()) && !all.some((option) => option.label.toLowerCase() === needle)));
   const rows = $derived(shown.length + (creating ? 1 : 0));
   const dotted = $derived(all.some((option) => option.color));
 

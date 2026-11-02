@@ -140,7 +140,7 @@ const shortcutGroups: ShortcutGroup[] = [
       ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
       [
         "Calendar / Study / Notes / Mind maps / AI",
-        "Pick a node on the atlas, use its Sections list, or Ctrl / ⌘ + K",
+        "Pick a node on the atlas, Sections on the stage, or Ctrl / ⌘ + K",
       ],
       ["?", "Show keyboard help"],
       ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
@@ -151,8 +151,9 @@ const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Atlas home",
     shortcuts: [
-      ["/", "Search the atlas and jump to a node"],
-      ["Enter in atlas search", "Focus the first match; Enter again opens it"],
+      ["/", "Open Sections and find a section"],
+      ["Enter in section search", "Show the first match on the map; Enter again opens it"],
+      ["]", "Hide or show the side widgets"],
       ["Drag / scroll", "Turn / zoom the Brain, or pan / zoom the 2D map"],
       ["Click a Brain group", "Open that group on its own; Escape returns to all"],
       ["Ctrl + ← / →", "Rotate the visible 3D schema left / right (outside editors and dialogs)"],
@@ -166,7 +167,7 @@ const shortcutGroups: ShortcutGroup[] = [
       ["Space / p", "Start, pause, or resume the study timer"],
       ["s / r", "Stop / reset the study timer"],
       ["b", "Skip the current break"],
-      ["Escape", "Leave study focus mode"],
+      ["[ / ]", "Open or close the subjects and guide drawers"],
     ],
   },
   {

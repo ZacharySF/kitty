@@ -3,17 +3,46 @@
   import TaskStatus from "./TaskStatus.svelte";
   import AIReview from "./AIReview.svelte";
   import SectionGraph, {type SectionNode} from "./SectionGraph.svelte";
+  import Icon from "./Icon.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import Select, { type SelectOption } from "./ui/Select.svelte";
+  import QuickAdd from "./ui/QuickAdd.svelte";
+  import EditDrawer from "./ui/EditDrawer.svelte";
+  import OverflowMenu, { type OverflowItem } from "./ui/OverflowMenu.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import type { Snippet } from "svelte";
+  /**
+   * Q21: map first. The category → source → opportunity map fills the page's one
+   * surface; Filters, List, Add (a quick-add popover) and ⋯ float over it in one row;
+   * the list slides in as a drawer on the right, and an opened item edits in the
+   * shared side drawer, as do Interests & monitor, Import and the full Add form.
+   */
   const pane = useWorkspaceContext();
-  let presentation = $state<"map" | "list">("map");
+  const LIST_KEY = "kitty.opportunities.list";
+  let listOpen = $state(readListOpen());
+  function readListOpen() {
+    try { return localStorage.getItem(LIST_KEY) === "open"; } catch { return false; }
+  }
+  function showList(open: boolean) {
+    listOpen = open;
+    try { localStorage.setItem(LIST_KEY, open ? "open" : "closed"); } catch { /* Storage can be unavailable; the drawer still opens. */ }
+  }
+  /** The side drawer: an opened item (`detail`) or one of these forms. */
+  let panel = $state<null | "new" | "import" | "monitor">(null);
+  function openPanel(next: "new" | "import" | "monitor") {
+    if (!pane.active) return;
+    detail = null;
+    pendingDelete = false;
+    panel = next;
+  }
   let schemaFocus = $state<string | null>(null);
   let schemaRevision = $state(0);
-  function rootSchema() { if (!pane.active) return; schemaFocus = null; presentation = "map"; detail = null; }
+  function rootSchema() { if (!pane.active) return; schemaFocus = null; detail = null; }
   function chooseNode(node: SectionNode) {
     if (!pane.active) return;
     if (node.entity === "category") schemaFocus = `category:${node.ref}`;
     else if (node.entity === "opportunity" && typeof node.ref === "number") void open(node.ref);
-    else if (node.entity === "source") configOpen = true;
+    else if (node.entity === "source") openPanel("monitor");
   }
   $effect(() => {
     const crumbs = [];
@@ -132,9 +161,7 @@
   let error = $state(""),
     notice = $state(""),
     busy = $state(false),
-    task = $state<TaskRecord | null>(null),
-    configOpen = $state(false),
-    addOpen = $state(false);
+    task = $state<TaskRecord | null>(null);
   let draft = $state({
     title: "",
     url: "",
@@ -158,6 +185,127 @@
   let summaryText = $state(""),
     aiResult = $state("");
   let pendingDelete = $state(false);
+  // Quick add: a title or a link, plus a category and a deadline chip.
+  let quick = $state(""),
+    quickCategory = $state("project"),
+    quickDeadline = $state("");
+  const STATUS_LABELS: Record<string, string> = {
+    discovered: "Discovered", new: "New", saved: "Saved", queued: "Queued", applied: "Applied",
+    participating: "Participating", completed: "Completed", skipped: "Skipped",
+  };
+  const statusLabel = (value: string) => STATUS_LABELS[value] ?? value.charAt(0).toUpperCase() + value.slice(1);
+  const AVAILABILITY: SelectOption[] = [
+    { value: "", label: "Any dates" },
+    { value: "future", label: "Upcoming" },
+    { value: "active", label: "Open now" },
+    { value: "closed", label: "Closed" },
+    { value: "unknown", label: "Dates unknown" },
+  ];
+  /** Remote is three-valued (yes, no, unknown); segments need string values. */
+  const REMOTE_CHOICES: SelectOption[] = [
+    { value: "unknown", label: "Unknown" },
+    { value: "true", label: "Remote" },
+    { value: "false", label: "In person" },
+  ];
+  /** A category keeps one theme colour slot wherever it appears. */
+  function tone(category: string) {
+    let hash = 0;
+    for (const char of category) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    return `var(--c${(hash % 6) + 1})`;
+  }
+  const shortDate = (value: string) => {
+    const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  };
+  const soon = (value: string | null) => {
+    if (!value) return false;
+    const days = (new Date(value).getTime() - Date.now()) / 86_400_000;
+    return days >= 0 && days <= 21;
+  };
+  /**
+   * Full-bleed: the surface runs from where it starts down to the dock. Notices above it
+   * (the demo pill) come and go, so the height is measured, not a fixed offset.
+   */
+  function fillWindow(node: HTMLElement) {
+    const measure = () => {
+      if (!node.offsetParent) return;
+      const dock = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0;
+      const top = node.getBoundingClientRect().top + window.scrollY;
+      node.style.height = `${Math.max(420, Math.floor(innerHeight - top - dock - 14))}px`;
+    };
+    let frame = 0;
+    const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
+    const main = node.closest("main");
+    const resize = new ResizeObserver(schedule);
+    if (main) resize.observe(main);
+    // A tab shown again (it was hidden) is measured as it reappears.
+    const shown = new IntersectionObserver(schedule);
+    shown.observe(node);
+    const notices = new MutationObserver(schedule);
+    if (main) notices.observe(main, { childList: true });
+    window.addEventListener("resize", measure);
+    measure();
+    return { destroy: () => { cancelAnimationFrame(frame); resize.disconnect(); shown.disconnect(); notices.disconnect(); window.removeEventListener("resize", measure); } };
+  }
+  const remoteValue = (value: boolean | null) => (value === null ? "unknown" : String(value));
+  const remoteFrom = (value: string) => (value === "unknown" ? null : value === "true");
+  const filterCount = $derived(
+    [source, category, status, location, remote, deadline, availability].filter(Boolean).length + (favoritesOnly ? 1 : 0),
+  );
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Filters and search narrow the list, so the list drawer opens to show the result. */
+  function applyFilters() {
+    clearTimeout(searchTimer);
+    showList(true);
+    void refresh();
+  }
+  function searchChanged() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applyFilters, 250);
+  }
+  function clearFilters() {
+    source = category = status = location = remote = deadline = availability = "";
+    favoritesOnly = false;
+    void refresh();
+  }
+  /** A pasted link becomes the source URL; its host and last path segment stand in for a title. */
+  function phrase(text: string) {
+    if (!/^https?:\/\//i.test(text)) return { title: text };
+    try {
+      const url = new URL(text);
+      const tail = url.pathname.split("/").filter(Boolean).pop() ?? "";
+      const words = decodeURIComponent(tail).replace(/[-_]+/g, " ").replace(/\.\w+$/, "").trim();
+      const host = url.hostname.replace(/^www\./, "");
+      return { title: words ? `${words.charAt(0).toUpperCase()}${words.slice(1)} · ${host}` : host, url: text };
+    } catch {
+      return { title: text };
+    }
+  }
+  async function quickSave(text: string) {
+    const result = await send("/opportunities", {
+      ...phrase(text),
+      category: quickCategory,
+      ...(quickDeadline ? { deadline: quickDeadline } : {}),
+    }, "", false);
+    if (!result) return false;
+    quickDeadline = "";
+    showList(true);
+  }
+  function quickMore(text: string) {
+    openPanel("new");
+    draft = { ...draft, ...phrase(text), category: quickCategory, deadline: quickDeadline };
+  }
+  const detailDirty = $derived.by(() => {
+    if (!detail) return false;
+    const now: Record<string, unknown> = { ...detail, tags: words(tags) };
+    return ["title", "url", "category", "description", "location", "remote", "notes", "status", "deadline", "timezone", "tags"]
+      .some((key) => JSON.stringify(now[key] ?? null) !== JSON.stringify(savedDetail[key] ?? null));
+  });
+  // Q3: the edited item's save state is a dot on the workspace tab, not "Saved locally".
+  $effect(() => {
+    pane.setStatus(detail ? (detailDirty ? { state: "unsaved", detail: "Unsaved changes · Save review" } : { state: "saved" }) : null);
+    return () => pane.setStatus(null);
+  });
   let requestGeneration = 0;
   let detailGeneration = 0;
   let savedDetail = $state<Record<string, unknown>>({});
@@ -210,7 +358,7 @@
       items = data.items;
       sources = data.sources;
       statuses = data.statuses;
-      if (!configOpen) {
+      if (panel !== "monitor") {
         profile = data.profile;
         interests = data.profile.interests.join(", ");
         locations = data.profile.locations.join(", ");
@@ -232,6 +380,7 @@
       const result = await api<Opportunity>(`/opportunities/${id}`);
       if (generation !== detailGeneration || (!pane.active && detail?.id !== id)) return;
       adopt(result);
+      panel = null;
       pendingDelete = false;
       editingItem = null;
     } catch (cause) {
@@ -241,7 +390,8 @@
   async function send(
     path: string,
     body: Record<string, unknown>,
-    message = "Saved locally.",
+    message = "",
+    show = true,
   ) {
     busy = true;
     error = "";
@@ -249,7 +399,7 @@
     try {
       const result = await api<Opportunity & { task?: TaskRecord }>(path, body);
       if (result.task) task = result.task;
-      else if (result.id && result.source && (pane.active || detail?.id === result.id)) adopt(result);
+      else if (show && result.id && result.source && (pane.active || detail?.id === result.id)) adopt(result);
       notice = message;
       await refresh();
       schemaRevision += 1;
@@ -272,8 +422,8 @@
       "/opportunities/favorites",
       { selections, favorite },
       favorite
-        ? "Selection saved to favorites."
-        : "Selection removed from favorites.",
+        ? ""
+        : "",
     );
     if (result && detail && ids.includes(detail.id)) await open(detail.id);
   }
@@ -374,7 +524,8 @@
       deadline: draft.deadline || null,
     });
     if (result) {
-      addOpen = false;
+      panel = null;
+      showList(true);
       draft = {
         title: "",
         url: "",
@@ -393,9 +544,13 @@
       const result = await send(
         "/opportunities/import",
         { items },
-        "Import stored locally.",
+        `Imported ${Array.isArray(items) ? items.length : 0}.`,
       );
-      if (result) importText = "";
+      if (result) {
+        importText = "";
+        panel = null;
+        showList(true);
+      }
     } catch (cause) {
       failure(cause);
     }
@@ -413,10 +568,10 @@
         enabled: schedule.enabled,
         interval_hours: Number(schedule.interval_hours),
       },
-      "Interest profile and opt-in monitoring saved.",
+      "",
     );
     if (result) {
-      configOpen = false;
+      panel = null;
       await refresh();
     }
   }
@@ -424,7 +579,7 @@
     await send(
       "/opportunities/discover",
       { confirmed: true },
-      "Free public discovery started; source failures remain visible.",
+      "Discovery started.",
     );
   }
   async function saveProjectItem() {
@@ -461,656 +616,756 @@
 </script>
 
 <svelte:window onkeydown={keydown} />
-<section class="opportunities">
-  <header>
-    <div>
-      <h2>Opportunities</h2>
-    </div>
-    <div class="actions">
-      <button
-        onclick={() => {
-          configOpen = !configOpen;
-        }}>Interests & monitor</button
-      ><button onclick={() => (addOpen = !addOpen)}>Add / import</button><button
-        disabled={demo || running}
-        onclick={discover}>Discover</button
-      >
-    </div>
-  </header>
-  {#if demo}<p class="notice">
-      Demo: local review, favorites, projects and calendar work; external
-      discovery and scheduled monitoring are disabled.
-    </p>{/if}
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if notice}<p class="notice" role="status">{notice}</p>{/if}
-  <TaskStatus
-    {task}
-    oncomplete={(result) => {
-      task = result;
-      void refresh();
-      if (detail) void open(detail.id);
-    }}
-  />
-  {#if configOpen}
-    <section class="panel">
-      <h2>Interest profile & public monitor</h2>
-      <p>
-        Ranking uses literal profile matches and explains every score. It does
-        not determine eligibility or guess missing dates.
-      </p>
-      <div class="fields">
-        <label>Major<input bind:value={profile.major} /></label><label
-          >Track<input bind:value={profile.track} /></label
-        ><label
-          >Interests (comma-separated)<input
-            bind:value={interests}
-            placeholder="quant, data science, hardware, hackathon"
-          /></label
-        ><label
-          >Preferred locations (comma-separated)<input
-            bind:value={locations}
-            placeholder="College Station, Texas"
-          /></label
-        ><label
-          ><input type="checkbox" bind:checked={profile.prefer_remote} /> Prefer remote</label
-        ><label
-          ><input
-            type="checkbox"
-            bind:checked={schedule.enabled}
-            disabled={demo}
-          /> Enable scheduled free monitoring while kitty! is open</label
-        ><label
-          >Interval (hours)<input
-            type="number"
-            min="6"
-            max="168"
-            bind:value={schedule.interval_hours}
-          /></label
-        >
-      </div>
-      <p>
-        Last run: {schedule.last_run || "never"} · Next run: {schedule.next_run ||
-          "not scheduled"}. Missed due runs resume next launch.
-      </p>
-      {#if schedule.last_error}<p class="notice">{schedule.last_error}</p>{/if}
-      <button disabled={busy} onclick={saveConfig}
-        >Save profile & schedule</button
-      >
-      <h3>Primary source citations & health</h3>
-      <p>
-        No login bypass, private portal access or paid search. Unknown dates are
-        not proof of open registration. Edit public provider paths to use an
-        authoritative feed; URLs must stay on the listed origin.
-      </p>
-      {#each sources as provider (provider.id)}<div class="source">
-          <label
-            ><input
-              type="checkbox"
-              checked={!!provider.enabled}
-              onchange={(e) =>
-                void send(`/opportunities/sources/${provider.id}`, {
-                  revision: provider.revision,
-                  enabled: e.currentTarget.checked,
-                })}
-            />
-            {provider.name}</label
-          ><a href={provider.url} target="_blank" rel="noreferrer"
-            >Primary source</a
-          ><label>Public URL<input bind:value={provider.url} /></label><button
-            disabled={busy}
-            onclick={() =>
-              void send(`/opportunities/sources/${provider.id}`, {
-                revision: provider.revision,
-                url: provider.url,
-              })}>Save URL</button
-          ><span
-            >{provider.last_status} · {provider.last_count} records · {provider.last_run ||
-              "not fetched"}</span
-          >{#if provider.last_error}<p class="notice">
-              {provider.last_error}
-            </p>{/if}
-        </div>{/each}
-    </section>
-  {/if}
-  {#if addOpen}<section class="panel">
-      <h2>Manual opportunity / project</h2>
-      <div class="fields">
-        <label>Title<input bind:value={draft.title} /></label><label
-          >Source URL<input type="url" bind:value={draft.url} /></label
-        ><label>Category<input bind:value={draft.category} /></label><label
-          >Location<input bind:value={draft.location} /></label
-        ><label
-          >Remote<select bind:value={draft.remote}
-            ><option value={null}>Unknown</option><option value={true}
-              >Yes</option
-            ><option value={false}>No</option></select
-          ></label
-        ><label
-          >Deadline (date or aware ISO8601)<input
-            bind:value={draft.deadline}
-            placeholder="2027-01-11 or 2027-01-11T17:00:00-06:00"
-          /></label
-        ><label>IANA timezone<input bind:value={draft.timezone} /></label><label
-          >Description<textarea bind:value={draft.description}
-          ></textarea></label
-        >
-      </div>
-      <button disabled={busy || !draft.title.trim()} onclick={add}
-        >Add locally</button
-      >
-      <h3>Import JSON</h3>
-      <p>
-        A JSON array of objects with title and optional url, category, location,
-        remote, description, deadline, timezone, notes, tags and status.
-        Duplicate canonical URLs are rejected.
-      </p>
-      <textarea
-        aria-label="Opportunity import JSON"
-        bind:value={importText}
-        placeholder={'[{"title":"My project","category":"project"}]'}
-      ></textarea><button
-        disabled={busy || !importText.trim()}
-        onclick={importItems}>Import locally</button
-      >
-    </section>{/if}
-  <nav class="actions" aria-label="Opportunities view">
-    <button aria-pressed={presentation === "map"} onclick={() => presentation = "map"}>Map</button>
-    <button aria-pressed={presentation === "list"} onclick={() => presentation = "list"}>List</button>
-    {#if schemaFocus}<button onclick={rootSchema}>All categories</button>{/if}
-  </nav>
-  {#if presentation === "map"}
-    <SectionGraph section="opportunities" revision={revision + schemaRevision} focus={schemaFocus} onselect={chooseNode}
-      ondelete={(node) => { if (node.entity === "opportunity" && typeof node.ref === "number") return deleteOpportunity(node.ref); }} listToggle={false} />
-  {:else}
-  <form
-    class="filters"
-    onsubmit={(e) => {
-      e.preventDefault();
-      void refresh();
-    }}
-  >
-    <label
-      >Search<input
-        bind:value={search}
-        placeholder="Title, description, notes, tags"
-      /></label
-    >
-    <details class="opportunity-filters"><summary>Filters</summary>
-    <label>Source<select bind:value={source}
-        ><option value="">All sources</option><option value="manual"
-          >Manual</option
-        >{#each sources as s}<option value={s.id}>{s.name}</option
-          >{/each}</select
-      ></label
-    ><label
-      >Category<input
-        bind:value={category}
-        list={`${pane.id}-opportunity-categories`}
-        placeholder="All categories"
-      /><datalist id={`${pane.id}-opportunity-categories`}
-        >{#each categories as c}<option value={c}></option>{/each}</datalist
-      ></label
-    ><label
-      >Review status<select bind:value={status}
-        ><option value="">All statuses</option>{#each statuses as s}<option
-            value={s}>{s}</option
-          >{/each}</select
-      ></label
-    ><label>Location<input bind:value={location} /></label><label
-      >Remote<select bind:value={remote}
-        ><option value="">All</option><option value="true">Remote</option
-        ><option value="false">In-person</option><option value="unknown"
-          >Unknown</option
-        ></select
-      ></label
-    ><label>Deadline on/before<input type="date" bind:value={deadline} /></label
-    ><label
-      >Dates / availability<select bind:value={availability}
-        ><option value="">All</option
-        >{#each ["future", "active", "closed", "unknown"] as a}<option value={a}
-            >{a}</option
-          >{/each}</select
-      ></label
-    ><label
-      ><input type="checkbox" bind:checked={favoritesOnly} /> Favorites</label
-    ><button type="submit">Apply filters</button>
-    </details>
-  </form>
-  <div class="actions">
-    <span>{items.length} opportunities · {selected.length} selected</span
-    ><button onclick={() => (selected = items.map((i) => i.id))}
-      >Select all shown</button
-    ><button onclick={() => (selected = [])}>Clear selection</button><button
-      disabled={busy || !selected.length}
-      onclick={() => void saveSelected()}>Save selected (Ctrl F)</button
-    ><button
-      disabled={busy || !selected.length}
-      onclick={() => void saveSelected(false)}>Unfavorite selected</button
-    >
+{#snippet field(label: string, control: Snippet, tip = "")}
+  <label class="field" title={tip || undefined}><span class="field-label">{label}</span>{@render control()}</label>
+{/snippet}
+
+<section class="opportunities surface" class:with-list={listOpen} aria-label="Opportunities" use:fillWindow>
+  <div class="map">
+    <SectionGraph bare section="opportunities" revision={revision + schemaRevision} focus={schemaFocus} onselect={chooseNode}
+      ondelete={(node) => { if (node.entity === "opportunity" && typeof node.ref === "number") return deleteOpportunity(node.ref); }} />
   </div>
+
+  <div class="float-row" role="toolbar" aria-label="Opportunities controls">
+    <h1>Opportunities</h1>
+    {#if schemaFocus}<button type="button" class="pill ghost" onclick={rootSchema} title="Show every category">All categories</button>{/if}
+    <div class="tools">
+      <label class="search">
+        <Icon name="jobs" size={14} />
+        <input type="search" aria-label="Search opportunities" placeholder="Search" bind:value={search} oninput={searchChanged}
+          onkeydown={(event) => { if (event.key === "Enter") applyFilters(); }} />
+      </label>
+      <Popover label="Filters" placement="bottom-end" class="opportunity-filters">
+        {#snippet trigger(props)}
+          <button type="button" class="pill" {...props}>Filters{#if filterCount}<span class="count">{filterCount}</span>{/if}</button>
+        {/snippet}
+        <div class="filter-grid">
+          {#snippet sourceSelect()}<Select label="Source" kind="list" bind:value={source} onchange={applyFilters}
+            options={[{ value: "", label: "All sources" }, { value: "manual", label: "Added by you" }, ...sources.map((s) => ({ value: s.id, label: s.name }))]} />{/snippet}
+          {#snippet categorySelect()}<Select label="Category" kind="search" bind:value={category} onchange={applyFilters}
+            options={[{ value: "", label: "All categories" }, ...categories.map((c) => ({ value: c, label: c }))]} />{/snippet}
+          {#snippet statusSelect()}<Select label="Review status" kind="list" bind:value={status} onchange={applyFilters}
+            options={[{ value: "", label: "Any status" }, ...statuses.map((s) => ({ value: s, label: statusLabel(s) }))]} />{/snippet}
+          {#snippet remoteSelect()}<Select label="Remote" kind="segments" value={remote || "all"} onchange={(next) => { remote = next === "all" ? "" : next; applyFilters(); }}
+            options={[{ value: "all", label: "Any" }, { value: "true", label: "Remote" }, { value: "false", label: "In person" }, { value: "unknown", label: "Unknown" }]} />{/snippet}
+          {#snippet availabilitySelect()}<Select label="Dates" kind="list" bind:value={availability} onchange={applyFilters} options={AVAILABILITY} />{/snippet}
+          {#snippet locationInput()}<input bind:value={location} placeholder="Any" onchange={applyFilters} />{/snippet}
+          {#snippet deadlineInput()}<input type="date" bind:value={deadline} onchange={applyFilters} />{/snippet}
+          {@render field("Source", sourceSelect)}
+          {@render field("Category", categorySelect)}
+          {@render field("Review status", statusSelect)}
+          {@render field("Dates", availabilitySelect)}
+          {@render field("Remote", remoteSelect)}
+          {@render field("Location", locationInput)}
+          {@render field("Deadline by", deadlineInput)}
+          <label class="check"><input type="checkbox" bind:checked={favoritesOnly} onchange={applyFilters} />Favorites only</label>
+        </div>
+        {#if filterCount}<div class="filter-foot"><button type="button" class="text-button" onclick={clearFilters}>Clear filters</button></div>{/if}
+      </Popover>
+      <button type="button" class="pill" aria-pressed={listOpen} onclick={() => showList(!listOpen)} title="Show the list beside the map"
+        ><Icon name="menu" size={14} />List<span class="count">{items.length}</span></button
+      >
+      <QuickAdd label="Add" placeholder="Title or link" bind:value={quick} onsave={quickSave} onmore={quickMore}>
+        {#snippet chips()}
+          <Select label="Category" kind="search" bind:value={quickCategory} oncreate={(name) => (quickCategory = name)}
+            options={[...new Set(["project", ...categories, quickCategory])].map((c) => ({ value: c, label: c }))} />
+          <input class="chip-date" type="date" aria-label="Deadline" title="Deadline" bind:value={quickDeadline} />
+        {/snippet}
+      </QuickAdd>
+      <OverflowMenu items={[
+        { label: "Interests & monitor", icon: "shield", onselect: () => openPanel("monitor") },
+        { label: "Import JSON…", icon: "download", onselect: () => openPanel("import") },
+        ...(demo ? [] : [{ label: running ? "Discovering…" : "Discover from public sources", icon: "refresh", disabled: running, onselect: () => void discover() }]),
+      ] satisfies OverflowItem[]} />
+    </div>
+  </div>
+
+  {#if error || notice || task}
+    <div class="float-notes">
+      {#if error}<p class="note error" role="alert">{error}<button type="button" class="icon-button" aria-label="Dismiss" onclick={() => (error = "")}><Icon name="close" size={12} /></button></p>{/if}
+      {#if notice}<p class="note" role="status">{notice}<button type="button" class="icon-button" aria-label="Dismiss" onclick={() => (notice = "")}><Icon name="close" size={12} /></button></p>{/if}
+      <TaskStatus compact {task} oncomplete={(result) => { task = result; void refresh(); if (detail) void open(detail.id); }} />
+    </div>
   {/if}
-  <div class="workspace">
-    {#if presentation === "list"}
-    <div class="list">
-      {#each items as item (item.id)}<article
-          class:selected={selected.includes(item.id)}
+
+  {#if listOpen}
+    <aside class="list-drawer" aria-label="Opportunities list">
+      <div class="list-head">
+        <label class="check" title="Select every shown opportunity"
+          ><input type="checkbox" aria-label="Select all shown" checked={items.length > 0 && selected.length === items.length}
+            onchange={(event) => (selected = event.currentTarget.checked ? items.map((i) => i.id) : [])} /></label
         >
-          <div class="row">
-            <input
-              type="checkbox"
-              aria-label={`Select ${item.title}`}
-              checked={selected.includes(item.id)}
-              onchange={(e) =>
-                (selected = e.currentTarget.checked
-                  ? [...new Set([...selected, item.id])]
-                  : selected.filter((id) => id !== item.id))}
-            /><button
-              class="row-title"
-              onclick={(event) => choose(item, event)}
+        {#if selected.length}
+          <span class="muted">{selected.length} selected</span>
+          <button type="button" class="pill" disabled={busy} onclick={() => void saveSelected()} title="Ctrl F">Favorite</button>
+          <button type="button" class="pill ghost" disabled={busy} onclick={() => void saveSelected(false)}>Unfavorite</button>
+        {:else}
+          <span class="muted">{filterCount || search ? `${items.length} match` : `${items.length} opportunities`}</span>
+        {/if}
+        <button type="button" class="icon-button close" aria-label="Hide the list" title="Hide the list" onclick={() => showList(false)}><Icon name="close" size={13} /></button>
+      </div>
+      <ul>
+        {#each items as item (item.id)}
+          <li class:on={focused === item.id} class:marked={selected.includes(item.id)} style:--tone={tone(item.category)}>
+            <input type="checkbox" aria-label={`Select ${item.title}`} checked={selected.includes(item.id)}
+              onchange={(e) => (selected = e.currentTarget.checked ? [...new Set([...selected, item.id])] : selected.filter((id) => id !== item.id))} />
+            <button type="button" class="row" onclick={(event) => choose(item, event)}
               oncontextmenu={(event) => { if (window.getSelection()?.toString()) return; event.preventDefault(); void deleteOpportunity(item.id); }}
-              ><strong>{item.favorite ? "★ " : ""}{item.title}</strong><span
-                >{item.source} · {item.category} · {item.status} · {item.availability}</span
-              ></button
-            >
-          </div>
-          <p>
-            {item.location || "Location unknown"} · {item.remote === null
-              ? "Remote unknown"
-              : item.remote
-                ? "Remote"
-                : "In-person"} · Deadline: {item.deadline || "unknown"}
-          </p>
-          <p>
-            Match score {item.score}: {item.reasons.length
-              ? item.reasons.join("; ")
-              : "No explicit profile matches."}
-          </p>
-        </article>{:else}<p class="panel">
-          No opportunities match. Add a local project or explicitly discover
-          public sources.
-        </p>{/each}
-    </div>
-    {/if}
-    {#if detail}<aside class="panel detail">
-        <div class="actions">
-          <h2>{detail.title}</h2>
-          <button onclick={() => (detail = null)}>Close</button>
-        </div>
-        {#if detail.url}<a href={detail.url} target="_blank" rel="noreferrer"
-            >Open source URL</a
-          >{:else}<p>No source URL supplied.</p>{/if}
-        <p>{detail.description}</p>
-        <p>
-          Event start: {detail.start || "unknown"} · End: {detail.end ||
-            "unknown"}. These are not application deadlines.
-        </p>
-        <div class="fields">
-          <label>Title<input bind:value={detail.title} /></label><label
-            >URL<input bind:value={detail.url} /></label
-          ><label>Category<input bind:value={detail.category} /></label><label
-            >Location<input bind:value={detail.location} /></label
-          ><label
-            >Remote<select bind:value={detail.remote}
-              ><option value={null}>Unknown</option><option value={true}
-                >Yes</option
-              ><option value={false}>No</option></select
-            ></label
-          ><label
-            >Status<select bind:value={detail.status}
-              >{#each statuses as s}<option value={s}>{s}</option
-                >{/each}</select
-            ></label
-          ><label
-            >Deadline override<input
-              bind:value={detail.deadline}
-              placeholder="Date or aware ISO8601"
-            /></label
-          ><label>IANA timezone<input bind:value={detail.timezone} /></label
-          ><label>Tags<input bind:value={tags} /></label><label
-            >Notes<textarea bind:value={detail.notes}></textarea></label
-          >
-        </div>
-        <p>
-          Saving protects edited facts from provider refresh. Manual overrides: {detail.overrides.join(
-            ", ",
-          ) || "none"}.
-        </p>
-        <label
-          >Description override<textarea bind:value={detail.description}
-          ></textarea></label
-        >
-        <div class="actions">
-          <button disabled={busy} onclick={saveDetail}>Save review</button
-          ><button
-            disabled={busy || !detail.deadline}
-            onclick={() =>
-              void send(
-                `/opportunities/${detail!.id}/calendar`,
-                {},
-                "Deadline added to local calendar; repeated exports do not overwrite calendar edits.",
-              )}>Export saved deadline to calendar</button
-          ><button disabled={demo || busy} onclick={aiSummary}
-            >Review AI summary prompt</button
-          ><button onclick={() => (pendingDelete = true)}
-            >Delete opportunity</button
-          >
-        </div>
-        {#if pendingDelete}<p class="notice">
-            Delete this opportunity, its evidence and local project items?
-            Calendar events already exported are retained.
-          </p>
-          <button
-            onclick={async () => {
-              const result = await send(
-                `/opportunities/${detail!.id}/delete`,
-                { revision: detail!.revision },
-                "Opportunity deleted.",
-              );
-              if (result) {
-                detail = null;
-                selected = selected.filter((id) => id !== focused);
-              }
-            }}>Confirm delete</button
-          ><button onclick={() => (pendingDelete = false)}>Cancel</button>{/if}
-        <h3>Factual source evidence</h3>
-        {#each detail.evidence || [] as evidence}<details>
-            <summary
-              >{evidence.source} · observed {evidence.observed_at}</summary
-            ><a href={evidence.url} target="_blank" rel="noreferrer"
-              >Evidence citation</a
-            >
-            <pre>{JSON.stringify(evidence.facts, null, 2)}</pre>
-          </details>{:else}<p>
-            Manually supplied record; no provider evidence claimed.
-          </p>{/each}
-        <h3>Project</h3>
-        {#if detail.project}<label
-            >Project title<input bind:value={detail.project.title} /></label
-          ><label
-            >Project notes<textarea bind:value={detail.project.notes}
-            ></textarea></label
-          ><button
-            disabled={busy}
-            onclick={() =>
-              void send(`/opportunities/${detail!.id}/project-details`, {
-                revision: detail!.project!.revision,
-                title: detail!.project!.title,
-                notes: detail!.project!.notes,
-              })}>Save project</button
-          >
-          {#each detail.project.items as item (item.id)}<div
-              class="project-item"
-            >
-              <label
-                ><input
-                  type="checkbox"
-                  checked={!!item.done}
-                  onchange={(e) =>
-                    void send(`/opportunities/${detail!.id}/items`, {
-                      revision: detail!.project!.revision,
-                      id: item.id,
-                      done: e.currentTarget.checked,
-                    })}
-                />
-                {item.kind}: {item.title}</label
-              ><span>{item.due || "No due date"}</span>{#if item.url}<a
-                  href={item.url}
-                  target="_blank"
-                  rel="noreferrer">Resource</a
-                >{/if}{#if item.notes}<p>{item.notes}</p>{/if}<button
-                onclick={() => editProjectItem(item)}>Edit</button
-              ><button
-                disabled={busy}
-                onclick={() =>
-                  void send(`/opportunities/${detail!.id}/items`, {
-                    revision: detail!.project!.revision,
-                    id: item.id,
-                    delete: true,
-                  })}>Delete item</button
-              >
-            </div>{/each}
-          <h4>{editingItem ? "Edit" : "Add"} task / milestone / resource</h4>
-          <div class="fields">
-            <label
-              >Kind<select bind:value={projectDraft.kind}
-                >{#each ["task", "milestone", "resource"] as kind}<option
-                    value={kind}>{kind}</option
-                  >{/each}</select
-              ></label
-            ><label>Title<input bind:value={projectDraft.title} /></label><label
-              >Due (date or aware ISO)<input
-                bind:value={projectDraft.due}
-              /></label
-            ><label>Resource URL<input bind:value={projectDraft.url} /></label
-            ><label
-              >Notes<textarea bind:value={projectDraft.notes}></textarea></label
-            >
-          </div>
-          <button
-            disabled={busy || !projectDraft.title.trim()}
-            onclick={saveProjectItem}>Save project item</button
-          >{#if editingItem}<button
-              onclick={() => {
-                editingItem = null;
-                projectDraft = {
-                  kind: "task",
-                  title: "",
-                  due: "",
-                  url: "",
-                  notes: "",
-                };
-              }}>Cancel edit</button
-            >{/if}
-        {:else}<p>
-            Turn this opportunity into a local project with actionable tasks,
-            milestones and resources.
-          </p>
-          <button
-            disabled={busy}
-            onclick={() =>
-              void send(`/opportunities/${detail!.id}/project`, {
-                revision: detail!.revision,
-              })}>Create project</button
-          >{/if}
-      </aside>{/if}
-  </div>
-  {#if summaryText}<section class="panel">
-      <h2>Opportunity summary request</h2>
-      <AIReview
-        purpose="opportunity-summary"
-        text={summaryText}
-        {demo}
-        active={pane.active}
-        onresult={(text) => {
-          aiResult = text;
-          summaryText = "";
-        }}
-      /><button onclick={() => (summaryText = "")}>Close summary request</button
-      >
-    </section>{/if}
-  {#if aiResult}<section class="panel">
-      <h2>AI suggestion — verify against evidence</h2>
-      <pre>{aiResult}</pre>
-      <p>Not applied to notes, eligibility, dates or project records.</p>
-    </section>{/if}
+              title={item.reasons.length ? `Match ${item.score}: ${item.reasons.join("; ")}` : undefined}>
+              <span class="dot" aria-hidden="true"></span>
+              <span class="row-main"><strong>{#if item.favorite}<span class="star" aria-label="Favorite">★</span>{/if}{item.title}</strong
+                ><small>{item.category} · {item.location || (item.remote ? "Remote" : "Location unknown")} · {statusLabel(item.status)}</small></span>
+              <span class="due" class:soon={soon(item.deadline)}>{item.deadline ? shortDate(item.deadline) : "—"}</span>
+            </button>
+          </li>
+        {:else}
+          <li class="empty">{filterCount || search ? "No opportunities match." : "Nothing yet. Add a project or import a list."}</li>
+        {/each}
+      </ul>
+    </aside>
+  {/if}
 </section>
 
+{#if detail}
+  <EditDrawer title={detail.title} meta={`${detail.category} · ${statusLabel(detail.status)}${detail.deadline ? ` · due ${shortDate(detail.deadline)}` : ""}`}
+    accent={tone(detail.category)} onclose={() => { detail = null; pendingDelete = false; }}>
+    {#if detail.url || detail.start || detail.end}
+      <p class="links">
+        {#if detail.url}<a href={detail.url} target="_blank" rel="noreferrer">Open source <Icon name="external" size={11} /></a>{/if}
+        {#if detail.start || detail.end}<span class="muted" title="Event dates, not application deadlines">Runs {detail.start || "?"} – {detail.end || "?"}</span>{/if}
+      </p>
+    {/if}
+    <div class="fields">
+      <label class="field wide"><span class="field-label">Title</span><input bind:value={detail.title} /></label>
+      <label class="field wide"><span class="field-label">URL</span><input bind:value={detail.url} /></label>
+      <label class="field"><span class="field-label">Category</span><input bind:value={detail.category} /></label>
+      <label class="field"><span class="field-label">Location</span><input bind:value={detail.location} /></label>
+      {#snippet detailStatus()}<Select label="Status" kind="list" bind:value={detail!.status} options={statuses.map((s) => ({ value: s, label: statusLabel(s) }))} />{/snippet}
+      {#snippet detailRemote()}<Select label="Remote" kind="segments" value={remoteValue(detail!.remote)} onchange={(next) => (detail!.remote = remoteFrom(next))} options={REMOTE_CHOICES} />{/snippet}
+      {@render field("Status", detailStatus)}
+      {@render field("Remote", detailRemote)}
+      <label class="field" title="A date, or an ISO time with offset"><span class="field-label">Deadline</span><input bind:value={detail.deadline} placeholder="2027-01-11" /></label>
+      {#snippet detailZone()}<Select label="Time zone" kind="timezone" value={detail!.timezone} onchange={(next) => (detail!.timezone = next)} />{/snippet}
+      {@render field("Time zone", detailZone)}
+      <label class="field wide"><span class="field-label">Tags</span><input bind:value={tags} placeholder="Comma-separated" /></label>
+      <label class="field wide"><span class="field-label">Notes</span><textarea bind:value={detail.notes}></textarea></label>
+      <label class="field wide"><span class="field-label">Description</span><textarea bind:value={detail.description}></textarea></label>
+    </div>
+
+    <section class="drawer-section" aria-label="Project">
+      <span class="section-head">Project</span>
+      {#if detail.project}
+        <label class="field"><span class="field-label">Project title</span><input bind:value={detail.project.title} /></label>
+        <label class="field"><span class="field-label">Project notes</span><textarea bind:value={detail.project.notes}></textarea></label>
+        <div class="row-actions">
+          <button type="button" class="pill" disabled={busy}
+            onclick={() => void send(`/opportunities/${detail!.id}/project-details`, { revision: detail!.project!.revision, title: detail!.project!.title, notes: detail!.project!.notes })}>Save project</button>
+        </div>
+        {#each detail.project.items as item (item.id)}
+          <div class="project-item">
+            <label class="check"><input type="checkbox" checked={!!item.done}
+              onchange={(e) => void send(`/opportunities/${detail!.id}/items`, { revision: detail!.project!.revision, id: item.id, done: e.currentTarget.checked })} />
+              <span><span class="kind">{item.kind}</span> {item.title}</span></label>
+            <span class="due">{item.due ? shortDate(item.due) : ""}</span>
+            {#if item.url}<a href={item.url} target="_blank" rel="noreferrer" aria-label={`Open resource for ${item.title}`}><Icon name="external" size={12} /></a>{/if}
+            <OverflowMenu label={`Actions for ${item.title}`} items={[
+              { label: "Edit", onselect: () => editProjectItem(item) },
+              { label: "Delete", danger: true, disabled: busy, onselect: () => void send(`/opportunities/${detail!.id}/items`, { revision: detail!.project!.revision, id: item.id, delete: true }) },
+            ]} />
+            {#if item.notes}<p class="item-notes">{item.notes}</p>{/if}
+          </div>
+        {/each}
+        <div class="item-form" aria-label={editingItem ? "Edit project item" : "Add project item"} role="group">
+          {#snippet kindSelect()}<Select label="Kind" kind="segments" bind:value={projectDraft.kind}
+            options={[{ value: "task", label: "Task" }, { value: "milestone", label: "Milestone" }, { value: "resource", label: "Resource" }]} />{/snippet}
+          {@render field("Kind", kindSelect)}
+          <label class="field"><span class="field-label">{editingItem ? "Edit item" : "New item"}</span><input bind:value={projectDraft.title} placeholder="Title" /></label>
+          <div class="pair">
+            <label class="field"><span class="field-label">Due</span><input bind:value={projectDraft.due} placeholder="2027-01-11" /></label>
+            <label class="field"><span class="field-label">Resource URL</span><input bind:value={projectDraft.url} /></label>
+          </div>
+          <label class="field"><span class="field-label">Item notes</span><textarea bind:value={projectDraft.notes}></textarea></label>
+          <div class="row-actions">
+            {#if editingItem}<button type="button" class="pill ghost" onclick={() => { editingItem = null; projectDraft = { kind: "task", title: "", due: "", url: "", notes: "" }; }}>Cancel edit</button>{/if}
+            <button type="button" class="pill" disabled={busy || !projectDraft.title.trim()} onclick={saveProjectItem}>{editingItem ? "Save item" : "Add item"}</button>
+          </div>
+        </div>
+      {:else}
+        <p class="muted">Track tasks, milestones and resources for it.</p>
+        <div class="row-actions">
+          <button type="button" class="pill" disabled={busy} onclick={() => void send(`/opportunities/${detail!.id}/project`, { revision: detail!.revision })}>Create project</button>
+        </div>
+      {/if}
+    </section>
+
+    {#if detail.evidence?.length}
+      <section class="drawer-section" aria-label="Evidence">
+        <span class="section-head">Evidence</span>
+        <ul class="evidence">
+          {#each detail.evidence as evidence}
+            <li><a href={evidence.url} target="_blank" rel="noreferrer" title={JSON.stringify(evidence.facts, null, 2)}>{evidence.source}<Icon name="external" size={11} /></a><span class="muted">{evidence.observed_at.slice(0, 10)}</span></li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
+    {#if summaryText || aiResult}
+      <section class="drawer-section" aria-label="AI summary">
+        <span class="section-head">AI summary</span>
+        {#if summaryText}
+          <AIReview purpose="opportunity-summary" text={summaryText} {demo} active={pane.active} onresult={(text) => { aiResult = text; summaryText = ""; }} />
+          <div class="row-actions"><button type="button" class="pill ghost" onclick={() => (summaryText = "")}>Cancel</button></div>
+        {/if}
+        {#if aiResult}
+          <p class="muted">Verify against the evidence; nothing was applied.</p>
+          <pre>{aiResult}</pre>
+          <div class="row-actions"><button type="button" class="pill ghost" onclick={() => (aiResult = "")}>Dismiss</button></div>
+        {/if}
+      </section>
+    {/if}
+
+    {#if pendingDelete}
+      <p class="confirm" role="alert">Delete it with its evidence and project? Exported events stay.</p>
+    {/if}
+    {#snippet footer()}
+      {#if pendingDelete}
+        <button type="button" class="pill ghost" onclick={() => (pendingDelete = false)}>Cancel</button>
+        <button type="button" class="pill danger" disabled={busy}
+          onclick={async () => {
+            const result = await send(`/opportunities/${detail!.id}/delete`, { revision: detail!.revision }, "Opportunity deleted.");
+            if (result) { selected = selected.filter((id) => id !== focused); detail = null; pendingDelete = false; }
+          }}>Delete</button>
+      {:else}
+        <OverflowMenu placement="top-start" items={[
+          { label: "Add deadline to calendar", icon: "calendar", disabled: busy || !detail!.deadline,
+            onselect: () => void send(`/opportunities/${detail!.id}/calendar`, {}, "Deadline added to the calendar.") },
+          { label: "Draft an AI summary", icon: "ai", disabled: demo || busy, onselect: aiSummary },
+          { label: detail!.favorite ? "Unfavorite" : "Favorite", icon: "favorites", disabled: busy,
+            onselect: () => { selected = [detail!.id]; void saveSelected(!detail!.favorite); } },
+          { separator: true },
+          { label: "Delete…", danger: true, onselect: () => (pendingDelete = true) },
+        ] satisfies OverflowItem[]} />
+        <span class="grow"></span>
+        <button type="button" class="pill primary" disabled={busy || !detailDirty} onclick={saveDetail}
+          title={`Your edits survive provider refresh${detail!.overrides.length ? ` · pinned: ${detail!.overrides.join(", ")}` : ""}`}>Save review</button>
+      {/if}
+    {/snippet}
+  </EditDrawer>
+{:else if panel === "new"}
+  <EditDrawer title="New opportunity" onclose={() => (panel = null)}>
+    <div class="fields">
+      <label class="field wide"><span class="field-label">Title</span><input bind:value={draft.title} /></label>
+      <label class="field wide"><span class="field-label">Source URL</span><input type="url" bind:value={draft.url} /></label>
+      <label class="field"><span class="field-label">Category</span><input bind:value={draft.category} /></label>
+      <label class="field"><span class="field-label">Location</span><input bind:value={draft.location} /></label>
+      {#snippet draftRemote()}<Select label="Remote" kind="segments" value={remoteValue(draft.remote)} onchange={(next) => (draft.remote = remoteFrom(next))} options={REMOTE_CHOICES} />{/snippet}
+      {@render field("Remote", draftRemote)}
+      <label class="field" title="A date, or an ISO time with offset"><span class="field-label">Deadline</span><input bind:value={draft.deadline} placeholder="2027-01-11" /></label>
+      {#snippet draftZone()}<Select label="Time zone" kind="timezone" bind:value={draft.timezone} />{/snippet}
+      {@render field("Time zone", draftZone)}
+      <label class="field wide"><span class="field-label">Description</span><textarea bind:value={draft.description}></textarea></label>
+    </div>
+    {#snippet footer()}
+      <button type="button" class="pill ghost" onclick={() => (panel = null)}>Cancel</button>
+      <button type="button" class="pill primary" disabled={busy || !draft.title.trim()} onclick={add}>Add</button>
+    {/snippet}
+  </EditDrawer>
+{:else if panel === "import"}
+  <EditDrawer title="Import opportunities" onclose={() => (panel = null)}>
+    <label class="field" title="A JSON array of objects with a title and optional url, category, location, remote, description, deadline, timezone, notes, tags and status. Duplicate URLs are rejected.">
+      <span class="field-label">JSON array</span>
+      <textarea class="json" bind:value={importText} placeholder={'[{"title":"My project","category":"project"}]'}></textarea>
+    </label>
+    {#snippet footer()}
+      <button type="button" class="pill ghost" onclick={() => (panel = null)}>Cancel</button>
+      <button type="button" class="pill primary" disabled={busy || !importText.trim()} onclick={importItems}>Import</button>
+    {/snippet}
+  </EditDrawer>
+{:else if panel === "monitor"}
+  <EditDrawer title="Interests & monitor" meta={`Last run ${schedule.last_run || "never"} · next ${schedule.next_run || "not scheduled"}`} onclose={() => (panel = null)}>
+    <div class="fields" title="Ranking uses literal profile matches and explains every score; it never decides eligibility.">
+      <label class="field"><span class="field-label">Major</span><input bind:value={profile.major} /></label>
+      <label class="field"><span class="field-label">Track</span><input bind:value={profile.track} /></label>
+      <label class="field wide"><span class="field-label">Interests</span><input bind:value={interests} placeholder="quant, data science, hackathon" /></label>
+      <label class="field wide"><span class="field-label">Locations</span><input bind:value={locations} placeholder="College Station, Texas" /></label>
+      <label class="check wide"><input type="checkbox" bind:checked={profile.prefer_remote} />Prefer remote</label>
+      <label class="check wide" title={demo ? "Monitoring is off in the demo" : "Checks free public sources while kitty! is open"}
+        ><input type="checkbox" bind:checked={schedule.enabled} disabled={demo} />Monitor public sources</label>
+      <label class="field"><span class="field-label">Every (hours)</span><input type="number" min="6" max="168" bind:value={schedule.interval_hours} /></label>
+    </div>
+    {#if schedule.last_error}<p class="note error">{schedule.last_error}</p>{/if}
+    <section class="drawer-section" aria-label="Sources">
+      <span class="section-head" title="Public pages only: no logins, private portals or paid search. URLs stay on the listed origin.">Sources</span>
+      {#each sources as provider (provider.id)}
+        <div class="source">
+          <label class="check"><input type="checkbox" checked={!!provider.enabled}
+            onchange={(e) => void send(`/opportunities/sources/${provider.id}`, { revision: provider.revision, enabled: e.currentTarget.checked })} />{provider.name}</label>
+          <a href={provider.url} target="_blank" rel="noreferrer" aria-label={`Open ${provider.name}`}><Icon name="external" size={12} /></a>
+          <span class="muted status" title={provider.last_error ?? undefined}>{provider.last_status} · {provider.last_count}</span>
+          <div class="url-row">
+            <input aria-label={`${provider.name} URL`} bind:value={provider.url} />
+            <button type="button" class="pill ghost" disabled={busy}
+              onclick={() => void send(`/opportunities/sources/${provider.id}`, { revision: provider.revision, url: provider.url })}>Save URL</button>
+          </div>
+        </div>
+      {/each}
+    </section>
+    {#snippet footer()}
+      <button type="button" class="pill ghost" onclick={() => (panel = null)}>Cancel</button>
+      <button type="button" class="pill primary" disabled={busy} onclick={saveConfig}>Save</button>
+    {/snippet}
+  </EditDrawer>
+{/if}
+
 <style>
+  /* Q21: one full-bleed surface; the map fills it and everything else floats over it. */
   .opportunities {
+    position: relative;
+    height: calc(100dvh - var(--workbench-top, 0px) - var(--dock-space, 0px) - 34px);
+    min-height: 420px;
+    overflow: hidden;
+    border-radius: var(--r-panel);
     color: var(--ink);
-    padding: 1.2rem;
-    min-width: 0;
   }
-  header,
-  .actions,
-  .row {
+  .map {
+    position: absolute;
+    inset: 0;
+  }
+  /* The open list takes the right edge; the map recentres in what is left. */
+  .with-list .map {
+    right: min(340px, 100%);
+  }
+  .float-row {
+    position: absolute;
+    top: 12px;
+    left: 16px;
+    right: 12px;
+    z-index: 3;
     display: flex;
     align-items: center;
-    gap: 0.65rem;
-    flex-wrap: wrap;
+    gap: 10px;
+    pointer-events: none;
   }
-  header {
-    justify-content: space-between;
+  .float-row > * {
+    pointer-events: auto;
   }
-  h2,
-  h3,
-  h4 {
-    margin: 0.6rem 0;
+  .float-row h1 {
+    margin: 0 auto 0 0;
+    font-size: 22px;
+    line-height: 1.2;
+    pointer-events: none;
   }
-  p {
-    line-height: 1.55;
-    overflow-wrap: anywhere;
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding: 4px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-control);
+    /* No backdrop blur: the map under it redraws every frame, and a blur would re-raster with it. */
+    background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 94%, transparent);
+    box-shadow: var(--overlay-shadow);
   }
-  .row-title span {
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--control-h);
+    padding: 0 10px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-control);
+    background: color-mix(in srgb, var(--solid-inset, #111) 45%, transparent);
     color: var(--muted);
   }
-  button,
-  input,
-  select,
-  textarea {
-    font: inherit;
+  :global(:root body) .search input {
+    width: 150px;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
     color: var(--ink);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.5rem;
+    font: 400 var(--fs-control) var(--font-ui);
+    outline: none;
   }
-  button {
-    cursor: pointer;
-  }
-  button:hover {
+  .search:focus-within {
     border-color: var(--accent);
   }
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  input[type="checkbox"] {
-    width: auto;
-  }
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    font-size: 0.88rem;
-  }
-  label:has(input[type="checkbox"]) {
-    flex-direction: row;
-    align-items: center;
-  }
-  .fields,
-  .filters {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.8rem;
-    margin: 0.8rem 0;
-  }
-  .filters {
-    padding: 1rem;
-    background: var(--surface-raised);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-  }
-  .panel {
-    background: var(--surface-raised);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    padding: 1rem;
-    margin: 1rem 0;
-  }
-  .source,
-  .project-item {
-    padding: 0.8rem 0;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    gap: 0.65rem;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .source label:has(input:not([type="checkbox"])) {
-    flex: 1;
-    min-width: 240px;
-  }
-  .source p,
-  .project-item p {
-    width: 100%;
-    margin: 0.25rem 0;
-  }
-  .workspace {
-    display: grid;
-    grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.1fr);
-    gap: 1rem;
-  }
-  .workspace:not(:has(aside)) {
-    grid-template-columns: 1fr;
-  }
-  .list article {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin: 0.65rem 0;
-    padding: 0.8rem;
-    background: var(--surface);
-  }
-  article.selected {
-    border-color: var(--accent);
-    background: var(--surface-raised);
-  }
-  .row-title {
-    border: none;
-    text-align: left;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
+  .pill.ghost {
+    border-color: transparent;
     background: transparent;
   }
-  .list p {
-    font-size: 0.85rem;
-    margin: 0.45rem 0;
+  .pill[aria-pressed="true"] {
+    background: var(--select-fill, color-mix(in srgb, var(--ink) 12%, transparent));
+    border-color: transparent;
+    color: var(--select-ink, var(--ink));
   }
-  .detail {
+  .pill.danger {
+    border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+    color: var(--danger);
+  }
+  .count {
+    min-width: 18px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ink) 12%, transparent);
+    font: 500 10.5px/1.4 var(--font-mono);
+    text-align: center;
+  }
+  :global(.kitty-popover.opportunity-filters) {
+    width: min(420px, calc(100vw - 16px));
+    padding: 12px;
+  }
+  .filter-grid,
+  .fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+  }
+  .filter-foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--hairline);
+  }
+  .field {
+    display: grid;
+    gap: 4px;
     min-width: 0;
-    margin-top: 0.65rem;
   }
-  textarea {
-    min-height: 95px;
+  .field.wide,
+  .check.wide {
+    grid-column: 1 / -1;
+  }
+  .field-label {
+    color: var(--muted);
+    font: 600 var(--fs-label) / 1.3 var(--font-ui);
+  }
+  .field :global(.select-trigger) {
+    width: 100%;
+  }
+  .field input,
+  .field textarea {
+    min-width: 0;
     width: 100%;
     box-sizing: border-box;
+    padding: 0 9px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-field);
+    color: var(--ink);
+    font: 400 var(--fs-control) var(--font-ui);
   }
-  a {
-    color: var(--accent);
+  .field input {
+    height: var(--control-h);
   }
-  pre {
-    white-space: pre-wrap;
+  .field textarea {
+    min-height: 72px;
+    padding: 7px 9px;
+    resize: vertical;
+  }
+  .field textarea.json {
+    min-height: 220px;
+    font: 12px/1.5 var(--font-mono);
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--fs-control);
+  }
+  .check input {
+    accent-color: var(--accent);
+  }
+  .chip-date {
+    height: var(--control-h);
+    padding: 0 8px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-control);
+    color: var(--ink);
+    font: 400 12px var(--font-ui);
+  }
+  .float-notes {
+    position: absolute;
+    top: 60px;
+    left: 16px;
+    z-index: 3;
+    display: grid;
+    gap: 6px;
+    max-width: min(440px, calc(100% - 32px));
+  }
+  .note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 6px 6px 6px 12px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-field);
+    background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 90%, transparent);
+    font-size: 12.5px;
     overflow-wrap: anywhere;
-    max-height: 350px;
-    overflow: auto;
-    font-size: 0.8rem;
   }
-  .error,
-  .notice {
-    border: 1px solid var(--warning);
-    padding: 0.8rem;
-    border-radius: 6px;
-  }
-  .error {
+  .note.error {
+    border-color: color-mix(in srgb, var(--warning) 60%, transparent);
     color: var(--warning);
   }
-  details {
-    margin: 0.7rem 0;
+  .note .icon-button {
+    margin-left: auto;
   }
-  summary {
+  /* The list: a drawer docked to the right edge under the control row. */
+  .list-drawer {
+    position: absolute;
+    top: 60px;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    width: min(340px, 100%);
+    border-top: 1px solid var(--hairline);
+    border-left: 1px solid var(--hairline);
+    border-top-left-radius: var(--r-panel);
+    background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 94%, transparent);
+  }
+  .list-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 4px 8px 4px 14px;
+    border-bottom: 1px solid var(--hairline);
+    font-size: 12px;
+  }
+  .list-head .close {
+    margin-left: auto;
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .list-drawer ul {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 4px 6px;
+    list-style: none;
+    overflow: auto;
+  }
+  .list-drawer li {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding-left: 8px;
+    border-radius: 8px;
+  }
+  .list-drawer li:hover,
+  .list-drawer li.on {
+    background: var(--wash, color-mix(in srgb, var(--ink) 7%, transparent));
+  }
+  .list-drawer li input {
+    accent-color: var(--accent);
+    opacity: 0.55;
+  }
+  .list-drawer li:hover input,
+  .list-drawer li.marked input {
+    opacity: 1;
+  }
+  .list-drawer li.empty {
+    padding: 24px 12px;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  .row {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    min-height: 42px;
+    padding: 0 8px 0 4px;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    text-align: left;
     cursor: pointer;
   }
-  @media (max-width: 1000px) {
-    .workspace {
-      grid-template-columns: 1fr;
+  .dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--tone);
+  }
+  .row-main {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+  .row-main strong,
+  .row-main small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row-main strong {
+    font: 500 12.5px/1.35 var(--font-ui);
+  }
+  .row-main small {
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+  .star {
+    margin-right: 4px;
+    color: var(--warning);
+  }
+  .due {
+    flex-shrink: 0;
+    color: var(--muted);
+    font: 10.5px var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .due.soon {
+    color: var(--warning);
+  }
+  /* Inside the side drawer: hairline sections, never boxes. */
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    font-size: 12.5px;
+  }
+  a {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--accent);
+  }
+  .drawer-section {
+    display: grid;
+    gap: 8px;
+    margin-top: 6px;
+    padding-top: 12px;
+    border-top: 1px solid var(--hairline);
+  }
+  .drawer-section p {
+    margin: 0;
+    font-size: 12.5px;
+  }
+  .row-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .project-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    font-size: 12.5px;
+  }
+  .project-item .check {
+    flex: 1;
+    min-width: 0;
+  }
+  .kind {
+    color: var(--muted);
+    font: 10.5px var(--font-mono);
+    text-transform: uppercase;
+  }
+  .item-notes {
+    flex-basis: 100%;
+    margin: 0 0 4px 24px;
+    color: var(--muted);
+  }
+  .item-form {
+    display: grid;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--hairline);
+  }
+  .pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .evidence {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 12.5px;
+  }
+  .evidence li {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .source {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    padding: 6px 0;
+    font-size: 12.5px;
+  }
+  .source + .source {
+    border-top: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  }
+  .source .check {
+    flex: 1;
+    min-width: 0;
+  }
+  .source .status {
+    font: 10.5px var(--font-mono);
+  }
+  .url-row {
+    display: flex;
+    flex-basis: 100%;
+    gap: 6px;
+  }
+  .url-row input {
+    flex: 1;
+    min-width: 0;
+    height: var(--control-h);
+    padding: 0 9px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-field);
+    color: var(--ink);
+    font: 400 12px var(--font-ui);
+  }
+  .confirm {
+    margin: 0;
+    color: var(--warning);
+    font-size: 12.5px;
+  }
+  .grow {
+    flex: 1;
+  }
+  pre {
+    max-height: 280px;
+    margin: 0;
+    overflow: auto;
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 760px) {
+    .float-row {
+      flex-wrap: wrap;
     }
-    .detail {
-      order: -1;
+    .float-row h1 {
+      display: none;
+    }
+    :global(:root body) .search input {
+      width: 90px;
+    }
+    .list-drawer {
+      top: 104px;
     }
   }
-  .filters {display:flex;gap:12px;align-items:start}
-  .opportunity-filters{min-width:200px}
-  .opportunity-filters[open]{display:grid;gap:10px;padding:12px}
 </style>

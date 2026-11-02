@@ -80,7 +80,7 @@ test("a subject-linked event shows its colour as locked, not a picker", async ()
   await open(page, "Optics lecture");
   await assert.doesNotReject(drawer(page).getByText("Auto · Physics").waitFor());
   assert.equal(await colours(page).count(), 0, "no palette picker while linked");
-  assert.equal(await drawer(page).getByLabel("Study subject").inputValue(), "7");
+  assert.equal(await drawer(page).getByRole("combobox", { name: "Study subject" }).textContent(), "Physics");
   assert.equal(await fill(drawer(page).locator(".locked i")), "rgb(49, 162, 188)");
   assert.deepEqual(problems, []);
   await context.close();
@@ -99,7 +99,8 @@ test("an unlinked event picks a palette slot live and saves the slot, or links a
   await until(async () => (await fill(block(page, "Lunch with Mira"))) === c5, "the saved block keeps the slot");
 
   await open(page, "Lunch with Mira");
-  await drawer(page).getByLabel("Study subject").selectOption({ label: "Physics" });
+  await drawer(page).getByRole("combobox", { name: "Study subject" }).click();
+  await page.getByRole("listbox", { name: "Study subject" }).getByRole("option", { name: "Physics" }).click();
   await assert.doesNotReject(drawer(page).getByText("Auto · Physics").waitFor());
   assert.equal(await colours(page).count(), 0);
   await until(async () => (await fill(block(page, "Lunch with Mira"))) === "rgb(49, 162, 188)", "linking recolours live");

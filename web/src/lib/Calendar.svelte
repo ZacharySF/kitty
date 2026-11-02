@@ -16,6 +16,9 @@
   import DayPlan from "./calendar/DayPlan.svelte";
   import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START, type DayLoad } from "./calendar/plan";
   import EditDrawer from "./ui/EditDrawer.svelte";
+  import Select from "./ui/Select.svelte";
+  import CalendarQuickAdd from "./calendar/CalendarQuickAdd.svelte";
+  import { wallAt, type QuickKind, type QuickPlan, type QuickSlot } from "./calendar/quickAdd";
   import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
   import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
   import { notifier } from "./notifications.svelte";
@@ -198,6 +201,27 @@
   let dragMessage = $state("");
   let suppressClickUntil = 0;
   let taskTrayOpen = $state(true);
+  /** Q20: the pill's quick add; a clicked slot or range prefills its time, else the selected day. */
+  let quickOpen = $state(false);
+  let quickKind = $state<QuickKind>("event");
+  let quickPick = $state<QuickSlot | null>(null);
+  const quickSlot = $derived(quickPick ?? { start: selectedDate });
+  $effect(() => {
+    if (!quickOpen) quickPick = null;
+  });
+  // One drawer at a time: opening an event closes the task drawer and vice versa.
+  $effect.pre(() => {
+    if (editor) untrack(() => (taskEditor = null));
+  });
+  $effect.pre(() => {
+    if (taskEditor) untrack(() => (editor = null));
+  });
+  /** Q3/Q9: saving reports to the tab's status dot instead of "saved locally" notices. */
+  $effect(() => {
+    if (!active) return;
+    pane.setStatus(error ? { state: "failed", detail: error } : pending > 0 ? { state: "unsaved", detail: "Saving…" } : { state: "saved" });
+    return () => pane.setStatus(null);
+  });
   const trayTasks = $derived(data.tasks.filter((task) =>
     task.status !== "done" && task.status !== "cancelled" &&
     (!task.due || task.due.length === 10 || parts(task.due).date === selectedDate),
@@ -304,7 +328,10 @@
     }
     return { destroy: () => { if (isActive) previous?.focus(); } };
   }
-  const statuses = ["todo", "doing", "done", "cancelled"];
+  const statusOptions = [
+    { value: "todo", label: "To do" }, { value: "doing", label: "In progress" },
+    { value: "done", label: "Done" }, { value: "cancelled", label: "Cancelled" },
+  ];
   const hours = Array.from({ length: 48 }, (_, i) => i);
   let focusedSlot = $state(18);
   let clock = $state(new Date().toISOString());
@@ -663,7 +690,7 @@
   let shortcutFlash = $state("");
   let flashTimer: ReturnType<typeof setTimeout> | undefined;
   let calendarLayout = $state<HTMLDivElement>();
-  /** Single-key shortcuts while focus is inside the calendar: D/W/M/A/Y/P views, J/K step, T today. */
+  /** Single-key shortcuts while focus is inside the calendar: D/W/M/A/Y/P views, J/K step, T today, N add. */
   function calendarKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.defaultPrevented ||
@@ -674,6 +701,11 @@
     else if (key === "j") navigate(-1);
     else if (key === "k") navigate(1);
     else if (key === "t") chooseDate(today);
+    else if (key === "n") {
+      event.preventDefault();
+      void openQuick(selectedDate);
+      return;
+    }
     else return;
     event.preventDefault();
     shortcutFlash = key.toUpperCase();
@@ -684,54 +716,39 @@
     clearTimeout(flashTimer);
     flashTimer = setTimeout(() => (shortcutFlash = ""), 700);
   }
-  function newEvent(start: string, end?: string, allDay = false) {
+  /** Opens the pill's quick add at `start` (a day or a wall time), ending at `end` when a range was picked. */
+  async function openQuick(start: string, end?: string) {
     if (!isActive) return;
     error = "";
+    if (section !== "calendar") {
+      section = "calendar";
+      await tick();
+    }
     selectedDate = start.slice(0, 10);
-    const cal = data.calendars.find((c) => c.visible) || data.calendars[0];
-    editor = {
-      id: "",
-      revision: 0,
-      title: "",
-      calendar_id: cal?.id || "personal",
-      start: "",
-      end: "",
-      timezone: tz,
-      all_day: allDay,
-      occurrence: "",
-      rrule: "",
-      exdates: [],
-      description: "",
-      location: "",
-      url: "",
-      busy: true,
-      privacy: "default",
-      reminders: [10],
-      attendees: [],
-      attachments: [],
-      event_type: "default",
-      google_options: {},
-      subject_id: null,
-      color: null,
-    };
-    startInput = start;
-    endInput =
-      end ||
-      (allDay
-        ? addDays(start, 1)
-        : new Date(new Date(start + "Z").getTime() + 3600000)
-            .toISOString()
-            .slice(0, 16));
-    editScope = "all";
-    attendeesText = "";
-    attachmentsText = "";
-    exdatesText = "";
-    remindersText = "10";
-    titleDraft = "";
-    quick = null;
-    fold = 0;
-    foldChanged = false;
-    googleOptionsText = "{}";
+    quickPick = { start, end };
+    quickOpen = true;
+  }
+  /** Creates the typed event or task; `more` then opens it in the drawer. */
+  async function quickSave(plan: QuickPlan, kind: QuickKind, more: boolean) {
+    const calendar_id = (data.calendars.find((c) => c.visible) || data.calendars[0])?.id || "personal";
+    const at = (minutes: number) => resolveTime(wallAt(plan.day, minutes), tz);
+    const result = await changed(async () => kind === "task"
+      ? api<Task>("/calendar/tasks", {
+          title: plan.title, description: "", due: plan.start === null ? plan.day : await at(plan.start), timezone: tz,
+          priority: "normal", status: "todo", tags: [], project: "", subject_id: null, calendar_id,
+          repeat_frequency: /^FREQ=(\w+)/.exec(plan.rrule)?.[1] ?? "", repeat_interval: 1, repeat_until: "",
+        })
+      : api<Event>("/calendar/events", {
+          title: plan.title, calendar_id, timezone: tz, all_day: plan.start === null,
+          start: plan.start === null ? plan.day : await at(plan.start),
+          end: plan.start === null ? plan.endDay : await at(plan.end ?? plan.start + 60),
+          description: "", location: plan.where, url: "", rrule: plan.rrule, exdates: [], privacy: "default", busy: true,
+          reminders: [10], attendees: [], attachments: [], event_type: "default", google_options: {}, subject_id: null, color: null,
+        }));
+    if (!result) return false;
+    if (more && kind === "task") taskEditor = { ...(result as Task) };
+    else if (more) openEvent(result as Event);
+    return true;
   }
   function editorFields(e: Event) {
     startInput = localInput(e.start, e.all_day, e.timezone);
@@ -854,31 +871,20 @@
         subject_id: e.subject_id ?? null,
         color: e.color ?? null,
       };
-      let patch: Record<string, unknown> = changes;
-      if (e.id) {
-        const base =
-          editScope === "all"
-            ? await api<Event>(`/calendar/events/${e.id}`)
-            : editBase;
-        patch = Object.fromEntries(
-          Object.entries(changes).filter(
-            ([key, value]) =>
-              JSON.stringify(value) !==
-              JSON.stringify(base?.[key as keyof Event] ?? null),
-          ),
-        );
-      }
-      const result = e.id
-        ? await api<Event>(`/calendar/events/${e.id}`, {
-            revision: e.revision,
-            scope: editScope,
-            occurrence: e.occurrence,
-            changes: patch,
-            delete: remove,
-          })
-        : await api<Event>("/calendar/events", changes);
+      const base = editScope === "all" ? await api<Event>(`/calendar/events/${e.id}`) : editBase;
+      const patch = Object.fromEntries(
+        Object.entries(changes).filter(
+          ([key, value]) => JSON.stringify(value) !== JSON.stringify(base?.[key as keyof Event] ?? null),
+        ),
+      );
+      const result = await api<Event>(`/calendar/events/${e.id}`, {
+        revision: e.revision,
+        scope: editScope,
+        occurrence: e.occurrence,
+        changes: patch,
+        delete: remove,
+      });
       editor = null;
-      notice = remove ? "Event deleted locally." : "Event saved locally. Google changes require a separately reviewed sync.";
       return result;
     });
   }
@@ -912,13 +918,8 @@
     const [a, b] = [rangeStart, rangeEnd].sort();
     if (rangeAllDay) {
       selectedDate = a;
-      if (a !== b) newEvent(a, addDays(b, 1), true);
-    }
-    else {
-      const d = new Date(b + "Z");
-      d.setUTCMinutes(d.getUTCMinutes() + 30);
-      newEvent(a, d.toISOString().slice(0, 16));
-    }
+      if (a !== b) void openQuick(a, addDays(b, 1));
+    } else void openQuick(a, a === b ? undefined : shiftWall(b, 30));
     rangeStart = null;
     rangeEnd = null;
   }
@@ -988,7 +989,6 @@
         const result = await api<Task>("/calendar/tasks", {
           id: task.id, revision: task.revision, due,
         });
-        notice = `Task scheduled for ${label(due, allDay)}.`;
         return result;
       });
       return;
@@ -1018,7 +1018,6 @@
         occurrence: selected.occurrence,
         changes: { start, end },
       });
-      notice = `${selected.rrule ? "This occurrence" : "Event"} ${mode === "resize" ? "resized" : "moved"} locally. Google changes require a separately reviewed sync.`;
       return result;
     });
   }
@@ -1080,25 +1079,6 @@
       event.stopImmediatePropagation();
     }
   }
-  function newTask() {
-    if (!isActive) return;
-    error = "";
-    taskEditor = {
-      title: "",
-      description: "",
-      due: selectedDate,
-      timezone: tz,
-      priority: "normal",
-      status: "todo",
-      tags: [],
-      project: "",
-      subject_id: null,
-      calendar_id: (data.calendars.find((c) => c.visible) || data.calendars[0])?.id || "personal",
-      repeat_frequency: "",
-      repeat_interval: 1,
-      repeat_until: "",
-    };
-  }
   async function saveTask(remove = false) {
     if (!taskEditor) return;
     const {
@@ -1145,7 +1125,6 @@
         delete: remove,
       });
       taskEditor = null;
-      notice = remove ? "Task deleted." : "Task saved.";
       return result;
     });
   }
@@ -1174,7 +1153,6 @@
         revision: task.revision,
         status,
       });
-      notice = status === "done" ? "Task completed." : "Task status updated.";
       return result;
     });
   }
@@ -1660,13 +1638,8 @@
 
 <section class="calendar-workspace" class:drawer-open={!!editor} aria-label="Calendar workspace">
   <header class="toolbar">
-    <div>
-      <h1>Calendar</h1>
-      <p><span>{tz}</span></p>
-    </div>
+    <h1 title={`Times in ${tz}`}>Calendar</h1>
     <div class="header-actions">
-      <Button intent="primary" onclick={newTask}>Add task</Button>
-      <Button onclick={() => newEvent(selectedDate + "T09:00", selectedDate + "T10:00")}>Add event</Button>
       {#if undoId}<Button size="sm" disabled={pending > 0}
         onclick={() =>
           run(async () => {
@@ -1677,7 +1650,7 @@
     </div>
   </header>
   <nav class="tabs" aria-label="Calendar sections">
-    {#each [["calendar", "Calendar"], ["tasks", "Task list"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
+    {#each [["calendar", "Calendar"], ["tasks", "Tasks"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
       <Button size="sm" intent={section === key ? "primary" : "neutral"}
         aria-pressed={section === key}
         onclick={() => (section = key)}>{title}</Button>
@@ -1693,18 +1666,12 @@
     <label class="calendar-search"><span>Search</span><input type="search" bind:value={search}
       placeholder="Search events, tasks or tags" /></label>
     <Button size="sm" onclick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</Button>
-    <span class="load-status" role="status">{pending > 0 ? "Saving / updating…" : loading ? "Loading calendar…" : `${data.events.length} events · ${data.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length} pending tasks`}</span>
   </div>
   {#if dragMessage}<p class="drop-status" role="status">{dragMessage}</p>{/if}
   <details class="display-options">
     <summary>Calendars & display settings</summary>
     <div class="controls">
-      <label>Display timezone<input bind:value={tz} list={`${pane.id}-calendar-zones`} placeholder="America/Chicago" /></label>
-      <datalist id={`${pane.id}-calendar-zones`}>
-        <option value="UTC"></option><option value="America/Chicago"></option>
-        <option value="America/New_York"></option><option value="America/Los_Angeles"></option>
-        <option value="Europe/London"></option><option value="Asia/Tokyo"></option>
-      </datalist>
+      <label>Display timezone<Select kind="timezone" label="Display timezone" bind:value={tz} /></label>
     </div>
   <div class="calendars">
     {#each data.calendars as c}<label style={`--calendar-color:${calendarColor(c)}`}
@@ -1729,11 +1696,6 @@
   </div>
   </details>
   {#if section === "calendar"}
-    <details class="interaction-help">
-      <summary>Shortcuts</summary>
-      <p class="hint">Select a date for its day plan. Click or press Enter on a time slot for a short event. Arrow keys move between slots; Home/End jump within a day. Drag or Shift+Enter selects a range. Drag an event to move it, ↔ to resize; changes open for review.</p>
-      <p class="hint">While the calendar has focus: <kbd>D</kbd>/<kbd>W</kbd>/<kbd>M</kbd>/<kbd>A</kbd>/<kbd>Y</kbd>/<kbd>P</kbd> switch to day, week, month, agenda, year or the day plan; <kbd>J</kbd>/<kbd>K</kbd> step back or forward; <kbd>T</kbd> jumps to today.</p>
-    </details>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="calendar-layout" bind:this={calendarLayout} tabindex="-1" onkeydown={calendarKey}>
     <div class="calendar-main">
@@ -1770,8 +1732,6 @@
             <button class="day-head" onclick={() => (selectedDate = day)}
               aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
             <span class="dots" aria-hidden="true">{#each dayEvents.slice(0, 4) as e (e.id + e.occurrence)}<i style:background={paint(e)}></i>{/each}</span>
-            <button class="day-add" aria-label={`Add event on ${day}`}
-              onclick={() => newEvent(day + "T09:00", day + "T10:00")}>＋</button>
           </div>{/each}
       </div>
       <DayAgenda
@@ -1828,7 +1788,7 @@
                 role="group" aria-label={`All-day events and tasks on ${day}`}
                 ondragover={(event) => allowDrop(day, true, event)}
                 ondrop={(event) => dropOn(day, true, event)}>
-                <button class="all-day-add" onclick={() => newEvent(day, addDays(day, 1), true)}
+                <button class="all-day-add" onclick={() => void openQuick(day, addDays(day, 1))}
                   aria-label={`Create all-day event on ${day}`}>＋</button>
                 <div class="all-day-items">
                   {#each eventsOn(day).filter((e) => e.all_day) as e}
@@ -1878,8 +1838,7 @@
                     onpointerenter={() => extendRange(slot(day, halfHour))}
                     onkeydown={(e) => slotKey(day, halfHour, e)}
                     onclick={(e) => {
-                      if (e.detail === 0 && !editor)
-                        newEvent(slot(day, halfHour), slot(day, halfHour + 1));
+                      if (e.detail === 0 && !editor) void openQuick(slot(day, halfHour));
                     }}></button>
                   {#each weekTasks[day][halfHour] as task}
                     <button class="task-chip timed-task" class:completed={task.status === "done"} style:--task-color={taskColor(task)}
@@ -1962,17 +1921,20 @@
       </div>
     {/if}
     <RangePill heading={rangeHeading} {view} date={anchor} flash={shortcutFlash}
-      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate} />
+      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate}>
+      {#snippet add()}
+        <CalendarQuickAdd label="Add event or task" round {today} at={quickSlot} bind:kind={quickKind} bind:open={quickOpen} onsave={quickSave} />
+      {/snippet}
+    </RangePill>
     </div>
     <aside class="selected-plan" aria-label="Selected date plan">
       <MiniMonth selected={selectedDate} {today} refresh={loadVersion} {loadBusy} onpick={chooseDate} />
       <Button size="sm" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
         onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide task tray" : "Open task tray"} · {trayTasks.length}</Button>
       {#if taskTrayOpen}
-        <section id={`${pane.id}-calendar-task-tray`} class="task-tray" aria-label="Tasks to schedule">
+        <section id={`${pane.id}-calendar-task-tray`} class="task-tray" aria-label="Tasks to schedule"
+          title="Drag a task onto a time slot to schedule it">
           <h3>Tasks to schedule</h3>
-          <p class="hint">Drag a task onto a week/day time slot to save its due date and time. Click to edit.</p>
-          <Button size="sm" onclick={newTask}>Add task</Button>
           <div class="tray-list">
             {#each trayTasks as task}
               <button class="tray-task" draggable="true" style:--task-color={taskColor(task)}
@@ -1987,11 +1949,6 @@
       {/if}
       <Panel title={dateTitle(selectedDate, { weekday: "long", month: "short", day: "numeric" })}
         readout="DAY PLAN">
-        <p class="hint">{eventsOn(selectedDate).length} events · {tasksOn(selectedDate).filter((t) => t.status !== "done" && t.status !== "cancelled").length} pending tasks</p>
-        <div class="selected-actions">
-          <Button size="sm" intent="primary" onclick={newTask}>Add task</Button>
-          <Button size="sm" onclick={() => newEvent(selectedDate + "T09:00", selectedDate + "T10:00")}>Add event</Button>
-        </div>
         {#if view !== "month"}
         {#each eventsOn(selectedDate) as e}
           <button class="plan-event" style={`--calendar-color:${paint(e)}`} onclick={() => openEvent(e)}
@@ -2048,14 +2005,8 @@
                   class="task-title"
                   oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
                   onclick={() => (taskEditor = { ...t })}>{t.title}</button
-                ><select
-                  aria-label={`Status for ${t.title}`}
-                  disabled={pending > 0}
-                  value={t.status}
-                  onchange={(e) => taskStatus(t, e.currentTarget.value)}
-                  >{#each statuses as s}<option value={s}>{s}</option
-                    >{/each}</select
-                >
+                ><Select kind="list" label={`Status for ${t.title}`} disabled={pending > 0} value={t.status}
+                  options={statusOptions} onchange={(value) => taskStatus(t, value)} />
               </div>
               <p>
                 {t.due ? label(t.due, t.due.length === 10) : "No due date"} · {t.priority}
@@ -2067,17 +2018,12 @@
               <div class="tags">
                 {#each t.tags as tag}<span>{tag}</span>{/each}
               </div>
-            </article>{/each}<button
-            onclick={() => {
-              newTask();
-              if (taskEditor && status !== "all") taskEditor.status = status;
-            }}>＋ Task</button
-          >
+            </article>{/each}
+          <CalendarQuickAdd label="Add task" kind="task" {today} at={{ start: selectedDate }} onsave={quickSave} />
         </section>{/each}
     </div>
   {:else if section === "activity"}
-    <h2>Activity</h2>
-    <p class="hint">From saved records only.</p>
+    <h2 title="From saved records only">Activity</h2>
     <div class="activity-graph">
       {#each data.activity as a}<div class="activity-row">
           <span>{a.date}</span>
@@ -2094,8 +2040,7 @@
         </p>{/if}
     </div>
   {:else if section === "availability"}
-    <h2>Free / busy</h2>
-    <p class="hint">Visible calendars; free events excluded.</p>
+    <h2 title="Visible calendars; free events excluded">Free / busy</h2>
     <h3>Overlaps</h3>
     {#each data.conflicts as c}<p class="conflict">
         {data.events.find((e) => e.id === c.event_id)?.title} overlaps {c.with
@@ -2105,20 +2050,12 @@
     <h3>Free intervals</h3>
     {#each data.free as free}<div class="free-row">
         <span>{label(free.start)} → {label(free.end)}</span><button
-          onclick={() =>
-            newEvent(
-              localInput(free.start, false, tz),
-              localInput(free.end, false, tz),
-            )}>Schedule here</button
+          onclick={() => void openQuick(localInput(free.start, false, tz), localInput(free.end, false, tz))}>Schedule here</button
         >
       </div>{/each}
   {:else if section === "integrations"}
     <section class="panel">
       <h2>Import / export</h2>
-      <p class="hint">
-        CSV headers: <code>title,date</code>; optional
-        <code>job_id,kind,timezone,url,description</code>. Imports are local copies.
-      </p>
       <div class="controls">
         <label class="file"
           >Preview ICS<input
@@ -2126,7 +2063,7 @@
             accept=".ics,text/calendar"
             onchange={(e) => importFile(e.target, "ics")}
           /></label
-        ><label class="file"
+        ><label class="file" title="CSV headers: title,date; optional job_id,kind,timezone,url,description"
           >Preview CSV<input
             type="file"
             accept=".csv,text/csv"
@@ -2165,11 +2102,7 @@
         ><button onclick={() => (importRows = [])}>Cancel</button>{/if}
     </section>
     <section class="panel">
-      <h2>Reminder notifications</h2>
-      <p class="hint">
-        Due reminders arrive as toasts and in the bell's notification center, only
-        while kitty runs. Quiet hours live in Settings.
-      </p>
+      <h2 title="Due reminders arrive as toasts and in the bell while kitty runs; quiet hours live in Settings">Reminder notifications</h2>
       <label
         ><input
           type="checkbox"
@@ -2183,10 +2116,7 @@
     </section>
     <section class="panel">
       <h2>Google Calendar · optional</h2>
-      {#if demo}<p class="notice">
-          Demo supports every local action. Real Google authorization and API
-          calls are blocked.
-        </p>{/if}{#if googleStatus}<p>{googleStatus.notice}</p>
+      {#if demo}<p class="notice">Demo mode: Google calls are blocked.</p>{/if}{#if googleStatus}<p>{googleStatus.notice}</p>
         <p>
           Client: {googleStatus.client_present
             ? "stored privately"
@@ -2328,19 +2258,12 @@
           >{/each}
       </div>
       <div class="controls">
-        <label
-          >Direction<select bind:value={syncDirection}
-            ><option value="pull"
-              >Pull from Google (local conflicts reviewed)</option
-            ><option value="both">Pull + push local changes</option></select
-          ></label
-        ><label
-          >Attendee email updates<select bind:value={sendUpdates}
-            ><option value="none">none (Google may still notify)</option><option
-              value="all">all attendees</option
-            ><option value="externalOnly">external attendees only</option
-            ></select
-          ></label
+        <label title="Pull reviews local conflicts; Pull + push also sends local changes"
+          >Direction<Select label="Direction" bind:value={syncDirection}
+            options={[{ value: "pull", label: "Pull from Google" }, { value: "both", label: "Pull + push" }]} /></label
+        ><label title="Google may still notify on its own"
+          >Attendee email updates<Select label="Attendee email updates" bind:value={sendUpdates}
+            options={[{ value: "none", label: "None" }, { value: "all", label: "All attendees" }, { value: "externalOnly", label: "External only" }]} /></label
         >
       </div>
       <button
@@ -2450,30 +2373,16 @@
               })}
           />{/each}{/if}
       <details class="google-tools">
-        <summary>Google resource editor · exact reviewed API operations</summary
+        <summary title="List or get first, copy the returned ID and ETag, edit exact JSON, then review"
+          >Google resource editor</summary
         >
-        <p>
-          List/get first, copy the returned ID and ETag, edit exact JSON, then
-          review. Resources include calendar
-          creation/timezone/color/subscription, event recurrence/RSVP/attendee
-          updates, Meet, attachment links, reminders, sharing ACL, free/busy and
-          optional Google Tasks. Primary settings are read-only; primary
-          calendar timezone is edited via calendars/update. Focus
-          time/OOO/working location may require eligible accounts. Appointment
-          schedules are not exposed by Google.
-        </p>
         <div class="controls">
           <label
-            >Resource<select bind:value={resource} onchange={template}
-              >{#each Object.keys(resourceActions) as r}<option>{r}</option
-                >{/each}</select
-            ></label
+            >Resource<Select kind="list" label="Resource" bind:value={resource} onchange={template}
+              options={Object.keys(resourceActions).map((r) => ({ value: r, label: r }))} /></label
           ><label
-            >Action<select bind:value={action} onchange={template}
-              >{#each resourceActions[resource] as a}<option value={a}
-                  >{actionLabels[a] || a}</option
-                >{/each}</select
-            ></label
+            >Action<Select kind="list" label="Action" bind:value={action} onchange={template}
+              options={(resourceActions[resource] ?? []).map((a) => ({ value: a, label: actionLabels[a] || a }))} /></label
           ><button onclick={template}>Fill example for resource</button>
         </div>
         <div class="form-grid">
@@ -2505,35 +2414,15 @@
           <button onclick={useGoogleResult}
             >Copy returned ID & ETag into this editor</button
           >{/if}
-        <p class="hint">
-          Move: set params.destination (Calendar) or
-          destinationTasklist/parent/previous (Tasks). Import requires
-          iCalUID/start/end and a normal event. Quick add sends exact data.text
-          to Google's parser. Clear hides completed Tasks, or deletes every
-          event in the primary Calendar; this is not undoable locally. Every
-          change is previewed by kitty's server against live Google state (exact
-          URL, body, ETag, target, recipients, clear listing) and is sent only
-          with that frozen preview after your approval. Resource operations
-          change Google directly; pull again to refresh linked local copies.
-        </p>
-        {#if action === "watch"}<p class="hint">
-            A channel requires your own publicly reachable HTTPS webhook with
-            valid TLS and a verified/authorized receiver. kitty's loopback
-            server is not that receiver. Configure it separately before
-            approving; registrations expire and are not auto-renewed. Use
-            channels/stop with the returned id and resourceId.
-          </p>
+        <p class="hint">Changes are previewed against live Google and sent only after approval.</p>
+        {#if action === "watch"}<p class="hint">Needs your own public HTTPS webhook; channels expire unrenewed.</p>
           <label
             ><input type="checkbox" bind:checked={webhookConfirmed} />
             I control and configured the public HTTPS receiver in data.address and
             reviewed what Google may deliver.</label
           >{/if}
-        {#if resource === "events" && action === "quickAdd"}<p class="hint">
-            Google has no text-parser dry run. This safe quick-add path uses
-            sendUpdates=none and no attendee addresses. Use structured create
-            for invitations, with every recipient explicitly reviewed.
-          </p>{/if}
-        <label
+        {#if resource === "events" && action === "quickAdd"}<p class="hint">Google has no dry run; sent without attendees or notifications.</p>{/if}
+        <label title="Move: params.destination (Calendar) or destinationTasklist/parent/previous (Tasks). Import needs iCalUID, start and end. Clear is not undoable locally."
           >Exact resource data (JSON)<textarea
             rows="10"
             bind:value={remoteData}
@@ -2556,7 +2445,7 @@
         >{#if !googleStatus?.authorized}<p class="hint">
             {demo
               ? "External Google calls are disabled in demo mode."
-              : "Not connected: upload a Desktop OAuth client and authorize Calendar above before using Google resources."}
+              : "Not connected: authorize Calendar above first."}
           </p>{/if}{#if operationReview && operationRequest}<div
             class="review"
             role="group"
@@ -2655,7 +2544,7 @@
 </section>
 
 {#if editor && isActive}
-  <EditDrawer title={editor.id ? "Event details" : "New event"} accent={paint(editor)} closeLabel="Close event editor"
+  <EditDrawer title="Event details" accent={paint(editor)} closeLabel="Close event editor"
     meta={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
     onclose={() => (editor = null)}>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -2672,13 +2561,10 @@
             when={`${dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" })}${editor.all_day ? " · all day" : ` · ${startInput.slice(11, 16)}–${endInput.slice(11, 16)}`}`}
             where={quick.where} repeat={quick.repeat} />
         {/if}
-        {#if editor.id && editor.rrule}
-          <label>Edit recurrence scope<select bind:value={editScope} onchange={changeScope}>
-            <option value="this">This occurrence only</option>
-            <option value="future">This and future occurrences</option>
-            <option value="all">Entire series (original date/time anchors)</option>
-          </select></label>
-          <p class="hint">Choose the scope before editing; changing it reloads saved values.</p>
+        {#if editor.rrule}
+          <label title="Choose before editing; changing it reloads saved values">Edit recurrence scope<Select label="Edit recurrence scope"
+            bind:value={editScope} onchange={changeScope}
+            options={[{ value: "this", label: "This one" }, { value: "future", label: "This and future" }, { value: "all", label: "Entire series" }]} /></label>
         {/if}
         {#if !editor.all_day}
           <div class="steppers" role="group" aria-label="Time">
@@ -2701,7 +2587,7 @@
               }
             }} />All-day / multi-day</label>
         </div>
-        <fieldset class="drawer-field" disabled={!!editor.id && !!editor.rrule && editScope === "this"}>
+        <fieldset class="drawer-field" disabled={!!editor.rrule && editScope === "this"}>
           <legend class="eyebrow">calendar</legend>
           <div class="swatches">
             {#each data.calendars as c (c.id)}
@@ -2721,57 +2607,50 @@
             {/each}
           </div>
         </div>
-        <p class="hint">{editor.timezone}{editor.all_day ? " · All-day end is the date after the last included day." : ""} · Saved locally; Google updates are reviewed separately.</p>
         <details class="editor-options">
           <summary>Repeat & time settings{editor.rrule ? " · Repeating event" : ""}</summary>
           <div class="form-grid">
             <label>Timezone<input bind:value={editor.timezone} required /></label>
-            <label>DST ambiguous-time occurrence<select bind:value={fold} onchange={() => (foldChanged = true)}>
-              <option value={0}>First occurrence</option><option value={1}>Second occurrence</option>
-            </select></label>
+            <label title="For a fall-back time that happens twice; DST gaps are rejected">DST repeated time<Select label="DST repeated time"
+              value={String(fold)} onchange={(value) => { fold = Number(value); foldChanged = true; }}
+              options={[{ value: "0", label: "First" }, { value: "1", label: "Second" }]} /></label>
           </div>
-          <p class="hint">DST gaps are rejected. Choose the first or second occurrence for repeated fall-back times.</p>
-          <label>Repeat rule (RRULE)<input bind:value={editor.rrule}
-            disabled={!!editor.id && editScope === "this"} placeholder="FREQ=WEEKLY;BYDAY=MO,WE;COUNT=12" /></label>
-          <p class="hint">Leave empty for one event. Use UTC UNTIL, e.g. UNTIL=20271231T235959Z. This/future selection uses the original occurrence, even after moving it.</p>
+          <label title="Empty for one event. UNTIL in UTC, e.g. UNTIL=20271231T235959Z">Repeat rule (RRULE)<input bind:value={editor.rrule}
+            disabled={editScope === "this"} placeholder="FREQ=WEEKLY;BYDAY=MO,WE;COUNT=12" /></label>
           <label>Excluded starts, one per line (date or aware ISO timestamp)<textarea rows="2" bind:value={exdatesText}
-            disabled={!!editor.id && editScope === "this"}></textarea></label>
+            disabled={editScope === "this"}></textarea></label>
         </details>
         <details class="editor-options">
           <summary>Notes, privacy & custom reminders</summary>
           <label>Notes<textarea rows="3" bind:value={editor.description}></textarea></label>
           <div class="form-grid">
             <label>URL<input type="url" bind:value={editor.url} /></label>
-            <label>Privacy<select bind:value={editor.privacy}>
-              {#each ["default", "public", "private", "confidential"] as p}<option>{p}</option>{/each}
-            </select></label>
+            <label>Privacy<Select label="Privacy" kind="list" bind:value={editor.privacy}
+              options={[{ value: "default", label: "Default" }, { value: "public", label: "Public" }, { value: "private", label: "Private" }, { value: "confidential", label: "Confidential" }]} /></label>
             <label><input type="checkbox" bind:checked={editor.busy} />Blocks availability (busy)</label>
           </div>
           <label>Reminder minutes before start<input bind:value={remindersText} placeholder="10,60,1440" /></label>
-          <p class="hint">Separate multiple reminders with commas; leave empty for none.</p>
         </details>
         <details class="editor-options">
           <summary>Attendees, attachments & Google properties</summary>
-        <label
+        <label title="RSVP: needsAction, accepted, declined or tentative. Local edits never email anyone."
           >Attendees: email,name,RSVP,optional (true/false) per line<textarea
             rows="3"
             bind:value={attendeesText}
             placeholder="person@example.com,Person,needsAction"
           ></textarea></label
         >
-        <p class="hint">
-          RSVP: needsAction, accepted, declined, tentative. Local edits never
-          email anyone. Google updates require separately approved sync or
-          resource operation.
-        </p>
         <label
           >Attachment links: title | https://URL per line<textarea
             rows="2"
             bind:value={attachmentsText}
           ></textarea></label
         ><label
-          >Google special event type<select
+          title="Special types need an eligible Google account">Google special event type<Select
+            label="Google special event type"
+            kind="list"
             bind:value={editor.event_type}
+            options={[{ value: "default", label: "Normal" }, { value: "focusTime", label: "Focus time" }, { value: "outOfOffice", label: "Out of office" }, { value: "workingLocation", label: "Working location" }]}
             onchange={() => {
               const defaults: Record<string, unknown> = {
                 default: {},
@@ -2797,14 +2676,7 @@
                 2,
               );
             }}
-            ><option value="default">Normal</option><option value="focusTime"
-              >Focus time (eligible Google account)</option
-            ><option value="outOfOffice"
-              >Out of office (eligible Google account)</option
-            ><option value="workingLocation"
-              >Working location (eligible Google account)</option
-            ></select
-          ></label
+          /></label
         >
         <label
           >Google properties (exact JSON; account eligibility applies)<textarea
@@ -2825,140 +2697,98 @@
               >{/if}
           </p>{/if}
         <footer>
-          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : editor.id ? "Save changes" : "Add event"}</Button>
+          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : "Save changes"}</Button>
           <Button type="button" disabled={pending > 0} onclick={() => (editor = null)}>Cancel</Button>
-          {#if editor.id}<Button type="button" disabled={pending > 0} onclick={() => {
+          <Button type="button" disabled={pending > 0} onclick={() => {
             if (window.confirm("Delete the selected occurrence/scope? You can undo if it has not changed.")) void saveEvent(true);
-          }}>Delete selected scope</Button>{/if}
+          }}>Delete selected scope</Button>
         </footer>
       </form>
   </EditDrawer>{/if}
-{#if taskEditor && isActive}<div class="modal-backdrop" role="presentation">
-    <dialog
-      use:modal
-      oncancel={() => (taskEditor = null)}
-      class="dialog"
-      aria-modal="true"
-      aria-labelledby={`${pane.id}-task-editor-title`}
-      tabindex="-1"
-    >
-      <header>
-        <h2 id={`${pane.id}-task-editor-title`}>
-          {taskEditor.id ? "Edit task" : "New task"}
-        </h2>
-        <button
-          onclick={() => (taskEditor = null)}
-          aria-label="Close task editor" type="button">×</button
-        >
-      </header>
-      {#if taskEditor.id}{@const id = taskEditor.id}<div class="task-map-row">
-          <TaskMapAction task={{ id, title: taskEditor.title }} inMaps={taskMaps[id]}
-            onadded={(m) => mappedTask(id, m)} />
-        </div>{/if}
+{#if taskEditor?.id && isActive}{@const id = taskEditor.id}
+  <EditDrawer title="Task details" accent={taskColor(taskEditor) ?? ""} closeLabel="Close task editor"
+    meta={`${data.calendars.find((c) => c.id === taskEditor?.calendar_id)?.name ?? "Calendar"}${taskDueInput ? ` · ${dateTitle(taskDueInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" })}` : ""}`}
+    onclose={() => (taskEditor = null)}>
+      <div class="task-map-row">
+        <TaskMapAction task={{ id, title: taskEditor.title }} inMaps={taskMaps[id]} onadded={(m) => mappedTask(id, m)} />
+      </div>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <form
+      <form class="drawer-form"
         onsubmit={(e) => {
           e.preventDefault();
           void saveTask();
         }}
       >
-        <label>Task title<input required bind:value={taskEditor.title} placeholder="What needs to get done?" /></label>
-            <label><input type="checkbox" bind:checked={taskDueTimed} onchange={() => {
-              taskDueInput = taskDueInput ? taskDueTimed ? taskDueInput + "T09:00" : taskDueInput.slice(0, 10) : "";
-            }} />Include due time</label>
-        <div class="form-grid">
+        <input class="drawer-title" aria-label="Task title" required bind:value={taskEditor.title} />
+        <label class="inline"><input type="checkbox" bind:checked={taskDueTimed} onchange={() => {
+          taskDueInput = taskDueInput ? taskDueTimed ? taskDueInput + "T09:00" : taskDueInput.slice(0, 10) : "";
+        }} />Include due time</label>
+        <div class="drawer-dates">
           <CalendarDateTime label="Due" timed={taskDueTimed} bind:value={taskDueInput} />
-          <label>Calendar<select bind:value={taskEditor.calendar_id}>
-            {#each data.calendars as c}<option value={c.id}>{c.name}</option>{/each}
-          </select></label>
-          {#if data.subjects.length}<label>Study subject<select value={taskEditor.subject_id ?? ""}
-            onchange={(e) => taskEditor && (taskEditor.subject_id = e.currentTarget.value ? Number(e.currentTarget.value) : null)}>
-            <option value="">No subject</option>
-            {#each data.subjects as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-          </select></label>{/if}
+        </div>
+        <div class="form-grid">
+          <label>Calendar<Select label="Calendar" kind="list" bind:value={taskEditor.calendar_id}
+            options={data.calendars.map((c) => ({ value: c.id, label: c.name, color: calendarColor(c) }))} /></label>
+          {#if data.subjects.length}<label>Study subject<Select label="Study subject" kind="list" value={String(taskEditor.subject_id ?? "")}
+            onchange={(value) => taskEditor && (taskEditor.subject_id = value ? Number(value) : null)}
+            options={[{ value: "", label: "No subject" }, ...data.subjects.map((s) => ({ value: String(s.id), label: s.name, color: s.color }))]} /></label>{/if}
         </div>
         <details class="editor-options">
-          <summary>More options · notes, priority & repeat</summary>
+          <summary>Notes, priority & repeat</summary>
           <label>Notes<textarea rows="3" bind:value={taskEditor.description}></textarea></label>
           <div class="form-grid">
-            <label>Timezone<input bind:value={taskEditor.timezone} /></label>
-            <label>Priority<select bind:value={taskEditor.priority}>
-              {#each ["low", "normal", "high", "urgent"] as p}<option>{p}</option>{/each}
-            </select></label>
-            <label>Status<select bind:value={taskEditor.status}>
-              {#each statuses as s}<option>{s}</option>{/each}
-            </select></label>
+            <label>Timezone<Select kind="timezone" label="Timezone" bind:value={taskEditor.timezone} /></label>
+            <label>Priority<Select label="Priority" bind:value={taskEditor.priority}
+              options={[{ value: "low", label: "Low" }, { value: "normal", label: "Normal" }, { value: "high", label: "High" }, { value: "urgent", label: "Urgent" }]} /></label>
+            <label>Status<Select label="Status" kind="list" bind:value={taskEditor.status} options={statusOptions} /></label>
             <label>Project<input bind:value={taskEditor.project} /></label>
           </div>
-        <div class="form-grid">
+          <div class="form-grid">
+            <label title={editingCompletedTask ? "Completed history: change repetition on the next pending task"
+              : "Needs a due date. Completing creates the next one; repetition stays local"}
+              >Repeat<Select label="Repeat" kind="list" bind:value={taskEditor.repeat_frequency} disabled={editingCompletedTask}
+                options={[{ value: "", label: "One-off task" }, { value: "DAILY", label: "Daily" }, { value: "WEEKLY", label: "Weekly" }, { value: "MONTHLY", label: "Monthly" }, { value: "YEARLY", label: "Yearly" }]} /></label>
+            {#if taskEditor.repeat_frequency}<label
+                >Every ({repeatUnits[taskEditor.repeat_frequency]}s)<input
+                  type="number"
+                  min="1"
+                  step="1"
+                  bind:value={taskEditor.repeat_interval}
+                  required
+                  disabled={editingCompletedTask}
+                /></label
+              >
+              <label
+                >Repeat until (inclusive; optional)<input
+                  type="date"
+                  bind:value={taskEditor.repeat_until}
+                  disabled={editingCompletedTask}
+                /></label
+              >{/if}
+          </div>
           <label
-            >Repeat<select
-              bind:value={taskEditor.repeat_frequency}
-              disabled={editingCompletedTask}
-            >
-              <option value="">One-off task</option><option value="DAILY"
-                >Daily</option
-              >
-              <option value="WEEKLY">Weekly</option><option value="MONTHLY"
-                >Monthly</option
-              >
-              <option value="YEARLY">Yearly</option></select
-            ></label
+            >Tags (comma-separated)<input
+              value={taskEditor.tags.join(", ")}
+              onchange={(e) => {
+                if (taskEditor)
+                  taskEditor.tags = e.currentTarget.value
+                    .split(",")
+                    .map((t) => t.trim())
+                    .filter(Boolean);
+              }}
+            /></label
           >
-          {#if taskEditor.repeat_frequency}<label
-              >Every ({repeatUnits[taskEditor.repeat_frequency]}s)<input
-                type="number"
-                min="1"
-                step="1"
-                bind:value={taskEditor.repeat_interval}
-                required
-                disabled={editingCompletedTask}
-              /></label
-            >
-            <label
-              >Repeat until (inclusive; optional)<input
-                type="date"
-                bind:value={taskEditor.repeat_until}
-                disabled={editingCompletedTask}
-              /></label
-            >{/if}
-        </div>
-        {#if taskEditor.repeat_frequency}<p class="hint">
-          Needs a due date. Completing creates the next instance; missed dates
-          stay open. Repetition stays local (never sent to Google).
-        </p>{/if}
-        {#if editingCompletedTask && taskEditor.repeat_frequency}<p
-            class="hint"
-          >
-            This is completed history; change repetition on the next pending
-            task instead.
-          </p>{/if}
-        <label
-          >Tags (comma-separated)<input
-            value={taskEditor.tags.join(", ")}
-            onchange={(e) => {
-              if (taskEditor)
-                taskEditor.tags = e.currentTarget.value
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter(Boolean);
-            }}
-          /></label
-        >
         </details>
         <footer>
-          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : taskEditor.id ? "Save changes" : "Add task"}</Button>
+          <Button type="submit" intent="primary" disabled={pending > 0}>{pending > 0 ? "Saving…" : "Save changes"}</Button>
           <Button type="button" disabled={pending > 0} onclick={() => (taskEditor = null)}>Cancel</Button>
-          {#if taskEditor.id}
-            <Button type="button" disabled={pending > 0} onclick={() => {
-              if (taskEditor) { taskEditor.status = taskEditor.status === "done" ? "todo" : "done"; void saveTask(); }
-            }}>{taskEditor.status === "done" ? "Reopen task" : "Complete task"}</Button>
-            <Button type="button" disabled={pending > 0} onclick={() => saveTask(true)}>Delete task</Button>
-          {/if}
+          <Button type="button" disabled={pending > 0} onclick={() => {
+            if (taskEditor) { taskEditor.status = taskEditor.status === "done" ? "todo" : "done"; void saveTask(); }
+          }}>{taskEditor.status === "done" ? "Reopen task" : "Complete task"}</Button>
+          <Button type="button" disabled={pending > 0} onclick={() => saveTask(true)}>Delete task</Button>
         </footer>
       </form>
-    </dialog>
-  </div>{/if}
+  </EditDrawer>{/if}
 {#if calendarEditor && isActive}<div class="modal-backdrop" role="presentation">
     <dialog
       use:modal
@@ -3048,7 +2878,6 @@
   }
   button,
   input,
-  select,
   textarea {
     font: inherit;
     color: var(--ink);
@@ -3069,14 +2898,12 @@
   }
   button:focus-visible,
   input:focus-visible,
-  select:focus-visible,
   textarea:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   input,
-  textarea,
-  select {
+  textarea {
     border: 1px solid var(--border);
     background: var(--surface);
     border-radius: 0.4rem;
@@ -3112,12 +2939,10 @@
     gap: 0.55rem;
     flex-wrap: wrap;
   }
-  .toolbar > div:first-child {
+  .toolbar h1 {
     margin-right: auto;
   }
-  .toolbar p,
-  .hint,
-  .toolbar span {
+  .hint {
     color: var(--muted);
     font-size: 0.85rem;
   }
@@ -3126,8 +2951,7 @@
     padding-bottom: 0.6rem;
   }
   .header-actions,
-  .search-toolbar,
-  .selected-actions {
+  .search-toolbar {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -3146,11 +2970,6 @@
     width: 100%;
     min-width: 0;
   }
-  .load-status {
-    color: var(--muted);
-    font-size: 0.78rem;
-    margin-left: auto;
-  }
   .display-options {
     margin: 0;
     border-bottom: 1px solid var(--border);
@@ -3160,15 +2979,6 @@
   .display-options > .controls,
   .display-options > .calendars {
     margin-top: 0.8rem;
-  }
-  .interaction-help {
-    margin: 0;
-    max-width: 36rem;
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-  .interaction-help p {
-    margin-top: 0.5rem;
   }
   .calendar-layout {
     display: grid;
@@ -3183,9 +2993,6 @@
   .calendar-main {
     border-radius: 0.7rem;
     border: 1px solid var(--border);
-  }
-  .selected-actions {
-    margin-bottom: 0.85rem;
   }
   .plan-event {
     display: flex;
@@ -3332,24 +3139,6 @@
     width: 5px;
     height: 5px;
     border-radius: 999px;
-  }
-  .day-add {
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    padding: 0 0.25rem;
-    border-color: transparent;
-    background: transparent;
-    color: var(--muted);
-    font-size: 0.7rem;
-    opacity: 0;
-  }
-  .day-cell:hover .day-add,
-  .day-add:focus-visible {
-    opacity: 1;
-  }
-  .day-cell.selected .day-add {
-    color: var(--solid-void);
   }
   .outside {
     opacity: 0.45;
@@ -3693,10 +3482,6 @@
     text-align: left;
     margin-right: auto;
   }
-  .task-card select {
-    max-width: 7rem;
-    font-size: 0.8rem;
-  }
   .task-card p {
     font-size: 0.78rem;
     color: var(--muted);
@@ -3885,10 +3670,6 @@
     align-items: stretch;
     margin: 0.8rem 0;
   }
-  .editor-options .hint {
-    line-height: 1.55;
-    margin-top: 0.65rem;
-  }
   .dialog footer {
     margin-top: 1rem;
     position: sticky;
@@ -4050,10 +3831,6 @@
     }
     .toolbar {
       align-items: start;
-    }
-    .load-status {
-      flex-basis: 100%;
-      margin-left: 0;
     }
     .header-actions {
       margin-left: 0;

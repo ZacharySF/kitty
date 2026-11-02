@@ -98,8 +98,9 @@ after(async () => {
 
 /** Opens a fresh profile on `hash`. `modules: []` is a core-only workspace. The profile is a
  *  returning user: the first-run welcome guide (covered by its own tests) is already done.
- *  `setup(context)` adds routes or init scripts before the first page load. */
-async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, setup } = {}) {
+ *  `storage` seeds localStorage before the first load; `setup(context)` adds routes or init
+ *  scripts before the first page load. */
+async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, storage, setup } = {}) {
   const context = await browser.newContext({ viewport });
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
@@ -110,6 +111,13 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
     await context.addInitScript((float) => localStorage.setItem("kitty.dock", JSON.stringify({
       mode: float ? "terminal" : "hidden", shown: "terminal", float, step: "m", size: null, offset: { right: 16, bottom: 16 },
     })), dock === "floating");
+  if (storage)
+    await context.addInitScript((entries) => {
+      // Only the first load is seeded: a reload keeps what the page saved since.
+      if (sessionStorage.getItem("seeded")) return;
+      sessionStorage.setItem("seeded", "1");
+      for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value);
+    }, storage);
   if (modules)
     await context.route("**/api/bootstrap", async (route) => {
       const response = await route.fetch();
@@ -168,16 +176,19 @@ async function assertAtlasFits(page, label) {
 }
 
 /**
- * Every control in the sidebar can be focused and is then above the docked dock and
+ * Every home control outside the drawing (both widget rails, the rail's collapse chevron
+ * and the stage's corner controls) can be focused and is then above the docked dock and
  * hit-testable; only a floating dock card, which the user can move or hide, may cover it.
  */
 async function assertSidebarReachable(page, label) {
-  const unreachable = await page.locator(".atlas-panel").evaluate((panel) => {
+  const unreachable = await page.locator(".atlas").evaluate((atlas) => {
     const space = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0;
     const dock = document.querySelector('[data-kitty-panel="dock"][data-float="true"], .dock-pill');
     const missing = [];
-    for (const control of panel.querySelectorAll("a[href], button, input, summary")) {
-      if (!control.getClientRects().length || control.closest("details:not([open]) > :not(summary)")) continue;
+    const controls = atlas.querySelectorAll(":is(.rail, [data-home-corner]) :is(a[href], button, input, textarea, summary), .rail-toggle");
+    if (!atlas.querySelector("[data-home-corner] button")) missing.push("no corner controls");
+    for (const control of controls) {
+      if (!control.getClientRects().length || control.disabled || control.closest("details:not([open]) > :not(summary)")) continue;
       control.focus();
       const box = control.getBoundingClientRect();
       const x = box.left + box.width / 2, y = box.top + box.height / 2;
@@ -187,8 +198,10 @@ async function assertSidebarReachable(page, label) {
     }
     return missing;
   });
-  assert.deepEqual(unreachable, [], `${label}: sidebar controls cannot be reached`);
+  assert.deepEqual(unreachable, [], `${label}: home controls cannot be reached`);
 }
+
+const RAIL_KEY = "kitty.home.rail";
 
 describe("the Brain home fills the window above the dock", () => {
   for (const viewport of [DEFAULT, MINIMUM, SCALED_MINIMUM]) {
@@ -197,12 +210,14 @@ describe("the Brain home fills the window above the dock", () => {
       ["all modules, dock shown", {}],
       ["all modules, dock hidden", { dock: "hidden" }],
       ["all modules, dock floating", { dock: "floating" }],
+      ["all modules, rail collapsed", { storage: { [RAIL_KEY]: "collapsed" } }],
       ["core only", { modules: [] }],
     ]) {
       test(`${size}, ${name}`, async () => {
         const { page, problems, context } = await open("today", { viewport, ...options });
         if (!options.modules && options.dock !== "hidden") await page.locator('[data-kitty-panel="dock"]').waitFor();
         if (options.dock === "floating") assert.equal(await visibleBottom(page), viewport.height, `${size}: the floating card reserves page space`);
+        if (options.storage) await page.locator(".atlas .side.collapsed").waitFor();
         await assertAtlasFits(page, `${size} ${name}`);
         await assertSidebarReachable(page, `${size} ${name}`);
         assert.deepEqual(problems, []);
@@ -558,17 +573,31 @@ describe("study timer", () => {
 });
 
 describe("study guide", () => {
-  test("the 14 steps sit in three phase columns; the rail view is one click away and remembered", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
-    await page.getByRole("button", { name: "Study session", exact: true }).click();
+  test("the guide drawer shows only the current phase; Full guide opens all 14 steps as phase columns, with the rail remembered", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden", setup: (context) => context.addInitScript(() => {
+      if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); localStorage.removeItem("kitty-study-draft"); sessionStorage.setItem("seeded", "1"); }
+    }) });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    await page.getByRole("button", { name: "Guide & notes", exact: true }).click();
+    const drawer = page.getByRole("complementary", { name: "Guide & notes" });
+    const phase = drawer.getByRole("region", { name: "Current phase" });
+    await phase.waitFor();
+    assert.ok(await phase.getByRole("checkbox").count() <= 6, "the drawer shows more than one phase");
+    assert.match(await phase.textContent(), /Prepare & prime · \d+\/14/);
+    await phase.getByRole("button", { name: "Next phase" }).click();
+    assert.match(await phase.textContent(), /During the session/);
+    assert.equal(await drawer.getByText(/Guide saved|Adapted from|Prepare → connect/).count(), 0, "status or provenance text is still shown");
+    await phase.getByRole("button", { name: "Full guide ›" }).click();
     const guide = page.getByRole("region", { name: "Fourteen-step study guide" });
     await guide.waitFor();
     const columns = guide.locator('[data-guide-view="columns"] > section');
     assert.equal(await columns.count(), 3, "guide is not three phase columns");
     assert.deepEqual(await columns.locator("h4").allTextContents(), ["Prepare & prime", "During the session", "Test, review & return"]);
     assert.equal(await guide.getByRole("checkbox").count(), 14);
-    await guide.getByRole("checkbox").first().check();
-    await page.waitForFunction(() => document.querySelector('[aria-label="Fourteen-step study guide"] [role="status"]')?.textContent?.startsWith("1/14"));
+    assert.equal(await guide.locator("details").count(), 0, "the guide still folds content away");
+    const before = Number((await guide.locator(".guide-heading .count").textContent()).split("/")[0]);
+    await guide.getByRole("checkbox").first().click();
+    await page.waitForFunction((count) => document.querySelector('[aria-label="Fourteen-step study guide"] .guide-heading .count')?.textContent?.startsWith(`${count}/14`), before === 0 ? 1 : before - 1);
     await guide.getByRole("radio", { name: "Rail" }).click();
     await guide.locator('[data-guide-view="rail"]').waitFor();
     assert.equal(await guide.locator('[data-guide-view="columns"]').count(), 0);
@@ -595,6 +624,14 @@ function seedDeck(page, name, cards) {
   }, { name, cards });
 }
 
+/** Scopes Flashcards to deck `name` through the header's searchable deck chip. */
+async function pickDeck(page, name) {
+  await page.getByRole("combobox", { name: "Deck scope" }).click();
+  await page.getByRole("searchbox", { name: "Search Deck scope" }).fill(name);
+  await page.getByRole("option", { name: new RegExp(`^${name}`) }).first().click();
+  await page.waitForFunction((name) => document.querySelector('[role="combobox"][aria-label="Deck scope"]')?.textContent.includes(name), name);
+}
+
 /** Opens Flashcards with `deck` seeded and its due review started. */
 async function reviewDeck(name, cards) {
   const opened = await open("flashcards", { dock: "hidden" });
@@ -602,7 +639,7 @@ async function reviewDeck(name, cards) {
   await page.getByRole("navigation", { name: "Flashcard views" }).waitFor();
   await seedDeck(page, name, cards);
   await page.reload();
-  await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: name });
+  await pickDeck(page, name);
   await page.getByRole("button", { name: "Review due" }).first().click();
   return opened;
 }
@@ -730,44 +767,111 @@ describe("Liquid Glass theme", () => {
   });
 });
 
-describe("study cockpit", () => {
-  test("the Study hub is three columns (subjects & tasks, timer, guide & notes) with every tool tab visible, and one column in a narrow pane", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+describe("study focus-first", () => {
+  test("Study opens on the timer alone, centred, without scrolling at 1440×900; [ and ] slide the drawers over it and are remembered", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden", viewport: { width: 1440, height: 900 }, setup: (context) => context.addInitScript(() => {
+      if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); sessionStorage.setItem("seeded", "1"); }
+    }) });
     page.on("dialog", (dialog) => dialog.accept());
-    const left = page.getByRole("region", { name: "Subjects & tasks" });
-    const centre = page.getByRole("region", { name: "Session timer" });
-    const right = page.getByRole("region", { name: "Guide & notes" });
-    await centre.waitFor();
-    const stop = centre.getByRole("button", { name: /^Stop/ });
-    if (await stop.isEnabled()) {
-      await stop.click();
-      await centre.getByRole("button", { name: /Start session/ }).waitFor();
-    }
-    let [a, b, c] = await Promise.all([rect(left), rect(centre), rect(right)]);
-    assert.ok(a.right <= b.left + 1 && b.right <= c.left + 1, "columns are not side by side");
-    assert.ok(Math.abs(a.top - b.top) < 2 && Math.abs(b.top - c.top) < 2, "columns do not share a row");
-    assert.equal(await page.getByText("Planning & tools").count(), 0, "tools are still behind a disclosure");
+    const timer = page.getByRole("region", { name: "Session timer" });
+    await timer.waitFor();
+    const stop = timer.getByRole("button", { name: /^Stop/ });
+    if (await stop.count()) await stop.click();
+    await timer.getByRole("button", { name: /Start session/ }).waitFor();
+    const page1 = page.locator(".focus-first");
+    // Nothing but the timer: no drawers open, no lede, no duplicate start.
+    assert.equal(await page.getByRole("complementary", { name: "Subjects & tasks" }).count(), 0);
+    assert.equal(await page.getByRole("complementary", { name: "Guide & notes" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: /Start session/ }).count(), 1, "Start session is duplicated");
+    assert.equal(await page.getByText(/Demo study records stay local|Focus mode/).count(), 0);
     const tabs = page.getByRole("navigation", { name: "Study tools" });
-    for (const name of ["Study session", "Progress", "History", "Exams & plans", "Mind map", "Helpers", "Timer settings"])
-      assert.ok(await tabs.getByRole("button", { name, exact: true }).isVisible(), `${name} tab is not visible`);
-    assert.ok(await right.getByRole("region", { name: "Fourteen-step study guide" }).isVisible(), "guide is not in the right column");
-    assert.ok(await right.getByRole("textbox", { name: /Session notes/ }).isVisible(), "session notes are not in the right column");
-    const subject = `Cockpit subject ${Date.now()}`;
+    assert.deepEqual((await tabs.getByRole("button").allTextContents()).map((text) => text.trim()), ["Session", "Progress", "Exams & plans", "Mind map", "Tools"]);
+    const [area, card] = await Promise.all([rect(page1), rect(timer)]);
+    assert.ok(Math.abs((area.left + area.right) / 2 - (card.left + card.right) / 2) < 2, "the timer is not centred horizontally");
+    assert.ok(Math.abs((area.top + area.bottom) / 2 - (card.top + card.bottom) / 2) < 24, "the timer is not centred vertically");
+    const overflow = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
+    assert.ok(overflow <= 1, `the Study page scrolls ${overflow}px at 1440×900`);
+    assert.ok(area.bottom <= 900 && area.bottom >= 880, `the session page ends at ${area.bottom}, not at the window bottom`);
+    for (const name of ["Subjects & tasks", "Guide & notes"]) {
+      const edge = page.getByRole("button", { name, exact: true });
+      assert.ok(await edge.isVisible(), `${name} edge tab is hidden`);
+      assert.equal(await edge.getAttribute("aria-expanded"), "false");
+      assert.equal(await edge.evaluate((node) => getComputedStyle(node).writingMode), "vertical-rl");
+    }
+
+    // ] and [ open the drawers over the page: the timer does not move.
+    await page.locator("body").press("]");
+    const right = page.getByRole("complementary", { name: "Guide & notes" });
+    await right.waitFor();
+    await page.locator("body").press("[");
+    const left = page.getByRole("complementary", { name: "Subjects & tasks" });
+    await left.waitFor();
+    await page.waitForTimeout(250);
+    assert.deepEqual(await rect(timer), card, "opening a drawer moved the timer");
+    assert.equal(await left.evaluate((node) => getComputedStyle(node).position), "absolute");
+    const [l, r] = await Promise.all([rect(left), rect(right)]);
+    assert.ok(Math.abs(l.left - area.left) < 1 && Math.abs(r.right - area.right) < 1, "drawers do not sit on the page edges");
+    assert.ok(await right.getByRole("textbox", { name: "Session notes" }).isVisible(), "session notes are not in the guide drawer");
+    assert.equal(await page.getByRole("button", { name: "Guide & notes", exact: true }).getAttribute("aria-expanded"), "true");
+    assert.ok(await page.getByRole("button", { name: "Guide & notes", exact: true }).isVisible(), "the edge tab is hidden by its drawer");
+    assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("kitty.study.drawers"))), { left: true, right: true });
+
+    // Add and pick a subject from the left drawer; the timer's session chip follows.
+    const subject = `Drawer subject ${Date.now()}`;
     await left.getByRole("button", { name: "Add subject" }).click();
-    const editor = page.getByRole("region", { name: "Edit subjects" });
-    await editor.getByLabel("Name").fill(subject);
-    await editor.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("textbox", { name: "Add subject" }).fill(subject);
+    await page.getByRole("textbox", { name: "Add subject" }).press("Enter");
     const pick = left.getByRole("button", { name: new RegExp(`^${subject}`) });
     await pick.click();
     assert.equal(await pick.getAttribute("aria-pressed"), "true");
-    await centre.getByText(subject).waitFor();
-    await page.setViewportSize(MINIMUM);
-    await page.waitForFunction(() => {
-      const [x, y] = ["Subjects & tasks", "Session timer"].map((name) => document.querySelector(`[aria-label="${name}"]`).getBoundingClientRect());
-      return Math.abs(x.left - y.left) < 2;
-    });
-    [a, b, c] = await Promise.all([rect(left), rect(centre), rect(right)]);
-    assert.ok(b.top >= a.bottom - 1 && c.top >= b.bottom - 1, "a narrow pane is not one column");
+    await timer.getByText(subject).waitFor();
+
+    await page.reload();
+    await page.getByRole("complementary", { name: "Subjects & tasks" }).waitFor();
+    await page.getByRole("complementary", { name: "Guide & notes" }).waitFor();
+    await page.getByRole("button", { name: "Subjects & tasks", exact: true }).click();
+    await page.getByRole("complementary", { name: "Subjects & tasks" }).waitFor({ state: "detached" });
+    assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("kitty.study.drawers"))), { left: false, right: true });
+
+    // History and Helpers live under Tools.
+    await tabs.getByRole("button", { name: "Tools", exact: true }).click();
+    await page.getByRole("heading", { name: /^Study records/ }).waitFor();
+    await page.getByRole("group", { name: "Tool" }).getByRole("button", { name: "Helpers" }).click();
+    await page.getByRole("heading", { name: "Active recall" }).waitFor();
+    assert.equal(await page.locator(".study select").count(), 0, "a native select is still shown");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("timer settings are a popover from the timer: minute steppers, switches and the themed timezone picker save as they change", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const timer = page.getByRole("region", { name: "Session timer" });
+    await timer.waitFor();
+    const settings = () => page.evaluate(async () => (await (await fetch("/api/study")).json()).settings);
+    const before = await settings();
+    await timer.getByRole("button", { name: "Timer settings" }).click();
+    const popover = page.getByRole("dialog", { name: "Timer settings" });
+    await popover.waitFor();
+    assert.equal(await popover.getByText(/seconds|IANA|Each new session begins/).count(), 0, "the seconds fields or the paragraph are still shown");
+    const focus = popover.getByRole("group", { name: "Focus length" });
+    assert.equal((await focus.locator("output").textContent()).replace(/\s+/g, " ").trim(), `${Math.round(before.focus_seconds / 60)} min`);
+    await focus.getByRole("button", { name: "Longer focus" }).click();
+    await page.waitForFunction(async (seconds) => (await (await fetch("/api/study")).json()).settings.focus_seconds !== seconds, before.focus_seconds);
+    assert.equal((await settings()).focus_seconds % 300, 0, "the stepper does not move in 5-minute steps");
+    const sound = popover.getByRole("switch", { name: "Sound at phase end" });
+    assert.equal(await sound.getAttribute("aria-checked"), String(before.sound));
+    await sound.click();
+    await page.waitForFunction(async (on) => (await (await fetch("/api/study")).json()).settings.sound === on, !before.sound);
+    await page.waitForFunction((on) => document.querySelector('[role="switch"][aria-checked]')?.getAttribute("aria-checked") === String(on), !before.sound);
+    assert.equal(await popover.getByRole("switch", { name: "Desktop notifications" }).count(), 1);
+    const zone = popover.getByRole("combobox", { name: "Timezone" });
+    assert.equal(await popover.locator("select").count(), 0, "the timezone is a native select");
+    await zone.click();
+    await page.getByRole("searchbox", { name: "Search Timezone" }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    // Restore the demo's settings for the other tests.
+    await page.evaluate(async (settings) => fetch("/api/study/settings", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(settings) }), before);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -892,6 +996,50 @@ describe("study plans", () => {
   });
 });
 
+describe("study exams", () => {
+  test("Add exam is a quick-add with a date chip and a themed subject picker; the exam opens in the edit drawer", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    const stamp = Date.now();
+    await page.evaluate(async (stamp) => {
+      await fetch("/api/study/subjects", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify({ name: `Quick ${stamp}`, color: "#40a080" }) });
+      window.dispatchEvent(new CustomEvent("kitty-study-changed"));
+    }, stamp);
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Exams & plans", exact: true }).click();
+    await page.getByRole("button", { name: "Add exam", exact: true }).click();
+    const popover = page.getByRole("dialog", { name: "Add exam" });
+    await popover.waitFor();
+    assert.equal(await popover.locator("select, textarea").count(), 0, "the quick-add has a native select or a notes field");
+    await popover.getByRole("textbox", { name: "Add exam" }).fill(`Quick exam ${stamp}`);
+    const day = await page.evaluate(async () => {
+      const { stats } = await (await fetch("/api/study")).json();
+      return new Date(Date.parse(`${stats.today}T12:00:00Z`) + 9 * 86_400_000).toISOString().slice(0, 10);
+    });
+    await popover.getByLabel("Exam date").fill(day);
+    const subject = popover.getByRole("combobox", { name: "Exam subject" });
+    assert.notEqual(await subject.evaluate((node) => getComputedStyle(node).appearance), "auto");
+    await subject.click();
+    await page.getByRole("searchbox", { name: "Search Exam subject" }).fill(`Quick ${stamp}`);
+    await page.getByRole("option", { name: new RegExp(`^Quick ${stamp}`) }).waitFor();
+    await page.getByRole("searchbox", { name: "Search Exam subject" }).press("Enter");
+    await popover.getByRole("textbox", { name: "Add exam" }).press("Enter");
+    const card = page.getByRole("region", { name: "Exam countdowns" }).getByRole("article").filter({ hasText: `Quick exam ${stamp}` });
+    await card.waitFor();
+    assert.match(await card.textContent(), new RegExp(`Quick ${stamp}`));
+    assert.match(await card.textContent(), /9\s*days/);
+    await card.getByRole("button", { name: `Edit exam Quick exam ${stamp}` }).click();
+    const drawer = page.getByRole("dialog", { name: "Edit exam" });
+    await drawer.waitFor();
+    assert.equal(await drawer.locator("select").count(), 0, "the edit drawer uses native selects");
+    assert.equal(await drawer.getByRole("combobox", { name: "Subject" }).textContent().then((text) => text.includes(`Quick ${stamp}`)), true);
+    await drawer.getByRole("button", { name: "Close exam editor" }).click();
+    await drawer.waitFor({ state: "detached" });
+    assert.equal(await page.getByText(/No exam dates are guessed|Select a block to mark it done/).count(), 0);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
 describe("study streak", () => {
   test("manual logging fills persisted streak segments and cancel does not log", async () => {
     const { page, context, problems } = await open("study", { dock: "hidden" });
@@ -900,14 +1048,13 @@ describe("study streak", () => {
     const ring = page.getByRole("region", { name: "Study streak" });
     const before = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
     await ring.getByRole("button").click();
-    const editor = page.getByRole("region", { name: "Edit completed session" });
+    const editor = page.getByRole("dialog", { name: "Log study" });
     await editor.getByRole("button", { name: "Cancel", exact: true }).click();
     assert.equal(await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats.session_count), before.session_count);
     await ring.getByRole("button").click();
-    await editor.getByLabel("Start timestamp with explicit offset").fill(new Date(Date.now() - 20 * 60_000).toISOString());
-    await editor.getByLabel("IANA timezone").fill("UTC");
-    await editor.getByLabel("Duration in minutes").fill("15");
-    await editor.getByRole("button", { name: "Save completed session" }).click();
+    await editor.getByLabel("Started").fill(new Date(Date.now() - 20 * 60_000).toISOString());
+    await editor.getByLabel("Minutes studied").fill("15");
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
     await ring.getByText("Today's study is logged.", { exact: true }).waitFor();
     const saved = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
     assert.equal(saved.session_count, before.session_count + 1);
@@ -924,10 +1071,10 @@ describe("study streak", () => {
 
 describe("home rails", () => {
   for (const viewport of [DEFAULT, SCALED_MINIMUM]) {
-    test(`home at ${viewport.width}×${viewport.height}: the Brain sits centre between two scrolling widget rails; find and sections stay in reach`, async () => {
+    test(`home at ${viewport.width}×${viewport.height}: widgets only in both rails around the Brain; Sections and the look switch sit in the stage's corner`, async () => {
       const { page, problems, context } = await open("today", { viewport, dock: "hidden" });
       const left = page.getByRole("complementary", { name: "Home widgets" });
-      const right = page.getByRole("complementary", { name: "Workspace" });
+      const right = page.getByRole("complementary", { name: "Activity" });
       const stage = page.locator('[data-kitty-panel="graph"]');
       await Promise.all([left.waitFor(), right.waitFor(), stage.waitFor()]);
       const [l, s, r] = await Promise.all([rect(left), rect(stage), rect(right)]);
@@ -935,19 +1082,109 @@ describe("home rails", () => {
       assert.ok(s.width > l.width && s.width > r.width, `the atlas (${s.width}px) is not the widest column`);
       for (const [name, box] of [["left", l], ["right", r]])
         assert.ok(Math.abs(box.top - s.top) <= 1 && Math.abs(box.bottom - s.bottom) <= 1, `${name} rail is not as tall as the atlas`);
-      // Each rail scrolls on its own; the page never does.
-      const scrolled = await right.evaluate((rail) => { rail.scrollTop = 200; return rail.scrollTop; });
-      assert.ok(scrolled > 0, "the Workspace rail does not scroll");
-      assert.ok(["auto", "scroll"].includes(await left.evaluate((rail) => getComputedStyle(rail).overflowY)), "the widget rail does not scroll");
+      // The rails hold only widgets: Today and Quick note, Agents and Up next.
+      const titles = (rail) => rail.locator(":scope > section h3").allInnerTexts();
+      assert.deepEqual(await titles(left), ["Today", "Quick note"]);
+      assert.deepEqual(await titles(right), ["Agents", "Up next"]);
+      for (const rail of [left, right]) {
+        assert.equal(await rail.getByRole("searchbox").count(), 0, "a rail still holds the section search");
+        assert.equal(await rail.getByRole("navigation").count(), 0, "a rail still holds the Sections list");
+        assert.ok(["auto", "scroll"].includes(await rail.evaluate((node) => getComputedStyle(node).overflowY)), "a rail does not scroll on its own");
+      }
       assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
-      await right.getByRole("searchbox", { name: /Find a section/ }).fill("Flash");
-      await right.getByRole("list", { name: "Matching nodes" }).getByRole("button", { name: /Flashcards/ }).waitFor();
-      assert.ok(await right.getByRole("navigation", { name: "Workspace sections" }).getByRole("link", { name: "Calendar" }).isVisible());
+
+      // The corner control row: Sections top-left, the Brain/2D switch top-right beside View.
+      const sections = stage.getByRole("button", { name: /^Sections \d/ });
+      const looks = stage.getByRole("group", { name: "Home look" });
+      const view = stage.getByRole("button", { name: "View" });
+      await Promise.all([sections.waitFor(), looks.waitFor(), view.waitFor()]);
+      const [sb, lb, vb] = await Promise.all([rect(sections), rect(looks), rect(view)]);
+      assert.ok(sb.top - s.top <= 20 && sb.left - s.left <= 20, `Sections is not in the stage's top-left corner: ${JSON.stringify(sb)}`);
+      assert.ok(lb.top - s.top <= 20 && lb.right <= vb.left && vb.left - lb.right <= 12, "the look switch is not beside View");
+      assert.ok(Math.abs((lb.top + lb.bottom) / 2 - (vb.top + vb.bottom) / 2) <= 2, "the look switch and View are not one row");
+      for (const box of [sb, lb, vb]) assert.equal(Math.round(box.height), 28, "corner controls are not 28px");
+
+      // "/" opens the Sections popover on its search; the list filters, and each row's ⋯ opens, locates, hides.
+      await page.locator("body").press("/");
+      const popover = page.getByRole("dialog", { name: "Sections" });
+      await popover.waitFor();
+      const find = popover.getByRole("searchbox", { name: "Find a section" });
+      assert.ok(await find.evaluate((node) => node === document.activeElement), "the section search is not focused");
+      assert.ok(await popover.getByRole("link", { name: /^Calendar\b/ }).isVisible());
+      await find.fill("Flash");
+      await popover.getByRole("link", { name: /^Flashcards\b/ }).waitFor();
+      assert.equal(await popover.getByRole("link", { name: /^Calendar\b/ }).count(), 0, "the list does not filter");
+      await popover.getByRole("button", { name: "Flashcards options" }).click();
+      const menu = page.getByRole("menu", { name: "Flashcards options" });
+      assert.deepEqual(await menu.getByRole("menuitem").allInnerTexts(), ["Open", "Show on the map", "Hide from the atlas"]);
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      assert.ok(await popover.isVisible(), "Escape in the row menu closed the Sections popover");
+      await find.press("Escape");
+      await popover.waitFor({ state: "detached" });
       await assertAtlasFits(page, `${viewport.width} rails`);
       assert.deepEqual(problems, []);
       await context.close();
     });
   }
+
+  test("the side rail collapses to an edge strip by its chevron or ], the Brain widens and refits, and the choice is remembered", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    const rail = page.getByRole("complementary", { name: "Activity" });
+    const stage = page.locator('[data-kitty-panel="graph"]');
+    const toggle = page.getByRole("button", { name: "Side widgets" });
+    await Promise.all([rail.waitFor(), toggle.waitFor()]);
+    await assertAtlasFits(page, "expanded");
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+    // The chevron sits on the rail's inner edge, between the stage and the rail.
+    const [railBox, chevron, wide] = await Promise.all([rect(rail), rect(toggle), rect(stage)]);
+    assert.ok(chevron.left >= wide.right - 12 && chevron.right <= railBox.left + 12, `the chevron is not on the rail's inner edge: ${JSON.stringify(chevron)}`);
+    assert.match(await toggle.getAttribute("title"), /\]/, "the chevron's tooltip does not name its shortcut");
+
+    await toggle.click();
+    await rail.waitFor({ state: "detached" });
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+    const strip = await rect(page.locator(".atlas .side"));
+    assert.ok(strip.width > 0 && strip.width <= 24, `the collapsed rail is ${strip.width}px, not a thin strip`);
+    await assertAtlasFits(page, "collapsed");
+    const grown = await rect(stage);
+    assert.ok(grown.width - wide.width >= 150, `the Brain only grew ${grown.width - wide.width}px`);
+    assert.ok(strip.left - grown.right <= 14, "the Brain does not fill the rail's space");
+    assert.equal(await page.evaluate((key) => localStorage.getItem(key), RAIL_KEY), "collapsed");
+
+    await page.reload();
+    await page.locator(".atlas .side.collapsed").waitFor();
+    assert.equal(await rail.count(), 0, "the collapsed rail is not remembered");
+    await assertAtlasFits(page, "collapsed after reload");
+
+    // ] toggles it from anywhere on home except while typing.
+    await page.getByRole("textbox", { name: "Quick note" }).click();
+    await page.keyboard.press("]");
+    assert.equal(await rail.count(), 0, "] typed into a note toggled the rail");
+    await page.getByRole("textbox", { name: "Quick note" }).fill("");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("]");
+    await rail.waitFor();
+    assert.equal(await page.getByRole("button", { name: "Side widgets" }).getAttribute("aria-expanded"), "true");
+    await assertAtlasFits(page, "expanded again");
+    assert.equal(Math.round((await rect(stage)).width), Math.round(wide.width), "the Brain did not return to its width");
+    assert.equal(await page.evaluate((key) => localStorage.getItem(key), RAIL_KEY), "expanded");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Ctrl K still finds every section without the rail list", async () => {
+    const { page, problems, context } = await open("today", { dock: "hidden" });
+    await page.locator(".atlas").waitFor();
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    await palette.getByRole("combobox").fill("Calen");
+    await palette.getByRole("option", { name: /Calendar/ }).first().waitFor();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash === "#calendar");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
 });
 
 describe("home widgets", () => {
@@ -979,10 +1216,10 @@ describe("home widgets", () => {
     const left = page.getByRole("complementary", { name: "Home widgets" });
     const agenda = left.getByRole("region", { name: "Today" });
     const note = left.getByRole("region", { name: "Quick note" });
-    const agents = page.getByRole("complementary", { name: "Workspace" }).getByRole("region", { name: "Agents" });
+    const agents = page.getByRole("complementary", { name: "Activity" }).getByRole("region", { name: "Agents" });
     await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
 
-    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, the eyebrow on the right.
+    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, any tag on the right.
     for (const widget of [agenda, note, agents]) {
       const frame = await widget.evaluate((node) => {
         const style = getComputedStyle(node);
@@ -990,7 +1227,7 @@ describe("home widgets", () => {
         return {
           fill: style.backgroundColor, top: style.borderTopWidth, sides: [style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
           font: getComputedStyle(title).fontFamily, size: parseFloat(getComputedStyle(title).fontSize),
-          titleRight: title.getBoundingClientRect().right, eyebrowLeft: eyebrow?.getBoundingClientRect().left ?? -1,
+          titleRight: title.getBoundingClientRect().right, eyebrow: !!eyebrow, eyebrowLeft: eyebrow?.getBoundingClientRect().left ?? -1,
           sameRow: eyebrow ? Math.abs(eyebrow.getBoundingClientRect().bottom - title.getBoundingClientRect().bottom) < 6 : false,
         };
       });
@@ -999,8 +1236,12 @@ describe("home widgets", () => {
       assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
       assert.match(frame.font, /Inter/);
       assert.ok(frame.size <= 14, `title is ${frame.size}px`);
-      assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
+      if (frame.eyebrow) assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
     }
+    // Q9 purpose check: the shortcut is the Save button's tooltip, not a tag; the agents' state is the tag.
+    assert.equal(await note.locator("header .eyebrow").count(), 0, "Quick note still tags itself with its shortcut");
+    assert.match(await note.getByRole("button", { name: "Save" }).getAttribute("title"), /Ctrl/);
+    assert.equal((await agents.locator("header .eyebrow").innerText()).trim(), "1 working · 1 needs you");
 
     // Today agenda: past, live with progress, now-line, then the next event with a countdown.
     const rows = agenda.getByRole("listitem");
@@ -1043,20 +1284,77 @@ describe("home widgets", () => {
     await context.close();
   });
 
-  test("Find jobs holds the reminders brief and How to apply in one collapsible section that remembers it is open", async () => {
+  test("Up next lists the coming week's deadlines, reminders, tasks and due cards soonest first; a row opens its page", async () => {
+    /** Local midnight `offset` days from today, plus `hour` hours. */
+    const at = (offset, hour = 0) => { const day = new Date(); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() + offset); day.setHours(hour); return day; };
+    const date = (offset) => { const day = at(offset); return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`; };
+    const event = (id, title, start, source_key = null) => ({ id, title, start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString(), all_day: false, calendar_id: "personal", location: "", source_key });
+    let week = {
+      calendars: [{ id: "personal", name: "Personal", color: "#6d5dfc", visible: 1 }],
+      events: [
+        event("e-today", "Seminar today", new Date(Date.now() + 60 * 60_000)),
+        event("e-deadline", "Deadline · Arch problem set", at(1, 17), "opportunity:3:deadline"),
+        event("e-reminder", "Follow_Up · Northwind Labs · Engineer", at(3, 10), "reminder:4"),
+        event("e-far", "Next month", at(12, 9)),
+      ],
+      tasks: [
+        { id: "t-late", title: "Overdue essay", due: at(-1, 12).toISOString(), status: "todo" },
+        { id: "t-next", title: "Finish eigenvalue set", due: date(2), status: "doing" },
+        { id: "t-done", title: "Already done", due: date(1), status: "done" },
+        { id: "t-someday", title: "Someday", due: "", status: "todo" },
+      ],
+      activity: [], reminders: [],
+    };
+    let cards = 31;
+    // The calendar's copy of reminder 4 (event "e-reminder") is the same follow-up: it shows once.
+    let reminders = { due: [], upcoming: [{ id: 4, kind: "followup", due_at: at(3, 10).toISOString(), note: "", job_id: 1, application_id: 1, done_at: null, label: "Northwind Labs — Engineer" }] };
+    const { page, problems, context } = await open("today", {
+      dock: "hidden",
+      setup: async (context) => {
+        await context.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: week }));
+        await context.route((url) => url.pathname === "/api/flashcards", (route) => route.fulfill({ json: { decks: [], types: [], media: [], stats: { due: cards, total: 60 } } }));
+        await context.route((url) => url.pathname === "/api/reminders", (route) => route.fulfill({ json: reminders }));
+      },
+    });
+    const upNext = page.getByRole("complementary", { name: "Activity" }).getByRole("region", { name: "Up next" });
+    await upNext.getByText("Overdue essay").waitFor();
+    const rows = await upNext.getByRole("listitem").allInnerTexts();
+    const order = ["Overdue essay", "Flashcards", "Arch problem set", "Finish eigenvalue set", "Northwind Labs"];
+    assert.deepEqual(rows.map((row) => order.findIndex((title) => row.includes(title))), [0, 1, 2, 3, 4], `Up next order: ${JSON.stringify(rows)}`);
+    // Kinds are mono caps; the text is compared case-blind.
+    assert.match(rows[0], /\btask\b/i);
+    assert.match(rows[0], /overdue/i);
+    assert.match(rows[1], /31 due/);
+    assert.match(rows[2], /deadline/i);
+    assert.match(rows[2], /Tomorrow/);
+    assert.ok(!/deadline · arch/i.test(rows[2]), "the kind is repeated in the title");
+    assert.match(rows[4], /follow-up/i);
+    assert.equal((await upNext.locator("header .eyebrow").innerText()).trim(), "5");
+    await upNext.getByRole("button", { name: /Flashcards/ }).click();
+    await page.waitForFunction(() => location.hash === "#flashcards");
+
+    // Nothing coming: one short empty line.
+    week = { ...week, events: [], tasks: [] };
+    cards = 0;
+    reminders = { due: [], upcoming: [] };
+    await page.goto(new URL("#today", page.url()).href);
+    await upNext.getByText("Nothing due this week.").waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Find jobs shows reminders, the weekly goal and How to apply in an always-visible strip", async () => {
     const { page, problems, context } = await open("jobs", { dock: "hidden" });
-    const brief = page.locator("details").filter({ has: page.locator("summary", { hasText: "Reminders, deadlines & goals" }) });
-    await brief.waitFor();
-    assert.equal(await brief.evaluate((node) => node.open), false, "brief starts open");
-    await brief.locator("summary").click();
-    await brief.getByRole("heading", { name: "Reminders & deadlines" }).waitFor();
-    assert.ok(await brief.getByRole("button", { name: "How to apply" }).isVisible());
-    await page.reload();
-    await brief.getByRole("heading", { name: "Reminders & deadlines" }).waitFor();
-    assert.equal(await brief.evaluate((node) => node.open), true, "brief forgot it was open");
+    const strip = page.getByRole("region", { name: "Reminders, deadlines and goals" });
+    await strip.waitFor();
+    assert.ok(await strip.getByText("This week", { exact: true }).isVisible());
+    assert.ok(await strip.getByRole("button", { name: "How to apply" }).isVisible());
+    assert.equal(await strip.locator("details, summary").count(), 0, "the strip folds");
+    await strip.getByRole("button", { name: "How to apply" }).click();
+    await page.getByRole("heading", { name: "Three steps. One application at a time." }).waitFor();
     await page.evaluate(() => (location.hash = "inbox"));
     await page.getByRole("heading", { name: /New jobs/ }).first().waitFor();
-    assert.equal(await page.locator("summary", { hasText: "Reminders, deadlines & goals" }).count(), 0, "brief shows outside Find jobs");
+    assert.equal(await page.getByRole("region", { name: "Reminders, deadlines and goals" }).count(), 0, "the strip shows outside Find jobs");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1064,7 +1362,7 @@ describe("home widgets", () => {
 
 describe("appearance settings", () => {
   test("Settings → Appearance: one panel with a live preview, presets that set everything, single changes after, saved and applied before mount", async () => {
-    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    const { page, problems, context } = await open("settings/appearance", { dock: "hidden" });
     await context.addInitScript(() => {
       new MutationObserver((_, observer) => {
         if (!document.getElementById("app")?.firstElementChild) return;
@@ -1165,13 +1463,66 @@ describe("flashcard decks", () => {
     await tile.hover();
     assert.equal(await opacity(), "1", "details stay hidden on hover");
     await tile.click();
-    await page.getByRole("heading", { name: "Tile deck", level: 2 }).waitFor();
+    await page.waitForFunction(() => document.querySelector('[role="combobox"][aria-label="Deck scope"]')?.textContent.includes("Tile deck"));
     await looks.getByRole("radio", { name: "Graph" }).click();
     await page.getByRole("region", { name: "Flashcards", exact: true }).first().waitFor();
     assert.equal(await tile.count(), 0, "tiles stay beside the graph");
     await page.reload();
     await page.getByRole("region", { name: "Flashcards", exact: true }).first().waitFor();
     assert.equal(await looks.getByRole("radio", { name: "Graph" }).getAttribute("aria-checked"), "true", "the Graph look is not remembered");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("flashcard header (Q16 A)", () => {
+  test("a searchable deck chip in the header, one New card (N), rare tools in ⋯ and tile actions in each tile's ⋯", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Chip deck", [["One?", "1"], ["Two?", "2"]]);
+    await seedDeck(page, "Other chip deck", [["Three?", "3"]]);
+    await page.reload();
+    const workspace = page.getByRole("region", { name: "Flashcards workspace" });
+    const header = workspace.locator("header").first();
+    const chip = header.getByRole("combobox", { name: "Deck scope" });
+    await chip.waitFor();
+    assert.match(await chip.textContent(), /All decks.*\d+ due/);
+    const [h1, box] = [await header.locator("h1").boundingBox(), await chip.boundingBox()];
+    assert.ok(Math.abs(h1.y + h1.height / 2 - (box.y + box.height / 2)) < 12, "the chip is not beside the title");
+    assert.ok(box.width < 320, `the chip is ${box.width}px wide`);
+    assert.equal(box.height, 28);
+    assert.equal(await chip.evaluate((node) => getComputedStyle(node).borderTopLeftRadius), "999px");
+    assert.equal(await workspace.locator("select, details").count(), 0, "native select or fold-out on the deck page");
+    assert.equal(await page.getByText("Selected study scope").count(), 0);
+    // The chip searches decks and ends with a New deck row.
+    await chip.click();
+    const search = page.getByRole("searchbox", { name: "Search Deck scope" });
+    await search.waitFor();
+    await page.getByRole("option", { name: /^New deck/ }).waitFor();
+    await search.fill("other");
+    assert.equal(await page.getByRole("listbox", { name: "Deck scope" }).getByRole("option").filter({ hasText: "Chip deck" }).count(), 1);
+    await page.getByRole("option", { name: /^Other chip deck/ }).click();
+    await page.waitForFunction(() => document.querySelector('[role="combobox"][aria-label="Deck scope"]')?.textContent.includes("Other chip deck"));
+    // Exactly one New card, and it opens the quick add for the deck in scope.
+    const newCards = workspace.getByRole("button", { name: /New card/ });
+    assert.equal(await newCards.count(), 1, "more than one New card button");
+    await newCards.click();
+    const popover = page.getByRole("dialog", { name: "Quick add card" });
+    await popover.waitFor();
+    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] [role="combobox"]')?.textContent.trim() === "Other chip deck");
+    await page.keyboard.press("Escape");
+    await popover.waitFor({ state: "detached" });
+    // Study tools and note types live in the ⋯ menu.
+    await workspace.getByRole("button", { name: "More flashcard actions" }).click();
+    const menu = page.getByRole("menu");
+    for (const name of ["Practice & review options", "Review history", "Import / export", "AI drafts", "New deck", "New note type", "Edit Basic"]) await menu.getByRole("menuitem", { name, exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    // Settings and Archive sit in each tile's ⋯, not in a row under the tiles.
+    assert.equal(await workspace.getByRole("toolbar").count(), 0, "a deck action row is still under the tiles");
+    await workspace.getByRole("button", { name: "Chip deck actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await page.getByRole("heading", { name: "Deck settings" }).waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1261,13 +1612,14 @@ describe("calendar redesign", () => {
     const d = new Date();
     const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const slotButton = (time) => page.getByRole("button", { name: `Create event ${day} ${time}`, exact: true });
-    const editor = page.getByRole("dialog");
+    // A slot (Enter, a click or a drag) prefills the pill's quick add with its time.
+    const quick = page.getByRole("dialog", { name: "Add event or task" });
     await slotButton("14:00").focus();
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await editor.getByRole("heading", { name: "New event" }).waitFor();
+    await quick.getByText("14:30–15:30").waitFor();
     await page.keyboard.press("Escape");
-    await editor.waitFor({ state: "detached" });
+    await quick.waitFor({ state: "detached" });
     await slotButton("16:00").scrollIntoViewIfNeeded();
     const from = await slotButton("15:00").boundingBox();
     const to = await slotButton("16:00").boundingBox();
@@ -1275,9 +1627,9 @@ describe("calendar redesign", () => {
     await page.mouse.down();
     await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 4 });
     await page.mouse.up();
-    await editor.getByRole("heading", { name: "New event" }).waitFor();
+    await quick.getByText("15:00–16:30").waitFor();
     await page.keyboard.press("Escape");
-    await editor.waitFor({ state: "detached" });
+    await quick.waitFor({ state: "detached" });
     const block = page.getByRole("group", { name: "Move me" });
     // Native automated drags are flaky in Chromium (and cancel on the tiny ↔ handle); dispatch the same DOM events.
     const dragOnto = async (source, target) => {
@@ -1356,8 +1708,9 @@ describe("calendar redesign", () => {
     await page.getByRole("region", { name: "Agenda" }).waitFor();
     await page.getByRole("searchbox").fill("dwm");
     assert.equal(await page.getByRole("region", { name: "Agenda" }).count(), 1, "typing in search switched views");
-    await page.getByText("Shortcuts", { exact: true }).click();
-    assert.match(await page.locator(".interaction-help").textContent(), /D\/W\/M\/A[\s\S]*J\/K[\s\S]*T/);
+    // Shortcuts live in tooltips now that the Shortcuts fold-out is gone.
+    assert.equal(await pill.getByRole("button", { name: "Day", exact: true }).getAttribute("title"), "Day (D)");
+    assert.equal(await pill.getByRole("button", { name: "Add event or task" }).getAttribute("aria-keyshortcuts"), "N");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1411,23 +1764,25 @@ describe("calendar redesign", () => {
     await context.close();
   });
 
-  test("a side drawer edits events live and its title understands 'lunch with Mira fri 12:30'", async () => {
+  test("quick add understands 'lunch with Mira fri 12:30' and More opens the new event in the side drawer", async () => {
     const { page, problems, context } = await open("calendar", { dock: "hidden" });
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
-    await page.getByRole("button", { name: "Add event", exact: true }).first().click();
-    const drawer = page.getByRole("dialog", { name: "New event" });
+    await page.getByRole("toolbar", { name: "Calendar range" }).getByRole("button", { name: "Add event or task" }).click();
+    const quick = page.getByRole("dialog", { name: "Add event or task" });
+    await quick.getByRole("textbox", { name: "Add event or task" }).fill("lunch with Mira fri 12:30 at Café Rose");
+    await quick.getByText(/^Fri/).waitFor();
+    await quick.getByText("12:30–13:30").waitFor();
+    await quick.getByRole("button", { name: /^More/ }).click();
+    const drawer = page.getByRole("dialog", { name: "Event details" });
     await drawer.waitFor();
     assert.notEqual(await drawer.getAttribute("aria-modal"), "true", "the drawer should leave the calendar usable");
     const box = await drawer.boundingBox();
     assert.ok(box.x + box.width >= 1280 - 24 && box.width <= 440 && box.height >= 400, `drawer is not a right-hand side drawer: ${JSON.stringify(box)}`);
-    await drawer.getByRole("textbox", { name: "Title" }).fill("lunch with Mira fri 12:30 at Café Rose");
-    const understood = drawer.getByRole("status", { name: "Understood" });
-    await understood.getByText("Lunch with Mira", { exact: true }).waitFor();
-    assert.match(await understood.textContent(), /Fri[\s\S]*12:30–13:30[\s\S]*Café Rose/);
+    assert.equal(await drawer.getByRole("textbox", { name: "Title" }).inputValue(), "Lunch with Mira");
     for (const section of ["Repeat & time settings", "Notes, privacy & custom reminders", "Attendees, attachments & Google properties"])
       assert.equal(await drawer.getByText(section, { exact: false }).count() >= 1, true, `${section} is not reachable`);
     assert.equal(await drawer.getByRole("button", { name: "10 minutes before" }).getAttribute("aria-pressed"), "true");
-    await drawer.getByRole("button", { name: "Add event" }).click();
+    await drawer.getByRole("button", { name: "Close event editor" }).click();
     await drawer.waitFor({ state: "detached" });
     const saved = await page.evaluate(async () => {
       const from = new Date(Date.now() - 864e5).toISOString(), to = new Date(Date.now() + 9 * 864e5).toISOString();
@@ -1505,22 +1860,33 @@ async function openMindMaps(page) {
   await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Mind map", exact: true }).click();
   const { maps } = await (await listed).json();
   const schema = page.getByRole("region", { name: "Mental schema maps" });
-  if (maps.length) await schema.getByRole("button", { name: "New map", exact: true }).waitFor();
+  if (maps.length) await schema.locator("svg.stage").waitFor();
   else await schema.waitFor();
   return schema;
 }
-/** Opens Study → Mind map and creates a fresh map from `template`; returns its node locator. */
-async function newMindMap(page, title, template = "Lecture") {
-  const schema = await openMindMaps(page);
-  const fresh = schema.getByRole("button", { name: "New map", exact: true });
-  const titleField = schema.getByRole("textbox", { name: "New map title" });
-  if (await fresh.isVisible()) await fresh.click();
-  await titleField.fill(title);
-  await schema.locator("summary", { hasText: "Advanced options" }).click();
-  await schema.getByRole("combobox", { name: "Starting template" }).selectOption(template);
-  await schema.getByRole("button", { name: "Create map" }).click();
+/** Creates a map from `template` with the editor's New map popover (Q8); returns its node locator. */
+async function createMap(page, schema, title, template) {
+  await schema.getByRole("button", { name: "New map", exact: true }).click();
+  const popover = page.getByRole("dialog", { name: "New map" });
+  await popover.getByRole("textbox", { name: "New map" }).fill(title);
+  await popover.getByRole("group", { name: "Starting template" }).getByRole("button", { name: template, exact: true }).click();
+  await popover.getByRole("textbox", { name: "New map" }).press("Enter");
   await page.waitForFunction((label) => [...document.querySelectorAll("svg.stage [data-node]")].some((node) => node.textContent.includes(label)), title);
   return { schema, nodes: schema.locator("svg.stage [data-node]") };
+}
+/** Opens Study → Mind map and creates a fresh map from `template`; returns its node locator. */
+async function newMindMap(page, title, template = "Lecture") {
+  return createMap(page, await openMindMaps(page), title, template);
+}
+/** Waits for the autosave (Ctrl+S saves at once): the editor reports "saved". */
+async function savedMap(page) {
+  await page.keyboard.press("Control+s");
+  await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "saved");
+}
+/** Runs an item of the selected topic's ⋯ menu (on the topic bar). */
+async function topicAction(page, name) {
+  await page.getByRole("toolbar", { name: "Topic" }).getByRole("button", { name: "More topic actions" }).click();
+  await page.getByRole("menu", { name: "More topic actions" }).getByRole("menuitem", { name, exact: true }).click();
 }
 /** Resolves a CSS colour expression (e.g. `var(--ink)`) to the computed rgb() string. */
 const resolveColor = (page, value) => page.evaluate((color) => {
@@ -1577,8 +1943,8 @@ const nodeBoxes = (page) => page.evaluate(() => Object.fromEntries([...document.
 })));
 const mapNode = (page, label) => page.locator("svg.stage [data-node]").filter({ has: page.locator("text.label", { hasText: new RegExp(`^${label}$`) }) });
 const centre = async (locator) => { const box = await locator.boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
-/** Waits until the map editor takes input again: it ignores keys and drags while it saves, splits or undoes. */
-const editable = (page) => page.waitForFunction(() => document.querySelector(".schema .mapbar input")?.disabled === false);
+/** Waits until the map editor takes input again: it ignores keys and drags while it splits, undoes or reloads. */
+const editable = (page) => page.waitForFunction(() => document.querySelector(".schema")?.getAttribute("aria-busy") === "false");
 
 describe("mind-map editing", () => {
   test("keyboard building: arrows move, Ctrl+arrows reorder, Tab child, Enter sibling, Ctrl+Enter edits", async () => {
@@ -1655,9 +2021,9 @@ describe("mind-map editing", () => {
     assert.match(await mapNode(page, "Examples").getAttribute("class"), /\broot\b/, "Examples was not detached");
     const dropped = await centre(pill("Examples"));
     assert.ok(Math.abs(dropped.x - (start.x + 60)) < 6 && Math.abs(dropped.y - (start.y + 150)) < 6, "the detached branch did not stay where it was dropped");
-    // The inspector's Detach breaks Questions (with Leaf) off too.
+    // The topic bar's Detach breaks Questions (with Leaf) off too.
     await mapNode(page, "Questions").click();
-    await schema.getByRole("button", { name: "Detach branch" }).click();
+    await schema.getByRole("toolbar", { name: "Topic" }).getByRole("button", { name: "Detach", exact: true }).click();
     assert.match(await mapNode(page, "Questions").getAttribute("class"), /\broot\b/);
     boxes = await nodeBoxes(page);
     assert.ok(boxes.Leaf.x > boxes.Questions.x, "Leaf did not stay with Questions");
@@ -1731,7 +2097,8 @@ describe("notes canvas pill", () => {
   test("canvas fullscreen keeps the same bottom pill instead of a second toolbar", async () => {
     const { page, problems, context } = await open("notes", { dock: "hidden" });
     await openCanvas(page);
-    await page.getByRole("button", { name: "Open canvas fullscreen" }).click();
+    await page.getByRole("button", { name: "More page actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Canvas fullscreen", exact: true }).click();
     await page.getByRole("button", { name: "Exit canvas fullscreen" }).waitFor();
     const tools = page.getByRole("toolbar", { name: "Drawing tools" });
     await tools.waitFor();
@@ -1917,55 +2284,61 @@ describe("mind-map free positioning", () => {
     await page.keyboard.press("Escape");
     let boxes = await nodeBoxes(page);
     assert.ok(boxes.Case.x > boxes.Examples.x && Math.abs(boxes.Case.y - boxes.Examples.y) < 4, "the free node's child is not laid out beside it");
-    // Reset position puts Examples back between its siblings.
+    // Reset position (in the topic bar's ⋯) puts Examples back between its siblings.
     await mapNode(page, "Examples").click();
-    await schema.getByRole("button", { name: "Reset position" }).click();
+    await topicAction(page, "Reset position");
     boxes = await nodeBoxes(page);
     assert.equal(boxes.Examples.x, before.Examples.x, "Examples is not back in its column");
     assert.ok(boxes.Examples.y > boxes["Key ideas"].y && boxes.Examples.y < boxes.Questions.y, "Examples is not back between its siblings");
     assert.doesNotMatch(await mapNode(page, "Examples").getAttribute("aria-label"), /placed freely/);
-    assert.equal(await schema.getByRole("button", { name: "Reset position" }).isDisabled(), true);
+    await mapNode(page, "Examples").click();
+    await page.getByRole("toolbar", { name: "Topic" }).getByRole("button", { name: "More topic actions" }).click();
+    assert.equal(await page.getByRole("menuitem", { name: "Reset position" }).getAttribute("aria-disabled"), "true");
+    await page.keyboard.press("Escape");
     assert.deepEqual(problems, []);
     await context.close();
   });
 });
 
 describe("mind-map recolour", () => {
-  test("a swatch row on the selection recolours a node or its whole branch; style copies and pastes; colours survive a reload", async () => {
+  test("the pill's colour row recolours a node, the topic bar's style recolours its whole branch and copies and pastes style; colours survive a reload", async () => {
     const { page, problems, context } = await open("study", { dock: "hidden" });
     const { schema } = await newMindMap(page, "Colour map");
     const dot = (label) => mapNode(page, label).locator("circle.dot").evaluate((node) => getComputedStyle(node).fill);
     const colour = (n) => resolveColor(page, `var(--c${n})`);
+    const tools = schema.getByRole("toolbar", { name: "Map tools" });
+    const style = async () => {
+      await schema.getByRole("toolbar", { name: "Topic" }).getByRole("button", { name: "Topic colour" }).click();
+      return page.getByRole("dialog", { name: "Topic style" });
+    };
     await mapNode(page, "Key ideas").click();
     await page.keyboard.press("Tab");
     await page.keyboard.type("Alpha");
     await page.keyboard.press("Escape");
     const alpha = await dot("Alpha");
     await mapNode(page, "Key ideas").click();
-    const swatches = schema.getByRole("toolbar", { name: "Node style" });
-    await swatches.getByRole("button", { name: "Colour 4" }).click();
+    await tools.getByRole("button", { name: "Colour 4" }).click();
     assert.equal(await dot("Key ideas"), await colour(4), "the node was not recoloured");
     assert.equal(await dot("Alpha"), alpha, "node-only recolour changed its child");
-    await swatches.getByRole("button", { name: "Whole branch" }).click();
-    await swatches.getByRole("button", { name: "Colour 5" }).click();
+    await (await style()).getByRole("button", { name: "Whole branch" }).click();
+    await tools.getByRole("button", { name: "Colour 5" }).click();
     assert.equal(await dot("Key ideas"), await colour(5));
     assert.equal(await dot("Alpha"), await colour(5), "branch recolour skipped the child");
     // Copy the style from Key ideas and paste it onto Questions (button) and Examples (Alt+V).
-    await swatches.getByRole("button", { name: "Copy style" }).click();
+    await (await style()).getByRole("button", { name: "Copy style" }).click();
     await mapNode(page, "Questions").click();
-    await swatches.getByRole("button", { name: "Paste style" }).click();
+    await (await style()).getByRole("button", { name: "Paste style" }).click();
     assert.equal(await dot("Questions"), await colour(5));
     await mapNode(page, "Examples").click();
     await page.keyboard.press("Alt+v");
     assert.equal(await dot("Examples"), await colour(5));
-    await schema.getByRole("button", { name: /^Save map/ }).click();
-    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await savedMap(page);
     await page.reload();
     await openMindMaps(page);
     await mapNode(page, "Questions").waitFor();
     assert.equal(await dot("Questions"), await colour(5), "the colour was not saved");
     await mapNode(page, "Questions").click();
-    await swatches.getByRole("button", { name: "Automatic colour" }).click();
+    await tools.getByRole("button", { name: "Automatic colour" }).click();
     assert.notEqual(await dot("Questions"), await colour(5), "Automatic colour did not clear the colour");
     assert.deepEqual(problems, []);
     await context.close();
@@ -1982,7 +2355,7 @@ describe("mind-map cross connections", () => {
     await page.keyboard.press("Escape");
     const before = await nodeBoxes(page);
     await mapNode(page, "Alpha").click();
-    await schema.getByRole("button", { name: "Connect to…" }).click();
+    await topicAction(page, "Connect to…");
     await page.getByRole("status").filter({ hasText: /^Click a topic to connect “Alpha”/ }).waitFor();
     await mapNode(page, "Questions").click();
     const label = page.getByRole("textbox", { name: "Connection label" });
@@ -1999,7 +2372,8 @@ describe("mind-map cross connections", () => {
       return Math.abs((b.x - a.x) * (a.y - m.y) - (a.x - m.x) * (b.y - a.y)) / Math.hypot(b.x - a.x, b.y - a.y);
     });
     assert.ok(bend > 10, `the connection is not curved (${bend}px)`);
-    await schema.getByRole("button", { name: "Tree layout" }).click();
+    await schema.getByRole("button", { name: "Layout" }).click();
+    await page.getByRole("menu", { name: "Layout" }).getByRole("menuitem", { name: "Tree" }).click();
     const relaid = await nodeBoxes(page);
     assert.equal(relaid.Questions.x, relaid.Examples.x, "the link pulled Questions out of its tree column");
     // Folding Key ideas hides Alpha and its link, but not Questions.
@@ -2008,8 +2382,7 @@ describe("mind-map cross connections", () => {
     assert.equal(await text.count(), 0, "the link stayed visible with its end folded away");
     assert.equal(await mapNode(page, "Questions").count(), 1);
     await page.keyboard.press(" ");
-    await schema.getByRole("button", { name: /^Save map/ }).click();
-    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await savedMap(page);
     await page.reload();
     await openMindMaps(page);
     await text.waitFor();
@@ -2030,9 +2403,8 @@ describe("mind-map multi-select", () => {
     await page.keyboard.press("Shift+ArrowDown");
     await page.keyboard.press("Shift+ArrowDown");
     assert.deepEqual((await picked()).sort(), ["Examples", "Key ideas", "Questions"]);
-    const toolbar = schema.getByRole("toolbar", { name: "Node style" });
-    await toolbar.getByText("3 selected").waitFor();
-    await toolbar.getByRole("button", { name: "Colour 6" }).click();
+    await schema.getByRole("toolbar", { name: "Topic" }).getByText("3 selected").waitFor();
+    await schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Colour 6" }).click();
     const six = await resolveColor(page, "var(--c6)");
     for (const label of ["Key ideas", "Examples", "Questions"]) assert.equal(await dot(label), six, `${label} was not recoloured`);
     // A plain click selects one topic again; a Shift-drag box from empty space picks Examples and Questions.
@@ -2088,9 +2460,8 @@ describe("mind-map history", () => {
     await page.keyboard.press("Control+Shift+z");
     assert.deepEqual((await nodeBoxes(page)).Examples, moved.Examples);
     await mapNode(page, "Examples").click();
-    await schema.getByRole("button", { name: "Colour 4", exact: true }).click();
-    await schema.getByRole("button", { name: /^Save map/ }).click();
-    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Colour 4", exact: true }).click();
+    await savedMap(page);
     await editable(page);
     await page.keyboard.press("Control+z");
     const dot = () => mapNode(page, "Examples").locator("circle.dot").evaluate(n => getComputedStyle(n).fill);
@@ -2099,8 +2470,8 @@ describe("mind-map history", () => {
     assert.equal(await dot(), await resolveColor(page, "var(--c4)"));
     await page.keyboard.press("Control+z");
     await mapNode(page, "Questions").click();
-    await schema.getByRole("button", { name: "Colour 5", exact: true }).click();
-    assert.equal(await schema.getByRole("button", { name: "Redo", exact: true }).isDisabled(), true);
+    await schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Colour 5", exact: true }).click();
+    assert.equal(await schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Redo", exact: true }).isDisabled(), true);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -2113,8 +2484,8 @@ describe("mind-map split and merge", () => {
     await mapNode(page, "Key ideas").click(); await page.keyboard.press("Tab");
     await page.keyboard.type("Leaf"); await page.keyboard.press("Escape");
     await mapNode(page, "Key ideas").click();
-    await schema.getByRole("button", { name: "Split branch into map", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('select') && [...document.querySelectorAll('svg.stage text.label')].length === 2);
+    await topicAction(page, "Split branch into map");
+    await page.waitForFunction(() => [...document.querySelectorAll('svg.stage text.label')].length === 2);
     await mapNode(page, "Leaf").waitFor();
     await editable(page);
     assert.equal(await mapNode(page, "Transfer map").count(), 0);
@@ -2125,9 +2496,11 @@ describe("mind-map split and merge", () => {
     await mapNode(page, "Key ideas").waitFor();
     await editable(page);
     const root = await centre(mapNode(page, "Key ideas").locator("rect.pill"));
+    // Dragging a root shows the other maps as drop targets; dropping it on one merges it there.
+    await page.mouse.move(root.x, root.y); await page.mouse.down();
+    await page.mouse.move(root.x + 30, root.y + 30, { steps: 3 });
     const target = schema.getByRole("group", { name: "Merge map drop targets" }).getByRole("button", { name: "Transfer map", exact: true });
     const to = await centre(target);
-    await page.mouse.move(root.x, root.y); await page.mouse.down();
     await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up();
     await mapNode(page, "Transfer map").waitFor();
     await mapNode(page, "Leaf").waitFor();
@@ -2136,6 +2509,114 @@ describe("mind-map split and merge", () => {
     await openMindMaps(page);
     await mapNode(page, "Leaf").waitFor();
     assert.equal(await mapNode(page, "Key ideas").count(), 1);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+/** Computed styles that make a floating tool pill look like the Notes canvas pill. */
+const pillLook = (toolbar) => toolbar.evaluate((bar) => {
+  const style = getComputedStyle(bar), button = getComputedStyle(bar.querySelector(".pill-btn"));
+  const handle = bar.parentElement.querySelector(".pill-handle");
+  return {
+    radius: style.borderRadius, padding: style.padding, background: style.backgroundColor, border: style.borderTopColor, filter: style.backdropFilter,
+    button: [button.width, button.height, button.borderRadius], handle: handle && getComputedStyle(handle).width, docked: getComputedStyle(bar.parentElement).position,
+  };
+});
+
+describe("one mind-map editor", () => {
+  test("Mind maps opens one full-bleed editor: a slim top bar, the Notes canvas pill, a bar on the selected topic, and autosave", async () => {
+    const { page, problems, context } = await open("schema", { dock: "hidden" });
+    const schema = page.getByRole("region", { name: "Mental schema maps" });
+    await schema.waitFor();
+    await createMap(page, schema, "Chrome map", "Lecture");
+    // One slim bar: switcher, title, Layout, Map/Graph and ⋯ (last) share one row of at most 48px.
+    const switcher = await rect(schema.getByRole("button", { name: "Switch map" }));
+    const parts = [schema.getByRole("textbox", { name: "Map title" }), schema.getByRole("button", { name: "Layout" }),
+      schema.getByRole("group", { name: "View" }), schema.getByRole("button", { name: "More map actions" })];
+    const boxes = await Promise.all(parts.map(rect));
+    for (const box of boxes) assert.ok(Math.abs(box.top + box.height / 2 - (switcher.top + switcher.height / 2)) < 3, "the top bar is not one row");
+    assert.ok(boxes.at(-1).left >= Math.max(...boxes.slice(0, -1).map((box) => box.right)), "⋯ is not the last control");
+    // The canvas fills the editor under the bar, which fills the window: no help paragraph, title bar or Organize well.
+    const region = await rect(schema), stage = await rect(schema.locator("svg.stage"));
+    assert.ok(stage.top - region.top <= 48, `the canvas starts ${Math.round(stage.top - region.top)}px down`);
+    assert.ok(Math.abs(stage.bottom - region.bottom) <= 2 && Math.abs(stage.left - region.left) <= 2 && Math.abs(stage.right - region.right) <= 2, "the canvas does not fill the editor");
+    assert.ok(region.bottom >= DEFAULT.height - 24, `the editor ends at ${Math.round(region.bottom)}px`);
+    assert.equal(await schema.locator("p:visible").count(), 0, "help text is shown at rest");
+    assert.equal(await schema.locator("select, summary, details").count(), 0, "native selects or fold-outs remain");
+    // The building tools are the Notes canvas pill itself.
+    const mapPill = schema.getByRole("toolbar", { name: "Map tools" });
+    for (const name of ["Select", "Connect topics", "Ink", "Undo", "Redo", "More map tools"]) await mapPill.getByRole("button", { name, exact: true }).waitFor();
+    const look = await pillLook(mapPill), mapPillBox = await rect(mapPill);
+    assert.ok(Math.abs(mapPillBox.left + mapPillBox.width / 2 - (stage.left + stage.width / 2)) < 2 && stage.bottom - mapPillBox.bottom < 24, "the pill is not docked at the bottom centre");
+    // A small bar rides on the selected topic.
+    await mapNode(page, "Key ideas").click();
+    const topic = schema.getByRole("toolbar", { name: "Topic" });
+    await topic.waitFor();
+    const bar = await rect(topic), pill = await rect(mapNode(page, "Key ideas").locator("rect.pill"));
+    assert.ok(Math.abs(bar.bottom - pill.top) <= 2 && bar.left < pill.right && bar.right > pill.left, "the topic bar is not on the selected topic");
+    for (const name of ["Topic colour", "Rename", "Detach", "More topic actions", "Delete topic"]) await topic.getByRole("button", { name, exact: true }).waitFor();
+    // The pill's Connect tool links the selection to the next topic clicked.
+    await mapPill.getByRole("button", { name: "Connect topics" }).click();
+    await mapNode(page, "Questions").click();
+    await page.getByRole("textbox", { name: "Connection label" }).press("Enter");
+    await page.locator("svg.stage path.edge.cross").waitFor();
+    // Edits save by themselves: the title persists without pressing anything.
+    await schema.getByRole("textbox", { name: "Map title" }).fill("Chrome map, renamed");
+    await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "unsaved");
+    await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "saved");
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector('.schema input[aria-label="Map title"]')?.value === "Chrome map, renamed");
+    // Same component as the Notes canvas pill: identical computed look.
+    await page.evaluate(() => { location.hash = "#notes"; });
+    await openCanvas(page);
+    assert.deepEqual(await pillLook(page.getByRole("toolbar", { name: "Drawing tools" })), look, "the map pill differs from the Notes canvas pill");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Ctrl K opens a map in the editor by its title and offers New mind map", async () => {
+    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    await page.evaluate(async () => { const { api } = await import("/src/lib/api.ts"); await api("/schema/create", { title: "Palette map", mode: "study" }); });
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Search kitty!" });
+    await palette.getByRole("combobox").fill("palette map");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Palette map"));
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector('.schema input[aria-label="Map title"]')?.value === "Palette map");
+    assert.equal(await page.evaluate(() => location.hash), "#schema");
+    await page.keyboard.press("Control+k");
+    await palette.getByRole("combobox").fill("new mind map");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("New mind map"));
+    await page.keyboard.press("Enter");
+    await page.getByRole("dialog", { name: "New map" }).getByRole("textbox", { name: "New map" }).waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Notes' Map mode is the same editor for the page's own map, inside the page", async () => {
+    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    await page.getByRole("group", { name: "Page mode" }).getByRole("button", { name: "Map", exact: true }).click();
+    const schema = page.getByRole("region", { name: "Mental schema maps" });
+    const create = schema.getByRole("button", { name: "Create map" });
+    await create.click();
+    const root = schema.locator("svg.stage [data-node].root");
+    await root.waitFor();
+    const tab = (await page.getByRole("navigation", { name: "Open note pages" }).locator('[aria-current="page"]').textContent()).trim();
+    assert.equal((await root.locator("text.label").textContent()).replace(/^▤ /, ""), tab, "the map is not the page's");
+    // The same editor (its pill and topic bar), but the page keeps its own header: no second top bar.
+    await schema.getByRole("toolbar", { name: "Map tools" }).waitFor();
+    assert.equal(await schema.getByRole("button", { name: "Switch map" }).count(), 0, "the embedded editor draws its own top bar");
+    assert.equal(await page.getByRole("group", { name: "Page mode" }).isVisible(), true);
+    await root.click();
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Branch");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "saved");
+    // Back to Write and to Map again: the page's map comes back.
+    await page.getByRole("group", { name: "Page mode" }).getByRole("button", { name: "Write", exact: true }).click();
+    await page.getByRole("group", { name: "Page mode" }).getByRole("button", { name: "Map", exact: true }).click();
+    await mapNode(page, "Branch").waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -2250,7 +2731,7 @@ describe("flashcard memory stats", () => {
       }
     });
     await page.reload();
-    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Stats deck" });
+    await pickDeck(page, "Stats deck");
     await views.getByRole("button", { name: "Stats" }).click();
     const panel = (name) => page.getByRole("region", { name });
     const queue = panel("Today's queue");
@@ -2344,7 +2825,7 @@ describe("flashcard card browser", () => {
       await post("/flashcards/grade", { token: card.token, rating: 4, duration_ms: 5000 });
     });
     await page.reload();
-    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Browser deck" });
+    await pickDeck(page, "Browser deck");
     await views.getByRole("button", { name: "Cards" }).click();
     const list = page.getByRole("list", { name: "Cards" });
     await list.getByRole("listitem").nth(2).waitFor();
@@ -2402,7 +2883,7 @@ describe("adding flashcards", () => {
     const row = page.getByRole("form", { name: "Add a card" });
     // With All decks in scope the row asks which deck to save into.
     await row.getByRole("combobox", { name: "Deck for the new card" }).waitFor();
-    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Inline deck" });
+    await pickDeck(page, "Inline deck");
     await page.waitForFunction(() => !document.querySelector('[aria-label="Deck for the new card"]'));
     const list = page.getByRole("list", { name: "Cards" });
     await list.getByRole("listitem").first().waitFor();
@@ -2449,7 +2930,7 @@ describe("adding flashcards", () => {
     await seedDeck(page, "Other deck", [["Unrelated", "x"]]);
     await seedDeck(page, "Quick deck", [["Capital of Peru?", "Lima"]]);
     await page.reload();
-    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Quick deck" });
+    await pickDeck(page, "Quick deck");
     await page.locator("h1").click();
     await page.keyboard.press("n");
     const popover = page.getByRole("dialog", { name: "Quick add card" });
@@ -2539,7 +3020,7 @@ describe("mind-map pen", () => {
     await capturable(page);
     const examplesId = await mapNode(page, "Examples").getAttribute("data-node");
     // Ink mode: a pressure-varying wavy stroke across Examples attaches to Examples.
-    const ink = schema.getByRole("button", { name: "Ink", exact: true });
+    const ink = schema.getByRole("toolbar", { name: "Map tools" }).getByRole("button", { name: "Ink", exact: true });
     await ink.click();
     assert.equal(await ink.getAttribute("aria-pressed"), "true");
     const e = await pill("Examples").boundingBox();
@@ -2561,8 +3042,7 @@ describe("mind-map pen", () => {
     assert.ok(Math.abs(moved.x - from.x - 170) < 3 && Math.abs(moved.y - from.y - 110) < 3, "the pen did not drag Examples");
     assert.ok(Math.abs(inkAfter.x - inkBefore.x - 170) < 3 && Math.abs(inkAfter.y - inkBefore.y - 110) < 3, "the ink did not move with its topic");
     // Saved with the map: simplified, relative to Examples, with its pressure.
-    await schema.getByRole("button", { name: /^Save map/ }).click();
-    await schema.getByRole("button", { name: "Map saved" }).waitFor();
+    await savedMap(page);
     await page.reload();
     // The study cockpit reopens on its session section; the map stays the last one opened.
     await openMindMaps(page);
@@ -2745,7 +3225,7 @@ describe("notifications", () => {
   });
 
   test("quiet hours on a 24-hour dial hold notifications, then deliver one morning digest", async () => {
-    const { page, problems, context } = await open("settings", {
+    const { page, problems, context } = await open("settings/quiet-hours", {
       dock: "hidden",
       setup: async (context) => {
         await mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] });
@@ -2781,7 +3261,11 @@ describe("notifications", () => {
     assert.equal(await digest.count(), 1, "held reminders toasted one by one");
     assert.match(await digest.textContent(), /1 calendar · 1 job search/);
     await digest.getByRole("button", { name: "Open" }).click();
-    await page.getByRole("dialog", { name: "Notification center" }).waitFor();
+    const center = page.getByRole("dialog", { name: "Notification center" });
+    await center.waitFor();
+    // The center slides over the page's right column; close it to reach the switches.
+    await page.keyboard.press("Escape");
+    await center.waitFor({ state: "hidden" });
     // The choices are remembered.
     await panel.getByRole("switch", { name: "Let calendar events through" }).click();
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("kitty.notify.quiet")));

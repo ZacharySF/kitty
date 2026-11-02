@@ -49,7 +49,7 @@
     const targetView = step.view;
     const selector = step.selector;
     untrack(() => {
-      if (window.location.hash.slice(1) !== targetView) onview(targetView);
+      if (window.location.hash.slice(1).split("/")[0] !== targetView) onview(targetView);
     });
     reveals = 0;
     void tick().then(() => requestAnimationFrame(positionHighlight));
@@ -162,7 +162,7 @@
     welcomeStep = 1; error = "";
   }
   function startTour() {
-    originalView = (window.location.hash.slice(1) || "today") as View;
+    originalView = (window.location.hash.slice(1).split("/")[0] || "today") as View;
     originalScroll = window.scrollY;
     dockPresent = !!document.querySelector(DOCK_SELECTOR);
     stepIndex = 0; error = ""; mode = "tour";

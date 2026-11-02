@@ -28,6 +28,14 @@ const events = [
   event("picked", "Lunch with Mira", 12, { color: "c3" }),
   event("club", "Club night", 15, { calendar_id: "legacy" }),
 ];
+const today = (() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+})();
+const tasks = [
+  { id: "read", revision: 1, title: "Read chapter 3", description: "", due: today, timezone: zone, priority: "normal", status: "todo",
+    tags: [], project: "", subject_id: null, calendar_id: "personal", repeat_frequency: "", repeat_interval: 1, repeat_until: "" },
+];
 
 const calls = [];
 const harness = { calls, posted: (path) => calls.filter((c) => c.method === "POST" && c.path === path).map((c) => c.body) };
@@ -40,14 +48,27 @@ window.fetch = async (input, init = {}) => {
   const path = url.pathname.replace(/^\/api/, "");
   calls.push({ path, method, body });
   if (path === "/calendar" && method === "GET")
-    return json({ calendars, events, tasks: [], subjects, activity: [], reminders: [], conflicts: [], free: [], busy: [] });
+    return json({ calendars, events, tasks, subjects, activity: [], reminders: [], conflicts: [], free: [], busy: [] });
   if (path === "/calendar/time") return json({ value: new Date(body.value).toISOString() });
   if (path === "/calendar/google/status")
     return json({ client_present: false, authorized: false, tasks_authorized: false, steps: [], selected: [], notice: "",
       limits: [], public_operations: {}, calendar_conflicts: [], capabilities: { google: [], account_dependent: [], unsupported: {} } });
   if (path === "/calendar/google/conflicts") return json({ items: [] });
   if (path === "/schema/network") return json({ maps: [], nodes: [] });
-  const edit = /^\/calendar\/events\/([a-z]+)$/.exec(path);
+  if (path === "/calendar/events" && method === "POST") {
+    const saved = { ...event(`new${calls.length}`, body.title, 0), ...body, occurrence: body.start };
+    events.push(saved);
+    return json({ ...saved, undo_id: calls.length });
+  }
+  if (path === "/calendar/tasks" && method === "POST") {
+    const index = tasks.findIndex((t) => t.id === body.id);
+    const saved = { ...(index >= 0 ? tasks[index] : {}), ...body, id: body.id ?? `task${calls.length}`, revision: (body.revision ?? 0) + 1 };
+    if (body.delete) tasks.splice(index, 1);
+    else if (index >= 0) tasks[index] = saved;
+    else tasks.push(saved);
+    return json({ ...saved, undo_id: calls.length });
+  }
+  const edit = /^\/calendar\/events\/([a-z0-9]+)$/.exec(path);
   if (edit && method === "GET") return json(events.find((e) => e.id === edit[1]));
   if (edit) {
     const index = events.findIndex((e) => e.id === edit[1]);

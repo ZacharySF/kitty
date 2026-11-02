@@ -15,6 +15,7 @@
   import { GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics, graphLook } from "./graphPreferences";
   import { prefersReducedMotion } from "./appearance";
   import GraphLookToggle from "./GraphLookToggle.svelte";
+  import Icon from "./Icon.svelte";
   import Popover from "./ui/Popover.svelte";
   import Select from "./ui/Select.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -30,6 +31,7 @@
     focus = null,
     listToggle = true,
     height = "min(70vh, 850px)",
+    bare = false,
   }: {
     section: "jobs" | "flashcards" | "notes" | "study" | "opportunities";
     revision?: number;
@@ -38,6 +40,11 @@
     focus?: string | null;
     listToggle?: boolean;
     height?: string;
+    /**
+     * Q21/Q22: the map alone, full-bleed in the page's own surface: no panel, the canvas
+     * fills the parent (which sizes it) and 2D/3D · Layout · Fit float in a corner pill.
+     */
+    bare?: boolean;
   } = $props();
 
   const titles = { jobs: "Jobs", flashcards: "Flashcards", notes: "Notes", study: "Study", opportunities: "Opportunities" };
@@ -208,6 +215,30 @@
   {:else}<p class="message">No nodes match your search.</p>{/if}
 {/snippet}
 
+{#if bare}
+  <div class="section-graph bare" data-kitty-panel="graph" tabindex="-1" role="region" aria-label={`${titles[section]} map`}>
+    {#if loading}
+      <p class="message centered" role="status">Loading {section}…</p>
+    {:else if error}
+      <p class="message centered error" role="alert">{error}</p>
+    {:else if !hasNodes}
+      <p class="message centered">{empty[section]}</p>
+    {:else}
+      {#if mode === "graph"}
+        <div class="canvas" bind:this={container} aria-hidden="true"></div>
+      {:else}
+        <div class="node-list">{@render nodeList()}</div>
+      {/if}
+      <div class="map-controls" role="group" aria-label="Map controls">
+        <GraphLookToggle />
+        <span class="rule" aria-hidden="true"></span>
+        <Select label="Layout" kind="list" bind:value={layout} disabled={mode === "list"} options={layouts.map((item) => ({ value: item.id, label: item.label }))} />
+        <button type="button" class="icon-button fit" aria-label="Fit all" title="Fit all" onclick={fit} disabled={mode !== "graph" || !handle}><Icon name="schema" size={14} /></button>
+      </div>
+      {#if notice}<p class="notice floating" role="status">{notice}</p>{/if}
+    {/if}
+  </div>
+{:else}
 <Panel
   title={titles[section]}
   readout={graph ? `${graph.shown} / ${graph.total}` : undefined}
@@ -250,6 +281,7 @@
     {/if}
   </div>
 </Panel>
+{/if}
 
 <style>
   .section-graph { display: grid; gap: 0.65rem; min-width: 0; }
@@ -274,5 +306,15 @@
   li small { color: var(--muted); font-size: 0.73rem; }
   button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (max-width: 600px) { .canvas { height: 290px; } .layout { margin-left: 0; } }
+  /* Bare: the map fills the page surface; its controls float in one pill bottom-left. */
+  .section-graph.bare { position: relative; display: block; width: 100%; height: 100%; min-height: 0; }
+  .bare .canvas { position: absolute; inset: 0; height: auto; border-radius: 0; background: transparent; }
+  .bare .node-list { position: absolute; inset: 0; overflow: auto; padding: 56px 16px 64px; }
+  .bare .centered { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; }
+  .map-controls { position: absolute; left: 14px; bottom: 14px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 4px; border: 1px solid var(--hairline); border-radius: var(--r-control); background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 94%, transparent); box-shadow: var(--overlay-shadow); }
+  .map-controls .rule { width: 1px; height: 16px; background: var(--hairline); }
+  .map-controls :global(.select-trigger) { min-width: 96px; }
+  .map-controls .fit { display: inline-grid; place-items: center; width: var(--control-h); height: var(--control-h); }
+  .notice.floating { position: absolute; left: 14px; bottom: 56px; max-width: min(420px, calc(100% - 28px)); padding: 6px 10px; border-radius: var(--r-field); background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 88%, transparent); }
   @media (prefers-reduced-motion: reduce) { li button { transition: none; } }
 </style>
