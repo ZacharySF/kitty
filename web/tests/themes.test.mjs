@@ -43,7 +43,7 @@ test('an unknown saved theme falls back to Kitty, a known one is kept', () => {
 });
 
 test('every theme owns a surface, focus, selection and motion style, not just colours', () => {
-  assert.equal(THEMES.length, 10);
+  assert.equal(new Set(THEMES.map((theme) => theme.id)).size, THEMES.length);
   for (const theme of THEMES) {
     assert.ok(SURFACE_STYLES.includes(theme.surface.style), `${theme.id} surface ${theme.surface.style}`);
     assert.ok(FOCUS_STYLES.includes(theme.focus), `${theme.id} focus ${theme.focus}`);
@@ -104,4 +104,58 @@ test('Kitty has a real palette: lifted panels, an accent apart from structure, s
   for (const color of graph) assert.ok(chroma(color) >= 0.06, `${color} is washed out`);
   // Body and secondary text pass AA on the solid panel colour.
   for (const role of ['ink', 'mute', 'dim']) assert.ok(contrast(roles[role], roles.panel) >= 4.5, role);
+});
+
+/* Q12: the six new themes. Each owns a palette with real roles and six separable data colours. */
+function assertDistinctData(theme) {
+  for (let i = 0; i < theme.graph.length; i += 1)
+    for (let j = i + 1; j < theme.graph.length; j += 1)
+      assert.ok(distance(theme.graph[i], theme.graph[j]) >= 0.07, `${theme.id}: data colours ${theme.graph[i]} and ${theme.graph[j]} are too close`);
+}
+
+test('SPEED is the light theme: ink on watercolour paper, crimson accent, teal structure', () => {
+  const speed = getTheme('speed');
+  assert.equal(speed.label, 'SPEED');
+  assert.equal(speed.scheme, 'light');
+  assert.equal(speed.surface.style, 'paper');
+  assert.equal(speed.focus, 'bracket');
+  const {roles} = speed;
+  assert.ok(luminance(roles.void) > 0.7 && luminance(roles.panel) > 0.8, 'a light ground and light panels');
+  // Text, and the crimson the motif sets labels in, pass AA on the panels and on the bare paper.
+  for (const role of ['ink', 'mute', 'dim', 'signal', 'danger', 'go'])
+    for (const ground of ['panel', 'void', 'inset', 'raised'])
+      assert.ok(contrast(roles[role], roles[ground]) >= 4.5, `${role} on ${ground} ${contrast(roles[role], roles[ground]).toFixed(2)}`);
+  assert.ok(distance(roles.signal, roles.structure) >= 0.15, 'crimson accent apart from the teal structure');
+  assertDistinctData(speed);
+});
+
+test('c is an engraving on black: frames, a blood-red glow and a rare teal', () => {
+  const c = getTheme('c');
+  assert.equal(c.label, 'c');
+  assert.equal(c.scheme, 'dark');
+  assert.equal(c.surface.style, 'frame');
+  assert.equal(c.focus, 'glow');
+  const {roles, graph} = c;
+  assert.ok(luminance(roles.void) < 0.01, 'near-black ground');
+  for (const role of ['ink', 'mute', 'dim']) assert.ok(contrast(roles[role], roles.panel) >= 4.5, role);
+  assert.ok(contrast(roles.signal, roles.panel) >= 3, 'blood red reads as an accent on the panel');
+  const hue = (hex) => (Math.atan2(oklab(hex)[2], oklab(hex)[1]) * 180) / Math.PI;
+  // Teal stays rare: at most two data colours lean teal.
+  assert.ok(graph.filter((color) => chroma(color) > 0.03 && hue(color) > 150 && hue(color) < 230).length <= 2, 'teal is rare');
+  assertDistinctData(c);
+});
+
+test('red is stark: square flat black blocks, paper-white ink, one blood-red accent', () => {
+  const red = getTheme('red');
+  assert.equal(red.label, 'red');
+  assert.equal(red.surface.style, 'flat');
+  assert.equal(red.surface.radius, 0);
+  const {roles} = red;
+  assert.ok(luminance(roles.panel) < 0.01, 'black surfaces');
+  assert.ok(chroma(roles.ink) < 0.03 && chroma(roles.mute) < 0.03 && chroma(roles.structure) < 0.03, 'ink and structure stay black and white');
+  // The one accent: every saturated role is the same blood red.
+  const saturated = Object.values(roles).filter((color) => chroma(color) >= 0.1);
+  assert.ok(saturated.length >= 1 && new Set(saturated).size === 1, `one accent, not ${[...new Set(saturated)]}`);
+  for (const role of ['ink', 'mute', 'dim']) assert.ok(contrast(roles[role], roles.panel) >= 4.5, role);
+  assertDistinctData(red);
 });

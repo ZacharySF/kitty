@@ -17,7 +17,7 @@ import { THEMES } from "../src/lib/themes/catalog.ts";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const VIEWPORT = { width: 1100, height: 760 };
 /** Themes that ship a motif module (lib/themes/<id>/). */
-const MODULES = ["kitty", "liquid-glass", "scythe"];
+const MODULES = ["kitty", "liquid-glass", "scythe", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"];
 let server;
 let browser;
 let base;
@@ -77,9 +77,11 @@ async function switchTheme(page, id) {
  */
 async function backdropExtremes(page) {
   // Opacity, not visibility: Bracket's buttons pin an inline `visibility: visible` on their labels.
-  await page.evaluate(() => (document.getElementById("specimen").style.opacity = "0"));
+  // The frame paints above content at the window's edges, never behind text: it is not backdrop.
+  const hide = (opacity) => page.evaluate((value) => document.querySelectorAll("#specimen, .theme-frame").forEach((node) => (node.style.opacity = value)), opacity);
+  await hide("0");
   const shot = (await page.screenshot()).toString("base64");
-  await page.evaluate(() => (document.getElementById("specimen").style.opacity = ""));
+  await hide("");
   return page.evaluate(async (data) => {
     const image = new Image();
     image.src = `data:image/png;base64,${data}`;
@@ -249,7 +251,7 @@ describe("theme motion yields to Reduce motion", () => {
     });
   }
 
-  for (const id of ["kitty", "liquid-glass", "scythe"]) {
+  for (const id of MODULES.filter((id) => THEMES.some((theme) => theme.id === id))) {
     test(`${id}: ambient and transition motion stop under the setting and the OS preference`, async () => {
       const theme = THEMES.find((entry) => entry.id === id);
       const expected = { calm: "320ms", fluid: "240ms", snappy: "120ms" }[theme.motion];
@@ -335,6 +337,93 @@ describe("switching themes swaps the motif layer without a reload", () => {
     assert.equal(state.divider, "none");
     assert.doesNotMatch(state.tick, /url\(/);
     assert.match(state.blur, /blur\(/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("Q12 themes: SPEED, c and red own their motif layers", () => {
+  /** The motif as the harness shows it now: art, frame, divider, bullet, tick, empty and loader art. */
+  const marks = (page) =>
+    page.evaluate(() => {
+      const divider = getComputedStyle(document.querySelector("hr.rule"), "::before");
+      const tick = getComputedStyle(document.querySelector("[data-tick]"));
+      const dot = getComputedStyle(document.querySelector("span.dot"));
+      const visible = (node) => !!node && getComputedStyle(node).display !== "none" && getComputedStyle(node).visibility !== "hidden";
+      return {
+        art: document.querySelector(".theme-art")?.dataset.themeArt ?? null,
+        frame: document.querySelector(".theme-frame")?.dataset.themeFrame ?? null,
+        ornaments: [...document.querySelectorAll(".theme-art [data-ornament], .theme-frame [data-ornament]")].filter(visible).length,
+        divider: divider.content === "none" ? "none" : `${divider.backgroundImage} ${divider.maskImage}`,
+        bullet: dot.maskImage,
+        tick: `${tick.backgroundImage} ${tick.maskImage}`,
+        empty: document.querySelector(".kitty-empty [data-empty-art]")?.dataset.emptyArt ?? null,
+        loader: document.querySelector(".kitty-loader [data-loader-art]")?.dataset.loaderArt ?? null,
+      };
+    });
+  const FRAMED = { speed: null, c: "c", red: "red" };
+
+  test("SPEED → c → red → SPEED swaps art, frame, dividers, bullets, ticks, empty and loader art without a reload", async () => {
+    const { page, problems, context } = await harness("speed");
+    await page.evaluate(() => (window.__sameDocument = true));
+    const seen = {};
+    for (const id of ["speed", "c", "red", "speed"]) {
+      if ((await page.evaluate(() => document.documentElement.dataset.theme)) !== id) await switchTheme(page, id);
+      const now = await marks(page);
+      assert.equal(now.art, id, `${id} background art`);
+      assert.equal(now.frame, FRAMED[id], `${id} frame`);
+      assert.ok(now.ornaments > 0, `${id} ornaments`);
+      assert.match(now.divider, /url\(/, `${id} divider`);
+      assert.match(now.bullet, /url\(/, `${id} bullet`);
+      assert.match(now.tick, /url\(/, `${id} tick`);
+      assert.equal(now.empty, id, `${id} empty-state art`);
+      assert.equal(now.loader, id, `${id} loader art`);
+      if (seen[id]) assert.deepEqual(now, seen[id], `${id} looks the same after the round trip`);
+      seen[id] = now;
+    }
+    // Three different worlds, not one motif recoloured.
+    for (const key of ["divider", "bullet", "tick"]) assert.equal(new Set(["speed", "c", "red"].map((id) => seen[id][key])).size, 3, `${key} differs per theme`);
+    assert.equal(await page.evaluate(() => window.__sameDocument), true, "the page did not reload");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  for (const id of ["speed", "c", "red"]) {
+    test(`${id}: Theme motif off hides its marks and ornaments but keeps its surfaces and art`, async () => {
+      const { page, problems, context } = await harness(id, { appearance: { motif: false } });
+      const off = await marks(page);
+      const theme = THEMES.find((entry) => entry.id === id);
+      assert.equal(off.divider, "none");
+      assert.doesNotMatch(off.bullet, /url\(/);
+      assert.doesNotMatch(off.tick, /url\(/);
+      assert.equal(off.ornaments, 0, "ornaments hidden");
+      assert.equal(off.art, id, "the background art stays");
+      const surface = await page.locator("[data-surface-sample]").evaluate((panel) => getComputedStyle(panel).borderTopLeftRadius);
+      assert.equal(parseFloat(surface), theme.surface.radius, "the surface stays");
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.themeSurface), theme.surface.style);
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+
+  test("SPEED is a light theme: dark ink, light panels, a light colour scheme for native controls", async () => {
+    const { page, problems, context } = await harness("speed");
+    const look = await page.evaluate(() => {
+      const lin = (value) => ((value /= 255) <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+      const lum = (css) => {
+        const [r, g, b] = css.match(/[\d.]+/g).map(Number);
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      };
+      const panel = document.querySelector("[data-surface-sample]");
+      return {
+        scheme: getComputedStyle(document.documentElement).colorScheme,
+        ink: lum(getComputedStyle(panel.querySelector("[data-sample=body]")).color),
+        panel: lum(getComputedStyle(panel).backgroundColor),
+      };
+    });
+    assert.equal(look.scheme, "light");
+    assert.ok(look.ink < 0.05, `ink luminance ${look.ink}`);
+    assert.ok(look.panel > 0.8, `panel luminance ${look.panel}`);
     assert.deepEqual(problems, []);
     await context.close();
   });

@@ -17,6 +17,9 @@ const MODULES: Partial<Record<ThemeId, () => Promise<{ default: ThemeModule }>>>
   kitty: () => import("./kitty"),
   "liquid-glass": () => import("./liquid-glass"),
   scythe: () => import("./scythe"),
+  speed: () => import("./speed"),
+  c: () => import("./c"),
+  red: () => import("./red"),
 };
 
 export function currentTheme(): ThemeId {

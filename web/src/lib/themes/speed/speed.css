@@ -1,0 +1,182 @@
+/* ── SPEED (design Q12) ────────────────────────────────────────────────────
+   The one light theme: hand-inked on watercolour paper. Square paper sheets with an inked
+   edge and a crimson misprint, ink chrome, crimson-magenta sketch lines for accent and
+   focus, teal-green washes for selection. Motif: ink-splat bullets, sketched crimson ticks
+   that stamp on, brush-stroke dividers, a marker swipe under page titles, a skewed crimson
+   tab mark. Scoped to :root[data-theme="speed"]; marks also to :not([data-motif="off"]). */
+
+:root[data-theme="speed"] {
+  --spd-crimson: #c3164f;
+  --spd-teal: #1f7a62;
+  --spd-ink: #141716;
+  --spd-paper: #f8f7f3;
+  --spd-misprint: 3px 3px 0 -0.5px color-mix(in srgb, var(--spd-crimson) 58%, transparent);
+  /* Paper fibres: dark noise, where the engine's grain is white. */
+  --spd-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .1 0 0 0 0 .12 0 0 0 0 .11 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --backdrop: var(--spd-grain), linear-gradient(180deg, #efeee9, #e8e8e2);
+  --hairline: color-mix(in srgb, var(--spd-ink) 26%, transparent);
+  --border-fine: color-mix(in srgb, var(--spd-ink) 30%, transparent);
+  --r-control: 2px;
+  --r-field: 2px;
+  --r-menu: 2px;
+  --r-item: 1px;
+  --r-chip: 1px;
+  /* Paper sheets: no border (the edge is an inked shadow ring), a crimson misprint. */
+  --surface-fill: var(--spd-grain), var(--solid-panel);
+  --surface-border: transparent;
+  --surface-shadow:
+    0 0 0 1px color-mix(in srgb, var(--spd-ink) 72%, transparent),
+    var(--spd-misprint),
+    0 16px 30px -22px color-mix(in srgb, var(--shadow-tint) 60%, transparent);
+  /* Selection: a teal wash under a crimson edge. Pressed: ink with paper type. */
+  --select-fill: linear-gradient(90deg, color-mix(in srgb, var(--spd-teal) 24%, var(--solid-panel)), color-mix(in srgb, var(--spd-teal) 8%, var(--solid-panel)));
+  --select-edge: inset 3px 0 0 var(--spd-crimson);
+  --press-fill: var(--spd-ink);
+  --press-ink: var(--spd-paper);
+  --overlay-shadow: var(--spd-misprint), 0 18px 40px -16px color-mix(in srgb, var(--shadow-tint) 45%, transparent);
+}
+:root[data-theme="speed"] ::selection {
+  background: color-mix(in srgb, var(--spd-crimson) 24%, transparent);
+}
+
+/* The top bar is a sheet of the same paper, ruled in ink with a crimson offset. */
+:root[data-theme="speed"] body .workbench-top {
+  background: color-mix(in srgb, var(--solid-void) 90%, transparent);
+}
+:root[data-theme="speed"] body .system-bar {
+  border-bottom: 1.5px solid var(--spd-ink);
+  box-shadow: 0 3px 0 -1.5px var(--spd-crimson);
+}
+:root[data-theme="speed"] body .dock:not(.floating) {
+  border-top: 1.5px solid var(--spd-ink);
+  box-shadow: 0 -3px 0 -1.5px var(--spd-crimson);
+}
+:root[data-theme="speed"] body .workspace-groups {
+  border-color: color-mix(in srgb, var(--spd-ink) 55%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--spd-paper) 94%, transparent);
+}
+:root[data-theme="speed"] body .workspace-groups button {
+  border-radius: 1px;
+}
+:root[data-theme="speed"] body .workspace-groups button[aria-current="page"] {
+  border-color: var(--spd-ink);
+  background: var(--spd-ink);
+  color: var(--spd-paper);
+}
+
+/* Primary actions: an ink block with a crimson misprint. */
+:root[data-theme="speed"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root[data-theme="speed"] body .br-btn[data-variant="solid"] {
+  background: var(--spd-ink);
+  border-color: var(--spd-ink);
+  color: var(--spd-paper);
+  box-shadow: 2.5px 2.5px 0 var(--spd-crimson);
+}
+
+/* Overlays: the same paper, inked edge, misprinted. */
+:root[data-theme="speed"] body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root[data-theme="speed"] body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  border-color: color-mix(in srgb, var(--spd-ink) 72%, transparent);
+  background: var(--solid-panel);
+}
+
+/* Keyboard focus: the crimson ring, sketched twice over, slightly out of register. */
+:root[data-theme="speed"] .theme-focus[data-focus-style="bracket"]::before {
+  inset: calc(var(--focus-out) * -1 - 3px);
+  border: 1.5px solid var(--spd-crimson);
+  border-radius: 2px;
+  background: none;
+  transform: rotate(-0.7deg);
+}
+:root[data-theme="speed"] .theme-focus[data-focus-style="bracket"]::after {
+  content: "";
+  inset: calc(var(--focus-out) * -1 - 1px);
+  border: 1px solid color-mix(in srgb, var(--spd-ink) 70%, transparent);
+  border-radius: 2px;
+  transform: translate(2.5px, 2px) rotate(0.6deg);
+}
+
+/* ── Motif marks ── */
+
+:root[data-theme="speed"][data-motif="off"] .theme-art [data-ornament] {
+  display: none;
+}
+
+/* Ink-splat bullets in each subject's own colour. */
+:root[data-theme="speed"]:not([data-motif="off"]) span.dot:not(.kitty-loader .dot) {
+  width: 11px;
+  height: 11px;
+  border-radius: 0;
+  -webkit-mask: url("./splat.svg") center / contain no-repeat;
+  mask: url("./splat.svg") center / contain no-repeat;
+}
+
+/* Ticks: a square ink box; checked, a crimson check is sketched in and stamps down. */
+:root[data-theme="speed"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  border: 1.5px solid var(--spd-ink);
+  border-radius: 0;
+  background: var(--spd-paper);
+  vertical-align: -3px;
+  cursor: pointer;
+}
+:root[data-theme="speed"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):checked {
+  background: url("./check.svg") 1px -2px / 16px 16px no-repeat, var(--spd-paper);
+  animation: speed-stamp calc(var(--motion-ms) * 2) var(--motion-ease) both;
+}
+:root[data-theme="speed"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes speed-stamp {
+  0% { transform: scale(1.45) rotate(-8deg); opacity: 0.3; }
+  60% { transform: scale(0.92) rotate(2deg); opacity: 1; }
+  100% { transform: none; }
+}
+
+/* Dividers: a brush stroke in ink with a crimson pencil line under it and one drip. */
+:root[data-theme="speed"]:not([data-motif="off"]) .surface-section + .surface-section {
+  border-top-color: transparent;
+}
+:root[data-theme="speed"]:not([data-motif="off"]) hr.rule {
+  height: 14px;
+  margin-block: 2px;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+:root[data-theme="speed"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -7px;
+  height: 14px;
+  pointer-events: none;
+  background: url("./stroke.svg") center / 100% 100% no-repeat;
+  opacity: 0.75;
+}
+:root[data-theme="speed"]:not([data-motif="off"]) hr.rule::before {
+  top: 0;
+}
+
+/* Page titles: a crimson marker swipe under the first word or so (not authored content). */
+:root[data-theme="speed"]:not([data-motif="off"]) body main h1:not(.sr-only, :is(.sheet, .authored-preview, [contenteditable]) h1) {
+  background: linear-gradient(176deg, transparent 58%, color-mix(in srgb, var(--spd-crimson) 30%, transparent) 58% 86%, transparent 86%) left bottom / min(100%, 4.2em) 100% no-repeat;
+}
+
+/* The current workspace tab: a skewed crimson mark with a teal offset. */
+:root[data-theme="speed"]:not([data-motif="off"]) .workspace-tabbar .tab.active::after {
+  height: 3px;
+  border-radius: 0;
+  background: var(--spd-crimson);
+  box-shadow: 3px 2px 0 -1px var(--spd-teal);
+  transform: skewX(-20deg);
+}
