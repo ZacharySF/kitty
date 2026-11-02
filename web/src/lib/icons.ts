@@ -1,5 +1,5 @@
 /**
- * kitty!'s icon set: 24px hairline outlines (stroke ICON_STROKE). Navigation icons
+ * rika!'s icon set: 24px hairline outlines (stroke ICON_STROKE). Navigation icons
  * turn one detail into a tiny cherry blossom, listed in `accents` as [x, y, radius];
  * control glyphs (arrows, close, check…) stay plain so they read as controls.
  * Paths drop the line a blossom sits on, so petals never cross strokes.

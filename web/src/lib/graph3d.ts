@@ -1,5 +1,5 @@
 /**
- * Shared switchable Canvas 2D / WebGL 3D network renderer for kitty! graphs.
+ * Shared switchable Canvas 2D / WebGL 3D network renderer for rika! graphs.
  * The default is 2D; the 3D library is loaded only when requested.
  * Canvas interactions are pointer-only; every caller must offer a keyboard /
  * screen-reader path (lists + `focus(id)`). Coordinates in the public picking

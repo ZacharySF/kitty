@@ -86,13 +86,13 @@ def native_note(tmp_path):
 
             def find_note():
                 assert app.poll() is None, (tmp_path / "native.log").read_text()
-                return run("xdotool", "search", "--onlyvisible", "--name", "^kitty! quick note$", check=False).stdout.strip()
+                return run("xdotool", "search", "--onlyvisible", "--name", "^rika! quick note$", check=False).stdout.strip()
 
             note = eventually(find_note).splitlines()[0]
             run("xdotool", "windowmove", note, "50", "60")
             run("xdotool", "windowsize", note, "380", "460")
             # Keep the main window beside, never underneath, the detached editor.
-            main = eventually(lambda: run("xdotool", "search", "--onlyvisible", "--name", "^kitty!$", check=False).stdout.strip()).splitlines()[0]
+            main = eventually(lambda: run("xdotool", "search", "--onlyvisible", "--name", "^rika!$", check=False).stdout.strip()).splitlines()[0]
             run("xdotool", "windowmove", main, "1200", "60")
             run("xdotool", "windowsize", main, "1000", "850")
             time.sleep(2)

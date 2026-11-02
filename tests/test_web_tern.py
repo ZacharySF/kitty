@@ -1,7 +1,7 @@
 """Stencil Tern in the Terminal module, against a synthetic ``tern``; never the real one.
 
 Every test runs with PATH, XDG_RUNTIME_DIR and the Tern daemon socket in throwaway
-directories, and with the parent environment pretending kitty! itself runs inside
+directories, and with the parent environment pretending rika! itself runs inside
 the user's own Tern pane (whose daemon must never be touched), herdr and a
 PyInstaller bundle.
 """
@@ -23,7 +23,7 @@ STATUS_KEYS = {"install_url", "installed", "path", "source", "override", "versio
                "workspace", "socket", "running", "windows", "sessions"}
 OUTER_TERN = {"TERN_PANE": "5", "TERN_PANE_SOCKET": "", "TERN_WINDOW_KEY": "", "TERN_WINDOW_SOCKET": "",
               "TERN_EXE": "/somewhere/else/tern", "TERN_IDENTITY": "{}"}
-#: What the AppImage runtime adds to kitty!'s environment, and a secret from the user's shell.
+#: What the AppImage runtime adds to rika!'s environment, and a secret from the user's shell.
 #: (Not PYTHONHOME: the fake tern is Python, the real one is not.)
 APPIMAGE = {"APPDIR": "/tmp/.mount_kitty", "APPIMAGE": "/apps/kitty.AppImage",
             "GIO_MODULE_DIR": "/tmp/.mount_kitty/usr/lib/gio/modules", "GTK_PATH": "/tmp/.mount_kitty/usr/lib/gtk-3.0",
@@ -40,7 +40,7 @@ def tern(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(fake.runtime))
     # Not inside an FHS sandbox unless a test says so, whatever runs the tests.
     monkeypatch.setattr("kitty.core.tern.FHS_HOST_ETC", tmp_path / "no-host-etc")
-    # kitty! may run inside the user's own Tern pane: its daemon is someone else's.
+    # rika! may run inside the user's own Tern pane: its daemon is someone else's.
     monkeypatch.setenv("TERN_DAEMON_SOCKET", str(fake.owner_socket))
     for key, value in OUTER_TERN.items():
         monkeypatch.setenv(key, value)
@@ -57,7 +57,7 @@ def tern(tmp_path, monkeypatch):
 
 @pytest.fixture
 def sandbox(tmp_path, tern, monkeypatch):
-    """kitty! inside appimage-run's FHS sandbox, as NixOS runs its AppImage."""
+    """rika! inside appimage-run's FHS sandbox, as NixOS runs its AppImage."""
     host_etc = tmp_path / "host-etc"
     host_etc.mkdir()
     monkeypatch.setattr("kitty.core.tern.FHS_HOST_ETC", host_etc)
@@ -191,7 +191,7 @@ def test_open_in_tern_runs_a_window_on_kittys_own_daemon_and_quit_leaves_nothing
     assert calls.count(["daemon", "--socket", str(socket_path)]) == 1
     assert calls.count(["new", "session", "kitty", "--cwd", root, "--json"]) == 1
     assert calls.count(["--dir", root]) == 2
-    # Outside a sandbox Tern runs as kitty!'s child, never through systemd.
+    # Outside a sandbox Tern runs as rika!'s child, never through systemd.
     assert not any(item["argv"][0] in ("systemd-run", "systemctl") for item in invocations)
     for item in invocations:
         if item["argv"] == ["daemon", "--socket", str(tern.owner_socket)]:
@@ -204,7 +204,7 @@ def test_open_in_tern_runs_a_window_on_kittys_own_daemon_and_quit_leaves_nothing
         assert env["TERN_CONFIG_DIR"] == str(tmp_path / "user-tern-config")
         if item["argv"][:1] in (["--dir"], ["daemon"]):
             assert item["cwd"] == root
-    # Quit stopped every window and kitty!'s daemon; nothing kitty! started outlives it.
+    # Quit stopped every window and rika!'s daemon; nothing rika! started outlives it.
     assert not listening(socket_path)
     for item in invocations:
         if item["argv"] != ["daemon", "--socket", str(tern.owner_socket)]:
@@ -247,7 +247,7 @@ def test_in_an_fhs_sandbox_tern_runs_outside_it_as_user_services_and_quit_stops_
         assert sorted(option for option in options if option.startswith("--setenv=")) == [
             "--setenv=TERN_CONFIG_DIR", "--setenv=TERN_DAEMON_SOCKET", "--setenv=WAYLAND_DISPLAY"]
     assert "s3cret-value" not in json.dumps([item["argv"] for item in invocations])
-    # The daemon and the window run in the user's session environment, aimed at kitty!'s daemon.
+    # The daemon and the window run in the user's session environment, aimed at rika!'s daemon.
     outside = [item for item in invocations if (str(sandbox.binary), *item["argv"]) in (daemon, window)]
     assert len(outside) == 2
     for item in outside:
@@ -257,9 +257,9 @@ def test_in_an_fhs_sandbox_tern_runs_outside_it_as_user_services_and_quit_stops_
         assert env["WAYLAND_DISPLAY"] == "wayland-kitty-test"
         assert not (set(APPIMAGE) | set(OUTER_TERN) | {"LD_LIBRARY_PATH_ORIG", "HERDR_ENV"}) & set(env)
         assert item["cwd"] == root
-    # Status and session commands are clients of the socket; they run as kitty!'s children.
+    # Status and session commands are clients of the socket; they run as rika!'s children.
     assert [item["argv"] for item in invocations].count(["new", "session", "kitty", "--cwd", root, "--json"]) == 1
-    # Quit stopped the window's and the daemon's services; nothing kitty! started outlives it.
+    # Quit stopped the window's and the daemon's services; nothing rika! started outlives it.
     assert any(item["argv"][:3] == ["systemctl", "--user", "stop"] for item in invocations)
     assert not listening(socket_path) and not list(sandbox.units.iterdir())
     for item in sandbox.invocations():
@@ -314,7 +314,7 @@ def test_a_daemon_left_on_kittys_socket_is_adopted_and_stopped_at_quit(tmp_path,
     with site(settings) as running:
         socket_path = Path(status(running)["socket"])
         socket_path.parent.mkdir(mode=0o700, parents=True)
-        # A previous kitty! process's daemon, still running on kitty!'s private socket.
+        # A previous rika! process's daemon, still running on rika!'s private socket.
         previous = tern.start_daemon(socket_path)
         code, body = running.request("/api/terminal/tern/start", {})
         assert code == 200 and body["running"] is True

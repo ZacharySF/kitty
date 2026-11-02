@@ -26,7 +26,7 @@ function mixHex(a: string, b: string, amount: number): string {
   return `#${from.map((value, i) => Math.round(value + (to[i] - value) * amount).toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** Fresh kitty! Canvas renderer; no LearnHarness source or assets are used. */
+/** Fresh rika! Canvas renderer; no LearnHarness source or assets are used. */
 export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise<GraphRenderer> {
   await document.fonts?.ready;
   const canvas = document.createElement("canvas");

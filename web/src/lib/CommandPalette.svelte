@@ -136,7 +136,7 @@
   bind:this={dialog}
   class="spotlight"
   class:open={typed}
-  aria-label="Search kitty!"
+  aria-label="Search rika!"
   oncancel={onclose}
   onkeydown={key}
   onclick={(event) => {
@@ -155,7 +155,7 @@
       aria-controls="spotlight-results"
       aria-activedescendant={choices.length ? `spotlight-${selected}` : undefined}
       aria-label={applyai ? "Search sections, commands and jobs" : "Search sections and commands"}
-      placeholder="kitty! search"
+      placeholder="rika! search"
       autocomplete="off"
       spellcheck="false"
     />

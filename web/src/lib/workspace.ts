@@ -135,7 +135,7 @@ const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Navigate",
     shortcuts: [
-      ["kitty!", "Return to the main schema"],
+      ["rika!", "Return to the main schema"],
       ["Ctrl + Alt / Ctrl + X / Ctrl + C / Ctrl + V", "Plan / Study / Job search / Settings (outside text editing)"],
       ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
       [

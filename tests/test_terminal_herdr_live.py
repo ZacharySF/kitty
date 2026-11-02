@@ -1,4 +1,4 @@
-"""Real herdr v0.9.5 end to end through kitty!'s WebSocket. Opt-in, isolated lab only.
+"""Real herdr v0.9.5 end to end through rika!'s WebSocket. Opt-in, isolated lab only.
 
     KITTY_HERDR_LIVE=/path/to/herdr-0.9.5 uv run pytest tests/test_terminal_herdr_live.py
 
@@ -49,7 +49,7 @@ def lab(monkeypatch):
                    "XDG_STATE_HOME": str(home / ".local/state"), "XDG_DATA_HOME": str(home / ".local/share"),
                    "XDG_CACHE_HOME": str(home / ".cache"), "SHELL": "/bin/sh",
                    "KITTY_HERDR": LIVE, "KITTY_HERDR_SESSION": session,
-                   # kitty! itself running inside herdr must still start its own herdr.
+                   # rika! itself running inside herdr must still start its own herdr.
                    "HERDR_ENV": "1", "HERDR_SESSION": "default"}
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
@@ -109,6 +109,6 @@ def test_real_herdr_session_streams_detaches_reattaches_and_stops(tmp_path, lab)
         redrawn = FrameReader(again, rest).until(b"kitty-42", timeout=30)
         assert re.search(rb"kitty-\$\(\(6\*7\)\)|kitty-42", redrawn)
         again.close()
-    # Quit stops kitty!'s session; the lab's own herdr config was never touched.
+    # Quit stops rika!'s session; the lab's own herdr config was never touched.
     assert not listening(folder / "herdr.sock")
     assert user_config.read_text() == user_theme

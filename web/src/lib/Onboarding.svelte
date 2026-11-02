@@ -208,7 +208,7 @@
     </section>
   {:else if mode}
     <div class="welcome-shell">
-      <header><span class="wordmark"><Icon name="kitty" size={27} />kitty<span class="brand-dot">!</span></span><ThemePicker /><button class="quiet" disabled={busy} onclick={finish} aria-label="Skip onboarding">Skip for now ↗</button></header>
+      <header><span class="wordmark"><Icon name="kitty" size={27} />rika<span class="brand-dot">!</span></span><ThemePicker /><button class="quiet" disabled={busy} onclick={finish} aria-label="Skip onboarding">Skip for now ↗</button></header>
       <div class="welcome-grid">
         <aside class="welcome-art" aria-hidden="true">
           <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit orbit-three"></div>

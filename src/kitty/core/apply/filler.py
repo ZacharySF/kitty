@@ -1246,7 +1246,7 @@ def fill_jobs(
                                        watch=watch, background=background, pause=pause, approvals=approvals,
                                        eligibility_override=eligibility_override, recovery_planner=recovery_ai,
                                        on_report=on_report, stop=stop)
-        say("opening the kitty Firefox window")
+        say("opening the rika! Firefox window")
         port = ensure_firefox(settings)
         try:
             if not hide_automation(port):

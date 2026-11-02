@@ -1,5 +1,5 @@
 {
-  description = "kitty! Linux desktop build prerequisites";
+  description = "rika! Linux desktop build prerequisites";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   outputs = { self, nixpkgs }:
     let
@@ -30,7 +30,7 @@
             APPIMAGE_EXTRACT_AND_RUN = "1";
             shellHook = ''
               export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-              printf 'kitty! desktop dependencies ready; run bash scripts/build-desktop.sh from the project root.\n'
+              printf 'rika! desktop dependencies ready; run bash scripts/build-desktop.sh from the project root.\n'
               printf 'NixOS AppImage tooling uses the host nix-ld loader with this shell’s NIX_LD environment.\n'
             '';
           };

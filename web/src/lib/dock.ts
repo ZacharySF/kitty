@@ -1,5 +1,5 @@
 /**
- * The dock (docs/terminal-dock-design.md Q3, Q8): kitty!'s terminal or herdr's
+ * The dock (docs/terminal-dock-design.md Q3, Q8): rika!'s terminal or herdr's
  * agent cards (Q56). By default it is docked to the bottom of the window at a fixed
  * height step (hidden: a thin handle); floated, it is a glass card in the
  * bottom-right corner (hidden: a small pill) that takes no page space. Its state,

@@ -94,7 +94,7 @@ class _ModuleGroup(TyperGroup):
             if module not in enabled:
                 raise _module_error([
                     f"[bold red]`kitty {args[0]}` belongs to the {module} module, which is not enabled.[/bold red]",
-                    f"Enable it with [bold]kitty modules enable {module}[/bold] and start kitty again; "
+                    f"Enable it with [bold]kitty modules enable {module}[/bold] and start rika! again; "
                     "your data is kept either way.",
                 ])
         return super().resolve_command(ctx, args)
@@ -797,7 +797,7 @@ def autofill(
                 console.print("\nNothing to fill.")
             else:
                 console.print("\n[bold yellow]Nothing was submitted.[/bold yellow] Review each tab in the "
-                              "kitty Firefox and click submit yourself.")
+                              "rika! Firefox and click submit yourself.")
             if result.pushed:
                 console.print(f"[dim]summary pushed: {escape(result.pushed)}[/dim]")
 
@@ -1507,7 +1507,7 @@ def mcp() -> None:
 # ------------------------------------------------------------------ modules
 
 _RESTART_NOTE = (
-    "Changes apply the next time kitty starts: a running web server, TUI or MCP server "
+    "Changes apply the next time rika! starts: a running web server, TUI or MCP server "
     "keeps the modules it started with. Your data is never removed."
 )
 
@@ -1564,7 +1564,7 @@ def modules_list() -> None:
 def modules_enable(
     ids: Annotated[list[str], typer.Argument(metavar="MODULE...", help=f"One or more of: {', '.join(MODULE_IDS)}.")],
 ) -> None:
-    """Enable modules (takes effect when kitty next starts)."""
+    """Enable modules (takes effect when rika! next starts)."""
     _change_modules(ids, enable=True)
 
 
@@ -1572,7 +1572,7 @@ def modules_enable(
 def modules_disable(
     ids: Annotated[list[str], typer.Argument(metavar="MODULE...", help=f"One or more of: {', '.join(MODULE_IDS)}.")],
 ) -> None:
-    """Disable modules (takes effect when kitty next starts; data stays)."""
+    """Disable modules (takes effect when rika! next starts; data stays)."""
     _change_modules(ids, enable=False)
 
 

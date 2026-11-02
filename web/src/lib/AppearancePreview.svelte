@@ -44,7 +44,7 @@
     </div>
   {/if}
   <div class="bar">
-    <span class="mark" data-wordmark>kitty!{#if appearance.motif}<svg class="bloom" viewBox="-11 -11 22 22" aria-hidden="true">{#each PETAL_ANGLES as angle (angle)}<path d={PETAL} transform={`rotate(${angle})`} />{/each}</svg>{/if}</span>
+    <span class="mark" data-wordmark>rika!{#if appearance.motif}<svg class="bloom" viewBox="-11 -11 22 22" aria-hidden="true">{#each PETAL_ANGLES as angle (angle)}<path d={PETAL} transform={`rotate(${angle})`} />{/each}</svg>{/if}</span>
     <span class="groups"><b>Plan</b><span>Study</span><span>Jobs</span></span>
   </div>
   <div class="body">

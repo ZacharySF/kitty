@@ -71,3 +71,23 @@ def test_reject_incomplete_or_mismatched_release(release, fault):
     result = run_guard(release)
     assert result.returncode == 1, result.stderr
     assert "Invalid desktop release:" in result.stderr
+
+
+def test_rika_product_name_keeps_updater_and_package_identity():
+    """The user-visible name is rika!; everything an installed app updates through stays kitty."""
+    config = json.loads((ROOT / "desktop/tauri.conf.json").read_text())
+    workflow = (ROOT / ".github/workflows/desktop-release.yml").read_text()
+    assert config["productName"] == "rika! Workspace"
+    assert config["identifier"] == "com.zacharysf.kitty"
+    assert config["mainBinaryName"] == "kitty-workspace"
+    assert config["plugins"]["updater"]["endpoints"] == [
+        "https://github.com/ZacharySF/kitty-releases/releases/latest/download/latest.json"]
+    # Asset names (parsed by the release guard) stay pinned, independent of productName.
+    assert "releaseAssetNamePattern: kitty_[version]_[arch][ext]" in workflow
+    assert "releaseName: rika! ${{ steps.version.outputs.tag }} (Linux x86_64)" in workflow
+    # Tauri names the .deb package (kebab-case productName) and its /usr/lib folder after productName;
+    # the new package takes over the old kitty-workspace package so dpkg -i updates in place.
+    assert '= rika-workspace' in workflow
+    deb = config["bundle"]["linux"]["deb"]
+    assert "kitty-workspace" in deb["conflicts"] and "kitty-workspace" in deb["replaces"]
+    assert "usr/lib/rika!\\ Workspace/licenses" in workflow and "kitty!" not in workflow

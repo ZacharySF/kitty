@@ -6,8 +6,8 @@
 
   /**
    * Stencil Tern beside herdr (docs/terminal-dock-design.md, Tern). A truthful status
-   * panel, never a terminal: Tern's web client needs WebGPU, which kitty!'s desktop web
-   * view lacks, so the terminal itself opens in Tern's own window on kitty!'s daemon.
+   * panel, never a terminal: Tern's web client needs WebGPU, which rika!'s desktop web
+   * view lacks, so the terminal itself opens in Tern's own window on rika!'s daemon.
    * Reading the status never starts Tern.
    */
   const POLL_MS = 3000;
@@ -59,7 +59,7 @@
   <header>
     <div>
       <h1>Tern</h1>
-      <p>Stencil's native terminal, beside kitty!'s herdr. kitty! runs the Tern you installed on a session of its own; your own Tern sessions are never touched.</p>
+      <p>Stencil's native terminal, beside rika!'s herdr. rika! runs the Tern you installed on a session of its own; your own Tern sessions are never touched.</p>
     </div>
     {#if status?.installed}
       <div class="actions"><Button intent="primary" size="sm" disabled={busy} onclick={() => act("open")}>Open in Tern</Button></div>
@@ -73,25 +73,25 @@
   {:else if !status.installed}
     <Panel title={status.problem ? "Tern cannot be used" : "Tern is not installed"}>
       {#if status.problem}<p class="error" role="alert">{status.problem}</p>{/if}
-      <p>kitty! never bundles Tern: it is Stencil's closed-beta app and needs your own installation and Stencil account.
+      <p>rika! never bundles Tern: it is Stencil's closed-beta app and needs your own installation and Stencil account.
         Install it from <a href={status.install_url} target="_blank" rel="noopener noreferrer">stencil.so/tern</a>,
-        then choose Check again. herdr stays kitty!'s built-in terminal.</p>
+        then choose Check again. herdr stays rika!'s built-in terminal.</p>
       <Button size="sm" disabled={busy} onclick={load}>Check again</Button>
     </Panel>
   {:else}
     <dl class="facts">
       <div><dt>Installed</dt><dd>Tern {status.version}</dd></div>
       <div><dt>{status.source === "settings" ? "From settings" : "On PATH"}</dt><dd><code>{status.path}</code></dd></div>
-      <div><dt>Session</dt><dd>{status.running ? "kitty!'s Tern session is running" : "Not running"}</dd></div>
+      <div><dt>Session</dt><dd>{status.running ? "rika!'s Tern session is running" : "Not running"}</dd></div>
       <div><dt>Windows</dt><dd>{windowsLabel(status.windows)}</dd></div>
     </dl>
     {#if !status.running}
-      <Panel title="kitty!'s Tern session">
-        <p>kitty!'s Tern session is not running. Open in Tern starts it in <code>{status.workspace}</code> and shows it in a Tern window; you can also start it without a window.</p>
-        <Button size="sm" disabled={busy} onclick={() => act("start")}>Start kitty!'s Tern session</Button>
+      <Panel title="rika!'s Tern session">
+        <p>rika!'s Tern session is not running. Open in Tern starts it in <code>{status.workspace}</code> and shows it in a Tern window; you can also start it without a window.</p>
+        <Button size="sm" disabled={busy} onclick={() => act("start")}>Start rika!'s Tern session</Button>
       </Panel>
     {:else}
-      <ul class="sessions" aria-label="kitty!'s Tern sessions">
+      <ul class="sessions" aria-label="rika!'s Tern sessions">
         {#each status.sessions as session (session.id)}
           {#each session.tabs as tab (tab.id)}
             {#each tab.blocks as block (block.id)}
@@ -109,13 +109,13 @@
       <p class="muted">Scripts and agents can drive this session with Tern's own commands:
         <code>TERN_DAEMON_SOCKET={status.socket} tern ls</code></p>
     {/if}
-    <p class="muted">This is a status panel. Tern's web client draws with WebGPU, which kitty!'s window does not provide, so the terminal opens in Tern's own window. Quitting kitty! closes the Tern windows it opened and stops its Tern session.</p>
+    <p class="muted">This is a status panel. Tern's web client draws with WebGPU, which rika!'s window does not provide, so the terminal opens in Tern's own window. Quitting rika! closes the Tern windows it opened and stops its Tern session.</p>
   {/if}
 
   {#if status}
     <details bind:open={showPath}>
       <summary>Tern executable</summary>
-      <p class="muted">kitty! uses <code>tern</code> from PATH unless a path is saved here.</p>
+      <p class="muted">rika! uses <code>tern</code> from PATH unless a path is saved here.</p>
       <label class="path">Tern executable path
         <input type="text" spellcheck="false" placeholder="/home/you/.local/bin/tern" bind:value={path} oninput={() => { editedPath = true; }} />
       </label>

@@ -46,7 +46,7 @@ def previous_appimage_launcher(launcher: Path, image: Path) -> tuple[list[str], 
     if command is None and "while :; do" in lines:
         command = lines[lines.index("while :; do") + 1].strip()
     if command is None or not command.endswith(' "$@"'):
-        raise ValueError("Existing launcher is not a generated kitty! launcher; keep it and install separately.")
+        raise ValueError("Existing launcher is not a generated rika! launcher; keep it and install separately.")
     tokens = shlex.split(command.removesuffix(' "$@"'))
     index = tokens.index(str(image))
     if index not in (0, 1) or tokens[index + 1:index + 2] not in ([], ["--workspace"]) or len(tokens[index + 1:]) not in (0, 2):
@@ -139,7 +139,7 @@ def main() -> None:
     launcher.write_text("\n".join(lines) + "\n")
     launcher.chmod(0o755)
     entry = applications / "com.zacharysf.kitty.desktop"
-    entry.write_text("[Desktop Entry]\nType=Application\nName=kitty!\n"
+    entry.write_text("[Desktop Entry]\nType=Application\nName=rika!\n"
                      "Comment=Private local opportunities, learning and planning workspace\n"
                      f"Exec={desktop_quote(str(launcher))}\n"
                      f"Icon={str(icon).replace(chr(92), chr(92) * 2)}\n"
@@ -147,8 +147,8 @@ def main() -> None:
     database_updater = shutil.which("update-desktop-database")
     if database_updater:
         subprocess.run([database_updater, str(applications)], check=True)
-    print(f"Installed kitty! launcher: {entry}")
-    print("Launch kitty! from your application menu. Existing workspace data was not changed.")
+    print(f"Installed rika! launcher: {entry}")
+    print("Launch rika! from your application menu. Existing workspace data was not changed.")
     if args.appimage is None:
         print("This local source installation is not an auto-updatable AppImage or Debian package.")
 

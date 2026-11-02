@@ -1,7 +1,7 @@
 """Terminal module over HTTP/WebSocket against a synthetic herdr; never a real session.
 
 Every test runs with HOME/XDG_CONFIG_HOME in a throwaway directory, and with the
-parent environment pretending kitty! itself runs inside herdr and tmux.
+parent environment pretending rika! itself runs inside herdr and tmux.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def herdr(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(fake.home / ".local" / "state"))
     monkeypatch.setenv("KITTY_HERDR", str(fake.binary))
     monkeypatch.setenv("KITTY_HERDR_SESSION", SESSION)
-    # kitty! may itself run inside a herdr pane or tmux; none of that reaches its child.
+    # rika! may itself run inside a herdr pane or tmux; none of that reaches its child.
     monkeypatch.setenv("HERDR_ENV", "1")
     monkeypatch.setenv("HERDR_SESSION", "default")
     monkeypatch.setenv("HERDR_SOCKET_PATH", str(fake.home / "someone-elses-herdr.sock"))
@@ -359,7 +359,7 @@ def test_activity_reports_herdr_agent_states_per_workspace(tmp_path, herdr):
             {"pane": "w1:p2", "name": "Codex", "status": "blocked", "task": "",
              "line": "needs permission: read the synthetic notes", "revision": 1},
         ]},
-        # herdr states kitty! does not know are shown as unknown, never passed through.
+        # herdr states rika! does not know are shown as unknown, never passed through.
         {"id": "w2", "label": "docs", "status": "unknown", "focused": False, "agents": []},
     ]}
     reads = [item for item in herdr.invocations() if item["argv"][2:4] in (["workspace", "list"], ["agent", "list"], ["agent", "read"])]

@@ -19,7 +19,7 @@
     try {
       info = await api<AgentInfo>("/terminal/agents");
       if (!info.kinds.includes(kind)) kind = info.default;
-      error = info.binary ? "" : "The bundled herdr runtime is missing; reinstall kitty!";
+      error = info.binary ? "" : "The bundled herdr runtime is missing; reinstall rika!";
     } catch (cause) { error = (cause as Error).message; }
   }
   async function toggleChooser() {
@@ -62,7 +62,7 @@
   {#if error}<p role="alert">{error}</p>{/if}
   {#if external && info && command}
     <section class="external" aria-label="External agent attachment">
-      <p>Use kitty!'s named session, never herdr's default. Open the terminal first. Each external agent creates its own labelled tab; use the returned workspace, tab and root_pane IDs, not another client's focused pane.</p>
+      <p>Use rika!'s named session, never herdr's default. Open the terminal first. Each external agent creates its own labelled tab; use the returned workspace, tab and root_pane IDs, not another client's focused pane.</p>
       <pre>{command} workspace list
 {command} tab create --workspace &lt;workspace-id&gt; --cwd {quote(info.cwd)} --label 'My agent' --no-focus
 {command} --skill</pre>

@@ -24,7 +24,7 @@ BASE = 'https://www.googleapis.com/calendar/v3/'
 TASKS_BASE = 'https://tasks.googleapis.com/tasks/v1/'
 SETUP = ['Enable Google Calendar API in Google Cloud Console.',
          'Configure OAuth consent audience/test users and create a Desktop app OAuth client.',
-         'Upload the downloaded client JSON here; kitty stores it only in .private/calendar_client.json.',
+         'Upload the downloaded client JSON here; rika! stores it only in .private/calendar_client.json.',
          'Select Authorize, review the separate Calendar permissions in your browser, and consent manually.',
          'Select calendars to sync. Each push requires explicit approval; Gmail authorization is never reused or widened.']
 
@@ -104,7 +104,7 @@ def status(settings, conn=None):
                 'Linked sync covers local events and calendar name/timezone/color. Local tasks, including local repeat rules, are not mirrored to Google Tasks: the public Tasks API cannot represent recurrence. Use the reviewed Tasks resource editor for one-off Google tasks.',
                 'The exact resource editor exposes the public_operations inventory, including explicit move/import/quickAdd/watch/clear/stop and full replacement. Every change is prepared as a server-built preview (exact URL, query, body, If-Match, live target, recipients, clear listing) and is sent only with that frozen preview plus explicit approval; any drift returns 409.',
                 'Appointment schedules and consumer-only settings have no public API; they remain an explicit handoff to Google Calendar in a browser.',
-                'Watch requires your own ready public HTTPS webhook receiver. Kitty localhost is not a receiver; kitty never provisions, automatically subscribes or renews channels.',
+                'Watch requires your own ready public HTTPS webhook receiver. rika! localhost is not a receiver; rika! never provisions, automatically subscribes or renews channels.',
                 'Move, clear and Tasks mutations use an ETag GET preflight; these endpoints do not promise atomic If-Match. A change can race between the final preflight/listing and the mutation.',
                 'Calendar clear deletes every event on a primary calendar and requires a separate confirmation of the full listing. Tasks clear hides completed tasks; it does not delete all tasks.',
                 'QuickAdd has no provider dry-run: review its exact text and use sendUpdates=none; email addresses are rejected. Google may still send some emails; use structured create/import when exact parsed fields are required.',
@@ -776,7 +776,7 @@ def _required_text(value, name, limit=1024):
 
 def _watch_channel(body, data):
     if body.get('webhook_confirmed') is not True:
-        local.fail('Confirm your public HTTPS webhook receiver is ready; kitty localhost is not a public receiver and does not provision or renew channels')
+        local.fail('Confirm your public HTTPS webhook receiver is ready; rika! localhost is not a public receiver and does not provision or renew channels')
     _required_text(data.get('id'), 'Channel ID')
     _required_text(data.get('address'), 'Public HTTPS receiver address', 8192)
     try:
@@ -1045,7 +1045,7 @@ def _review(client, plan, body):
         if resource == 'calendars':
             listed = [v for v in page_all(client, 'calendars/' + container + '/events')['items'] if v.get('status') != 'cancelled']
             recipients = _event_recipients(*listed)
-            notes.append(f'Permanently deletes all {len(listed)} listed events on this calendar; kitty cannot undo Google changes.')
+            notes.append(f'Permanently deletes all {len(listed)} listed events on this calendar; rika! cannot undo Google changes.')
         else:
             listed = [v for v in page_all(client, 'lists/' + container + '/tasks', {'showCompleted': 'true', 'showHidden': 'false'}, tasks=True)['items']
                       if v.get('status') == 'completed' and not v.get('hidden')]
@@ -1059,13 +1059,13 @@ def _review(client, plan, body):
     if action == 'move':
         notes.append('Moves this item to the exact destination in params; for events the destination calendar becomes the organizer.')
     elif action == 'watch':
-        notes.append(f"Google will POST change notifications to {data['address']} until the channel expires; kitty neither receives nor renews them.")
+        notes.append(f"Google will POST change notifications to {data['address']} until the channel expires; rika! neither receives nor renews them.")
     elif action == 'quickAdd':
         notes.append("Google parses this text server-side with no dry run; inspect the created event afterwards.")
     elif action == 'import':
         notes.append('Imports a private copy by iCalUID; import has no sendUpdates option and does not invite listed attendees.')
     elif action == 'delete':
-        notes.append('Deletes the remote resource; kitty cannot undo Google changes.')
+        notes.append('Deletes the remote resource; rika! cannot undo Google changes.')
     empty = action in {'move', 'clear', 'quickAdd'}
     return {'resource': resource, 'action': action, 'method': plan['method'],
             'url': (TASKS_BASE if plan['tasks'] else BASE) + plan['path'], 'params': params,
@@ -1081,7 +1081,7 @@ def _send(client, plan, payload):
 
 def _require_clear_confirmation(body, items):
     if items and body.get('clear_confirmed') is not True:
-        local.fail(f'Confirm clearing all {len(items)} listed items; this cannot be undone from kitty')
+        local.fail(f'Confirm clearing all {len(items)} listed items; this cannot be undone from rika!')
 
 
 def preview_operation(settings, body):

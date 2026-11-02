@@ -1,6 +1,6 @@
 """Synthetic Stencil Tern stand-in; never the real ``tern`` or anyone's Tern daemon.
 
-The fake mirrors only the Tern 0.9.8 surface kitty! uses:
+The fake mirrors only the Tern 0.9.8 surface rika! uses:
 
 * ``tern --version`` prints ``tern 0.9.8 (f21d9a3)``;
 * ``tern daemon --socket PATH`` serves sessions on a Unix socket (created 0600 like
@@ -250,11 +250,11 @@ class FakeTern:
         self.binary.write_text(f"#!{sys.executable}\n" + textwrap.dedent(
             FAKE_TERN.format(log=str(self.log), mode_file=str(self.mode_file))))
         self.binary.chmod(0o755)
-        # sun_path is 108 bytes; a short XDG_RUNTIME_DIR keeps kitty!'s Tern socket addressable.
+        # sun_path is 108 bytes; a short XDG_RUNTIME_DIR keeps rika!'s Tern socket addressable.
         self.runtime = Path(tempfile.mkdtemp(prefix="kt", dir="/tmp"))
         os.chmod(self.runtime, 0o700)
         self._daemons: list[subprocess.Popen] = []
-        # The user's systemd manager: its environment is the desktop session's, not kitty!'s
+        # The user's systemd manager: its environment is the desktop session's, not rika!'s
         # (nix-ld's variables let this test's interpreter start on NixOS, as they do there).
         self.units = folder / "systemd-units"
         self.units.mkdir()
@@ -278,7 +278,7 @@ class FakeTern:
         return [item["argv"] for item in self.invocations()]
 
     def start_daemon(self, path: Path) -> subprocess.Popen:
-        """Someone else's daemon (the user's own Tern) on `path`, outside kitty!."""
+        """Someone else's daemon (the user's own Tern) on `path`, outside rika!."""
         process = subprocess.Popen([str(self.binary), "daemon", "--socket", str(path)],
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, start_new_session=True)

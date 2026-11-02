@@ -53,7 +53,7 @@ def backend(tmp_path):
     assets.mkdir(parents=True)
     shutil.copytree(PROJECT / "config", bundle / "examples", ignore=lambda _path, names: [name for name in names if not name.endswith(".yaml.example")])
     (bundle / "backend-package.txt").write_text("kitty\n")
-    (assets / "index.html").write_text("<!doctype html><title>kitty!</title><p>Private website</p>")
+    (assets / "index.html").write_text("<!doctype html><title>rika!</title><p>Private website</p>")
     # Run the actual frozen entrypoint and owner channel with a synthetic bundle.
     code = (
         "import runpy, sys; "
@@ -208,7 +208,7 @@ def test_owner_quit_stops_kitty_herdr_session_but_detaching_does_not(terminal_wo
     assert fake.listening(session)
     stop = ["--session", session, "session", "stop", session]
     assert stop not in [item["argv"] for item in fake.invocations()]
-    # Quit kitty! (save and stop workers) also stops kitty!'s herdr server, even with a page attached.
+    # Quit rika! (save and stop workers) also stops rika!'s herdr server, even with a page attached.
     process.stdin.write("quit\n")
     process.stdin.flush()
     assert process.wait(timeout=30) == 0
