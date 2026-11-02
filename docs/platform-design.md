@@ -690,15 +690,21 @@ already in the lock through `mcp`).
   attachment retention days), `settings.history.retention_days` (Q15/Q20, default 30),
   `settings.tags.mode` (Q13), `settings.study` (focus and break lengths, sound, notifications),
   `settings.opportunities` (scheduled monitoring on/off and interval), `settings.tern.plugin`
-  (the kitty Tern plugin may pair and send captures); `theme.base` (a built-in theme),
-  `theme.tokens`, `theme.css`; `ui.dock`, `ui.graph` (look, layout, physics), `ui.atlas.hidden`,
-  `ui.notes.pen_only`, `ui.terminal.coding_agent`.
+  (the kitty Tern plugin may pair and send captures); `theme.base` (a built-in theme; default
+  Kitty), `theme.tokens`, `theme.css`; `ui.dock` (mode, the docked height step `s`/`m`/`l`, or
+  the floating card's `float`, `size` and `offset`), `ui.graph` (look, layout, physics),
+  `ui.atlas.hidden`, `ui.notes.pen_only`, `ui.terminal.coding_agent`, and the preferences the
+  redesign added (merged from main, 2026-11-02): `ui.appearance` (title font, density, motion,
+  motif, background), `ui.home.look` (Brain or 2D), `ui.brain` (the Brain's View panel settings
+  and picked colours), `ui.notifications.quiet` (quiet hours), `ui.flashcards.look` and
+  `ui.study` (study guide and plans views).
 - **What it never holds:** notes, pages, documents, quick notes, tags and any block content;
   keys and credentials (Q10 Keys service, `.private/`); paired clients (Q7) and paired devices
   (Q16); applicant data (`config/profile.yaml`, `answers.yaml`, resumes, watchlists, tracks,
   sources, the opportunity-monitoring profile: major, track, interests, locations); device
-  state (the study timezone, open note tabs, schema drafts, notification permission, recent ink
-  colours, caches). The schema has no place for them, export writes only the normalized build
+  state (the study timezone, open note tabs, schema drafts, notification permission and the
+  notification ledger, recent ink colours, caches, and window layout: the home rail, the Brain's
+  View panel, the notes floating outline, the canvas pill, drawers and split widths). The schema has no place for them, export writes only the normalized build
   (unknown and `x-` keys are dropped), and `tests/test_builds.py` checks a workspace seeded with
   synthetic secrets, credentials, a paired client, a profile and notes exports none of them.
 - **Format and errors.** `document.check` parses JSON with a position for every value and key
@@ -733,7 +739,10 @@ already in the lock through `mcp`).
   removed; `modules.py` reads it only to migrate). The first projection takes the settings the
   file does not mention from the existing rows. Browser preferences (`kitty.theme`,
   `kitty.dock`, `kitty.graph.look`, `kitty.graph.default-layout`, `kitty.atlas.physics`,
-  `kitty.atlas.hidden`, `kitty.notes.pen-only`, `kitty.coding-agent`) move once per workspace
+  `kitty.atlas.hidden`, `kitty.notes.pen-only`, `kitty.coding-agent`, and main's
+  `kitty.appearance`, `kitty.home.look`, `kitty.brain.view`, `kitty.brain.colors`,
+  `kitty.notify.quiet`, `kitty.flashcards.deck-look`, `kitty.study.guide-view`,
+  `kitty.study.plan-view`) move once per workspace
   through `POST /api/build/local`, which fills only keys the build does not set; every browser
   then deletes those keys. No localStorage fallback remains.
 - **Live (Q9).** The live channel moved from the workspace module to the always-on core
@@ -745,6 +754,13 @@ already in the lock through `mcp`).
   keeps the last good build, which `build_state.applied_text` also keeps across a restart
   (`startup_modules` starts the server on it). A window whose `hello` names another active build
   reloads it. Module changes are flagged "restart required" everywhere.
+- **Theme engine:** the build's look is applied by main's theme engine (`web/src/lib/themes/`:
+  the catalog's tokens, the engine presets for surface, focus, selection, motion and backdrop,
+  and the lazily loaded motif modules of Kitty, Scythe and Liquid Glass) with the build's role
+  tokens over the base theme's roles, the other tokens as custom properties, the custom CSS
+  scoped to `#app`, and safe mode on the base theme alone. Settings → Appearance (theme, presets,
+  title font, density, motion, motif, background, home and section-graph looks) writes the
+  build; a preset is one change.
 - **Build editor** (Settings → Build → *Open build editor*, or *Edit build* in Ctrl+K): a pane
   docked at the right (the workbench narrows beside it), line numbers, marks at problem lines,
   a problems list that moves the caret, the checked look applied to that window while typing,
@@ -821,6 +837,41 @@ Code: `integrations/browser/` (the extension, MIT, with its README: `src/backgro
 - **Pairing in the extension.** The person pastes kitty!'s address (Settings → Connected apps shows it with *Copy address*; the default is kitty-web's `http://127.0.0.1:8765`): an extension cannot read `.private/endpoint.json`. *Connect* probes the token route (kitty! answers 401 with its Bearer realm), pairs with the `capture` scope only, shows the code and polls every 2 s; the token is kept in `storage.local`. A 401 later forgets it and the panel pairs again by itself. The panel also hosts *Send selection to kitty! Inbox* (the existing `/api/ingress/mirror` snapshot) and the deny-list editor; the future note pop-up goes here too.
 - **Tests.** `tests/test_web_mirror.py` (push to two windows, listing and image route, text pushed only on change, no op_log rows or disk bytes, stop, revoke, scope, origin binding, preflight, 10 image cases, WebP, size caps, field validation, pacing, per-client cap, module gate, the address, expiry with a fake clock); `integrations/browser/tests` (34 node tests: deny list, pacing, payloads, message checking, client, pairing with re-pairing, the background controller with a fake browser, manifests); `web/tests/mirror.test.mjs` (frames, quotes, placement); `web/tests/browserMirror.browser.test.mjs` (the built extension in Playwright's Chromium against `kitty-web --demo`: pair with the same code in both, mirror a local article and see screenshot, title, URL and Readability text in the Mirror pane, quote a paragraph, the browser selection and a pane selection into the note, send to the Inbox, stop on a password-field page, revoke → 401 → a new code); `web/tests/browserMirrorFirefox.browser.test.mjs` (the Firefox build installed as a temporary add-on in headless Firefox over WebDriver BiDi with a throwaway profile: pairs, mirrors with a screenshot, switching off drops it). `web-ext lint` on `dist/firefox`: 0 errors, 2 warnings (`innerHTML` inside Readability, on a detached copy).
 - **Not exercised:** the real side panel and sidebar chrome (the toolbar button; tests open `panel.html?tab=<id>` as a page), Brave and Edge, Firefox's install-time permission and data-consent prompts (the test profile grants host access by pref), Mozilla signing, Chrome's Local Network Access prompt (none appeared for the extension), and a screenshot larger than 2 MiB from a real HiDPI screen.
+
+## Merging main's redesign (2026-11-02)
+
+The stack (block backend through the browser mirror) was merged with main at `82fc9bd`
+(Liquid Glass and the theme engine, the Brain view and `record_events`, quiet hours and the
+notification center, the floating or stepped dock, the fidelity screens, concept maps folded
+into the mind-map editor).
+
+- **Migrations.** Main's `034_record_events`, `035_calendar_palette_subjects` and
+  `036_note_page_maps` keep their numbers; the stack's unreleased 035-039 became
+  `037_text_flow_outline`, `038_clients`, `039_block_tags`, `040_peer_sync` and `041_builds`.
+  A database at main's schema applies `032_blocks` and `033_notes_to_blocks` after 036 (the
+  runner applies every unapplied number), then 037 onwards. `042_note_page_maps_blocks`
+  rebuilds main's page ↔ map link with `page_id` as the page's Notes number (the frozen
+  `note_pages` no longer holds new pages): Trash keeps the link, a purge removes it.
+  `043_op_log_migrated` marks the `op_log` rows the block migrations wrote. A database
+  migrated with the stack's old numbering was never released and is not supported.
+  `tests/test_migration_numbers.py` keeps every number unique (021 was never used) and
+  checks that a fresh database and one at main's schema reach the same schema.
+- **Brain and `record_events`.** A browser mutation that appended `op_log` rows (every Notes,
+  Documents and Quick-notes write) is not captured: `/api/brain` counts block edits from
+  `op_log`, labelled create, delete, restore or edit from the operations on the page's root,
+  together with the edits that never pass through a POST (the editor's live transactions,
+  peer-sync merges, paired captures). Conversion rows (043) are left out; history older than
+  the retention window counts once per page per day from `page_snapshots`. Notebooks,
+  folders and every other section are still captured.
+- **Concept maps.** The one-time move reads the frozen `note_pages` canvas documents (the
+  content the block migration converted) for pages still live in the projection; the page
+  map routes look pages up in `note_page_index`.
+- **Interface.** Notes keeps main's layout (tabs, library drawer, floating "On this page"
+  outline, one-row header, Write/Canvas/Map) with the block editor as the page: the outline,
+  find and the word count read the editor's blocks; *Mirror* sits in the header beside Find;
+  *Page history…* and *Trash…* are in ⋯. Settings keeps main's paged index and adds Build,
+  Tags, Connected apps, Keys and Devices pages. Main's preferences are build preferences (see
+  [Builds](#builds-q8q9-what-was-built)).
 
 ## Verified facts
 
