@@ -45,6 +45,8 @@ def main() -> None:
         "--add-data", f"{examples}:examples",
         "--add-data", f"{build / 'backend-package.txt'}:.",
         "--add-data", f"{learning}:learnharness",
+        # The kitty Tern plugin's source (kitty.core.tern_plugin copies it into a workspace).
+        "--add-data", f"{root / 'integrations/tern'}:tern-plugin",
         "--add-binary", f"{learning / 'node'}:learnharness",
     ]
     # These adapters load data/native libraries dynamically. Optional packages

@@ -18,7 +18,11 @@ The fake mirrors only the Tern 0.9.8 surface kitty! uses:
   follower's subscription;
 * ``tern --dir DIR`` is a native window: it attaches to that daemon as a window
   client until it is terminated. Like Tern's, when a window is already attached it
-  hands over to that window (Tern raises it) and exits 0 instead.
+  hands over to that window (Tern raises it) and exits 0 instead;
+* ``tern plugin dir|link DIR [--json]|unlink ID|list --json`` work on
+  ``$TERN_CONFIG_DIR/plugins`` like Tern 0.9.8's: ``link`` writes ``ID.path`` (replacing
+  an earlier link of that ID) and says on stderr that no daemon runs; ``list`` reads the
+  folder, reporting a second package with an ID as a ``duplicate id`` problem.
 
 Every invocation is appended to a JSON-lines log (argv, environment, cwd, pid) so
 tests can prove what ran, against which daemon, and that nothing outlived Quit.
@@ -266,6 +270,68 @@ elif argv[:1] == ["--dir"] and len(argv) == 2:
         sys.exit(0)
     while True:
         time.sleep(3600)
+elif argv[:1] == ["plugin"]:
+    import tomllib
+    config = os.environ.get("TERN_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".config", "tern")
+    plugins = os.path.join(config, "plugins")
+
+    def manifest(folder):
+        with open(os.path.join(folder, "plugin.toml"), "rb") as handle:
+            return tomllib.load(handle)
+
+    def packages():
+        found = []
+        for name in sorted(os.listdir(plugins)) if os.path.isdir(plugins) else []:
+            path = os.path.join(plugins, name)
+            if name.startswith("."):
+                continue
+            if name.endswith(".path"):
+                path = open(path).read().strip()
+            elif not os.path.isdir(path):
+                continue
+            found.append(path)
+        return found
+
+    if argv[1:] == ["dir"]:
+        print(plugins)
+    elif argv[1:2] == ["link"] and argv[3:] in ([], ["--json"]):
+        folder = argv[2]
+        if not os.path.isdir(folder):
+            sys.stderr.write("tern plugin: no directory %s: No such file or directory (os error 2)\n" % folder)
+            sys.exit(1)
+        if not os.path.isfile(os.path.join(folder, "plugin.toml")):
+            sys.stderr.write("tern plugin: %s is not a plugin: no plugin.toml\n" % folder)
+            sys.exit(1)
+        data = manifest(folder)
+        os.makedirs(plugins, exist_ok=True)
+        with open(os.path.join(plugins, data["id"] + ".path"), "w") as handle:
+            handle.write(folder + "\n")
+        print(json.dumps({{"id": data["id"], "version": data["version"], "dir": folder}}, indent=2))
+        sys.stderr.write("no daemon running; changes apply at next start\n")
+    elif argv[1:2] == ["unlink"] and len(argv) == 3:
+        link = os.path.join(plugins, argv[2] + ".path")
+        if not os.path.exists(link):
+            sys.stderr.write("tern plugin: no plugin %s in %s\n" % (argv[2], plugins))
+            sys.exit(1)
+        os.unlink(link)
+        print("unlinked %s (%s)" % (argv[2], link))
+    elif argv[1:] == ["list", "--json"]:
+        entries, problems, seen = [], [], set()
+        for folder in packages():
+            if not os.path.isfile(os.path.join(folder, "plugin.toml")):
+                problems.append({{"dir": folder, "error": "no plugin.toml"}})
+                continue
+            data = manifest(folder)
+            if data["id"] in seen:
+                problems.append({{"dir": folder, "error": "duplicate id %s" % data["id"]}})
+                continue
+            seen.add(data["id"])
+            entries.append({{"id": data["id"], "name": data["name"], "version": data["version"],
+                             "status": "failed: host.luau:1: boom" if mode == "plugin-failed" else "ready"}})
+        print(json.dumps({{"plugins": entries, "problems": problems, "jit": True, "canvas": True}}))
+    else:
+        sys.stderr.write("fake tern: unsupported arguments %r\n" % (argv,))
+        sys.exit(2)
 else:
     sys.stderr.write("fake tern: unsupported arguments %r\n" % (argv,))
     sys.exit(2)

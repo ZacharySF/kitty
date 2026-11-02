@@ -23,7 +23,9 @@ public commands are used, always with ``TERN_DAEMON_SOCKET`` set to that socket:
   first checks the pane is listed there, accepts one line of text without control
   characters for ``run``, and strips terminal controls from captures;
 * ``tern events --filter pane_spawned,pane_exited`` follows the daemon's pane starts
-  and exits (with exit status) while it runs, for the recent-activity list.
+  and exits (with exit status) while it runs, for the recent-activity list;
+* ``tern plugin dir|list|link|unlink`` installs and reports the kitty Tern plugin
+  (kitty.core.tern_plugin) in the user's plugins folder, which Tern's daemons watch.
 
 Tern's web client (``tern web serve``) needs WebGPU, which kitty!'s WebKitGTK view
 does not provide, so kitty! shows status and opens native windows instead of
@@ -537,6 +539,14 @@ class TernRuntime:
         self._follow(found["path"])
         result["activity"] = self.activity()
         return result
+
+    # The kitty Tern plugin (kitty.core.tern_plugin) ----------------------------
+
+    def plugin(self, *arguments: str) -> str:
+        """``tern plugin ARGS``'s standard output. Like every ``tern`` kitty! runs it is aimed at
+        kitty!'s socket, so its reload reaches only kitty!'s daemon; Tern's daemons and windows
+        watch the plugins folder and load a change there by themselves."""
+        return self._run(self._binary(), "plugin", *arguments)
 
     # Quit --------------------------------------------------------------------
 

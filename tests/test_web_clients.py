@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import http.client
+import re
 import json
 
 import pytest
@@ -267,3 +268,43 @@ def test_capture_and_read_need_the_workspace_module(tmp_path):
         _, token = pair(running, scopes=("capture", "read"))
         assert call(running, "POST", "/api/ingress/notes", {"text": "x"}, token=token)[0] == 403
         assert call(running, "GET", "/api/ingress/recent", token=token)[0] == 403
+
+
+def test_the_kitty_tern_plugin_request_sequence(running):
+    """The requests integrations/tern/lib/client.luau makes, with the shapes it reads back."""
+    tern = {"Accept": "application/json", "User-Agent": "Tern"}
+    # lib/core.luau accepts only a loopback origin with a port, as kitty! publishes it.
+    assert re.fullmatch(r"http://127\.0\.0\.1:\d+", running.server.origin)
+    status, ticket, _ = call(running, "POST", "/api/ingress/pair",
+                             {"name": "Tern", "kind": "tern-plugin", "scopes": ["capture", "read"]}, headers=tern)
+    assert status == 202 and {"request", "code", "expires_in"} <= set(ticket)
+    poll = {"request": ticket["request"]}
+    assert call(running, "POST", "/api/ingress/pair/status", poll, headers=tern)[1] == {"status": "pending"}
+    [waiting] = running.request("/api/clients")[1]["requests"]
+    assert waiting["code"] == ticket["code"] and waiting["name"] == "Tern"
+    running.request("/api/clients/approve", {"id": waiting["id"]})
+    approved = call(running, "POST", "/api/ingress/pair/status", poll, headers=tern)[1]
+    token = approved["token"]
+    assert approved["status"] == "approved" and approved["client"]["scopes"] == ["capture", "read"]
+
+    status, me, _ = call(running, "GET", "/api/ingress/client", token=token, headers=tern)
+    assert status == 200 and me["kind"] == "tern-plugin" and me["scopes"] == ["capture", "read"]
+    blocks = [{"type": "quote", "text": "selected"}, {"type": "text", "text": "From Tern · bash · /tmp"},
+              {"type": "code", "text": "$ make\nerror"}]
+    status, saved, _ = call(running, "POST", "/api/ingress/inbox", {"blocks": blocks}, token=token, headers=tern)
+    assert status == 200 and isinstance(saved["page"], int)
+    status, note, _ = call(running, "POST", "/api/ingress/notes", {"text": "typed in Tern"}, token=token, headers=tern)
+    assert status == 200 and isinstance(note["id"], int)
+    assert running.request("/api/calendar/tasks", {"title": "Synthetic task", "due": "2026-11-05"})[0] == 200
+    status, recent, _ = call(running, "GET", "/api/ingress/recent?limit=20", token=token, headers=tern)
+    assert status == 200 and recent["inbox"] == saved["page"]
+    assert all(isinstance(page["number"], int) and isinstance(page["title"], str) for page in recent["pages"])
+    assert [(task["title"], task["due"]) for task in recent["tasks"]] == [("Synthetic task", "2026-11-05")]
+    assert all(set(task) == {"id", "title", "due"} for task in recent["tasks"])
+
+    # Revoked: 401 (lib/core.luau's "unauthorized"), then a fresh pairing works at once.
+    running.request("/api/clients/revoke", {"id": approved["client"]["id"]})
+    status, refused, headers = call(running, "POST", "/api/ingress/notes", {"text": "x"}, token=token, headers=tern)
+    assert status == 401 and headers["www-authenticate"].startswith("Bearer")
+    _, fresh = pair(running, name="Tern")
+    assert call(running, "POST", "/api/ingress/notes", {"text": "again"}, token=fresh, headers=tern)[0] == 200

@@ -22,12 +22,23 @@ POST /api/terminal/tern/settings  {"path": "/abs/tern" | "" | null}  ->  status
     daemon is not running, 404 for a block that is not a pane of kitty!'s session
     and 400 for a non-integer block or text that is not one line. A daemon that
     cannot start or answer is 503.
+
+The kitty Tern plugin (kitty.core.tern_plugin, platform design Q1):
+
+GET  /api/terminal/tern/plugin            ->  plugin status
+    {available, version, dir, installed, installed_version, current, linked_elsewhere,
+     tern_status, problems, enabled}; ``enabled`` is the build's ``settings.tern.plugin``.
+POST /api/terminal/tern/plugin/install  {}  ->  plugin status
+    Copies the shipped plugin into the workspace and links it into the user's Tern;
+    409 while the build turns the plugin off or another plugin holds its id.
+POST /api/terminal/tern/plugin/remove   {}  ->  plugin status
 """
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from kitty.core import quick_notes
+from kitty.core import quick_notes, tern_plugin
+from kitty.core.builds import project
 from kitty.core.tern import (
     SESSION,
     TernMissing,
@@ -39,6 +50,7 @@ from kitty.core.tern import (
 )
 
 PREFIX = "/api/terminal/tern"
+PLUGIN = PREFIX + "/plugin"
 #: Request fields of the pane actions.
 PANE_FIELDS = {PREFIX + "/run": {"block", "text"}, PREFIX + "/focus": {"block"}, PREFIX + "/capture": {"block"}}
 CAPTURE_TINT = "sky"
@@ -89,14 +101,30 @@ def _capture(app, conn, block) -> dict:
     return {"note_id": note["id"], "block": block, "truncated": truncated}
 
 
+def _plugin(app, conn, action=tern_plugin.status) -> dict:
+    try:
+        found = _act(lambda: action(app.tern, app.settings.root))
+    except tern_plugin.PluginError as exc:
+        raise _error(409, str(exc)) from None
+    return {**found, "enabled": project.tern_plugin_enabled(conn)}
+
+
 def get(app, conn, path, query):
-    if path != PREFIX:
+    if path not in {PREFIX, PLUGIN}:
         return None
     app._no_query(query)
-    return _status(app)
+    return _plugin(app, conn) if path == PLUGIN else _status(app)
 
 
 def post(app, conn, path, body):
+    if path in {PLUGIN + "/install", PLUGIN + "/remove"}:
+        if body:
+            raise _error(400, "This Tern request expects an empty object")
+        if path.endswith("/remove"):
+            return _plugin(app, conn, tern_plugin.remove)
+        if not project.tern_plugin_enabled(conn):
+            raise _error(409, "The kitty Tern plugin is turned off in this kitty!'s build (Settings > Build)")
+        return _plugin(app, conn, tern_plugin.install)
     if path == PREFIX + "/settings":
         if not isinstance(body, dict) or set(body) != {"path"} or not isinstance(body["path"], (str, type(None))):
             raise _error(400, 'Tern settings expect {"path": "/absolute/path/to/tern"} or an empty path')
