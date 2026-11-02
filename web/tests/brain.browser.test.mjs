@@ -1,4 +1,4 @@
-// The Brain look: a mindcorpus-style point cloud, shaped like a cat, where every record and every edit is a point.
+// The Brain look: a mindcorpus-style point cloud, shaped like a neural-network brain, where every record and every edit is a point.
 // `/api/brain` is mocked with a synthetic ~20k-node workspace (tests/brainFixture.mjs).
 // Run with Node >=22 and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
@@ -69,13 +69,11 @@ const legendDot = (page, key) => page.getByRole("list", { name: "Legend" }).loca
 const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
 const near = (a, b, tolerance = 0.02) => a.every((value, c) => Math.abs(value - b[c]) <= tolerance);
 const RECORD_IDS = BRAIN.nodes.filter((node) => node.kind === "record").map((node) => node.id);
-/** Projected bounding box of the cat's head: every record in its brain, ears, eyes and whiskers. */
-const headBox = (page) => page.evaluate(async (ids) => {
-  const { CAT_BRAIN } = await import("/src/lib/brain/brainLayout.ts");
+/** Projected bounding box of the brain: every record, each a neuron in its cortex. */
+const brainBox = (page) => page.evaluate((ids) => {
   const box = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
   for (const id of ids) {
-    const world = window.brainHarness.worldPoint(id);
-    const point = world && Math.hypot(...world.map((value, axis) => value - CAT_BRAIN[axis])) < 2.6 ? window.brainHarness.screenPoint(id) : null;
+    const point = window.brainHarness.screenPoint(id);
     if (!point) continue;
     box.left = Math.min(box.left, point.x);
     box.right = Math.max(box.right, point.x);
@@ -188,7 +186,7 @@ describe("brain stage", () => {
     const draculaPoint = await pointColour(page, "notes.page:0");
     await page.evaluate(() => window.brainHarness.setTheme("gruvbox"));
     await page.waitForFunction((before) => getComputedStyle(document.querySelector('.legend [data-key="notes"] i')).backgroundColor !== before, dracula);
-    assert.notDeepEqual(await pointColour(page, "notes.page:0"), draculaPoint, "the theme recolours the cat");
+    assert.notDeepEqual(await pointColour(page, "notes.page:0"), draculaPoint, "the theme recolours the brain");
 
     await page.getByRole("button", { name: "Colour of Notes" }).click();
     const hex = page.getByRole("textbox", { name: "Hex colour" });
@@ -284,14 +282,14 @@ describe("brain stage", () => {
       { ...reset, panel: undefined },
       { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 1, lines: false, scaffold: true, pointSize: 1, background: "transparent", panel: undefined },
     );
-    assert.equal(await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Anatomy" }).getAttribute("aria-pressed"), "true");
+    assert.equal(await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Brain" }).getAttribute("aria-pressed"), "true");
     assert.equal(await page.getByRole("switch", { name: "Lines" }).getAttribute("aria-checked"), "false");
     assert.equal(await page.getByRole("slider", { name: "Point size" }).inputValue(), "1");
     assert.match(await page.locator("[data-brain-stage]").innerText(), /BY SECTION/);
     await context.close();
   });
 
-  test("the View panel starts closed with the cat's head in view; open, it reframes the cat beside it and is remembered", async () => {
+  test("the View panel starts closed with the brain in view; open, it reframes the brain beside it and is remembered", async () => {
     const { page, problems, context } = await open({ fresh: true });
     await mount(page, "stage");
     await brainReady(page);
@@ -299,8 +297,8 @@ describe("brain stage", () => {
     assert.equal(await toggle.getAttribute("aria-expanded"), "false");
     assert.equal(await page.getByRole("group", { name: "Layout" }).count(), 0);
     const area = await stage(page).evaluate((element) => element.getBoundingClientRect().toJSON());
-    const closed = await headBox(page);
-    assert.ok(within(closed, area), `the head ${JSON.stringify(closed)} leaves the stage ${JSON.stringify(area)}`);
+    const closed = await brainBox(page);
+    assert.ok(within(closed, area), `the brain ${JSON.stringify(closed)} leaves the stage ${JSON.stringify(area)}`);
 
     await toggle.click();
     assert.equal(await toggle.getAttribute("aria-expanded"), "true");
@@ -308,12 +306,12 @@ describe("brain stage", () => {
     const panel = await page.locator(".panel").evaluate((element) => element.getBoundingClientRect().toJSON());
     let beside = null;
     for (let attempt = 0; attempt < 40; attempt += 1) {
-      beside = await headBox(page);
+      beside = await brainBox(page);
       if (beside.right <= panel.left - 4) break;
       await page.waitForTimeout(100);
     }
-    assert.ok(beside.right <= panel.left - 4, `the panel (from x ${panel.left}) covers the head (to x ${beside.right})`);
-    assert.ok(within(beside, { ...area, right: panel.left }), "the head stays inside the stage beside the panel");
+    assert.ok(beside.right <= panel.left - 4, `the panel (from x ${panel.left}) covers the brain (to x ${beside.right})`);
+    assert.ok(within(beside, { ...area, right: panel.left }), "the brain stays inside the stage beside the panel");
 
     await mount(page, "stage");
     await brainReady(page);
@@ -324,11 +322,13 @@ describe("brain stage", () => {
     await context.close();
   });
 
-  test("the brain builds itself unless reduced motion is requested", async () => {
+  test("the brain builds itself and pulses travel its network unless reduced motion is requested", async () => {
     const animated = await open({ reducedMotion: "no-preference" });
     await mount(animated.page, "stage");
     await drawn(animated.page).waitFor({ timeout: 30_000 });
     assert.equal(await animated.page.locator("[data-brain-stage]").getAttribute("data-birth"), "running");
+    assert.ok(Number(await drawn(animated.page).getAttribute("data-filaments")) > 1000, "the neural network is drawn");
+    assert.equal(await drawn(animated.page).getAttribute("data-pulses"), "on");
     await animated.page.waitForFunction(() => document.querySelector("[data-brain-stage]")?.getAttribute("data-birth") === "done", null, { timeout: 30_000 });
     await animated.context.close();
 
@@ -336,6 +336,10 @@ describe("brain stage", () => {
     await mount(still.page, "stage");
     await drawn(still.page).waitFor({ timeout: 30_000 });
     assert.equal(await still.page.locator("[data-brain-stage]").getAttribute("data-birth"), "done");
+    assert.ok(Number(await drawn(still.page).getAttribute("data-filaments")) > 1000, "the network is still drawn");
+    assert.equal(await drawn(still.page).getAttribute("data-pulses"), "off", "but holds still: no pulses");
+    await still.page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Spheres" }).click();
+    await still.page.waitForFunction(() => document.querySelector("[data-brain-stage] canvas")?.getAttribute("data-filaments") === "0");
     await still.context.close();
   });
 

@@ -641,7 +641,7 @@ options. **More filters** exposes ranking, source and other filters; selected-jo
 actions and job details have their own expandable advanced controls.
 
 Home is the **Brain** (below), every record and edit in the workspace as a
-glowing point-cloud cat, or the 2D **atlas** of workspace sections; the
+point of light in a glowing neural-network brain, or the 2D **atlas** of workspace sections; the
 Workspace panel's **Brain | 2D** switch (or Settings → Appearance) chooses, and
 the choice is remembered (`kitty.home.look`; an earlier 3D choice opens the
 Brain). It sits in the centre between two narrow rails that scroll on
@@ -668,36 +668,40 @@ Left or middle-button drag rotates; the wheel zooms; right-button drag pans.
 Ctrl + Left/Right rotates the visible 3D schema in ten-degree steps, except while
 editing text, selecting text, or using a dialog.
 The **Brain** on home draws every record and every edit from `GET /api/brain` as one
-point of light in a standing cat seen from the side (head up and turned toward you,
-tail stretched out behind), over the theme's own backdrop. The cat has no body, only its
-brain and veins: records form the colourful brain in its skull (one lobe per section)
-with its cerebellum, veined ears, two bright eyes and whiskers; a spinal cord runs from
-the brain along the back into the tail, and vessels branch from it into each region
-(withers, chest, forelegs, paws, back, flank, belly, rump, hind legs, hocks, feet, toes,
-tail base and tail). Each region is one group's vessels, made of that group's edits and a
-few of its records, newest nearest the brain and oldest at the tips; a large group spans
-several neighbouring regions and small groups share one. The vessels branch further as
-the workspace grows, and even a few hundred points still trace the whole cat. The cat
-builds itself from the brain outward along its vessels. Colours come from the active
+point of light in a brain made of a glowing neural network, seen three-quarters from the
+front and slowly turnable, over the theme's own backdrop. Its folded surface is a faint
+rim of light with its sulci traced across it: two hemispheres split by the longitudinal
+fissure, each with frontal, parietal, temporal and occipital lobes, a cerebellum tucked
+below and behind and the brainstem. Records are its neurons, glowing in the cortex of
+their group's region (a large group spans several neighbouring regions, small groups
+share one); fibre tracts fan from the brain's centre out to every region and run between
+them (the corpus callosum across the hemispheres, the arcuate and longitudinal fasciculi
+within each), neurons reach their neighbours along short dendrites, and records that
+belong together (a page in its notebook, a card in its deck) are linked by arcs. Each
+group's edits travel its own fibres in time order, newest nearest the centre. Slow pulses
+of light run outward along the network, and the far side of the brain is dimmer than
+the near. The network grows denser and branches further as the workspace grows; even a
+few hundred points still draw the whole brain. It builds itself from the centre outward.
+Colours come from the active
 theme and change with it; inside a group, each
 record type and each kind of edit (save, create, delete, status, review…) has its
 own shade. The **View** button opens its View panel (closed at first; whether it is
-open is remembered, and while it is open the cat is framed beside it). It sets the
-layout (Anatomy, Spheres, Wheel), grouping
+open is remembered, and while it is open the brain is framed beside it). It sets the
+layout (Brain, Spheres, Wheel), grouping
 (section, navigation group or type), labels, turning and speed, edit→record
-lines, the faint vein scaffold, the background (Transparent, where the theme's backdrop
+lines, the scaffold (the brain's lit surface and folds), the background (Transparent, where the theme's backdrop
 shows through unchanged, or Black for the original
 night sky), point size and colours: pick any group's colour from the theme's
 swatches or a hex value, or Reset colours to follow the theme again (picks are
 remembered per grouping). Reset restores the view; the choices are remembered.
 The legend lists each group's records + edits and, on hover or focus, the kinds
-inside it; click an entry to highlight it. Hovering a sphere, sector or the cat's
-vessels and lobes
+inside it; click an entry to highlight it. Hovering a sphere, sector or a region of
+the brain
 highlights its group; clicking it opens that group alone, laid out by kind to
 fill the stage, until **← All** or Escape. Labels never overlap; ones without
 room hide. Hovering a point shows its label, section, type and date. Without
 WebGL home is the 2D atlas; a backend without `/api/brain` gets a notice, never
-invented data. Reduced motion skips the build-up, twinkle and
+invented data. Reduced motion skips the build-up, twinkle, pulses and
 turning.
 Theme presets include dark cherry-pink **Cherry cat**, with blossom ASCII,
 and a Scythe palette. Scythe illustration requires the actual supplied artwork;

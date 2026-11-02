@@ -437,7 +437,7 @@
     onpointerdowncapture={stagePointerDown}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      {#if look === "brain"}Every record and every edit in your workspace as a point of light in a cat drawn as its brain and veins. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.{/if}
+      {#if look === "brain"}Every record and every edit in your workspace as a point of light in a glowing neural-network brain. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto the Sections list to hide it; each section's options menu shows or hides it.{/if}
     </p>
     <!-- Hidden under the Brain, whose stage is transparent. -->
     <div class="canvas" class:behind={look === "brain"} bind:this={container}></div>
@@ -464,7 +464,7 @@
     {#if terminal}<HomeAgents id={`${atlasId}-agents`} {onview} />{/if}
     <HomeWidget id={`${atlasId}-workspace`} title="Workspace" eyebrow="atlas">
     <div class="look" role="group" aria-label="Home look">
-      <Button size="sm" variant={look === "brain" ? "soft" : "ghost"} aria-pressed={look === "brain"} disabled={!supportsBrain} title={supportsBrain ? "Every record and edit as a glowing cat" : "The Brain requires WebGL; 2D remains available"} onclick={() => chooseLook("brain")}>Brain</Button>
+      <Button size="sm" variant={look === "brain" ? "soft" : "ghost"} aria-pressed={look === "brain"} disabled={!supportsBrain} title={supportsBrain ? "Every record and edit as a glowing neural network" : "The Brain requires WebGL; 2D remains available"} onclick={() => chooseLook("brain")}>Brain</Button>
       <Button size="sm" variant={look === "2d" ? "soft" : "ghost"} aria-pressed={look === "2d"} title="A 2D map of workspace sections" onclick={() => chooseLook("2d")}>2D</Button>
       {#if lookError}<span role="alert">{lookError}</span>{/if}
     </div>
