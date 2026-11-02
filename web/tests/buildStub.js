@@ -41,3 +41,21 @@ export function createBuildStub(initial = {}) {
   window.harnessBuild = stub;
   return stub;
 }
+
+/**
+ * For harnesses that answer the API themselves: the build routes come from a stub whose
+ * first build is the defaults plus whatever old per-browser preferences a test seeded in
+ * localStorage (moved once, as `POST /api/build/local` does), and the build is loaded so
+ * the look and its motif are in before the harness mounts. Call it after the harness's own
+ * `window.fetch`, which it chains to.
+ */
+export async function installBuild() {
+  const { collectLegacy } = await import("/src/lib/buildCore.ts");
+  const stub = createBuildStub(collectLegacy(localStorage).patch);
+  const next = window.fetch.bind(window);
+  window.fetch = (input, init) => stub.fetch(input, init) ?? next(input, init);
+  const build = await import("/src/lib/build.svelte.ts");
+  await build.loadBuild();
+  await build.lookApplied();
+  return stub;
+}

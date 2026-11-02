@@ -12,6 +12,7 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { DOCK, routeBuild } from "./buildRoutes.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -93,14 +94,12 @@ async function open({ theme } = {}) {
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue());
-  await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({
-    mode: "hidden", shown: "terminal", float: false, step: "m", size: null, offset: { right: 16, bottom: 16 },
-  })));
+  await routeBuild(context, { ui: { dock: DOCK.hidden } });
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL("#opportunities", base).href);
-  if (theme) await page.evaluate(async (id) => (await import("/src/lib/themes/index.ts")).setTheme(id), theme);
+  if (theme) await page.evaluate(async (id) => (await import("/src/lib/build.svelte.ts")).setTheme(id), theme);
   await page.getByRole("toolbar", { name: "Opportunities controls" }).waitFor({ timeout: 60_000 });
   return { page, problems, context };
 }

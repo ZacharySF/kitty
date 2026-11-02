@@ -11,6 +11,7 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { DOCK, mergePreferences, routeBuild } from "./buildRoutes.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -110,20 +111,8 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
-  const prefs = structuredClone(build ?? {});
-  if (dock === "hidden" || dock === "floating")
-    merge(prefs, { ui: { dock: { mode: dock === "floating" ? "terminal" : "hidden", shown: "terminal", float: dock === "floating", step: "m", size: null, offset: { right: 16, bottom: 16 } } } });
-  await context.route("**/api/build/preferences", async (route) => {
-    merge(prefs, route.request().postDataJSON());
-    await route.fulfill({ json: { ok: true } });
-  });
-  await context.route("**/api/build", async (route) => {
-    if (route.request().method() !== "GET") return route.continue();
-    const response = await route.fetch();
-    const body = await response.json();
-    body.build = merge(body.build, structuredClone(prefs));
-    await route.fulfill({ response, json: body });
-  });
+  const prefs = await routeBuild(context, mergePreferences(structuredClone(build ?? {}),
+    dock === "hidden" || dock === "floating" ? { ui: { dock: DOCK[dock] } } : {}));
   if (storage)
     await context.addInitScript((entries) => {
       // Only the first load is seeded: a reload keeps what the page saved since.
@@ -155,14 +144,13 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
   return { page, problems, context, prefs };
 }
 
-/** `patch` merged into `target` in place, as the server merges preferences into the build. */
-function merge(target, patch) {
-  for (const [key, value] of Object.entries(patch ?? {})) {
-    if (value && typeof value === "object" && !Array.isArray(value) && target[key] && typeof target[key] === "object" && !Array.isArray(target[key]))
-      merge(target[key], value);
-    else target[key] = value;
+/** Polls until `read()` (a preference the page saved into its build layer) equals `value`. */
+async function prefIs(read, value, what) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (JSON.stringify(read()) === JSON.stringify(value)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  return target;
+  assert.deepEqual(read(), value, what);
 }
 
 const rect = (locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON());
@@ -597,7 +585,7 @@ describe("study timer", () => {
 
 describe("study guide", () => {
   test("the guide drawer shows only the current phase; Full guide opens all 14 steps as phase columns, with the rail remembered", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden", setup: (context) => context.addInitScript(() => {
+    const { page, problems, context, prefs } = await open("study", { dock: "hidden", setup: (context) => context.addInitScript(() => {
       if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); localStorage.removeItem("kitty-study-draft"); sessionStorage.setItem("seeded", "1"); }
     }) });
     await page.getByRole("region", { name: "Session timer" }).waitFor();
@@ -624,7 +612,7 @@ describe("study guide", () => {
     await guide.getByRole("radio", { name: "Rail" }).click();
     await guide.locator('[data-guide-view="rail"]').waitFor();
     assert.equal(await guide.locator('[data-guide-view="columns"]').count(), 0);
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.study.guide-view")), "rail");
+    await prefIs(() => prefs.ui?.study?.guide_view, "rail", "the guide view is not saved to the build");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1385,7 +1373,7 @@ describe("home widgets", () => {
 
 describe("appearance settings", () => {
   test("Settings → Appearance: one panel with a live preview, presets that set everything, single changes after, saved and applied before mount", async () => {
-    const { page, problems, context } = await open("settings/appearance", { dock: "hidden" });
+    const { page, problems, context, prefs } = await open("settings/appearance", { dock: "hidden" });
     await context.addInitScript(() => {
       new MutationObserver((_, observer) => {
         if (!document.getElementById("app")?.firstElementChild) return;
@@ -1398,7 +1386,7 @@ describe("appearance settings", () => {
     const preview = panel.getByRole("img", { name: /preview/i });
     const radio = (name) => panel.getByRole("radio", { name, exact: true });
     const root = (key) => page.evaluate((key) => document.documentElement.dataset[key], key);
-    const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem("kitty.appearance") ?? "null"));
+    const saved = () => prefs.ui?.appearance ?? null;
     const titleFont = () => page.getByRole("heading", { level: 1, name: "Settings" }).evaluate((node) => getComputedStyle(node).fontFamily);
     const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
 
@@ -1406,9 +1394,9 @@ describe("appearance settings", () => {
     for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
     assert.equal(await panel.getByRole("group", { name: "Home" }).getByRole("radio").count(), 2, "home offers Brain and 2D only");
     await radio("2D map").check();
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "2d");
+    await prefIs(() => prefs.ui?.home?.look, "2d", "home look not saved to the build");
     await radio("Brain").check();
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "brain");
+    await prefIs(() => prefs.ui?.home?.look, "brain", "home look not saved to the build");
     assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), true);
     assert.match(await titleFont(), /Fraunces/);
     assert.equal(await bodySize(), "13px");
@@ -1422,20 +1410,21 @@ describe("appearance settings", () => {
     assert.doesNotMatch(await titleFont(), /Fraunces/);
     assert.equal(await root("motion"), "reduced");
     assert.equal(await preview.getAttribute("data-title-font"), "plain");
-    assert.deepEqual(await saved(), { titleFont: "plain", density: "compact", motion: "reduced", motif: false, background: "nebula" });
+    await prefIs(saved, { title_font: "plain", density: "compact", motion: "reduced", motif: false, background: "nebula" }, "Minimal not saved to the build");
+    assert.equal(prefs.theme?.base, "harness");
 
     // Any single setting still changes afterwards; the preset no longer matches.
     await radio("Comfortable · 14px").check();
     assert.equal(await bodySize(), "14px");
     assert.equal(await preview.getAttribute("data-density"), "comfortable");
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "false");
-    assert.equal((await saved()).density, "comfortable");
-    assert.equal((await saved()).titleFont, "plain", "changing density reset another setting");
+    await prefIs(() => saved()?.density, "comfortable", "density not saved");
+    assert.equal(saved().title_font, "plain", "changing density reset another setting");
 
     // Cozy: petal drift behind the app and 3D section graphs; reduced motion pauses the petals.
     await panel.getByRole("button", { name: /^Cozy/ }).click();
     assert.equal(await radio("3D").isChecked(), true);
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "3d");
+    await prefIs(() => prefs.ui?.graph?.look, "3d", "Cozy did not save 3D section graphs to the build");
     const petals = page.locator(".petal-drift");
     await petals.waitFor({ state: "attached" });
     assert.ok((await petals.locator("svg").count()) >= 8, "too few petals");
@@ -2694,8 +2683,8 @@ describe("pipeline swimlanes", () => {
 
 describe("agent status cards", () => {
   test("the dock's Agents view shows one live card per herdr agent; a blocked one offers Open pane", async () => {
-    const { page, problems, context } = await open("today", { dock: "hidden" });
-    await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({ mode: "activity", shown: "activity", size: null, offset: { right: 16, bottom: 16 } })));
+    const { page, problems, context, prefs } = await open("today", { dock: "hidden" });
+    mergePreferences(prefs, { ui: { dock: { ...DOCK.hidden, mode: "activity", shown: "activity" } } });
     let polls = 0;
     const started = Date.now() - 75_000;
     await context.route("**/api/terminal/activity", (route) => {
@@ -3248,20 +3237,17 @@ describe("notifications", () => {
   });
 
   test("quiet hours on a 24-hour dial hold notifications, then deliver one morning digest", async () => {
-    const { page, problems, context } = await open("settings/quiet-hours", {
+    const { page, problems, context, prefs } = await open("settings/quiet-hours", {
       dock: "hidden",
-      setup: async (context) => {
-        await mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] });
-        // A window that started an hour ago and ends within 15 minutes; calendar events do not ring through.
-        await context.addInitScript(() => {
-          const now = new Date();
-          const minute = now.getHours() * 60 + now.getMinutes();
-          const from = ((Math.floor((minute - 60) / 15) * 15) + 1440) % 1440;
-          const to = (Math.ceil((minute + 1) / 15) * 15) % 1440;
-          if (!localStorage.getItem("kitty.notify.quiet"))
-            localStorage.setItem("kitty.notify.quiet", JSON.stringify({ enabled: true, from, to, letCalendar: false, digest: true }));
-        });
-      },
+      setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
+      // A window that started an hour ago and ends within 15 minutes; calendar events do not ring through.
+      build: { ui: { notifications: { quiet: (() => {
+        const now = new Date();
+        const minute = now.getHours() * 60 + now.getMinutes();
+        const from = ((Math.floor((minute - 60) / 15) * 15) + 1440) % 1440;
+        const to = (Math.ceil((minute + 1) / 15) * 15) % 1440;
+        return { enabled: true, from, to, let_calendar: false, digest: true };
+      })() } } },
     });
     const panel = page.locator(".br-panel").filter({ has: page.locator(".br-panel__header", { hasText: /^Quiet hours$/ }) });
     await panel.waitFor();
@@ -3291,9 +3277,8 @@ describe("notifications", () => {
     await center.waitFor({ state: "hidden" });
     // The choices are remembered.
     await panel.getByRole("switch", { name: "Let calendar events through" }).click();
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("kitty.notify.quiet")));
-    assert.equal(saved.letCalendar, true);
-    assert.equal(saved.to, (before - 30 + 1440) % 1440);
+    await prefIs(() => prefs.ui.notifications.quiet.let_calendar, true, "the switch is not saved to the build");
+    assert.equal(prefs.ui.notifications.quiet.to, (before - 30 + 1440) % 1440);
     assert.deepEqual(problems, []);
     await context.close();
   });

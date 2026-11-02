@@ -371,10 +371,3 @@ test("picked colours per grouping drop junk", () => {
   assert.deepEqual(brainColours({ section: { notes: "red", jobs: "#00ff00" }, type: 4 }), { section: { jobs: "#00ff00" }, group: {}, type: {} });
   assert.deepEqual(brainColours("{oops"), { section: {}, group: {}, type: {} });
 });
-  saveBrainColours({ section: { notes: "#AABBCC" }, group: {}, type: { page: "#112233" } });
-  assert.deepEqual(loadBrainColours(), { section: { notes: "#aabbcc" }, group: {}, type: { page: "#112233" } });
-  localStorage.setItem(BRAIN_COLOURS_KEY, JSON.stringify({ section: { notes: "red", jobs: "#00ff00" }, type: 4 }));
-  assert.deepEqual(loadBrainColours(), { section: { jobs: "#00ff00" }, group: {}, type: {} });
-  localStorage.setItem(BRAIN_COLOURS_KEY, "{oops");
-  assert.deepEqual(loadBrainColours(), { section: {}, group: {}, type: {} });
-});

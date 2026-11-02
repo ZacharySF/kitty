@@ -11,18 +11,24 @@ const storage = (values) => ({ getItem: (key) => (key in values ? values[key] : 
 
 test('every legacy key is listed for removal, including the delete-only tree marker', () => {
   assert.deepEqual([...LEGACY_KEYS].sort(), [
-    'kitty.atlas.hidden', 'kitty.atlas.physics', 'kitty.coding-agent', 'kitty.dock', 'kitty.graph.default-layout',
-    'kitty.graph.look', 'kitty.graph.tree-default.v2', 'kitty.notes.pen-only', 'kitty.theme',
+    'kitty.appearance', 'kitty.atlas.hidden', 'kitty.atlas.physics', 'kitty.brain.colors', 'kitty.brain.view',
+    'kitty.coding-agent', 'kitty.dock', 'kitty.flashcards.deck-look', 'kitty.graph.default-layout', 'kitty.graph.look',
+    'kitty.graph.tree-default.v2', 'kitty.home.look', 'kitty.notes.pen-only', 'kitty.notify.quiet', 'kitty.study.guide-view',
+    'kitty.study.plan-view', 'kitty.theme',
   ]);
   // Device and window state stays local and is never collected.
-  const { keys } = collectLegacy(storage({ 'kitty.notes.tabs': '[1]', 'kitty-calendar-notifications': 'true', 'kitty.ink.recent': '[]' }));
+  const { keys } = collectLegacy(storage({
+    'kitty.notes.tabs': '[1]', 'kitty-calendar-notifications': 'true', 'kitty.ink.recent': '[]', 'kitty.home.rail': 'collapsed',
+    'kitty.notify.ledger': '{}', 'kitty.notify.system': 'true', 'kitty.notes.outline': 'open', 'kitty.study.drawers': '{}',
+    'kitty.brain.panel': 'open',
+  }));
   assert.deepEqual(keys, []);
 });
 
 test('legacy preferences become one patch for the build', () => {
   const { patch, keys } = collectLegacy(storage({
-    'kitty.theme': 'dracula',
-    'kitty.dock': JSON.stringify({ mode: 'hidden', height: 287.4, shown: 'activity' }),
+    'kitty.theme': 'liquid-glass',
+    'kitty.dock': JSON.stringify({ mode: 'hidden', shown: 'activity', float: true, step: 'l', size: { width: 600.4, height: 380 }, offset: { right: 40, bottom: 90 } }),
     'kitty.graph.look': '3d',
     'kitty.graph.default-layout': 'force',
     'kitty.graph.tree-default.v2': '1',
@@ -30,16 +36,34 @@ test('legacy preferences become one patch for the build', () => {
     'kitty.atlas.hidden': JSON.stringify(['calendar', 7, 'calendar', 'Bad Id', 'jobs']),
     'kitty.notes.pen-only': 'true',
     'kitty.coding-agent': 'codex',
+    'kitty.appearance': JSON.stringify({ titleFont: 'plain', density: 'comfortable', motion: 'reduced', motif: false, background: 'petals' }),
+    'kitty.home.look': '2d',
+    'kitty.brain.view': JSON.stringify({ layout: 'wheel', groupBy: 'type', labels: 'off', turning: false, speed: 9, lines: true,
+      scaffold: false, pointSize: 0.5, background: 'black', panel: true }),
+    'kitty.brain.colors': JSON.stringify({ section: { notes: '#AABBCC', jobs: 'red' }, type: 4 }),
+    'kitty.notify.quiet': JSON.stringify({ enabled: true, from: 1380, to: 5000, letCalendar: false, digest: true }),
+    'kitty.flashcards.deck-look': 'graph',
+    'kitty.study.guide-view': 'rail',
+    'kitty.study.plan-view': 'days',
   }));
   assert.equal(keys.length, LEGACY_KEYS.length);
   assert.deepEqual(patch, {
-    theme: { base: 'dracula' },
+    theme: { base: 'liquid-glass' },
     ui: {
-      dock: { mode: 'hidden', height: 287, shown: 'activity' },
+      dock: { mode: 'hidden', shown: 'activity', float: true, step: 'l', size: { width: 600, height: 380 }, offset: { right: 40, bottom: 90 } },
       graph: { look: '3d', layout: 'force', physics: { repulsion: 300, spring: 0.3 } },
       atlas: { hidden: ['calendar', 'jobs'] },
       notes: { pen_only: true },
       terminal: { coding_agent: 'codex' },
+      appearance: { title_font: 'plain', density: 'comfortable', motion: 'reduced', motif: false, background: 'petals' },
+      home: { look: '2d' },
+      brain: {
+        layout: 'wheel', group_by: 'type', labels: 'off', turning: false, speed: 3, lines: true, scaffold: false, point_size: 0.5,
+        background: 'black', colors: { section: { notes: '#aabbcc' }, group: {}, type: {} },
+      },
+      notifications: { quiet: { enabled: true, from: 1380, to: 450, let_calendar: false, digest: true } },
+      flashcards: { look: 'graph' },
+      study: { guide_view: 'rail', plans_view: 'days' },
     },
   });
 });
@@ -53,11 +77,17 @@ test('values the build would refuse are left out, and a stored Sphere from befor
     'kitty.atlas.hidden': '{"calendar":true}',
     'kitty.notes.pen-only': 'yes',
     'kitty.coding-agent': 'vim',
+    'kitty.home.look': 'hologram',
+    'kitty.flashcards.deck-look': 'list',
   }));
   assert.deepEqual(patch, {});
-  assert.equal(keys.length, 7);
-  assert.deepEqual(collectLegacy(storage({ 'kitty.dock': '{"mode":"terminal","height":40}' })).patch,
-    { ui: { dock: { mode: 'terminal', height: null, shown: 'terminal' } } });
+  assert.equal(keys.length, 9);
+  // An old dragged docked height is dropped (main's dock has height steps); a bad card size falls back.
+  assert.deepEqual(collectLegacy(storage({ 'kitty.dock': '{"mode":"terminal","height":400,"size":{"width":10,"height":300}}' })).patch,
+    { ui: { dock: { mode: 'terminal', shown: 'terminal', float: false, step: 'm', size: null, offset: { right: 16, bottom: 16 } } } });
+  // Home's choice used to share the graph look: an old 2D stays 2D, anything else is the Brain (the default).
+  assert.deepEqual(collectLegacy(storage({ 'kitty.graph.look': '2d' })).patch, { ui: { graph: { look: '2d' }, home: { look: '2d' } } });
+  assert.deepEqual(collectLegacy(storage({ 'kitty.graph.look': '3d' })).patch, { ui: { graph: { look: '3d' } } });
   const denied = { getItem() { throw new Error('denied'); } };
   assert.deepEqual(collectLegacy(denied), { patch: {}, keys: [] });
 });
@@ -72,7 +102,7 @@ test('deep merge replaces arrays and values, merges objects and never mutates it
   assert.deepEqual(deepMerge(merged, { ui: { atlas: { hidden: [] } } }).ui.atlas.hidden, []);
   assert.equal(merged.theme.base, 'nord');
   assert.equal(merged.theme.css, '');
-  assert.equal(deepMerge({ height: 300 }, { height: null }).height, null);
+  assert.equal(deepMerge({ size: { width: 400, height: 300 } }, { size: null }).size, null);
   assert.equal(deepMerge({ a: 1 }, { a: undefined }).a, 1);
 });
 

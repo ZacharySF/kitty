@@ -5,9 +5,11 @@ import "@nunera/bracket/styles.css";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";
 import { setActiveModules } from "/src/lib/modules.svelte.ts";
-import { setTheme } from "/src/lib/themes/index.ts";
+import { setPreferences, setTheme } from "/src/lib/build.svelte.ts";
+import { installBuild } from "./buildStub.js";
 import BrainHarness from "./BrainHarness.svelte";
 
+await installBuild();
 const host = document.getElementById("host");
 let instance = null;
 
@@ -16,8 +18,7 @@ window.brainHarness = {
   mount(kind, { look, home } = {}) {
     if (instance) unmount(instance);
     host.replaceChildren();
-    if (look) localStorage.setItem("kitty.graph.look", look);
-    if (home) localStorage.setItem("kitty.home.look", home);
+    if (look || home) void setPreferences({ ui: { ...(look ? { graph: { look } } : {}), ...(home ? { home: { look: home } } : {}) } });
     setActiveModules(["workspace"]);
     instance = mount(BrainHarness, { target: host, props: { kind } });
     flushSync();

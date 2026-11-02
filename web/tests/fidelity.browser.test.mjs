@@ -13,6 +13,7 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { DOCK, routeBuild } from "./buildRoutes.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -82,10 +83,7 @@ async function open(hash, theme) {
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
-  await context.addInitScript((id) => {
-    localStorage.setItem("kitty.theme", id);
-    localStorage.setItem("kitty.dock", JSON.stringify({ mode: "hidden", shown: "terminal", size: null, offset: { right: 16, bottom: 16 } }));
-  }, theme);
+  await routeBuild(context, { theme: { base: theme }, ui: { dock: DOCK.hidden } });
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));

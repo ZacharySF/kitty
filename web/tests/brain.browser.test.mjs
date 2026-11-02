@@ -41,7 +41,7 @@ after(async () => {
  * A fresh profile whose `/api/brain` answers with `brain` (or `status`), and every other API with synthetic data.
  * The View panel is opened (most tests use its controls) unless `fresh` keeps the first-run view.
  */
-async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, settings = {}, fresh = false } = {}) {
+async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, settings = {}, fresh = false, storage = {} } = {}) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 760 }, reducedMotion });
   await context.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -50,7 +50,13 @@ async function open({ reducedMotion = "reduce", brain = BRAIN, status = 200, set
     if (path.startsWith("/api/atlas/sections/")) return route.fulfill({ json: SECTION_GRAPH });
     return route.fulfill({ status: 503, json: { error: "synthetic harness" } });
   });
-  if (!fresh) await context.addInitScript((value) => localStorage.setItem("kitty.brain.view", value), JSON.stringify({ panel: true, ...settings }));
+  // The view settings start in the harness's build (moved there from the old key, as on upgrade); the open panel is device state.
+  if (!fresh) storage = { "kitty.brain.view": JSON.stringify(settings), "kitty.brain.panel": "open", ...storage };
+  await context.addInitScript((entries) => {
+    if (sessionStorage.getItem("seeded")) return;
+    sessionStorage.setItem("seeded", "1");
+    for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value);
+  }, storage);
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -62,7 +68,17 @@ const mount = (page, kind, options = {}) => page.evaluate(([kind, options]) => w
 const screenPoint = (page, id) => page.evaluate((id) => window.brainHarness.screenPoint(id), id);
 const worldPoint = (page, id) => page.evaluate((id) => window.brainHarness.worldPoint(id), id);
 const drawn = (page) => page.locator("[data-brain-stage] canvas[data-points]");
-const stored = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("kitty.brain.view") || "null"));
+/** The saved view: the harness build's `ui.brain` (written once a change settles) and the device's panel state. */
+const stored = async (page) => {
+  await page.waitForTimeout(500);
+  return page.evaluate(() => {
+    const view = window.harnessBuild.build.ui.brain;
+    return { layout: view.layout, groupBy: view.group_by, labels: view.labels, turning: view.turning, speed: view.speed,
+      lines: view.lines, scaffold: view.scaffold, pointSize: view.point_size, background: view.background,
+      panel: localStorage.getItem("kitty.brain.panel") === "open" };
+  });
+};
+const savedBuild = (page) => page.evaluate(() => window.harnessBuild.build);
 const pointColour = (page, id) => page.evaluate((id) => window.brainHarness.pointColour(id), id);
 const stage = (page) => page.locator("[data-brain-stage]");
 const legendDot = (page, key) => page.getByRole("list", { name: "Legend" }).locator(`[data-key="${key}"] i`).evaluate((element) => getComputedStyle(element).backgroundColor);
@@ -195,7 +211,8 @@ describe("brain stage", () => {
     const picked = [0xe0, 0x5a, 0x9a].map((value) => value / 255);
     await page.waitForFunction((want) => getComputedStyle(document.querySelector('.legend [data-key="notes"] i')).backgroundColor === want, rgb("#e05a9a"));
     assert.ok(near(await pointColour(page, "notes.page:0"), picked), "the points take the picked colour");
-    assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("kitty.brain.colors"))).section, { notes: "#e05a9a" });
+    await page.waitForTimeout(500);
+    assert.deepEqual((await savedBuild(page)).ui.brain.colors.section, { notes: "#e05a9a" });
 
     await page.reload();
     await page.waitForFunction(() => !!window.brainHarness);
@@ -375,8 +392,8 @@ describe("home is the Brain or the 2D atlas", () => {
     await page.waitForFunction(() => !document.querySelector("[data-brain-stage]"));
     await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
     assert.equal(await page.locator(".atlas .stage > .canvas").evaluate((element) => getComputedStyle(element).visibility), "visible");
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "2d");
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), null, "home's choice leaves section graphs alone");
+    assert.equal((await savedBuild(page)).ui.home.look, "2d");
+    assert.ok(!(await page.evaluate(() => window.harnessBuild.preferences.some((patch) => patch.ui?.graph))), "home's choice leaves section graphs alone");
     await mount(page, "atlas");
     await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
     assert.equal(await page.locator("[data-brain-stage]").count(), 0, "the 2D choice is remembered");
@@ -472,12 +489,13 @@ describe("home is the Brain or the 2D atlas", () => {
 
   for (const [saved, shown] of [["3d", "brain"], ["brain", "brain"], ["2d", "2d"]]) {
     test(`an old shared look of ${saved} opens home as ${shown}`, async () => {
-      const { page, problems, context } = await open();
-      await mount(page, "atlas", { look: saved });
+      // Saved by a kitty! from before builds; moved into the build on first start.
+      const { page, problems, context } = await open({ storage: { "kitty.graph.look": saved } });
+      await mount(page, "atlas");
       if (shown === "brain") await brainReady(page);
       else await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
       assert.equal(await page.getByRole("group", { name: "Home look" }).getByRole("button", { name: shown === "brain" ? "Brain" : "2D" }).getAttribute("aria-pressed"), "true");
-      assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), shown);
+      assert.equal((await savedBuild(page)).ui.home.look, shown);
       assert.deepEqual(problems, []);
       await context.close();
     });
@@ -494,7 +512,7 @@ describe("home is the Brain or the 2D atlas", () => {
       assert.equal(await looks.getByRole("button", { name: "3D" }).getAttribute("aria-pressed"), "true");
       await looks.getByRole("button", { name: "2D" }).click();
       await page.locator('canvas[data-graph-look="2d"]').waitFor({ timeout: 30_000 });
-      assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "2d");
+      assert.equal((await savedBuild(page)).ui.graph.look, "2d");
       assert.deepEqual(problems, []);
       await context.close();
     });

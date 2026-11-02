@@ -4,11 +4,11 @@ import { mount } from "svelte";
 import "@nunera/bracket/styles.css";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";
-import { applySavedTheme, setTheme } from "/src/lib/themes/index.ts";
-import { applySavedAppearance, setAppearance, DEFAULT_APPEARANCE } from "/src/lib/appearance.ts";
+import { setTheme } from "/src/lib/build.svelte.ts";
+import { setAppearance, DEFAULT_APPEARANCE } from "/src/lib/appearance.ts";
+import { installBuild } from "./buildStub.js";
 import ThemeHarness from "./ThemeHarness.svelte";
 
-applySavedAppearance();
-await applySavedTheme();
+await installBuild();
 mount(ThemeHarness, { target: document.getElementById("app") });
 window.themeHarness = { setTheme, setAppearance, DEFAULT_APPEARANCE };
