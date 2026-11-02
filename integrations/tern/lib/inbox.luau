@@ -130,7 +130,10 @@ local function listing(ui: any, section: string, items: { Item }, offset: number
 	end
 	local p: { [string]: any } = node.p or {}
 	p.key = "items"
-	p.empty = { ui.span(empty, "muted") }
+	if #items == 0 then
+		-- Tern 0.9.8 draws `empty` beside the rows too, so it is set only for an empty list.
+		p.empty = { ui.span(empty, "muted") }
+	end
 	local current = sel - offset
 	if current >= 1 and current <= #items then
 		p.selected = string.format("main.%s.items.%s", section, items[current].key)
