@@ -1043,20 +1043,18 @@ describe("home widgets", () => {
     await context.close();
   });
 
-  test("Find jobs holds the reminders brief and How to apply in one collapsible section that remembers it is open", async () => {
+  test("Find jobs shows reminders, the weekly goal and How to apply in an always-visible strip", async () => {
     const { page, problems, context } = await open("jobs", { dock: "hidden" });
-    const brief = page.locator("details").filter({ has: page.locator("summary", { hasText: "Reminders, deadlines & goals" }) });
-    await brief.waitFor();
-    assert.equal(await brief.evaluate((node) => node.open), false, "brief starts open");
-    await brief.locator("summary").click();
-    await brief.getByRole("heading", { name: "Reminders & deadlines" }).waitFor();
-    assert.ok(await brief.getByRole("button", { name: "How to apply" }).isVisible());
-    await page.reload();
-    await brief.getByRole("heading", { name: "Reminders & deadlines" }).waitFor();
-    assert.equal(await brief.evaluate((node) => node.open), true, "brief forgot it was open");
+    const strip = page.getByRole("region", { name: "Reminders, deadlines and goals" });
+    await strip.waitFor();
+    assert.ok(await strip.getByText("This week", { exact: true }).isVisible());
+    assert.ok(await strip.getByRole("button", { name: "How to apply" }).isVisible());
+    assert.equal(await strip.locator("details, summary").count(), 0, "the strip folds");
+    await strip.getByRole("button", { name: "How to apply" }).click();
+    await page.getByRole("heading", { name: "Three steps. One application at a time." }).waitFor();
     await page.evaluate(() => (location.hash = "inbox"));
     await page.getByRole("heading", { name: /New jobs/ }).first().waitFor();
-    assert.equal(await page.locator("summary", { hasText: "Reminders, deadlines & goals" }).count(), 0, "brief shows outside Find jobs");
+    assert.equal(await page.getByRole("region", { name: "Reminders, deadlines and goals" }).count(), 0, "the strip shows outside Find jobs");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1064,7 +1062,7 @@ describe("home widgets", () => {
 
 describe("appearance settings", () => {
   test("Settings → Appearance: one panel with a live preview, presets that set everything, single changes after, saved and applied before mount", async () => {
-    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    const { page, problems, context } = await open("settings/appearance", { dock: "hidden" });
     await context.addInitScript(() => {
       new MutationObserver((_, observer) => {
         if (!document.getElementById("app")?.firstElementChild) return;
@@ -2745,7 +2743,7 @@ describe("notifications", () => {
   });
 
   test("quiet hours on a 24-hour dial hold notifications, then deliver one morning digest", async () => {
-    const { page, problems, context } = await open("settings", {
+    const { page, problems, context } = await open("settings/quiet-hours", {
       dock: "hidden",
       setup: async (context) => {
         await mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] });
@@ -2781,7 +2779,11 @@ describe("notifications", () => {
     assert.equal(await digest.count(), 1, "held reminders toasted one by one");
     assert.match(await digest.textContent(), /1 calendar · 1 job search/);
     await digest.getByRole("button", { name: "Open" }).click();
-    await page.getByRole("dialog", { name: "Notification center" }).waitFor();
+    const center = page.getByRole("dialog", { name: "Notification center" });
+    await center.waitFor();
+    // The center slides over the page's right column; close it to reach the switches.
+    await page.keyboard.press("Escape");
+    await center.waitFor({ state: "hidden" });
     // The choices are remembered.
     await panel.getByRole("switch", { name: "Let calendar events through" }).click();
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("kitty.notify.quiet")));

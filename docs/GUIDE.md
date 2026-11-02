@@ -85,8 +85,9 @@ enabled: [applyai, workspace, terminal]
 ```
 
 Save, then **quit and restart Kitty** to activate the change. Refresh/reload does
-not unload running modules, restart workers or discard drafts. Settings shows
-the active and saved selections separately. CLI invocations are separate
+not unload running modules, restart workers or discard drafts. Settings → Modules
+marks a module whose saved choice differs from the running session with
+**Restart** (its tooltip says whether it starts or stops). CLI invocations are separate
 processes, so the next command uses the saved selection.
 
 Disabled modules disappear from navigation, commands, shortcuts, atlas sections
@@ -239,6 +240,14 @@ and its backdrop. Typefaces never change with the theme.
 Surfaces turn opaque under reduced transparency, and every theme's text,
 selected and pressed controls stay at WCAG AA contrast over its backdrop. Graph
 nodes and their edges use the active theme's graph palette.
+**Settings** is a left index of short pages, each one surface: **General**
+(Appearance, Desktop, Quiet hours), **Workspace** (Account, Modules, Graphs) and
+**Careers & AI** (Profile & saved answers, AI & privacy, which open their own
+views). **Find a setting** filters the index by name or keyword; Enter opens the
+first match. Every page has its own link, `#settings/<page>` (`appearance`,
+`desktop`, `quiet-hours`, `account`, `modules`, `graphs`), so Back returns to the
+previous page; plain `#settings` opens Appearance. Explanations of individual
+controls, such as the graph physics sliders, are tooltips on their ⓘ.
 **Settings → Appearance** sets the whole look in one panel beside a live
 preview: theme, title font (Fraunces or plain), density (compact 13px or
 comfortable 14px), motion (full or reduced), home (Brain or 2D map), section graph look
@@ -270,7 +279,8 @@ configuration from disk; saves in My profile reload it automatically.
 The first-run welcome offers **Continue locally** or an optional Google identity
 connection, followed by a skippable guided tour of workspace panels, modules,
 Atlas, quick notes and Study (plus the terminal dock when present). Completion is
-remembered per workspace. Reopen either flow in **Settings → Welcome & account**.
+remembered per workspace. Reopen either flow in **Settings → Account** (**Connect
+Google** or **Take the tour**; **Setup guide** links to the Google setup document).
 Google is not required for local/offline use and does not secure the local API or
 sync data. For the owner-created Desktop OAuth client, `KITTY_GOOGLE_CLIENT_ID`,
 `KITTY_GOOGLE_CLIENT_SECRET`,
@@ -457,10 +467,14 @@ profile and session, not relaunch or replace an owner's running instance.
 
 ### Start here
 
-**How to apply** under **Find jobs → Reminders, deadlines & goals** (a section
-that stays closed until you open it, and remembers that) opens a three-step guide and checks
-whether your name/email and a usable resume PDF are
-saved. These checks describe saved data, not application readiness.
+**Find jobs** has one row on top: the title and count, one segmented control for
+**Map · List · Saved · Applications · Resumes · Sources**, and **Add a job link**.
+Under it, an always-visible **This week** strip lists the next reminders and
+deadlines (click one to open the job or Reminders), the weekly goal as sent/goal,
+and **How to apply**; ⋯ at its end holds stale applications, expected openings,
+search health, per-track progress, rates and rank/state totals. **How to apply**
+opens a three-step guide and checks whether your name/email and a usable resume
+PDF are saved. These checks describe saved data, not application readiness.
 
 1. **My profile → My resumes:** enter your verified details in the ordinary form,
    review the save, then upload a resume PDF. Blank fields stay blank. Basic-form
@@ -468,10 +482,13 @@ saved. These checks describe saved data, not application readiness.
    unsaved profile, configuration or answer draft prompts before discarding it.
 2. **Find jobs:** the list scrolls in 100-row batches; selections persist across
    batches and **Select all matching** covers the whole filter. Sort by best fit,
-   similarity score, newest, job type (track), company or deadline. Jobs opens its
-   own schema, showing only job-type categories at the root. Open a category to
-   see every matching job, without 120-item map pages; its searchable Browse list
-   progressively reveals rows. Uncategorized jobs remain available in List.
+   similarity score, newest, job type (track), company or deadline; **Filters**
+   (a popover) holds rank (hover Rank for what A/B/C mean), saved view, source,
+   eligibility, status, preparation progress and the checkboxes. Map opens Jobs'
+   own schema, filling the page with its 2D/3D, Layout and Fit controls in a
+   bottom-left pill; it shows only job-type categories at the root. Open a
+   category to see every matching job, without 120-item map pages (**All job
+   types** returns). Every job, uncategorized ones included, is in List.
 3. **Select jobs → press Shift+F:** marked jobs (otherwise the opened or focused job) go
    straight to the reviewed autofill plan. Approved preparation opens Firefox and
    fills known fields. Check each form and submit it yourself; kitty! never submits.
@@ -685,9 +702,19 @@ Clipboard files/text and relative Markdown-folder structure are supported.
 Topic matching can stay inside the document or the selected folder, locally;
 scanned-PDF OCR and proprietary notebook formats are not supported.
 
-**Opportunities** has a separate category → source → opportunity schema and a
-List view. Source hubs remain visible when no opportunities have been ingested;
-Discover explicitly fetches enabled public sources, and is disabled in demo.
+**Opportunities & projects** opens on its category → source → opportunity map,
+full-bleed in one surface (2D/3D, layout and Fit float bottom-left). One
+floating row over the map holds search, **Filters** (a popover of source,
+category, status, dates, remote, location, deadline and favorites), **List**,
+**Add** and ⋯. **List** slides the list in as a drawer on the right (remembered
+per browser); filters and search open it to show what matches. **Add** is a
+quick-add popover: type a title or paste a link, pick a category or deadline
+chip, Enter saves; **More** opens the full form. Opening a row or map node edits
+it in the side drawer (fields, project tasks, evidence; ⋯ adds the deadline to
+the calendar, drafts an AI summary or deletes). ⋯ in the row holds **Interests &
+monitor** (profile, opt-in monitoring and public sources) and **Import JSON**;
+**Discover from public sources** appears there outside the demo. Source hubs stay
+on the map when no opportunities have been ingested.
 
 These interactions draw on [MindNode's keyboard map-building](https://www.mindnode.com/support/guides/keyboard-shortcuts),
 [Heptabase's note cards and whiteboards](https://heptabase.com/),
@@ -698,9 +725,9 @@ alone as studying: [retrieval-practice research](https://pubmed.ncbi.nlm.nih.gov
 supports actively recalling material.
 
 **Prepare applications** also lists recommended open, unsubmitted A/B jobs.
-Alternative groups, job limits and browser progress remain under preparation
-options. **More filters** exposes ranking, source and other filters; selected-job
-actions and job details have their own expandable advanced controls.
+**Preparation** (next to Fill) opens a side drawer with alternative groups, job
+limits and browser progress; Fill and Shift+F open it too. With jobs selected,
+**Change selected** sets their progress, rank or category (g and t open it).
 
 Home is the **Brain** (below), every record and edit in the workspace as a
 glowing point-cloud cat, or the 2D **atlas** of workspace sections; the
@@ -716,7 +743,7 @@ highlights the match in the Brain or on the map) and the Sections list.
 Job-search reminders, deadlines and weekly goals live in **Find jobs**, not on
 home. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
 Appearance); every schema starts in Tree, and an explicit layout preference can
-then be changed in **Settings → Workspace**. Home has one Study entry and only
+then be changed in **Settings → Graphs**, with the graph physics and **Reset to defaults**. Home has one Study entry and only
 the Jobs section entry, not separate job-action nodes.
 The kitty logo returns home. Clickable schema tabs show section →
 notebook/type → page/job/node; the Back control returns through that hierarchy.
@@ -1111,8 +1138,8 @@ window. Wayland gives GTK no DPI setting, and WebKitGTK turns that into a negati
 device-pixel ratio (a blank, compressed page), so the app sets a neutral 96 DPI when
 none is present; a DPI you set yourself is kept. An explicit `GDK_BACKEND` is respected.
 The window has no native menu strip. **Settings → Desktop** provides **Check for
-updates**, **Keep running on close (monitoring / reminders)**, **New quick note**,
-and **Quit kitty! (save and stop workers)**. All remain in the system-tray menu,
+updates**, **Keep running on close**, **New quick note** and **Quit kitty!** (which
+saves and stops workers). All remain in the system-tray menu,
 along with **Show kitty!**. Without a system tray, keeping the app running on close
 is unavailable. A browser-only website explains that desktop controls are unavailable.
 The page uses the protected backend API and a fixed command allowlist over the

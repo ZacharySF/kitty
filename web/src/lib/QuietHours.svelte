@@ -68,9 +68,9 @@
   </div>
 {/snippet}
 
-<Panel title="Quiet hours">
+<Panel title="Quiet hours" aria-label="Quiet hours">
   <div class="quiet" class:off={!quiet.enabled}>
-    <div class="dial-wrap">
+    <div class="dial-wrap" title="Drag either end, or use the arrow keys">
       <svg viewBox="0 0 184 184" class="dial" bind:this={dial} role="group" aria-label={`Quiet hours ${clock(quiet.from)} to ${clock(quiet.to)}`}>
         <circle cx={C} cy={C} r={R} class="track" />
         {#each Array.from({ length: 24 }, (_, hour) => hour) as hour}
@@ -106,19 +106,14 @@
           />
         {/each}
       </svg>
-      <span class="hint">drag the ends</span>
     </div>
     <div class="side">
       <h3>{quiet.enabled ? `Hold notifications from ${clock(quiet.from)} until ${clock(quiet.to)}` : "Notifications arrive any time"}</h3>
-      {@render toggle(quiet.enabled, "Quiet hours", quietNow ? "On · quiet right now" : "Toasts and system alerts wait inside the window", (value) => save({ enabled: value }))}
+      {@render toggle(quiet.enabled, "Quiet hours", quietNow ? "Quiet right now" : "Toasts wait inside the window", (value) => save({ enabled: value }))}
       {@render toggle(quiet.letCalendar, "Let calendar events through", "Calendar reminders still ring", (value) => save({ letCalendar: value }))}
-      {@render toggle(quiet.digest, "Morning digest", `Held items arrive together at ${clock(quiet.to)}`, (value) => save({ digest: value }))}
-      <p class="held" role="status">
+      {@render toggle(quiet.digest, "Morning digest", `Held items arrive at ${clock(quiet.to)}`, (value) => save({ digest: value }))}
+      <p class="held" role="status" title="kitty checks reminders only while it runs. In the desktop app, Keep running on close (Settings → Desktop) keeps checking from the system tray.">
         {notifier.heldNotices.length ? `Held now: ${digestLine(notifier.heldNotices)}` : "Nothing held right now"}
-      </p>
-      <p class="limit">
-        kitty checks reminders only while it runs. In the desktop app, Settings → Desktop → <strong>Keep running on close</strong>
-        keeps it checking from the system tray; when kitty is fully closed, reminders that fell due meanwhile arrive when it next opens.
       </p>
       {#if error}<p role="alert">{error}</p>{/if}
     </div>
@@ -144,17 +139,6 @@
   }
   .off .arc {
     opacity: 0.35;
-  }
-  .hint,
-  .limit {
-    color: var(--subtle);
-    font-size: 11px;
-  }
-  .hint {
-    font-family: var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    font-size: 9.5px;
   }
   .track {
     fill: none;
@@ -268,15 +252,11 @@
   }
   .held {
     margin: 4px 0 0;
-    padding: 8px 10px;
-    border: 1px dashed var(--hairline);
-    border-radius: 10px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
     color: var(--muted);
     font-size: 12px;
-  }
-  .limit {
-    margin: 0;
-    line-height: 1.5;
+    cursor: help;
   }
   @media (max-width: 620px) {
     .quiet {
