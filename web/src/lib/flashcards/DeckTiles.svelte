@@ -12,21 +12,29 @@
 </script>
 
 <script lang="ts">
+  import OverflowMenu from "../ui/OverflowMenu.svelte";
   /**
    * Deck tiles (Q40, decluttered): one ring splitting today's load into review,
    * learning and new around today's count, plus the deck name. The split, measured
-   * recall and a Review action fade in on hover or keyboard focus.
+   * recall and a Review action fade in on hover or keyboard focus. Settings and
+   * Archive sit in each tile's ⋯ (Q16).
    */
   let {
     decks,
     selected,
+    busy = false,
     onselect,
     onreview,
+    onsettings,
+    onarchive,
   }: {
     decks: DeckLoad[];
     selected: number;
+    busy?: boolean;
     onselect: (deck: DeckLoad) => void;
     onreview: (deck: DeckLoad) => void;
+    onsettings?: (deck: DeckLoad) => void;
+    onarchive?: (deck: DeckLoad) => void;
   } = $props();
 
   const R = 30;
@@ -77,6 +85,10 @@
         <span class="recall">{deck.recall === null ? "No recall yet" : `${Math.round(deck.recall * 100)}% recall`}</span>
         <button class="review" onclick={() => onreview(deck)} disabled={!!deck.archived || !today}>Review</button>
       </div>
+      {#if onsettings || onarchive}<span class="more"><OverflowMenu label={`${deck.name} actions`} items={[
+        ...(onsettings ? [{ label: "Settings", onselect: () => onsettings(deck) }] : []),
+        ...(onarchive ? [{ label: deck.archived ? "Restore" : "Archive", disabled: busy, onselect: () => onarchive(deck) }] : []),
+      ]} /></span>{/if}
     </div>
   {/each}
 </div>
@@ -199,6 +211,18 @@
   .tile:hover .review,
   .tile:focus-within .review {
     pointer-events: auto;
+  }
+  .more {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .tile:hover .more,
+  .tile:focus-within .more,
+  .more:has(:global([aria-expanded="true"])) {
+    opacity: 1;
   }
   .split {
     grid-column: 1;

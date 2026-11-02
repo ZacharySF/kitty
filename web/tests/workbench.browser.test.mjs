@@ -595,6 +595,14 @@ function seedDeck(page, name, cards) {
   }, { name, cards });
 }
 
+/** Scopes Flashcards to deck `name` through the header's searchable deck chip. */
+async function pickDeck(page, name) {
+  await page.getByRole("combobox", { name: "Deck scope" }).click();
+  await page.getByRole("searchbox", { name: "Search Deck scope" }).fill(name);
+  await page.getByRole("option", { name: new RegExp(`^${name}`) }).first().click();
+  await page.waitForFunction((name) => document.querySelector('[role="combobox"][aria-label="Deck scope"]')?.textContent.includes(name), name);
+}
+
 /** Opens Flashcards with `deck` seeded and its due review started. */
 async function reviewDeck(name, cards) {
   const opened = await open("flashcards", { dock: "hidden" });
@@ -602,7 +610,7 @@ async function reviewDeck(name, cards) {
   await page.getByRole("navigation", { name: "Flashcard views" }).waitFor();
   await seedDeck(page, name, cards);
   await page.reload();
-  await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: name });
+  await pickDeck(page, name);
   await page.getByRole("button", { name: "Review due" }).first().click();
   return opened;
 }
@@ -1165,13 +1173,66 @@ describe("flashcard decks", () => {
     await tile.hover();
     assert.equal(await opacity(), "1", "details stay hidden on hover");
     await tile.click();
-    await page.getByRole("heading", { name: "Tile deck", level: 2 }).waitFor();
+    await page.waitForFunction(() => document.querySelector('[role="combobox"][aria-label="Deck scope"]')?.textContent.includes("Tile deck"));
     await looks.getByRole("radio", { name: "Graph" }).click();
     await page.getByRole("region", { name: "Flashcards", exact: true }).first().waitFor();
     assert.equal(await tile.count(), 0, "tiles stay beside the graph");
     await page.reload();
     await page.getByRole("region", { name: "Flashcards", exact: true }).first().waitFor();
     assert.equal(await looks.getByRole("radio", { name: "Graph" }).getAttribute("aria-checked"), "true", "the Graph look is not remembered");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("flashcard header (Q16 A)", () => {
+  test("a searchable deck chip in the header, one New card (N), rare tools in ⋯ and tile actions in each tile's ⋯", async () => {
+    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const views = page.getByRole("navigation", { name: "Flashcard views" });
+    await views.waitFor();
+    await seedDeck(page, "Chip deck", [["One?", "1"], ["Two?", "2"]]);
+    await seedDeck(page, "Other chip deck", [["Three?", "3"]]);
+    await page.reload();
+    const workspace = page.getByRole("region", { name: "Flashcards workspace" });
+    const header = workspace.locator("header").first();
+    const chip = header.getByRole("combobox", { name: "Deck scope" });
+    await chip.waitFor();
+    assert.match(await chip.textContent(), /All decks.*\d+ due/);
+    const [h1, box] = [await header.locator("h1").boundingBox(), await chip.boundingBox()];
+    assert.ok(Math.abs(h1.y + h1.height / 2 - (box.y + box.height / 2)) < 12, "the chip is not beside the title");
+    assert.ok(box.width < 320, `the chip is ${box.width}px wide`);
+    assert.equal(box.height, 28);
+    assert.equal(await chip.evaluate((node) => getComputedStyle(node).borderTopLeftRadius), "999px");
+    assert.equal(await workspace.locator("select, details").count(), 0, "native select or fold-out on the deck page");
+    assert.equal(await page.getByText("Selected study scope").count(), 0);
+    // The chip searches decks and ends with a New deck row.
+    await chip.click();
+    const search = page.getByRole("searchbox", { name: "Search Deck scope" });
+    await search.waitFor();
+    await page.getByRole("option", { name: /^New deck/ }).waitFor();
+    await search.fill("other");
+    assert.equal(await page.getByRole("listbox", { name: "Deck scope" }).getByRole("option").filter({ hasText: "Chip deck" }).count(), 1);
+    await page.getByRole("option", { name: /^Other chip deck/ }).click();
+    await page.waitForFunction(() => document.querySelector('[role="combobox"][aria-label="Deck scope"]')?.textContent.includes("Other chip deck"));
+    // Exactly one New card, and it opens the quick add for the deck in scope.
+    const newCards = workspace.getByRole("button", { name: /New card/ });
+    assert.equal(await newCards.count(), 1, "more than one New card button");
+    await newCards.click();
+    const popover = page.getByRole("dialog", { name: "Quick add card" });
+    await popover.waitFor();
+    await page.waitForFunction(() => document.querySelector('dialog[aria-label="Quick add card"] [role="combobox"]')?.textContent.trim() === "Other chip deck");
+    await page.keyboard.press("Escape");
+    await popover.waitFor({ state: "detached" });
+    // Study tools and note types live in the ⋯ menu.
+    await workspace.getByRole("button", { name: "More flashcard actions" }).click();
+    const menu = page.getByRole("menu");
+    for (const name of ["Practice & review options", "Review history", "Import / export", "AI drafts", "New deck", "New note type", "Edit Basic"]) await menu.getByRole("menuitem", { name, exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    // Settings and Archive sit in each tile's ⋯, not in a row under the tiles.
+    assert.equal(await workspace.getByRole("toolbar").count(), 0, "a deck action row is still under the tiles");
+    await workspace.getByRole("button", { name: "Chip deck actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await page.getByRole("heading", { name: "Deck settings" }).waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -2250,7 +2311,7 @@ describe("flashcard memory stats", () => {
       }
     });
     await page.reload();
-    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Stats deck" });
+    await pickDeck(page, "Stats deck");
     await views.getByRole("button", { name: "Stats" }).click();
     const panel = (name) => page.getByRole("region", { name });
     const queue = panel("Today's queue");
@@ -2344,7 +2405,7 @@ describe("flashcard card browser", () => {
       await post("/flashcards/grade", { token: card.token, rating: 4, duration_ms: 5000 });
     });
     await page.reload();
-    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Browser deck" });
+    await pickDeck(page, "Browser deck");
     await views.getByRole("button", { name: "Cards" }).click();
     const list = page.getByRole("list", { name: "Cards" });
     await list.getByRole("listitem").nth(2).waitFor();
@@ -2402,7 +2463,7 @@ describe("adding flashcards", () => {
     const row = page.getByRole("form", { name: "Add a card" });
     // With All decks in scope the row asks which deck to save into.
     await row.getByRole("combobox", { name: "Deck for the new card" }).waitFor();
-    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Inline deck" });
+    await pickDeck(page, "Inline deck");
     await page.waitForFunction(() => !document.querySelector('[aria-label="Deck for the new card"]'));
     const list = page.getByRole("list", { name: "Cards" });
     await list.getByRole("listitem").first().waitFor();
@@ -2449,7 +2510,7 @@ describe("adding flashcards", () => {
     await seedDeck(page, "Other deck", [["Unrelated", "x"]]);
     await seedDeck(page, "Quick deck", [["Capital of Peru?", "Lima"]]);
     await page.reload();
-    await page.getByRole("combobox", { name: /deck scope/ }).selectOption({ label: "Quick deck" });
+    await pickDeck(page, "Quick deck");
     await page.locator("h1").click();
     await page.keyboard.press("n");
     const popover = page.getByRole("dialog", { name: "Quick add card" });
