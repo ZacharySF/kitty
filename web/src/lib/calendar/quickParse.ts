@@ -9,7 +9,7 @@ export type QuickEvent = {
   /** Minutes since midnight. */
   start: number | null;
   end: number | null;
-  /** Explicit length ("for 90m"). */
+  /** Explicit length ("for 90m", "1h"). */
   minutes: number | null;
   where: string;
   rrule: string;
@@ -28,7 +28,7 @@ const RULES: Rule[] = [
   ["date", new RegExp(`\\b(${MONTHS.join("|")})[a-z]*\\.?\\s+(\\d{1,2})\\b`, "gi")],
   ["day", new RegExp(`\\b(today|tonight|tomorrow|tmr|(?:next\\s+)?(?:${WEEKDAY_RE}))\\b`, "gi")],
   ["range", /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/gi],
-  ["dur", /\bfor\s+(\d+(?:\.\d+)?)\s*(m|mins?|minutes|h|hrs?|hours?)\b/gi],
+  ["dur", /\b(?:for\s+)?(\d+(?:\.\d+)?)\s*(m|mins?|minutes|h|hrs?|hours?)\b/gi],
   ["time", /\b(?:at\s+)?(?:(\d{1,2})(?::(\d{2}))?\s*(am|pm)|(\d{1,2}):(\d{2}))\b/gi],
   ["where", /(?:\bat|@)\s+(\p{Lu}[\p{L}'’-]*(?:\s+\p{Lu}[\p{L}'’-]*)*)/gu],
 ];

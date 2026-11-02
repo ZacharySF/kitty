@@ -322,7 +322,7 @@ be registered inside the disposable workspace.
 - **Adding and editing.** New things open a small quick-add popover from their +
   button: one phrase field and at most two chips; Enter saves, Esc keeps the
   phrase, **More** opens the full editor. Opening an existing item shows the side
-  drawer with every field (the calendar's event drawer is the first).
+  drawer with every field (the calendar's event and task drawers are the first).
 
 ### Interface copy rules
 
@@ -648,23 +648,29 @@ colours (new calendars start on the next one), which recolour with the theme.
 Colours picked before keep their hex, and tasks linked to a subject carry its
 colour too. A floating range pill at the bottom of
 the calendar steps back/forward, returns to today, jumps to a date and switches
-**D**ay, **W**eek, **M**onth, **A**genda, **Y**ear and day **P**lan. While the
-calendar has focus the same letters switch views, **J**/**K** step and **T** goes
-to today. Month shows up to four calendar dots per date; clicking a date fills a
+**D**ay, **W**eek, **M**onth, **A**genda, **Y**ear and day **P**lan; each letter's
+tooltip names its key. While the calendar has focus the same letters switch views,
+**J**/**K** step, **T** goes to today and **N** adds. Month shows up to four calendar dots per date; clicking a date fills a
 side day agenda. Year tints every day by booked hours (hover to read, click to
 pin, **Open day** to jump). Plan splits the day's timeline from its open tasks;
 **Plan** drops a task into the next free 30-minute gap (08:00–21:00) as a dashed
 block. The sidebar's mini month shows ISO weeks; hover a week to preview its
 load and click a date to jump there.
-Click a slot to schedule a time, or drag an event/task to another date or time. Drops open the
-editor for review before saving; moving an event preserves its duration.
-All-day items can be moved across the all-day row. Clicking an event opens a side
-drawer whose time steppers, calendar, place and reminder chips (5m/10m/1h/1d
-before) update the block live until you save or press Escape. Its title field
-reads natural language: `lunch with Mira fri 12:30 at Café Rose every week` fills
-the date, time, place and repeat and shows what it understood before you save.
-Repeat rules, time zone, custom reminder offsets and Google properties stay in
-the drawer's expandable sections.
+**Adding.** The pill's one **+** opens a quick add: type a phrase such as
+`gym tue 6pm 1h` or `lunch with Mira fri 12:30 at Café Rose every week`, pick
+**Event** or **Task**, and Enter saves it; the chip shows the day and time it
+understood. Clicking an empty slot (or Enter on it) opens the same quick add at
+that time for an hour, dragging across slots or all-day cells prefills the range,
+and **Schedule here** on Availability prefills a free interval. **More** saves
+and opens the new item in its drawer. The Tasks list has its own **+ Add task**.
+**Editing.** Drag an event/task to another date or time; moving an event preserves
+its duration. All-day items can be moved across the all-day row. Clicking an event
+opens a side drawer whose time steppers, calendar, place and reminder chips
+(5m/10m/1h/1d before) update the block live until you save or press Escape; its
+title field still reads natural language to retime the event. Clicking a task opens
+the same side drawer for the task. Repeat rules, time zone, custom reminder offsets
+and Google properties stay in the drawer's expandable sections, with their
+explanations in tooltips. Saving reports through the tab's status dot.
 A task's **＋ Map** action optionally adds it beneath a chosen map node.
 When an event changed both in kitty and in Google Calendar, **Imports & Google**
 draws both versions on a small day grid in the event's colour: kitty's as a solid
