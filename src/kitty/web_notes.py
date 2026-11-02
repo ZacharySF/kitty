@@ -7,12 +7,14 @@ citation_counts. GET /api/notes/blocks/:uuid/contexts returns direct citations;
 GET /api/notes/topics?kind=page|tag&topic=... aggregates local topic blocks.
 Both endpoints accept offset and return next_offset to page through all contexts.
 GET /api/notes/pages/:id/mentions returns unlinked local title mentions.
+GET /api/notes/pages/:id/map returns {"map_id": id | null}, the page's mind map;
+POST it with {} to create that map (the page as its root topic) when it has none.
 """
 from __future__ import annotations
 
 import re
 from contextlib import closing
-from kitty.core import notes, note_blocks
+from kitty.core import concept_maps, notes, note_blocks
 from kitty.db import connect
 
 def _error(exc: notes.NotesError):
@@ -45,6 +47,10 @@ def get(app, conn, path, query):
         if blocks:
             notes.keys(query, set())
             return note_blocks.get_blocks(conn, int(blocks[1])) if blocks[2] == "blocks" else note_blocks.mentions(conn, int(blocks[1]))
+        page_map = re.fullmatch(r"/api/notes/pages/([1-9][0-9]{0,15})/map", path)
+        if page_map:
+            notes.keys(query, set())
+            return concept_maps.page_map(conn, int(page_map[1]))
         reference = re.fullmatch(r"/api/notes/blocks/([0-9a-f-]{36})/contexts", path)
         if reference:
             notes.keys(query, {"offset"})
@@ -77,6 +83,15 @@ def post(app, conn, path, body):
         if blocks:
             notes.keys(body, {"revision", "blocks", "title", "document"}, {"revision", "blocks"})
             return note_blocks.save_blocks(conn, int(blocks[1]), body["revision"], body["blocks"], body.get("title"), body.get("document"))
+        page_map = re.fullmatch(r"/api/notes/pages/([1-9][0-9]{0,15})/map", path)
+        if page_map:
+            notes.keys(body, set())
+            try:
+                return concept_maps.create_page_map(conn, int(page_map[1]))
+            except notes.NotesError:
+                raise
+            except ValueError as exc:
+                raise notes.NotesError(str(exc)) from None
         if path == "/api/notes/daily":
             notes.keys(body, {"date"})
             return notes.daily_page(conn, body.get("date"))

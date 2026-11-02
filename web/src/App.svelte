@@ -81,7 +81,7 @@
   const schemaLabel = $derived(
     ({ jobs: "Jobs", notes: "Notes", flashcards: "Flashcards", opportunities: "Opportunities", schema: "Mind maps" } as Partial<Record<View, string>>)[view] || title,
   );
-  const ownsTrail = $derived(trail.section === view || (view === "schema" && trail.section === "notes"));
+  const ownsTrail = $derived(trail.section === view);
   const schemaNodes = $derived(ownsTrail ? trail.nodes : []);
   const sectionGroup = $derived(navigationGroups.find(group => group.views.includes(view))?.label ?? "Workspace");
 

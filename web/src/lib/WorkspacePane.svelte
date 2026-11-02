@@ -58,6 +58,7 @@
     isCanvasFullscreen: () => boolean;
     newCanvasTab: () => Promise<void>;
   } | undefined = $state();
+  let maps: { hasUnsavedChanges: () => boolean } | undefined = $state();
 
   export function breadcrumbs() { return trail; }
   export function saveStatus() { return status; }
@@ -65,7 +66,8 @@
     if (view === "profile") return profile?.hasUnsavedChanges() ?? false;
     if (view === "documents") return documents?.hasUnsavedChanges() ?? false;
     if (view === "settings") return settings?.hasUnsavedChanges() ?? false;
-    if (view === "notes" || view === "schema") return notes?.hasUnsavedChanges() ?? false;
+    if (view === "notes") return notes?.hasUnsavedChanges() ?? false;
+    if (view === "schema") return maps?.hasUnsavedChanges() ?? false;
     return false;
   }
   export function focusGroup(label: string) { if (active) atlas?.focusGroup(label); }
@@ -116,9 +118,13 @@
     {#await import("./Calendar.svelte")}{@render pending()}{:then { default: Calendar }}
       <Calendar {revision} {active} demo={workspace?.demo ?? true} />
     {/await}
-  {:else if view === "notes" || view === "schema"}
+  {:else if view === "notes"}
     {#await import("./Notes.svelte")}{@render pending()}{:then { default: Notes }}
-      <Notes bind:this={notes} {revision} demo={workspace?.demo ?? true} initialMode={view === "schema" ? "mindmap" : undefined} />
+      <Notes bind:this={notes} {revision} demo={workspace?.demo ?? true} />
+    {/await}
+  {:else if view === "schema"}
+    {#await import("./SchemaMaps.svelte")}{@render pending()}{:then { default: SchemaMaps }}
+      <SchemaMaps bind:this={maps} {revision} demo={workspace?.demo ?? true} />
     {/await}
   {:else if view === "opportunities"}
     {#await import("./Opportunities.svelte")}{@render pending()}{:then { default: Opportunities }}

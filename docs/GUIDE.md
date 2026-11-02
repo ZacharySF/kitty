@@ -496,13 +496,16 @@ PDF are saved. These checks describe saved data, not application readiness.
 **Notes** opens today's dated note, reusing the same page on subsequent visits.
 The library (☰, top left) slides over the page as a drawer and is the one
 notebook/page navigator: folders, notebooks, recent pages, tags and drag-to-reorder;
-opening a page or pressing Escape closes it. The header row holds browser-style
-page tabs (a dot in the notebook's colour, × to close, + for a new page), the save
-state, **Views** (saved maps, the folder/notebook **Library overview** schema,
-Today) and canvas fullscreen. One editor toolbar holds the
-Writing/Canvas/Mind map switch, page title, Save (Ctrl+S) and Find in page;
-**More** holds outline preview, add block, paper, favorite, reload, delete and the
-keyboard help. Escape closes Views and More. While writing, a floating **On this
+opening a page or pressing Escape closes it. The header is one row: ☰, browser-style
+page tabs (a dot in the notebook's colour, × to close, + for a new page), the
+**Write / Canvas / Map** switch, **Find in page** (Ctrl+F) and **⋯**, always last:
+Today's page, Library overview (the folder/notebook schema), Import PDF or
+Markdown…, Favourite, Preview outline, Canvas fullscreen, Privacy & storage…,
+Reload saved and Delete page…. The page title is the large heading at the top of
+the page, under a small line naming the notebook and when it was last edited.
+Pages save as you type (Ctrl+S saves at once); the save state is the dot on the
+workspace tab: neutral when saved, warning while unsaved, red when a save failed,
+with **Retry save** in the error line. While writing, a floating **On this
 page** outline lists the top-level blocks and the word count; click an entry to
 jump to that block, or collapse the outline to a corner pill (remembered).
 Text notes use stable bullet blocks: Enter adds a sibling, Tab/Shift+Tab nests or
@@ -510,20 +513,23 @@ unnests, `[[Title]]` and `#tags` collect topic mentions, and unlinked title ment
 offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
-The canvas retains paper templates, ink/fill palettes, layers and handwriting.
-A page is the theme's flat background colour with no grid; **More → Paper** adds
-lines, a grid, dots or Cornell margins when you want them.
+The canvas retains paper templates, ink/fill palettes, layers and handwriting, and
+fills the window above the dock.
+A page is the theme's flat background colour with no grid; the pill's **⋯ → Paper**
+adds lines, a grid, dots or Cornell margins when you want them.
 Its tools sit in one floating pill at the bottom of the canvas: select, pen,
-highlighter, eraser, text and sticky (mind maps: select, sticky, connect, pen,
-eraser and **+ Concept**), your last five colours as round swatches (**+** opens all
-twelve named colours and a hex field), a stroke-size toggle, undo/redo, and **⋯**
-for the other tools, fill, exact stroke and text size, pen mode, snap, zoom and
-the text outline. Click the handle on the pill's bottom edge to tuck it away to
-a small tab and again to bring it back (remembered); tool keys still work while it
-is tucked. **Canvas fullscreen** (⛶) puts only the canvas and the same pill on the
-laptop screen, not the whole application. Its exit control and Escape restore the
-workspace.
+highlighter, eraser, text and sticky, your last five colours as round swatches (**+**
+opens all twelve named colours and a hex field), a stroke-size toggle, undo/redo, and
+**⋯** for the other tools, fill, exact stroke and text size, pen mode, snap, zoom,
+paper, the text outline, **Layers…** (a side drawer) and the file actions (import an
+image or PDF, restore a JSON page, export JSON, SVG or PNG). Click the handle on the
+pill's bottom edge to tuck it away to a small tab and again to bring it back
+(remembered); tool keys still work while it is tucked. **Canvas fullscreen** puts
+only the canvas and the same pill on the laptop screen, not the whole application.
+Its exit control and Escape restore the workspace.
 Outside text editing, F fullscreens the focused workspace panel instead.
+**Map** opens the page's own mind map in the one mind-map editor (below), inside the
+page; a page without one offers **Create map**, which starts it from the page's title.
 
 **Connections** automatically compares note and flashcard text locally:
 explicit `[[Page title]]` links, unlinked title mentions and related concepts
@@ -580,52 +586,76 @@ steps, sound and desktop-notification switches and the time zone, each saved as
 you change it and applied from the next phase. The tabs are Session, Progress,
 Exams & plans, Mind map and Tools (History and Helpers). Unsaved notes or a failed
 save show as a dot on the workspace tab.
-In **Mind map**, create Lecture, Chapter or Exam review maps,
-or create one from a subject. Topics are compact pills in their branch colour around
-an ink root. Click a node, then Tab adds a child, Enter adds a sibling right after it,
-typing or Ctrl+Enter renames, arrows move between parent, children and siblings,
-Ctrl+↑/↓ reorders siblings and Space collapses a branch. Drag a topic (its branch
-travels with it): the topic it would join lights up and the branch previews its new
-place; dropping elsewhere snaps it back. Press **D** mid-drag, or **Detach branch**
-in the node panel, to break a branch off as a floating piece that keeps its place.
-Alt-drag places a topic anywhere while keeping its parent; its own children are laid
-out beside it, and **Reset position** puts it back into the automatic layout.
-A swatch row floats above the selected topic: pick one of the theme's six colours
-(or automatic) for the topic, or turn on **Whole branch** to paint its descendants
-too; **Copy style** / **Paste style** (Alt+C / Alt+V) carry a colour to other topics.
-**Connect to…** in the node panel links the topic to any other one: click (or move
-to and press Enter on) the other topic, then type the connection's label. Connections
-are dashed curves outside the tree: they never change the layout, hide when either
-end is folded away, and double-clicking one edits its label.
+
+**Mind maps** have one editor, reached from Notes → **Map** (the page's own map),
+Study → **Mind map** and the **Mind maps** view; Ctrl K finds any map by its title and
+offers **New mind map**. Its slim top bar holds the map switcher (**Maps ▾**, with
+**All maps, merged** for the network of every map), **+** for a new map, the title
+(edit it in place), the linked subject, **Layout ▾** (tree, radial, force), the
+Map/Graph switch and **⋯** (export or import JSON, reload, linked mentions, ask AI
+about the map, import tracked jobs in a jobs map, delete). The canvas fills the rest.
+**+** opens a small popover: type the title, pick a starting template (Blank,
+Lecture, Chapter, Exam review) and category, and press Enter; **More** adds starting
+from a study subject or importing a map file. Topics are compact pills in their
+branch colour around an ink root. Click a node, then Tab adds a child, Enter adds a
+sibling right after it, typing or Ctrl+Enter renames, arrows move between parent,
+children and siblings, Ctrl+↑/↓ reorders siblings and Space collapses a branch.
+The building tools are the Notes canvas pill itself: select, **Connect topics**,
+**Ink**, **+ Child** (or **+ Topic**), **+ Sibling**, the theme's six colours plus
+automatic, undo/redo and **⋯** (outline, quiz, add a linked topic such as a study
+class, link a note page, find a topic, and in Notes the layout and map actions).
+Zoom out, the zoom level, zoom in and **Fit** sit in the corner.
+A small bar rides on the selected topic: its colour (**Whole branch**, **Copy style**
+/ **Paste style**, also Alt+C / Alt+V), **Rename**, **Detach**, **⋯** (Connect to…,
+collapse, Reset position, Split branch into map, Merge into another map, make
+flashcards, quiz this branch, start a session, open a linked page or map, and
+**Details…**, a side drawer with the label, notes, reference URL, parent, linked map,
+source and every connection) and × to delete.
+Drag a topic (its branch travels with it): the topic it would join lights up and the
+branch previews its new place; dropping elsewhere snaps it back. Press **D** mid-drag,
+or **Detach** on the topic bar, to break a branch off as a floating piece that keeps
+its place. Alt-drag places a topic anywhere while keeping its parent; its own children
+are laid out beside it, and **Reset position** puts it back into the automatic layout.
+**Connect topics** (or **Connect to…**) links the selected topic to any other one:
+click (or move to and press Enter on) the other topic, then type the connection's
+label. Connections are dashed curves outside the tree: they never change the layout,
+hide when either end is folded away, and double-clicking one edits its label.
 Shift+arrows, Shift-click or a Shift-drag box on empty space select several topics:
-the swatch row then recolours them all, dragging one moves every selected branch
+the colours then recolour them all, dragging one moves every selected branch
 (onto a topic, freely with Alt, or detached with D), and Delete removes them together.
-Ctrl+Z undoes every map edit (including drags, viewport changes and recolouring);
-Ctrl+Shift+Z or **Redo** reapplies it. Saving keeps the current editor's history.
-A new edit after undo discards the redo branch. Reloading starts a fresh local
-history; **Undo last save** still restores the durable previous saved snapshot.
+Edits save by themselves once the map is idle (Ctrl+S saves at once); the save state
+is the dot on the workspace tab. Ctrl+Z undoes every map edit (including drags,
+viewport changes and recolouring); Ctrl+Shift+Z or **Redo** reapplies it, and saving
+keeps the editor's history. A new edit after undo discards the redo branch. After a
+reload, Undo restores the previous saved snapshot.
 **Split branch into map** moves its descendants into a new map with links in both
-directions. To merge, drag a root onto another map's named drop target above the
-canvas (or use **Merge into map → Merge root**). Merging back replaces the split
-placeholder; other roots stay in the source map. Transfers save both maps
-atomically; undo/redo restores both sides and refuses if either map changed in
-another window. The emptied source map remains available.
+directions. To merge, drag a root: the other maps appear as drop targets above the
+canvas; drop it on one (or use **Merge into “…”** in the topic bar's ⋯). Merging back
+replaces the split placeholder; other roots stay in the source map. Transfers save
+both maps atomically; undo/redo restores both sides and refuses if either map changed
+in another window. The emptied source map remains available.
 Mouse, touch and pen share one pointer path: tap selects, drag moves or reparents,
 and a double tap (or double-click) edits a topic (or opens its linked note or map),
 adds a topic on empty space or relabels a connection. With a pen, **Ink** in the
-map toolbar draws pressure-sensitive strokes (a mouse draws too; fingers keep
-panning). Each stroke is smoothed when you lift the pen and sticks to the nearest
-topic, so it moves with that topic, hides when its branch is folded, follows a
-split or merge, and is saved with the map. Hold the pen's barrel button and draw a
-loop to select every topic inside it; flip the pen to its eraser end to rub out
-ink (topics are never erased).
+pill draws pressure-sensitive strokes (a mouse draws too; fingers keep panning).
+Each stroke is smoothed when you lift the pen and sticks to the nearest topic, so it
+moves with that topic, hides when its branch is folded, follows a split or merge,
+and is saved with the map. Hold the pen's barrel button and draw a loop to select
+every topic inside it; flip the pen to its eraser end to rub out ink (topics are
+never erased).
 While the pen hovers or has just been used, touches are treated as a resting palm
 and ignored, and the pen's barrel button never opens the delete prompt.
-Tree/radial layouts, an outline, linked note cards and links between maps help
-organize material. **Quiz me** hides labels for recall; a branch can produce a
-flashcard draft. **Auto-links** also suggests local sources for node labels;
-accepting references is revision-checked and idempotent. Save graph edits
-explicitly. Kanban is removed; existing stored rows are left untouched.
+**Quiz me** hides labels for recall; a branch can produce a flashcard draft.
+**Linked mentions** suggests local sources for topic labels; accepting references is
+revision-checked and idempotent. Kanban is removed; existing stored rows are left
+untouched.
+
+Notes once had its own concept-map mode (cards joined by connectors on a page's
+canvas). On the first start after updating, kitty! copies each such page's concept
+map into a mind map linked to that page (opened by Map), after first writing an
+owner-only JSON export of those pages to `data/exports/concept-maps-<time>.json`.
+The cards themselves stay on the page's Canvas untouched.
+`kitty.core.concept_maps.revert(conn, path)` removes the migrated maps again.
 
 **Start session** opens the fourteen-step preparation/connection/recall guide
 and a five-minute priming timer, then repeats 25-minute focus / five-minute break
