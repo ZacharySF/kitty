@@ -26,7 +26,9 @@
   let dragged = $state<number | null>(null);
   let handle = $state<HTMLButtonElement>();
   let viewport = $state(window.innerHeight);
-  const height = $derived(dragged ?? dock.height);
+  /** The first size, measured here, while the build sets no height (a pushed build may clear it). */
+  let measured = $state<number | null>(null);
+  const height = $derived(dragged ?? dock.height ?? measured);
   const size = $derived(height === null ? null : clampDockHeight(height, viewport));
 
   function choose(next: DockMode) {
@@ -70,10 +72,17 @@
     const space = mode === "hidden" ? (handle?.offsetHeight ?? 0) : (size ?? 0);
     document.documentElement.style.setProperty("--dock-space", `${space}px`);
   });
+  $effect(() => {
+    // A build without a height (installed, rolled back or edited elsewhere) still shows the
+    // dock at its first size; only this window's own choices write a height back.
+    if (dock.height !== null || measured !== null) return;
+    const frame = requestAnimationFrame(() => (measured = firstDockHeight(viewport, measure())));
+    return () => cancelAnimationFrame(frame);
+  });
   onMount(() => {
     // Wait for the first layout so the empty area below the main panel is real.
     const frame = requestAnimationFrame(() => {
-      if (mode !== "hidden" && height === null) resizeTo(firstDockHeight(viewport, measure()));
+      if (mode !== "hidden" && dock.height === null) resizeTo(firstDockHeight(viewport, measure()));
     });
     const onresize = () => (viewport = window.innerHeight);
     window.addEventListener("resize", onresize);

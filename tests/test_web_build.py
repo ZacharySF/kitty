@@ -253,3 +253,9 @@ def test_the_tern_plugin_setting_gates_its_pairing(running):
     running.app.builds.refresh()  # the watcher would within a quarter second
     status, answer = running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})
     assert status == 403 and "Tern plugin is turned off" in answer["error"]
+
+
+def test_the_page_opens_with_safe_in_its_address_and_nothing_else(running):
+    assert running.request("/?safe")[0] == 200
+    assert running.request("/?safe=1")[0] == 200
+    assert running.request("/?theme=x")[0] == 400

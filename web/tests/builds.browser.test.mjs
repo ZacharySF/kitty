@@ -193,10 +193,20 @@ test("safe mode (?safe and Ctrl+Alt+Shift+S) drops custom CSS and tokens; its co
   assert.equal(await scopedCss(windowA), null);
   assert.equal(await property(windowA, "--probe4"), "");
   assert.equal(new URL(windowA.url()).searchParams.has("safe"), true);
+  // The chord starts with Ctrl+Alt, which alone opens Plan: it must not do so on the way.
+  await windowA.waitForTimeout(300);
+  assert.equal(new URL(windowA.url()).hash, "#settings");
   await control.getByRole("button", { name: "Turn back on" }).click();
   await waitProperty(windowA, "--probe4", "#00ff00");
   assert.match(await scopedCss(windowA), /^@scope \(#app\)/);
   assert.equal(new URL(windowA.url()).searchParams.has("safe"), false);
+  // Ctrl+Alt on its own still opens Plan (on release).
+  await windowA.keyboard.down("Control");
+  await windowA.keyboard.down("Alt");
+  await windowA.keyboard.up("Alt");
+  await windowA.keyboard.up("Control");
+  await windowA.waitForFunction(() => location.hash === "#today");
+  await windowA.goto(new URL("#settings", base).href);
 
   // ?safe opens one window without the custom look; the other keeps it.
   await windowB.goto(new URL("?safe#settings", base).href);

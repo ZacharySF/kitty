@@ -2,7 +2,7 @@
 // stand-in kitty! API and WebSocket so the page never reaches a herdr session.
 import { mount } from "svelte";
 import "/src/styles.css";
-import { loadBuild } from "/src/lib/build.svelte.ts";
+import { loadBuild, reloadBuild } from "/src/lib/build.svelte.ts";
 import { createBuildStub } from "./buildStub.js";
 import { installPanelFullscreen } from "/src/lib/panelFullscreen.ts";
 import Dock from "/src/lib/Dock.svelte";
@@ -130,4 +130,9 @@ window.dockHarness = {
     socket.onmessage?.(new MessageEvent("message", { data: new TextEncoder().encode(text).buffer }));
   },
   sent: () => sockets.at(-1)?.sent ?? [],
+  /** The build changed elsewhere (as a live push would deliver it). */
+  async changeBuild(patch) {
+    build.write(patch);
+    await reloadBuild();
+  },
 };

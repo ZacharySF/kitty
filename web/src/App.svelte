@@ -285,7 +285,17 @@
     tabBar?.closeMenu(false);
     closeTab(activeId);
   }
+  let planChord = false;
+  function keyboardUp(event: KeyboardEvent) {
+    const chord = planChord;
+    planChord = false;
+    if (chord && ["Alt", "Control"].includes(event.key) && groups.some(item => item.label === "Plan")) {
+      event.preventDefault();
+      void focusGroup("Plan");
+    }
+  }
   async function keyboard(event: KeyboardEvent) {
+    planChord = false;
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
     const target = event.target as HTMLElement | null;
     const context = focusContext(target);
@@ -307,10 +317,14 @@
       await selectTab(tabs[(index + direction + tabs.length) % tabs.length].id);
       return;
     }
+    // Ctrl+Alt alone opens Plan when it is released, so chords that start with it
+    // (Ctrl+Alt+Shift+S, safe mode) never open Plan on the way.
+    planChord = !typing && !event.repeat && !event.metaKey && !event.shiftKey && event.ctrlKey && event.altKey &&
+      ["Alt", "Control"].includes(event.key) && !window.getSelection()?.toString() && !event.getModifierState("AltGraph");
+    if (planChord) return;
     if (!typing && !event.repeat && !event.metaKey && !event.shiftKey &&
         !window.getSelection()?.toString() && !event.getModifierState("AltGraph")) {
-      const group = event.ctrlKey && event.altKey && ["Alt", "Control"].includes(event.key) ? "Plan"
-        : event.ctrlKey && !event.altKey ? ({ x: "Study", c: "Job search", v: "Settings" } as Record<string, string>)[event.key.toLowerCase()] : null;
+      const group = event.ctrlKey && !event.altKey ? ({ x: "Study", c: "Job search", v: "Settings" } as Record<string, string>)[event.key.toLowerCase()] : null;
       if (group && groups.some(item => item.label === group)) { event.preventDefault(); await focusGroup(group); return; }
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -337,7 +351,7 @@
   }
 </script>
 
-<svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} />
+<svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} onkeyup={keyboardUp} />
 <svelte:head><title>{title} · kitty!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>
 <div class="workbench" class:atlas-home={view === "today"}>

@@ -15,6 +15,8 @@ export function createBuildStub(initial = {}) {
     /** Every preferences POST body, in order. */
     preferences: [],
     get build() { return read(); },
+    /** Change the stand-in file as another window or editor would (then reload the build). */
+    write(patch) { sessionStorage.setItem(KEY, JSON.stringify(deepMerge(read(), patch))); },
     /** Answer a build request, or null for other paths. */
     fetch(url, init = {}) {
       const path = new URL(String(url), location.href).pathname;

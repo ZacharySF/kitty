@@ -100,6 +100,18 @@ test("dragging the divider resizes the dock and the height is remembered", async
   await context.close();
 });
 
+test("a build pushed without a dock height keeps the dock at its first size", async () => {
+  const { page, problems, context } = await harness();
+  await dock(page).waitFor();
+  await page.evaluate(() => window.dockHarness.changeBuild({ ui: { dock: { height: null } } }));
+  await page.waitForTimeout(100);
+  assert.equal(await height(dock(page)), 300);
+  assert.equal(await dockSpace(page), "300px");
+  assert.equal((await saved(page)).height, null, "another window's choice is not written back");
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
 test("bare f reaches the shell; Ctrl+Shift+F fullscreens the terminal; Escape exits", async () => {
   const { page, problems, context } = await harness();
   await page.waitForFunction(() => window.dockHarness.sockets[0]?.readyState === 1);

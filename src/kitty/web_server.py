@@ -585,7 +585,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             elif path == "/api" or path.startswith("/api/"):
                 self._get_api(path, query)
             else:
-                self.server.app._no_query(query)
+                # `?safe` opens one window in safe mode (Q9); the page reads it itself.
+                self.server.app._no_query({key: value for key, value in query.items() if key != "safe"})
                 self._static(path)
         except APIError as exc:
             self.close_connection = True
