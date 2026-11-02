@@ -558,17 +558,31 @@ describe("study timer", () => {
 });
 
 describe("study guide", () => {
-  test("the 14 steps sit in three phase columns; the rail view is one click away and remembered", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
-    await page.getByRole("button", { name: "Study session", exact: true }).click();
+  test("the guide drawer shows only the current phase; Full guide opens all 14 steps as phase columns, with the rail remembered", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden", setup: (context) => context.addInitScript(() => {
+      if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); localStorage.removeItem("kitty-study-draft"); sessionStorage.setItem("seeded", "1"); }
+    }) });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    await page.getByRole("button", { name: "Guide & notes", exact: true }).click();
+    const drawer = page.getByRole("complementary", { name: "Guide & notes" });
+    const phase = drawer.getByRole("region", { name: "Current phase" });
+    await phase.waitFor();
+    assert.ok(await phase.getByRole("checkbox").count() <= 6, "the drawer shows more than one phase");
+    assert.match(await phase.textContent(), /Prepare & prime · \d+\/14/);
+    await phase.getByRole("button", { name: "Next phase" }).click();
+    assert.match(await phase.textContent(), /During the session/);
+    assert.equal(await drawer.getByText(/Guide saved|Adapted from|Prepare → connect/).count(), 0, "status or provenance text is still shown");
+    await phase.getByRole("button", { name: "Full guide ›" }).click();
     const guide = page.getByRole("region", { name: "Fourteen-step study guide" });
     await guide.waitFor();
     const columns = guide.locator('[data-guide-view="columns"] > section');
     assert.equal(await columns.count(), 3, "guide is not three phase columns");
     assert.deepEqual(await columns.locator("h4").allTextContents(), ["Prepare & prime", "During the session", "Test, review & return"]);
     assert.equal(await guide.getByRole("checkbox").count(), 14);
-    await guide.getByRole("checkbox").first().check();
-    await page.waitForFunction(() => document.querySelector('[aria-label="Fourteen-step study guide"] [role="status"]')?.textContent?.startsWith("1/14"));
+    assert.equal(await guide.locator("details").count(), 0, "the guide still folds content away");
+    const before = Number((await guide.locator(".guide-heading .count").textContent()).split("/")[0]);
+    await guide.getByRole("checkbox").first().click();
+    await page.waitForFunction((count) => document.querySelector('[aria-label="Fourteen-step study guide"] .guide-heading .count')?.textContent?.startsWith(`${count}/14`), before === 0 ? 1 : before - 1);
     await guide.getByRole("radio", { name: "Rail" }).click();
     await guide.locator('[data-guide-view="rail"]').waitFor();
     assert.equal(await guide.locator('[data-guide-view="columns"]').count(), 0);
@@ -738,44 +752,111 @@ describe("Liquid Glass theme", () => {
   });
 });
 
-describe("study cockpit", () => {
-  test("the Study hub is three columns (subjects & tasks, timer, guide & notes) with every tool tab visible, and one column in a narrow pane", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+describe("study focus-first", () => {
+  test("Study opens on the timer alone, centred, without scrolling at 1440×900; [ and ] slide the drawers over it and are remembered", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden", viewport: { width: 1440, height: 900 }, setup: (context) => context.addInitScript(() => {
+      if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); sessionStorage.setItem("seeded", "1"); }
+    }) });
     page.on("dialog", (dialog) => dialog.accept());
-    const left = page.getByRole("region", { name: "Subjects & tasks" });
-    const centre = page.getByRole("region", { name: "Session timer" });
-    const right = page.getByRole("region", { name: "Guide & notes" });
-    await centre.waitFor();
-    const stop = centre.getByRole("button", { name: /^Stop/ });
-    if (await stop.isEnabled()) {
-      await stop.click();
-      await centre.getByRole("button", { name: /Start session/ }).waitFor();
-    }
-    let [a, b, c] = await Promise.all([rect(left), rect(centre), rect(right)]);
-    assert.ok(a.right <= b.left + 1 && b.right <= c.left + 1, "columns are not side by side");
-    assert.ok(Math.abs(a.top - b.top) < 2 && Math.abs(b.top - c.top) < 2, "columns do not share a row");
-    assert.equal(await page.getByText("Planning & tools").count(), 0, "tools are still behind a disclosure");
+    const timer = page.getByRole("region", { name: "Session timer" });
+    await timer.waitFor();
+    const stop = timer.getByRole("button", { name: /^Stop/ });
+    if (await stop.count()) await stop.click();
+    await timer.getByRole("button", { name: /Start session/ }).waitFor();
+    const page1 = page.locator(".focus-first");
+    // Nothing but the timer: no drawers open, no lede, no duplicate start.
+    assert.equal(await page.getByRole("complementary", { name: "Subjects & tasks" }).count(), 0);
+    assert.equal(await page.getByRole("complementary", { name: "Guide & notes" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: /Start session/ }).count(), 1, "Start session is duplicated");
+    assert.equal(await page.getByText(/Demo study records stay local|Focus mode/).count(), 0);
     const tabs = page.getByRole("navigation", { name: "Study tools" });
-    for (const name of ["Study session", "Progress", "History", "Exams & plans", "Mind map", "Helpers", "Timer settings"])
-      assert.ok(await tabs.getByRole("button", { name, exact: true }).isVisible(), `${name} tab is not visible`);
-    assert.ok(await right.getByRole("region", { name: "Fourteen-step study guide" }).isVisible(), "guide is not in the right column");
-    assert.ok(await right.getByRole("textbox", { name: /Session notes/ }).isVisible(), "session notes are not in the right column");
-    const subject = `Cockpit subject ${Date.now()}`;
+    assert.deepEqual((await tabs.getByRole("button").allTextContents()).map((text) => text.trim()), ["Session", "Progress", "Exams & plans", "Mind map", "Tools"]);
+    const [area, card] = await Promise.all([rect(page1), rect(timer)]);
+    assert.ok(Math.abs((area.left + area.right) / 2 - (card.left + card.right) / 2) < 2, "the timer is not centred horizontally");
+    assert.ok(Math.abs((area.top + area.bottom) / 2 - (card.top + card.bottom) / 2) < 24, "the timer is not centred vertically");
+    const overflow = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
+    assert.ok(overflow <= 1, `the Study page scrolls ${overflow}px at 1440×900`);
+    assert.ok(area.bottom <= 900 && area.bottom >= 880, `the session page ends at ${area.bottom}, not at the window bottom`);
+    for (const name of ["Subjects & tasks", "Guide & notes"]) {
+      const edge = page.getByRole("button", { name, exact: true });
+      assert.ok(await edge.isVisible(), `${name} edge tab is hidden`);
+      assert.equal(await edge.getAttribute("aria-expanded"), "false");
+      assert.equal(await edge.evaluate((node) => getComputedStyle(node).writingMode), "vertical-rl");
+    }
+
+    // ] and [ open the drawers over the page: the timer does not move.
+    await page.locator("body").press("]");
+    const right = page.getByRole("complementary", { name: "Guide & notes" });
+    await right.waitFor();
+    await page.locator("body").press("[");
+    const left = page.getByRole("complementary", { name: "Subjects & tasks" });
+    await left.waitFor();
+    await page.waitForTimeout(250);
+    assert.deepEqual(await rect(timer), card, "opening a drawer moved the timer");
+    assert.equal(await left.evaluate((node) => getComputedStyle(node).position), "absolute");
+    const [l, r] = await Promise.all([rect(left), rect(right)]);
+    assert.ok(Math.abs(l.left - area.left) < 1 && Math.abs(r.right - area.right) < 1, "drawers do not sit on the page edges");
+    assert.ok(await right.getByRole("textbox", { name: "Session notes" }).isVisible(), "session notes are not in the guide drawer");
+    assert.equal(await page.getByRole("button", { name: "Guide & notes", exact: true }).getAttribute("aria-expanded"), "true");
+    assert.ok(await page.getByRole("button", { name: "Guide & notes", exact: true }).isVisible(), "the edge tab is hidden by its drawer");
+    assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("kitty.study.drawers"))), { left: true, right: true });
+
+    // Add and pick a subject from the left drawer; the timer's session chip follows.
+    const subject = `Drawer subject ${Date.now()}`;
     await left.getByRole("button", { name: "Add subject" }).click();
-    const editor = page.getByRole("region", { name: "Edit subjects" });
-    await editor.getByLabel("Name").fill(subject);
-    await editor.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("textbox", { name: "Add subject" }).fill(subject);
+    await page.getByRole("textbox", { name: "Add subject" }).press("Enter");
     const pick = left.getByRole("button", { name: new RegExp(`^${subject}`) });
     await pick.click();
     assert.equal(await pick.getAttribute("aria-pressed"), "true");
-    await centre.getByText(subject).waitFor();
-    await page.setViewportSize(MINIMUM);
-    await page.waitForFunction(() => {
-      const [x, y] = ["Subjects & tasks", "Session timer"].map((name) => document.querySelector(`[aria-label="${name}"]`).getBoundingClientRect());
-      return Math.abs(x.left - y.left) < 2;
-    });
-    [a, b, c] = await Promise.all([rect(left), rect(centre), rect(right)]);
-    assert.ok(b.top >= a.bottom - 1 && c.top >= b.bottom - 1, "a narrow pane is not one column");
+    await timer.getByText(subject).waitFor();
+
+    await page.reload();
+    await page.getByRole("complementary", { name: "Subjects & tasks" }).waitFor();
+    await page.getByRole("complementary", { name: "Guide & notes" }).waitFor();
+    await page.getByRole("button", { name: "Subjects & tasks", exact: true }).click();
+    await page.getByRole("complementary", { name: "Subjects & tasks" }).waitFor({ state: "detached" });
+    assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("kitty.study.drawers"))), { left: false, right: true });
+
+    // History and Helpers live under Tools.
+    await tabs.getByRole("button", { name: "Tools", exact: true }).click();
+    await page.getByRole("heading", { name: /^Study records/ }).waitFor();
+    await page.getByRole("group", { name: "Tool" }).getByRole("button", { name: "Helpers" }).click();
+    await page.getByRole("heading", { name: "Active recall" }).waitFor();
+    assert.equal(await page.locator(".study select").count(), 0, "a native select is still shown");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("timer settings are a popover from the timer: minute steppers, switches and the themed timezone picker save as they change", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const timer = page.getByRole("region", { name: "Session timer" });
+    await timer.waitFor();
+    const settings = () => page.evaluate(async () => (await (await fetch("/api/study")).json()).settings);
+    const before = await settings();
+    await timer.getByRole("button", { name: "Timer settings" }).click();
+    const popover = page.getByRole("dialog", { name: "Timer settings" });
+    await popover.waitFor();
+    assert.equal(await popover.getByText(/seconds|IANA|Each new session begins/).count(), 0, "the seconds fields or the paragraph are still shown");
+    const focus = popover.getByRole("group", { name: "Focus length" });
+    assert.equal((await focus.locator("output").textContent()).replace(/\s+/g, " ").trim(), `${Math.round(before.focus_seconds / 60)} min`);
+    await focus.getByRole("button", { name: "Longer focus" }).click();
+    await page.waitForFunction(async (seconds) => (await (await fetch("/api/study")).json()).settings.focus_seconds !== seconds, before.focus_seconds);
+    assert.equal((await settings()).focus_seconds % 300, 0, "the stepper does not move in 5-minute steps");
+    const sound = popover.getByRole("switch", { name: "Sound at phase end" });
+    assert.equal(await sound.getAttribute("aria-checked"), String(before.sound));
+    await sound.click();
+    await page.waitForFunction(async (on) => (await (await fetch("/api/study")).json()).settings.sound === on, !before.sound);
+    await page.waitForFunction((on) => document.querySelector('[role="switch"][aria-checked]')?.getAttribute("aria-checked") === String(on), !before.sound);
+    assert.equal(await popover.getByRole("switch", { name: "Desktop notifications" }).count(), 1);
+    const zone = popover.getByRole("combobox", { name: "Timezone" });
+    assert.equal(await popover.locator("select").count(), 0, "the timezone is a native select");
+    await zone.click();
+    await page.getByRole("searchbox", { name: "Search Timezone" }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    // Restore the demo's settings for the other tests.
+    await page.evaluate(async (settings) => fetch("/api/study/settings", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(settings) }), before);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -900,6 +981,50 @@ describe("study plans", () => {
   });
 });
 
+describe("study exams", () => {
+  test("Add exam is a quick-add with a date chip and a themed subject picker; the exam opens in the edit drawer", async () => {
+    const { page, problems, context } = await open("study", { dock: "hidden" });
+    await page.getByRole("region", { name: "Session timer" }).waitFor();
+    const stamp = Date.now();
+    await page.evaluate(async (stamp) => {
+      await fetch("/api/study/subjects", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify({ name: `Quick ${stamp}`, color: "#40a080" }) });
+      window.dispatchEvent(new CustomEvent("kitty-study-changed"));
+    }, stamp);
+    await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Exams & plans", exact: true }).click();
+    await page.getByRole("button", { name: "Add exam", exact: true }).click();
+    const popover = page.getByRole("dialog", { name: "Add exam" });
+    await popover.waitFor();
+    assert.equal(await popover.locator("select, textarea").count(), 0, "the quick-add has a native select or a notes field");
+    await popover.getByRole("textbox", { name: "Add exam" }).fill(`Quick exam ${stamp}`);
+    const day = await page.evaluate(async () => {
+      const { stats } = await (await fetch("/api/study")).json();
+      return new Date(Date.parse(`${stats.today}T12:00:00Z`) + 9 * 86_400_000).toISOString().slice(0, 10);
+    });
+    await popover.getByLabel("Exam date").fill(day);
+    const subject = popover.getByRole("combobox", { name: "Exam subject" });
+    assert.notEqual(await subject.evaluate((node) => getComputedStyle(node).appearance), "auto");
+    await subject.click();
+    await page.getByRole("searchbox", { name: "Search Exam subject" }).fill(`Quick ${stamp}`);
+    await page.getByRole("option", { name: new RegExp(`^Quick ${stamp}`) }).waitFor();
+    await page.getByRole("searchbox", { name: "Search Exam subject" }).press("Enter");
+    await popover.getByRole("textbox", { name: "Add exam" }).press("Enter");
+    const card = page.getByRole("region", { name: "Exam countdowns" }).getByRole("article").filter({ hasText: `Quick exam ${stamp}` });
+    await card.waitFor();
+    assert.match(await card.textContent(), new RegExp(`Quick ${stamp}`));
+    assert.match(await card.textContent(), /9\s*days/);
+    await card.getByRole("button", { name: `Edit exam Quick exam ${stamp}` }).click();
+    const drawer = page.getByRole("dialog", { name: "Edit exam" });
+    await drawer.waitFor();
+    assert.equal(await drawer.locator("select").count(), 0, "the edit drawer uses native selects");
+    assert.equal(await drawer.getByRole("combobox", { name: "Subject" }).textContent().then((text) => text.includes(`Quick ${stamp}`)), true);
+    await drawer.getByRole("button", { name: "Close exam editor" }).click();
+    await drawer.waitFor({ state: "detached" });
+    assert.equal(await page.getByText(/No exam dates are guessed|Select a block to mark it done/).count(), 0);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
 describe("study streak", () => {
   test("manual logging fills persisted streak segments and cancel does not log", async () => {
     const { page, context, problems } = await open("study", { dock: "hidden" });
@@ -908,14 +1033,13 @@ describe("study streak", () => {
     const ring = page.getByRole("region", { name: "Study streak" });
     const before = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
     await ring.getByRole("button").click();
-    const editor = page.getByRole("region", { name: "Edit completed session" });
+    const editor = page.getByRole("dialog", { name: "Log study" });
     await editor.getByRole("button", { name: "Cancel", exact: true }).click();
     assert.equal(await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats.session_count), before.session_count);
     await ring.getByRole("button").click();
-    await editor.getByLabel("Start timestamp with explicit offset").fill(new Date(Date.now() - 20 * 60_000).toISOString());
-    await editor.getByLabel("IANA timezone").fill("UTC");
-    await editor.getByLabel("Duration in minutes").fill("15");
-    await editor.getByRole("button", { name: "Save completed session" }).click();
+    await editor.getByLabel("Started").fill(new Date(Date.now() - 20 * 60_000).toISOString());
+    await editor.getByLabel("Minutes studied").fill("15");
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
     await ring.getByText("Today's study is logged.", { exact: true }).waitFor();
     const saved = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
     assert.equal(saved.session_count, before.session_count + 1);

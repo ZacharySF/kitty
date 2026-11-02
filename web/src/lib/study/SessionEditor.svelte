@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Button } from "@nunera/bracket";
+  import EditDrawer from "../ui/EditDrawer.svelte";
+  import Select from "../ui/Select.svelte";
   import type { Session, Workspace } from "./types";
 
   /** Log or correct a completed study session. */
@@ -24,6 +25,7 @@
   let project = $state(initial ? initial.project_id?.toString() || "" : defaults.projectId);
   let notes = $state(initial?.notes || "");
   let distractions = $state(initial?.distractions || "");
+  const formId = $props.id();
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
@@ -42,23 +44,36 @@
   }
 </script>
 
-<div class="editor panel" role="region" aria-label="Edit completed session">
-  <form onsubmit={save}>
-    <h3>{initial ? "Edit session" : "Log completed session"}</h3>
-    <div class="form-grid">
-      <label>Start timestamp with explicit offset<input required bind:value={start} placeholder="2026-10-14T09:00:00-04:00" /></label>
-      <label>IANA timezone<input required bind:value={zone} /></label>
-      <label>Duration in minutes<input type="number" min="0.016667" max="10080" step="any" required bind:value={minutes} /></label>
-      <label>Subject<select bind:value={subject}><option value="">Unassigned</option>{#each data.subjects as item (item.id)}<option value={item.id.toString()}>{item.name}</option>{/each}</select></label>
-      <label>Project<select bind:value={project}><option value="">None</option>{#each data.projects as item (item.id)}<option value={item.id.toString()}>{item.name}</option>{/each}</select></label>
-      <label>Notes<textarea bind:value={notes}></textarea></label>
-      <label>Distractions<textarea bind:value={distractions}></textarea></label>
-    </div>
-    <p class="muted">
-      Duration means time actually studied, not time away. Editing the start/duration of a paused focus replaces its interval distribution with the manual contiguous interval you enter.
-    </p>
-    <div class="row">
-      <Button type="submit" {disabled}>Save completed session</Button><Button onclick={onclose}>Cancel</Button>
-    </div>
+<EditDrawer title={initial ? "Edit session" : "Log study"} closeLabel="Close session editor" {onclose}
+  accent={data.subjects.find((item) => String(item.id) === subject)?.color ?? ""}>
+  <form id={formId} class="fields" onsubmit={save}>
+    <label class="field">Started<input required bind:value={start} placeholder="2026-10-14T09:00:00-04:00" /></label>
+    <div class="field"><span>Timezone</span><Select kind="timezone" label="Timezone" bind:value={zone} /></div>
+    <label class="field">Minutes studied<input type="number" min="0.016667" max="10080" step="any" required bind:value={minutes} /></label>
+    <div class="field"><span>Subject</span><Select kind="list" label="Subject" options={[{ value: "", label: "Unassigned" }, ...data.subjects.map((item) => ({ value: String(item.id), label: item.name ?? "", color: item.color }))]} bind:value={subject} /></div>
+    <div class="field"><span>Concept</span><Select kind="list" label="Concept" options={[{ value: "", label: "None" }, ...data.projects.map((item) => ({ value: String(item.id), label: item.name ?? "" }))]} bind:value={project} /></div>
+    <label class="field">Notes<textarea rows="3" bind:value={notes}></textarea></label>
+    <label class="field">Distractions<textarea rows="2" bind:value={distractions}></textarea></label>
   </form>
-</div>
+  {#snippet footer()}
+    <button type="button" class="pill" onclick={onclose}>Cancel</button>
+    <button type="submit" class="pill primary" form={formId} {disabled}>Save</button>
+  {/snippet}
+</EditDrawer>
+
+<style>
+  .fields {
+    display: grid;
+    gap: 12px;
+  }
+  .field {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .field :is(input, textarea) {
+    width: 100%;
+    box-sizing: border-box;
+  }
+</style>
