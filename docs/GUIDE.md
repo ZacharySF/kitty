@@ -278,7 +278,7 @@ and its backdrop. Typefaces never change with the theme.
 - **SPEED**, the one light theme: hand-inked on off-white watercolour paper.
   Square paper sheets with an inked edge and a crimson misprint over grey-teal
   washes, teal-green and black ink splatter and drips, a white gothic cathedral,
-  faint gear rings that tick round and a crimson sketched wheel; crimson-magenta
+  faint gear rings that turn slowly and a crimson sketched wheel; crimson-magenta
   for accents and a sketched double focus ring, teal washes for selection, ink-splat
   bullets, crimson checks that stamp on, brush-stroke dividers, a marker swipe
   under page titles, a ticking gear loader and a stalled-gear empty state.

@@ -5,24 +5,12 @@
    * one accent signs the lower left: "rika" in a fast blood-red brush hand whose drips keep
    * running, slowly (Reduce motion stills them). Both sit where pages leave the block bare.
    * Original drawing, nothing traced.
+   *
+   * The rough brush letters are brush.source.svg rendered to WebP by
+   * scripts/render-theme-art.mjs: as a live filter the turbulence re-ran on every frame the
+   * drips ran. The drips stay vector and move.
    */
-  const uid = $props.id();
-  const STROKES = [
-    // r: stem and shoulder
-    "M15 30 C14 40 12 48 10 57",
-    "M13 41 C17 34 23 30 31 31",
-    // i
-    "M43 33 C42 41 40 49 38 57",
-    // k: stem, arm, leg
-    "M60 8 C58 24 55 40 51 57",
-    "M54 42 C61 36 68 31 76 28",
-    "M57 40 C63 46 68 51 75 57",
-    // a: bowl and stem
-    "M104 36 C96 31 86 34 84 45 C83 54 92 58 99 51 C102 47 104 41 104 36",
-    "M104 34 C103 42 103 50 107 57",
-  ];
-  // The long signature stroke flicked out over the k and a.
-  const CROSS = "M64 24 C82 21 110 16 140 12";
+  import brush from "./brush-680.webp";
   const DRIPS = [
     [10, 57, 17, 4.4],
     [38, 57, 9, 3.4],
@@ -67,23 +55,7 @@
 </svg>
 
 <svg class="brush" viewBox="0 0 150 120" aria-hidden="true" data-ornament>
-  <defs>
-    <filter id="{uid}-rough" x="-10%" y="-10%" width="120%" height="120%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="4" result="noise" />
-      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.6" />
-    </filter>
-  </defs>
-  <g filter="url(#{uid}-rough)" fill="none" stroke="#d90d1a" stroke-linecap="round" stroke-linejoin="round">
-    <g stroke-width="2.6" opacity="0.5" transform="translate(3 -2)">
-      {#each STROKES as d (d)}<path {d} />{/each}
-    </g>
-    <g stroke-width="8.6">
-      {#each STROKES as d (d)}<path {d} />{/each}
-    </g>
-    <path d={CROSS} stroke-width="6" />
-    <path d="M70 24 C90 21 114 17 136 14" stroke-width="1.4" opacity="0.6" transform="translate(0 3)" />
-    <circle cx="46" cy="22" r="4.8" fill="#d90d1a" stroke="none" />
-  </g>
+  <image href={brush} x="-10" y="-10" width="170" height="140" />
   <g fill="#d90d1a">
     {#each DRIPS as [x, y, length, width], index (index)}
       <path

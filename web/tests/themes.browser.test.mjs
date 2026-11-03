@@ -3,15 +3,17 @@
 // contrast of text and of selected and pressed controls over the theme's brightest backdrop
 // pixel, that the theme's surface style really applies, and the focus ornament; then that
 // Reduce motion (setting and OS) stops theme motion and that switching themes swaps the
-// motif layer without a reload.
-// Run from web/ with Node >=22 and a matching Playwright Chromium:
+// motif layer without a reload. Last, every theme's frame rate and scrolling stay within
+// Kitty's budget measured in the same run, and SPEED's painted art renders in WebKit (the
+// desktop app's engine; skipped when Playwright has no WebKit).
+// Run from web/ with Node >=22 and a matching Playwright Chromium (and WebKit):
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
 // PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/themes.browser.test.mjs
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 import { THEMES } from "../src/lib/themes/catalog.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -34,8 +36,8 @@ after(async () => {
 });
 
 /** Opens the harness on `theme` (saved before the first load, as a returning user). */
-async function harness(theme, { reducedMotion = "no-preference", appearance } = {}) {
-  const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion });
+async function harness(theme, { reducedMotion = "no-preference", appearance, query = "", engine = browser } = {}) {
+  const context = await engine.newContext({ viewport: VIEWPORT, reducedMotion });
   await context.addInitScript(
     ([id, look]) => {
       localStorage.setItem("kitty.theme", id);
@@ -47,7 +49,7 @@ async function harness(theme, { reducedMotion = "no-preference", appearance } = 
   page.setDefaultTimeout(10_000);
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
-  await page.goto(new URL("tests/theme-harness.html", base).href, { timeout: 60_000 });
+  await page.goto(new URL(`tests/theme-harness.html${query}`, base).href, { timeout: 60_000 });
   await page.waitForFunction(() => !!window.themeHarness, null, { timeout: 60_000 });
   await settled(page, theme);
   return { page, problems, context };
@@ -61,9 +63,10 @@ async function settled(page, id) {
       (hasModule ? document.documentElement.dataset.themeMotif === theme : !document.documentElement.dataset.themeMotif),
     [id, MODULES.includes(id)],
   );
-  // Fonts and the lazily loaded motif stylesheet settle before measuring.
+  // Fonts, the lazily loaded motif stylesheet and the art's rendered images settle before measuring.
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(150);
+  await page.evaluate(() => Promise.all([...document.querySelectorAll(".theme-art img")].map((image) => image.decode().catch(() => {}))));
 }
 
 async function switchTheme(page, id) {
@@ -502,4 +505,123 @@ describe("pretti, BloodLuxe and half blood own their motif layers", () => {
       await context.close();
     });
   }
+});
+
+describe("every theme paints within Kitty's budget, measured in the same run", () => {
+  /** Frames per second over `span` ms of animation-frame callbacks. */
+  const frameRate = (page, span) =>
+    page.evaluate(
+      (ms) =>
+        new Promise((resolve) => {
+          let start = 0;
+          let frames = 0;
+          const tick = (now) => {
+            if (start) frames++;
+            else start = now;
+            if (now - start < ms) requestAnimationFrame(tick);
+            else resolve((frames * 1000) / (now - start));
+          };
+          requestAnimationFrame(tick);
+        }),
+      span,
+    );
+
+  /** Idle frame rate over 2 s, then frame rate and the longest main-thread task while a long list scrolls. */
+  async function measure(id) {
+    const { page, problems, context } = await harness(id, { query: "?long" });
+    const list = page.locator("[data-long-list]");
+    await list.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
+    const idle = await frameRate(page, 2000);
+    await list.evaluate((node) => {
+      window.__longest = 0;
+      window.__scrolled = 0;
+      new PerformanceObserver((entries) => {
+        for (const entry of entries.getEntries()) window.__longest = Math.max(window.__longest, entry.duration);
+      }).observe({ type: "longtask" });
+      node.addEventListener("scroll", () => (window.__scrolled = Math.max(window.__scrolled, node.scrollTop)), { passive: true });
+    });
+    const box = await list.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const scrolling = frameRate(page, 1500);
+    for (let step = 0; step < 24; step++) {
+      await page.mouse.wheel(0, step < 12 ? 240 : -240);
+      await page.waitForTimeout(50);
+    }
+    const scroll = await scrolling;
+    await page.waitForTimeout(200);
+    const { longest, scrolled } = await page.evaluate(() => ({ longest: window.__longest, scrolled: window.__scrolled }));
+    await context.close();
+    return { idle, scroll, longest, scrolled, problems };
+  }
+  // Relative budgets: a theme may cost up to 1.5× Kitty's frame time; a long task fails past
+  // 100 ms, or past 1.5× Kitty's own when the machine is slow enough that Kitty has them too.
+  const within = (theme, kitty) =>
+    theme.idle >= kitty.idle / 1.5 && theme.scroll >= kitty.scroll / 1.5 && theme.longest <= Math.max(100, kitty.longest * 1.5);
+  const show = (run) => `idle ${run.idle.toFixed(0)} fps, scrolling ${run.scroll.toFixed(0)} fps, longest task ${run.longest.toFixed(0)} ms`;
+
+  let kitty;
+  before(async () => {
+    kitty = await measure("kitty");
+  });
+
+  for (const theme of THEMES.filter((entry) => entry.id !== "kitty")) {
+    test(`${theme.label}: idle and scrolling frame rates within 1.5× Kitty's frame time, no long task while a list scrolls`, async () => {
+      let run = await measure(theme.id);
+      // One retry against a fresh baseline, so a load spike on a shared machine is not a failure.
+      if (!within(run, kitty)) {
+        kitty = await measure("kitty");
+        run = await measure(theme.id);
+      }
+      assert.ok(kitty.scrolled > 0 && run.scrolled > 0, "the wheel scrolled the long list");
+      assert.ok(within(run, kitty), `${theme.label}: ${show(run)}; Kitty: ${show(kitty)}`);
+      assert.deepEqual(run.problems, []);
+    });
+  }
+});
+
+describe("SPEED's painted art renders in WebKit, the desktop app's engine", () => {
+  test("the paper decodes and its washes, ink and crimson wheel show", async (t) => {
+    let engine;
+    try {
+      engine = await webkit.launch();
+    } catch (error) {
+      t.skip(`no Playwright WebKit here: ${error.message.split("\n")[0]}`);
+      return;
+    }
+    try {
+      const { page, problems, context } = await harness("speed", { engine });
+      const paper = await page.evaluate(() => {
+        const image = document.querySelector('[data-theme-art="speed"] img.paper');
+        return { width: image?.naturalWidth ?? 0, source: image?.currentSrc ?? "" };
+      });
+      assert.ok(paper.width > 0 && /paper-\d+.*\.webp/.test(paper.source), `the painted paper decoded (${JSON.stringify(paper)})`);
+      await page.evaluate(() => (document.getElementById("specimen").style.opacity = "0"));
+      const shot = (await page.screenshot()).toString("base64");
+      const counts = await page.evaluate(async (data) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${data}`;
+        await image.decode();
+        const canvas = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height });
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0);
+        const { data: pixels } = context.getImageData(0, 0, image.width, image.height);
+        const seen = { ink: 0, teal: 0, crimson: 0 };
+        for (let index = 0; index < pixels.length; index += 4) {
+          const [r, g, b] = [pixels[index], pixels[index + 1], pixels[index + 2]];
+          if (r < 70 && g < 70 && b < 70) seen.ink++;
+          else if (g - r > 40 && g > b) seen.teal++;
+          else if (r - g > 60 && r - b > 30) seen.crimson++;
+        }
+        return seen;
+      }, shot);
+      assert.ok(counts.ink > 2000, `black ink pools and drips (${counts.ink} px)`);
+      assert.ok(counts.teal > 2000, `teal washes (${counts.teal} px)`);
+      assert.ok(counts.crimson > 300, `the crimson wheel (${counts.crimson} px)`);
+      assert.deepEqual(problems, []);
+      await context.close();
+    } finally {
+      await engine.close();
+    }
+  });
 });
