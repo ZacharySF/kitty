@@ -23,6 +23,8 @@
     "d3-force-3d": "^3.0.6",
     "d3-selection": "^3.0.0",
     "d3-zoom": "^3.0.0",
+    "katex": "^0.19.1",
+    "mathlive": "^0.111.4",
     "three": "^0.186.1"
   },
   "devDependencies": {

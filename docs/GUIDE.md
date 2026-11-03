@@ -551,6 +551,10 @@ export, AI drafts and note types. Review deals the queue as a stacked deck: tap 
 grade's direction (← Again, ↓ Hard, → Good, ↑ Easy). Below the pile a keyboard strip
 shows keycaps 1–4 with each next interval and Space (flip, then Good); they sink as
 you press them.
+Math on a face renders with KaTeX: `\( … \)` and `$…$` inline, `\[ … \]` and
+`$$…$$` as a display line, so imported Anki math decks read as typeset math. A lone
+`$` before a digit or a space stays text, so "$5 and $10" is not read as math. KaTeX
+(MIT) and its fonts are bundled; nothing is fetched from a CDN.
 **Stats** shows memory statistics for the selected scope: today's queue (learning,
 review and new, with suspended, leech and buried cards and a time estimate), a
 30-day due forecast with overdue cards in today, FSRS forgetting curves for weak,
@@ -586,6 +590,48 @@ steps, sound and desktop-notification switches and the time zone, each saved as
 you change it and applied from the next phase. The tabs are Session, Progress,
 Exams & plans, Mind map and Tools (History and Helpers). Unsaved notes or a failed
 save show as a dot on the workspace tab.
+
+**Math** (Study group) opens focus-first like Study: one centred problem, lesson or
+sprint, chosen by **Practice · Sprint · Lessons**. **Practice** shows the one next
+thing, with why: a due topic review (a fresh generated problem) or the next lesson.
+The **Topics** edge on the left (press **[**) slides in the topic graph:
+prerequisites sit above what they unlock, and each topic is coloured locked (dashed,
+padlock), ready (outlined), learning (filled to its progress) or mastered (filled,
+ticked); a mastered topic whose spaced review is due wears an amber ring, and the
+edge counts them. Click or press Enter on a topic for why it is open or locked
+("Locked until you master Bayes' rule"), its next review, what it needs and
+unlocks, and **Start the lesson** or **Review**. **History** and **Settings** share
+the right edge (press **]**): History shows the sprint trend at the current length
+and format, the daily sprint streak and recent runs; Settings sets the sprint format
+(typed or multiple choice), its length (30 s to 10 min; Zetamac's 120 s by default),
+the operations (+ (2–100) + (2–100), − reversed +, × (2–12) × (2–100), ÷
+reversed ×) and **Start a Study focus cycle on Math when I practise**. The mode,
+drawers and settings are remembered.
+**Sprint** puts the problem large inside a countdown ring. Typed: the answer is
+taken the instant it is right, with no Enter, and the score is the number right.
+Multiple choice: four options on keys 1–4, +1 right, −1 wrong. When the time is up
+the run is saved and the results card shows the score, the rate per minute, the
+best and the trend line; **R** restarts. **Stop** abandons a run without saving it.
+Problems come from the backend; answers are checked in the browser, so the next
+problem appears at once.
+A **lesson** runs **Example · Guided · Solo**: a worked example, then the same kind
+of problem with the step you fill highlighted and the later ones faded, then 3–8
+problems on your own. Three misses in a row end it early. Guided blanks never count
+toward mastery; graded solo answers and reviews do.
+**Answers**: numbers and fractions are plain text with a live echo ("3/7 ≈
+0.4286", "0.43 · 2 s.f."); fractions compare exactly. Algebra goes in a MathLive
+field (MIT; its sounds and the KaTeX fonts are bundled) and is checked by SymPy on
+your computer. Each check adds a feedback line: correct, a named common mistake,
+not equivalent, or "Couldn't decide" (nothing is marked). Only the first decided
+answer is graded; you can retry until it is right or the answer is shown after the
+third miss. After a wrong answer, **Explain my mistake** takes your working and
+sends it through the reviewed AI flow: you see the model, the maximum cost and the
+exact text, approve, and the explanation appears as a bubble. It points at the
+first faulty step and never gives the answer; the checker still grades.
+Launchers: Ctrl K **Mental math sprint** and **Next math lesson**, and the home **Up
+next** rows **Math: next lesson** (or **Math: review due**) and, on a day without a
+sprint yet, the sprint-streak nudge. While a Study cycle runs, the Math header shows
+its phase, subject and time ("Focus · Math · 18:02").
 
 **Mind maps** have one editor, reached from Notes → **Map** (the page's own map),
 Study → **Mind map** and the **Mind maps** view; Ctrl K finds any map by its title and
