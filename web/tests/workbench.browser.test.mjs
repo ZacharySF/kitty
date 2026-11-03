@@ -3370,3 +3370,31 @@ describe("Google calendar conflicts", () => {
     await context.close();
   });
 });
+
+describe("agent skills against the demo's synthetic catalogue", () => {
+  test("All agent skills sits under Plan; turning omp on lists its skills and the drawer's cards show what each uses now", async () => {
+    const { page, problems, context } = await open("settings");
+    await page.getByRole("region", { name: "Rika" }).waitFor();
+    await page.keyboard.press("Control+k");
+    const search = page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox");
+    await search.fill("All agent skills");
+    await search.press("Enter");
+    await page.waitForFunction(() => location.hash === "#agent-skills");
+    const view = page.getByRole("region", { name: "All agent skills" });
+    const toggle = view.getByRole("switch", { name: "Show omp skills and activity" });
+    if ((await toggle.getAttribute("aria-checked")) === "false") await toggle.click();
+    const skills = view.getByRole("region", { name: "omp agent skills" });
+    await skills.locator('[data-skill="lavish"]').waitFor();
+    // The demo reads no file on this machine: every path is the synthetic home's.
+    for (const button of await skills.getByRole("button", { name: /^Copy the path/ }).all())
+      assert.match(await button.getAttribute("title"), /^\/home\/demo\//);
+    assert.equal(await skills.getByRole("button", { name: /^Open / }).count(), 0, "a website offers Open file");
+    await page.getByRole("group", { name: "Running agents" }).getByRole("button", { name: /\d+ agents/ }).click();
+    const section = page.getByRole("dialog", { name: "Rika history" }).getByRole("region", { name: "Agents" });
+    const card = section.getByRole("article").filter({ hasText: "Refactor the PDF parser" });
+    assert.equal(await card.locator("[data-now]").innerText(), "now: no-mistakes · bash");
+    assert.match(await card.getByRole("button", { name: /agent skills, \d+$/ }).innerText(), /Skills\s*5/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

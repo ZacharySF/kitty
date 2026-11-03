@@ -92,14 +92,22 @@ def get(app, conn, path, query):
 def post(app, conn, path, body):
     if path == "/api/terminal/agents":
         kind = body.get("kind", "omp")
-        if set(body) - {"kind"} or not isinstance(kind, str) or kind not in CODING_AGENTS:
+        off = body.get("skills_off", [])
+        if set(body) - {"kind", "skills_off"} or not isinstance(kind, str) or kind not in CODING_AGENTS:
             raise _error(400, "Choose a supported coding agent")
+        if not isinstance(off, list) or len(off) > 500 or not all(isinstance(name, str) for name in off):
+            raise _error(400, "skills_off lists the names of skills to switch off")
         try:
-            return app.terminal.runtime.start_agent(kind, app.settings.root)
+            extra, notice = app.agent_skills.launch(kind, off)
+        except ValueError as exc:
+            raise _error(400, str(exc)) from None
+        try:
+            started = app.terminal.runtime.start_agent(kind, app.settings.root, extra)
         except TerminalNotRunning as exc:
             raise _error(409, str(exc)) from None
         except TerminalUnavailable as exc:
             raise _error(503, str(exc)) from None
+        return {**started, "notice": notice} if notice else started
     if path == "/api/terminal/focus":
         pane = body.get("pane")
         if set(body) != {"pane"} or not isinstance(pane, str):

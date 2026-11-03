@@ -2,8 +2,10 @@
 rika!'s herdr session, surfaced through Tern windows, plus coding agents a Tern pane runs.
 
 An agent is ``{id, kind, name, status: working|blocked|idle|done, task, line, since,
-where: {herdr_pane} | {tern_pane}}``; ``id`` is ``herdr:<pane>`` or ``tern:<block>``
-and ``since`` is epoch ms its status began.
+where: {herdr_pane} | {tern_pane}, now}``; ``id`` is ``herdr:<pane>`` or ``tern:<block>``
+and ``since`` is epoch ms its status began. ``now`` is what it is using now
+(kitty.web_agent_skills: ``{skill, tool, intent, via, label}``), or None while
+"Show agent skills and activity" is off for its kind.
 
 Starting one (after the user approved it) runs herdr headless when no page has
 attached it (the herdr dock is gone), starts the agent through
@@ -89,13 +91,22 @@ class Agents:
     def _tern(self):
         return getattr(self.app, "tern", None)
 
+    @property
+    def _skills(self):
+        return getattr(self.app, "agent_skills", None)
+
     # Listing ------------------------------------------------------------------
 
     def list(self) -> list[dict[str, Any]]:
         if self.app.settings.demo:
             with self._lock:
-                return [dict(agent) for agent in self._demo]
+                agents = [dict(agent) for agent in self._demo]
+            return [{**agent, "now": self._now(agent, {})} for agent in agents]
         return [*self._herdr_agents(), *self._tern_agents()]
+
+    def _now(self, agent: dict[str, Any], signals: dict[str, Any]) -> dict[str, Any] | None:
+        skills = self._skills
+        return skills.now({"id": agent["id"], "kind": agent["kind"], **signals}) if skills is not None else None
 
     def _herdr_agents(self) -> list[dict[str, Any]]:
         from kitty.core.terminal import TerminalUnavailable
@@ -103,14 +114,18 @@ class Agents:
         if self._herdr is None:
             return []
         try:
-            activity = self._herdr.activity()
+            activity = self._herdr.activity(signals=True)
         except TerminalUnavailable:
             return []
-        return [{"id": f"herdr:{card['pane']}", "kind": card.get("kind") or card["name"].split("-")[0],
-                 "name": card["name"], "status": card["status"] if card["status"] in STATUSES else "idle",
-                 "task": card["task"] or self._briefs.get(card["pane"], "").split("\n")[0][:200],
-                 "line": card["line"], "since": card["since"], "where": {"herdr_pane": card["pane"]}}
-                for space in activity["workspaces"] for card in space["agents"]]
+        found = []
+        for space in activity["workspaces"]:
+            for card in space["agents"]:
+                agent = {"id": f"herdr:{card['pane']}", "kind": card.get("kind") or card["name"].split("-")[0],
+                         "name": card["name"], "status": card["status"] if card["status"] in STATUSES else "idle",
+                         "task": card["task"] or self._briefs.get(card["pane"], "").split("\n")[0][:200],
+                         "line": card["line"], "since": card["since"], "where": {"herdr_pane": card["pane"]}}
+                found.append({**agent, "now": self._now(agent, card.get("signals") or {})})
+        return found
 
     def _tern_agents(self) -> list[dict[str, Any]]:
         from kitty.core.tern import TernUnavailable
@@ -132,38 +147,45 @@ class Agents:
                     previous = self._tern_states.get(block["id"])
                     since = previous[1] if previous and previous[0] == state else now
                     seen[block["id"]] = (state, since)
-                    found.append({"id": f"tern:{block['id']}", "kind": kind, "name": block["title"] or kind,
-                                  "status": state, "task": block["title"], "line": "", "since": since,
-                                  "where": {"tern_pane": block["id"]}})
+                    agent = {"id": f"tern:{block['id']}", "kind": kind, "name": block["title"] or kind,
+                             "status": state, "task": block["title"], "line": "", "since": since,
+                             "where": {"tern_pane": block["id"]}}
+                    found.append({**agent, "now": self._now(agent, {"cwd": block.get("cwd")})})
         self._tern_states = seen
         return found
 
     # Starting -----------------------------------------------------------------
 
-    def start(self, kind: str, task: str, cwd: Path) -> dict[str, Any]:
-        """Start an approved worker agent and hand it the task brief."""
+    def start(self, kind: str, task: str, cwd: Path, skills_off: tuple[str, ...] | list[str] = ()) -> dict[str, Any]:
+        """Start an approved worker agent and hand it the task brief. ``skills_off`` are
+        the agent skills switched off for this launch only."""
         from kitty.core.terminal import TerminalUnavailable
 
         if kind not in CODING_AGENTS:
             raise AgentError("Choose omp, claude or codex")
+        try:
+            extra = self._skills.launch(kind, list(skills_off))[0] if self._skills is not None else []
+        except ValueError as exc:
+            raise AgentError(str(exc)) from None
         if self.app.settings.demo:
             with self._lock:
                 pane = f"demo:w1:p{len(self._demo) + 2}"
                 agent = {"id": f"herdr:{pane}", "kind": kind, "name": f"{kind} · {task[:24]}", "status": "working",
                          "task": task[:200], "line": "Reading the brief", "since": _now_ms(), "where": {"herdr_pane": pane}}
                 self._demo.append(agent)
-            return dict(agent)
+            return {**agent, "now": self._now(agent, {})}
         if self._herdr is None:
             raise AgentError("Worker agents need the Terminal module")
         try:
             self._herdr.serve(cwd)
-            started = self._herdr.start_agent(kind, cwd)
+            started = self._herdr.start_agent(kind, cwd, extra)
             self._herdr.prompt(started["pane"], brief(task, cwd))
         except TerminalUnavailable as exc:
             raise AgentError(str(exc)) from None
         self._briefs[started["pane"]] = task
-        return {"id": f"herdr:{started['pane']}", "kind": kind, "name": started["name"], "status": "working",
-                "task": task[:200], "line": "", "since": _now_ms(), "where": {"herdr_pane": started["pane"]}}
+        agent = {"id": f"herdr:{started['pane']}", "kind": kind, "name": started["name"], "status": "working",
+                 "task": task[:200], "line": "", "since": _now_ms(), "where": {"herdr_pane": started["pane"]}}
+        return {**agent, "now": self._now(agent, {"pane": started["pane"]})}
 
     # Opening ------------------------------------------------------------------
 

@@ -7,7 +7,9 @@ GET  /api/rika/history[?before=<created_at>]  ->  {items, has_more, next_before}
     Messages, actions and approvals, oldest first (shapes in kitty.core.rika.store).
 POST /api/rika/approvals/<id> {decision: approve|reject}  ->  {approval}
 POST /api/rika/actions/<id>/undo {}  ->  {action}
-GET  /api/rika/agents  ->  {agents: [{id, kind, name, status, task, line, since, where}]}
+GET  /api/rika/agents  ->  {agents: [{id, kind, name, status, task, line, since, where, now}]}
+    ``now`` is what the agent uses now (kitty.web_agent_skills), or null while agent
+    skills are off for its kind.
 POST /api/rika/agents/<id>/open {}  ->  {ok, window, view}
     Focuses the agent's pane in a Tern window; ``view`` asks the page to open a view
     instead (the herdr view when Tern is not installed).

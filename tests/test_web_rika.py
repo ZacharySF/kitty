@@ -104,7 +104,9 @@ def test_starting_an_agent_waits_for_approval_then_joins_the_scripted_roster(dem
     status, roster = demo.request("/api/rika/agents")
     assert status == 200 and len(roster["agents"]) == 5
     assert {agent["status"] for agent in roster["agents"]} == {"working", "blocked", "idle", "done"}
-    assert all(set(agent) == {"id", "kind", "name", "status", "task", "line", "since", "where"} for agent in roster["agents"])
+    assert all(set(agent) == {"id", "kind", "name", "status", "task", "line", "since", "where", "now"} for agent in roster["agents"])
+    # Agent skills are off by default: no agent's now state is read.
+    assert all(agent["now"] is None for agent in roster["agents"])
     demo.request("/api/rika/messages", {"text": "start omp to tidy the fixtures"})
     approval = stream.until(lambda event: event["type"] == "approval")[-1]["approval"]
     assert approval["tool"] == "start_worker" and "tidy the fixtures" in approval["detail"]

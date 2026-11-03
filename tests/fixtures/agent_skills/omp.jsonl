@@ -1,0 +1,8 @@
+{"type": "session", "version": 3, "id": "s1", "cwd": "/work"}
+{"type": "custom", "customType": "tool_execution_start", "data": {"toolCallId": "t1", "toolName": "read", "startedAt": "2026-11-01T10:00:00Z", "args": {"path": "skill://lavish"}, "intent": "Reading the lavish skill"}}
+{"type": "message", "message": {"role": "toolResult", "content": [{"type": "text", "text": "secret file body"}]}}
+{"type": "custom", "customType": "system-prompt-digest", "data": "abc"}
+not json at all
+{"type": "message", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "private reasoning"}, {"type": "toolCall", "id": "t2", "name": "edit", "arguments": {"path": "web/src/App.svelte", "i": "x"}, "intent": "Editing the app shell"}]}}
+{"type": "custom", "customType": "tool_execution_start", "data": {"toolCallId": "t3", "toolName": "bash", "startedAt": "2026-11-01T10:00:05Z", "args": {"command": "npm test"}, "intent": "Running the unit tests in the web folder, which takes a while because the suite compiles every Svelte component first and then the browser checks"}}
+{"type": "model_usage", "usage": {"input": 1}}
