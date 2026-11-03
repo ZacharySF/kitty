@@ -38,6 +38,7 @@ async function newPage(title) {
 
 async function open(number) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  await kitty.authorize(context);
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
   const problems = [];

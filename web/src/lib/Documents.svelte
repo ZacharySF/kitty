@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Popover } from '@nunera/bracket';
-  import { api, type TaskRecord } from './api';
+  import { api, apiFetch, followApiLink, type TaskRecord } from './api';
   import DocumentImport from './DocumentImport.svelte';
   import Icon from './Icon.svelte';
   import RichDocumentEditor from './RichDocumentEditor.svelte';
@@ -107,7 +107,7 @@
     if ((!id || dirty) && !(await save())) return;
     busy = true; error = '';
     try {
-      const response = await fetch(`/api/documents/${id}/pdf`, {cache: 'no-store'});
+      const response = await apiFetch(`/documents/${id}/pdf`, {cache: 'no-store'});
       if (!response.ok) {const problem = await response.json(); throw new Error(problem.error || 'PDF export failed');}
       const blob = await response.blob(), url = URL.createObjectURL(blob), link = document.createElement('a');
       link.href = url; link.download = (title.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '').slice(0, 100) || 'document') + '.pdf'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
@@ -249,7 +249,7 @@
     <p class="hint">Keyword matching only; no AI or network. Folder searches include subfolders; root searches all local notes.</p>
     {#each matches as item}<article><button type="button" onclick={() => openNote(item.page_id)}>{item.title}</button><p>{item.snippet}</p><small>{item.terms.join(' · ')}</small></article>{/each}
   </details>
-  <details class="import"><summary>Import files, Markdown folders, or clipboard content</summary><DocumentImport notebookId={destination ? Number(destination) : undefined} documentId={id} documentRevision={revision} onbeforeimport={beforeImport} ondocumentimport={imported} onimportstate={value => busy = value}/>{#each originals as original}<p><a href={`/api/documents/originals/${original.id}`} download>Retained original: {original.name}</a></p>{/each}{#if !id}<p class="hint">Save this document first to append imported content directly to it.</p>{/if}</details>
+  <details class="import"><summary>Import files, Markdown folders, or clipboard content</summary><DocumentImport notebookId={destination ? Number(destination) : undefined} documentId={id} documentRevision={revision} onbeforeimport={beforeImport} ondocumentimport={imported} onimportstate={value => busy = value}/>{#each originals as original}<p><a href={`/api/documents/originals/${original.id}`} download onclick={followApiLink}>Retained original: {original.name}</a></p>{/each}{#if !id}<p class="hint">Save this document first to append imported content directly to it.</p>{/if}</details>
 </div>
 
 <style>

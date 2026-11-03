@@ -113,6 +113,11 @@ def test_the_pairing_ui_routes_keep_the_browser_guard(running):
     status, _, _ = call(running, "POST", "/api/clients/approve", {"id": waiting["id"]},
                         origin="https://attacker.example", headers={"X-Kitty-Request": "1"})
     assert status == 403
+    # Nor with every page header forged exactly: only kitty's own window has the UI secret.
+    status, body, headers = call(running, "POST", "/api/clients/approve", {"id": waiting["id"]},
+                                 origin=running.server.origin, headers={"X-Kitty-Request": "1"})
+    assert status == 401 and headers["www-authenticate"].startswith("Kitty")
+    assert running.server.ui_auth.secret not in json.dumps(body)
     assert running.request("/api/clients")[1]["requests"][0]["id"] == waiting["id"]
 
 

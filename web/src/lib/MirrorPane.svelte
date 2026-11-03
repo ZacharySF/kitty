@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { safeUrl } from "./api";
+  import { apiObjectUrl, safeUrl } from "./api";
   import { age, imageUrl, paragraphs, type Mirror } from "./mirror";
   import { followMirrors, mirrors } from "./mirrorStore.svelte";
 
@@ -23,6 +23,19 @@
   const parts = $derived(current ? paragraphs(current.text) : []);
   const host = $derived.by(() => { try { return current ? new URL(current.url).host : ""; } catch { return ""; } });
   const retention = $derived(mirrors.retention);
+  const shotPath = $derived(current ? imageUrl(current) : null);
+  /** The screenshot as an object URL: an <img> cannot carry the UI secret's header. */
+  let shot = $state<string | null>(null);
+  $effect(() => {
+    const path = shotPath;
+    if (!path) { shot = null; return; }
+    let done = false, made: string | null = null;
+    apiObjectUrl(path.slice("/api".length)).then(
+      (url) => { if (done) URL.revokeObjectURL(url); else shot = made = url; },
+      () => { if (!done) shot = null; },
+    );
+    return () => { done = true; if (made) URL.revokeObjectURL(made); };
+  });
 
   onMount(() => {
     followMirrors();
@@ -79,8 +92,8 @@
       {:else}<strong class="title">{current.title}</strong>{/if}
       <small>{host} · {current.client.name} · updated {age(current.at, now)}</small>
     </div>
-    {#if imageUrl(current)}
-      <img class="shot" src={imageUrl(current)} alt={`Screenshot of ${current.title}`} width={current.image?.width} height={current.image?.height} />
+    {#if shot}
+      <img class="shot" src={shot} alt={`Screenshot of ${current.title}`} width={current.image?.width} height={current.image?.height} />
     {/if}
     {#if current.selection}
       <section class="selection" aria-label="Selected in the browser">

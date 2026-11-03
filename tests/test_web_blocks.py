@@ -18,7 +18,7 @@ class Client:
     def __init__(self, running):
         status, body = running.request("/api/live/session", {})
         assert status == 200 and body["socket"] == SOCKET, body
-        status, _headers, self.connection, rest = websocket(running.port, f"{SOCKET}?token={body['token']}", {})
+        status, _headers, self.connection, rest = websocket(running.port, f"{SOCKET}?token={body['token']}", {}, secret=running.secret)
         assert status == 101
         self.reader = FrameReader(self.connection, rest)
         self.hello = self.receive()
@@ -142,18 +142,18 @@ def test_a_reconnecting_window_resumes_after_its_last_sequence(running):
 
 
 def test_the_socket_needs_a_single_use_token_and_is_core(running, tmp_path):
-    status, _headers, connection, _rest = websocket(running.port, SOCKET, {})
+    status, _headers, connection, _rest = websocket(running.port, SOCKET, {}, secret=running.secret)
     connection.close()
     assert status == 403
     status, body = running.request("/api/live/session", {})
     token = body["token"]
-    status, _headers, connection, _rest = websocket(running.port, f"{SOCKET}?token={token}", {})
+    status, _headers, connection, _rest = websocket(running.port, f"{SOCKET}?token={token}", {}, secret=running.secret)
     connection.close()
     assert status == 101
-    status, _headers, connection, _rest = websocket(running.port, f"{SOCKET}?token={token}", {})
+    status, _headers, connection, _rest = websocket(running.port, f"{SOCKET}?token={token}", {}, secret=running.secret)
     connection.close()
     assert status == 403
-    status, _headers, connection, _rest = websocket(running.port, f"{SOCKET}?token={token}", {"Origin": "http://evil.invalid"})
+    status, _headers, connection, _rest = websocket(running.port, f"{SOCKET}?token={token}", {"Origin": "http://evil.invalid"}, secret=running.secret)
     connection.close()
     assert status == 403
     assert running.request("/api/live/session", {}, headers={"X-Kitty-Request": None})[0] == 403

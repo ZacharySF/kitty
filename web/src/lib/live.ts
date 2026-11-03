@@ -3,7 +3,7 @@
 // without polling, and every change to the build file (Q8/Q9) so each window restyles at
 // once. Protocol: src/kitty/web_live.py. The block editor sends its transactions over the
 // same socket with `transact` and receives the server's ack or reject.
-import { api } from "./api";
+import { api, socketProtocols } from "./api";
 import type { Op } from "./blockDoc";
 import type { Reply, TxnMessage } from "./blockSync";
 
@@ -146,9 +146,10 @@ async function connect() {
   connecting = true;
   try {
     const session = await api<{ token: string; socket: string }>("/live/session", {});
+    const protocols = await socketProtocols();
     if (!wanted()) return;
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    const next = new WebSocket(`${scheme}//${location.host}${session.socket}?${new URLSearchParams({ token: session.token })}`);
+    const next = new WebSocket(`${scheme}//${location.host}${session.socket}?${new URLSearchParams({ token: session.token })}`, protocols);
     socket = next;
     ready = false;
     next.onopen = () => { retryDelay = 500; };

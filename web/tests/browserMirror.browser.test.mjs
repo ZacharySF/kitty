@@ -112,6 +112,7 @@ before(async () => {
   // rika!'s own window, in another browser, as on the desktop.
   kittyBrowser = await chromium.launch();
   const kittyContext = await kittyBrowser.newContext({ viewport: { width: 1400, height: 900 } });
+  await kitty.authorize(kittyContext);
   await kittyContext.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })

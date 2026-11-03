@@ -4,7 +4,7 @@
   import NotesLibrary, { type Folder, type Notebook, type PageSummary } from "./NotesLibrary.svelte";
   import CanvasColorMenu from "./CanvasColorMenu.svelte";
   import SectionGraph, { type SectionNode } from "./SectionGraph.svelte";
-  import { api, type TaskRecord } from "./api";
+  import { api, apiFetch, apiObjectUrl, followApiLink, type TaskRecord } from "./api";
   import AIReview from "./AIReview.svelte";
   import NoteReferences from "./NoteReferences.svelte";
   import NoteOutline, { type BlocksResult } from "./NoteOutline.svelte";
@@ -1570,7 +1570,7 @@
         const attachments = [];
         let bytes = 0;
         for (const id of refs) {
-          const response = await fetch(`/api/notes/attachments/${id}`);
+          const response = await apiFetch(`/notes/attachments/${id}`);
           if (!response.ok)
             throw new Error("Reference unavailable; export stopped");
           const blob = await response.blob();
@@ -1861,11 +1861,15 @@
       if (e.kind === "image" && e.attachment && !images.has(e.attachment)) {
         const image = new Image();
         images.set(e.attachment, image);
-        image.onload = () => imageEpoch++;
-        image.onerror = () => {
+        const failed = () => {
           error = "A registered local reference could not load.";
         };
-        image.src = `/api/notes/attachments/${e.attachment}`;
+        // An <img> cannot carry the UI secret's header: load the bytes, then show them.
+        apiObjectUrl(`/notes/attachments/${e.attachment}`).then((url) => {
+          image.onload = () => { URL.revokeObjectURL(url); imageEpoch++; };
+          image.onerror = () => { URL.revokeObjectURL(url); failed(); };
+          image.src = url;
+        }, failed);
       }
     }
   });
@@ -2217,7 +2221,7 @@
     {#if originals.length}
       <div class="drawer-group">
         <span class="eyebrow">Originals</span>
-        {#each originals as original}<a href={`/api/documents/originals/${original.id}`} download>{original.name}</a>{/each}
+        {#each originals as original}<a href={`/api/documents/originals/${original.id}`} download onclick={followApiLink}>{original.name}</a>{/each}
       </div>
     {/if}
   </EditDrawer>

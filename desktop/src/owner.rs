@@ -1,3 +1,30 @@
+use url::Url;
+
+/// The global the web page reads the UI secret from (`web/src/lib/api.ts`).
+pub const SECRET_GLOBAL: &str = "__KITTY_UI_SECRET__";
+
+/// The sidecar's one readiness line, `{"origin", "secret"}` and nothing else: its origin
+/// (checked by the caller) and this launch's 256-bit UI secret as 64 lowercase hex digits.
+pub fn readiness(line: &str) -> Option<(String, String)> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let object = value.as_object()?;
+    if object.len() != 2 { return None; }
+    let origin = object.get("origin")?.as_str()?;
+    let secret = object.get("secret")?.as_str()?;
+    let hex = secret.len() == 64 && secret.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    hex.then(|| (origin.to_string(), secret.to_string()))
+}
+
+/// The initialisation script that hands the UI secret to one rika! window. Tauri runs it
+/// only on the main frame (never the LearnHarness frame) before page scripts, on every
+/// top-level navigation, so it also checks the page is on the server's exact origin.
+pub fn window_script(origin: &Url, secret: &str) -> String {
+    let origin = serde_json::Value::String(origin.origin().ascii_serialization());
+    let secret = serde_json::Value::String(secret.to_string());
+    format!("if (window.location.origin === {origin}) Object.defineProperty(window, {global}, {{ value: {secret} }});",
+            global = serde_json::Value::String(SECRET_GLOBAL.into()))
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     CheckUpdates,
@@ -46,6 +73,7 @@ mod tests {
     #[test]
     fn anything_outside_the_fixed_allowlist_is_ignored() {
         for line in ["", "quit", "\"quit\"", "[\"quit\"]", r#"{"origin":"http://127.0.0.1:1"}"#,
+                     r#"{"origin":"http://127.0.0.1:1","secret":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}"#,
                      r#"{"command":"open-url"}"#, r#"{"command":"QUIT"}"#, r#"{"command":" quit"}"#,
                      r#"{"command":"quit","url":"https://example.invalid"}"#, r#"{"command":["quit"]}"#,
                      r#"{"command":null}"#, "Traceback (most recent call last):"] {
@@ -59,5 +87,40 @@ mod tests {
         assert!(line.ends_with('\n') && !line[..line.len() - 1].contains('\n'));
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value, serde_json::json!({"keep_running": true, "keep_running_available": false}));
+    }
+
+    const SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn readiness_carries_exactly_the_origin_and_a_256_bit_secret() {
+        let line = format!(r#"{{"origin":"http://127.0.0.1:43721","secret":"{SECRET}"}}"#);
+        assert_eq!(readiness(&line), Some(("http://127.0.0.1:43721".into(), SECRET.into())));
+        let short = &SECRET[..63];
+        let upper = SECRET.to_uppercase();
+        for bad in [
+            r#"{"origin":"http://127.0.0.1:43721"}"#.to_string(),
+            format!(r#"{{"secret":"{SECRET}"}}"#),
+            format!(r#"{{"origin":"http://127.0.0.1:43721","secret":"{short}"}}"#),
+            format!(r#"{{"origin":"http://127.0.0.1:43721","secret":"{SECRET}0"}}"#),
+            format!(r#"{{"origin":"http://127.0.0.1:43721","secret":"{upper}"}}"#),
+            format!(r#"{{"origin":"http://127.0.0.1:43721","secret":"{}g"}}"#, &SECRET[..63]),
+            format!(r#"{{"origin":"http://127.0.0.1:43721","secret":"{SECRET}","extra":1}}"#),
+            format!(r#"{{"origin":43721,"secret":"{SECRET}"}}"#),
+            r#"{"origin":"http://127.0.0.1:43721","secret":null}"#.to_string(),
+            "Traceback (most recent call last):".to_string(),
+        ] {
+            assert_eq!(readiness(&bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn window_script_defines_the_secret_only_on_the_exact_origin() {
+        let origin = Url::parse("http://127.0.0.1:43721/").unwrap();
+        let script = window_script(&origin, SECRET);
+        assert_eq!(script, format!(
+            "if (window.location.origin === \"http://127.0.0.1:43721\") Object.defineProperty(window, \"__KITTY_UI_SECRET__\", {{ value: \"{SECRET}\" }});"));
+        // Quotes and script terminators in a value can never escape the string literal.
+        let hostile = window_script(&origin, "\"); alert(1); (\"</script>");
+        assert!(hostile.contains(r#"value: "\"); alert(1); (\"</script>""#), "{hostile}");
     }
 }

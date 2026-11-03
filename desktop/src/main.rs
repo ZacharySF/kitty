@@ -51,6 +51,8 @@ struct Desktop {
     preferences: PathBuf,
     root: PathBuf,
     origin: Url,
+    /// Hands this launch's UI secret to every rika! window (`owner::window_script`).
+    window_script: String,
     next_note: AtomicU64,
 }
 
@@ -130,6 +132,7 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
             .title("rika! quick note").inner_size(380.0, 460.0).min_inner_size(260.0, 220.0)
             .transparent(true).decorations(false).always_on_top(true)
             .initialization_script(TRANSPARENT_MARKER)
+            .initialization_script(state.window_script.as_str())
             .devtools(cfg!(debug_assertions))
             .data_directory(state.root.join(".private/webview"))
             .on_navigation(move |url| {
@@ -152,7 +155,7 @@ fn sidecar(directory: &Path, name: &str, staging: Option<&Path>) -> Option<PathB
         .filter(|path| path.is_file())
 }
 
-fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, mpsc::Receiver<owner::Command>), Box<dyn std::error::Error>> {
+fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc::Receiver<owner::Command>), Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let directory = executable.parent().ok_or("Desktop executable has no directory")?;
     let staging = cfg!(debug_assertions).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
@@ -194,13 +197,14 @@ fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, mpsc::Receive
             return Err(error.into());
         }
     };
-    let message: serde_json::Value = serde_json::from_str(&line)?;
-    let origin = Url::parse(message["origin"].as_str().ok_or("Invalid backend readiness message")?)?;
+    // The readiness line also carries the UI secret; it is never logged or written anywhere.
+    let (origin, secret) = owner::readiness(&line).ok_or("Invalid backend readiness message")?;
+    let origin = Url::parse(&origin)?;
     if !local_url(&origin, &origin) || origin.port().is_none() || origin.path() != "/"
         || origin.query().is_some() || origin.fragment().is_some() {
         return Err("Backend did not bind a private loopback origin".into());
     }
-    Ok((backend, origin, receiver))
+    Ok((backend, origin, secret, receiver))
 }
 
 fn show(app: &tauri::AppHandle) {
@@ -301,7 +305,8 @@ fn main() {
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                 .and_then(|value| value["background"].as_bool()).unwrap_or(false);
             let safe = wants_safe_mode(&std::env::args().collect::<Vec<_>>());
-            let (backend, origin, commands) = start_backend(&root, safe)?;
+            let (backend, origin, secret, commands) = start_backend(&root, safe)?;
+            let window_script = owner::window_script(&origin, &secret);
             let show_item = MenuItem::with_id(app, "show", "Show rika!", true, None::<&str>)?;
             let note_item = MenuItem::with_id(app, "quick-note", "New quick note", true, None::<&str>)?;
             let background_item = CheckMenuItem::with_id(app, "background", "Keep running on close (monitoring / reminders)", true, background, None::<&str>)?;
@@ -321,7 +326,8 @@ fn main() {
                 background_item, background_available,
                 update_item: update,
                 lifecycle: Mutex::new(update_lifecycle::Lifecycle::default()), preferences,
-                root: root.clone(), origin: origin.clone(), next_note: AtomicU64::new(1),
+                root: root.clone(), origin: origin.clone(), window_script: window_script.clone(),
+                next_note: AtomicU64::new(1),
             });
             report_desktop(app.handle());
             let navigation_origin = origin.clone();
@@ -331,6 +337,7 @@ fn main() {
                 .title("rika!").inner_size(1280.0, 850.0).min_inner_size(760.0, 500.0)
                 .transparent(true)
                 .initialization_script(TRANSPARENT_MARKER)
+                .initialization_script(window_script)
                 .devtools(cfg!(debug_assertions))
                 .data_directory(root.join(".private/webview"))
                 .on_navigation(move |url| {

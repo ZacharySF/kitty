@@ -98,7 +98,9 @@ def serve(root: Path, assets: Path, package: str, *, safe: bool = False) -> None
             # Paired programs (Q7) find this random port through the owner-only
             # .private/endpoint.json; it is removed again when serving stops.
             with endpoint_module.published(settings.root, server.origin):
-                send(json.dumps({"origin": server.origin}))
+                # The UI secret travels only on this private pipe: the shell injects it into
+                # rika!'s own windows (docs/platform-design.md, "UI secret").
+                send(json.dumps({"origin": server.origin, "secret": server.ui_auth.secret}))
                 server.serve_forever(poll_interval=0.1)
         finally:
             server.server_close()

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
 import { DOCK, mergePreferences, routeBuild } from "./buildRoutes.mjs";
+import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -36,6 +37,7 @@ const PAPER = {
 };
 
 let backend;
+let secret;
 let server;
 let browser;
 let base;
@@ -58,18 +60,20 @@ before(async () => {
     cwd: repository,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const origin = await new Promise((resolve, reject) => {
+  const { origin, code } = await new Promise((resolve, reject) => {
     let output = "";
     const timer = setTimeout(() => reject(new Error(`demo backend did not start:\n${output}`)), 120_000);
     const read = (chunk) => {
       output += chunk;
-      const match = output.match(/website: (http:\/\/\S+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      const found = announcement(output);
+      if (found) { clearTimeout(timer); resolve(found); }
     };
     backend.stdout.on("data", read);
     backend.stderr.on("data", read);
     backend.once("exit", (code) => { clearTimeout(timer); reject(new Error(`demo backend exited (${code}):\n${output}`)); });
   });
+  // The link's one-time code, spent as a browser tab spends it; pages get the secret as rika!'s windows do.
+  secret = await exchange(origin, code);
   server = await createServer({
     root,
     logLevel: "error",
@@ -106,6 +110,7 @@ after(async () => {
  *  routes or init scripts before the first page load. */
 async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, storage, setup, build } = {}) {
   const context = await browser.newContext({ viewport });
+  await authorize(context, secret);
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
@@ -635,12 +640,12 @@ describe("study guide", () => {
 function seedDeck(page, name, cards) {
   return page.evaluate(async ({ name, cards }) => {
     const post = async (path, body) => {
-      const response = await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) });
+      const response = await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       return data;
     };
-    const overview = await (await fetch("/api/flashcards", { cache: "no-store" })).json();
+    const overview = await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
     const basic = overview.types.find((type) => type.kind === "basic");
     const { deck } = await post("/flashcards/deck", { name, settings: {} });
     for (const [front, back] of cards) await post("/flashcards/note", { deck_id: deck.id, type_id: basic.id, fields: { Front: front, Back: back }, tags: [] });
@@ -712,7 +717,7 @@ describe("flashcard review", () => {
     assert.equal(await top.getAttribute("aria-label"), "Flip card");
     await top.click();
     await stack.getByText(/Lima|Santiago|Sucre|Quito/).waitFor();
-    const latest = () => page.evaluate(async () => (await (await fetch("/api/flashcards/history", { cache: "no-store" })).json()).reviews[0] ?? null);
+    const latest = () => page.evaluate(async () => (await (await fetch("/api/flashcards/history", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).reviews[0] ?? null);
     /** The grade of the next recorded review, once the following card is on the pile. */
     const gradedAfter = async (before, count) => {
       await page.waitForFunction((text) => !document.body.innerText.includes(text), count);
@@ -872,7 +877,7 @@ describe("study focus-first", () => {
     const { page, problems, context } = await open("study", { dock: "hidden" });
     const timer = page.getByRole("region", { name: "Session timer" });
     await timer.waitFor();
-    const settings = () => page.evaluate(async () => (await (await fetch("/api/study")).json()).settings);
+    const settings = () => page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).settings);
     const before = await settings();
     await timer.getByRole("button", { name: "Timer settings" }).click();
     const popover = page.getByRole("dialog", { name: "Timer settings" });
@@ -881,12 +886,12 @@ describe("study focus-first", () => {
     const focus = popover.getByRole("group", { name: "Focus length" });
     assert.equal((await focus.locator("output").textContent()).replace(/\s+/g, " ").trim(), `${Math.round(before.focus_seconds / 60)} min`);
     await focus.getByRole("button", { name: "Longer focus" }).click();
-    await page.waitForFunction(async (seconds) => (await (await fetch("/api/study")).json()).settings.focus_seconds !== seconds, before.focus_seconds);
+    await page.waitForFunction(async (seconds) => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).settings.focus_seconds !== seconds, before.focus_seconds);
     assert.equal((await settings()).focus_seconds % 300, 0, "the stepper does not move in 5-minute steps");
     const sound = popover.getByRole("switch", { name: "Sound at phase end" });
     assert.equal(await sound.getAttribute("aria-checked"), String(before.sound));
     await sound.click();
-    await page.waitForFunction(async (on) => (await (await fetch("/api/study")).json()).settings.sound === on, !before.sound);
+    await page.waitForFunction(async (on) => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).settings.sound === on, !before.sound);
     await page.waitForFunction((on) => document.querySelector('[role="switch"][aria-checked]')?.getAttribute("aria-checked") === String(on), !before.sound);
     assert.equal(await popover.getByRole("switch", { name: "Desktop notifications" }).count(), 1);
     const zone = popover.getByRole("combobox", { name: "Timezone" });
@@ -896,7 +901,7 @@ describe("study focus-first", () => {
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     // Restore the demo's settings for the other tests.
-    await page.evaluate(async (settings) => fetch("/api/study/settings", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(settings) }), before);
+    await page.evaluate(async (settings) => fetch("/api/study/settings", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(settings) }), before);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -910,7 +915,7 @@ describe("study progress", () => {
     // A fixed past Wednesday keeps the week and month deterministic.
     const [major, minor] = await page.evaluate(async (stamp) => {
       const post = async (path, body) => {
-        const response = await fetch(`/api/study/${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) });
+        const response = await fetch(`/api/study/${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) });
         return (await response.json()).item;
       };
       const major = await post("subjects", { name: `Major ${stamp}`, color: "#d05080" });
@@ -958,7 +963,7 @@ describe("study plans", () => {
     const stamp = Date.now();
     await page.evaluate(async (stamp) => {
       const call = async (path, body) => {
-        const response = await fetch(`/api/study${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) } : undefined);
+        const response = await fetch(`/api/study${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) } : { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } });
         const result = await response.json();
         if (!response.ok) throw new Error(`${path}: ${JSON.stringify(result)}`);
         return result;
@@ -1027,7 +1032,7 @@ describe("study exams", () => {
     await page.getByRole("region", { name: "Session timer" }).waitFor();
     const stamp = Date.now();
     await page.evaluate(async (stamp) => {
-      await fetch("/api/study/subjects", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify({ name: `Quick ${stamp}`, color: "#40a080" }) });
+      await fetch("/api/study/subjects", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify({ name: `Quick ${stamp}`, color: "#40a080" }) });
       window.dispatchEvent(new CustomEvent("kitty-study-changed"));
     }, stamp);
     await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Exams & plans", exact: true }).click();
@@ -1037,7 +1042,7 @@ describe("study exams", () => {
     assert.equal(await popover.locator("select, textarea").count(), 0, "the quick-add has a native select or a notes field");
     await popover.getByRole("textbox", { name: "Add exam" }).fill(`Quick exam ${stamp}`);
     const day = await page.evaluate(async () => {
-      const { stats } = await (await fetch("/api/study")).json();
+      const { stats } = await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
       return new Date(Date.parse(`${stats.today}T12:00:00Z`) + 9 * 86_400_000).toISOString().slice(0, 10);
     });
     await popover.getByLabel("Exam date").fill(day);
@@ -1071,17 +1076,17 @@ describe("study streak", () => {
     await page.getByRole("region", { name: "Session timer" }).waitFor();
     await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
     const ring = page.getByRole("region", { name: "Study streak" });
-    const before = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
+    const before = await page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).stats);
     await ring.getByRole("button").click();
     const editor = page.getByRole("dialog", { name: "Log study" });
     await editor.getByRole("button", { name: "Cancel", exact: true }).click();
-    assert.equal(await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats.session_count), before.session_count);
+    assert.equal(await page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).stats.session_count), before.session_count);
     await ring.getByRole("button").click();
     await editor.getByLabel("Started").fill(new Date(Date.now() - 20 * 60_000).toISOString());
     await editor.getByLabel("Minutes studied").fill("15");
     await editor.getByRole("button", { name: "Save", exact: true }).click();
     await ring.getByText("Today's study is logged.", { exact: true }).waitFor();
-    const saved = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
+    const saved = await page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).stats);
     assert.equal(saved.session_count, before.session_count + 1);
     assert.ok(saved.daily_streak >= 1);
     assert.equal(await ring.locator("path.filled").count(), saved.daily_streak);
@@ -1296,7 +1301,7 @@ describe("home widgets", () => {
     const notes = await note.getByRole("listitem").allTextContents();
     assert.equal(notes.length, 3);
     assert.match(notes[0], /fourth thought/);
-    const saved = await page.evaluate(() => fetch("/api/quick-notes").then((r) => r.json()));
+    const saved = await page.evaluate(() => fetch("/api/quick-notes", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } }).then((r) => r.json()));
     assert.ok(saved.notes.some((item) => item.body === "first thought"), "quick note was not saved");
 
     // Job-search and study readouts no longer sit on home.
@@ -1586,7 +1591,7 @@ describe("calendar redesign", () => {
   /** Creates an event through the real API; returns it. */
   const addEvent = (page, body) => page.evaluate(async (event) => {
     const response = await fetch("/api/calendar/events", {
-      method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" },
+      method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
       body: JSON.stringify({ calendar_id: "personal", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...event }),
     });
     return response.json();
@@ -1746,7 +1751,7 @@ describe("calendar redesign", () => {
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     await addEvent(page, { title: "Plan busy 1", start: at(1, 8), end: at(1, 9) });
     await addEvent(page, { title: "Plan busy 2", start: at(1, 9), end: at(1, 10, 30) });
-    await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" },
+    await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
       body: JSON.stringify({ title: "Plan me", priority: "normal", status: "todo" }) }));
     await page.reload();
     const pill = page.getByRole("toolbar", { name: "Calendar range" });
@@ -1812,7 +1817,7 @@ describe("calendar redesign", () => {
     await drawer.waitFor({ state: "detached" });
     const saved = await page.evaluate(async () => {
       const from = new Date(Date.now() - 864e5).toISOString(), to = new Date(Date.now() + 9 * 864e5).toISOString();
-      const snap = await fetch(`/api/calendar?start=${from}&end=${to}&timezone=UTC`).then((r) => r.json());
+      const snap = await fetch(`/api/calendar?start=${from}&end=${to}&timezone=UTC`, { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } }).then((r) => r.json());
       const event = snap.events.find((e) => e.title === "Lunch with Mira" && e.location === "Café Rose");
       if (!event) return null;
       const start = new Date(event.start);
@@ -2691,10 +2696,10 @@ describe("pipeline swimlanes", () => {
     await cell("Quant", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
     // The status history is append-only: the move and its undo are both recorded.
     const jobId = await page.evaluate(async () => {
-      const board = await (await fetch("/api/pipeline")).json();
+      const board = await (await fetch("/api/pipeline", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
       return Object.values(board.columns).flat().find((card) => card.company_name.startsWith("Tidewater")).job_id;
     });
-    const history = await page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()).application.history, jobId);
+    const history = await page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`, { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).application.history, jobId);
     assert.ok(history.some((event) => event.undoes_event_id), "undo did not append a reverting event");
     assert.deepEqual(problems, []);
     await context.close();
@@ -2754,8 +2759,8 @@ describe("flashcard memory stats", () => {
     await seedDeck(page, "Stats deck", [["Sun?", "Star"], ["Moon?", "Satellite"], ["Mars?", "Planet"], ["Io?", "Moon"]]);
     // One card graduates straight to review (Easy), one stays in learning (Again).
     await page.evaluate(async () => {
-      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) })).json();
-      const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === "Stats deck");
+      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) })).json();
+      const deck = (await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).decks.find((item) => item.name === "Stats deck");
       for (const rating of [4, 1]) {
         const { card } = await post("/flashcards/review", { deck_id: deck.id, search: "", mode: "regular" });
         await post("/flashcards/reveal", { token: card.token });
@@ -2850,8 +2855,8 @@ describe("flashcard card browser", () => {
     await views.waitFor();
     await seedDeck(page, "Browser deck", [["Capital of Peru?", "Lima"], ["Capital of Kenya?", "Nairobi"], ["Capital of Japan?", "Tokyo"]]);
     await page.evaluate(async () => {
-      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) })).json();
-      const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === "Browser deck");
+      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) })).json();
+      const deck = (await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).decks.find((item) => item.name === "Browser deck");
       const { card } = await post("/flashcards/review", { deck_id: deck.id, search: "", mode: "regular" });
       await post("/flashcards/reveal", { token: card.token });
       await post("/flashcards/grade", { token: card.token, rating: 4, duration_ms: 5000 });
@@ -2899,8 +2904,8 @@ describe("flashcard card browser", () => {
 
 /** The fronts saved in deck `name`, read back through the API. */
 const deckFronts = (page, name) => page.evaluate(async (name) => {
-  const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === name);
-  return (await (await fetch(`/api/flashcards/fronts?deck_id=${deck.id}`, { cache: "no-store" })).json()).fronts;
+  const deck = (await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).decks.find((item) => item.name === name);
+  return (await (await fetch(`/api/flashcards/fronts?deck_id=${deck.id}`, { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).fronts;
 }, name);
 const focused = (locator) => locator.evaluate((node) => node === document.activeElement);
 
@@ -3309,7 +3314,7 @@ describe("job-search report", () => {
     const { page, problems, context } = await open("reports", { dock: "hidden" });
     const card = page.getByRole("article", { name: "Job-search summary" });
     await card.waitFor();
-    const { summary, sections } = await page.evaluate(async () => (await fetch("/api/reports")).json());
+    const { summary, sections } = await page.evaluate(async () => (await fetch("/api/reports", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json());
     const text = async () => (await card.textContent()).replace(/\s+/g, " ");
     // Week: the weekly total against the target, the streak, an inline sparkline and a next step.
     assert.equal(await card.getByRole("radio", { name: "Week" }).getAttribute("aria-checked"), "true");

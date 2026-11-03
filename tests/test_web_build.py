@@ -22,7 +22,7 @@ class Window:
     def __init__(self, running):
         status, body = running.request("/api/live/session", {})
         assert status == 200 and body["socket"] == SOCKET, body
-        status, _headers, self.connection, rest = websocket(running.port, f"{SOCKET}?token={body['token']}", {})
+        status, _headers, self.connection, rest = websocket(running.port, f"{SOCKET}?token={body['token']}", {}, secret=running.secret)
         assert status == 101
         self.reader = FrameReader(self.connection, rest)
         self.hello = self.receive()

@@ -4,7 +4,7 @@
    * link with a diff before installing, rollback, and the build editor.
    */
   import { Badge, Button, Panel } from "@nunera/bracket";
-  import { api, ApiError, type Problem, type TaskRecord } from "./api";
+  import { api, ApiError, followApiLink, type Problem, type TaskRecord } from "./api";
   import { buildStore, reloadBuild, setPreferences } from "./build.svelte";
   import { describeValue, type HistoryEntry } from "./buildCore";
 
@@ -152,7 +152,7 @@
     </div>
     <div class="links">
       <Button intent="primary" size="sm" onclick={() => (buildStore.editorOpen = true)}>Open build editor</Button>
-      <a class="button" href="/api/build/export" download="kitty-build.json">Export build</a>
+      <a class="button" href="/api/build/export" download="kitty-build.json" onclick={followApiLink}>Export build</a>
       <label class="button file">Import from file<input type="file" accept=".json,application/json" onchange={fromFile} /></label>
     </div>
     <form class="link" onsubmit={fromLink}>

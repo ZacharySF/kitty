@@ -12,6 +12,7 @@ from terminal_support import make_root, site
 from test_web_blocks import Client
 from test_web_clients import EXTENSION, OTHER_EXTENSION, call, pair, preflight
 
+from kitty import web_auth
 from kitty.core import mirror
 
 FRAME = "/api/ingress/mirror/frame"
@@ -52,8 +53,8 @@ def send(running, body, token, origin=EXTENSION, path=FRAME):
 
 
 def page_get(running, path):
-    """A GET as rika!'s own page makes it (an <img> in the Mirror pane)."""
-    return call(running, "GET", path, origin=running.server.origin)
+    """A GET as rika!'s own page makes it (the Mirror pane fetches the image with its secret)."""
+    return call(running, "GET", path, origin=running.server.origin, headers={web_auth.HEADER: running.secret})
 
 
 def ops_count(running) -> int:

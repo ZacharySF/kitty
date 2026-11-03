@@ -1,8 +1,9 @@
 """Minimal RFC 6455 server side shared by rika!'s same-origin WebSocket streams.
 
-The upgrade itself is guarded by ``RequestHandler._upgrade`` (exact Host and Origin);
-each stream additionally demands a single-use token from a header-protected API call,
-because browsers cannot add X-Kitty-Request to an upgrade (``Tokens``).
+The upgrade itself is guarded by ``RequestHandler._upgrade`` (exact Host and Origin, and
+the UI secret as a subprotocol, kitty.web_auth); each stream additionally demands a
+single-use token from a header-protected API call, because browsers cannot add
+X-Kitty-Request to an upgrade (``Tokens``).
 """
 from __future__ import annotations
 
@@ -72,6 +73,10 @@ def accept(handler, key: str) -> None:
     handler.send_header("Upgrade", "websocket")
     handler.send_header("Connection", "Upgrade")
     handler.send_header("Sec-WebSocket-Accept", accept_key(key))
+    # The page offered the UI secret as a subprotocol; the 101 must select one it offered.
+    protocol = getattr(handler, "websocket_protocol", None)
+    if protocol:
+        handler.send_header("Sec-WebSocket-Protocol", protocol)
     handler.end_headers()
     handler.wfile.flush()
     handler.close_connection = True

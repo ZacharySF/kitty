@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from kitty import web_atlas
+from kitty import web_atlas, web_auth
 from kitty.config import load_config
 from kitty.core import applications, backlinks, calendar, jobs, notes, opportunities, schema_maps
 from kitty.core.workspace import open_workspace
@@ -75,7 +75,7 @@ def site(settings: Settings, modules: tuple[str, ...] | None = None):
     worker.start()
 
     def request(path, body=None):
-        headers = {"Origin": server.origin}
+        headers = {"Origin": server.origin, web_auth.HEADER: server.ui_auth.secret}
         payload = None
         method = "GET"
         if body is not None:

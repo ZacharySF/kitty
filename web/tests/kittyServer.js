@@ -26,10 +26,42 @@ function freePort() {
   });
 }
 
+/** The header rika!'s page sends its per-launch UI secret in (src/kitty/web_auth.py). */
+export const SECRET_HEADER = "X-Kitty-Secret";
+
+/** The origin and one-time code in kitty-web's announcement, `website: <origin>/?code=<code>`. */
+export function announcement(output) {
+  const match = /website: (http:\/\/127\.0\.0\.1:\d+)\/\?code=([0-9a-f]{32})/.exec(output);
+  return match ? { origin: match[1], code: match[2] } : null;
+}
+
+/** Trade kitty-web's one-time code for the UI secret, as the page does in browser mode. */
+export async function exchange(origin, code) {
+  const response = await fetch(`${origin}/api/session`, {
+    method: "POST", headers: { Origin: origin, "X-Kitty-Request": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(`The one-time code was refused: ${response.status} ${data.error}`);
+  return data.secret;
+}
+
 /**
- * Start kitty-web; resolves with { origin, root, stop, request } once it serves. Without
- * `root` it is `--demo`; with `root` (a temporary workspace the caller made) it serves that
- * workspace, so a test can edit its files, such as config/build.json, like an outside editor.
+ * Hand every page of a browser context the UI secret the way rika!'s desktop shell does: a
+ * global defined before page scripts run (`owner::window_script` in desktop/src/owner.rs).
+ * Test code that calls the API from a page itself reads it from the same global.
+ */
+export async function authorize(context, secret) {
+  await context.addInitScript((value) => {
+    Object.defineProperty(window, "__KITTY_UI_SECRET__", { value });
+  }, secret);
+}
+
+/**
+ * Start kitty-web; resolves with { origin, root, secret, stop, request, authorize } once it
+ * serves. Without `root` it is `--demo`; with `root` (a temporary workspace the caller made) it
+ * serves that workspace, so a test can edit its files, such as config/build.json, like an
+ * outside editor. The announced one-time code is spent on `secret`, as a browser tab would.
  */
 export async function startKitty({ root } = {}) {
   const port = await freePort();
@@ -38,30 +70,48 @@ export async function startKitty({ root } = {}) {
     cwd: repo, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KITTY_KEYRING: "none", KITTY_SYNC: "off" },
   });
   let output = "";
-  const origin = await new Promise((resolve, reject) => {
+  const { origin, code } = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`kitty-web did not start:\n${output}`)), 120_000);
     const read = (chunk) => {
       output += chunk;
-      const match = /website: (http:\/\/127\.0\.0\.1:\d+)/.exec(output);
-      if (match) {
+      const found = announcement(output);
+      if (found) {
         clearTimeout(timer);
-        resolve(match[1]);
+        resolve(found);
       }
     };
     child.stdout.on("data", read);
     child.stderr.on("data", read);
     child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`kitty-web exited (${code}):\n${output}`)); });
   });
-  const headers = { Origin: origin, "X-Kitty-Request": "1", "Content-Type": "application/json" };
+  const secret = await exchange(origin, code);
+  let spent = 0;
+  const headers = { Origin: origin, "X-Kitty-Request": "1", "Content-Type": "application/json", [SECRET_HEADER]: secret };
   return {
     origin,
     root,
+    secret,
+    /** Give a browser context's pages this server's UI secret (see `authorize`). */
+    authorize: (context) => authorize(context, secret),
     /** One API call straight to the server (seeding and checking state). */
     async request(path, body) {
-      const response = await fetch(`${origin}/api${path}`, body === undefined ? { headers: { Origin: origin } } : { method: "POST", headers, body: JSON.stringify(body) });
+      const response = await fetch(`${origin}/api${path}`, body === undefined ? { headers: { Origin: origin, [SECRET_HEADER]: secret } } : { method: "POST", headers, body: JSON.stringify(body) });
       const data = await response.json();
       if (!response.ok) throw new Error(`${path}: ${response.status} ${data.error}`);
       return data;
+    },
+    /**
+     * The code of the next one-time link kitty-web prints: a new link follows each one used,
+     * as a person opening a second browser tab would take it from the terminal.
+     */
+    async nextCode() {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const codes = [...output.matchAll(/next link [^:]*: http:\/\/127\.0\.0\.1:\d+\/\?code=([0-9a-f]{32})/g)];
+        if (codes.length > spent) return codes[spent++][1];
+        if (Date.now() > deadline) throw new Error(`kitty-web printed no new link:\n${output}`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
     },
     /** Stop the server; resolves once it exited (its workspace files are closed). */
     stop() {

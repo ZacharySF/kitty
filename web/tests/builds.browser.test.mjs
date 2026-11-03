@@ -56,6 +56,7 @@ before(async () => {
   base = vite.resolvedUrls.local[0];
   browser = await chromium.launch();
   context = await browser.newContext({ viewport: { width: 1280, height: 850 } });
+  await kitty.authorize(context);
   // A returning user: the first-run welcome guide is covered by its own tests.
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"

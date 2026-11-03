@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
 import { DOCK, routeBuild } from "./buildRoutes.mjs";
+import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -21,6 +22,7 @@ const PAGES = ["Appearance", "Desktop", "Quiet hours", "Build", "Account", "Modu
 const REGIONS = [...PAGES, "Build settings"];
 
 let backend;
+let secret;
 let server;
 let browser;
 let base;
@@ -43,18 +45,20 @@ before(async () => {
     cwd: repository,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const origin = await new Promise((resolve, reject) => {
+  const { origin, code } = await new Promise((resolve, reject) => {
     let output = "";
     const timer = setTimeout(() => reject(new Error(`demo backend did not start:\n${output}`)), 120_000);
     const read = (chunk) => {
       output += chunk;
-      const match = output.match(/website: (http:\/\/\S+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      const found = announcement(output);
+      if (found) { clearTimeout(timer); resolve(found); }
     };
     backend.stdout.on("data", read);
     backend.stderr.on("data", read);
     backend.once("exit", (code) => { clearTimeout(timer); reject(new Error(`demo backend exited (${code}):\n${output}`)); });
   });
+  // The link's one-time code, spent as a browser tab spends it; pages get the secret as rika!'s windows do.
+  secret = await exchange(origin, code);
   server = await createServer({
     root,
     logLevel: "error",
@@ -84,6 +88,7 @@ after(async () => {
 /** Opens a fresh returning-user profile on `hash` with the dock hidden. */
 async function open(hash, { viewport = DEFAULT } = {}) {
   const context = await browser.newContext({ viewport });
+  await authorize(context, secret);
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
@@ -218,7 +223,7 @@ describe("settings pages", () => {
     const { page, problems, context } = await open("settings/modules");
     const modules = region(page, "Modules");
     await modules.getByRole("switch").first().waitFor();
-    const available = await page.evaluate(async () => (await (await fetch("/api/modules")).json()).available);
+    const available = await page.evaluate(async () => (await (await fetch("/api/modules", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).available);
     assert.ok(available.length >= 3);
     const text = await modules.evaluate((node) => node.innerText);
     for (const item of available) {
