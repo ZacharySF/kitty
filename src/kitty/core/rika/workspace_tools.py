@@ -26,7 +26,7 @@ VIEWS: dict[str, str | None] = {
     "calendar": "workspace", "opportunities": "workspace", "study": "workspace", "learnharness": "workspace",
     "flashcards": "workspace", "notes": "workspace", "quick-notes": "workspace", "documents": "workspace",
     "schema": "workspace",
-    "herdr": "terminal", "tern": "terminal",
+    "herdr": "terminal", "tern": "terminal", "agent-skills": "terminal",
     "inbox": "applyai", "queue": "applyai", "jobs": "applyai", "pipeline": "applyai", "applications": "applyai",
     "favorites": "applyai", "reminders": "applyai", "sources": "applyai", "resumes": "applyai",
     "profile": "applyai", "finder": "applyai", "reports": "applyai", "mail": "applyai", "triage": "applyai",
@@ -36,6 +36,7 @@ VIEWS: dict[str, str | None] = {
 VIEW_ALIASES = {
     "atlas": "today", "home": "today", "ai settings": "ai", "mind maps": "schema", "mind map": "schema",
     "maps": "schema", "canvas": "notes", "notes": "notes", "cards": "flashcards", "terminal": "tern",
+    "agent skills": "agent-skills", "all agent skills": "agent-skills",
     "jobs": "jobs", "applications": "pipeline", "documents": "documents", "pdf": "documents",
 }
 #: Canvas defaults of a new sticky note, matching the Notes view's (web/src/lib/Notes.svelte).

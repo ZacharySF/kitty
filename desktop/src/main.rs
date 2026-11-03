@@ -82,8 +82,17 @@ fn external_url(url: &Url) -> bool {
 fn open_external(url: &Url) {
     if external_url(url) {
         // open passes the checked URL as an argument, not shell source. There is
-        // deliberately no frontend shell, file, opener, or notification command.
+        // deliberately no frontend shell, file, opener, or notification command; the
+        // one file the owner pipe may open is a listed SKILL.md (open_skill).
         let _ = open::that_detached(url.as_str());
+    }
+}
+
+/// The agent skills view's "Open file": the owner pipe already accepted only an absolute
+/// path named SKILL.md; it must still be a regular file when it opens.
+fn open_skill(path: &Path) {
+    if path.is_file() {
+        let _ = open::that_detached(path);
     }
 }
 
@@ -249,6 +258,7 @@ fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
         owner::Command::NewQuickNote => open_quick_note(app, "quick-note".into()),
         owner::Command::KeepRunning(enabled) => set_background(app, enabled),
         owner::Command::Quit => request_quit(app),
+        owner::Command::OpenSkill(path) => open_skill(&path),
     }
 }
 

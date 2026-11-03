@@ -135,7 +135,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), (None, "web_desktop"),
     (None, "web_account"), (None, "web_rika"),
-    ("terminal", "web_terminal"), ("terminal", "web_tern"),
+    ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
 
 
