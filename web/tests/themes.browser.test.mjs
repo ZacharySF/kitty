@@ -428,3 +428,78 @@ describe("Q12 themes: SPEED, c and red own their motif layers", () => {
     await context.close();
   });
 });
+
+describe("pretti, BloodLuxe and half blood own their motif layers", () => {
+  const layers = (page) =>
+    page.evaluate(() => {
+      const frame = document.querySelector(".theme-frame");
+      const divider = getComputedStyle(document.querySelector("hr.rule"), "::before");
+      const dot = getComputedStyle(document.querySelector("span.dot"));
+      return {
+        art: document.querySelector(".theme-art")?.dataset.themeArt ?? null,
+        frame: frame && getComputedStyle(frame).display !== "none" ? frame.dataset.themeFrame : null,
+        divider: divider.content === "none" ? "none" : `${divider.backgroundImage} ${divider.maskImage ?? divider.webkitMaskImage}`,
+        bullet: dot.maskImage ?? dot.webkitMaskImage,
+        empty: document.querySelector(".kitty-empty [data-empty-art]")?.dataset.emptyArt ?? null,
+        loader: document.querySelector(".kitty-loader [data-loader-art]")?.dataset.loaderArt ?? null,
+        surface: getComputedStyle(document.querySelector("[data-surface-sample]")).backgroundColor,
+      };
+    });
+
+  test("pretti → BloodLuxe → half blood → Kitty swaps art, frame, bullets, dividers, loader and empty art", async () => {
+    const { page, problems, context } = await harness("pretti");
+    await page.evaluate(() => (window.__sameDocument = true));
+
+    const pretti = await layers(page);
+    assert.equal(pretti.art, "pretti", "airbrushed graffiti ground");
+    assert.equal(pretti.frame, null, "pretti closes in with a vignette, not a frame");
+    assert.match(pretti.bullet, /url\(/, "heart and star bullets");
+    assert.match(pretti.divider, /url\(|gradient/, "candy divider");
+    assert.equal(pretti.loader, "pretti", "spiral loader");
+    assert.equal(pretti.empty, "pretti", "butterfly empty state");
+    assert.ok(await page.locator('[data-loader-art="pretti"] .spiral').count(), "the loader is a spiral");
+
+    await switchTheme(page, "bloodluxe");
+    const luxe = await layers(page);
+    assert.equal(luxe.art, "bloodluxe", "marbled sky");
+    assert.equal(luxe.frame, "bloodluxe", "barbed-wire window frame");
+    assert.match(luxe.divider, /url\(/, "dripping section rule");
+    assert.notEqual(luxe.bullet, pretti.bullet, "no pretti hearts on BloodLuxe");
+    assert.equal(luxe.empty, "bloodluxe");
+    assert.equal(luxe.loader, "bloodluxe");
+
+    await switchTheme(page, "halfblood");
+    const half = await layers(page);
+    assert.equal(half.art, "halfblood", "ultramarine cloud field");
+    assert.equal(half.frame, "halfblood", "bone filigree frame");
+    assert.match(half.divider, /url\(/, "dripping section rule");
+    assert.equal(half.empty, "halfblood");
+    assert.equal(half.loader, "halfblood");
+    assert.ok(await page.locator('[data-theme-art="halfblood"] :is(.sun, .moon)').count() >= 2, "sun-eye and crescent-moon ornaments");
+
+    await switchTheme(page, "kitty");
+    const back = await layers(page);
+    assert.deepEqual([back.art, back.frame, back.empty], ["kitty", null, "kitty"]);
+
+    assert.equal(await page.evaluate(() => window.__sameDocument), true, "the page did not reload");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  for (const id of ["pretti", "bloodluxe", "halfblood"]) {
+    test(`${id}: Theme motif off hides its frame and marks but keeps its surfaces`, async () => {
+      const on = await harness(id);
+      const marked = await layers(on.page);
+      await on.context.close();
+      const { page, problems, context } = await harness(id, { appearance: { motif: false } });
+      const plain = await layers(page);
+      assert.equal(plain.frame, null, "no frame");
+      assert.equal(plain.divider, "none", "no motif divider");
+      assert.ok(!/url\(/.test(plain.bullet ?? ""), "plain bullets");
+      assert.equal(plain.surface, marked.surface, "surfaces keep their fill");
+      assert.equal(plain.art, id, "the backdrop stays (it is the ground, not a mark)");
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+});

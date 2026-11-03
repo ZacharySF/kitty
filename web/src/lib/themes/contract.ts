@@ -62,7 +62,10 @@ export type ThemeId =
   | "liquid-glass"
   | "speed"
   | "c"
-  | "red";
+  | "red"
+  | "pretti"
+  | "bloodluxe"
+  | "halfblood";
 
 export type Palette = Omit<Theme, "name">;
 

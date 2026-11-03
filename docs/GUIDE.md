@@ -253,6 +253,20 @@ and its backdrop. Typefaces never change with the theme.
   rules drip once, page titles sit on a red swash, and the loader paints a stroke.
 - Harness and Nord are flat, Catppuccin Mocha and Gruvbox are matte paper, and
   Dracula and Tokyo Night are glass, each with its own focus, selection and motion.
+- **pretti**: glossy airbrushed graffiti on purple-black under a dark vignette:
+  candy-glass panels with a magenta rim, acid-green primary pills, magenta
+  selections, an acid glow on focus with a little heart, heart and star bullets,
+  heart ticks, candy-chain dividers, ringed targets, hearts, stars and butterflies
+  in the corners, a hypnotic spiral loader and a butterfly empty state.
+- **BloodLuxe** (the light one): cream paper panels rimmed in black over a marbled
+  red, white and blue sky, rose ridges, grass and flames, inside a black barbed-wire
+  window frame; blood-red titles, section rules and focus drip, blood-drop bullets,
+  bead ticks, a marble-orb loader and a thorn-wreathed heart for empty states.
+- **half blood**: storybook heraldry in flat bold colour: navy panels edged in bone
+  over an ultramarine field of white cloud squiggles with a grass hem, inside a
+  bone filigree frame with crossed bones; a sun-eye and a crescent moon, sun-orange
+  actions, sun bullets, green ticks, red drips on titles, rules and focus, a sun-eye
+  loader and a moon asleep on a cloud for empty states.
 
 Surfaces turn opaque under reduced transparency, and every theme's text,
 selected and pressed controls stay at WCAG AA contrast over its backdrop. Graph
