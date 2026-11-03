@@ -14,6 +14,7 @@ from tempfile import NamedTemporaryFile
 
 import httpx
 
+from kitty.core.rika import router
 from kitty.db import connect
 from kitty.db.connection import transaction
 
@@ -123,9 +124,20 @@ def _status(app, conn):
         'configured': bool(_key(app)), 'model': settings['model'], 'routing': settings['routing'],
         'max_output_tokens': settings['max_output_tokens'], 'daily_budget_usd': float(settings['daily_budget_usd']),
         'spent_today': float(_spent(conn)), 'revision': settings['revision'],
+        'rika_tiers': router.configured(conn), 'rika_tier_defaults': router.defaults(conn),
         'models': [dict(row) for row in conn.execute('SELECT * FROM ai_models ORDER BY name')],
-        'privacy_notice': 'Only text you select and review is sent to OpenRouter. Providers must decline data collection. AI output is a draft, not verified fact.',
+        'privacy_notice': 'Only text you select and review, and what you ask Rika with the records its tools read for that request, is sent to OpenRouter. Note text is shared only while Notes allow AI. Providers must decline data collection. AI output is a draft, not verified fact.',
     }
+
+
+def _tiers(conn, value):
+    """Validated Settings → AI tier models for Rika; '' means the family default."""
+    if not isinstance(value, dict) or set(value) - set(router.TIERS):
+        raise _error(400, 'Rika tiers are fast, standard and deep')
+    for model in value.values():
+        if not isinstance(model, str) or model and conn.execute('SELECT 1 FROM ai_models WHERE id=?', (model,)).fetchone() is None:
+            raise _error(400, 'Choose each Rika tier model from the refreshed list, or none for the default')
+    return value
 
 
 def _refresh_models(app):
@@ -368,7 +380,7 @@ def post(app, conn, path, body):
     if path == '/api/ai/mind-map/preview':
         return _mind_map_preview(app, conn, body)
     if path == '/api/ai/settings':
-        _keys(body, {'revision', 'model', 'routing', 'max_output_tokens', 'daily_budget_usd', 'key', 'remove_key', 'confirmed'})
+        _keys(body, {'revision', 'model', 'routing', 'max_output_tokens', 'daily_budget_usd', 'rika_tiers', 'key', 'remove_key', 'confirmed'})
         if body.get('confirmed') is not True:
             raise _error(400, 'Confirm the AI settings change')
         settings = _settings(conn)
@@ -384,6 +396,7 @@ def post(app, conn, path, body):
         if type(maximum) is not int or not 128 <= maximum <= 8192:
             raise _error(400, 'Output limit must be 128–8192 tokens')
         cap = _number(body.get('daily_budget_usd', settings['daily_budget_usd']), 'Daily budget', 0, 100)
+        tiers = {**router.configured(conn), **_tiers(conn, body.get('rika_tiers', {}))}
         if body.get('key') and body.get('remove_key'):
             raise _error(400, 'Cannot add and remove the key together')
         if body.get('key'):
@@ -392,7 +405,9 @@ def post(app, conn, path, body):
             _key(app)  # Reject symbolic-link private storage first.
             _key_path(app).unlink(missing_ok=True)
         with transaction(conn):
-            conn.execute('UPDATE ai_settings SET model=?,routing=?,max_output_tokens=?,daily_budget_usd=?,revision=revision+1 WHERE id=1', (model, routing, maximum, str(cap)))
+            conn.execute('UPDATE ai_settings SET model=?,routing=?,max_output_tokens=?,daily_budget_usd=?,'
+                         'rika_fast_model=?,rika_standard_model=?,rika_deep_model=?,revision=revision+1 WHERE id=1',
+                         (model, routing, maximum, str(cap), tiers['fast'], tiers['standard'], tiers['deep']))
         return _status(app, conn)
     if path == '/api/ai/models/refresh':
         _keys(body, {'confirmed'})

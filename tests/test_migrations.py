@@ -190,3 +190,45 @@ def test_calendar_palette_migration_moves_the_fixed_default_onto_theme_slots(tmp
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_rika_tables_keep_their_conversation_and_tier_settings(tmp_path):
+    """037: Rika's messages, actions and approvals, and the three tier models in Settings → AI."""
+    import shutil
+    import sqlite3
+
+    early = tmp_path / "before-rika"
+    early.mkdir()
+    for migration in available_migrations():
+        if migration.version < 37:
+            shutil.copy(migration.path, early / migration.path.name)
+    conn = connect(tmp_path / "rika.sqlite")
+    try:
+        migrate(conn, early)
+        conn.execute("UPDATE ai_settings SET model='anthropic/claude-sonnet-4.5' WHERE id=1")
+        migrate(conn)
+        row = conn.execute("SELECT model,rika_fast_model,rika_standard_model,rika_deep_model FROM ai_settings").fetchone()
+        assert tuple(row) == ("anthropic/claude-sonnet-4.5", "", "", "")
+        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,created_at) VALUES('u','c','user','hi','t1')")
+        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,reply_to,tier,status,created_at)"
+                     " VALUES('r','c','rika','','u','fast','pending','t2')")
+        conn.execute("INSERT INTO rika_actions(id,message_id,tool,args_json,summary,reversible,undo_json,status,created_at)"
+                     " VALUES('a','r','add_card','{}','Added a card',1,'{\"note_id\":1}','done','t3')")
+        conn.execute("INSERT INTO rika_approvals(id,message_id,tool,args_json,summary,detail,created_at)"
+                     " VALUES('p','r','start_worker','{}','Start omp','Task brief','t4')")
+        assert conn.execute("SELECT status FROM rika_approvals WHERE id='p'").fetchone()[0] == "pending"
+        for statement in (
+            "INSERT INTO rika_messages(id,conversation_id,role,text,created_at) VALUES('x','c','system','','t')",
+            "INSERT INTO rika_messages(id,conversation_id,role,text,tier,created_at) VALUES('y','c','rika','','huge','t')",
+            "INSERT INTO rika_actions(id,message_id,tool,args_json,summary,reversible,status,created_at)"
+            " VALUES('b','r','t','{}','s',1,'maybe','t')",
+            "INSERT INTO rika_approvals(id,message_id,tool,args_json,summary,detail,created_at)"
+            " VALUES('q','missing','t','{}','s','d','t')",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(statement)
+        conn.execute("DELETE FROM rika_messages WHERE id='r'")
+        assert conn.execute("SELECT count(*) FROM rika_actions").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM rika_approvals").fetchone()[0] == 0
+    finally:
+        conn.close()

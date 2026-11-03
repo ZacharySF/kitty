@@ -239,3 +239,18 @@ def test_mind_map_review_sends_exact_approved_prompt_once(ai, workspace, monkeyp
     with pytest.raises(APIError):
         web_ai.post(ai, workspace.conn, '/api/ai/run', approved)
     assert len(calls) == 1
+
+
+def test_rika_tier_models_are_settings_from_the_refreshed_catalog(ai, workspace):
+    status = web_ai.get(ai, workspace.conn, '/api/ai/status', {})
+    assert status['rika_tiers'] == {'fast': '', 'standard': '', 'deep': ''}
+    assert set(status['rika_tier_defaults']) == {'fast', 'standard', 'deep'}
+    saved = web_ai.post(ai, workspace.conn, '/api/ai/settings', {
+        'revision': status['revision'], 'rika_tiers': {'fast': 'synthetic/text', 'deep': ''}, 'confirmed': True})
+    assert saved['rika_tiers'] == {'fast': 'synthetic/text', 'standard': '', 'deep': ''}
+    for tiers in ({'fast': 'not/listed'}, {'huge': 'synthetic/text'}, ['synthetic/text'], {'fast': 3}):
+        with pytest.raises(APIError) as error:
+            web_ai.post(ai, workspace.conn, '/api/ai/settings', {
+                'revision': saved['revision'], 'rika_tiers': tiers, 'confirmed': True})
+        assert error.value.status == 400
+    assert web_ai.get(ai, workspace.conn, '/api/ai/status', {})['rika_tiers']['fast'] == 'synthetic/text'

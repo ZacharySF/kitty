@@ -6,7 +6,11 @@ never uses herdr's ``default`` session. Only herdr's public commands are used:
 
 * ``herdr --session NAME`` starts the session's server when it is not running (as a
   detached daemon) and attaches a client on its terminal;
-* ``herdr --session NAME session stop NAME`` stops that server and its panes.
+* ``herdr --session NAME server`` runs that server headless, for Rika's worker agents
+  when no page attached a client;
+* ``herdr --session NAME session stop NAME`` stops that server and its panes;
+* the socket API's ``workspace``, ``tab`` and ``agent`` commands list, create, start,
+  focus and prompt agents.
 
 The session's sockets live where herdr keeps every named session,
 ``$XDG_CONFIG_HOME/herdr/sessions/NAME`` (default ``~/.config/herdr``), so agents
@@ -15,8 +19,8 @@ and refuses a session whose sockets are readable by anyone else. The Harness the
 lives in rika!'s own ``.private/herdr/config.toml`` (``HERDR_CONFIG_PATH``), so the
 user's own herdr configuration is never read or changed.
 
-Nothing here starts until a page attaches; ``stop`` stops the session only when this
-process used it.
+Nothing here starts until a page attaches or Rika starts an approved worker agent;
+``stop`` stops the session only when this process used it.
 """
 from __future__ import annotations
 
@@ -193,6 +197,8 @@ class HerdrRuntime:
         self.environ = os.environ if environ is None else environ
         self._lock = threading.Lock()
         self._used = False
+        #: The headless server `serve` started, reaped on stop.
+        self._server: subprocess.Popen | None = None
         #: pane -> (state, epoch ms it was first seen in); the dock cards' running timers.
         self._states: dict[str, tuple[str, int]] = {}
         self._states_lock = threading.Lock()
@@ -326,6 +332,7 @@ class HerdrRuntime:
                 "pane": pane,
                 "name": str(agent.get("name") or agent.get("display_agent") or agent.get("agent") or "agent"),
                 "status": status,
+                "kind": str(agent.get("agent") or ""),
                 "task": str(agent.get("terminal_title_stripped") or agent.get("terminal_title") or "").strip()[:LINE_MAX],
                 "line": self._last_line(pane),
                 "revision": revision if type(revision) is int else 0,
@@ -432,9 +439,47 @@ class HerdrRuntime:
             self._used = True
             return {"tab": tab, "pane": pane, "name": name, "kind": kind}
 
+    def serve(self, cwd: Path) -> None:
+        """Run the session headless when no page attached it (Rika's worker agents), with
+        a focused workspace in `cwd` for their Agent tabs."""
+        with self._lock:
+            environment, folder = self._prepare()
+            if not _listening(folder / "herdr.sock"):
+                process = subprocess.Popen(
+                    self._command("server"), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, env=environment, cwd=str(cwd), start_new_session=True)
+                self._used = True
+                self._server = process
+                deadline = time.monotonic() + READY_TIMEOUT
+                while not _listening(folder / "herdr.sock"):
+                    if process.poll() is not None or time.monotonic() > deadline:
+                        self._stop_session()
+                        raise TerminalUnavailable("rika!'s herdr session did not start")
+                    time.sleep(0.02)
+            self._verify_private(folder)
+            spaces = self._read("workspace", "list").get("workspaces", [])
+            if not any(item.get("focused") is True for item in spaces):
+                self._agent_command("workspace", "create", "--cwd", str(cwd), "--label", "Rika", "--focus")
+
+    def prompt(self, pane: str, text: str) -> None:
+        """Submit a task brief to an agent that herdr reports ready for input."""
+        self._agent_command("agent", "prompt", pane, text)
+
+    def client_command(self) -> list[str]:
+        """A herdr client on rika!'s session, for a Tern tab that shows its panes."""
+        self._prepare()
+        return ["env", f"HERDR_CONFIG_PATH={self.config_path}", str(self.binary), "--session", self.session]
+
     def stop(self) -> None:
         """Quit: stop the session if this process used it; its clients then exit."""
         with self._lock:
             used, self._used = self._used, False
+            server, self._server = self._server, None
         if used:
             self._stop_session()
+        if server is not None:
+            try:
+                server.wait(timeout=STOP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()

@@ -1,0 +1,205 @@
+"""Rika's conversation, actions and approvals (migration 037).
+
+Public shapes, shared by ``GET /api/rika/history`` and the stream's events:
+
+* message ``{kind:'message', id, conversation_id, role:'user'|'rika', text, reply_to,
+  tier, model, status:'pending'|'done'|'failed', cost_usd, created_at}``;
+* action ``{kind:'action', id, message_id, tool, summary, reversible,
+  status:'done'|'undone'|'failed', created_at}``; its undo payload stays private;
+* approval ``{kind:'approval', id, message_id, tool, summary, detail, cost_usd,
+  status:'pending'|'approved'|'rejected'|'expired', created_at}``.
+"""
+from __future__ import annotations
+
+import json
+import secrets
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from kitty.db.connection import transaction
+
+#: A request continues the latest conversation when it came within this long of it.
+CONVERSATION_GAP = timedelta(hours=6)
+#: Earlier turns sent with each model request.
+TRANSCRIPT_TURNS = 20
+HISTORY_PAGE = 50
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def new_id() -> str:
+    return secrets.token_hex(16)
+
+
+def _money(value: str | None) -> float | None:
+    return float(value) if value is not None else None
+
+
+def _message(row: sqlite3.Row) -> dict[str, Any]:
+    return {"kind": "message", "id": row["id"], "conversation_id": row["conversation_id"], "role": row["role"],
+            "text": row["text"], "reply_to": row["reply_to"], "tier": row["tier"], "model": row["model"],
+            "status": row["status"], "cost_usd": _money(row["cost_usd"]), "created_at": row["created_at"]}
+
+
+def _action(row: sqlite3.Row) -> dict[str, Any]:
+    return {"kind": "action", "id": row["id"], "message_id": row["message_id"], "tool": row["tool"],
+            "summary": row["summary"], "reversible": bool(row["reversible"]), "status": row["status"],
+            "created_at": row["created_at"]}
+
+
+def _approval(row: sqlite3.Row) -> dict[str, Any]:
+    return {"kind": "approval", "id": row["id"], "message_id": row["message_id"], "tool": row["tool"],
+            "summary": row["summary"], "detail": row["detail"], "cost_usd": _money(row["cost_usd"]),
+            "status": row["status"], "created_at": row["created_at"]}
+
+
+# Messages ---------------------------------------------------------------------
+
+def conversation_for(conn: sqlite3.Connection, requested: str | None = None) -> str:
+    """`requested` when it exists, else the latest conversation if recent, else a new one."""
+    if requested is not None:
+        if not conn.execute("SELECT 1 FROM rika_messages WHERE conversation_id=? LIMIT 1", (requested,)).fetchone():
+            raise LookupError("Conversation not found")
+        return requested
+    row = conn.execute("SELECT conversation_id,created_at FROM rika_messages ORDER BY created_at DESC LIMIT 1").fetchone()
+    if row and datetime.fromisoformat(row["created_at"]) > datetime.now(timezone.utc) - CONVERSATION_GAP:
+        return row["conversation_id"]
+    return new_id()
+
+
+def add_message(conn: sqlite3.Connection, *, conversation_id: str, role: str, text: str,
+                reply_to: str | None = None, tier: str | None = None, model: str | None = None,
+                status: str = "done") -> dict[str, Any]:
+    ident = new_id()
+    with transaction(conn):
+        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,reply_to,tier,model,status,created_at)"
+                     " VALUES(?,?,?,?,?,?,?,?,?)",
+                     (ident, conversation_id, role, text, reply_to, tier, model, status, now()))
+    return message(conn, ident)
+
+
+def update_message(conn: sqlite3.Connection, ident: str, **fields: Any) -> dict[str, Any]:
+    allowed = {"text", "tier", "model", "status", "cost_usd"}
+    if set(fields) - allowed:
+        raise ValueError("Unknown message field")
+    if "cost_usd" in fields and fields["cost_usd"] is not None:
+        fields["cost_usd"] = str(fields["cost_usd"])
+    with transaction(conn):
+        conn.execute("UPDATE rika_messages SET " + ",".join(f"{key}=?" for key in fields) + " WHERE id=?",
+                     (*fields.values(), ident))
+    return message(conn, ident)
+
+
+def message(conn: sqlite3.Connection, ident: str) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM rika_messages WHERE id=?", (ident,)).fetchone()
+    if row is None:
+        raise LookupError("Message not found")
+    return _message(row)
+
+
+def transcript(conn: sqlite3.Connection, conversation_id: str, before: str) -> list[dict[str, str]]:
+    """Earlier finished turns of a conversation, oldest first, as model chat messages."""
+    rows = conn.execute(
+        "SELECT role,text FROM rika_messages WHERE conversation_id=? AND created_at<? AND status='done' AND text<>''"
+        " ORDER BY created_at DESC LIMIT ?", (conversation_id, before, TRANSCRIPT_TURNS * 2)).fetchall()
+    return [{"role": "user" if row["role"] == "user" else "assistant", "content": row["text"]} for row in reversed(rows)]
+
+
+def failed_before(conn: sqlite3.Connection, conversation_id: str, before: str) -> bool:
+    """Whether the conversation's previous Rika reply failed (the next try goes deep)."""
+    row = conn.execute("SELECT status FROM rika_messages WHERE conversation_id=? AND role='rika' AND created_at<?"
+                       " ORDER BY created_at DESC LIMIT 1", (conversation_id, before)).fetchone()
+    return row is not None and row["status"] == "failed"
+
+
+# Actions ----------------------------------------------------------------------
+
+def add_action(conn: sqlite3.Connection, *, message_id: str, tool: str, args: dict, summary: str,
+               reversible: bool, undo: dict | None, status: str = "done") -> dict[str, Any]:
+    ident = new_id()
+    with transaction(conn):
+        conn.execute("INSERT INTO rika_actions(id,message_id,tool,args_json,summary,reversible,undo_json,status,created_at)"
+                     " VALUES(?,?,?,?,?,?,?,?,?)",
+                     (ident, message_id, tool, json.dumps(args), summary, int(reversible),
+                      json.dumps(undo) if undo is not None else None, status, now()))
+    return action(conn, ident)
+
+
+def action(conn: sqlite3.Connection, ident: str) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM rika_actions WHERE id=?", (ident,)).fetchone()
+    if row is None:
+        raise LookupError("Action not found")
+    return _action(row)
+
+
+def undo_payload(conn: sqlite3.Connection, ident: str) -> tuple[dict[str, Any], dict | None]:
+    """An action and its private undo payload."""
+    row = conn.execute("SELECT * FROM rika_actions WHERE id=?", (ident,)).fetchone()
+    if row is None:
+        raise LookupError("Action not found")
+    return _action(row), json.loads(row["undo_json"]) if row["undo_json"] else None
+
+
+def mark_undone(conn: sqlite3.Connection, ident: str) -> dict[str, Any]:
+    with transaction(conn):
+        conn.execute("UPDATE rika_actions SET status='undone',undone_at=? WHERE id=? AND status='done'", (now(), ident))
+    return action(conn, ident)
+
+
+# Approvals --------------------------------------------------------------------
+
+def add_approval(conn: sqlite3.Connection, *, message_id: str, tool: str, args: dict, summary: str,
+                 detail: str, cost_usd: float | None = None) -> dict[str, Any]:
+    ident = new_id()
+    with transaction(conn):
+        conn.execute("INSERT INTO rika_approvals(id,message_id,tool,args_json,summary,detail,cost_usd,created_at)"
+                     " VALUES(?,?,?,?,?,?,?,?)",
+                     (ident, message_id, tool, json.dumps(args), summary, detail,
+                      str(cost_usd) if cost_usd is not None else None, now()))
+    return approval(conn, ident)
+
+
+def approval(conn: sqlite3.Connection, ident: str) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM rika_approvals WHERE id=?", (ident,)).fetchone()
+    if row is None:
+        raise LookupError("Approval not found")
+    return _approval(row)
+
+
+def decide(conn: sqlite3.Connection, ident: str, status: str) -> dict[str, Any]:
+    """Settle a pending approval once; a second decision raises."""
+    if status not in {"approved", "rejected", "expired"}:
+        raise ValueError("Approve or reject")
+    with transaction(conn, immediate=True):
+        current = approval(conn, ident)
+        if current["status"] != "pending":
+            raise PermissionError(f"This approval is already {current['status']}")
+        conn.execute("UPDATE rika_approvals SET status=?,decided_at=? WHERE id=?", (status, now(), ident))
+    return approval(conn, ident)
+
+
+def recover(conn: sqlite3.Connection) -> None:
+    """After a restart nothing waits any more: pending approvals expire, unfinished replies fail."""
+    with transaction(conn):
+        conn.execute("UPDATE rika_approvals SET status='expired',decided_at=? WHERE status='pending'", (now(),))
+        conn.execute("UPDATE rika_messages SET status='failed' WHERE status='pending'")
+
+
+# History ----------------------------------------------------------------------
+
+def history(conn: sqlite3.Connection, before: str | None = None, limit: int = HISTORY_PAGE) -> dict[str, Any]:
+    """The newest `limit` items older than `before`, returned oldest first."""
+    bound = before or "~"  # sorts after every ISO timestamp
+    items: list[tuple[str, dict]] = []
+    for table, shape in (("rika_messages", _message), ("rika_actions", _action), ("rika_approvals", _approval)):
+        for row in conn.execute(f"SELECT * FROM {table} WHERE created_at<? ORDER BY created_at DESC LIMIT ?",
+                                (bound, limit + 1)):
+            items.append((row["created_at"], shape(row)))
+    items.sort(key=lambda item: item[0], reverse=True)
+    page, more = items[:limit], len(items) > limit
+    page.reverse()
+    return {"items": [item for _, item in page], "has_more": more,
+            "next_before": page[0][0] if more and page else None}

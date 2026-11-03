@@ -13,7 +13,10 @@ public commands are used, always with ``TERN_DAEMON_SOCKET`` set to that socket:
 * ``tern new session kitty --cwd WORKSPACE`` gives it rika!'s session;
 * ``tern inspect --json`` reads sessions, panes and attached clients for status;
 * ``tern --dir WORKSPACE`` opens a native Tern window on that daemon; it shows
-  rika!'s session and only starts a fresh session in the workspace when none exists.
+  rika!'s session and only starts a fresh session in the workspace when none exists;
+* ``tern new tab kitty --cwd DIR --keep-open -- COMMAND...`` and ``tern focus BLOCK``
+  run and show Rika's panes: an approved shell command, or a herdr client that
+  surfaces a worker agent's herdr pane in a Tern window.
 
 On NixOS rika!'s AppImage runs inside appimage-run's FHS sandbox (bubblewrap), whose
 own ``/etc/profile`` and ``/usr`` stand in for the system's. Tern starts every pane as
@@ -35,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -189,7 +193,8 @@ def _terminate_group(process: subprocess.Popen) -> None:
 
 def _block(block: dict, working: set) -> dict:
     return {"id": block["id"], "title": str(block.get("title") or ""), "cwd": block.get("cwd"),
-            "program": block.get("program"), "cols": block.get("cols"), "rows": block.get("rows"),
+            "program": block.get("program"), "command": block.get("command"),
+            "cols": block.get("cols"), "rows": block.get("rows"),
             "focused": block.get("focused") is True, "live": block.get("live") is True,
             "exited": block.get("exited"), "working": block["id"] in working}
 
@@ -366,16 +371,61 @@ class TernRuntime:
         with self._lock:
             self._start_locked()
 
+    def _open_window_locked(self, binary: str) -> None:
+        self._windows = [window for window in self._windows if window.running()]
+        try:
+            self._windows.append(self._spawn(binary, "--dir", str(self.workspace),
+                                             unit=f"{self._unit}-window-{os.urandom(4).hex()}"))
+        except OSError:
+            raise TernUnavailable("Tern's window could not start") from None
+
     def open_window(self) -> None:
         """A native Tern window on rika!'s daemon, showing rika!'s session."""
         with self._lock:
+            self._open_window_locked(self._start_locked())
+
+    def _front_locked(self, binary: str, block: int) -> None:
+        """Show `block` in a window, opening one when none shows rika!'s daemon."""
+        self._run(binary, "focus", str(block))
+        if not any(client.get("kind") == "window" for client in self._inspect(binary).get("clients") or []):
+            self._open_window_locked(binary)
+
+    def show(self, block: int) -> None:
+        """Bring one pane of rika!'s session to the front of a Tern window (an agent card's Open)."""
+        with self._lock:
+            self._front_locked(self._start_locked(), block)
+
+    def _tab_locked(self, binary: str, command: list[str], cwd: Path) -> int:
+        try:
+            block = json.loads(self._run(binary, "new", "tab", SESSION, "--cwd", str(cwd), "--keep-open",
+                                         "--json", "--", *command))["block"]
+            if type(block) is not int:
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            raise TernUnavailable("Tern did not report the new tab") from None
+        self._front_locked(binary, block)
+        return block
+
+    def run_tab(self, command: list[str], cwd: Path) -> int:
+        """`command` in a new tab of rika!'s session, kept open after it ends, in front."""
+        with self._lock:
+            return self._tab_locked(self._start_locked(), command, cwd)
+
+    def show_program(self, command: list[str], cwd: Path) -> int:
+        """Bring the live pane running `command` to the front, else start it in a new tab."""
+        with self._lock:
             binary = self._start_locked()
-            self._windows = [window for window in self._windows if window.running()]
-            try:
-                self._windows.append(self._spawn(binary, "--dir", str(self.workspace),
-                                                 unit=f"{self._unit}-window-{os.urandom(4).hex()}"))
-            except OSError:
-                raise TernUnavailable("Tern's window could not start") from None
+            for session in self._inspect(binary)["sessions"]:
+                for tab in session.get("tabs") or []:
+                    for block in tab.get("blocks") or []:
+                        try:
+                            running = shlex.split(block.get("command") or "")
+                        except ValueError:
+                            continue
+                        if running == command and block.get("exited") is None and type(block.get("id")) is int:
+                            self._front_locked(binary, block["id"])
+                            return block["id"]
+            return self._tab_locked(binary, command, cwd)
 
     def status(self) -> dict:
         """Detection plus rika!'s session; reading never starts anything."""
