@@ -361,6 +361,65 @@ compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
 
+### Math
+
+**Study → Math** trains the math quant interviews and tech work test. It has two
+practice modes, timed mental-arithmetic **sprints** and topic **lessons**, over a
+graph of 46 topics in five strands: arithmetic and estimation, counting,
+probability (conditioning, Bayes, first-step analysis), expected value and
+variance, and basic statistics. Every problem is made fresh by a seeded generator
+(`src/kitty/core/math/templates/`) whose exact answer key is cross-checked by
+enumeration or Monte Carlo over hundreds of seeds in the test suite. Topics and
+generators are original and MIT-licensed. The view itself (drawers, Ctrl K, Up
+next) is described under **Math** in *Start here*; this section covers how it
+grades and schedules.
+
+- **Mastery.** A topic is *locked* until every prerequisite is mastered, then
+  *ready*, *learning* after your first graded answer, and *mastered* after three
+  correct first tries in a row. Mastery starts a spaced-review schedule for the
+  topic (FSRS, as in Flashcards); each review is a new problem, graded by
+  correctness and time (wrong = Again, slower than twice the target = Hard, under
+  half = Easy). A missed review is a lapse, never a relock. A correct answer also
+  gives partial credit (normally 0.3, halved when not yet due) to the prerequisites
+  it practises; each whole unit of credit counts as one review. Every state and
+  recommendation says why, e.g. *Unlocked because you mastered Bayes' rule*.
+- **Next.** Due reviews come first (most overdue), then the topic you are learning,
+  then a new ready topic, preferring a different strand from your last practice.
+- **Lessons.** A worked example, the same shape again with its last steps blanked
+  for you to fill, then 3–8 solo problems (fewer once a topic is going well, more
+  after misses); the view ends a lesson after three misses in a row.
+- **Checking.** Only your first decided answer to a problem is graded; you get
+  three tries, and the answer is shown when you solve it or after the third miss.
+  Numbers and fractions are exact in any form (`3/7`, `6/14`, `\frac{3}{7}`,
+  `0.25`, `25%`); decimals for non-terminating answers need the stated significant
+  figures or tolerance. Known slips (dropped carries, $P(+\mid C)$ for $P(C\mid +)$,
+  subtracting variances…) get specific feedback. Algebra answers are LaTeX, checked
+  by SymPy in a separate worker process: both of its LaTeX parsers read the answer,
+  `simplify` and random numeric probes compare it, and a check stops after 5 s.
+  When the answer can't be read, reads two ways (`n^n^2`), lacks significant
+  figures or times out, the checker says so and the try doesn't count.
+- **Sprints.** Zetamac defaults: 120 s; addition (2–100) + (2–100), subtraction as
+  reversed addition, multiplication (2–12) × (2–100), division as reversed
+  multiplication. *Typed* takes each answer the moment it is right; *multiple
+  choice* scores right − wrong. Problems come from a stored seed and are checked in
+  the browser; results keep your best score per mode and a daily streak.
+- **Explain my mistake.** After a wrong answer you can paste your working and ask
+  AI where it went wrong (purpose `math-explain`). It is a normal AI review: you see
+  exactly what is sent (the problem, your answer and working, never the correct
+  answer) and its maximum cost, then approve it within your daily budget. The
+  prompt forbids revealing the answer and treats your working as data. AI never
+  grades. Demo mode has no AI.
+
+API (`workspace` module): `GET /api/math/topics`, `GET /api/math/next`,
+`POST /api/math/problems {topic_id, seed?}`, `POST /api/math/answers {problem_id,
+answer, elapsed_ms}`, `GET /api/math/lessons/<topic_id>`, `POST /api/math/sprints
+{mode: zetamac|mc, duration_s, ops?}`, `POST /api/math/sprints/<id>/result {score,
+wrong, elapsed_ms}`, `GET /api/math/sprints/history?duration_s=&timezone=` and
+`POST /api/math/explain {problem_id, working}` (then `POST /api/ai/run`). The graph
+is authored in `kitty.core.math.topics`, synced into `math_topics`/`math_prereqs`
+(a trigger rejects any prerequisite cycle), and practice lives in `math_mastery`,
+`math_attempts` and `math_sprints` (migration 044).
+
 ### Brain data (`/api/brain`)
 
 `GET /api/brain?limit=<n>` (default 20,000, at most 50,000) returns the whole
