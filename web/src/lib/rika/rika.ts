@@ -2,6 +2,8 @@
  * Rika's wire types (docs/rika-design.md; served by kitty.web_rika) and the pure
  * helpers the bar, its toasts and the history drawer share.
  */
+import type { AgentNow } from "../agentSkills";
+
 export type Id = number | string;
 export type Tier = "fast" | "standard" | "deep";
 export type AgentStatus = "working" | "blocked" | "idle" | "done";
@@ -50,6 +52,8 @@ export type RikaAgent = {
   /** Epoch ms the current state began. */
   since: number;
   where: { herdr_pane?: string; tern_pane?: string };
+  /** What it uses now (agent skills); null while "Show agent skills and activity" is off for its kind. */
+  now?: AgentNow | null;
 };
 
 export type Entry =

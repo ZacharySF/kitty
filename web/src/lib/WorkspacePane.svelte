@@ -110,6 +110,10 @@
     {#await import("./TernView.svelte")}{@render pending()}{:then { default: TernView }}
       <TernView />
     {/await}
+  {:else if view === "agent-skills"}
+    {#await import("./AgentSkillsView.svelte")}{@render pending()}{:then { default: AgentSkillsView }}
+      <AgentSkillsView />
+    {/await}
   {:else if view === "settings"}
     <WorkspaceSettings bind:this={settings} {onview} {onchange} />
   {:else if view === "ai"}

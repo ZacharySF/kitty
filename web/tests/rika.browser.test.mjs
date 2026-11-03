@@ -82,6 +82,9 @@ async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
     }
   }
   await context.routeWebSocket("**/api/rika/stream", (ws) => { socket = ws; });
+  // The Agents cards read the agent skills catalogue (every kind off here; agentSkills.browser.test.mjs covers it).
+  await context.route("**/api/terminal/agent-skills", (route) => route.fulfill({ json: { can_open: false, kinds: ["omp", "claude", "codex"].map((kind) =>
+    ({ kind, label: kind, enabled: false, skills: [], mcp: [], plugins: [] })) } }));
   await context.route("**/api/rika/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;

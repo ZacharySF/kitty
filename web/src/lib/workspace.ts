@@ -7,6 +7,7 @@ export const navigation = [
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
   { id: "herdr", label: "herdr", icon: "terminal", module: "terminal" },
   { id: "tern", label: "Tern", icon: "terminal", module: "terminal" },
+  { id: "agent-skills", label: "All agent skills", icon: "terminal", module: "terminal" },
   { id: "study", label: "Study", icon: "study", module: "workspace" },
   { id: "learnharness", label: "LearnHarness", icon: "study", module: "workspace" },
   { id: "flashcards", label: "Flashcards", icon: "flashcards", module: "workspace" },
@@ -56,7 +57,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
     label: "Plan",
     shortcut: "Ctrl + Alt",
     tone: "var(--c1)",
-    views: ["today", "calendar", "opportunities", "reminders", "herdr", "tern"],
+    views: ["today", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
   },
   { label: "Study", shortcut: "Ctrl + X", tone: "var(--c3)", views: ["study", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
@@ -96,6 +97,7 @@ export function visibleGroups(enabled: Enabled) {
  */
 export const navigationRelations: [View, View][] = [
   ["herdr", "tern"],
+  ["tern", "agent-skills"],
   ["calendar", "reminders"],
   ["calendar", "study"],
   ["opportunities", "calendar"],

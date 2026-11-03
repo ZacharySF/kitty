@@ -182,6 +182,11 @@ export class RikaSession {
     }
   }
 
+  /** Opens one of the app's views (the Agents cards' "All agent skills" link). */
+  navigate(view: string) {
+    this.onnavigate(view);
+  }
+
   showDrawer(section: DrawerSection = this.drawer.section) {
     this.drawer = { open: true, section, auto: false };
   }

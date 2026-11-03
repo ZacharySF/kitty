@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { nowText } from "../agentSkills";
   import { agentChips } from "./rika";
   import { rika } from "./session.svelte";
 
@@ -56,7 +57,8 @@
           ><i class="rika-dot" aria-hidden="true"></i>{chips.count} agents</button>
       {:else}
         {#each chips.agents as agent (agent.id)}
-          <button class="rika-agent-chip" data-state={agent.status} aria-label={`${agent.name}, ${agent.status}: open its window`} title={agent.task || agent.name} onclick={() => rika.open(agent)}
+          <button class="rika-agent-chip" data-state={agent.status} aria-label={`${agent.name}, ${agent.status}${agent.now ? `, ${nowText(agent.now)}` : ""}: open its window`}
+            title={[agent.task || agent.name, agent.now ? nowText(agent.now) : "", agent.now?.intent ?? ""].filter(Boolean).join("\n")} onclick={() => rika.open(agent)}
             ><i class="rika-dot" aria-hidden="true"></i>{agent.name}</button>
         {/each}
       {/if}

@@ -184,6 +184,59 @@ WebKitGTK view lacks, so rika! does not embed it. Scripts reach the session with
 and stops its Tern daemon (Tern restores the layout next time); closing the window
 with **Keep running on close** leaves them running.
 
+**Agent skills (docs/agent-skills-design.md).** Each agent card in Rika's history
+drawer (**Agents**) shows a **now: skill · tool** chip, what the agent is using right
+now (for example "now: lavish · read"; "now: —" until something answers), and a
+**Skills (N)** button that lists that agent's skills in the drawer. The Rika bar's
+agent chips carry the same text in their tooltip, with omp's one-line intent.
+**All agent skills**, under Plan beside Tern (also in Ctrl K, or ask Rika to open
+"agent skills"), catalogues every agent kind's **Agent skills**, **Tools (MCP)** and
+**Plugins**, even with no agent running, with the running agents and their now
+chips in a strip above. Each skill row has **Copy path** and, in the desktop app,
+**Open file**, which opens that `SKILL.md` with your desktop's default opener (the
+shell accepts only an absolute path to a file named `SKILL.md` that rika! listed).
+
+- **Off until you turn it on, per agent kind.** The switch **Show agent skills and
+  activity** sits in the All agent skills view, in a card's Skills list and in the
+  New Agent tab chooser. It is saved owner-only in `.private/agents/settings.json`.
+  While a kind is off, rika! opens no file under `~/.omp`, `~/.claude`, `~/.codex`
+  (nor `~/.claude.json` or `~/.agents`) for it.
+- **What it reads, names only.** `SKILL.md` frontmatter (`name`, `description`) under
+  each agent's own skill folders: omp's `~/.omp/agent/skills`, its extension
+  packages, managed skills and the project `.omp/skills`, `.claude/skills`,
+  `.agents/skills`, `.codex/skills` and `.github/skills`; Claude's `~/.claude/skills`
+  (including synced skills), its installed plugins' skills and the project
+  `.claude/skills`; Codex's `~/.codex/skills` (with `.system`), `~/.agents/skills`,
+  the project `.agents/skills` and its plugin cache. MCP server names and enabled
+  flags come from omp's `mcp.json` files, `~/.claude.json` and the project
+  `.mcp.json`, and Codex's `config.toml`; every other value (commands, arguments,
+  `env`, `headers`, URLs) is dropped while the file is parsed, and the agents' CLIs
+  are never run. Credentials (`~/.claude/.credentials.json`, `~/.codex/auth.json`,
+  omp's `agent.db`) are never opened. Nothing is stored in the database, nothing is
+  synced to peers and no ingress route serves it (`GET /api/terminal/agent-skills`,
+  page guard only).
+- **How "now" is found**, first source that answers: tokens that kitty!'s own
+  per-launch hooks report on the agent's herdr pane (`kitty-tool`, `kitty-skill`
+  through `herdr pane report-metadata`), the report of kitty!'s omp extension (which
+  adds omp's intent line, at most 120 characters), then the last 64 KB of the
+  agent's session log named by herdr's `agent_session` (or the newest log for the
+  pane's directory), reduced to the last tool name and skill name. Session-log
+  formats change between agent releases; anything unrecognised shows "—".
+- **Per-launch hooks, never installed globally.** For agents rika! starts (New Agent
+  tab, Rika's `start_worker`), rika! writes its hook and omp extension to
+  `.private/agents/` and passes them on that launch only: Claude Code gets
+  `--settings '{"hooks":{"PreToolUse":…}}'`, Codex `-c hooks.PreToolUse=[…]` and omp
+  `--extension .private/agents/kitty-activity.ts`. The hook runs `python3` once per
+  tool call and skips a repeat within two seconds. Codex runs a new hook only after
+  you trust it in its `/hooks` screen; until then rika! reads Codex's session log
+  instead and says so once.
+- **Per-launch skill checklist.** With a kind on, **New Agent tab** lists its skills
+  as checkboxes and shows the flags they become: omp `--skills 'a,b'` (or
+  `--no-skills`), Claude `--settings '{"skillOverrides":{"x":"off"}}'`, Codex
+  `-c 'skills.config=[{name="x",enabled=false}]'`. Rika's `start_worker` takes the
+  same list as `skills_off`, and its approval card names the skills switched off.
+  Your own agent configuration files are never edited.
+
 
 ## Try it on fake data first
 
