@@ -264,7 +264,7 @@ def test_the_outline_view_lists_exactly_the_text_flow_types():
 
     from kitty.core.blocks import convert
 
-    sql = (Path(__file__).parents[1] / 'src/kitty/db/migrations/037_text_flow_outline.sql').read_text()
+    sql = (Path(__file__).parents[1] / 'src/kitty/db/migrations/045_text_flow_outline.sql').read_text()
     lists = re.findall(r"type IN \(([^)]*)\)", sql)
     assert len(lists) == 2
     for found in lists:

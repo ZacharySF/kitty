@@ -13,7 +13,7 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
-import { DOCK, routeBuild } from "./buildRoutes.mjs";
+import { routeBuild } from "./buildRoutes.mjs";
 import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -64,7 +64,9 @@ before(async () => {
         "/api": {
           target: origin,
           changeOrigin: true,
-          configure: (proxy) => proxy.on("proxyReq", (request) => request.setHeader("Origin", origin)),
+          ws: true,
+          // Rika's stream upgrades through the same proxy; the backend compares Origin exactly.
+          configure: (proxy) => { for (const event of ["proxyReq", "proxyReqWs"]) proxy.on(event, (request) => request.setHeader("Origin", origin)); },
         },
       },
     },
@@ -79,7 +81,7 @@ after(async () => {
   backend?.kill();
 });
 
-/** A returning user's profile on `hash` with the dock hidden and `theme` applied. */
+/** A returning user's profile on `hash` with `theme` applied. */
 async function open(hash, theme) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 } });
   await authorize(context, secret);
@@ -88,7 +90,7 @@ async function open(hash, theme) {
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
-  await routeBuild(context, { theme: { base: theme }, ui: { dock: DOCK.hidden } });
+  await routeBuild(context, { theme: { base: theme } });
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));

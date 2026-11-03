@@ -223,15 +223,15 @@
     return days >= 0 && days <= 21;
   };
   /**
-   * Full-bleed: the surface runs from where it starts down to the dock. Notices above it
+   * Full-bleed: the surface runs from where it starts down to the Rika bar. Notices above it
    * (the demo pill) come and go, so the height is measured, not a fixed offset.
    */
   function fillWindow(node: HTMLElement) {
     const measure = () => {
       if (!node.offsetParent) return;
-      const dock = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0;
+      const bar = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--rika-space")) || 0;
       const top = node.getBoundingClientRect().top + window.scrollY;
-      node.style.height = `${Math.max(420, Math.floor(innerHeight - top - dock - 14))}px`;
+      node.style.height = `${Math.max(420, Math.floor(innerHeight - top - bar - 14))}px`;
     };
     let frame = 0;
     const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
@@ -921,7 +921,7 @@
   /* Q21: one full-bleed surface; the map fills it and everything else floats over it. */
   .opportunities {
     position: relative;
-    height: calc(100dvh - var(--workbench-top, 0px) - var(--dock-space, 0px) - 34px);
+    height: calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 34px);
     min-height: 420px;
     overflow: hidden;
     border-radius: var(--r-panel);

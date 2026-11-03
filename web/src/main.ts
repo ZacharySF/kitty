@@ -10,6 +10,8 @@ import "@fontsource-variable/inter";
 import "@fontsource-variable/fraunces/full.css";
 import "@fontsource-variable/fredoka";
 import "@fontsource-variable/jetbrains-mono";
+// KaTeX's fonts are bundled here, so math (cards, Math, MathLive) never fetches a font.
+import "katex/dist/katex.min.css";
 import "./styles.css";
 import "./lib/themes/engine.css";
 

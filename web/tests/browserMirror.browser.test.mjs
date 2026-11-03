@@ -117,14 +117,6 @@ before(async () => {
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue());
-  // The note beside the Mirror pane needs the room the terminal dock takes in the demo.
-  await kittyContext.route("**/api/build/preferences", (route) => route.fulfill({ json: { ok: true } }));
-  await kittyContext.route("**/api/build", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    body.build.ui.dock = { mode: "hidden", height: null, shown: "terminal" };
-    await route.fulfill({ response, json: body });
-  });
   kittyPage = await kittyContext.newPage();
   kittyPage.on("pageerror", (error) => problems.push(`kitty: ${error.message}`));
   await kittyPage.goto(new URL(`#notes/${pageNumber}`, vite.resolvedUrls.local[0]).href, { timeout: 90_000 });

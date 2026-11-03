@@ -49,6 +49,7 @@ NON_CONTENT_PREFIXES = frozenset({
     # The block backend's own routes (history restore, Trash, tag records) are block
     # transactions: op_log is their history. Mirror frames live in memory only.
     "blocks", "tags", "mirror",
+    "math",  # practice controls; math_attempts and math_sprints are their own history
 })
 #: Non-content routes inside content sections.
 SKIP = tuple(re.compile(pattern) for pattern in (

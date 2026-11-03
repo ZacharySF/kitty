@@ -21,7 +21,7 @@ and a React rewrite. The Tern bridge is built and merged (pull requests #21 and 
 - **operation**: one atomic change to one block (set a property, move, insert text). The operations made by one user action form a **transaction**. *Avoid:* event, mutation, patch.
 - **operation log**: the append-only list of every transaction, stored in SQLite and never rewritten. It powers version history, point-in-time restore and sync. *Avoid:* event store, journal, history table.
 - **projection**: ordinary SQLite tables (blocks, refs, tags, graph positions) rebuilt from the operation log, so search, backlinks and the graph stay fast to read. *Avoid:* cache, view, materialization.
-- **build**: a shareable, versioned file describing one person's kitty: modules, settings, theme, layout, dock and graph preferences, and custom CSS. It never contains notes or keys. *Avoid:* config, profile, preset, dotfile.
+- **build**: a shareable, versioned file describing one person's kitty: modules, settings, theme, layout and graph preferences, and custom CSS. It never contains notes or keys. *Avoid:* config, profile, preset, dotfile.
 - **Tern bridge**: kitty driving a user-installed Stencil Tern through Tern's own command line. kitty never ships Tern. *Avoid:* Tern backend, Tern embed.
 - **kitty Tern plugin**: a Luau plugin installed into Tern that shows kitty notes and tasks inside Tern and sends captures back to kitty. *Avoid:* Tern extension, Tern add-on.
 
@@ -699,13 +699,12 @@ already in the lock through `mcp`).
   are runtime state and go to `data/build-history/` (the newest 10).
 - **What a build holds** (every key optional; a missing key takes its default):
   `schema` (format 1), `kitty_version`, `name`, `author`, `description`; `modules`;
-  `settings.ai` (model, routing, output limit, daily budget), `settings.notes` (allow AI,
+  `settings.ai` (model, routing, output limit, daily budget, Rika's three tier models), `settings.notes` (allow AI,
   attachment retention days), `settings.history.retention_days` (Q15/Q20, default 30),
   `settings.tags.mode` (Q13), `settings.study` (focus and break lengths, sound, notifications),
   `settings.opportunities` (scheduled monitoring on/off and interval), `settings.tern.plugin`
   (the kitty Tern plugin may pair and send captures); `theme.base` (a built-in theme; default
-  Kitty), `theme.tokens`, `theme.css`; `ui.dock` (mode, the docked height step `s`/`m`/`l`, or
-  the floating card's `float`, `size` and `offset`), `ui.graph` (look, layout, physics),
+  Kitty), `theme.tokens`, `theme.css`; `ui.graph` (look, layout, physics),
   `ui.atlas.hidden`, `ui.notes.pen_only`, `ui.terminal.coding_agent`, and the preferences the
   redesign added (merged from main, 2026-11-02): `ui.appearance` (title font, density, motion,
   motif, background), `ui.home.look` (Brain or 2D), `ui.brain` (the Brain's View panel settings
@@ -751,7 +750,7 @@ already in the lock through `mcp`).
   `config/build.json` writes it, moving `config/modules.yaml` into `modules` (the YAML is then
   removed; `modules.py` reads it only to migrate). The first projection takes the settings the
   file does not mention from the existing rows. Browser preferences (`kitty.theme`,
-  `kitty.dock`, `kitty.graph.look`, `kitty.graph.default-layout`, `kitty.atlas.physics`,
+  `kitty.graph.look`, `kitty.graph.default-layout`, `kitty.atlas.physics`,
   `kitty.atlas.hidden`, `kitty.notes.pen-only`, `kitty.coding-agent`, and main's
   `kitty.appearance`, `kitty.home.look`, `kitty.brain.view`, `kitty.brain.colors`,
   `kitty.notify.quiet`, `kitty.flashcards.deck-look`, `kitty.study.guide-view`,
@@ -862,9 +861,10 @@ Tern plugin and browser extension follow it).
 
 - **Migrations.** Main's `034_record_events`, `035_calendar_palette_subjects` and
   `036_note_page_maps` keep their numbers; the stack's unreleased 035-039 became
-  `037_text_flow_outline`, `038_clients`, `039_block_tags`, `040_peer_sync` and `041_builds`.
+  `037_text_flow_outline`, `038_clients`, `039_block_tags`, `040_peer_sync` and `041_builds`
+  (and later `045_text_flow_outline`, see below).
   A database at main's schema applies `032_blocks` and `033_notes_to_blocks` after 036 (the
-  runner applies every unapplied number), then 037 onwards. `042_note_page_maps_blocks`
+  runner applies every unapplied number), then 038 onwards. `042_note_page_maps_blocks`
   rebuilds main's page ↔ map link with `page_id` as the page's Notes number (the frozen
   `note_pages` no longer holds new pages): Trash keeps the link, a purge removes it.
   `043_op_log_migrated` marks the `op_log` rows the block migrations wrote. A database
@@ -888,11 +888,40 @@ Tern plugin and browser extension follow it).
   Tags, Connected apps, Keys and Devices pages. Main's preferences are build preferences (see
   [Builds](#builds-q8q9-what-was-built)).
 
+## Merging main's v0.3.30 (2026-11-03)
+
+Main shipped Rika (its own agent: tier router, tools with undo, approvals, worker agents,
+`/api/rika`), rika! math (KaTeX, sprints, lessons, the topic graph) and six themes, and
+replaced the herdr dock with the Rika bar. The stack was merged with it at `b416aa3`.
+
+- **Migrations.** Main's released `037_rika` and `044_math` keep their numbers (main left
+  038-043 free for the stack). The stack's `037_text_flow_outline` became
+  `045_text_flow_outline` and `044_search_index` became `046_search_index`. A database at
+  v0.3.30's schema applies 032, 033, 038-043, 045 and 046. Nothing in 038-043 reads the
+  outline view 045 widens.
+- **The dock is gone, and so is `ui.dock`.** Main's clean cutover removed `Dock.svelte`,
+  `dock.ts` and `AgentActivity.svelte`; the build schema drops `ui.dock` (an old build's
+  `ui.dock` is an unknown group: kept, ignored) and `kitty.dock` is no longer collected from
+  browsers. The build editor and the build status bar sit above `--rika-space`. The Tern panes
+  (run a line, focus, capture, recent activity) moved from the dock's Agents view to the Tern
+  view's **Panes** section, which shares the view's status poll.
+- **Rika's tier models are build settings** (`settings.ai.rika_fast_model`,
+  `rika_standard_model`, `rika_deep_model`, projected into `ai_settings` like the rest of
+  `settings.ai`); a shared build that changes one is a held cost change, like `model`.
+  The schema's theme list gained speed, c, red, pretti, bloodluxe and halfblood.
+- **Rika on the stack.** Rika's stream uses `kitty.web_socket` (main's parallel
+  `kitty.websocket` is removed) and, like every upgrade, needs the UI secret as a
+  subprotocol; the page sends it. Rika's note tools read pages and outline items from
+  `note_page_index` and `note_outline` (Notes numbers), not the frozen `note_pages` and
+  `note_blocks`; deleting a page moves it to Trash, which its approval card says.
+- **Tern.** `TernRuntime` keeps the stack's pane commands beside main's Rika ones
+  (`show`, `run_tab`, `show_program`); the fake `tern` in the tests serves both.
+
 ## Search index: what was built
 
 Paper §16 ("FTS5, backlinks and unlinked mentions fold the op log incrementally … with a
 scheduled oracle"). Code: `src/kitty/core/search.py`, `src/kitty/core/blocks/searchdocs.py`,
-`src/kitty/web_search.py`, migration `044_search_index.sql`, `kitty index check|rebuild`.
+`src/kitty/web_search.py`, migration `046_search_index.sql`, `kitty index check|rebuild`.
 
 - **Documents** (`search_docs`): one per searchable record. Blocks are written by
   `store.transact` in the same transaction as the projection; study, calendar, flashcard
@@ -930,7 +959,7 @@ scheduled oracle"). Code: `src/kitty/core/search.py`, `src/kitty/core/blocks/sea
 ## Verified facts
 
 - **Tern bridge merged** (#21 status view, Open in Tern, kitty!'s own daemon; #33 dock panes):
-  - **Code:** `src/kitty/core/tern.py` (`TernRuntime`), `src/kitty/web_tern.py`, `web/src/lib/TernView.svelte` (Tern node under Plan) and `web/src/lib/TernPanes.svelte` (the dock's Agents view).
+  - **Code:** `src/kitty/core/tern.py` (`TernRuntime`), `src/kitty/web_tern.py`, `web/src/lib/TernView.svelte` (Tern node under Plan) and `web/src/lib/TernPanes.svelte` (its Panes section; it was the dock's Agents view until main replaced the dock with the Rika bar).
   - **Daemon:** kitty!'s own, on `$XDG_RUNTIME_DIR/kitty/tern-<workspace hash>/daemon.sock` (directory 0700, owner-only socket); every `tern` kitty! runs targets only that socket, and pane actions only blocks of its `kitty` session (`kitty/<id>`). Quit closes kitty!'s Tern windows, stops following events and stops the daemon.
   - **Routes:** `GET /api/terminal/tern`; `POST /api/terminal/tern/{start,open,settings}` (#21) and `POST /api/terminal/tern/{new,run,focus,capture}` (#33). A capture saves the pane text as a quick note; a multi-line command is 400, a block outside kitty!'s session 404. Status includes exited panes with their exit status and recent `pane_spawned`/`pane_exited` events.
   - **Automated checks (#33):** full pytest passed (2714 passed, 3 skipped), including 37 in `tests/test_web_tern.py`; `svelte-check` reported 0 errors; all 108 web tests passed, including the dock browser tests for Tern present and absent; the production build passed.

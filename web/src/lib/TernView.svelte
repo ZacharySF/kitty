@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
+  import TernPanes from "./TernPanes.svelte";
   import { ternBlockState, ternPluginState, type TernPluginStatus, type TernStatus } from "./terminal";
 
   /**
@@ -135,7 +136,8 @@
       <p class="muted">Scripts and agents can drive this session with Tern's own commands:
         <code>TERN_DAEMON_SOCKET={status.socket} tern ls</code></p>
     {/if}
-    <p class="muted">This is a status panel. Tern's web client draws with WebGPU, which rika!'s window does not provide, so the terminal opens in Tern's own window. Quitting rika! closes the Tern windows it opened and stops its Tern session.</p>
+    <TernPanes tern={status} onstatus={adopt} />
+    <p class="muted">rika! never draws a Tern terminal itself: Tern's web client draws with WebGPU, which rika!'s window does not provide, so panes show in Tern's own window. Quitting rika! closes the Tern windows it opened and stops its Tern session.</p>
     <Panel title="rika! plugin for Tern">
       <p>Adds commands to your own Tern that send selections, panes, failed commands and web pages to rika!'s Inbox, and a rika! Inbox block.
         The first time, Tern asks to pair: approve its code in the bar above or in Settings → Connected apps.</p>

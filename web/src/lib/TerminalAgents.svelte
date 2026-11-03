@@ -71,7 +71,7 @@
 {command} --skill</pre>
       <p>Read herdr's skill before controlling panes. To view this same session from a terminal outside herdr:</p>
       <pre>env -u HERDR_ENV {command}</pre>
-      <p>Tabs and agent states appear live here and in the dock's Agents strip. CLI access grants full shell access as your user.</p>
+      <p>Tabs and agent states appear live here and on the Rika bar. CLI access grants full shell access as your user.</p>
     </section>
   {/if}
 </div>

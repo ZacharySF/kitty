@@ -1,7 +1,7 @@
 // For browser tests against a real kitty-web: each browser context gets its own layer of
 // interface preferences over the server's build (docs/platform-design.md Q8). `seed` starts
 // the layer; every preference the page saves lands in it (the returned object) instead of
-// the shared server, so one test's dock, theme or look never leaks into another, and a
+// the shared server, so one test's theme or look never leaks into another, and a
 // reload in the same context keeps what the page saved.
 
 /** `patch` merged into `target` in place, as the server merges preferences into the build. */
@@ -13,12 +13,6 @@ export function mergePreferences(target, patch) {
   }
   return target;
 }
-
-/** The dock as hidden, or floating, in a build's `ui.dock`. */
-export const DOCK = {
-  hidden: { mode: "hidden", shown: "terminal", float: false, step: "m", size: null, offset: { right: 16, bottom: 16 } },
-  floating: { mode: "terminal", shown: "terminal", float: true, step: "m", size: null, offset: { right: 16, bottom: 16 } },
-};
 
 export async function routeBuild(context, seed = {}) {
   const prefs = structuredClone(seed);

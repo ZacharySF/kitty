@@ -5,6 +5,7 @@
   import { hitIcon, hitLabel, hitTarget, oneLine, plain, searchPath, type SearchHit, type SearchResult, type Segment } from "./searchHits";
   import { navigationGroups, visibleNavigation, type View } from "./workspace";
   import { buildStore } from "./build.svelte";
+  import { launchMath, type MathLaunch } from "./math/launch";
 
   /**
    * Spotlight-style palette (Ctrl K): one large field, nothing else until you type,
@@ -22,6 +23,8 @@
     onhelp,
     onnewcard,
     onreload,
+    onterminal,
+    onrika,
   }: {
     enabled: readonly string[];
     onclose: () => void;
@@ -32,6 +35,10 @@
     /** Opens the quick-add flashcard popover; absent when Flashcards is off. */
     onnewcard?: () => void;
     onreload: () => void;
+    /** Opens a terminal in a Tern window; absent when the Terminal module is off. */
+    onterminal?: () => void;
+    /** Opens Rika's history drawer. */
+    onrika: () => void;
   } = $props();
 
   const LIMIT = 6;
@@ -53,10 +60,21 @@
     try { sessionStorage.setItem(id ? "kitty.schema.open-map" : "kitty.schema.new-map", id ? String(id) : "1"); } catch { /* Opens the last map. */ }
     onview("schema");
   }
+  const mathOn = $derived(visibleNavigation(enabled).some((item) => item.id === "math"));
+  function openMath(kind: MathLaunch) {
+    launchMath(kind);
+    onview("math");
+  }
   const actions = $derived<Choice[]>([
     ...(applyai ? [{ label: "Add job", meta: "Action", icon: "jobs", run: () => onadd() }] : []),
     ...(onnewcard ? [{ label: "New card", meta: "Flashcards", icon: "flashcards", run: () => onnewcard() }] : []),
     ...(mapsOn ? [{ label: "New mind map", meta: "Action", icon: "schema", run: () => openMap() }] : []),
+    ...(onterminal ? [{ label: "Open terminal", meta: "Tern window", icon: "terminal", run: () => onterminal() }] : []),
+    { label: "Rika history", meta: "Rika", icon: "kitty", run: () => onrika() },
+    ...(mathOn ? [
+      { label: "Mental math sprint", meta: "Math", icon: "math", run: () => openMath("sprint") },
+      { label: "Next math lesson", meta: "Math", icon: "math", run: () => openMath("lesson") },
+    ] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
     { label: "Edit build", meta: "Action", icon: "settings", run: () => { buildStore.editorOpen = true; } },
@@ -107,7 +125,13 @@
   onMount(() => {
     dialog.showModal();
     searchField?.focus();
-    if (mapsOn) void api<{ maps: { id: number; title: string }[] }>("/schema").then((result) => { mapList = result.maps; }).catch(() => { /* Maps stay reachable through Mind maps. */ });
+  });
+  // Ctrl K can open before the modules are read; the maps load once Mind maps is known to be on.
+  let mapsRequested = false;
+  $effect(() => {
+    if (!mapsOn || mapsRequested) return;
+    mapsRequested = true;
+    void api<{ maps: { id: number; title: string }[] }>("/schema").then((result) => { mapList = result.maps; }).catch(() => { /* Maps stay reachable through Mind maps. */ });
   });
   $effect(() => {
     const text = query.trim();

@@ -71,7 +71,7 @@ window.graphHarness = {
   setActive: (active) => handle.setActive(active),
   setLook: async (look) => { await handle.setLook(look); await window.graphHarness.settled(); return handle.look; },
   look: () => handle.look,
-  /** Resizes the stage as a layout change would (dock shown/hidden, fullscreen). */
+  /** Resizes the stage as a layout change would (a window resize, fullscreen). */
   resize: async (width, height) => {
     stage.style.width = `${width}px`;
     stage.style.height = `${height}px`;

@@ -12,7 +12,7 @@ const storage = (values) => ({ getItem: (key) => (key in values ? values[key] : 
 test('every legacy key is listed for removal, including the delete-only tree marker', () => {
   assert.deepEqual([...LEGACY_KEYS].sort(), [
     'kitty.appearance', 'kitty.atlas.hidden', 'kitty.atlas.physics', 'kitty.brain.colors', 'kitty.brain.view',
-    'kitty.coding-agent', 'kitty.dock', 'kitty.flashcards.deck-look', 'kitty.graph.default-layout', 'kitty.graph.look',
+    'kitty.coding-agent', 'kitty.flashcards.deck-look', 'kitty.graph.default-layout', 'kitty.graph.look',
     'kitty.graph.tree-default.v2', 'kitty.home.look', 'kitty.notes.pen-only', 'kitty.notify.quiet', 'kitty.study.guide-view',
     'kitty.study.plan-view', 'kitty.theme',
   ]);
@@ -20,7 +20,7 @@ test('every legacy key is listed for removal, including the delete-only tree mar
   const { keys } = collectLegacy(storage({
     'kitty.notes.tabs': '[1]', 'kitty-calendar-notifications': 'true', 'kitty.ink.recent': '[]', 'kitty.home.rail': 'collapsed',
     'kitty.notify.ledger': '{}', 'kitty.notify.system': 'true', 'kitty.notes.outline': 'open', 'kitty.study.drawers': '{}',
-    'kitty.brain.panel': 'open',
+    'kitty.brain.panel': 'open', 'kitty.dock': '{"mode":"hidden"}',
   }));
   assert.deepEqual(keys, []);
 });
@@ -28,7 +28,6 @@ test('every legacy key is listed for removal, including the delete-only tree mar
 test('legacy preferences become one patch for the build', () => {
   const { patch, keys } = collectLegacy(storage({
     'kitty.theme': 'liquid-glass',
-    'kitty.dock': JSON.stringify({ mode: 'hidden', shown: 'activity', float: true, step: 'l', size: { width: 600.4, height: 380 }, offset: { right: 40, bottom: 90 } }),
     'kitty.graph.look': '3d',
     'kitty.graph.default-layout': 'force',
     'kitty.graph.tree-default.v2': '1',
@@ -50,7 +49,6 @@ test('legacy preferences become one patch for the build', () => {
   assert.deepEqual(patch, {
     theme: { base: 'liquid-glass' },
     ui: {
-      dock: { mode: 'hidden', shown: 'activity', float: true, step: 'l', size: { width: 600, height: 380 }, offset: { right: 40, bottom: 90 } },
       graph: { look: '3d', layout: 'force', physics: { repulsion: 300, spring: 0.3 } },
       atlas: { hidden: ['calendar', 'jobs'] },
       notes: { pen_only: true },
@@ -71,7 +69,6 @@ test('legacy preferences become one patch for the build', () => {
 test('values the build would refuse are left out, and a stored Sphere from before tree-default.v2 is not a choice', () => {
   const { patch, keys } = collectLegacy(storage({
     'kitty.theme': 'Not A Theme!',
-    'kitty.dock': 'not json',
     'kitty.graph.look': 'hologram',
     'kitty.graph.default-layout': 'sphere',
     'kitty.atlas.hidden': '{"calendar":true}',
@@ -81,10 +78,7 @@ test('values the build would refuse are left out, and a stored Sphere from befor
     'kitty.flashcards.deck-look': 'list',
   }));
   assert.deepEqual(patch, {});
-  assert.equal(keys.length, 9);
-  // An old dragged docked height is dropped (main's dock has height steps); a bad card size falls back.
-  assert.deepEqual(collectLegacy(storage({ 'kitty.dock': '{"mode":"terminal","height":400,"size":{"width":10,"height":300}}' })).patch,
-    { ui: { dock: { mode: 'terminal', shown: 'terminal', float: false, step: 'm', size: null, offset: { right: 16, bottom: 16 } } } });
+  assert.equal(keys.length, 8);
   // Home's choice used to share the graph look: an old 2D stays 2D, anything else is the Brain (the default).
   assert.deepEqual(collectLegacy(storage({ 'kitty.graph.look': '2d' })).patch, { ui: { graph: { look: '2d' }, home: { look: '2d' } } });
   assert.deepEqual(collectLegacy(storage({ 'kitty.graph.look': '3d' })).patch, { ui: { graph: { look: '3d' } } });
@@ -94,10 +88,10 @@ test('values the build would refuse are left out, and a stored Sphere from befor
 
 test('deep merge replaces arrays and values, merges objects and never mutates its inputs', () => {
   const before = structuredClone(DEFAULT_BUILD);
-  const merged = deepMerge(DEFAULT_BUILD, { ui: { dock: { mode: 'hidden' }, atlas: { hidden: ['notes'] } }, theme: { base: 'nord' } });
+  const merged = deepMerge(DEFAULT_BUILD, { ui: { graph: { look: '3d' }, atlas: { hidden: ['notes'] } }, theme: { base: 'nord' } });
   assert.deepEqual(DEFAULT_BUILD, before);
-  assert.equal(merged.ui.dock.mode, 'hidden');
-  assert.equal(merged.ui.dock.shown, 'terminal');
+  assert.equal(merged.ui.graph.look, '3d');
+  assert.equal(merged.ui.graph.layout, 'tree');
   assert.deepEqual(merged.ui.atlas.hidden, ['notes']);
   assert.deepEqual(deepMerge(merged, { ui: { atlas: { hidden: [] } } }).ui.atlas.hidden, []);
   assert.equal(merged.theme.base, 'nord');
@@ -173,7 +167,7 @@ test('diff cells summarise long CSS and values', () => {
   assert.equal(describeValue('theme.css', ''), 'no CSS');
   assert.equal(describeValue('theme.base', 'nord'), '"nord"');
   assert.equal(describeValue('modules', ['workspace']), '["workspace"]');
-  assert.equal(describeValue('ui.dock.height', null), 'null');
+  assert.equal(describeValue('ui.graph.physics', null), 'null');
   assert.equal(describeValue('theme.tokens.ink', undefined), '(not set)');
   assert.equal(describeValue('description', 'x'.repeat(300)), '1 line (300 characters)');
 });

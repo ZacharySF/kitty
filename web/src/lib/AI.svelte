@@ -22,7 +22,12 @@
     spent_today: number;
     revision: number;
     privacy_notice: string;
+    /** Rika's tier models (Q12); '' means the default in `rika_tier_defaults`. */
+    rika_tiers: Record<Tier, string>;
+    rika_tier_defaults: Record<Tier, string>;
   };
+  type Tier = "fast" | "standard" | "deep";
+  const TIERS: [Tier, string][] = [["fast", "Fast tier"], ["standard", "Standard tier"], ["deep", "Deep tier"]];
   let status = $state<Status | null>(null);
   let key = $state("");
   let model = $state("");
@@ -31,6 +36,7 @@
   let maximum = $state(2048);
   let dailyBudget = $state(1);
   let confirmed = $state(false);
+  let tiers = $state<Record<Tier, string>>({ fast: "", standard: "", deep: "" });
   let busy = $state(false);
   let error = $state("");
   let message = $state("");
@@ -49,6 +55,7 @@
       routing = status.routing;
       maximum = status.max_output_tokens;
       dailyBudget = status.daily_budget_usd;
+      tiers = { ...status.rika_tiers };
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -66,6 +73,7 @@
         routing,
         max_output_tokens: maximum,
         daily_budget_usd: dailyBudget,
+        rika_tiers: tiers,
         ...(key ? { key } : {}),
         ...(removeKey ? { remove_key: true } : {}),
         confirmed: true,
@@ -185,6 +193,15 @@
           /></label
         >
       </div>
+      <fieldset class="tiers">
+        <legend>Rika's models</legend>
+        <datalist id="ai-model-ids">{#each status.models as item}<option value={item.id}>{item.name}</option>{/each}</datalist>
+        <div class="settings-grid">
+          {#each TIERS as [tier, label] (tier)}
+            <label>{label}<input list="ai-model-ids" spellcheck="false" bind:value={tiers[tier]} placeholder={status.rika_tier_defaults[tier]} /></label>
+          {/each}
+        </div>
+      </fieldset>
       <label class="approval"
         ><input type="checkbox" bind:checked={confirmed} /> Confirm these settings.
         Every inference request still needs its own review.</label
@@ -266,6 +283,18 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
     gap: 0.7rem;
+  }
+  .tiers {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .tiers legend {
+    padding: 0;
+    margin-bottom: 0.4rem;
+    font-weight: 600;
   }
   .actions {
     display: flex;

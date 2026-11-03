@@ -17,6 +17,9 @@ public commands are used, always with ``TERN_DAEMON_SOCKET`` set to that socket:
   With a window already open on that daemon Tern raises it instead (the new process
   exits), so focusing a pane runs ``tern focus`` and then ``tern --dir``;
 * ``tern new tab kitty --cwd WORKSPACE --json`` adds a pane to rika!'s session;
+* ``tern new tab kitty --cwd DIR --keep-open -- COMMAND...`` and ``tern focus BLOCK``
+  run and show Rika's panes: an approved shell command, or a herdr client that
+  surfaces a worker agent's herdr pane in a Tern window;
 * ``tern run kitty/ID -- LINE``, ``tern focus kitty/ID`` and
   ``tern capture kitty/ID --scrollback`` act on one pane of rika!'s session (the
   ``kitty/`` prefix makes Tern itself refuse a block of any other session); rika!
@@ -48,6 +51,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -280,7 +284,8 @@ def _terminate_group(process: subprocess.Popen) -> None:
 
 def _block(block: dict, working: set) -> dict:
     return {"id": block["id"], "title": str(block.get("title") or ""), "cwd": block.get("cwd"),
-            "program": block.get("program"), "cols": block.get("cols"), "rows": block.get("rows"),
+            "program": block.get("program"), "command": block.get("command"),
+            "cols": block.get("cols"), "rows": block.get("rows"),
             "focused": block.get("focused") is True, "live": block.get("live") is True,
             "exited": block.get("exited"), "working": block["id"] in working}
 
@@ -573,6 +578,51 @@ class TernRuntime:
         """Recent pane starts and exits on rika!'s daemon, newest first."""
         with self._events_lock:
             return [dict(item) for item in reversed(self._events)][:ACTIVITY_LIMIT]
+
+    # Rika's panes (kitty.core.rika) ----------------------------------------------
+
+    def _front_locked(self, binary: str, block: int) -> None:
+        """Show `block` in a window, opening one when none shows rika!'s daemon."""
+        self._run(binary, "focus", str(block))
+        if not any(client.get("kind") == "window" for client in self._inspect(binary).get("clients") or []):
+            self._open_window_locked(binary)
+
+    def show(self, block: int) -> None:
+        """Bring one pane of rika!'s session to the front of a Tern window (an agent card's Open)."""
+        with self._lock:
+            self._front_locked(self._start_locked()[0], block)
+
+    def _tab_locked(self, binary: str, command: list[str], cwd: Path) -> int:
+        try:
+            block = json.loads(self._run(binary, "new", "tab", SESSION, "--cwd", str(cwd), "--keep-open",
+                                         "--json", "--", *command))["block"]
+            if type(block) is not int:
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            raise TernUnavailable("Tern did not report the new tab") from None
+        self._front_locked(binary, block)
+        return block
+
+    def run_tab(self, command: list[str], cwd: Path) -> int:
+        """`command` in a new tab of rika!'s session, kept open after it ends, in front."""
+        with self._lock:
+            return self._tab_locked(self._start_locked()[0], command, cwd)
+
+    def show_program(self, command: list[str], cwd: Path) -> int:
+        """Bring the live pane running `command` to the front, else start it in a new tab."""
+        with self._lock:
+            binary = self._start_locked()[0]
+            for session in self._inspect(binary)["sessions"]:
+                for tab in session.get("tabs") or []:
+                    for block in tab.get("blocks") or []:
+                        try:
+                            running = shlex.split(block.get("command") or "")
+                        except ValueError:
+                            continue
+                        if running == command and block.get("exited") is None and type(block.get("id")) is int:
+                            self._front_locked(binary, block["id"])
+                            return block["id"]
+            return self._tab_locked(binary, command, cwd)
 
     def status(self) -> dict:
         """Detection plus rika!'s session; reading never starts anything."""

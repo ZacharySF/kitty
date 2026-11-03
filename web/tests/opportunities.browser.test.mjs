@@ -12,7 +12,7 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
-import { DOCK, routeBuild } from "./buildRoutes.mjs";
+import { routeBuild } from "./buildRoutes.mjs";
 import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -77,7 +77,9 @@ before(async () => {
         "/api": {
           target: origin,
           changeOrigin: true,
-          configure: (proxy) => proxy.on("proxyReq", (request) => request.setHeader("Origin", origin)),
+          ws: true,
+          // Rika's stream upgrades through the same proxy; the backend compares Origin exactly.
+          configure: (proxy) => { for (const event of ["proxyReq", "proxyReqWs"]) proxy.on(event, (request) => request.setHeader("Origin", origin)); },
         },
       },
     },
@@ -99,7 +101,7 @@ async function open({ theme } = {}) {
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue());
-  await routeBuild(context, { ui: { dock: DOCK.hidden } });
+  await routeBuild(context);
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));

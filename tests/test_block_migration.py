@@ -235,7 +235,7 @@ def test_one_log_transaction_per_migrated_root(migrated):
     conn = migrated[0]
     roots = conn.execute("SELECT COUNT(*) FROM blocks WHERE parent_id IS NULL AND type != 'tag'").fetchone()[0]
     assert roots == len(PAGES) + len(DOCUMENTS) + len(QUICK)
-    # Migration 037 then made each #tag a tag record, one transaction for all of them.
+    # Migration 039 then made each #tag a tag record, one transaction for all of them.
     tag_names = {row[0] for row in conn.execute("SELECT text FROM blocks WHERE parent_id IS NULL AND type = 'tag'")}
     assert tag_names == {"biology", "exam", "Bio/Energy"}
     tag_roots = len(tag_names)

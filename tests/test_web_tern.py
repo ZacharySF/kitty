@@ -185,7 +185,8 @@ def test_open_in_tern_runs_a_window_on_kittys_own_daemon_and_quit_leaves_nothing
         [tab] = session["tabs"]
         [block] = tab["blocks"]
         assert block["cwd"] == str(settings.root) and block["working"] is True
-        assert set(block) == {"id", "title", "cwd", "program", "cols", "rows", "focused", "live", "exited", "working"}
+        assert set(block) == {"id", "title", "cwd", "program", "command", "cols", "rows", "focused", "live", "exited",
+                              "working"}
         # A second Open hands over to the open window, which Tern raises: one window, daemon and session.
         assert running.request("/api/terminal/tern/open", {})[0] == 200
         assert wait_for(lambda: len(windows := [item for item in tern.invocations() if item["argv"][:1] == ["--dir"]]) == 2

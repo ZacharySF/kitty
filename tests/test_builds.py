@@ -193,7 +193,7 @@ def test_a_build_has_exactly_the_documented_sections():
     assert set(document.schema()["properties"]["settings"]["properties"]) == {
         "ai", "notes", "history", "tags", "study", "opportunities", "tern"}
     assert set(document.schema()["properties"]["ui"]["properties"]) == {
-        "dock", "graph", "atlas", "notes", "terminal", "appearance", "home", "brain", "notifications", "flashcards", "study"}
+        "graph", "atlas", "notes", "terminal", "appearance", "home", "brain", "notifications", "flashcards", "study"}
 
 
 def test_export_never_carries_keys_credentials_devices_clients_or_applicant_data(tmp_path):
@@ -253,7 +253,8 @@ def test_the_first_open_moves_modules_yaml_and_the_settings_rows_into_the_build(
     build = read_build(root)
     assert build["modules"] == ["workspace", "terminal"]
     assert build["settings"]["ai"] == {"model": "synthetic/model", "routing": "latency", "max_output_tokens": 2048,
-                                       "daily_budget_usd": 2.5}
+                                       "daily_budget_usd": 2.5, "rika_fast_model": "", "rika_standard_model": "",
+                                       "rika_deep_model": ""}
     assert build["settings"]["notes"] == {"allow_ai": True, "attachment_retention_days": 12}
     assert build["settings"]["study"]["focus_seconds"] == 1800 and build["settings"]["study"]["sound"] is False
     assert build["settings"]["opportunities"] == {"monitoring": False, "interval_hours": 48}

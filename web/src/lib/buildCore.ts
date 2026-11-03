@@ -6,18 +6,6 @@
 import type { Problem } from "./api";
 
 export type HistoryEntry = { id: string; saved_at: string; reason: string; source: string; name: string; valid: boolean; revision: string };
-export type DockMode = "terminal" | "activity" | "hidden";
-export type DockStep = "s" | "m" | "l";
-export type DockSize = { width: number; height: number };
-export type DockOffset = { right: number; bottom: number };
-export type DockPreference = {
-  mode: DockMode;
-  shown: Exclude<DockMode, "hidden">;
-  float: boolean;
-  step: DockStep;
-  size: DockSize | null;
-  offset: DockOffset;
-};
 export type GraphPreference = {
   look: "2d" | "3d";
   layout: "tree" | "clusters" | "sphere" | "force";
@@ -50,7 +38,6 @@ export type BrainPreference = {
 /** Quiet hours (Q60) in minutes of the local day. */
 export type QuietPreference = { enabled: boolean; from: number; to: number; let_calendar: boolean; digest: boolean };
 export type BuildUi = {
-  dock: DockPreference;
   graph: GraphPreference;
   atlas: { hidden: string[] };
   notes: { pen_only: boolean };
@@ -107,7 +94,6 @@ export const DEFAULT_BUILD: Build = {
   settings: {},
   theme: { base: "kitty", tokens: {}, css: "" },
   ui: {
-    dock: { mode: "terminal", shown: "terminal", float: false, step: "m", size: null, offset: { right: 16, bottom: 16 } },
     graph: { look: "2d", layout: "tree", physics: { repulsion: 60, spring: 0.5, damping: 0.35 } },
     atlas: { hidden: [] },
     notes: { pen_only: false },
@@ -141,7 +127,6 @@ export function deepMerge<T>(target: T, patch: unknown): T {
 /** Old per-browser preferences (before builds) and where they land in the build. */
 export const LEGACY_KEYS = [
   "kitty.theme",
-  "kitty.dock",
   "kitty.graph.look",
   "kitty.graph.default-layout",
   "kitty.atlas.physics",
@@ -182,25 +167,6 @@ export function collectLegacy(storage: Reader): { patch: { ui?: Record<string, u
 
   const theme = read("kitty.theme");
   if (theme && /^[a-z0-9][a-z0-9-]{0,39}$/.test(theme)) patch.theme = { base: theme };
-
-  const dock = parse(read("kitty.dock"));
-  if (isObject(dock)) {
-    // Main's dock (docked height steps or a floating card); an old dragged `height` is dropped.
-    const mode = oneOf(dock.mode, ["terminal", "activity", "hidden"] as const, "terminal");
-    const size = isObject(dock.size) ? dock.size : null;
-    const offset = isObject(dock.offset) ? dock.offset : null;
-    const span = (value: unknown, min: number) => typeof value === "number" && Number.isFinite(value) && value >= min && value <= 20000;
-    ui.dock = {
-      mode,
-      shown: mode !== "hidden" ? mode : dock.shown === "activity" ? "activity" : "terminal",
-      float: dock.float === true,
-      step: oneOf(dock.step, ["s", "m", "l"] as const, "m"),
-      size: size && span(size.width, 320) && span(size.height, 160)
-        ? { width: Math.round(size.width as number), height: Math.round(size.height as number) } : null,
-      offset: offset && span(offset.right, 0) && span(offset.bottom, 0)
-        ? { right: Math.round(offset.right as number), bottom: Math.round(offset.bottom as number) } : { right: 16, bottom: 16 },
-    };
-  }
 
   const graph: Record<string, unknown> = {};
   const look = read("kitty.graph.look");

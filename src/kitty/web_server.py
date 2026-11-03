@@ -132,7 +132,7 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
         "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
         "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness",
-        "/api/blocks", "/api/tags", "/api/mirror")),
+        "/api/blocks", "/api/tags", "/api/mirror", "/api/math")),
     ("/api/terminal", "terminal"),
 ), key=lambda item: -len(item[0])))
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
@@ -143,12 +143,13 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("applyai", "web_profile"), ("applyai", "web_insights"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
+    ("workspace", "web_math"),
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
     ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_keys"),
     (None, "web_devices"), (None, "web_search"),
-    (None, "web_account"),
+    (None, "web_account"), (None, "web_rika"),
     ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
 

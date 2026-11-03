@@ -62,7 +62,8 @@ def _budget(value: Any) -> str:
 
 def settings_from_rows(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     """The build's ``settings`` as the SQLite rows hold them now."""
-    ai = conn.execute("SELECT model, routing, max_output_tokens, daily_budget_usd FROM ai_settings WHERE id=1").fetchone()
+    ai = conn.execute("SELECT model, routing, max_output_tokens, daily_budget_usd, rika_fast_model, rika_standard_model,"
+                      " rika_deep_model FROM ai_settings WHERE id=1").fetchone()
     notes = conn.execute("SELECT allow_ai, retention_days FROM note_preferences WHERE id=1").fetchone()
     study = conn.execute("SELECT focus_seconds, short_break_seconds, sound, notifications FROM study_settings WHERE id=1").fetchone()
     monitoring = conn.execute("SELECT enabled, interval_hours FROM opportunity_settings WHERE id=1").fetchone()
@@ -70,7 +71,8 @@ def settings_from_rows(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     state = conn.execute("SELECT history_retention_days, tern_plugin FROM build_state WHERE id=1").fetchone()
     return {
         "ai": {"model": ai["model"], "routing": ai["routing"], "max_output_tokens": ai["max_output_tokens"],
-               "daily_budget_usd": float(Decimal(ai["daily_budget_usd"]))},
+               "daily_budget_usd": float(Decimal(ai["daily_budget_usd"])), "rika_fast_model": ai["rika_fast_model"],
+               "rika_standard_model": ai["rika_standard_model"], "rika_deep_model": ai["rika_deep_model"]},
         "notes": {"allow_ai": bool(notes["allow_ai"]), "attachment_retention_days": notes["retention_days"]},
         "history": {"retention_days": state["history_retention_days"]},
         "tags": {"mode": tags["mode"]},
@@ -92,9 +94,12 @@ def apply(conn: sqlite3.Connection, build: dict[str, Any]) -> None:
     settings = build["settings"]
     ai = settings["ai"]
     conn.execute(
-        "UPDATE ai_settings SET model=?, routing=?, max_output_tokens=?, daily_budget_usd=?, revision=revision+1 "
-        "WHERE id=1 AND (model IS NOT ? OR routing IS NOT ? OR max_output_tokens IS NOT ? OR daily_budget_usd IS NOT ?)",
-        (ai["model"], ai["routing"], ai["max_output_tokens"], _budget(ai["daily_budget_usd"])) * 2)
+        "UPDATE ai_settings SET model=?, routing=?, max_output_tokens=?, daily_budget_usd=?, rika_fast_model=?,"
+        " rika_standard_model=?, rika_deep_model=?, revision=revision+1 WHERE id=1 AND (model IS NOT ? OR routing IS NOT ?"
+        " OR max_output_tokens IS NOT ? OR daily_budget_usd IS NOT ? OR rika_fast_model IS NOT ? OR rika_standard_model IS NOT ?"
+        " OR rika_deep_model IS NOT ?)",
+        (ai["model"], ai["routing"], ai["max_output_tokens"], _budget(ai["daily_budget_usd"]),
+         ai["rika_fast_model"], ai["rika_standard_model"], ai["rika_deep_model"]) * 2)
     notes = settings["notes"]
     conn.execute(
         "UPDATE note_preferences SET allow_ai=?, retention_days=?, revision=revision+1 "

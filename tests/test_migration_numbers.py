@@ -4,8 +4,9 @@ starting point upgrades to the same schema.
 The runner keys migrations by number (kitty.db.migrations): two files with one number
 would make one of them unreachable on any database that applied the other, as happened
 when main's 035_calendar_palette_subjects and the platform stack's 035_text_flow_outline
-were both written. The stack's then-unreleased 035-039 became 037-041; a database at
-the old stack numbering was never released and is not a supported starting point.
+were both written. The stack's then-unreleased 035-039 became 037-041, and its 037 and 044
+became 045 and 046 when main shipped 037_rika and 044_math; a database at an old stack
+numbering was never released and is not a supported starting point.
 """
 from __future__ import annotations
 
@@ -21,8 +22,8 @@ from kitty.db.migrations import MIGRATIONS_DIR, available_migrations
 EXPLAINED_GAPS = {
     21: "never used: no 021 file exists in any branch's history (parallel features skipped it)",
 }
-#: Main's own migrations after the last one the block backend builds on (released in v0.3.2x).
-MAIN_ONLY = {"record_events", "calendar_palette_subjects", "note_page_maps"}
+#: Main's own migrations after the last one the block backend builds on (released in v0.3.2x-0.3.30).
+MAIN_ONLY = {"record_events", "calendar_palette_subjects", "note_page_maps", "rika", "math"}
 
 
 def test_every_file_is_numbered_once_and_the_numbers_have_no_unexplained_gap():
@@ -62,12 +63,12 @@ def test_a_fresh_database_applies_everything(tmp_path):
 def test_a_database_at_mains_schema_upgrades_to_the_same_schema_and_keeps_its_notes(tmp_path):
     fresh = connect(tmp_path / "data" / "fresh.db")
     migrate(fresh)
-    # Main's released schema: every migration before the block backend plus main's 034-036.
+    # Main's released schema: every migration before the block backend plus main's 034-037 and 044.
     main_schema = _copy(tmp_path, "main", lambda m: m.version < 32 or m.name in MAIN_ONLY)
     conn = connect(tmp_path / "data" / "apply.db")
     migrate(conn, main_schema)
     applied = {row[0] for row in conn.execute("SELECT version FROM schema_version")}
-    assert {34, 35, 36} <= applied and not applied & {32, 33, 37}
+    assert {34, 35, 36, 37, 44} <= applied and not applied & {32, 33, 38, 45}
     book = conn.execute("INSERT INTO note_notebooks(title, created_at, updated_at) VALUES ('Biology', 't', 't')").lastrowid
     page = conn.execute("INSERT INTO note_pages(notebook_id, title, document, created_at, updated_at)"
                         " VALUES (?, 'Cells', '{\"version\": 1, \"elements\": []}', 't', 't')", (book,)).lastrowid

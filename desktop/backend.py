@@ -137,4 +137,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # The math checker runs SymPy in a spawned worker process (kitty.core.math.cas).
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     main()

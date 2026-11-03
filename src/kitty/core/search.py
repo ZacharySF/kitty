@@ -1,7 +1,7 @@
 """The full-text search index: exact, incremental, and checked against a rebuild (paper §16).
 
 One external-content table, ``search_docs``, holds a document per searchable record;
-two FTS5 indexes read it (migration 044):
+two FTS5 indexes read it (migration 046):
 
 - ``search_fts``: words. ``unicode61 remove_diacritics 2`` folds case and diacritics
   ("cafe" finds "Café") with Unicode word boundaries; prefix indexes of 2 and 3
@@ -65,7 +65,7 @@ MAX_LIMIT = 200
 HIT, END = "\x02", "\x03"
 TAG = re.compile(r"<[^>]{0,2000}>")
 CHECKS_KEPT = 50
-#: Every trigger that queues a source-table change (migration 044).
+#: Every trigger that queues a source-table change (migration 046).
 TRIGGERS = tuple(f"search_{table}_{event}" for table, events in (
     ("study_subjects", "iud"), ("study_projects", "iud"), ("study_tasks", "iud"), ("calendar_events", "iud"),
     ("calendar_tasks", "iud"), ("flash_decks", "iud"), ("flash_notes", "iud"), ("flash_types", "u"),
@@ -75,12 +75,12 @@ TRIGGERS = tuple(f"search_{table}_{event}" for table, events in (
 
 
 class SearchUnavailable(RuntimeError):
-    """The database has no search index (a schema before migration 044)."""
+    """The database has no search index (a schema before migration 046)."""
 
 
 def require(conn: sqlite3.Connection) -> None:
     if not has_index(conn):
-        raise SearchUnavailable("This database has no search index; open it with rika! to apply migration 044")
+        raise SearchUnavailable("This database has no search index; open it with rika! to apply migration 046")
 
 
 def clean(value: str | None) -> str:
@@ -252,7 +252,7 @@ def sync(conn: sqlite3.Connection) -> int:
 
 
 def build(conn: sqlite3.Connection) -> int:
-    """Replace every document with one made from the current data (migration 044, ``kitty index rebuild``)."""
+    """Replace every document with one made from the current data (migration 046, ``kitty index rebuild``)."""
     with (nullcontext() if conn.in_transaction else transaction(conn, immediate=True)):
         # Rebuilding both indexes from the stored documents first makes them consistent even if
         # they were corrupt, so the deletes below (each one a trigger-driven FTS delete) are exact.

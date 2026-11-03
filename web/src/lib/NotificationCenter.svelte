@@ -93,7 +93,7 @@
     display: flex;
     flex-direction: column;
     width: min(340px, calc(100vw - 24px));
-    max-height: calc(100vh - var(--workbench-top, 56px) - var(--dock-space, 0px) - 24px);
+    max-height: calc(100vh - var(--workbench-top, 56px) - var(--rika-space, 0px) - 24px);
     border: 1px solid var(--hairline);
     border-radius: 16px;
     background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 94%, transparent);

@@ -19,6 +19,9 @@ The fake mirrors only the Tern 0.9.8 surface rika! uses:
 * ``tern --dir DIR`` is a native window: it attaches to that daemon as a window
   client until it is terminated. Like Tern's, when a window is already attached it
   hands over to that window (Tern raises it) and exits 0 instead;
+* ``tern new tab SESSION --cwd DIR --keep-open --json -- COMMAND...`` adds a tab whose
+  block runs ``sh -c COMMAND`` (``command`` is the joined line, as Tern reports it);
+  ``tern focus BLOCK`` focuses a block by bare id and fails like Tern for an unknown one;
 * ``tern plugin dir|link DIR [--json]|unlink ID|list --json`` work on
   ``$TERN_CONFIG_DIR/plugins`` like Tern 0.9.8's: ``link`` writes ``ID.path`` (replacing
   an earlier link of that ID) and says on stderr that no daemon runs; ``list`` reads the
@@ -46,7 +49,7 @@ import time
 from pathlib import Path
 
 FAKE_TERN = r'''
-import json, os, signal, socket, sys, threading, time
+import json, os, shlex, signal, socket, sys, threading, time
 LOG = {log!r}
 MODE_FILE = {mode_file!r}
 argv = sys.argv[1:]
@@ -158,15 +161,30 @@ def daemon(path):
                     return {{"error": "no session is called `%s`" % message["name"]}}
                 session = found[0]
             tab = new_block(message["cwd"])
-            for other in session["tabs"]:
-                other["shown"] = False
-                for block in other["blocks"]:
-                    block["focused"] = False
+            block = tab["blocks"][0]
+            if message.get("command"):
+                # Rika's `new tab ... --keep-open -- COMMAND...`: Tern adds it behind the shown tab.
+                line = shlex.join(message["command"])
+                block.update(title="", args=["-c", line], command=line, keep_open=True)
+                tab["shown"] = False
+            else:
+                for other in session["tabs"]:
+                    other["shown"] = False
+                    for item in other["blocks"]:
+                        item["focused"] = False
             tab["number"] = len(session["tabs"]) + 1
             session["tabs"].append(tab)
-            block = tab["blocks"][0]
             publish({{"event": "pane_spawned", "pane": block["id"], "by": 1}})
             return {{"session": session["id"], "tab": tab["id"], "block": block["id"]}}
+        if op == "focus" and "/" not in message["ref"]:
+            # `tern focus BLOCK` by bare id, in any session.
+            blocks = [block for session in state["sessions"] for tab in session["tabs"] for block in tab["blocks"]]
+            found = [block for block in blocks if str(block["id"]) == message["ref"]]
+            if not found:
+                return {{"error": "no block"}}
+            for block in blocks:
+                block["focused"] = block is found[0]
+            return {{"block": found[0]["id"]}}
         if op in ("run", "focus", "capture"):
             found = find(message["ref"])
             if found is None:
@@ -250,11 +268,12 @@ elif argv == ["inspect", "--json"]:
         print(json.dumps(request({{"op": "inspect"}})))
 elif argv[:1] == ["new"] and argv[1:2] in (["session"], ["tab"]) and "--cwd" in argv:
     print(json.dumps(answer(request({{"op": "new", "kind": argv[1], "name": argv[2],
-                                      "cwd": argv[argv.index("--cwd") + 1]}}))))
+                                      "cwd": argv[argv.index("--cwd") + 1],
+                                      "command": argv[argv.index("--") + 1:] if "--" in argv else []}}))))
 elif argv[:1] == ["run"] and len(argv) == 4 and argv[2] == "--":
     answer(request({{"op": "run", "ref": argv[1], "text": argv[3]}}))
 elif argv[:1] == ["focus"] and len(argv) == 2:
-    answer(request({{"op": "focus", "ref": argv[1]}}))
+    print(json.dumps(answer(request({{"op": "focus", "ref": argv[1]}}))))
 elif argv[:1] == ["capture"] and argv[2:] in ([], ["--scrollback"]):
     text = answer(request({{"op": "capture", "ref": argv[1]}}))["text"]
     if mode == "big":

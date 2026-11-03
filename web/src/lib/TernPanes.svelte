@@ -1,36 +1,24 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { api } from "./api";
   import { popOutQuickNote } from "./quickNotes";
   import { ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, ternTarget, type TernStatus } from "./terminal";
 
   /**
-   * The panes of rika!'s own Tern session in the dock (docs/terminal-dock-design.md,
-   * Tern): their live state, one command line for a pane, focus in rika!'s Tern
-   * window and capture to a quick note. Renders nothing unless Tern is installed.
+   * The panes of rika!'s own Tern session in the Tern view (docs/terminal-dock-design.md,
+   * Tern): their live state, one command line for a pane, focus in rika!'s Tern window
+   * and capture to a quick note. `tern` is the view's status (it polls); every action
+   * hands the status it answers back through `onstatus`.
    */
-  const POLL_MS = 3000;
-  let tern = $state<TernStatus | null>(null);
+  let { tern, onstatus }: { tern: TernStatus; onstatus: (next: TernStatus) => void } = $props();
   let busy = $state(false);
   let note = $state("");
   let failed = $state(false);
   let savedNote = $state<number | null>(null);
   let command = $state("");
   let chosen = $state<number | null>(null);
-  const panes = $derived(tern ? ternPanes(tern) : []);
+  const panes = $derived(ternPanes(tern));
   const target = $derived(ternTarget(panes, chosen));
 
-  async function load() {
-    try {
-      tern = await api<TernStatus>("/terminal/tern");
-    } catch (cause) {
-      // An absent route (module off) or an unreadable daemon: keep what was shown, say why.
-      if (tern?.installed) {
-        note = (cause as Error).message;
-        failed = true;
-      }
-    }
-  }
   async function act(run: () => Promise<string>) {
     if (busy) return;
     busy = true;
@@ -46,14 +34,15 @@
     }
   }
   const update = (path: string, body: object, done: string) => act(async () => {
-    tern = await api<TernStatus>(`/terminal/tern/${path}`, body);
+    onstatus(await api<TernStatus>(`/terminal/tern/${path}`, body));
     return done;
   });
   const addPane = () => act(async () => {
     const before = new Set(panes.map((pane) => pane.id));
-    tern = await api<TernStatus>("/terminal/tern/new", {});
+    const next = await api<TernStatus>("/terminal/tern/new", {});
+    onstatus(next);
     // The new pane is where the next command goes.
-    chosen = ternPanes(tern).find((pane) => !before.has(pane.id))?.id ?? chosen;
+    chosen = ternPanes(next).find((pane) => !before.has(pane.id))?.id ?? chosen;
     return "Opened a new pane in rika!'s Tern session.";
   });
   async function runCommand(event: SubmitEvent) {
@@ -69,22 +58,15 @@
     return `Saved to quick note #${saved.note_id}${saved.truncated ? " (newest output only)" : ""}.`;
   });
 
-  onMount(() => {
-    void load();
-    const timer = window.setInterval(() => { if (!document.hidden && !busy) void load(); }, POLL_MS);
-    return () => window.clearInterval(timer);
-  });
 </script>
 
-{#if tern?.installed}
-  <section class="tern" aria-label="Tern">
-    <header>
-      <p class="heading"><span class="name">Tern</span> <span class="meta">kitty session · {tern.version}{tern.windows ? ` · ${tern.windows} window${tern.windows === 1 ? "" : "s"}` : ""}</span></p>
-      <button disabled={busy} onclick={addPane}>New pane</button>
-      <button disabled={busy} onclick={() => update("open", {}, "Opened a Tern window on rika!'s session.")}>Open in Tern</button>
-    </header>
+<section class="panes" aria-label="Tern panes">
+  <header>
+    <h2>Panes</h2>
+    <button disabled={busy} onclick={addPane}>New pane</button>
+  </header>
     {#if !tern.running}
-      <p class="tern-note" role="status">rika!'s Tern session is not running. New pane starts it.</p>
+      <p class="tern-note" role="status">No panes yet: New pane starts the session with one.</p>
     {:else if !panes.length}
       <p class="tern-note" role="status">rika!'s Tern session has no panes. New pane adds one.</p>
     {:else}
@@ -125,16 +107,15 @@
       <p class="tern-note" role={failed ? "alert" : "status"}>{note}
         {#if savedNote !== null}<button onclick={() => popOutQuickNote(savedNote!)}>Open note</button>{/if}</p>
     {/if}
-  </section>
-{/if}
+</section>
 
 <style>
-  .tern {
+  .panes {
     display: grid;
     gap: 8px;
-    margin-top: 12px;
-    padding-top: 10px;
-    border-top: 1px solid var(--hairline);
+    padding: .8rem;
+    border: 1px solid var(--hairline, var(--border));
+    border-radius: 8px;
     font: 11px var(--font-mono);
     letter-spacing: 0.08em;
   }
@@ -144,9 +125,10 @@
     flex-wrap: wrap;
     gap: 8px;
   }
-  .heading {
+  h2 {
     margin: 0 auto 0 0;
     color: var(--muted);
+    font: inherit;
     text-transform: uppercase;
   }
   .tern-note {
@@ -175,7 +157,6 @@
   }
   .pane.focused { border-color: color-mix(in srgb, var(--ink) 30%, transparent); }
   .name { color: var(--ink); font-weight: 600; }
-  .meta { color: var(--muted); }
   .state { color: var(--muted); text-transform: uppercase; }
   .state::before {
     content: "";

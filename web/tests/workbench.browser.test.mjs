@@ -1,6 +1,6 @@
 // The real app in a real browser against the disposable synthetic backend
 // (`kitty-web --demo`); no private workspace is read. Covers the Brain home fitting
-// the window above the dock, and selected toggles staying readable.
+// the window above the Rika bar, and selected toggles staying readable.
 // Run from web/ with Node >=22, uv and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
 // PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/workbench.browser.test.mjs
@@ -11,7 +11,7 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
-import { DOCK, mergePreferences, routeBuild } from "./buildRoutes.mjs";
+import { routeBuild } from "./buildRoutes.mjs";
 import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -85,7 +85,9 @@ before(async () => {
         "/api": {
           target: origin,
           changeOrigin: true,
-          configure: (proxy) => proxy.on("proxyReq", (request) => request.setHeader("Origin", origin)),
+          ws: true,
+          // Rika's stream upgrades through the same proxy; the backend compares Origin exactly.
+          configure: (proxy) => { for (const event of ["proxyReq", "proxyReqWs"]) proxy.on(event, (request) => request.setHeader("Origin", origin)); },
         },
       },
     },
@@ -105,10 +107,10 @@ after(async () => {
  *  returning user: the first-run welcome guide (covered by its own tests) is already done.
  *  Interface preferences come from the demo's build with this window's own layered on top:
  *  `build` seeds that layer and every preference the page saves lands in it (returned as
- *  `prefs`), so one test's dock, theme or look never leaks into the shared backend.
+ *  `prefs`), so one test's theme or look never leaks into the shared backend.
  *  `storage` seeds device-state localStorage before the first load; `setup(context)` adds
  *  routes or init scripts before the first page load. */
-async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, storage, setup, build } = {}) {
+async function open(hash, { viewport = DEFAULT, modules, theme, storage, setup, build } = {}) {
   const context = await browser.newContext({ viewport });
   await authorize(context, secret);
   await context.route("**/api/account", (route) =>
@@ -116,8 +118,7 @@ async function open(hash, { viewport = DEFAULT, modules, dock = "shown", theme, 
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
-  const prefs = await routeBuild(context, mergePreferences(structuredClone(build ?? {}),
-    dock === "hidden" || dock === "floating" ? { ui: { dock: DOCK[dock] } } : {}));
+  const prefs = await routeBuild(context, structuredClone(build ?? {}));
   if (storage)
     await context.addInitScript((entries) => {
       // Only the first load is seeded: a reload keeps what the page saved since.
@@ -159,9 +160,9 @@ async function prefIs(read, value, what) {
 }
 
 const rect = (locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON());
-/** Viewport bottom not covered by the docked dock or its handle (a floating card reserves nothing). */
+/** Viewport bottom not covered by the Rika bar. */
 const visibleBottom = (page) => page.evaluate(() =>
-  innerHeight - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0));
+  innerHeight - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--rika-space")) || 0));
 
 /**
  * Polls until the Brain's WebGL canvas has drawn the workspace and fills its stage,
@@ -178,7 +179,7 @@ async function fitted(page) {
   }, null, { timeout: 20_000, polling: 200 });
 }
 
-/** The atlas ends above the docked dock, the page does not scroll and the graph is fitted. */
+/** The atlas ends above the Rika bar, the page does not scroll and the graph is fitted. */
 async function assertAtlasFits(page, label) {
   const atlas = page.locator(".atlas");
   await atlas.waitFor();
@@ -193,13 +194,12 @@ async function assertAtlasFits(page, label) {
 
 /**
  * Every home control outside the drawing (both widget rails, the rail's collapse chevron
- * and the stage's corner controls) can be focused and is then above the docked dock and
- * hit-testable; only a floating dock card, which the user can move or hide, may cover it.
+ * and the stage's corner controls) can be focused and is then above the Rika bar and
+ * hit-testable.
  */
 async function assertSidebarReachable(page, label) {
   const unreachable = await page.locator(".atlas").evaluate((atlas) => {
-    const space = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dock-space")) || 0;
-    const dock = document.querySelector('[data-kitty-panel="dock"][data-float="true"], .dock-pill');
+    const space = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--rika-space")) || 0;
     const missing = [];
     const controls = atlas.querySelectorAll(":is(.rail, [data-home-corner]) :is(a[href], button, input, textarea, summary), .rail-toggle");
     if (!atlas.querySelector("[data-home-corner] button")) missing.push("no corner controls");
@@ -209,7 +209,7 @@ async function assertSidebarReachable(page, label) {
       const box = control.getBoundingClientRect();
       const x = box.left + box.width / 2, y = box.top + box.height / 2;
       const hit = document.elementFromPoint(x, y);
-      if (y < 0 || y > innerHeight - space || !hit || !(control === hit || control.contains(hit) || dock?.contains(hit)))
+      if (y < 0 || y > innerHeight - space || !hit || !(control === hit || control.contains(hit)))
         missing.push(control.getAttribute("aria-label") || control.textContent.trim().slice(0, 30));
     }
     return missing;
@@ -219,20 +219,17 @@ async function assertSidebarReachable(page, label) {
 
 const RAIL_KEY = "kitty.home.rail";
 
-describe("the Brain home fills the window above the dock", () => {
+describe("the Brain home fills the window above the Rika bar", () => {
   for (const viewport of [DEFAULT, MINIMUM, SCALED_MINIMUM]) {
     const size = `${viewport.width}×${viewport.height}`;
     for (const [name, options] of [
-      ["all modules, dock shown", {}],
-      ["all modules, dock hidden", { dock: "hidden" }],
-      ["all modules, dock floating", { dock: "floating" }],
+      ["all modules", {}],
       ["all modules, rail collapsed", { storage: { [RAIL_KEY]: "collapsed" } }],
       ["core only", { modules: [] }],
     ]) {
       test(`${size}, ${name}`, async () => {
         const { page, problems, context } = await open("today", { viewport, ...options });
-        if (!options.modules && options.dock !== "hidden") await page.locator('[data-kitty-panel="dock"]').waitFor();
-        if (options.dock === "floating") assert.equal(await visibleBottom(page), viewport.height, `${size}: the floating card reserves page space`);
+        await page.getByRole("region", { name: "Rika" }).waitFor();
         if (options.storage) await page.locator(".atlas .side.collapsed").waitFor();
         await assertAtlasFits(page, `${size} ${name}`);
         await assertSidebarReachable(page, `${size} ${name}`);
@@ -241,14 +238,19 @@ describe("the Brain home fills the window above the dock", () => {
       });
     }
 
-    test(`${size}, F fullscreens the fitted Brain and Escape refits it; the docked dock is reserved, hiding or floating it frees the page`, async () => {
+    test(`${size}, no dock: the Rika bar is the bottom edge, the page takes the full height above it, and F fullscreens the Brain over both`, async () => {
       const { page, problems, context } = await open("today", { viewport });
-      const dock = page.locator('[data-kitty-panel="dock"]');
-      await dock.waitFor();
+      const bar = page.getByRole("region", { name: "Rika" });
+      await bar.waitFor();
       await assertAtlasFits(page, `${size} initial`);
-      const docked = await rect(dock);
-      assert.deepEqual([docked.left, docked.width, Math.round(docked.bottom)], [0, viewport.width, viewport.height], `${size}: the dock is not docked at the bottom`);
-      assert.ok((await rect(page.locator(".atlas"))).bottom <= docked.top + 1, `${size}: the atlas runs under the docked dock`);
+      assert.equal(await page.locator('[data-kitty-panel="dock"], .dock-handle, .dock-pill, [aria-label="Dock"]').count(), 0, `${size}: a dock is rendered`);
+      assert.equal(await page.getByRole("button", { name: /dock/i }).count(), 0, `${size}: a dock control is rendered`);
+      const box = await rect(bar);
+      assert.deepEqual([box.left, box.width, Math.round(box.bottom)], [0, viewport.width, viewport.height], `${size}: the bar is not along the bottom`);
+      assert.ok(box.height <= 60, `${size}: the bar is not slim (${box.height}px)`);
+      assert.equal(await visibleBottom(page), viewport.height - Math.round(box.height), `${size}: the page does not reserve exactly the bar`);
+      const atlas = await rect(page.locator(".atlas"));
+      assert.ok(atlas.bottom <= box.top + 1 && atlas.bottom >= box.top - 24, `${size}: the atlas ends at ${atlas.bottom}, not just above the bar at ${box.top}`);
       const stage = page.locator('[data-kitty-panel="graph"]');
       await stage.focus();
       await page.keyboard.press("f");
@@ -256,56 +258,12 @@ describe("the Brain home fills the window above the dock", () => {
       await fitted(page);
       const full = await rect(stage);
       assert.deepEqual([full.top, full.left, full.width, full.height], [0, 0, viewport.width, viewport.height]);
+      // Hidden, the bar leaves the accessibility tree, so it is found by its class.
+      assert.equal(await page.locator(".rika-bar").evaluate((node) => getComputedStyle(node).visibility), "hidden", `${size}: the bar shows over the fullscreen panel`);
       await page.keyboard.press("Escape");
       await assertAtlasFits(page, `${size} after Escape`);
       await assertSidebarReachable(page, `${size} after Escape`);
-      await dock.getByRole("button", { name: "Hide dock" }).click();
-      await page.getByRole("button", { name: "Show dock" }).waitFor();
-      await assertAtlasFits(page, `${size} dock hidden`);
-      assert.ok((await rect(page.locator(".atlas"))).bottom > (await visibleBottom(page)) - 40, `${size}: atlas did not grow into the hidden dock's space`);
-      await page.getByRole("button", { name: "Show dock" }).click();
-      await dock.waitFor();
-      await assertAtlasFits(page, `${size} dock shown again`);
-      await dock.getByRole("button", { name: "Float dock" }).click();
-      await page.waitForFunction(() => document.querySelector('[data-kitty-panel="dock"]')?.dataset.float === "true");
-      assert.equal(await visibleBottom(page), viewport.height, `${size}: the floating card reserves page space`);
-      await assertAtlasFits(page, `${size} dock floating`);
-      const atlas = await rect(page.locator(".atlas"));
-      const brain = page.locator("[data-brain-stage]");
-      const stageBox = await rect(brain);
-      // Moving the card by its header and resizing it by its grip leave the page alone mid-drag and after.
-      await page.evaluate(() => {
-        const atlas = document.querySelector(".atlas");
-        const brain = document.querySelector("[data-brain-stage]");
-        const box = () => JSON.stringify([atlas.getBoundingClientRect(), brain.getBoundingClientRect()]);
-        const first = box();
-        window.atlasWatch = { changed: 0 };
-        const sample = () => {
-          if (!window.atlasWatch) return;
-          if (box() !== first) window.atlasWatch.changed += 1;
-          requestAnimationFrame(sample);
-        };
-        requestAnimationFrame(sample);
-      });
-      const drag = async (from, dx, dy) => {
-        await page.mouse.move(from.x, from.y);
-        await page.mouse.down();
-        for (let step = 1; step <= 10; step += 1) await page.mouse.move(from.x + (dx * step) / 10, from.y + (dy * step) / 10);
-        await page.mouse.up();
-      };
-      const tabs = await dock.getByRole("group", { name: "Dock contents" }).boundingBox();
-      const before = await rect(dock);
-      await drag({ x: tabs.x + tabs.width + 12, y: tabs.y + tabs.height / 2 }, -40, -30);
-      const moved = await rect(dock);
-      assert.ok(moved.x < before.x && moved.y < before.y, `${size}: the header drag did not move the card`);
-      const grip = await dock.getByRole("button", { name: "Resize dock" }).boundingBox();
-      await drag({ x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 }, 60, 40);
-      assert.ok((await rect(dock)).width < moved.width, `${size}: the grip did not resize the card`);
-      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      assert.equal(await page.evaluate(() => { const { changed } = window.atlasWatch; window.atlasWatch = null; return changed; }), 0,
-        `${size}: dragging the dock re-laid out the atlas`);
-      assert.deepEqual(await rect(page.locator(".atlas")), atlas);
-      assert.deepEqual(await rect(brain), stageBox, `${size}: moving or resizing the dock changed the Brain stage`);
+      assert.equal(await page.evaluate(() => localStorage.getItem("kitty.dock")), null, `${size}: the retired dock state was written`);
       assert.deepEqual(problems, []);
       await context.close();
     });
@@ -371,8 +329,7 @@ describe("selected job views stay readable", () => {
   for (const [themeName, theme] of [["Kitty (default)", undefined], ["Liquid Glass", "liquid-glass"], ["a light theme", PAPER]]) {
     for (const viewport of [DEFAULT, MINIMUM]) {
       test(`${themeName} at ${viewport.width}px: Map and List show a readable, distinct selection`, async () => {
-        // The dock's first height depends on how much of Jobs loaded; keep it out of the measured area.
-        const { page, problems, context } = await open("jobs", { viewport, theme, dock: "hidden" });
+        const { page, problems, context } = await open("jobs", { viewport, theme });
         const views = page.getByRole("navigation", { name: "Jobs view" });
         const map = views.getByRole("button", { name: "Map", exact: true });
         const list = views.getByRole("button", { name: "List", exact: true });
@@ -396,7 +353,7 @@ describe("selected job views stay readable", () => {
 
 describe("type system", () => {
   test("the page title is Fraunces; headings and labels are Inter, never italic; the wordmark is Fredoka", async () => {
-    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    const { page, problems, context } = await open("settings");
     await page.locator("h1").first().waitFor();
     const type = await page.evaluate(async () => {
       // Probes for elements Settings does not render; global type rules apply to them as anywhere else.
@@ -441,7 +398,7 @@ describe("flashcard view switcher", () => {
   // Liquid Glass gives ghost buttons its own control fill, which must not split the current view's accent pair.
   for (const [themeName, theme] of [["the default theme", undefined], ["Liquid Glass", "liquid-glass"]]) {
     test(`the current flashcard view stays readable and distinct on ${themeName}`, async () => {
-      const { page, problems, context } = await open("flashcards", { theme, dock: "hidden" });
+      const { page, problems, context } = await open("flashcards", { theme });
       const views = page.getByRole("navigation", { name: "Flashcard views" });
       const current = views.locator('button[aria-current="page"]');
       await current.waitFor();
@@ -461,7 +418,7 @@ describe("flashcard view switcher", () => {
 
 describe("product name", () => {
   test("the wordmark, home link and document title say rika!; the Kitty theme keeps its name", async () => {
-    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    const { page, problems, context } = await open("settings");
     await page.locator(".wordmark .word").waitFor();
     assert.equal((await page.locator(".wordmark .word").textContent())?.trim(), "rika!");
     assert.equal(await page.locator(".wordmark").getAttribute("aria-label"), "rika! home");
@@ -474,7 +431,7 @@ describe("product name", () => {
 
 describe("command palette", () => {
   test("Spotlight palette: empty until you type, six results with a top hit, Enter opens it, Escape closes", async () => {
-    const { page, problems, context } = await open("today", { dock: "hidden" });
+    const { page, problems, context } = await open("today");
     await page.locator(".wordmark").waitFor();
     await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog", { name: "Search rika!" });
@@ -503,7 +460,7 @@ describe("command palette", () => {
 
 describe("workspace tabs", () => {
   test("underline tabs: icon per tab, the active tab underlined in its group colour, close shown on hover", async () => {
-    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const { page, problems, context } = await open("calendar");
     const bar = page.getByRole("navigation", { name: "Workspace tabs" });
     await bar.waitFor();
     await page.keyboard.press("Control+t");
@@ -531,7 +488,7 @@ describe("workspace tabs", () => {
 
 describe("empty states", () => {
   test("an empty Flashcards collection shows the sleeping kitty with its title and actions; motion stops when reduced", async () => {
-    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const { page, problems, context } = await open("flashcards");
     const empty = page.locator(".kitty-empty").first();
     await empty.waitFor();
     assert.equal(await empty.locator("svg.sleeping-cat").count(), 1, "no sleeping cat drawn");
@@ -550,7 +507,7 @@ describe("empty states", () => {
 
 describe("loaders", () => {
   test("lists load behind shimmering skeleton rows; whole views behind the theme's loader (Kitty: the blinking cat in a petal spinner)", async () => {
-    const { page, problems, context } = await open("today", { dock: "hidden" });
+    const { page, problems, context } = await open("today");
     await page.locator(".wordmark").waitFor();
     let release;
     const held = new Promise((resolve) => (release = resolve));
@@ -580,7 +537,7 @@ describe("loaders", () => {
 
 describe("study timer", () => {
   test("a running session shows as a ring in the Study card and in the top bar, whose popover pauses it", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     await page.getByRole("button", { name: /Start session/ }).first().click();
     const card = page.locator(".timer-card .timer-ring");
     await card.waitFor();
@@ -603,7 +560,7 @@ describe("study timer", () => {
 
 describe("study guide", () => {
   test("the guide drawer shows only the current phase; Full guide opens all 14 steps as phase columns, with the rail remembered", async () => {
-    const { page, problems, context, prefs } = await open("study", { dock: "hidden", setup: (context) => context.addInitScript(() => {
+    const { page, problems, context, prefs } = await open("study", { setup: (context) => context.addInitScript(() => {
       if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); localStorage.removeItem("kitty-study-draft"); sessionStorage.setItem("seeded", "1"); }
     }) });
     await page.getByRole("region", { name: "Session timer" }).waitFor();
@@ -663,7 +620,7 @@ async function pickDeck(page, name) {
 
 /** Opens Flashcards with `deck` seeded and its due review started. */
 async function reviewDeck(name, cards) {
-  const opened = await open("flashcards", { dock: "hidden" });
+  const opened = await open("flashcards");
   const { page } = opened;
   await page.getByRole("navigation", { name: "Flashcard views" }).waitFor();
   await seedDeck(page, name, cards);
@@ -754,7 +711,7 @@ describe("flashcard review", () => {
 
 describe("Liquid Glass theme", () => {
   test("panels are clear, neutral, lit glass like macOS/iOS, never rainbow-tinted, and their text stays readable", async () => {
-    const { page, problems, context } = await open("settings", { dock: "hidden" });
+    const { page, problems, context } = await open("settings");
     await page.locator(".br-panel").first().waitFor();
     await page.evaluate(async () => (await import("/src/lib/build.svelte.ts")).setTheme("liquid-glass"));
     await page.waitForFunction(() => document.documentElement.dataset.theme === "liquid-glass");
@@ -798,7 +755,7 @@ describe("Liquid Glass theme", () => {
 
 describe("study focus-first", () => {
   test("Study opens on the timer alone, centred, without scrolling at 1440×900; [ and ] slide the drawers over it and are remembered", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden", viewport: { width: 1440, height: 900 }, setup: (context) => context.addInitScript(() => {
+    const { page, problems, context } = await open("study", { viewport: { width: 1440, height: 900 }, setup: (context) => context.addInitScript(() => {
       if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); sessionStorage.setItem("seeded", "1"); }
     }) });
     page.on("dialog", (dialog) => dialog.accept());
@@ -820,7 +777,8 @@ describe("study focus-first", () => {
     assert.ok(Math.abs((area.top + area.bottom) / 2 - (card.top + card.bottom) / 2) < 24, "the timer is not centred vertically");
     const overflow = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
     assert.ok(overflow <= 1, `the Study page scrolls ${overflow}px at 1440×900`);
-    assert.ok(area.bottom <= 900 && area.bottom >= 880, `the session page ends at ${area.bottom}, not at the window bottom`);
+    const floor = await visibleBottom(page);
+    assert.ok(area.bottom <= floor && area.bottom >= floor - 20, `the session page ends at ${area.bottom}, not just above the Rika bar at ${floor}`);
     for (const name of ["Subjects & tasks", "Guide & notes"]) {
       const edge = page.getByRole("button", { name, exact: true });
       assert.ok(await edge.isVisible(), `${name} edge tab is hidden`);
@@ -874,7 +832,7 @@ describe("study focus-first", () => {
   });
 
   test("timer settings are a popover from the timer: minute steppers, switches and the themed timezone picker save as they change", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const timer = page.getByRole("region", { name: "Session timer" });
     await timer.waitFor();
     const settings = () => page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).settings);
@@ -909,7 +867,7 @@ describe("study focus-first", () => {
 
 describe("study progress", () => {
   test("Progress stacks each day's study in subject colours beside a share ring, tints a month calendar by each day's main subject with weekly-goal checks, and draws goal rings", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     await page.getByRole("region", { name: "Session timer" }).waitFor();
     const stamp = Date.now();
     // A fixed past Wednesday keeps the week and month deterministic.
@@ -958,7 +916,7 @@ describe("study progress", () => {
 
 describe("study plans", () => {
   test("Exams & plans shows countdown cards, a timeline to each exam, a 12-day strip to drag blocks with a load warning, and a returns queue", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     await page.getByRole("region", { name: "Session timer" }).waitFor();
     const stamp = Date.now();
     await page.evaluate(async (stamp) => {
@@ -1028,7 +986,7 @@ describe("study plans", () => {
 
 describe("study exams", () => {
   test("Add exam is a quick-add with a date chip and a themed subject picker; the exam opens in the edit drawer", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     await page.getByRole("region", { name: "Session timer" }).waitFor();
     const stamp = Date.now();
     await page.evaluate(async (stamp) => {
@@ -1072,7 +1030,7 @@ describe("study exams", () => {
 
 describe("study streak", () => {
   test("manual logging fills persisted streak segments and cancel does not log", async () => {
-    const { page, context, problems } = await open("study", { dock: "hidden" });
+    const { page, context, problems } = await open("study");
     await page.getByRole("region", { name: "Session timer" }).waitFor();
     await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
     const ring = page.getByRole("region", { name: "Study streak" });
@@ -1102,7 +1060,7 @@ describe("study streak", () => {
 describe("home rails", () => {
   for (const viewport of [DEFAULT, SCALED_MINIMUM]) {
     test(`home at ${viewport.width}×${viewport.height}: widgets only in both rails around the Brain; Sections and the look switch sit in the stage's corner`, async () => {
-      const { page, problems, context } = await open("today", { viewport, dock: "hidden" });
+      const { page, problems, context } = await open("today", { viewport });
       const left = page.getByRole("complementary", { name: "Home widgets" });
       const right = page.getByRole("complementary", { name: "Activity" });
       const stage = page.locator('[data-kitty-panel="graph"]');
@@ -1159,7 +1117,7 @@ describe("home rails", () => {
   }
 
   test("the side rail collapses to an edge strip by its chevron or ], the Brain widens and refits, and the choice is remembered", async () => {
-    const { page, problems, context } = await open("today", { dock: "hidden" });
+    const { page, problems, context } = await open("today");
     const rail = page.getByRole("complementary", { name: "Activity" });
     const stage = page.locator('[data-kitty-panel="graph"]');
     const toggle = page.getByRole("button", { name: "Side widgets" });
@@ -1204,7 +1162,7 @@ describe("home rails", () => {
   });
 
   test("Ctrl K still finds every section without the rail list", async () => {
-    const { page, problems, context } = await open("today", { dock: "hidden" });
+    const { page, problems, context } = await open("today");
     await page.locator(".atlas").waitFor();
     await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog", { name: "Search rika!" });
@@ -1239,7 +1197,7 @@ describe("home widgets", () => {
   };
 
   test("home widgets: hairline Today agenda with now-line, progress and countdown; agents with Approve; Ctrl+Enter quick notes", async () => {
-    const { page, problems, context } = await open("today", { dock: "hidden" });
+    const { page, problems, context } = await open("today");
     await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: calendar() }));
     await page.route((url) => url.pathname === "/api/terminal/activity", (route) => route.fulfill({ json: ACTIVITY }));
     await page.reload();
@@ -1322,7 +1280,8 @@ describe("home widgets", () => {
     let week = {
       calendars: [{ id: "personal", name: "Personal", color: "#6d5dfc", visible: 1 }],
       events: [
-        event("e-today", "Seminar today", new Date(Date.now() + 60 * 60_000)),
+        // Today's events are the agenda's, not Up next's: keep this one today even late in the evening.
+        event("e-today", "Seminar today", new Date(Math.min(Date.now() + 60 * 60_000, at(1).getTime() - 60_000))),
         event("e-deadline", "Deadline · Arch problem set", at(1, 17), "opportunity:3:deadline"),
         event("e-reminder", "Follow_Up · Northwind Labs · Engineer", at(3, 10), "reminder:4"),
         event("e-far", "Next month", at(12, 9)),
@@ -1339,11 +1298,13 @@ describe("home widgets", () => {
     // The calendar's copy of reminder 4 (event "e-reminder") is the same follow-up: it shows once.
     let reminders = { due: [], upcoming: [{ id: 4, kind: "followup", due_at: at(3, 10).toISOString(), note: "", job_id: 1, application_id: 1, done_at: null, label: "Northwind Labs — Engineer" }] };
     const { page, problems, context } = await open("today", {
-      dock: "hidden",
       setup: async (context) => {
         await context.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: week }));
         await context.route((url) => url.pathname === "/api/flashcards", (route) => route.fulfill({ json: { decks: [], types: [], media: [], stats: { due: cards, total: 60 } } }));
         await context.route((url) => url.pathname === "/api/reminders", (route) => route.fulfill({ json: reminders }));
+        // Math's lesson and streak rows have their own test (math.browser.test.mjs); nothing is due here.
+        await context.route((url) => url.pathname === "/api/math/next", (route) => route.fulfill({ json: { kind: null } }));
+        await context.route((url) => url.pathname === "/api/math/sprints/history", (route) => route.fulfill({ json: { sprints: [], streak_days: 0 } }));
       },
     });
     const upNext = page.getByRole("complementary", { name: "Activity" }).getByRole("region", { name: "Up next" });
@@ -1374,7 +1335,7 @@ describe("home widgets", () => {
   });
 
   test("Find jobs shows reminders, the weekly goal and How to apply in an always-visible strip", async () => {
-    const { page, problems, context } = await open("jobs", { dock: "hidden" });
+    const { page, problems, context } = await open("jobs");
     const strip = page.getByRole("region", { name: "Reminders, deadlines and goals" });
     await strip.waitFor();
     assert.ok(await strip.getByText("This week", { exact: true }).isVisible());
@@ -1392,7 +1353,7 @@ describe("home widgets", () => {
 
 describe("appearance settings", () => {
   test("Settings → Appearance: one panel with a live preview, presets that set everything, single changes after, saved and applied before mount", async () => {
-    const { page, problems, context, prefs } = await open("settings/appearance", { dock: "hidden" });
+    const { page, problems, context, prefs } = await open("settings/appearance");
     await context.addInitScript(() => {
       new MutationObserver((_, observer) => {
         if (!document.getElementById("app")?.firstElementChild) return;
@@ -1472,7 +1433,7 @@ describe("appearance settings", () => {
 
 describe("flashcard decks", () => {
   test("deck tiles: one due ring with the name and today's count, details on hover, and a remembered Graph look", async () => {
-    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const { page, problems, context } = await open("flashcards");
     const views = page.getByRole("navigation", { name: "Flashcard views" });
     await views.waitFor();
     await seedDeck(page, "Tile deck", [["One?", "1"], ["Two?", "2"], ["Three?", "3"]]);
@@ -1508,7 +1469,7 @@ describe("flashcard decks", () => {
 
 describe("flashcard header (Q16 A)", () => {
   test("a searchable deck chip in the header, one New card (N), rare tools in ⋯ and tile actions in each tile's ⋯", async () => {
-    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const { page, problems, context } = await open("flashcards");
     const views = page.getByRole("navigation", { name: "Flashcard views" });
     await views.waitFor();
     await seedDeck(page, "Chip deck", [["One?", "1"], ["Two?", "2"]]);
@@ -1561,7 +1522,7 @@ describe("flashcard header (Q16 A)", () => {
 
 describe("home agenda empty", () => {
   test("an empty Today agenda says so and offers the calendar on one line", async () => {
-    const { page, problems, context } = await open("today", { dock: "hidden" });
+    const { page, problems, context } = await open("today");
     await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: { calendars: [], events: [], tasks: [], activity: [], reminders: [] } }));
     await page.reload();
     const agenda = page.getByRole("region", { name: "Today" });
@@ -1614,7 +1575,7 @@ describe("calendar redesign", () => {
   }));
 
   test("week events are filled palette blocks with readable text and a blossom now-marker", async () => {
-    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     await addEvent(page, { title: "Pastel standup", start: at(0, 10), end: at(0, 11) });
     await page.reload();
@@ -1636,7 +1597,7 @@ describe("calendar redesign", () => {
   });
 
   test("existing interactions still work: keyboard slots, drag-create, drag-move and resize", async () => {
-    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     await addEvent(page, { title: "Move me", start: at(0, 9), end: at(0, 10) });
     await page.reload();
@@ -1679,7 +1640,7 @@ describe("calendar redesign", () => {
   });
 
   test("month cells show up to four calendar dots and clicking a date fills the side agenda", async () => {
-    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     const now = new Date();
     const on20 = (hour) => new Date(now.getFullYear(), now.getMonth(), 20, hour).toISOString();
@@ -1704,7 +1665,7 @@ describe("calendar redesign", () => {
   });
 
   test("a floating range pill switches views and D/W/M/A, J/K and T work while the calendar has focus", async () => {
-    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const { page, problems, context } = await open("calendar");
     const week = page.getByRole("region", { name: "Week calendar" });
     await week.waitFor();
     assert.equal(await page.getByRole("combobox", { name: "Calendar view" }).count(), 0, "native view select is still shown");
@@ -1747,7 +1708,7 @@ describe("calendar redesign", () => {
   });
 
   test("year heatmap, mini-month navigator and a today plan that drops a task into the next free gap", async () => {
-    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     await addEvent(page, { title: "Plan busy 1", start: at(1, 8), end: at(1, 9) });
     await addEvent(page, { title: "Plan busy 2", start: at(1, 9), end: at(1, 10, 30) });
@@ -1796,7 +1757,7 @@ describe("calendar redesign", () => {
   });
 
   test("quick add understands 'lunch with Mira fri 12:30' and More opens the new event in the side drawer", async () => {
-    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     await page.getByRole("toolbar", { name: "Calendar range" }).getByRole("button", { name: "Add event or task" }).click();
     const quick = page.getByRole("dialog", { name: "Add event or task" });
@@ -1844,7 +1805,7 @@ describe("calendar redesign", () => {
 
 describe("notes tabs and floating outline", () => {
   test("browser-style page tabs, the library slides over the page, and 'On this page' jumps to blocks", async () => {
-    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const { page, problems, context } = await open("notes");
     const title = page.getByRole("textbox", { name: "Page title" });
     await title.waitFor();
     const tabs = page.getByRole("navigation", { name: "Open note pages" });
@@ -1934,7 +1895,7 @@ const resolveColor = (page, value) => page.evaluate((color) => {
 
 describe("mind-map pills", () => {
   test("nodes are compact capsules with a branch-coloured dot and an inverted ink root pill", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { nodes } = await newMindMap(page, "Pipelines");
     assert.equal(await nodes.count(), 4);
     const shapes = await nodes.evaluateAll((list) => list.map((node) => {
@@ -1982,7 +1943,7 @@ const editable = (page) => page.waitForFunction(() => document.querySelector(".s
 
 describe("mind-map editing", () => {
   test("keyboard building: arrows move, Ctrl+arrows reorder, Tab child, Enter sibling, Ctrl+Enter edits", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     await newMindMap(page, "Keyboard map");
     await page.waitForFunction(() => document.activeElement?.closest("[data-node]"));
     assert.equal(await focusedNode(page), "Keyboard map");
@@ -2023,7 +1984,7 @@ describe("mind-map editing", () => {
   });
 
   test("dragging lights the drop target and reparents; D mid-drag or Detach breaks a branch off", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { schema } = await newMindMap(page, "Drag map");
     const pill = (label) => mapNode(page, label).locator("rect.pill");
     await mapNode(page, "Key ideas").click();
@@ -2077,7 +2038,7 @@ async function openCanvas(page) {
 
 describe("notes canvas pill", () => {
   test("the canvas tools are one icon pill at the stage bottom that collapses from its bottom edge and stays collapsed after reload", async () => {
-    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const { page, problems, context } = await open("notes");
     const canvas = await openCanvas(page);
     const tools = page.getByRole("toolbar", { name: "Drawing tools" });
     await tools.waitFor();
@@ -2129,7 +2090,7 @@ describe("notes canvas pill", () => {
   });
 
   test("canvas fullscreen keeps the same bottom pill instead of a second toolbar", async () => {
-    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const { page, problems, context } = await open("notes");
     await openCanvas(page);
     await page.getByRole("button", { name: "More page actions", exact: true }).click();
     await page.getByRole("menuitem", { name: "Canvas fullscreen", exact: true }).click();
@@ -2152,7 +2113,7 @@ describe("notes canvas pill", () => {
 
 describe("notes canvas colours", () => {
   test("the pill shows the last 5 colours as round swatches; + opens all 12 named colours and a hex field; recents persist", async () => {
-    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const { page, problems, context } = await open("notes");
     await openCanvas(page);
     const inks = page.getByRole("toolbar", { name: "Drawing tools" }).getByRole("group", { name: "Ink colours" });
     await inks.waitFor();
@@ -2195,7 +2156,7 @@ describe("notes canvas colours", () => {
 
 describe("notes canvas background", () => {
   test("an empty page is the theme's flat void colour with no grid, and follows a theme switch", async () => {
-    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const { page, problems, context } = await open("notes");
     const canvas = await openCanvas(page);
     /** The canvas's top-left 240×120 CSS px: the distinct colours drawn there and the theme's --solid-void. */
     const sample = () => canvas.evaluate((node) => {
@@ -2230,7 +2191,7 @@ describe("notes canvas background", () => {
 
 describe("documents side-by-side", () => {
   test("numbered source sits beside the preview; the separator drags, arrow-keys and remembers; source scroll drives the preview", async () => {
-    const { page, problems, context } = await open("documents", { dock: "hidden" });
+    const { page, problems, context } = await open("documents");
     const source = page.getByRole("textbox", { name: "Markdown source" });
     await source.waitFor();
     assert.equal(await page.getByRole("button", { name: "Export PDF" }).count(), 1, "no Export PDF in the bar");
@@ -2287,7 +2248,7 @@ describe("documents side-by-side", () => {
 
 describe("mind-map free positioning", () => {
   test("Alt-drag places a node anywhere and keeps its parent; Reset position snaps it back into the layout", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { schema } = await newMindMap(page, "Free map");
     const pill = (label) => mapNode(page, label).locator("rect.pill");
     const stage = schema.locator("svg.stage");
@@ -2336,7 +2297,7 @@ describe("mind-map free positioning", () => {
 
 describe("mind-map recolour", () => {
   test("the pill's colour row recolours a node, the topic bar's style recolours its whole branch and copies and pastes style; colours survive a reload", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { schema } = await newMindMap(page, "Colour map");
     const dot = (label) => mapNode(page, label).locator("circle.dot").evaluate((node) => getComputedStyle(node).fill);
     const colour = (n) => resolveColor(page, `var(--c${n})`);
@@ -2381,7 +2342,7 @@ describe("mind-map recolour", () => {
 
 describe("mind-map cross connections", () => {
   test("Connect to… links any two topics with a labelled curve that stays out of the tree layout and folds with its ends", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { schema } = await newMindMap(page, "Link map");
     await mapNode(page, "Key ideas").click();
     await page.keyboard.press("Tab");
@@ -2427,7 +2388,7 @@ describe("mind-map cross connections", () => {
 
 describe("mind-map multi-select", () => {
   test("Shift+arrows and a Shift-drag box select several topics to recolour, move and delete together", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { schema } = await newMindMap(page, "Bulk map");
     const pill = (label) => mapNode(page, label).locator("rect.pill");
     const dot = (label) => mapNode(page, label).locator("circle.dot").evaluate((node) => getComputedStyle(node).fill);
@@ -2479,7 +2440,7 @@ describe("mind-map multi-select", () => {
 
 describe("mind-map history", () => {
   test("undo and redo restore drags and colours across saving, and a new edit clears redo", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { schema } = await newMindMap(page, "History map");
     await mapNode(page, "Examples").click();
     const before = await nodeBoxes(page);
@@ -2513,7 +2474,7 @@ describe("mind-map history", () => {
 
 describe("mind-map split and merge", () => {
   test("split creates linked maps, paired undo/redo works, and dropping the root merges it back", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { schema } = await newMindMap(page, "Transfer map");
     await mapNode(page, "Key ideas").click(); await page.keyboard.press("Tab");
     await page.keyboard.type("Leaf"); await page.keyboard.press("Escape");
@@ -2560,7 +2521,7 @@ const pillLook = (toolbar) => toolbar.evaluate((bar) => {
 
 describe("one mind-map editor", () => {
   test("Mind maps opens one full-bleed editor: a slim top bar, the Notes canvas pill, a bar on the selected topic, and autosave", async () => {
-    const { page, problems, context } = await open("schema", { dock: "hidden" });
+    const { page, problems, context } = await open("schema");
     const schema = page.getByRole("region", { name: "Mental schema maps" });
     await schema.waitFor();
     await createMap(page, schema, "Chrome map", "Lecture");
@@ -2575,7 +2536,7 @@ describe("one mind-map editor", () => {
     const region = await rect(schema), stage = await rect(schema.locator("svg.stage"));
     assert.ok(stage.top - region.top <= 48, `the canvas starts ${Math.round(stage.top - region.top)}px down`);
     assert.ok(Math.abs(stage.bottom - region.bottom) <= 2 && Math.abs(stage.left - region.left) <= 2 && Math.abs(stage.right - region.right) <= 2, "the canvas does not fill the editor");
-    assert.ok(region.bottom >= DEFAULT.height - 24, `the editor ends at ${Math.round(region.bottom)}px`);
+    assert.ok(region.bottom >= (await visibleBottom(page)) - 24, `the editor ends at ${Math.round(region.bottom)}px, not just above the Rika bar`);
     assert.equal(await schema.locator("p:visible").count(), 0, "help text is shown at rest");
     assert.equal(await schema.locator("select, summary, details").count(), 0, "native selects or fold-outs remain");
     // The building tools are the Notes canvas pill itself.
@@ -2610,7 +2571,7 @@ describe("one mind-map editor", () => {
   });
 
   test("Ctrl K opens a map in the editor by its title and offers New mind map", async () => {
-    const { page, problems, context } = await open("calendar", { dock: "hidden" });
+    const { page, problems, context } = await open("calendar");
     await page.evaluate(async () => { const { api } = await import("/src/lib/api.ts"); await api("/schema/create", { title: "Palette map", mode: "study" }); });
     // The app mounts once the build (and its theme's motif) has loaded; Ctrl K needs it mounted.
     await page.locator("#app .workbench").waitFor();
@@ -2632,7 +2593,7 @@ describe("one mind-map editor", () => {
   });
 
   test("Notes' Map mode is the same editor for the page's own map, inside the page", async () => {
-    const { page, problems, context } = await open("notes", { dock: "hidden" });
+    const { page, problems, context } = await open("notes");
     await page.getByRole("group", { name: "Page mode" }).getByRole("button", { name: "Map", exact: true }).click();
     const schema = page.getByRole("region", { name: "Mental schema maps" });
     const create = schema.getByRole("button", { name: "Create map" });
@@ -2661,7 +2622,7 @@ describe("one mind-map editor", () => {
 
 describe("pipeline swimlanes", () => {
   test("rows are tracks and columns open stages; dragging or Shift+arrows moves a card, and Undo puts it back", async () => {
-    const { page, problems, context } = await open("pipeline", { dock: "hidden" });
+    const { page, problems, context } = await open("pipeline");
     const board = page.getByRole("grid", { name: "Applications by track and stage" });
     await board.waitFor();
     const heads = await board.getByRole("columnheader").allTextContents();
@@ -2706,46 +2667,89 @@ describe("pipeline swimlanes", () => {
   });
 });
 
-describe("agent status cards", () => {
-  test("the dock's Agents view shows one live card per herdr agent; a blocked one offers Open pane", async () => {
-    const { page, problems, context, prefs } = await open("today", { dock: "hidden" });
-    mergePreferences(prefs, { ui: { dock: { ...DOCK.hidden, mode: "activity", shown: "activity" } } });
-    let polls = 0;
-    const started = Date.now() - 75_000;
-    await context.route("**/api/terminal/activity", (route) => {
-      polls += 1;
-      route.fulfill({ json: { running: true, workspaces: [
-        { id: "w1", label: "synthetic", status: "blocked", focused: true, agents: [
-          { pane: "w1:p1", name: "omp", status: "working", task: "Synthetic task: tidy fixtures", line: "run pytest · 4 passed", revision: 10 + polls * 7, since: started },
-          { pane: "w1:p2", name: "codex", status: "blocked", task: "Synthetic review", line: "needs permission: read notes", revision: 3, since: started },
-        ] },
-      ] } });
+describe("Rika against the demo's scripted responder", () => {
+  const ask = async (page, text) => {
+    const field = page.getByRole("textbox", { name: "Ask Rika" });
+    await field.fill(text);
+    await field.press("Enter");
+  };
+  const drawer = (page) => page.getByRole("dialog", { name: "Rika history" });
+  const replies = (page) => page.getByRole("list", { name: "Rika replies" });
+
+  test("typing a request produces a toast with its tier and a drawer entry; Undo reverts it", async () => {
+    const { page, problems, context } = await open("settings");
+    await page.getByRole("region", { name: "Rika" }).waitFor();
+    await ask(page, "add a task Buy oat milk");
+    const toast = replies(page).getByRole("listitem").filter({ hasText: /oat milk/i });
+    await toast.getByRole("button", { name: "Undo" }).waitFor();
+    assert.match(await toast.locator("[data-tier]").innerText(), /fast|standard|deep/i);
+    await page.keyboard.press("Control+j");
+    const history = drawer(page);
+    await history.getByText("add a task Buy oat milk").waitFor();
+    const action = history.getByRole("article").filter({ hasText: /oat milk/i }).first();
+    await action.getByRole("button", { name: "Undo" }).waitFor();
+    await toast.getByRole("button", { name: "Undo" }).click();
+    await action.getByText("Undone").waitFor();
+    const items = await page.evaluate(async () => (await (await fetch("/api/rika/history", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).items);
+    assert.ok(items.some((item) => item.kind === "action" && item.status === "undone"), "the undo was not recorded");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("starting an agent asks first: the drawer opens by itself, Approve continues and closes it", async () => {
+    const { page, problems, context } = await open("settings");
+    await page.getByRole("region", { name: "Rika" }).waitFor();
+    await ask(page, "start omp to tidy the fixtures");
+    const history = drawer(page);
+    const card = history.getByRole("article").filter({ has: page.getByRole("button", { name: "Approve" }) });
+    await card.waitFor();
+    assert.match(await card.innerText(), /approval/i);
+    await card.getByRole("button", { name: "Approve" }).click();
+    await history.waitFor({ state: "detached" });
+    await page.keyboard.press("Control+j");
+    await drawer(page).getByText("Approved").first().waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("the demo's running agents collapse to a count past four; the drawer's Agents cards open their windows", async () => {
+    const { page, problems, context } = await open("settings");
+    const chips = page.getByRole("group", { name: "Running agents" });
+    const count = chips.getByRole("button", { name: /\d+ agents/ });
+    await count.waitFor();
+    assert.equal(await chips.getByRole("button").count(), 1);
+    await count.click();
+    const section = drawer(page).getByRole("region", { name: "Agents" });
+    await section.getByRole("article").first().waitFor();
+    assert.ok(await section.getByRole("article").count() > 4);
+    const card = section.getByRole("article").first();
+    assert.match(await card.innerText(), /working|blocked|idle|done/i);
+    const opened = page.waitForResponse((response) => response.request().method() === "POST" && /\/api\/rika\/agents\/[^/]+\/open$/.test(new URL(response.url()).pathname));
+    await card.getByRole("button", { name: "Open window" }).click();
+    assert.ok((await opened).ok(), "the demo refused to open the agent's window");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Rika opening a view navigates there; Ctrl K Open terminal asks for a Tern window", async () => {
+    // A Tern install on this machine must never open a real window: the open is answered here.
+    const opens = [];
+    const { page, problems, context } = await open("settings", {
+      setup: (context) => context.route("**/api/terminal/tern/open", (route) => {
+        opens.push(route.request().postDataJSON());
+        return route.fulfill({ status: 409, json: { error: "Tern is not installed" } });
+      }),
     });
-    await context.route("**/api/terminal/session", (route) => route.fulfill({ status: 503, json: { error: "No terminal in this test" } }));
-    const focused = [];
-    await context.route("**/api/terminal/focus", (route) => {
-      focused.push(route.request().postDataJSON());
-      route.fulfill({ json: { ok: true } });
-    });
-    await page.reload();
-    const dock = page.getByRole("region", { name: "Agent activity" });
-    const working = dock.getByRole("article", { name: /^omp/ });
-    const blocked = dock.getByRole("article", { name: /^codex/ });
-    await working.waitFor();
-    assert.match(await working.textContent(), /Synthetic task: tidy fixtures/);
-    assert.match(await working.textContent(), /run pytest · 4 passed/);
-    assert.match(await working.textContent(), /synthetic/i, "workspace label missing");
-    const timer = working.locator("time");
-    // The card counts up from `since` (75 s before the reload); the page load time varies.
-    const [minutes, seconds] = (await timer.textContent()).split(":").map(Number);
-    const shown = minutes * 60 + seconds, elapsed = (Date.now() - started) / 1000;
-    assert.ok(shown >= 75 && shown <= Math.ceil(elapsed), `agent timer shows ${shown}s, expected 75–${Math.ceil(elapsed)}s`);
-    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Agent activity"] svg[role="img"] path.line').length === 2);
-    assert.match(await working.getByRole("img").getAttribute("aria-label"), /output over the last 30 seconds/);
-    assert.equal(await working.getByRole("button", { name: "Open pane" }).count(), 0, "a working agent offers Open pane");
-    await blocked.getByRole("button", { name: "Open pane" }).click();
-    await page.waitForFunction(() => document.querySelector('[aria-label="Dock contents"] button[aria-pressed="true"]')?.textContent === "Terminal");
-    assert.deepEqual(focused, [{ pane: "w1:p2" }]);
+    await page.getByRole("region", { name: "Rika" }).waitFor();
+    await ask(page, "open calendar");
+    await page.waitForFunction(() => location.hash === "#calendar");
+    await page.keyboard.press("Control+k");
+    const search = page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox");
+    await search.fill("Open terminal");
+    await search.press("Enter");
+    // Without a usable Tern the request fails and the Tern view says why.
+    await page.waitForFunction(() => location.hash === "#tern");
+    assert.deepEqual(opens, [{}]);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -2753,7 +2757,7 @@ describe("agent status cards", () => {
 
 describe("flashcard memory stats", () => {
   test("Stats shows today's queue, a 30-day forecast, retention curves, maturity and a 26-week heatmap for the scope", async () => {
-    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const { page, problems, context } = await open("flashcards");
     const views = page.getByRole("navigation", { name: "Flashcard views" });
     await views.waitFor();
     await seedDeck(page, "Stats deck", [["Sun?", "Star"], ["Moon?", "Satellite"], ["Mars?", "Planet"], ["Io?", "Moon"]]);
@@ -2796,7 +2800,7 @@ describe("flashcard memory stats", () => {
 
 describe("reminder actions", () => {
   test("hover reveals edit, snooze and delete; swiping right snoozes and left deletes, each with Undo", async () => {
-    const { page, problems, context } = await open("reminders", { dock: "hidden" });
+    const { page, problems, context } = await open("reminders");
     const form = page.locator("form").filter({ has: page.getByRole("button", { name: "Add reminder" }) });
     await form.getByLabel("When").selectOption("+7");
     await form.getByLabel("Reminder").fill("Synthetic swipe check");
@@ -2850,7 +2854,7 @@ describe("reminder actions", () => {
 
 describe("flashcard card browser", () => {
   test("split browser: filter the list, flip the preview, read memory meters and last reviews, suspend and bury", async () => {
-    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const { page, problems, context } = await open("flashcards");
     const views = page.getByRole("navigation", { name: "Flashcard views" });
     await views.waitFor();
     await seedDeck(page, "Browser deck", [["Capital of Peru?", "Lima"], ["Capital of Kenya?", "Nairobi"], ["Capital of Japan?", "Tokyo"]]);
@@ -2911,7 +2915,7 @@ const focused = (locator) => locator.evaluate((node) => node === document.active
 
 describe("adding flashcards", () => {
   test("inline add row: type the front, Tab, the back, Enter saves and the next row is ready", async () => {
-    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const { page, problems, context } = await open("flashcards");
     const views = page.getByRole("navigation", { name: "Flashcard views" });
     await views.waitFor();
     await seedDeck(page, "Inline deck", [["Capital of Peru?", "Lima"]]);
@@ -2961,7 +2965,7 @@ describe("adding flashcards", () => {
   });
 
   test("quick add: N on Flashcards and Ctrl K 'New card' open a front/back popover with the deck preselected", async () => {
-    const { page, problems, context } = await open("flashcards", { dock: "hidden" });
+    const { page, problems, context } = await open("flashcards");
     const views = page.getByRole("navigation", { name: "Flashcard views" });
     await views.waitFor();
     await seedDeck(page, "Other deck", [["Unrelated", "x"]]);
@@ -3048,7 +3052,7 @@ async function stroke(page, points, { pressure = () => 0.5, ...init } = {}) {
 
 describe("mind-map pen", () => {
   test("ink sticks to the nearest topic, moves, folds and saves with it; the barrel lasso selects; the eraser removes only ink; palms are ignored", async () => {
-    const { page, problems, context } = await open("study", { dock: "hidden" });
+    const { page, problems, context } = await open("study");
     const { schema } = await newMindMap(page, "Pen map");
     const pill = (label) => mapNode(page, label).locator("rect.pill");
     const strokes = page.locator("svg.stage g.ink path[data-stroke]");
@@ -3159,7 +3163,7 @@ describe("notifications", () => {
   test("reminders from every source toast bottom-right; hover fans the stack out and pauses it; Snooze and Open act", async () => {
     let state;
     const { page, problems, context } = await open("settings", {
-      dock: "hidden", setup: async (context) => { state = await mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }); },
+      setup: async (context) => { state = await mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }); },
     });
     const stack = page.getByRole("list", { name: "New notifications" });
     const toasts = stack.getByRole("listitem");
@@ -3171,10 +3175,10 @@ describe("notifications", () => {
     assert.match(await followup.textContent(), /Job search/);
     const box = await stack.boundingBox();
     const viewport = page.viewportSize();
-    // Bottom-right, stacked just above the hidden dock's pill rather than over it.
-    const pill = await page.getByRole("button", { name: "Show dock" }).boundingBox();
-    assert.ok(viewport.width - (box.x + box.width) < 40 && box.y + box.height <= pill.y - 8 && pill.y - (box.y + box.height) < 24,
-      `stack ${JSON.stringify(box)} is not bottom-right just above the pill ${JSON.stringify(pill)}`);
+    // Bottom-right, stacked just above the Rika bar rather than over it.
+    const bar = await page.getByRole("region", { name: "Rika" }).boundingBox();
+    assert.ok(viewport.width - (box.x + box.width) < 40 && box.y + box.height <= bar.y - 8 && bar.y - (box.y + box.height) < 24,
+      `stack ${JSON.stringify(box)} is not bottom-right just above the Rika bar ${JSON.stringify(bar)}`);
     // Stacked, the toasts overlap; hovering fans them out and freezes their countdown.
     const overlap = async () => {
       const [a, b] = [await lecture.boundingBox(), await followup.boundingBox()];
@@ -3203,34 +3207,29 @@ describe("notifications", () => {
     await context.close();
   });
 
-  test("toasts stack above the docked dock and the floating card, not over them, and follow the card when it moves", async () => {
+  test("reminder toasts stack above Rika's reply toasts, which sit just above the bar; neither covers the other", async () => {
     const { page, problems, context } = await open("settings", { setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }) });
-    const card = page.locator('[data-kitty-panel="dock"]');
-    await card.waitFor();
     await page.waitForFunction(() => document.querySelectorAll('[aria-label="New notifications"] > li').length === 2);
-    const stack = page.getByRole("list", { name: "New notifications" });
-    const above = async (label) => {
-      const [toasts, dock] = [await stack.boundingBox(), await card.boundingBox()];
-      assert.ok(toasts.y + toasts.height <= dock.y - 8 && dock.y - (toasts.y + toasts.height) < 24,
-        `${label}: toasts ${JSON.stringify(toasts)} are not just above the card ${JSON.stringify(dock)}`);
-    };
-    await above("docked");
-    await card.getByRole("button", { name: "Float dock" }).click();
-    await page.waitForFunction(() => document.querySelector('[data-kitty-panel="dock"]')?.dataset.float === "true");
-    await above("floating");
-    const tabs = await card.getByRole("group", { name: "Dock contents" }).boundingBox();
-    await page.mouse.move(tabs.x + tabs.width + 12, tabs.y + tabs.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(tabs.x + tabs.width + 12, tabs.y + tabs.height / 2 - 60, { steps: 6 });
-    await page.mouse.up();
-    await above("after moving the card up");
+    const field = page.getByRole("textbox", { name: "Ask Rika" });
+    await field.fill("add a task Water the plants");
+    await field.press("Enter");
+    const replies = page.getByRole("list", { name: "Rika replies" });
+    await replies.getByRole("listitem").filter({ hasText: /plants/i }).getByRole("button", { name: "Undo" }).waitFor();
+    const [bar, rika, reminders] = await Promise.all([
+      page.getByRole("region", { name: "Rika" }).boundingBox(), replies.boundingBox(), page.getByRole("list", { name: "New notifications" }).boundingBox(),
+    ]);
+    assert.ok(rika.y + rika.height <= bar.y - 8 && bar.y - (rika.y + rika.height) < 24, `replies ${JSON.stringify(rika)} are not just above the bar ${JSON.stringify(bar)}`);
+    await page.waitForFunction(() => {
+      const [top, bottom] = ['[aria-label="New notifications"]', '[aria-label="Rika replies"]'].map((label) => document.querySelector(label).getBoundingClientRect());
+      return top.bottom <= bottom.top && bottom.top - top.bottom < 16;
+    }).catch(() => assert.fail(`reminders ${JSON.stringify(reminders)} do not sit just above the replies ${JSON.stringify(rika)}`));
     assert.deepEqual(problems, []);
     await context.close();
   });
 
   test("the bell counts unread notifications and opens a center with All/Unread, sources and mark all read", async () => {
     const { page, problems, context } = await open("settings", {
-      dock: "hidden", setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
+      setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
     });
     const bell = page.getByRole("button", { name: "Notifications, 2 unread" });
     await bell.waitFor();
@@ -3263,7 +3262,6 @@ describe("notifications", () => {
 
   test("quiet hours on a 24-hour dial hold notifications, then deliver one morning digest", async () => {
     const { page, problems, context, prefs } = await open("settings/quiet-hours", {
-      dock: "hidden",
       setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
       // A window that started an hour ago and ends within 15 minutes; calendar events do not ring through.
       build: { ui: { notifications: { quiet: (() => {
@@ -3311,7 +3309,7 @@ describe("notifications", () => {
 
 describe("job-search report", () => {
   test("a narrative card tells the week or month from recorded data; the tables stay one click away", async () => {
-    const { page, problems, context } = await open("reports", { dock: "hidden" });
+    const { page, problems, context } = await open("reports");
     const card = page.getByRole("article", { name: "Job-search summary" });
     await card.waitFor();
     const { summary, sections } = await page.evaluate(async () => (await fetch("/api/reports", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json());
@@ -3348,7 +3346,6 @@ describe("Google calendar conflicts", () => {
       timezone: "UTC", location: "Hall B", description: "Bring problem set 6", reminders: [15], rrule: "", ...fields });
     const resolved = [];
     const { page, problems, context } = await open("calendar", {
-      dock: "hidden",
       setup: async (context) => {
         await context.route("**/api/bootstrap", async (route) => {
           const response = await route.fetch();

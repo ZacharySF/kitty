@@ -46,12 +46,13 @@ def _raises_cost_or_privacy(path: str, before: Any, after: Any) -> bool:
         return after is True and before is not True
     if path == "settings.ai.daily_budget_usd":
         return float(after) > float(before)
-    if path == "settings.ai.model":
+    if path in {"settings.ai.model", "settings.ai.rika_fast_model", "settings.ai.rika_standard_model", "settings.ai.rika_deep_model"}:
         return after != before and after != ""
     return False
 
 
-SENSITIVE_PATHS = ("settings.notes.allow_ai", "settings.ai.model", "settings.ai.daily_budget_usd",
+SENSITIVE_PATHS = ("settings.notes.allow_ai", "settings.ai.model", "settings.ai.rika_fast_model",
+                   "settings.ai.rika_standard_model", "settings.ai.rika_deep_model", "settings.ai.daily_budget_usd",
                    "settings.opportunities.monitoring")
 
 

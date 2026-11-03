@@ -8,7 +8,7 @@
 
   let dismissedProblem = $state("");
   let dismissedError = $state("");
-  let dockSpace = $state(0);
+  let barSpace = $state(0);
   const problem = $derived(buildStore.invalid ? buildStore.problems.find((item) => item.severity === "error") ?? buildStore.problems[0] : undefined);
   const problemKey = $derived(problem ? `${buildStore.revision}:${problem.line}:${problem.message}` : "");
   const showProblem = $derived(!!problem && problemKey !== dismissedProblem);
@@ -17,12 +17,12 @@
   const visible = $derived(showSafe || showProblem || showError);
   const inApp = document.documentElement.dataset.surface !== "quick-note";
 
-  // Sit above the dock: its height is read from the page, clamped so a token cannot push this off screen.
+  // Sit above the Rika bar: its height is read from the page, clamped so a token cannot push this off screen.
   $effect(() => {
     const root = document.documentElement;
     const measure = () => {
-      const space = parseFloat(root.style.getPropertyValue("--dock-space")) || 0;
-      dockSpace = Math.max(0, Math.min(space, window.innerHeight - 80));
+      const space = parseFloat(root.style.getPropertyValue("--rika-space")) || 0;
+      barSpace = Math.max(0, Math.min(space, window.innerHeight - 80));
     };
     measure();
     const observer = new MutationObserver(measure);
@@ -47,7 +47,7 @@
 </script>
 
 {#if visible}
-  <div popover="manual" {@attach topLayer} role="region" aria-label="Build status" data-build-status style={`${box};bottom:${dockSpace + 10}px`}>
+  <div popover="manual" {@attach topLayer} role="region" aria-label="Build status" data-build-status style={`${box};bottom:${barSpace + 10}px`}>
     {#if showProblem && problem}
       <p role="status" style={row} data-build-problem>
         <span><strong style="font-weight:600;color:#ffb4a8">Build file error</strong> · line {problem.line}: {problem.message} · the last good build stays applied.</span>

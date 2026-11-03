@@ -42,7 +42,10 @@
             "model": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._:/@+-]*$", "description": "OpenRouter model ID; empty for none chosen.", "default": ""},
             "routing": {"enum": ["price", "latency", "throughput"], "default": "latency"},
             "max_output_tokens": {"type": "integer", "minimum": 128, "maximum": 8192, "default": 2048},
-            "daily_budget_usd": {"type": "number", "minimum": 0, "maximum": 100, "description": "US dollars; rounded to cents.", "default": 1.0}
+            "daily_budget_usd": {"type": "number", "minimum": 0, "maximum": 100, "description": "US dollars; rounded to cents.", "default": 1.0},
+            "rika_fast_model": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._:/@+-]*$", "description": "OpenRouter model for Rika's fast tier; empty for the default of the main model's family.", "default": ""},
+            "rika_standard_model": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._:/@+-]*$", "description": "OpenRouter model for Rika's standard tier; empty for the default.", "default": ""},
+            "rika_deep_model": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._:/@+-]*$", "description": "OpenRouter model for Rika's deep tier; empty for the default.", "default": ""}
           }
         },
         "notes": {
@@ -102,7 +105,7 @@
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
           "description": "A built-in theme. An unknown name (say, from a newer rika!) is a warning and falls back to the default.",
-          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "scythe", "liquid-glass"],
+          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "scythe", "liquid-glass", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"],
           "default": "kitty"
         },
         "tokens": {
@@ -128,36 +131,6 @@
       "description": "Interface preferences. Unknown groups are kept and ignored, so newer preferences slot in.",
       "additionalProperties": {"type": "object"},
       "properties": {
-        "dock": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "mode": {"enum": ["terminal", "activity", "hidden"], "default": "terminal"},
-            "shown": {"enum": ["terminal", "activity"], "description": "What the handle or pill brings back after hiding.", "default": "terminal"},
-            "float": {"type": "boolean", "description": "A floating card in the bottom-right corner instead of the bottom panel.", "default": false},
-            "step": {"enum": ["s", "m", "l"], "description": "Docked height: a small, medium or large share of the window.", "default": "m"},
-            "size": {
-              "description": "The floating card's size in pixels; null follows the window.",
-              "anyOf": [
-                {"type": "null"},
-                {"type": "object", "additionalProperties": false, "required": ["width", "height"], "properties": {
-                  "width": {"type": "integer", "minimum": 320, "maximum": 20000},
-                  "height": {"type": "integer", "minimum": 160, "maximum": 20000}
-                }}
-              ],
-              "default": null
-            },
-            "offset": {
-              "type": "object",
-              "additionalProperties": false,
-              "description": "The floating card's distance in pixels from the window's right and bottom edges.",
-              "properties": {
-                "right": {"type": "integer", "minimum": 0, "maximum": 20000, "default": 16},
-                "bottom": {"type": "integer", "minimum": 0, "maximum": 20000, "default": 16}
-              }
-            }
-          }
-        },
         "graph": {
           "type": "object",
           "additionalProperties": false,

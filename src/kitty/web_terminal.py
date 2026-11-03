@@ -2,8 +2,9 @@
 
 GET  /api/terminal/activity  ->  {"running", "workspaces": [{id, label, status, focused, agents}]}
     herdr's own agent states (idle/working/blocked/done/unknown) per workspace,
-    read with herdr's CLI; each agent also carries its task (terminal title), last
-    output line, output revision and ``since`` (epoch ms its state began). Never
+    read with herdr's CLI; each agent also carries its kind (herdr's agent name, e.g.
+    omp), task (terminal title), last output line, output revision and ``since`` (epoch
+    ms its state began). Never
     starts the session: ``running`` is false while rika!'s session is not running.
 POST /api/terminal/focus  {"pane"}  ->  {"ok"}
     Focuses one agent pane herdr currently lists (the dock's Open pane).

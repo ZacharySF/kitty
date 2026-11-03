@@ -298,7 +298,7 @@ def link_all(conn: sqlite3.Connection, tag_id: Any) -> dict:
 # Migration --------------------------------------------------------------------------------
 
 def backfill(conn: sqlite3.Connection) -> None:
-    """Migration 037: every ``#name`` already written becomes a tag record (spelled as first written)."""
+    """Migration 039: every ``#name`` already written becomes a tag record (spelled as first written)."""
     existing = load_vocabulary(conn)
     ops: list[dict] = []
     for (topic,) in conn.execute("SELECT DISTINCT topic FROM block_topics WHERE kind='tag' ORDER BY topic").fetchall():

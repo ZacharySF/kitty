@@ -1,0 +1,267 @@
+<script lang="ts">
+  import { tick } from "svelte";
+  import EditDrawer from "../ui/EditDrawer.svelte";
+  import RikaAgents from "./RikaAgents.svelte";
+  import { costLabel, entryKey } from "./rika";
+  import { rika } from "./session.svelte";
+
+  /**
+   * Q2 D, Q19 A, Q20 A: the history drawer. Conversation holds every request and reply
+   * with the actions they ran (Undo) and the approvals they wait on (Approve / Reject,
+   * with what will happen and what it may cost); Agents holds the live worker cards.
+   */
+  const STATUS = { done: "Done", undone: "Undone", failed: "Failed", approved: "Approved", rejected: "Rejected", expired: "Expired", pending: "Needs you" } as const;
+  let list = $state<HTMLElement>();
+  const requests = $derived(rika.entries.filter((entry) => entry.kind === "message" && entry.role === "user").length);
+  const meta = $derived([`${requests} request${requests === 1 ? "" : "s"}`, rika.pending.length ? `${rika.pending.length} need${rika.pending.length === 1 ? "s" : ""} you` : ""].filter(Boolean).join(" · "));
+  const time = (value: string | undefined) => {
+    const date = new Date(value ?? "");
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+  // While open, the drawer's room on the right keeps the toasts beside it (Q2 D).
+  $effect(() => {
+    document.documentElement.style.setProperty("--rika-drawer", "calc(min(400px, 100vw - 1.5rem) + 0.75rem)");
+    return () => document.documentElement.style.removeProperty("--rika-drawer");
+  });
+  // New entries scroll into view, so an approval that opened the drawer is in sight.
+  $effect(() => {
+    void rika.entries.length;
+    if (rika.drawer.section === "conversation") void tick().then(() => list?.lastElementChild?.scrollIntoView({ block: "end" }));
+  });
+</script>
+
+<EditDrawer title="Rika history" {meta} closeLabel="Close Rika history" onclose={() => rika.closeDrawer()}>
+  <div class="sections" role="group" aria-label="History sections">
+    <button aria-pressed={rika.drawer.section === "conversation"} onclick={() => rika.showDrawer("conversation")}>Conversation</button>
+    <button aria-pressed={rika.drawer.section === "agents"} onclick={() => rika.showDrawer("agents")}>Agents <i>{rika.agents.length}</i></button>
+  </div>
+  {#if rika.error}<p class="error" role="alert">{rika.error}</p>{/if}
+  {#if rika.drawer.section === "agents"}
+    <RikaAgents />
+  {:else}
+    <section class="conversation" aria-label="Conversation">
+      {#if rika.hasMore}<button class="pill earlier" onclick={() => rika.loadHistory(true)}>Load earlier</button>{/if}
+      {#if !rika.entries.length}<p class="note">Ask Rika anything in the bar below. Replies, what Rika did and what it needs you to approve collect here.</p>{/if}
+      <ol bind:this={list}>
+        {#each rika.entries as entry (entryKey(entry))}
+          <li data-entry={entry.kind}>
+            {#if entry.kind === "message" && entry.role === "user"}
+              <div class="you"><time>{time(entry.created_at)}</time><p>{entry.text}</p></div>
+            {:else if entry.kind === "message"}
+              <div class="said">
+                <i class="mark" aria-hidden="true"></i>
+                <div>
+                  <p class:thinking={!entry.text}>{entry.text || "Thinking…"}</p>
+                  <span class="meta-line">
+                    {#if entry.tier}<span class="rika-chip" data-tier={entry.tier} title={entry.model}>{entry.tier}</span>{/if}
+                    <time>{time(entry.created_at)}</time>
+                    {#if costLabel(entry.cost_usd)}<span>{costLabel(entry.cost_usd)}</span>{/if}
+                    {#if entry.status === "failed"}<span class="failed">Failed</span>{/if}
+                  </span>
+                </div>
+              </div>
+            {:else if entry.kind === "action"}
+              <article class="card" data-status={entry.status} aria-label={entry.summary}>
+                <header><span class="kind">{entry.tool.replaceAll("_", " ")}</span><span class="state">{STATUS[entry.status]}</span></header>
+                <p>{entry.summary}</p>
+                {#if entry.reversible && entry.status === "done"}<div class="decide"><button class="pill" onclick={() => rika.undo(entry.id)}>Undo</button></div>{/if}
+              </article>
+            {:else}
+              {@const status = entry.status ?? "pending"}
+              <article class="card ask" data-status={status} aria-label={entry.summary}>
+                <header><span class="kind">{entry.tool.replaceAll("_", " ")} · approval</span><span class="state">{STATUS[status]}</span></header>
+                <p>{entry.summary}</p>
+                {#if entry.detail}<p class="detail">{entry.detail}</p>{/if}
+                {#if costLabel(entry.cost_usd)}<p class="cost">Estimated cost <b>{costLabel(entry.cost_usd)}</b></p>{/if}
+                {#if status === "pending"}
+                  <div class="decide">
+                    <button class="pill" onclick={() => rika.decide(entry.id, "reject")}>Reject</button>
+                    <button class="pill primary" onclick={() => rika.decide(entry.id, "approve")}>Approve</button>
+                  </div>
+                {/if}
+              </article>
+            {/if}
+          </li>
+        {/each}
+      </ol>
+    </section>
+  {/if}
+</EditDrawer>
+
+<style>
+  .sections {
+    display: flex;
+    align-self: start;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+  }
+  .sections button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 10.5px var(--font-mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .sections button:hover,
+  .sections button[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--ink) 12%, transparent);
+    color: var(--ink);
+  }
+  .sections i {
+    padding: 0 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ink) 18%, transparent);
+    font-style: normal;
+    letter-spacing: 0;
+  }
+  .error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 12px;
+  }
+  .note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .conversation {
+    display: grid;
+    gap: 10px;
+  }
+  .earlier {
+    justify-self: center;
+    min-height: 24px;
+    font-size: 10px;
+  }
+  ol {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  p {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  time,
+  .meta-line {
+    color: var(--subtle);
+    font: 10.5px var(--font-mono);
+  }
+  .you {
+    display: grid;
+    justify-items: end;
+    gap: 3px;
+    margin-left: 48px;
+  }
+  .you p {
+    padding: 7px 11px;
+    border-radius: 12px 12px 4px 12px;
+    background: color-mix(in srgb, var(--ink) 9%, transparent);
+  }
+  .said {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 9px;
+    margin-right: 24px;
+  }
+  .said > div {
+    display: grid;
+    gap: 4px;
+  }
+  .thinking {
+    color: var(--muted);
+  }
+  .mark {
+    width: 12px;
+    height: 12px;
+    margin-top: 3px;
+    border-radius: 999px;
+    background: radial-gradient(circle at 35% 30%, color-mix(in srgb, white 70%, var(--c1)), var(--c1) 45%, color-mix(in srgb, var(--c2) 80%, transparent) 100%);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c1) 55%, transparent);
+  }
+  .meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .failed {
+    color: var(--danger);
+  }
+  .card {
+    --tone: var(--success);
+    display: grid;
+    gap: 4px;
+    margin-left: 21px;
+    padding: 8px 10px;
+    border: 1px solid var(--hairline);
+    border-left: 2px solid var(--tone);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--solid-raised) 55%, transparent);
+  }
+  .card[data-status="undone"],
+  .card[data-status="rejected"],
+  .card[data-status="expired"] {
+    --tone: var(--subtle);
+  }
+  .card[data-status="failed"] {
+    --tone: var(--danger);
+  }
+  .card.ask[data-status="pending"] {
+    --tone: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 45%, var(--hairline));
+    box-shadow: 0 0 22px color-mix(in srgb, var(--warning) 12%, transparent);
+  }
+  .card header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .kind {
+    color: var(--subtle);
+    font: 10px var(--font-mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .state {
+    color: var(--tone);
+    font: 500 9.5px var(--font-mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .detail {
+    color: var(--muted);
+  }
+  .cost {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .cost b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .decide {
+    display: flex;
+    justify-content: end;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .decide .pill {
+    min-height: 26px;
+    padding: 3px 12px;
+    font-size: 10.5px;
+  }
+</style>
