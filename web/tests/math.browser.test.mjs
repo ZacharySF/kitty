@@ -78,7 +78,6 @@ async function open(hash, { storage, history, streak, ai = false, clock = false 
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue());
-  await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({ mode: "hidden", shown: "terminal", float: false, step: "m", size: null, offset: { right: 16, bottom: 16 } })));
   if (storage)
     await context.addInitScript((entries) => {
       if (sessionStorage.getItem("seeded")) return;

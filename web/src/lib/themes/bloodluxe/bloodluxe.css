@@ -162,7 +162,7 @@
 
 /* The frame: the window's content steps inside the barbed wire. */
 :root[data-theme="bloodluxe"]:not([data-motif="off"]) body .workbench {
-  padding: 28px 32px calc(24px + var(--dock-space, 0px));
+  padding: 28px 32px calc(24px + var(--rika-space, 0px));
 }
 :root[data-theme="bloodluxe"]:is([data-motif="off"], [data-panel-fullscreen]) .theme-frame {
   display: none;

@@ -1,15 +1,14 @@
 <script lang="ts">
   /**
    * c's frame: twisted rope borders in the window's gutters, tied off at each corner with an
-   * interlaced knot around a blood-red diamond. The foot rope parts in the middle, where the
-   * dock's handle sits. Edges only; the pointer passes through.
+   * interlaced knot around a blood-red diamond. The foot rope runs just above the Rika bar.
+   * Edges only; the pointer passes through.
    */
   const CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"];
 </script>
 
 <div class="rope top" data-ornament></div>
-<div class="rope foot west" data-ornament></div>
-<div class="rope foot east" data-ornament></div>
+<div class="rope foot" data-ornament></div>
 <div class="rope left" data-ornament></div>
 <div class="rope right" data-ornament></div>
 {#each CORNERS as corner (corner)}
@@ -36,13 +35,6 @@
   }
   .rope.foot {
     bottom: 2px;
-  }
-  .rope.west {
-    right: calc(50% + 40px);
-  }
-  .rope.east {
-    left: calc(50% + 40px);
-    background-position: right center;
   }
   .rope.left,
   .rope.right {

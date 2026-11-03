@@ -108,7 +108,13 @@
   onMount(() => {
     dialog.showModal();
     searchField?.focus();
-    if (mapsOn) void api<{ maps: { id: number; title: string }[] }>("/schema").then((result) => { mapList = result.maps; }).catch(() => { /* Maps stay reachable through Mind maps. */ });
+  });
+  // Ctrl K can open before the modules are read; the maps load once Mind maps is known to be on.
+  let mapsRequested = false;
+  $effect(() => {
+    if (!mapsOn || mapsRequested) return;
+    mapsRequested = true;
+    void api<{ maps: { id: number; title: string }[] }>("/schema").then((result) => { mapList = result.maps; }).catch(() => { /* Maps stay reachable through Mind maps. */ });
   });
   $effect(() => {
     const text = query.trim();

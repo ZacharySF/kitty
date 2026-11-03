@@ -10,7 +10,7 @@
   --red: #d90d1a;
   --red-paper: #f4f1ea;
   --red-black: #0a0a0a;
-  /* The paper margin (Frame.svelte); the page and the dock stay inside it. */
+  /* The paper margin (Frame.svelte); the page stays inside it, above the Rika bar. */
   --red-head: 10px;
   --red-side: 12px;
   --red-foot: 22px;
@@ -37,17 +37,13 @@
   color: #fff;
 }
 
-/* Keep the page and the docked panel inside the paper margin. */
+/* Keep the page inside the paper margin; the frame and its margin end above the Rika bar. */
 :root[data-theme="red"] body .workbench {
-  padding-bottom: calc(10px + var(--red-foot) + var(--dock-space, 0px));
+  padding-bottom: calc(10px + var(--red-foot) + var(--rika-space, 0px));
 }
-:root[data-theme="red"] body :is(.dock:not(.floating), .dock-handle) {
-  right: var(--red-side);
-  bottom: var(--red-foot);
-  left: var(--red-side);
-}
-:root[data-theme="red"] body .dock-pill {
-  bottom: calc(16px + var(--red-foot));
+:root[data-theme="red"] body .rika-bar {
+  border-top: 2px solid var(--red-paper);
+  background: var(--red-black);
 }
 
 /* Chrome: black, ruled in white; the current group prints in reverse. */

@@ -3,7 +3,7 @@
    * red's frame: the white paper margin round the black block, as on a printed cover, with
    * printer's crop marks and the magazine furniture set in tracked capitals (the motif's
    * small-caps voice, in the app's own face): an issue line along the foot and a running
-   * title up the right edge. Edges only; red.css keeps the page and dock clear of it.
+   * title up the right edge. Edges only; red.css keeps the page clear of it; it ends above the Rika bar.
    */
   const issue = new Intl.DateTimeFormat("en", { month: "2-digit", year: "2-digit" }).format(new Date());
 </script>
