@@ -141,9 +141,10 @@ closing the window without that setting, or Ctrl-C on `kitty-web`) stops rika!'s
 herdr session. With the module off there is no herdr process, socket or route.
 
 The page reaches it through a WebSocket on rika!'s own loopback origin
-(`/api/terminal/socket`). Browsers cannot add `X-Kitty-Request` to an upgrade, so
-the upgrade requires the exact Host and Origin plus a single-use token that expires
-after 30 seconds and is issued only by the header-protected `POST
+(`/api/terminal/socket`). Browsers cannot add `X-Kitty-Request` or the UI secret's
+header to an upgrade, so the upgrade requires the exact Host and Origin, the UI
+secret as a WebSocket subprotocol, and a single-use token that expires after 30
+seconds and is issued only by the header- and secret-protected `POST
 /api/terminal/session`. A development `kitty-web` uses `KITTY_HERDR=<herdr 0.9.5
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
@@ -300,13 +301,22 @@ From the project root, with Node 22+ and npm available:
 ```bash
 npm --prefix web ci
 npm --prefix web run build
-uv run kitty-web                 # http://127.0.0.1:8765
+uv run kitty-web                 # rika! website: http://127.0.0.1:8765/?code=…
 ```
 
 On NixOS without Node on PATH, prefix either npm command with
 `nix shell nixpkgs#nodejs_22 --command`.
-Use the printed `127.0.0.1` address, not `localhost`: the server validates its
-exact loopback Host/Origin. `--port`, `--root` and `--static-dir` override the port,
+Open the printed link, `127.0.0.1` and not `localhost`: the server validates its
+exact loopback Host/Origin. The link carries a one-time `code` (as Jupyter's token
+link does) that the page trades for this launch's UI secret; it works once, within
+ten minutes, and leaves the address bar at once. kitty-web then prints the next
+link, one per browser tab (a tab keeps its secret across reloads in its
+`sessionStorage`), and a fresh one whenever the current link expires. A tab opened
+without a valid code, or kept from an earlier launch, is refused: "rika! did not
+recognise this window". With the Vite dev server (`npm --prefix web run dev`, which
+proxies `/api` to port 8765), open `http://127.0.0.1:5173/?code=<code>` with the
+code from kitty-web's link. See [Local API protection](#local-api-protection-the-ui-secret).
+`--port`, `--root` and `--static-dir` override the port,
 workspace and built-asset directory. The refresh button and command palette reload
 configuration from disk; saves in My profile reload it automatically.
 
@@ -395,11 +405,37 @@ compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
 
+### Local API protection (the UI secret)
+
+rika!'s server listens on `127.0.0.1`, where every web page you visit (through your
+browser) and every program on your machine can reach it. The page guard (exact Host
+and Origin, `X-Kitty-Request` and JSON on every write) stops web pages, but a local
+program can send those headers too. So every `/api` route, WebSocket upgrade and
+terminal token also needs this launch's **UI secret**: a fresh 256-bit value made
+at start-up and kept only in memory (never in a log, a URL or `.private/endpoint.json`).
+
+- **Desktop app:** the backend hands the secret to the desktop shell on its private
+  pipe; the shell gives it to the main window and every quick-note window before
+  their scripts run (only on the main frame and only on rika!'s exact address, so the
+  LearnHarness frame never sees it). Nothing to do.
+- **`kitty-web` in a browser:** open the link it prints; its one-time code becomes
+  the tab's secret (see [Local website](#local-website)).
+- A request without the secret gets **401** with one message, "rika! did not
+  recognise this window…", whatever was wrong.
+- Downloads and PDFs opened in a new window (including the system browser the
+  desktop app opens them in) use a single-use link valid for one minute.
+- It is a header, not a cookie: browsers send a `127.0.0.1` cookie to every port on
+  `127.0.0.1`, so a cookie would reach the LearnHarness server and any other local
+  server; `web/tests/uiSecret.browser.test.mjs` shows this in Chromium and WebKit.
+- **What it does not cover:** the CLI, TUI and MCP server still open the database
+  directly, and a program running as you can still read your workspace files or
+  attach a debugger to rika!. Paired programs use their own tokens (below).
+
 ### Connected apps (pairing)
 
 Outside programs, such as the planned kitty Tern plugin and the browser extension,
-reach rika! only after you approve them. They never use the page API: its
-Origin/`X-Kitty-Request` guard stops web pages, but any local program can forge it.
+reach rika! only after you approve them. They never use the page API, which needs
+the UI secret only rika!'s own windows hold (see above).
 
 1. While rika! runs (desktop app or `kitty-web`), it writes its current address to
    the owner-only `.private/endpoint.json` (0600, in a 0700 `.private`), e.g.

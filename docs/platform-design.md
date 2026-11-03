@@ -60,7 +60,7 @@ Hard rule from the user: "dont adapt any of these if it makes kitty worse". Expl
   - Anthropic, USAJOBS and Brave come only from environment variables.
   - There is no keyring.
 - **Graph:** Canvas 2D with d3-force on the main thread, plus optional 3D through `3d-force-graph`. Capped at 180 atlas nodes per section and 300 nodes per mind map.
-- **Request guard:** checks exact Host and Origin plus an `X-Kitty-Request` header. This stops web pages but not local programs.
+- **Request guard:** checks exact Host and Origin plus an `X-Kitty-Request` header. This stops web pages but not local programs. (Since closed for `/api`: see [UI secret: what was built](#ui-secret-what-was-built).)
 
 ### Notion facts that shaped the design (primary sources)
 
@@ -650,6 +650,19 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
 - **CORS:** an extension pairs from its own `Origin`, which is recorded; its token is refused from any other origin (or none), and a non-extension client's token is refused from any origin. Preflight answers pairing for any extension origin and the token routes only for origins of live paired extensions (also `Access-Control-Allow-Private-Network`). Web page origins never pass. Extensions call from extension pages or the background, not content scripts.
 - **UI:** Settings → Connected apps (`ConnectedApps.svelte`) lists waiting requests with their codes (Approve/Deny) and paired clients (kind, scopes, origin, connected, last used, Revoke). `PairingPrompt.svelte` shows a waiting request as a non-blocking bar above every other view. Both poll `GET /api/clients` every 4 seconds while visible.
 - **Limits:** pending requests do not survive a restart. A crash (SIGKILL) leaves a stale endpoint file until the next start rewrites it; a client that finds no server there should treat the file as stale. Clients cannot yet verify that the server at the published origin is kitty!.
+
+## UI secret: what was built
+
+The paper's §13 step 3 ("the UI gets a per-launch secret through the Tauri initialisation-script path"). Code: `src/kitty/web_auth.py`, `RequestHandler._authorize`/`_session`/`_upgrade` in `src/kitty/web_server.py`, `desktop/backend.py`, `desktop/src/owner.rs` (`readiness`, `window_script`), `desktop/src/main.rs`, `web/src/lib/api.ts`.
+
+- **Secret:** `secrets.token_hex(32)` per server start, held only in memory (`LocalHTTPServer.ui_auth`). Never logged, never in a URL, never in `.private/endpoint.json`; `repr` hides it.
+- **Check:** every `/api` request except `/api/ingress/*` (bearer tokens, unchanged) needs exactly one `X-Kitty-Secret` header equal to it (`hmac.compare_digest`), after the existing Host/Origin/`Sec-Fetch-Site`/`X-Kitty-Request`/JSON checks and before module gating. Any failure is the same 401 (`WWW-Authenticate: Kitty`, one generic message). WebSocket upgrades (live channel, terminal) carry it as the subprotocol `kitty-secret.<secret>` next to `kitty`, which the 101 selects; the single-use socket tokens are still required and can only be minted with the secret.
+- **Desktop:** the sidecar's one readiness line on the private owner pipe is now `{"origin", "secret"}` (exactly those keys, 64 lowercase hex). The shell injects `Object.defineProperty(window, "__KITTY_UI_SECRET__", …)` with `initialization_script`, which Tauri runs on the main frame only, guarded by `location.origin ===` the server's origin, into the main window and every quick-note window. The LearnHarness frame (another origin) never gets it.
+- **Browser mode (`kitty-web`, also `--demo`):** prints `rika! website: <origin>/?code=<code>`. The page POSTs the code to `/api/session` (page-guarded, no secret needed) and gets the secret, keeps it in the tab's `sessionStorage` and removes the code from the address bar. One code is outstanding at a time, 128-bit, single use, 10 minutes; kitty-web prints a new link when one is used or expires.
+- **Navigations that cannot carry a header:** downloads and PDFs opened in a new window (on the desktop these open in the system browser) go through `POST /api/session/link {path}`, which returns the path with a 256-bit `ticket`: single use, 60 s, bound to the exact path and query, GET only, at most 64 outstanding. Images (canvas references, mirror screenshots) are fetched with the header and shown as object URLs.
+- **Why a header and not a cookie:** cookies ignore ports, so an HttpOnly, SameSite=Strict cookie set by `127.0.0.1:<port>` is also sent to `127.0.0.1:3210` (the LearnHarness frame) and to any other local server the browser opens. `web/tests/uiSecret.browser.test.mjs` shows it in Chromium and WebKit, for a subframe and a top-level page.
+- **Tests:** `tests/test_ui_secret.py` (every route family and HEAD/GET/POST with perfect forged headers gets 401; wrong, repeated or reshaped secrets; upgrades; terminal token minting; code and ticket lifetimes; ingress unaffected; kitty-web's reprinted link), the desktop sidecar (`tests/test_desktop_runtime.py`), Rust `owner::tests` (readiness parsing, the escaped, origin-guarded script), and web harness fixtures that hand pages the secret the desktop way (`tests/kittyServer.js` `authorize`).
+- **Limits (honest):** local programs no longer get `/api`, but trust remains elsewhere. The CLI, TUI and MCP server still open the SQLite database directly (the later "mediation" item); any same-user program can read workspace files, and with ptrace allowed can read the secret from rika!'s or the webview's memory. In browser mode the secret sits in `sessionStorage`, which browsers may write to disk for session restore, and a new tab needs a new link. A crash leaves nothing to clean up: the next launch has a new secret.
 
 ## Build step 3: what was built
 
