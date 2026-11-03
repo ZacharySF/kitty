@@ -888,6 +888,45 @@ Tern plugin and browser extension follow it).
   Tags, Connected apps, Keys and Devices pages. Main's preferences are build preferences (see
   [Builds](#builds-q8q9-what-was-built)).
 
+## Search index: what was built
+
+Paper §16 ("FTS5, backlinks and unlinked mentions fold the op log incrementally … with a
+scheduled oracle"). Code: `src/kitty/core/search.py`, `src/kitty/core/blocks/searchdocs.py`,
+`src/kitty/web_search.py`, migration `044_search_index.sql`, `kitty index check|rebuild`.
+
+- **Documents** (`search_docs`): one per searchable record. Blocks are written by
+  `store.transact` in the same transaction as the projection; study, calendar, flashcard
+  and job tables queue `(kind, ref)` in `search_pending` through pure-SQL triggers, folded
+  by `search.sync` before every query and check (the queue commits with the write).
+- **Indexes:** external content (snippets/highlights need the text; the oracle compares
+  documents column by column) with `unicode61 remove_diacritics 2` and prefix indexes (word
+  prefixes for type-ahead, bm25 with titles weighted 8×) plus a `trigram` index (substring
+  and CJK matches, which Notes find's `LIKE` always had). 1–2 character CJK queries match
+  only the start of a run.
+- **Readers:** Ctrl K (`GET /api/search`, highlighted segments), Notes find, atlas section
+  search (`?search=`), mind-map backlinks and `mentions` (FTS phrase candidates, then the
+  existing token matcher in recency order), unlinked title mentions (titles found through
+  the title column, then the old whole-word regex), related records (bm25 over the text's
+  24 most distinctive terms, document frequencies from `search_vocab`). No per-source,
+  per-record or total caps remain; the bounded lists report `truncated`.
+- **Oracle:** `search.check` rebuilds every document (blocks by replaying snapshots plus
+  the log) into a temp table, diffs it, runs FTS5 `integrity-check`, repairs, logs and
+  records the result in `search_checks`; the server runs it 5 minutes after start and every
+  6 hours. `tests/test_search_index.py` holds 12 seeded random runs (block edits, moves,
+  Trash, purges, source-table writes, compaction into snapshots) asserting rebuild ==
+  incremental.
+- **Measured** (synthetic workspace: 20,000 blocks, 2,000 jobs, 1,000 cards; 23,010
+  documents, 8.9 MB text): rebuild over an existing index 9.6 s; oracle 1.0 s (from log) /
+  0.85 s (projection); sizes `search_docs` 15.3 MB, words 10.1 MB, trigrams 28.2 MB.
+  p50/p95: Ctrl K 14/154 ms before the SQL count fix (1-char 37 ms, word 5 ms medians
+  after it) against 1.8/2.0 ms for the old jobs-only `LIKE`; Notes find 5.8/24.7 ms (old
+  7.5/15.3); backlink mentions 18/28 ms (old capped scan 284/300); unlinked mentions
+  55/62 ms (old 500 regexes 30/32); related 400/522 ms (old TF-IDF over ≤1,000 910/983);
+  one keystroke transaction 1.6/5.2 ms with the index against 0.72/1.55 ms without.
+- **Known limits:** unlinked mentions and related read long title-column doclists (a
+  title-only index would make them cheaper); a full rebuild runs the FTS triggers per row;
+  titles without word characters are never found as mentions.
+
 ## Verified facts
 
 - **Tern bridge merged** (#21 status view, Open in Tern, kitty!'s own daemon; #33 dock panes):

@@ -416,6 +416,10 @@ _HITS = """SELECT d.id,d.kind,d.ref,d.page_id,d.title AS doc_title,d.label,r.typ
     CAST(json_extract(r.properties,'$.number') AS INTEGER) AS number,{rank} AS score
     FROM {table} JOIN search_docs d ON d.id={table}.rowid LEFT JOIN blocks r ON d.kind='block' AND r.id=d.page_id
     WHERE {table} MATCH ? AND ({kinds}) ORDER BY score, d.id"""
+#: The record key of every matching document (a page's blocks count once), for ``total``.
+_KEYS = """SELECT CASE WHEN d.kind='block' THEN 'block:'||d.page_id ELSE d.kind||':'||d.ref END
+    FROM {table} JOIN search_docs d ON d.id={table}.rowid LEFT JOIN blocks r ON d.kind='block' AND r.id=d.page_id
+    WHERE {table} MATCH ? AND ({kinds})"""
 
 
 def kind_filter(kinds: Iterable[str] | None = None, modules: Iterable[str] = MODULE_IDS) -> str:
@@ -467,6 +471,8 @@ def search(conn: sqlite3.Connection, text: str, *, limit: int = 20, kinds: Itera
     ) if query]
     with (nullcontext() if conn.in_transaction else transaction(conn)):
         for table, query, rank, match, tokens in plans:
+            if more:
+                break
             for row in conn.execute(_HITS.format(table=table, rank=rank, kinds=allowed), (query,)):
                 kind, key, ident, title = _record_of(row)
                 if key in seen:
@@ -479,10 +485,8 @@ def search(conn: sqlite3.Connection, text: str, *, limit: int = 20, kinds: Itera
                              {"kind": kind, "id": ident, "title": title, "view": KINDS[kind][1], "match": match}))
         total = len(hits)
         if more:
-            keys = set(seen)
-            for table, query, rank, _, _ in plans:
-                keys.update(_record_of(row)[1] for row in conn.execute(_HITS.format(table=table, rank="0", kinds=allowed), (query,)))
-            total = len(keys)
+            total = conn.execute("SELECT COUNT(*) FROM (" + " UNION ".join(_KEYS.format(table=table, kinds=allowed) for table, *_ in plans)
+                                 + ")", [query for _, query, *_ in plans]).fetchone()[0]
         result = []
         for rowid, table, query, tokens, doc_title, hit in hits:
             title, snippet = _marks(conn, table, query, rowid, tokens)
