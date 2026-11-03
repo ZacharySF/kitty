@@ -180,6 +180,7 @@ describe("Opportunities & projects: map first", () => {
     await editor.waitFor({ state: "detached" });
     // The choice is remembered.
     await page.reload();
+    await controls(page).waitFor({ timeout: 60_000 });
     await list.waitFor();
     assert.deepEqual(problems, []);
     await context.close();

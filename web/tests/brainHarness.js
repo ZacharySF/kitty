@@ -9,11 +9,10 @@ import { setPreferences, setTheme } from "/src/lib/build.svelte.ts";
 import { installBuild } from "./buildStub.js";
 import BrainHarness from "./BrainHarness.svelte";
 
-await installBuild();
 const host = document.getElementById("host");
 let instance = null;
 
-window.brainHarness = {
+const brainHarness = {
   /** Replaces the fixture with a fresh `kind` ("stage" | "atlas" | "section" | "schema"). */
   mount(kind, { look, home } = {}) {
     if (instance) unmount(instance);
@@ -32,4 +31,8 @@ window.brainHarness = {
   pointColour: (id) => instance?.pointColour(id) ?? null,
   setTheme: (id) => setTheme(id),
 };
-window.dispatchEvent(new Event("brain-harness-ready"));
+// The build loads before the harness is offered (no top-level await: a reload's load event never waits on it).
+void installBuild().then(() => {
+  window.brainHarness = brainHarness;
+  window.dispatchEvent(new Event("brain-harness-ready"));
+});

@@ -2616,6 +2616,7 @@ describe("one mind-map editor", () => {
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector('.schema input[aria-label="Map title"]')?.value === "Palette map");
     assert.equal(await page.evaluate(() => location.hash), "#schema");
+    await palette.waitFor({ state: "hidden" });
     await page.keyboard.press("Control+k");
     await palette.getByRole("combobox").fill("new mind map");
     await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("New mind map"));

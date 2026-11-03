@@ -120,7 +120,7 @@ def test_pairing_needs_a_shown_code_and_a_reachable_address(kittys):
     with closing(socket.socket()) as probe:
         probe.bind(("127.0.0.1", 0))
         closed = probe.getsockname()[1]
-    with pytest.raises(peers.PeersError, match="No kitty"):
+    with pytest.raises(peers.PeersError, match="No rika!"):
         a.sync.pair("ABC-DEF", f"127.0.0.1:{closed}")
 
 
