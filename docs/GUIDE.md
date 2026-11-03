@@ -562,6 +562,39 @@ URLs; a change to something since deleted reads e.g. *Deleted page*. Sections of
 disabled modules are left out. When the limit is reached, records are kept and the
 newest edits fill the rest (`truncated: true`; `total` counts everything).
 
+### Search and the search index
+
+**Ctrl K** searches sections and commands by name and, from the full-text index, every
+note page, document, quick note, tag (name, keywords, aliases), study subject, project
+and task, calendar event and task, flashcard deck and card, and (with ApplyAI) job:
+titles and contents, with the matched words marked. Each word you type matches the
+start of a word ("mito" finds *Mitochondria*), case and accents are ignored ("cafe"
+finds *Café*), titles rank above body text, and from three characters on the text also
+matches inside words and in Chinese, Japanese or Korean text ("ondri", "都庁へ"). Notes
+find (the library's *Search your notes…*), the atlas section graphs' *Find a node*,
+mind-map backlinks, a page's *Unlinked title mentions* and the *Connections* panel read
+the same index, over every record: nothing older is left out. Where a panel shows only
+the first few, it says more exist.
+
+The index (`search_docs` with two SQLite FTS5 indexes, migration 044) is written in the
+same transaction as every block edit; other records reach it through a queue their
+tables' triggers fill, applied before every search. The server compares it with a full
+rebuild (pages replayed from their snapshots and history) five minutes after start and
+every six hours, repairs any difference and logs it.
+
+```bash
+kitty index check                 # rebuild, compare, repair; exit 1 on any difference
+kitty index check --no-repair     # report only
+kitty index check --from projection   # rebuild blocks from the projection, not the log
+kitty index rebuild               # replace every document from the current data
+```
+
+`GET /api/search?q=<text>[&limit=1-200][&kinds=note_page,job,…]` returns
+`{query, hits, total, truncated}`; each hit has `kind`, `id`, `title`, `title_marks` and
+`snippet` (`[[text, is_hit], …]` runs), `view` and `match` (`word` or `substring`).
+`GET /api/atlas/sections/<notes|study|flashcards|jobs>?search=<text>` returns the matching
+records as graph nodes with their hubs (titles only, never bodies).
+
 ### LearnHarness extension
 
 **Study → LearnHarness → Start LearnHarness** opens the included

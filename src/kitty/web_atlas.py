@@ -11,11 +11,13 @@ counts, and include archived items just like the browser. Other sections retain
 bounded samples; ``total`` counts eligible nodes and ``shown`` counts returned
 nodes (including hubs). Missing tables contribute no invented entities.
 
-``?focus=<entity>:<ref>`` is the only accepted query field: jobs
-``track:<name>``, flashcards ``deck:<id>``, notes ``notebook:<id>`` /
-``folder:<id>``, study ``subject:<id>`` and opportunities ``category:<name>``.
-Only ids, titles and short details are returned: no file paths, URLs, note
-bodies or tokens. Flashcard note labels use their type and stable note id.
+``?focus=<entity>:<ref>`` narrows a graph: jobs ``track:<name>``, flashcards
+``deck:<id>``, notes ``notebook:<id>`` / ``folder:<id>``, study ``subject:<id>`` and
+opportunities ``category:<name>``. ``?search=<text>`` (notes, study, flashcards, jobs)
+returns the section's records matching it in the search index (kitty.core.search),
+titles and contents alike, with their hubs. Only ids, titles and short details are
+returned: no file paths, URLs, note bodies, snippets or tokens. Flashcard note labels
+use their type and stable note id.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
-from kitty.core import calendar, backlinks
+from kitty.core import calendar, backlinks, search
 from kitty.modules import MODULE_IDS
 
 EVENT_WINDOW = timedelta(days=30)
@@ -488,6 +490,77 @@ def _focus(section, query):
     return entity, ref
 
 
+#: Result kinds of kitty.core.search each section's ``?search=`` looks through.
+SEARCH_KINDS = {'notes': ['note_page'], 'study': ['study_subject', 'study_project'],
+                'flashcards': ['flashcard_deck', 'flashcard_note'], 'jobs': ['job']}
+
+
+def _search_section(conn, section, text, modules):
+    """The section's records that match `text` in the search index (titles and contents), as graph nodes.
+
+    Nodes carry the same labels as the section graph (never bodies or snippets), with
+    their notebook, subject, deck or track hub; ``truncated`` says more than
+    ``SECTION_LIMIT`` records matched and ``total`` counts them.
+    """
+    if section not in SEARCH_KINDS:
+        raise _api_error(400, f'The {section} graph has no search')
+    try:
+        found = search.search(conn, text, limit=SECTION_LIMIT, kinds=SEARCH_KINDS[section], modules=modules)
+    except ValueError as exc:
+        raise _api_error(400, str(exc)) from None
+    ids = {}
+    for hit in found['hits']:
+        ids.setdefault(hit['kind'], []).append(hit['id'])
+    nodes, links, hubs = [], [], set()
+
+    def hub(entity, ref, label, detail=''):
+        if (entity, ref) not in hubs:
+            hubs.add((entity, ref))
+            nodes.append(_node(entity, ref, label, f'{entity}:{ref}', detail, hub=True))
+
+    if section == 'notes':
+        pages = ids.get('note_page', [])
+        for ident, title, notebook, book in _section_rows(conn, f'''SELECT p.id, p.title, n.id, n.title FROM note_page_index p
+                JOIN note_notebooks n ON n.id = p.notebook_id WHERE p.id IN ({_placeholders(pages)})''', pages):
+            hub('notebook', notebook, book)
+            nodes.append(_node('page', ident, title, f'notebook:{notebook}'))
+            links.append(_link(f'notebook:{notebook}', f'page:{ident}', 'contains'))
+    elif section == 'study':
+        for ident in ids.get('study_subject', []):
+            hub('subject', ident, next(hit['title'] for hit in found['hits'] if hit['kind'] == 'study_subject' and hit['id'] == ident))
+        projects = ids.get('study_project', [])
+        for ident, name, subject, subject_name in _section_rows(conn, f'''SELECT p.id, p.name, s.id, s.name FROM study_projects p
+                LEFT JOIN study_subjects s ON s.id = p.subject_id WHERE p.id IN ({_placeholders(projects)})''', projects):
+            if subject is not None:
+                hub('subject', subject, subject_name)
+                links.append(_link(f'subject:{subject}', f'project:{ident}', 'contains'))
+            nodes.append(_node('project', ident, name, f'subject:{subject}' if subject is not None else 'Independent projects'))
+    elif section == 'flashcards':
+        decks = ids.get('flashcard_deck', [])
+        for ident, name in _section_rows(conn, f'SELECT id, name FROM flash_decks WHERE id IN ({_placeholders(decks)})', decks):
+            hub('deck', ident, name)
+        cards = ids.get('flashcard_note', [])
+        for ident, deck, name, typ in _section_rows(conn, f'''SELECT n.id, d.id, d.name, t.name FROM flash_notes n
+                JOIN flash_decks d ON d.id = n.deck_id JOIN flash_types t ON t.id = n.type_id
+                WHERE n.id IN ({_placeholders(cards)})''', cards):
+            hub('deck', deck, name)
+            nodes.append(_node('flashcard_note', ident, f'{typ} · Note {ident}', f'deck:{deck}'))
+            links.append(_link(f'deck:{deck}', f'flashcard_note:{ident}', 'contains note'))
+    else:
+        jobs = ids.get('job', [])
+        tracks = {}
+        for ident, track in _section_rows(conn, f'SELECT job_id, track FROM job_tracks WHERE job_id IN ({_placeholders(jobs)}) '
+                                                'ORDER BY track', jobs):
+            tracks.setdefault(ident, []).append(track)
+        for ident, title, company, state in _section_rows(conn, f'''SELECT j.id, j.title, c.display_name, j.queue_state FROM jobs j
+                LEFT JOIN companies c ON c.id = j.company_id WHERE j.id IN ({_placeholders(jobs)})''', jobs):
+            for track in tracks.get(ident, []):
+                hub('track', track, track)
+                links.append(_link(f'track:{track}', f'job:{ident}', 'matched track'))
+            nodes.append(_job_node(ident, title, company, state, tracks[ident][0] if ident in tracks else 'Jobs'))
+    return {**_section_result(nodes, links, found['total']), 'search': text, 'truncated': found['truncated']}
+
+
 def get(app, conn, path, query):
     if path == '/api/atlas':
         app._no_query(query)
@@ -495,6 +568,10 @@ def get(app, conn, path, query):
     section = path.removeprefix('/api/atlas/sections/')
     if path != f'/api/atlas/sections/{section}' or section not in SECTIONS:
         return None
+    if 'search' in query:
+        if set(query) != {'search'}:
+            raise _api_error(400, 'A section search takes only search=<text>')
+        return _search_section(conn, section, query['search'], getattr(app, 'modules', MODULE_IDS))
     return SECTIONS[section](conn, _focus(section, query))
 
 

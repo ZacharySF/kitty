@@ -8,7 +8,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
   import { mountGraph, type GraphHandle, type GraphLayout, type GraphLink } from "./graph3d";
@@ -85,19 +85,48 @@
     return () => window.removeEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
   });
   const hasNodes = $derived(!!graph?.nodes.length);
+  /** Sections whose records `?search=` finds in the full-text index (titles and contents, kitty.core.search). */
+  const searchable = $derived(section !== "opportunities");
+  let found = $state.raw<(SectionData & { truncated: boolean }) | null>(null);
+  $effect(() => {
+    const term = query.trim();
+    const currentSection = section;
+    found = null;
+    if (!term || !searchable) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      void api<SectionData & { truncated: boolean }>(`/atlas/sections/${currentSection}?${new URLSearchParams({ search: term })}`)
+        .then((result) => { if (active) found = result; }, () => { /* Names and types still match below. */ });
+    }, 200);
+    return () => { active = false; clearTimeout(timer); };
+  });
+  /** Loaded nodes whose name or type matches, then the records the index found (by title or content). */
   const matches = $derived.by(() => {
     const term = query.trim().toLocaleLowerCase();
-    return (graph?.nodes ?? []).filter((node) =>
+    const local = (graph?.nodes ?? []).filter((node) =>
       !term || `${node.label} ${node.entity} ${node.detail ?? ""}`.toLocaleLowerCase().includes(term),
     );
+    if (!term || !found) return local;
+    const seen = new Set(local.map((node) => node.id));
+    return [...local, ...found.nodes.filter((node) => node.kind !== "hub" && !seen.has(node.id))];
   });
 
   function choose(node: SectionNode) {
     if (!pane.active) return;
+    if (graph && found && !graph.nodes.some((item) => item.id === node.id)) {
+      // A record the index found outside the loaded sample joins the graph with its hub.
+      const known = new Set(graph.nodes.map((item) => item.id));
+      const links = found.links.filter((link) => link.target === node.id || link.source === node.id);
+      const ends = new Set(links.flatMap((link) => [String(link.source), String(link.target)]));
+      const added = found.nodes.filter((item) => (item.id === node.id || ends.has(item.id)) && !known.has(item.id));
+      graph = { ...graph, nodes: [...graph.nodes, ...added], links: [...graph.links, ...links], shown: graph.shown + added.length };
+      void tick().then(() => handle?.focus(node.id));
+    }
     selected = node;
     handle?.focus(node.id);
     onselect?.(node);
   }
+
   function fit() {
     selected = null;
     handle?.focus(null);
@@ -196,7 +225,7 @@
 </script>
 
 {#snippet nodeList()}
-  <label class="search">Find a node<input type="search" bind:value={query} placeholder="Search names or types" /></label>
+  <label class="search">Find a node<input type="search" bind:value={query} placeholder={searchable ? "Search names, types and contents" : "Search names or types"} /></label>
   {#if matches.length}
     <ul aria-label={`${titles[section]} nodes`}>
       {#each matches.slice(0, listLimit) as node (node.id)}

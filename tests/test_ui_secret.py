@@ -19,7 +19,7 @@ CORE_ROUTES = (
     "/api", "/api/bootstrap", "/api/tasks/1", "/api/modules", "/api/brain", "/api/reload",
     "/api/ai/status", "/api/atlas", "/api/desktop", "/api/desktop/command", "/api/live/session",
     "/api/build", "/api/build/export", "/api/clients", "/api/clients/approve", "/api/keys",
-    "/api/devices", "/api/session/link", "/api/not-a-route",
+    "/api/devices", "/api/search", "/api/session/link", "/api/not-a-route",
 )
 ROUTES = tuple(sorted({prefix for prefix, _module in ROUTE_MODULES} | set(CORE_ROUTES)))
 

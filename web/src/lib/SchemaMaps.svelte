@@ -160,7 +160,7 @@
   type AutoLinks = {
     map_id: number;
     revision: number;
-    suggestions: { node_id: string; label: string; references: Reference[] }[];
+    suggestions: { node_id: string; label: string; references: Reference[]; truncated?: boolean }[];
     scanned: Record<string, number>;
   };
   const REF_KINDS: Record<string, string> = {
@@ -2544,7 +2544,7 @@
                   onchange={(e) => { autoPicked = e.currentTarget.checked ? [...autoPicked, s.node_id] : autoPicked.filter((id) => id !== s.node_id); }}
                 /><span class="sr-only">Link mentions of {s.label}</span></label>
                 <button type="button" class="hub-node" onclick={() => focusNode(s.node_id)}>{s.label}</button>
-                <Badge label={fresh ? `${fresh} new / ${s.references.length}` : `all ${s.references.length} linked`} />
+                <Badge label={(fresh ? `${fresh} new / ${s.references.length}` : `all ${s.references.length} linked`) + (s.truncated ? " · more not shown" : "")} />
               </div>
               <ul class="branches">
                 {#each s.references as r (`${r.kind}:${r.id}`)}

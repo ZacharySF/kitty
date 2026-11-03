@@ -48,6 +48,7 @@
   let context = $state<CitationContext | null>(null);
   let topic = $state<TopicContext | null>(null);
   let mentions = $state<Mention[]>([]);
+  let mentionsMore = $state(false);
   let error = $state("");
   /** The tag whose page is open in the side panel (a chip or a #tag with a tag record was clicked). */
   let tagId = $state<string | null>(null);
@@ -65,7 +66,7 @@
     const id = pageId;
     clearTimeout(mentionTimer);
     mentionTimer = setTimeout(() => {
-      api<{ mentions: Mention[] }>(`/notes/pages/${id}/mentions`).then((result) => { if (id === pageId) mentions = result.mentions.slice(0, 100); }).catch(() => {});
+      api<{ mentions: Mention[]; truncated: boolean }>(`/notes/pages/${id}/mentions`).then((result) => { if (id === pageId) { mentions = result.mentions.slice(0, 100); mentionsMore = result.truncated || result.mentions.length > 100; } }).catch(() => {});
     }, 300);
     return () => clearTimeout(mentionTimer);
   });
@@ -146,6 +147,7 @@
           {#each mentions as mention (`${mention.block_id}:${mention.page_id}`)}
             <div><span>{mention.text.slice(0, 160)}</span><button onclick={() => link(mention)}>Link [[{mention.title}]]</button></div>
           {/each}
+          {#if mentionsMore}<p class="more">More mentions than these {mentions.length}; link some to see the rest.</p>{/if}
         </section>
       {/if}
     </article>

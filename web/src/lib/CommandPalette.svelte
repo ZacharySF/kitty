@@ -1,13 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
-  import { api, type Job } from "./api";
+  import { api } from "./api";
+  import { hitIcon, hitLabel, hitTarget, oneLine, plain, searchPath, type SearchHit, type SearchResult, type Segment } from "./searchHits";
   import { navigationGroups, visibleNavigation, type View } from "./workspace";
   import { buildStore } from "./build.svelte";
 
   /**
    * Spotlight-style palette (Ctrl K): one large field, nothing else until you type,
-   * then up to six results with the top hit emphasised. Esc or a click outside closes.
+   * then up to six results with the top hit emphasised. Sections and commands match by
+   * name; records (notes, documents, quick notes, tags, study, calendar, flashcards and,
+   * with ApplyAI, jobs) come from the full-text index with the matched words marked.
+   * Esc or a click outside closes.
    */
   let {
     enabled,
@@ -34,13 +38,13 @@
   let dialog: HTMLDialogElement;
   let searchField = $state<HTMLInputElement>();
   let query = $state("");
-  let jobs = $state<Job[]>([]);
+  let found = $state<SearchHit[]>([]);
   let selected = $state(0);
   let error = $state("");
   const applyai = $derived(enabled.includes("applyai"));
   const typed = $derived(query.trim().length > 0);
 
-  type Choice = { label: string; meta: string; icon: string; run: () => void };
+  type Choice = { label: string; meta: string; icon: string; run: () => void; marks?: Segment[]; snippet?: Segment[] };
   // Q19: Ctrl K opens the one mind-map editor on a map, or on a new one.
   const mapsOn = $derived(visibleNavigation(enabled).some((item) => item.id === "schema"));
   let mapList = $state<{ id: number; title: string }[]>([]);
@@ -80,14 +84,25 @@
       .filter(({ score }) => score >= 0)
       .sort((a, b) => a.score - b.score)
       .map(({ choice }) => choice);
-    const found = jobs.map((job) => ({
-      label: `${job.company} · ${job.title}`,
-      meta: `Job #${job.id}`,
-      icon: "jobs",
-      run: () => onopenjob(job.id),
+    const records = found.map((hit) => ({
+      label: plain(hit.title_marks) || hit.title || "Untitled",
+      meta: hit.kind === "job" ? `Job #${hit.id}` : hitLabel(hit),
+      icon: hitIcon(hit),
+      marks: hit.title_marks,
+      snippet: oneLine(hit.snippet),
+      run: () => open(hit),
     }));
-    return [...matched, ...found].slice(0, LIMIT);
+    return [...matched, ...records].slice(0, LIMIT);
   });
+  function open(hit: SearchHit) {
+    const target = hitTarget(hit);
+    if ("job" in target) onopenjob(target.job);
+    else if ("hash" in target) location.hash = target.hash;
+    else {
+      if (target.storage) try { sessionStorage.setItem(...target.storage); } catch { /* The view still opens. */ }
+      onview(target.view);
+    }
+  }
 
   onMount(() => {
     dialog.showModal();
@@ -100,13 +115,13 @@
     error = "";
     let cancelled = false;
     const timer = setTimeout(() => {
-      if (!text || !applyai) {
-        jobs = [];
+      if (!text) {
+        found = [];
         return;
       }
-      void api<{ jobs: Job[] }>(`/jobs?search=${encodeURIComponent(text)}&limit=${LIMIT}&view=jobs&closed=1`)
+      void api<SearchResult>(searchPath(text, LIMIT))
         .then((result) => {
-          if (!cancelled) jobs = result.jobs;
+          if (!cancelled) found = result.hits;
         })
         .catch((cause) => {
           if (!cancelled) error = cause.message;
@@ -156,7 +171,7 @@
       aria-expanded={typed && choices.length > 0}
       aria-controls="spotlight-results"
       aria-activedescendant={choices.length ? `spotlight-${selected}` : undefined}
-      aria-label={applyai ? "Search sections, commands and jobs" : "Search sections and commands"}
+      aria-label="Search sections, commands, notes and records"
       placeholder="rika! search"
       autocomplete="off"
       spellcheck="false"
@@ -164,7 +179,7 @@
   </div>
   {#if typed}
     <div class="results" id="spotlight-results" role="listbox" aria-label="Results">
-      {#each choices as choice, index (`${choice.meta}:${choice.label}`)}
+      {#each choices as choice, index (`${choice.meta}:${choice.label}:${index}`)}
         <!-- svelte-ignore a11y_click_events_have_key_events (keys are handled on the dialog) -->
         <div
           id={`spotlight-${index}`}
@@ -176,7 +191,10 @@
           onclick={() => run(index)}
         >
           <span class="icon"><Icon name={choice.icon} size={index === 0 ? 18 : 15} /></span>
-          <span class="label">{choice.label}</span>
+          <span class="label">
+            {#if choice.marks}{#each choice.marks as [text, hit], part (part)}{#if hit}<mark>{text}</mark>{:else}{text}{/if}{/each}{:else}{choice.label}{/if}
+            {#if choice.snippet?.length}<small class="snippet">{#each choice.snippet as [text, hit], part (part)}{#if hit}<mark>{text}</mark>{:else}{text}{/if}{/each}</small>{/if}
+          </span>
           <span class="meta">{index === 0 ? "Top hit" : choice.meta}</span>
         </div>
       {:else}
@@ -260,6 +278,20 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .label .snippet {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+  }
+  mark {
+    padding: 0 1px;
+    border-radius: 3px;
+    color: inherit;
+    background: color-mix(in srgb, var(--accent) 34%, transparent);
   }
   .meta {
     margin-left: auto;

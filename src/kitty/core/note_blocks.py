@@ -13,11 +13,12 @@ import re
 import uuid
 from contextlib import nullcontext
 
-from kitty.core import notes
+from kitty.core import notes, search
 from kitty.core.blocks import REF, WIKI, convert
 from kitty.db.connection import transaction
 
 MAX_BLOCKS = 2000
+MAX_MENTIONS = 200
 _PROP = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,63}\Z')
 
 
@@ -156,15 +157,23 @@ def topics(conn, kind, topic, offset=0):
 
 
 def mentions(conn, page_id):
+    """Blocks of this page that name another note page's title without linking it.
+
+    Candidate titles come from the search index (every page whose title words all occur
+    in this page, kitty.core.search.page_titles_within); each is then confirmed with a
+    case-insensitive whole-word match outside ``[[links]]``. At most ``MAX_MENTIONS`` are
+    listed, longest titles first per block; ``truncated`` says when more exist.
+    """
     doc = notes.page_doc(conn, page_id)
-    rows = conn.execute('SELECT id,title FROM note_page_index WHERE id<>? ORDER BY length(title) DESC,id LIMIT 500', (page_id,)).fetchall()
+    flow = [(block, WIKI.sub('', block.text)) for block in doc.preorder(doc.page_id, types=convert.OUTLINE_TYPES)]
+    rows = search.page_titles_within(conn, {token for _, plain in flow for token in search.words(plain)}, exclude=doc.page_id)
+    rows.sort(key=lambda row: (-len(row['title']), row['id']))
     patterns = [(row, re.compile(r'(?<!\w)' + re.escape(row['title']) + r'(?!\w)', re.I)) for row in rows if row['title'].strip()]
     result = []
-    for block in doc.preorder(doc.page_id, types=convert.OUTLINE_TYPES):
-        plain = WIKI.sub('', block.text)
+    for block, plain in flow:
         for row, pattern in patterns:
             if pattern.search(plain):
+                if len(result) == MAX_MENTIONS:
+                    return {'mentions': result, 'truncated': True}
                 result.append({'block_id': block.id, 'page_id': row['id'], 'title': row['title'], 'text': block.text[:400]})
-                if len(result) >= 200:
-                    return {'mentions': result}
-    return {'mentions': result}
+    return {'mentions': result, 'truncated': False}

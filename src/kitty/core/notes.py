@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from kitty.core import blocks
+from kitty.core import search as search_index
 from kitty.core.blocks import convert
 from kitty.db.connection import transaction
 
@@ -265,17 +266,29 @@ def page_count(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM note_page_index").fetchone()[0]
 
 
+MAX_LISTED = 500
+
+
 def listing(conn: sqlite3.Connection, search: str = "") -> dict:
+    """Folders, notebooks and up to ``MAX_LISTED`` pages (``truncated`` when there are more).
+
+    `search` keeps pages whose title or text matches in the search index (every word as
+    a prefix, or the whole text as a substring from three characters on), or whose
+    notebook's title, subject or project contains it.
+    """
     search = text(search, 300)
-    pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    where, params = "1", []
+    if search.strip():
+        pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where = ("p.block_id IN (SELECT value FROM json_each(?)) OR n.title LIKE ? ESCAPE '\\' "
+                 "OR n.subject LIKE ? ESCAPE '\\' OR n.project LIKE ? ESCAPE '\\'")
+        params = [json.dumps(sorted(search_index.page_matches(conn, search))), pattern, pattern, pattern]
     rows = conn.execute("SELECT p.id,p.notebook_id,p.title,p.revision,p.updated_at,p.favorite,p.last_opened,p.position FROM note_page_index p "
-                        "JOIN note_notebooks n ON p.notebook_id=n.id WHERE p.title LIKE ? ESCAPE '\\' OR n.title LIKE ? ESCAPE '\\' "
-                        "OR n.subject LIKE ? ESCAPE '\\' OR n.project LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM blocks c WHERE "
-                        "c.page_id=p.block_id AND c.deleted_at IS NULL AND c.parent_id IS NOT NULL AND c.text LIKE ? ESCAPE '\\') "
-                        "ORDER BY p.position,p.updated_at DESC,p.id LIMIT 500", (pattern,) * 5)
+                        f"JOIN note_notebooks n ON p.notebook_id=n.id WHERE {where} "
+                        "ORDER BY p.position,p.updated_at DESC,p.id LIMIT ?", (*params, MAX_LISTED + 1)).fetchall()
     prefs = dict(conn.execute("SELECT allow_ai,retention_days,revision FROM note_preferences WHERE id=1").fetchone())
     prefs["allow_ai"] = bool(prefs["allow_ai"])
-    return {"folders": [dict(row) for row in conn.execute("SELECT * FROM note_folders ORDER BY position,title,id")], "notebooks": [dict(row) for row in conn.execute("SELECT * FROM note_notebooks ORDER BY position,updated_at DESC LIMIT 200")], "pages": [dict(row) for row in rows], "preferences": prefs}
+    return {"folders": [dict(row) for row in conn.execute("SELECT * FROM note_folders ORDER BY position,title,id")], "notebooks": [dict(row) for row in conn.execute("SELECT * FROM note_notebooks ORDER BY position,updated_at DESC LIMIT 200")], "pages": [dict(row) for row in rows[:MAX_LISTED]], "truncated": len(rows) > MAX_LISTED, "preferences": prefs}
 
 
 def _folder_id(conn: sqlite3.Connection, value: Any) -> int | None:

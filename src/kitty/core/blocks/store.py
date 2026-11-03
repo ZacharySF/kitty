@@ -1,8 +1,9 @@
 """Server-applied transactions: page documents -> append-only op log -> projection.
 
 `transact` is the only writer of `blocks`, `op_log`, `block_refs`, `block_topics`,
-`block_tags` and `tag_rejections` (the last two through kitty.core.blocks.tagging);
-merges from paired devices (kitty.core.blocks.merge) write through the same
+`block_tags` and `tag_rejections` (the last two through kitty.core.blocks.tagging) and of
+the block documents of the search index (kitty.core.blocks.searchdocs); merges from
+paired devices (kitty.core.blocks.merge) write through the same
 `_Transaction`. Inside one SQLite transaction it loads each touched page document
 (its projection plus its Loro document, kitty.core.blocks.crdt), applies every
 operation (so cycles, limits and stale revisions are refused before anything is
@@ -21,7 +22,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from kitty.core.blocks import crdt, tagging
+from kitty.core.blocks import crdt, searchdocs, tagging
 from kitty.core.blocks.crdt import LoroPageDoc
 from kitty.core.blocks.order import key_between
 from kitty.core.blocks.pagedoc import Block, BlockError, OrderedPageDoc, block_id, is_edit_key
@@ -287,6 +288,7 @@ class _Transaction:
     def write(self, device: str, txn_id: str) -> dict[str, int]:
         conn, seqs = self.conn, {}
         projected: list[Block] = []
+        removed: list[str] = []
         for page_id in self.logged:
             self.docs[page_id].check()
         for page_id, ops in self.logged.items():
@@ -305,6 +307,7 @@ class _Transaction:
             if doc.removed:
                 # Scoped to this page: the same ID may be landing on another page in this transaction.
                 conn.executemany("DELETE FROM blocks WHERE id=? AND page_id=?", [(bid, page_id) for bid in doc.removed])
+                removed.extend(doc.removed)
             changed = [doc.blocks[bid] for bid in doc.changed]
             projected.extend(changed)
             rows = [(item.id, item.type, item.parent_id, item.page_id, item.order_key,
@@ -334,6 +337,7 @@ class _Transaction:
                 conn.executemany("INSERT INTO block_refs(source_id,target_id,kind) VALUES (?,?,'block')", [(item.id, ref) for ref in refs])
                 conn.executemany("INSERT INTO block_topics(block_id,kind,topic) VALUES (?,?,?)", [(item.id, kind, topic) for kind, topic in topics])
         tagging.project(conn, projected, self.at)
+        searchdocs.project(conn, projected, removed)
         return seqs
 
 

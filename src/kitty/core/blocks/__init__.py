@@ -11,6 +11,8 @@ append-only ``op_log`` and updates the projection tables that readers use.
 - ``convert``: legacy canvas / outline / Markdown shapes <-> blocks.
 - ``legacy``: the one-way migration of existing notes, with its JSON export.
 - ``tokens``: ``((ref))``, ``[[page]]`` and ``#tag`` tokens in block text.
+- ``searchdocs``: each block's search-index document, folded inside every transaction
+  (kitty.core.search holds the index and its check).
 - ``autotag`` (pure keyword matcher), ``tagging`` (auto-tags on the transaction path) and
   ``tags`` (tag records, the Tags setting, tag pages): platform design Q13.
 """
