@@ -50,15 +50,24 @@ def _set_modules(ctx: Context, args: dict) -> Result:
 
 def _worker_card(ctx: Context, args: dict) -> tuple[str, str]:
     cwd = _directory(ctx, args.get("cwd"))
-    return f"Start {args['kind']} on: {args['task'][:120]}", brief(args["task"], cwd)
+    off = args.get("skills_off") or []
+    skills = f"\n\nAgent skills switched off for this launch: {', '.join(off)}." if off else ""
+    return f"Start {args['kind']} on: {args['task'][:120]}", brief(args["task"], cwd) + skills
+
+
+def _public(agent: dict) -> dict:
+    """An agent as Rika's results carry it: its now state stays in memory, on the page only
+    (docs/agent-skills-design.md Q4), never in the action log or a model request."""
+    return {key: value for key, value in agent.items() if key != "now"}
 
 
 def _start_worker(ctx: Context, args: dict) -> Result:
     try:
-        agent = ctx.app.rika.agents.start(args["kind"], args["task"], _directory(ctx, args.get("cwd")))
+        agent = ctx.app.rika.agents.start(args["kind"], args["task"], _directory(ctx, args.get("cwd")),
+                                          args.get("skills_off") or [])
     except AgentError as exc:
         raise ToolError(str(exc)) from None
-    return Result(f"Started {agent['name']}", {"agent": agent})
+    return Result(f"Started {agent['name']}", {"agent": _public(agent)})
 
 
 def _command_card(ctx: Context, args: dict) -> tuple[str, str]:
@@ -87,7 +96,7 @@ def _open_terminal(ctx: Context, args: dict) -> Result:
 
 
 def _list_agents(ctx: Context, args: dict) -> Result:
-    agents = ctx.app.rika.agents.list()
+    agents = [_public(agent) for agent in ctx.app.rika.agents.list()]
     return Result(f"{len(agents)} worker agent{'s' if len(agents) != 1 else ''} running", {"agents": agents})
 
 
@@ -103,7 +112,10 @@ TOOLS = (
          obj(), "read", _list_agents, module="terminal"),
     Tool("start_worker", "Start a worker coding agent (omp, Claude Code or Codex) in a herdr pane and hand it a task.",
          obj(("kind", "task"), kind=string("Agent", enum=CODING_AGENTS), task=string("The task brief", maximum=4000),
-             cwd=string("Absolute working directory; defaults to the workspace", maximum=4096)),
+             cwd=string("Absolute working directory; defaults to the workspace", maximum=4096),
+             skills_off={"type": "array", "maxItems": 200, "description": "Agent skills to switch off for this launch "
+                         "(names from the agent's skill list; needs its agent skills turned on)",
+                         "items": string("Agent skill name", maximum=80)}),
          "outward", _start_worker, module="terminal", describe=_worker_card),
     Tool("run_command", "Run a shell command in a new Tern tab.",
          obj(("command",), command=string("Shell command", maximum=4000),

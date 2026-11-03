@@ -61,7 +61,7 @@ def block_doc(block: Block) -> Doc | None:
 
 
 def has_index(conn: sqlite3.Connection) -> bool:
-    """Whether the schema has the search index (migrations before 046 transact without it)."""
+    """Whether the schema has the search index (migrations before 047 transact without it)."""
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='search_docs'").fetchone() is not None
 
 

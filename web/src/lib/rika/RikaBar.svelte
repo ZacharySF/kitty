@@ -1,34 +1,93 @@
 <script lang="ts">
-  import { agentChips } from "./rika";
+  import { onDestroy } from "svelte";
+  import { nowText } from "../agentSkills";
+  import { SpaceHold } from "./hold";
+  import { agentChips, downloadLabel } from "./rika";
   import { rika } from "./session.svelte";
 
   /**
-   * The Rika bar (Q1 C, Q2 D, Q4 C, Q19 B): the bottom edge of the window, where the
+   * The Rika bar (Q1 C, Q2 D, Q3 A, Q4 C, Q19 B): the bottom edge of the window, where the
    * herdr dock used to be. Type and press Enter to ask Rika; replies land as toasts above
-   * it and the history drawer holds the rest. Running worker agents show on the right as
-   * chips (a state dot and name; past four, one count); a chip opens its Tern window.
-   * While Rika is writing a reply the whole bar breathes with a soft ring of light; under
-   * reduced motion the ring stays lit and still. The bar publishes its height as
-   * --rika-space, so the page ends above it. No Space keycap or hint is drawn (Q5).
+   * it and the history drawer holds the rest. Hold Space in the field to talk (a tap types
+   * a space): Rika listens while it is held and sends what you said when you let go; a
+   * very long hold turns into a brain dump that keeps listening, with its transcript in
+   * the drawer, until Space is pressed again. Escape drops what is being said.
+   * Running worker agents show on the right as chips (a state dot and name; past four,
+   * one count); a chip opens its Tern window. While Rika listens or writes a reply the
+   * whole bar breathes with a soft ring of light; under reduced motion the ring stays lit
+   * and still. No Space keycap or hold hint is drawn (Q5): the breathing bar is the only
+   * signal. The bar publishes its height as --rika-space, so the page ends above it.
    */
-  let {
-    listening = false,
-  }: {
-    /** Phase 2's hold-Space voice input sets this while it listens; the ring breathes then too. */
-    listening?: boolean;
-  } = $props();
   let value = $state("");
   let bar = $state<HTMLElement>();
+  let input = $state<HTMLInputElement>();
   const chips = $derived(agentChips(rika.agents));
-  const asks = $derived(rika.pending.length);
+  const asks = $derived(rika.pending.length + rika.pendingPlans.length);
+  const listening = $derived(rika.listening);
+  /** While listening the field shows what Rika hears (as its placeholder, so nothing is typed). */
+  const heard = $derived.by(() => {
+    const voice = rika.voice;
+    if (voice.phase === "idle") return "Ask Rika…";
+    if (voice.phase === "loading" && rika.model) return `Getting the voice model ready · ${downloadLabel(rika.model.received, rika.model.total)}`;
+    if (voice.phase === "finishing") return voice.partial || "…";
+    const latest = voice.partial || voice.segments.at(-1)?.text || "";
+    return latest ? latest.split(" ").slice(-14).join(" ") : voice.mode === "dump" ? "Brain dump · listening…" : "Listening…";
+  });
+
+  const hold = new SpaceHold({
+    start: () => {
+      // Words typed first lead the spoken request; the field then shows what Rika hears.
+      const typed = value.trim();
+      value = "";
+      void rika.listen("command", typed);
+    },
+    latch: () => rika.latch(),
+    stop: () => rika.finish(),
+    tap: () => {
+      // The press was held back so that a hold types nothing; a tap types its space now.
+      if (!input) return;
+      input.setRangeText(" ", input.selectionStart ?? value.length, input.selectionEnd ?? value.length, "end");
+      value = input.value;
+    },
+  });
+  // Listening that ends elsewhere (the drawer's Done, an error) frees the next Space; a dump
+  // started from the drawer or Ctrl K ends with the next Space like a latched one.
+  $effect(() => {
+    if (!listening) hold.reset();
+    else if (rika.voice.mode === "dump") hold.adopt();
+  });
+  onDestroy(() => hold.reset());
 
   async function keydown(event: KeyboardEvent) {
-    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    if (event.isComposing) return;
+    if (event.key === " " && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+      event.preventDefault();
+      hold.down(event.repeat);
+      return;
+    }
+    if (event.key === "Escape" && (listening || hold.state !== "idle")) {
+      event.preventDefault();
+      event.stopPropagation();
+      const typed = rika.voice.prefix;
+      hold.reset();
+      rika.cancel();
+      value = typed;
+      return;
+    }
+    if (listening) {
+      if (event.key.length === 1 || event.key === "Enter" || event.key === "Backspace") event.preventDefault();
+      return;
+    }
+    if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     const text = value.trim();
     if (!text) return;
     value = "";
     if (!(await rika.send(text)) && !value) value = text;
+  }
+  /** Space is released wherever focus went (a hold may outlast the field's focus). */
+  function keyup(event: KeyboardEvent) {
+    if (event.key === " " && hold.state !== "idle") hold.up();
   }
 
   $effect(() => {
@@ -44,10 +103,12 @@
   });
 </script>
 
-<section bind:this={bar} class="rika-bar" class:breathing={rika.streaming || listening} data-streaming={String(rika.streaming)} data-tutorial="rika" aria-label="Rika">
+<svelte:window onkeyup={keyup} />
+<section bind:this={bar} class="rika-bar" class:breathing={rika.streaming || listening} data-streaming={String(rika.streaming)}
+  data-listening={listening ? rika.voice.mode : undefined} data-tutorial="rika" aria-label="Rika">
   <span class="mark" aria-hidden="true"><span class="orb"></span></span>
   <label class="field">
-    <input bind:value placeholder="Ask Rika…" aria-label="Ask Rika" spellcheck="false" autocomplete="off" onkeydown={keydown} />
+    <input bind:this={input} bind:value placeholder={heard} aria-label="Ask Rika" aria-busy={listening} spellcheck="false" autocomplete="off" onkeydown={keydown} />
   </label>
   {#if chips.kind === "count" || chips.agents.length}
     <div class="chips" role="group" aria-label="Running agents">
@@ -56,7 +117,8 @@
           ><i class="rika-dot" aria-hidden="true"></i>{chips.count} agents</button>
       {:else}
         {#each chips.agents as agent (agent.id)}
-          <button class="rika-agent-chip" data-state={agent.status} aria-label={`${agent.name}, ${agent.status}: open its window`} title={agent.task || agent.name} onclick={() => rika.open(agent)}
+          <button class="rika-agent-chip" data-state={agent.status} aria-label={`${agent.name}, ${agent.status}${agent.now ? `, ${nowText(agent.now)}` : ""}: open its window`}
+            title={[agent.task || agent.name, agent.now ? nowText(agent.now) : "", agent.now?.intent ?? ""].filter(Boolean).join("\n")} onclick={() => rika.open(agent)}
             ><i class="rika-dot" aria-hidden="true"></i>{agent.name}</button>
         {/each}
       {/if}
@@ -157,6 +219,10 @@
   }
   input::placeholder {
     color: var(--muted);
+  }
+  /* What Rika hears reads as live words, not as a prompt. */
+  .rika-bar[data-listening] input::placeholder {
+    color: var(--ink);
   }
   .chips {
     display: flex;

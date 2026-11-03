@@ -37,7 +37,7 @@ import tempfile
 import termios
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 #: Linux ``sockaddr_un.sun_path`` holds 107 bytes plus the terminating NUL.
@@ -307,9 +307,13 @@ class HerdrRuntime:
                 return text[:LINE_MAX]
         return ""
 
-    def activity(self) -> dict:
+    def activity(self, *, signals: bool = False) -> dict:
         """herdr's own agent states per workspace, with each agent's task, last output
-        line, output revision and when its state began; never starts the session."""
+        line, output revision and when its state began; never starts the session.
+
+        ``signals`` adds, for kitty.core.agent_skills.now only, what herdr knows of each
+        agent's activity: its pane tokens, ``agent_session`` and working directory. They
+        never leave the server (GET /api/terminal/activity omits them)."""
         folder = self._session_folder()
         if not _listening(folder / "herdr.sock"):
             return {"running": False, "workspaces": []}
@@ -328,7 +332,7 @@ class HerdrRuntime:
             since = previous[1] if previous and previous[0] == status else now
             seen[pane] = (status, since)
             revision = agent.get("revision")
-            return {
+            result = {
                 "pane": pane,
                 "name": str(agent.get("name") or agent.get("display_agent") or agent.get("agent") or "agent"),
                 "status": status,
@@ -338,6 +342,10 @@ class HerdrRuntime:
                 "revision": revision if type(revision) is int else 0,
                 "since": since,
             }
+            if signals:
+                result["signals"] = {"pane": pane, "tokens": agent.get("tokens"), "session": agent.get("agent_session"),
+                                     "cwd": agent.get("foreground_cwd") or agent.get("cwd")}
+            return result
 
         try:
             workspaces = self._read("workspace", "list")["workspaces"]
@@ -384,12 +392,14 @@ class HerdrRuntime:
         except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
             raise TerminalUnavailable("herdr_command_failed") from None
 
-    def start_agent(self, kind: str, cwd: Path) -> dict:
+    def start_agent(self, kind: str, cwd: Path, extra: Sequence[str] = ()) -> dict:
         """Create an Agent tab, then let herdr validate/start its chosen coding agent.
 
         No arbitrary commands or focused-pane writes: only the pane returned by tab
         creation is used. A failed start keeps the tab for inspection, never retries.
         The bundled skill is private; no global agent configuration is installed.
+        ``extra`` are the agent's own flags for this launch (kitty.web_agent_skills:
+        the activity hook and the skill checklist).
         """
         if kind not in CODING_AGENTS:
             raise ValueError("Unsupported coding agent")
@@ -431,7 +441,7 @@ class HerdrRuntime:
                 arguments = ["-c", "developer_instructions=" + json.dumps(instructions)]
             try:
                 self._agent_command("agent", "start", name, "--kind", kind, "--pane", pane,
-                                    "--", *arguments)
+                                    "--", *arguments, *extra)
             except TerminalUnavailable as exc:
                 raise TerminalUnavailable(
                     f"Agent startup reported {exc}. Inspect Agent tab {tab}, pane {pane}; "

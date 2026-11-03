@@ -28,15 +28,16 @@ test('each module alone exposes only its own views',()=>{
   assert.equal(viewEnabled('ai',[]),true);
 });
 
-test('the herdr and Tern views are Plan nodes owned by the Terminal module (Q10, Q11)',()=>{
-  for(const view of ['herdr','tern']){
+test('the herdr, Tern and All agent skills views are Plan nodes owned by the Terminal module (Q10, Q11)',()=>{
+  for(const view of ['herdr','tern','agent-skills']){
     assert.equal(viewEnabled(view,['terminal']),true);
     assert.equal(viewEnabled(view,['applyai','workspace']),false);
     assert.ok(!ids(visibleNavigation(['applyai','workspace'])).includes(view));
     assert.ok(visibleGroups(['applyai','workspace','terminal']).find(group=>group.label==='Plan').views.includes(view));
   }
-  assert.deepEqual(visibleGroups(['terminal']).map(group=>[group.label,group.views]),[['Plan',['today','herdr','tern']],['Settings',['settings','ai']]]);
+  assert.deepEqual(visibleGroups(['terminal']).map(group=>[group.label,group.views]),[['Plan',['today','herdr','tern','agent-skills']],['Settings',['settings','ai']]]);
   assert.ok(visibleRelations(['terminal']).some(([a,b])=>a==='herdr'&&b==='tern'));
+  assert.ok(visibleRelations(['terminal']).some(([a,b])=>a==='tern'&&b==='agent-skills'));
 });
 
 test('relations never cross into a disabled module',()=>{

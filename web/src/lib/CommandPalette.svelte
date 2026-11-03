@@ -6,6 +6,7 @@
   import { navigationGroups, visibleNavigation, type View } from "./workspace";
   import { buildStore } from "./build.svelte";
   import { launchMath, type MathLaunch } from "./math/launch";
+  import { rika } from "./rika/session.svelte";
 
   /**
    * Spotlight-style palette (Ctrl K): one large field, nothing else until you type,
@@ -71,6 +72,7 @@
     ...(mapsOn ? [{ label: "New mind map", meta: "Action", icon: "schema", run: () => openMap() }] : []),
     ...(onterminal ? [{ label: "Open terminal", meta: "Tern window", icon: "terminal", run: () => onterminal() }] : []),
     { label: "Rika history", meta: "Rika", icon: "kitty", run: () => onrika() },
+    { label: "Brain dump", meta: "Rika · talk, then one plan", icon: "kitty", run: () => void rika.listen("dump") },
     ...(mathOn ? [
       { label: "Mental math sprint", meta: "Math", icon: "math", run: () => openMath("sprint") },
       { label: "Next math lesson", meta: "Math", icon: "math", run: () => openMath("lesson") },

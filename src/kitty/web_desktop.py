@@ -4,6 +4,11 @@ The page never gains native permissions. The desktop sidecar forwards one of a
 fixed set of commands to the shell that started it over the private owner pipe
 (stdout); the shell reports its keep-running preference back on stdin. A plain
 ``kitty-web`` website has no owner and answers ``{"available": false}``.
+
+One command carries an argument: ``{"command": "open-skill", "path"}`` opens one agent
+skill's SKILL.md with the desktop opener. Only kitty.web_agent_skills sends it, for a
+path it listed itself; the shell accepts only an absolute path to an existing file named
+SKILL.md.
 """
 from __future__ import annotations
 
@@ -63,6 +68,10 @@ class DesktopOwner:
             if self._state["keep_running"] is not wanted:
                 raise APIError(409, "The desktop app could not save this preference")
             return {"available": True, **self._state}
+
+    def open_file(self, path: str) -> None:
+        """Ask the shell to open one listed SKILL.md (kitty.web_agent_skills checked it)."""
+        self._send(json.dumps({"command": "open-skill", "path": path}))
 
 
 def get(app, conn, path, query):

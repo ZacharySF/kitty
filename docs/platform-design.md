@@ -638,7 +638,7 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
   - `blockText.ts`: inline marks (bold, italic, code, link) kept in a `marks` property beside plain `text`, Markdown shortcuts, Markdown paste and copy;
   - `blockKeymap.ts`: one keyboard model for typing and for block selection (Esc, Shift+arrows, Ctrl/Cmd+Shift+arrows, Tab);
   - `blockSync.ts`: edits echo at once, go out one `txn` at a time with the page's `base` revision (typing as code-point splices), and re-sync on `reject`. Other windows' changes render under unconfirmed local edits. A Notes HTTP save runs `exclusive`ly so the two writers never race.
-- **Server additions:** `GET /api/blocks/page` (what the editor loads, with the `seq` it reflects); history sessions list every transaction as a `moment`; outline readers (citations, topics, mentions, search, `note_outline` via migration 045) treat every text-flow type as page text. The whole-outline `POST /api/notes/pages/:id/blocks` is gone; imports and portable copies still use `note_blocks.save_blocks`, which now keeps types and properties.
+- **Server additions:** `GET /api/blocks/page` (what the editor loads, with the `seq` it reflects); history sessions list every transaction as a `moment`; outline readers (citations, topics, mentions, search, `note_outline` via migration 046) treat every text-flow type as page text. The whole-outline `POST /api/notes/pages/:id/blocks` is gone; imports and portable copies still use `note_blocks.save_blocks`, which now keeps types and properties.
 - **Notes:** `NoteOutline.svelte` (editor plus citations, topics and unlinked mentions) replaces the textarea outline. Blocks drag onto a page in the sidebar or a page tab to move there. History (`BlockHistory.svelte`: sessions, a slider over every moment, read-only preview, Restore) and Trash (`BlockTrash.svelte`) open from the page's More menu.
 - **Not moved:** Documents keep their Markdown editor. A document is stored as exact-byte Markdown chunks (`convert.split_document`) for lossless export; moving it onto typed blocks needs a conversion of that format first. Quick notes keep their own editor.
 
@@ -862,7 +862,7 @@ Tern plugin and browser extension follow it).
 - **Migrations.** Main's `034_record_events`, `035_calendar_palette_subjects` and
   `036_note_page_maps` keep their numbers; the stack's unreleased 035-039 became
   `037_text_flow_outline`, `038_clients`, `039_block_tags`, `040_peer_sync` and `041_builds`
-  (and later `045_text_flow_outline`, see below).
+  (later `045_text_flow_outline`, now `046_text_flow_outline`, see below).
   A database at main's schema applies `032_blocks` and `033_notes_to_blocks` after 036 (the
   runner applies every unapplied number), then 038 onwards. `042_note_page_maps_blocks`
   rebuilds main's page ↔ map link with `page_id` as the page's Notes number (the frozen
@@ -896,9 +896,10 @@ replaced the herdr dock with the Rika bar. The stack was merged with it at `b416
 
 - **Migrations.** Main's released `037_rika` and `044_math` keep their numbers (main left
   038-043 free for the stack). The stack's `037_text_flow_outline` became
-  `045_text_flow_outline` and `044_search_index` became `046_search_index`. A database at
-  v0.3.30's schema applies 032, 033, 038-043, 045 and 046. Nothing in 038-043 reads the
-  outline view 045 widens.
+  `045_text_flow_outline` and `044_search_index` became `046_search_index`; when main's
+  v0.3.31 shipped `045_rika_voice` (merged at `7edb625`), they became
+  `046_text_flow_outline` and `047_search_index`. A database at v0.3.31's schema applies 032,
+  033, 038-043, 046 and 047. Nothing in 038-043 reads the outline view 046 widens.
 - **The dock is gone, and so is `ui.dock`.** Main's clean cutover removed `Dock.svelte`,
   `dock.ts` and `AgentActivity.svelte`; the build schema drops `ui.dock` (an old build's
   `ui.dock` is an unknown group: kept, ignored) and `kitty.dock` is no longer collected from
@@ -916,12 +917,20 @@ replaced the herdr dock with the Rika bar. The stack was merged with it at `b416
   `note_blocks`; deleting a page moves it to Trash, which its approval card says.
 - **Tern.** `TernRuntime` keeps the stack's pane commands beside main's Rika ones
   (`show`, `run_tab`, `show_program`); the fake `tern` in the tests serves both.
+- **v0.3.31 (merged at `7edb625`: agent skills, Rika voice and brain dumps).** Main's
+  `045_rika_voice` keeps its number (the stack's outline and search migrations became 046
+  and 047). `048_rika_plans_blocks` rebuilds main's `rika_plans` without its foreign key to
+  the frozen `note_pages` (as 042 did for page maps): a dump note is addressed by its Notes
+  number, Trash keeps the link and a purge clears it; plans read the note's title from
+  `note_page_index`. Voice frames travel on the Rika stream through `kitty.web_socket` (UI
+  secret required). The New Agent tab's agent choice stays the build's
+  `ui.terminal.coding_agent`; the Whisper model stays a Settings → AI row, not a build setting.
 
 ## Search index: what was built
 
 Paper §16 ("FTS5, backlinks and unlinked mentions fold the op log incrementally … with a
 scheduled oracle"). Code: `src/kitty/core/search.py`, `src/kitty/core/blocks/searchdocs.py`,
-`src/kitty/web_search.py`, migration `046_search_index.sql`, `kitty index check|rebuild`.
+`src/kitty/web_search.py`, migration `047_search_index.sql`, `kitty index check|rebuild`.
 
 - **Documents** (`search_docs`): one per searchable record. Blocks are written by
   `store.transact` in the same transaction as the projection; study, calendar, flashcard

@@ -7,6 +7,7 @@ export const navigation = [
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
   { id: "herdr", label: "herdr", icon: "terminal", module: "terminal" },
   { id: "tern", label: "Tern", icon: "terminal", module: "terminal" },
+  { id: "agent-skills", label: "All agent skills", icon: "terminal", module: "terminal" },
   { id: "study", label: "Study", icon: "study", module: "workspace" },
   { id: "math", label: "Math", icon: "math", module: "workspace" },
   { id: "learnharness", label: "LearnHarness", icon: "study", module: "workspace" },
@@ -62,7 +63,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
     label: "Plan",
     shortcut: "Ctrl + Alt",
     tone: "var(--c1)",
-    views: ["today", "calendar", "opportunities", "reminders", "herdr", "tern"],
+    views: ["today", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
   },
   { label: "Study", shortcut: "Ctrl + X", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
@@ -102,6 +103,7 @@ export function visibleGroups(enabled: Enabled) {
  */
 export const navigationRelations: [View, View][] = [
   ["herdr", "tern"],
+  ["tern", "agent-skills"],
   ["calendar", "reminders"],
   ["calendar", "study"],
   ["opportunities", "calendar"],
@@ -153,6 +155,9 @@ const shortcutGroups: ShortcutGroup[] = [
       ["?", "Show keyboard help"],
       ["Ctrl + J", "Open or close Rika's history drawer (anywhere but a terminal)"],
       ["Enter in the Rika bar", "Ask Rika; the reply lands as a toast above the bar"],
+      ["Hold Space in the Rika bar", "Talk to Rika; let go to send (a tap types a space)"],
+      ["Hold Space for 8 s", "Brain dump: keeps listening; press Space again to make the plan"],
+      ["Escape while Rika listens", "Drop what you said; nothing is sent"],
       ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
       ["Ctrl + Shift + F", "Toggle panel fullscreen inside terminal views"],
       ["Escape", "Close dialog or details; leave a text field"],

@@ -1,13 +1,17 @@
-"""Rika's conversation, actions and approvals (migration 037).
+"""Rika's conversation, actions, approvals and brain-dump plans (migrations 037, 045).
 
 Public shapes, shared by ``GET /api/rika/history`` and the stream's events:
 
 * message ``{kind:'message', id, conversation_id, role:'user'|'rika', text, reply_to,
-  tier, model, status:'pending'|'done'|'failed', cost_usd, created_at}``;
+  tier, model, status:'pending'|'done'|'failed', source:'typed'|'voice'|'dump',
+  cost_usd, created_at}``;
 * action ``{kind:'action', id, message_id, tool, summary, reversible,
   status:'done'|'undone'|'failed', created_at}``; its undo payload stays private;
 * approval ``{kind:'approval', id, message_id, tool, summary, detail, cost_usd,
-  status:'pending'|'approved'|'rejected'|'expired', created_at}``.
+  status:'pending'|'approved'|'rejected'|'expired', created_at}``;
+* plan ``{kind:'plan', id, message_id, request_id, items, duration,
+  note:{page_id, title}|null, status:'pending'|'running'|'applied'|'dismissed'|'failed',
+  created_at, decided_at}``; items are :func:`kitty.core.rika.dumps.public_items`.
 """
 from __future__ import annotations
 
@@ -41,7 +45,8 @@ def _money(value: str | None) -> float | None:
 def _message(row: sqlite3.Row) -> dict[str, Any]:
     return {"kind": "message", "id": row["id"], "conversation_id": row["conversation_id"], "role": row["role"],
             "text": row["text"], "reply_to": row["reply_to"], "tier": row["tier"], "model": row["model"],
-            "status": row["status"], "cost_usd": _money(row["cost_usd"]), "created_at": row["created_at"]}
+            "status": row["status"], "source": row["source"], "cost_usd": _money(row["cost_usd"]),
+            "created_at": row["created_at"]}
 
 
 def _action(row: sqlite3.Row) -> dict[str, Any]:
@@ -72,12 +77,12 @@ def conversation_for(conn: sqlite3.Connection, requested: str | None = None) -> 
 
 def add_message(conn: sqlite3.Connection, *, conversation_id: str, role: str, text: str,
                 reply_to: str | None = None, tier: str | None = None, model: str | None = None,
-                status: str = "done") -> dict[str, Any]:
+                status: str = "done", source: str = "typed") -> dict[str, Any]:
     ident = new_id()
     with transaction(conn):
-        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,reply_to,tier,model,status,created_at)"
-                     " VALUES(?,?,?,?,?,?,?,?,?)",
-                     (ident, conversation_id, role, text, reply_to, tier, model, status, now()))
+        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,reply_to,tier,model,status,source,created_at)"
+                     " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (ident, conversation_id, role, text, reply_to, tier, model, status, source, now()))
     return message(conn, ident)
 
 
@@ -181,11 +186,72 @@ def decide(conn: sqlite3.Connection, ident: str, status: str) -> dict[str, Any]:
     return approval(conn, ident)
 
 
+# Plans ------------------------------------------------------------------------
+
+def _plan(row: sqlite3.Row, conn: sqlite3.Connection) -> dict[str, Any]:
+    from kitty.core.rika.dumps import public_items
+
+    note = None
+    if row["note_page_id"] is not None:
+        page = conn.execute("SELECT id,title FROM note_page_index WHERE id=?", (row["note_page_id"],)).fetchone()
+        note = {"page_id": page["id"], "title": page["title"]} if page else None
+    return {"kind": "plan", "id": row["id"], "message_id": row["message_id"], "request_id": row["request_id"],
+            "items": public_items(json.loads(row["items_json"])), "duration": row["duration_s"], "note": note,
+            "status": row["status"], "created_at": row["created_at"], "decided_at": row["decided_at"]}
+
+
+def add_plan(conn: sqlite3.Connection, *, message_id: str, request_id: str, items: list[dict], segments: list[dict],
+             duration: float, note_page_id: int | None, note_block_id: str | None) -> dict[str, Any]:
+    ident = new_id()
+    with transaction(conn):
+        conn.execute("INSERT INTO rika_plans(id,message_id,request_id,items_json,segments_json,duration_s,note_page_id,"
+                     "note_block_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                     (ident, message_id, request_id, json.dumps(items), json.dumps(segments), duration, note_page_id,
+                      note_block_id, now()))
+    return plan(conn, ident)
+
+
+def plan(conn: sqlite3.Connection, ident: str) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM rika_plans WHERE id=?", (ident,)).fetchone()
+    if row is None:
+        raise LookupError("Plan not found")
+    return _plan(row, conn)
+
+
+def plan_record(conn: sqlite3.Connection, ident: str) -> dict[str, Any]:
+    """A plan's private record: its items with their tool calls, and where its dump note is."""
+    row = conn.execute("SELECT * FROM rika_plans WHERE id=?", (ident,)).fetchone()
+    if row is None:
+        raise LookupError("Plan not found")
+    return {"id": row["id"], "message_id": row["message_id"], "request_id": row["request_id"],
+            "items": json.loads(row["items_json"]), "status": row["status"], "note_page_id": row["note_page_id"],
+            "note_block_id": row["note_block_id"]}
+
+
+def start_plan(conn: sqlite3.Connection, ident: str, status: str, items: list[dict]) -> dict[str, Any]:
+    """Settle a pending plan once (running or dismissed); a second decision raises."""
+    with transaction(conn, immediate=True):
+        current = plan_record(conn, ident)
+        if current["status"] != "pending":
+            raise PermissionError(f"This plan is already {current['status']}")
+        conn.execute("UPDATE rika_plans SET status=?,items_json=?,decided_at=? WHERE id=?",
+                     (status, json.dumps(items), now(), ident))
+    return plan(conn, ident)
+
+
+def finish_plan(conn: sqlite3.Connection, ident: str, status: str, items: list[dict]) -> dict[str, Any]:
+    with transaction(conn):
+        conn.execute("UPDATE rika_plans SET status=?,items_json=? WHERE id=?", (status, json.dumps(items), ident))
+    return plan(conn, ident)
+
+
 def recover(conn: sqlite3.Connection) -> None:
-    """After a restart nothing waits any more: pending approvals expire, unfinished replies fail."""
+    """After a restart nothing waits any more: pending approvals expire, unfinished replies
+    and plans that were running fail (a plan still waiting for the user keeps waiting)."""
     with transaction(conn):
         conn.execute("UPDATE rika_approvals SET status='expired',decided_at=? WHERE status='pending'", (now(),))
         conn.execute("UPDATE rika_messages SET status='failed' WHERE status='pending'")
+        conn.execute("UPDATE rika_plans SET status='failed' WHERE status='running'")
 
 
 # History ----------------------------------------------------------------------
@@ -194,9 +260,10 @@ def history(conn: sqlite3.Connection, before: str | None = None, limit: int = HI
     """The newest `limit` items older than `before`, returned oldest first."""
     bound = before or "~"  # sorts after every ISO timestamp
     items: list[tuple[str, dict]] = []
-    for table, shape in (("rika_messages", _message), ("rika_actions", _action), ("rika_approvals", _approval)):
+    for table, shape in (("rika_messages", _message), ("rika_actions", _action), ("rika_approvals", _approval),
+                         ("rika_plans", lambda row: _plan(row, conn))):
         for row in conn.execute(f"SELECT * FROM {table} WHERE created_at<? ORDER BY created_at DESC LIMIT ?",
-                                (bound, limit + 1)):
+                                (bound, limit + 1)).fetchall():
             items.append((row["created_at"], shape(row)))
     items.sort(key=lambda item: item[0], reverse=True)
     page, more = items[:limit], len(items) > limit

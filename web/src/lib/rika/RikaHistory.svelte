@@ -2,18 +2,23 @@
   import { tick } from "svelte";
   import EditDrawer from "../ui/EditDrawer.svelte";
   import RikaAgents from "./RikaAgents.svelte";
-  import { costLabel, entryKey } from "./rika";
+  import RikaPlan from "./RikaPlan.svelte";
+  import { costLabel, entryKey, talkClock } from "./rika";
   import { rika } from "./session.svelte";
 
   /**
-   * Q2 D, Q19 A, Q20 A: the history drawer. Conversation holds every request and reply
-   * with the actions they ran (Undo) and the approvals they wait on (Approve / Reject,
-   * with what will happen and what it may cost); Agents holds the live worker cards.
+   * Q2 D, Q7 A, Q19 A, Q20 A: the history drawer. Conversation holds every request and
+   * reply with the actions they ran (Undo), the approvals they wait on (Approve / Reject,
+   * with what will happen and what it may cost) and brain-dump plans; Agents holds the
+   * live worker cards. Brain dump listens until Done, with the live transcript here.
    */
   const STATUS = { done: "Done", undone: "Undone", failed: "Failed", approved: "Approved", rejected: "Rejected", expired: "Expired", pending: "Needs you" } as const;
   let list = $state<HTMLElement>();
+  let transcript = $state<HTMLElement>();
   const requests = $derived(rika.entries.filter((entry) => entry.kind === "message" && entry.role === "user").length);
-  const meta = $derived([`${requests} request${requests === 1 ? "" : "s"}`, rika.pending.length ? `${rika.pending.length} need${rika.pending.length === 1 ? "s" : ""} you` : ""].filter(Boolean).join(" · "));
+  const waiting = $derived(rika.pending.length + rika.pendingPlans.length);
+  const meta = $derived([`${requests} request${requests === 1 ? "" : "s"}`, waiting ? `${waiting} need${waiting === 1 ? "s" : ""} you` : ""].filter(Boolean).join(" · "));
+  const dumping = $derived(rika.listening && rika.voice.mode === "dump");
   const time = (value: string | undefined) => {
     const date = new Date(value ?? "");
     return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -23,17 +28,24 @@
     document.documentElement.style.setProperty("--rika-drawer", "calc(min(400px, 100vw - 1.5rem) + 0.75rem)");
     return () => document.documentElement.style.removeProperty("--rika-drawer");
   });
-  // New entries scroll into view, so an approval that opened the drawer is in sight.
+  // New entries scroll into view, so an approval or plan that opened the drawer is in sight,
+  // and a brain dump's transcript follows what is being said.
   $effect(() => {
     void rika.entries.length;
-    if (rika.drawer.section === "conversation") void tick().then(() => list?.lastElementChild?.scrollIntoView({ block: "end" }));
+    void rika.voice.segments.length;
+    void rika.voice.partial;
+    if (rika.drawer.section !== "conversation") return;
+    void tick().then(() => (transcript ?? list?.lastElementChild)?.scrollIntoView({ block: "end" }));
   });
 </script>
 
 <EditDrawer title="Rika history" {meta} closeLabel="Close Rika history" onclose={() => rika.closeDrawer()}>
-  <div class="sections" role="group" aria-label="History sections">
-    <button aria-pressed={rika.drawer.section === "conversation"} onclick={() => rika.showDrawer("conversation")}>Conversation</button>
-    <button aria-pressed={rika.drawer.section === "agents"} onclick={() => rika.showDrawer("agents")}>Agents <i>{rika.agents.length}</i></button>
+  <div class="top">
+    <div class="sections" role="group" aria-label="History sections">
+      <button aria-pressed={rika.drawer.section === "conversation"} onclick={() => rika.showDrawer("conversation")}>Conversation</button>
+      <button aria-pressed={rika.drawer.section === "agents"} onclick={() => rika.showDrawer("agents")}>Agents <i>{rika.agents.length}</i></button>
+    </div>
+    <button class="pill dump-start" disabled={rika.listening} onclick={() => { rika.showDrawer("conversation"); void rika.listen("dump"); }}>Brain dump</button>
   </div>
   {#if rika.error}<p class="error" role="alert">{rika.error}</p>{/if}
   {#if rika.drawer.section === "agents"}
@@ -41,12 +53,14 @@
   {:else}
     <section class="conversation" aria-label="Conversation">
       {#if rika.hasMore}<button class="pill earlier" onclick={() => rika.loadHistory(true)}>Load earlier</button>{/if}
-      {#if !rika.entries.length}<p class="note">Ask Rika anything in the bar below. Replies, what Rika did and what it needs you to approve collect here.</p>{/if}
+      {#if !rika.entries.length && !dumping}<p class="note">Ask Rika anything in the bar below, or hold Space there to say it. Replies, what Rika did and what it needs you to approve collect here.</p>{/if}
       <ol bind:this={list}>
         {#each rika.entries as entry (entryKey(entry))}
           <li data-entry={entry.kind}>
-            {#if entry.kind === "message" && entry.role === "user"}
-              <div class="you"><time>{time(entry.created_at)}</time><p>{entry.text}</p></div>
+            {#if entry.kind === "message" && entry.role === "user" && entry.source === "dump"}
+              <div class="you dump"><time>{time(entry.created_at)} · brain dump</time><p>{entry.text}</p></div>
+            {:else if entry.kind === "message" && entry.role === "user"}
+              <div class="you"><time>{time(entry.created_at)}{entry.source === "voice" ? " · spoken" : ""}</time><p>{entry.text}</p></div>
             {:else if entry.kind === "message"}
               <div class="said">
                 <i class="mark" aria-hidden="true"></i>
@@ -66,6 +80,8 @@
                 <p>{entry.summary}</p>
                 {#if entry.reversible && entry.status === "done"}<div class="decide"><button class="pill" onclick={() => rika.undo(entry.id)}>Undo</button></div>{/if}
               </article>
+            {:else if entry.kind === "plan"}
+              <RikaPlan plan={entry} />
             {:else}
               {@const status = entry.status ?? "pending"}
               <article class="card ask" data-status={status} aria-label={entry.summary}>
@@ -84,11 +100,40 @@
           </li>
         {/each}
       </ol>
+      {#if dumping}
+        <section class="transcript" bind:this={transcript} aria-label="Brain dump transcript" aria-live="polite">
+          <header>
+            <span class="kind">Brain dump · {rika.voice.phase === "finishing" ? "finishing" : rika.voice.phase === "listening" ? "listening" : "starting"}</span>
+            <span class="sub">Talk as long as you like. Nothing changes until you approve the plan.</span>
+          </header>
+          <ol>
+            {#each rika.voice.segments as segment, index (index)}
+              <li><time>{talkClock(segment.start)}</time><span>{segment.text}</span></li>
+            {/each}
+            {#if rika.voice.partial}<li class="now"><time>{talkClock(rika.voice.segments.at(-1)?.end ?? 0)}</time><span>{rika.voice.partial}</span></li>{/if}
+          </ol>
+          <div class="decide">
+            <button class="pill" onclick={() => rika.cancel()}>Cancel</button>
+            <button class="pill primary" disabled={rika.voice.phase === "finishing"} onclick={() => rika.finish()}>Done · make plan</button>
+          </div>
+        </section>
+      {/if}
     </section>
   {/if}
 </EditDrawer>
 
 <style>
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .dump-start {
+    min-height: 26px;
+    padding: 3px 12px;
+    font-size: 10.5px;
+  }
   .sections {
     display: flex;
     align-self: start;
@@ -263,5 +308,44 @@
     min-height: 26px;
     padding: 3px 12px;
     font-size: 10.5px;
+  }
+  /* A dump's whole transcript is in its note; the conversation shows its start. */
+  .you.dump p {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+  }
+  .transcript {
+    display: grid;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--c1) 45%, var(--hairline));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--solid-raised) 55%, transparent);
+    box-shadow: 0 0 22px color-mix(in srgb, var(--c1) 14%, transparent);
+  }
+  .transcript header {
+    display: grid;
+    gap: 2px;
+  }
+  .transcript .sub {
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+  .transcript ol {
+    gap: 5px;
+  }
+  .transcript li {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .transcript li.now {
+    color: var(--ink);
   }
 </style>

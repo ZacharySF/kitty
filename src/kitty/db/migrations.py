@@ -11,12 +11,12 @@ module, so frozen builds that bundle only data files under migrations/ still run
 instead, for a conversion that fills the tables the script creates.
 
 Every number is used once (tests/test_migration_numbers.py; 021 was never used). Branches
-built in parallel fill each other's gaps: main's 034-037 and 044 shipped before the
-platform stack (032/033 and 038-043), so a database at main's schema applies 032 and 033
-after 044, then 038-043 and 045 onwards. The stack's own 035-039 were renumbered 037-041,
-then its 037 and 044 became 045 and 046 when main's 037_rika and 044_math shipped, before
-any release of the stack; a database migrated with an unreleased stack numbering is not a
-supported starting point.
+built in parallel fill each other's gaps: main's 034-037, 044 and 045 shipped before the
+platform stack (032/033, 038-043, 046 and 047), so a database at main's schema applies 032
+and 033 after 045, then 038-043, 046 and 047. The stack's own 035-039 were renumbered
+037-041; its 037 and 044 became 045 and 046 when main's 037_rika and 044_math shipped, then
+046 and 047 when main's 045_rika_voice shipped, all before any release of the stack; a
+database migrated with an unreleased stack numbering is not a supported starting point.
 """
 
 from __future__ import annotations
