@@ -23,6 +23,7 @@ export const ICONS: Record<string, IconDef> = {
   calendar: { path: "M4 5h16v16H4ZM4 10h16M8 3v4M16 3v4M8 14h2M14 14h2M8 18h2", accents: [[15, 18, 3]] },
   opportunities: { path: "m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3Z", accents: [[19.2, 4.8, 2.8]] },
   study: { path: "M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3ZM12 6v16M6 9h3M15 9h3", accents: [[16.5, 15, 3.2]] },
+  math: { path: "M2.5 13H5l3.5 7L13.5 4h8M14.5 9.5l4 5M18.5 9.5l-4 5", accents: [[19.5, 19.4, 2.6]] },
   flashcards: { path: "M7 3h14v14H7ZM3 7v14h14M10 8h8M10 12h5", accents: [[17.9, 13.9, 2.9]] },
   notes: { path: "M4 3h16v18H4ZM8 7h8M8 11h8M8 15h4", accents: [[15.8, 16.4, 3]] },
   "quick-notes": { path: "M5 4h14v11l-5 5H5ZM14 20v-5h5M8 9h8M8 13h4", accents: [[18.6, 4.6, 2.6]] },

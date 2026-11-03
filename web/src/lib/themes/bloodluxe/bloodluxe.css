@@ -1,0 +1,283 @@
+/* ── BloodLuxe (design Q12) ────────────────────────────────────────────────
+   Maximal album-art energy behind readable luxe paper: cream panels rimmed in black with
+   a hard black drop, over a marbled red, white and blue sky and a grass field, inside a
+   barbed-wire window frame (Frame.svelte). Blood red is the accent; titles, section rules
+   and the focus ornament drip. Scoped to :root[data-theme="bloodluxe"]; marks also to
+   :not([data-motif="off"]). */
+
+:root[data-theme="bloodluxe"] {
+  --bl-red: #c8102e;
+  --bl-red-deep: #8e0a1f;
+  --bl-blue: #2546c4;
+  --bl-pink: #f5a3c3;
+  --bl-cream: #fbf3e8;
+  --bl-paper: #fffdf8;
+  --bl-black: #120708;
+  --backdrop: var(--grain), linear-gradient(180deg, #f3d9d2, var(--bl-cream) 40%);
+  --surface-fill:
+    var(--grain),
+    linear-gradient(180deg, var(--bl-paper), color-mix(in srgb, var(--solid-panel) 90%, var(--bl-pink)));
+  --surface-border: transparent;
+  --surface-shadow:
+    0 0 0 1.5px var(--bl-black),
+    0 3.5px 0 1.5px var(--bl-black),
+    0 18px 34px -18px rgb(58 10 18 / 0.55);
+  --hairline: color-mix(in srgb, #8a4b4f 36%, transparent);
+  --wash: color-mix(in srgb, var(--bl-pink) 26%, var(--bl-cream));
+  --focus-ring-color: var(--bl-red);
+  --select-fill: linear-gradient(90deg, color-mix(in srgb, var(--bl-pink) 56%, white), color-mix(in srgb, var(--bl-pink) 22%, white));
+  --select-ink: var(--bl-black);
+  --select-edge: inset 3px 0 0 var(--bl-red), inset 0 0 0 1px color-mix(in srgb, var(--bl-red) 45%, transparent);
+  --drop: url("./drop-mask.svg");
+  --drip: url("./drip.svg");
+}
+:root[data-theme="bloodluxe"] ::selection {
+  background: var(--bl-pink);
+  color: var(--bl-black);
+}
+
+/* ── Chrome: a cream sticker bar over the marble ── */
+:root[data-theme="bloodluxe"] body .system-bar {
+  padding: 5px 12px;
+  border: 1.5px solid var(--bl-black);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bl-cream) 96%, transparent);
+  box-shadow: 0 3px 0 var(--bl-black), 0 12px 26px -12px rgb(58 10 18 / 0.55);
+}
+:root[data-theme="bloodluxe"] body .wordmark .word {
+  position: relative;
+  color: var(--bl-red);
+  text-shadow: 0 1.5px 0 var(--bl-black);
+}
+:root[data-theme="bloodluxe"] body .brand-dot {
+  color: var(--bl-blue);
+}
+:root[data-theme="bloodluxe"] body .brand-mark {
+  border-radius: 50%;
+  background: var(--bl-red);
+  color: var(--bl-cream);
+  box-shadow: 0 0 0 1.5px var(--bl-black), inset 0 -3px 0 rgb(0 0 0 / 0.2);
+}
+:root[data-theme="bloodluxe"] body .workspace-groups {
+  border-color: var(--bl-black);
+  background: var(--bl-paper);
+}
+:root[data-theme="bloodluxe"] body .workspace-groups button {
+  color: #5e2a30;
+}
+:root[data-theme="bloodluxe"] body .workspace-groups button[aria-current="page"] {
+  background: var(--bl-black);
+  color: var(--bl-cream);
+}
+:root[data-theme="bloodluxe"] body :is(.schema-tab, .schema-back, .system-command) {
+  border-color: color-mix(in srgb, var(--bl-black) 60%, transparent);
+  background: var(--bl-paper);
+  color: var(--bl-black);
+}
+:root[data-theme="bloodluxe"] body .schema-tab.current-schema {
+  border-color: var(--bl-red);
+  background: color-mix(in srgb, var(--bl-pink) 34%, white);
+  color: var(--bl-red-deep);
+}
+:root[data-theme="bloodluxe"] body .workspace-tabbar {
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  background: color-mix(in srgb, var(--bl-cream) 92%, transparent);
+  box-shadow: inset 0 -1.5px 0 var(--bl-black);
+}
+:root[data-theme="bloodluxe"] body .workspace-tabbar .tab.active::after {
+  height: 3px;
+  background: var(--bl-red);
+  box-shadow: none;
+}
+/* The demo/notice banners float on the marble: give them paper. */
+:root[data-theme="bloodluxe"] body :is(.demo-notice, .error-banner) {
+  border: 1.5px solid var(--bl-black);
+  background: var(--bl-paper);
+  box-shadow: 0 2.5px 0 var(--bl-black);
+}
+
+/* ── Controls: black-rimmed paper pills, a blood-red primary, royal-blue segments ── */
+:root[data-theme="bloodluxe"] body :is(.button, .br-btn, .pill):not([data-variant="solid"]):not(.primary):not([aria-pressed="true"]):not(.toggle-group *):not([data-variant="ghost"]):not([data-variant="link"]) {
+  border-color: var(--bl-black);
+  background: var(--bl-paper);
+  color: var(--bl-black);
+}
+:root[data-theme="bloodluxe"] body :is(.button, .br-btn, .pill):not([data-variant="solid"]):not(.primary):not([aria-pressed="true"]):not(.toggle-group *):hover:not(:disabled) {
+  border-color: var(--bl-red);
+  background: var(--wash);
+}
+:root[data-theme="bloodluxe"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root[data-theme="bloodluxe"] body .br-btn[data-variant="solid"] {
+  border-color: var(--bl-black);
+  background: linear-gradient(180deg, #d81636, var(--bl-red) 60%, #a50c27);
+  color: #fff8ee;
+  box-shadow: 0 2px 0 var(--bl-black), inset 0 1px 0 rgb(255 255 255 / 0.32);
+}
+:root[data-theme="bloodluxe"] body .toggle-group {
+  border-color: var(--bl-black);
+  background: var(--bl-paper);
+}
+:root[data-theme="bloodluxe"] body .toggle-group.toggle-group .br-btn[aria-pressed="true"] {
+  border-color: var(--bl-black);
+  background: var(--bl-blue);
+  color: #fff8ee;
+}
+:root[data-theme="bloodluxe"] body :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select, .br-input) {
+  border-color: color-mix(in srgb, var(--bl-black) 55%, transparent);
+  background-color: var(--bl-paper);
+}
+
+/* Overlays: cream paper, black rim. */
+:root[data-theme="bloodluxe"] body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root[data-theme="bloodluxe"] body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  border-color: var(--bl-black);
+  background: var(--bl-paper);
+}
+
+/* Page titles: blood-red letters on a black drop line. */
+:root[data-theme="bloodluxe"] body main :is(h1, .section-header h2) {
+  color: var(--bl-red);
+  text-shadow: 0 2px 0 var(--bl-black);
+}
+
+/* Home widgets and Study's columns are paper too, and the atlas stage a frosted cream window
+   onto the marble, so the art never runs under text. */
+:root[data-theme="bloodluxe"] body :is(.home-widget, .study .column:not(.column .column), .study-guide) {
+  border: 0;
+  border-radius: var(--r-panel);
+  background: var(--surface-fill);
+  box-shadow: var(--surface-shadow);
+}
+:root[data-theme="bloodluxe"] body .home-widget {
+  padding: 2px 12px 8px;
+}
+:root[data-theme="bloodluxe"] body .atlas .stage {
+  background: color-mix(in srgb, var(--bl-paper) 84%, transparent);
+  box-shadow: 0 0 0 1.5px var(--bl-black), 0 3.5px 0 1.5px var(--bl-black);
+  backdrop-filter: blur(3px);
+}
+
+/* ── Motif marks ── */
+
+/* The frame: the window's content steps inside the barbed wire. */
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) body .workbench {
+  padding: 28px 32px calc(24px + var(--rika-space, 0px));
+}
+:root[data-theme="bloodluxe"]:is([data-motif="off"], [data-panel-fullscreen]) .theme-frame {
+  display: none;
+}
+
+/* Dripping titles and wordmark: the letters bleed down into the page. */
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) body main :is(h1, .section-header h2) {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+}
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) body :is(main :is(h1, .section-header h2), .wordmark .word)::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 8px;
+  top: calc(100% - 6px);
+  height: 11px;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--bl-red) 40%, var(--bl-red-deep));
+  -webkit-mask: var(--drip) repeat-x 0 0 / 60px 11px;
+  mask: var(--drip) repeat-x 0 0 / 60px 11px;
+}
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) body .wordmark .word::after {
+  top: calc(100% - 4px);
+  height: 10px;
+  -webkit-mask-size: 48px 10px;
+  mask-size: 48px 10px;
+}
+
+/* Blood-drop bullets in their own colour, rimmed black. */
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) span.dot:not(.kitty-loader .dot) {
+  width: 9px;
+  height: 12px;
+  border-radius: 0;
+  -webkit-mask: var(--drop) center / contain no-repeat;
+  mask: var(--drop) center / contain no-repeat;
+  filter: drop-shadow(0 1px 0 var(--bl-black));
+}
+
+/* Ticks: a black-rimmed bead that fills with a glossy drop of red. */
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid var(--bl-black);
+  border-radius: 50%;
+  background: var(--bl-paper);
+  vertical-align: -3px;
+  cursor: pointer;
+}
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):checked {
+  background:
+    url("./check.svg") center / 12px no-repeat,
+    radial-gradient(circle at 35% 30%, #ff6b7d, var(--bl-red) 55%, var(--bl-red-deep));
+  animation: bloodluxe-bead calc(var(--motion-ms) * 1.4) var(--motion-ease) both;
+}
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes bloodluxe-bead {
+  from { transform: scale(0.5); }
+  to { transform: scale(1); }
+}
+
+/* Section rules: a blood-red stroke that drips. */
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) .surface-section + .surface-section {
+  border-top-color: transparent;
+}
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) hr.rule {
+  position: relative;
+  height: 12px;
+  margin-block: 4px;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2px;
+  height: 12px;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--bl-red) 30%, var(--bl-red-deep));
+  -webkit-mask: var(--drip) repeat-x 0 0 / 76px 12px;
+  mask: var(--drip) repeat-x 0 0 / 76px 12px;
+}
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) hr.rule::before {
+  top: 0;
+}
+
+/* Focus: black thorn corners around the red ring, a drop of blood hanging from its foot. */
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) .theme-focus[data-focus-style="bracket"]::before {
+  --bracket: var(--bl-black);
+}
+:root[data-theme="bloodluxe"]:not([data-motif="off"]) .theme-focus[data-focus-style="bracket"]::after {
+  content: "";
+  left: 14px;
+  top: calc(100% + var(--focus-out) - 1px);
+  width: 34px;
+  height: 11px;
+  background: var(--bl-red);
+  -webkit-mask: var(--drip) no-repeat 0 0 / 40px 11px;
+  mask: var(--drip) no-repeat 0 0 / 40px 11px;
+  transform-origin: top;
+  animation: bloodluxe-ooze calc(var(--motion-ms) * 2.5) var(--motion-ease) both;
+}
+@keyframes bloodluxe-ooze {
+  from { transform: scaleY(0.2); }
+  to { transform: scaleY(1); }
+}

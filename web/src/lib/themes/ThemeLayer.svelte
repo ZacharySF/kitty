@@ -94,10 +94,10 @@
     overflow: hidden;
     pointer-events: none;
   }
-  /* Above everything, edges only, never in the pointer's way. */
+  /* Above everything, edges only, never in the pointer's way; it ends above the Rika bar. */
   .theme-frame {
     position: fixed;
-    inset: 0;
+    inset: 0 0 var(--rika-space, 0px);
     z-index: 900;
     pointer-events: none;
   }

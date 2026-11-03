@@ -24,6 +24,9 @@ dependencies = [
     "zstandard>=0.23",
     "Pillow>=11",
     "PyMuPDF>=1.25",
+    "sympy>=1.13",
+    "lark>=1.2",
+    "antlr4-python3-runtime==4.11.*",
     "faster-whisper>=1.1",
 ]
 

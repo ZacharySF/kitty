@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="56" height="24" viewBox="0 0 56 24">
+  <g fill="none" stroke="#120708" stroke-width="2.2" stroke-linecap="round">
+    <path d="M0 12 C9 3 19 3 28 12 S47 21 56 12" />
+    <path d="M0 12 C9 21 19 21 28 12 S47 3 56 12" />
+  </g>
+  <g fill="#120708">
+    <!-- barb knot: four sharp spikes from a wound core -->
+    <circle cx="14" cy="12" r="3.2" />
+    <path d="M12.6 10.4 L6.5 1.2 L15.2 9.6 Z" />
+    <path d="M15.4 10.4 L22.6 2.4 L13.2 9.8 Z" />
+    <path d="M12.8 13.8 L5.4 22.4 L14.8 14.2 Z" />
+    <path d="M15.2 13.6 L21.4 23 L13.4 14.4 Z" />
+    <!-- lone thorns on the far twist -->
+    <path d="M40 6.6 L42.6 0.4 L43.8 7.2 Z" />
+    <path d="M44 17.4 L46.6 23.6 L47.6 16.6 Z" />
+  </g>
+</svg>

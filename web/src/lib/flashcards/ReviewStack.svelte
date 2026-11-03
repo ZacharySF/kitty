@@ -7,6 +7,7 @@
 
 <script lang="ts">
   import { GRADES } from "./GradeKeys.svelte";
+  import { typesetHtml } from "../math/tex";
 
   /**
    * Stacked deck (Q38): the current card sits on a pile of the cards still to come.
@@ -116,12 +117,12 @@
     <div class="inner" class:flipped={answerFace}>
       <div class="face front" aria-hidden={answerFace} inert={answerFace}>
         <span class="eyebrow">{caption}</span>
-        <div class="content">{@html front}</div>
+        <div class="content">{@html typesetHtml(front)}</div>
         <span class="hint">tap or <kbd>Space</kbd> to flip</span>
       </div>
       <div class="face back" aria-hidden={!answerFace} inert={!answerFace}>
         <span class="eyebrow">Answer</span>
-        {#if revealed}<div class="content">{@html back}</div>{/if}
+        {#if revealed}<div class="content">{@html typesetHtml(back)}</div>{/if}
         <span class="hint">swipe ← again · ↓ hard · → good · ↑ easy</span>
       </div>
     </div>

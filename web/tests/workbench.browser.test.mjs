@@ -1262,7 +1262,8 @@ describe("home widgets", () => {
     let week = {
       calendars: [{ id: "personal", name: "Personal", color: "#6d5dfc", visible: 1 }],
       events: [
-        event("e-today", "Seminar today", new Date(Date.now() + 60 * 60_000)),
+        // Today's events are the agenda's, not Up next's: keep this one today even late in the evening.
+        event("e-today", "Seminar today", new Date(Math.min(Date.now() + 60 * 60_000, at(1).getTime() - 60_000))),
         event("e-deadline", "Deadline · Arch problem set", at(1, 17), "opportunity:3:deadline"),
         event("e-reminder", "Follow_Up · Northwind Labs · Engineer", at(3, 10), "reminder:4"),
         event("e-far", "Next month", at(12, 9)),
@@ -1283,6 +1284,9 @@ describe("home widgets", () => {
         await context.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: week }));
         await context.route((url) => url.pathname === "/api/flashcards", (route) => route.fulfill({ json: { decks: [], types: [], media: [], stats: { due: cards, total: 60 } } }));
         await context.route((url) => url.pathname === "/api/reminders", (route) => route.fulfill({ json: reminders }));
+        // Math's lesson and streak rows have their own test (math.browser.test.mjs); nothing is due here.
+        await context.route((url) => url.pathname === "/api/math/next", (route) => route.fulfill({ json: { kind: null } }));
+        await context.route((url) => url.pathname === "/api/math/sprints/history", (route) => route.fulfill({ json: { sprints: [], streak_days: 0 } }));
       },
     });
     const upNext = page.getByRole("complementary", { name: "Activity" }).getByRole("region", { name: "Up next" });

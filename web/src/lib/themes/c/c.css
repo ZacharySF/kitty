@@ -1,0 +1,198 @@
+/* ── c (design Q12) ────────────────────────────────────────────────────────
+   An engraving on black: the engine's double-ruled frames in bone-white hairlines, tipped
+   with blood-red diamonds; blood red is the accent (selection, glow, primary), muted teal
+   is rare. Motif: sigil bullets, diamond ticks that ignite, rope dividers tied with a knot,
+   a rope-and-knot window frame. Scoped to :root[data-theme="c"]; marks also to
+   :not([data-motif="off"]). */
+
+:root[data-theme="c"] {
+  --c-bone: #ece6e2;
+  --c-blood: #a8192a;
+  --c-red: #c42f3d;
+  --c-black: #0b0a0c;
+  --backdrop:
+    radial-gradient(70vmax 50vmax at 56% 58%, color-mix(in srgb, #6a0d18 34%, transparent), transparent 70%),
+    radial-gradient(40vmax 30vmax at 10% 92%, color-mix(in srgb, #560a14 30%, transparent), transparent 70%);
+  --hairline: color-mix(in srgb, var(--c-bone) 22%, transparent);
+  --border-fine: color-mix(in srgb, var(--c-bone) 26%, transparent);
+  --r-control: 1px;
+  --r-field: 1px;
+  --r-menu: 1px;
+  --r-item: 0px;
+  --r-chip: 0px;
+  /* Frames: a bone outer rule and a fainter inner rule, a drop into the black. */
+  --surface-border: color-mix(in srgb, var(--c-bone) 34%, transparent);
+  --surface-shadow:
+    inset 0 0 0 4px var(--solid-panel),
+    inset 0 0 0 5px color-mix(in srgb, var(--c-bone) 11%, transparent),
+    0 18px 44px -18px #000;
+  /* Selection: a blood wash under a red edge. Pressed: bone with black type. */
+  --select-fill: linear-gradient(90deg, color-mix(in srgb, var(--c-blood) 52%, var(--solid-panel)), color-mix(in srgb, var(--c-blood) 16%, var(--solid-panel)));
+  --select-edge: inset 2px 0 0 var(--c-red), inset 0 1px 0 color-mix(in srgb, var(--c-red) 35%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--c-red) 35%, transparent);
+  --press-fill: var(--c-bone);
+  --press-ink: var(--c-black);
+  --focus-ring-color: color-mix(in srgb, var(--c-red) 70%, var(--c-bone));
+}
+:root[data-theme="c"] ::selection {
+  background: color-mix(in srgb, var(--c-blood) 60%, transparent);
+}
+
+/* Diamond corners on outer frames. */
+:root[data-theme="c"] body :is(.br-panel, .br-card):not(:is(.surface, .panel, .br-panel, .br-card) *)::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  pointer-events: none;
+  background:
+    url("./corner.svg") left top / 10px no-repeat,
+    url("./corner.svg") right top / 10px no-repeat,
+    url("./corner.svg") left bottom / 10px no-repeat,
+    url("./corner.svg") right bottom / 10px no-repeat;
+}
+:root[data-theme="c"][data-motif="off"] body :is(.br-panel, .br-card)::after,
+:root[data-theme="c"][data-motif="off"] .theme-frame [data-ornament] {
+  display: none;
+}
+
+/* Chrome: a double rule under the top bar, a black backing on the group switcher. */
+:root[data-theme="c"] body .workbench-top {
+  background: color-mix(in srgb, var(--c-black) 86%, transparent);
+}
+:root[data-theme="c"] body .system-bar {
+  border-bottom: 3px double color-mix(in srgb, var(--c-bone) 30%, transparent);
+}
+:root[data-theme="c"] body .workspace-groups {
+  border-color: color-mix(in srgb, var(--c-bone) 30%, transparent);
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--c-black) 92%, transparent);
+}
+:root[data-theme="c"] body .workspace-groups button {
+  border-radius: 0;
+}
+:root[data-theme="c"] body .workspace-groups button[aria-current="page"] {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--c-blood) 62%, var(--c-black));
+  box-shadow: inset 0 -1px 0 var(--c-red);
+  color: var(--c-bone);
+}
+
+/* Primary actions: blood with a bone inner rule. */
+:root[data-theme="c"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root[data-theme="c"] body .br-btn[data-variant="solid"] {
+  background: var(--c-blood);
+  border-color: var(--c-red);
+  color: #fff6f3;
+  box-shadow: inset 0 0 0 2px var(--c-blood), inset 0 0 0 3px color-mix(in srgb, var(--c-bone) 35%, transparent);
+}
+
+/* Overlays: black frames with the inner rule. */
+:root[data-theme="c"] body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root[data-theme="c"] body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  border-color: color-mix(in srgb, var(--c-bone) 40%, transparent);
+  background: var(--solid-panel);
+  outline: 1px solid color-mix(in srgb, var(--c-bone) 12%, transparent);
+  outline-offset: -4px;
+}
+
+/* Keyboard focus: the blood glow, with a red diamond pinned to the ring's top-left corner. */
+:root[data-theme="c"] .theme-focus[data-focus-style="glow"]::before {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--c-blood) 40%, transparent),
+    0 0 18px 3px color-mix(in srgb, var(--c-red) 55%, transparent);
+}
+:root[data-theme="c"]:not([data-motif="off"]) .theme-focus[data-focus-style="glow"]::after {
+  content: "";
+  top: calc(var(--focus-out) * -1 - 5px);
+  left: calc(var(--focus-out) * -1 - 5px);
+  width: 10px;
+  height: 10px;
+  background: url("./corner.svg") center / contain no-repeat;
+}
+
+/* ── Motif marks ── */
+
+/* Sigil bullets: a ringed diamond with a filled eye, in each subject's own colour. */
+:root[data-theme="c"]:not([data-motif="off"]) span.dot:not(.kitty-loader .dot) {
+  width: 11px;
+  height: 11px;
+  border-radius: 0;
+  -webkit-mask: url("./sigil-mask.svg") center / contain no-repeat;
+  mask: url("./sigil-mask.svg") center / contain no-repeat;
+}
+
+/* Ticks: an etched diamond; checked, it fills with blood and a bone check. */
+:root[data-theme="c"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: url("./diamond.svg") center / contain no-repeat;
+  vertical-align: -3px;
+  cursor: pointer;
+}
+:root[data-theme="c"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):checked {
+  background-image: url("./diamond-lit.svg");
+  animation: c-ignite calc(var(--motion-ms) * 2.5) var(--motion-ease) both;
+}
+:root[data-theme="c"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes c-ignite {
+  0% { transform: rotate(-90deg) scale(0.6); filter: drop-shadow(0 0 0 transparent); }
+  60% { transform: rotate(8deg) scale(1.1); filter: drop-shadow(0 0 6px #c42f3d); }
+  100% { transform: none; filter: none; }
+}
+
+/* Dividers: a twisted rope tied in the middle with a knot around a red diamond. */
+:root[data-theme="c"]:not([data-motif="off"]) .surface-section + .surface-section {
+  border-top-color: transparent;
+}
+:root[data-theme="c"]:not([data-motif="off"]) hr.rule {
+  height: 16px;
+  margin-block: 2px;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+:root[data-theme="c"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 16px;
+  pointer-events: none;
+  background:
+    url("./knot.svg") center / 32px 16px no-repeat,
+    url("./rope-h.svg") left center / 9.6px 8px repeat-x;
+  opacity: 0.85;
+}
+:root[data-theme="c"]:not([data-motif="off"]) hr.rule::before {
+  top: 0;
+}
+
+/* The current workspace tab: a red hairline tipped with a diamond. */
+:root[data-theme="c"]:not([data-motif="off"]) .workspace-tabbar .tab.active::after {
+  height: 1px;
+  border-radius: 0;
+  background: var(--c-red);
+  box-shadow: none;
+}
+:root[data-theme="c"]:not([data-motif="off"]) .workspace-tabbar .tab.active::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  translate: -50% 0;
+  rotate: 45deg;
+  background: var(--c-red);
+  box-shadow: 0 0 0 1.5px var(--c-black);
+}

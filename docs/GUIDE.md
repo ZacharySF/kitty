@@ -203,7 +203,7 @@ typefaces, each with one job: Fraunces for the page title only, Inter for the re
 of the interface (headings, labels, buttons, body) and JetBrains Mono for the
 navigation chrome, key caps, code and tabular figures; Fredoka sets only the
 wordmark. Labels, eyebrows and fold-out labels are Inter semibold in sentence case,
-never italic. The Theme menu persists one of ten dark themes locally. A theme is more
+never italic. The Theme menu persists the chosen theme locally. A theme is more
 than colours: each one also sets what its surfaces are made of (frosted glass,
 matte paper with grain, flat sheets, or square double-ruled frames), its focus
 ring (a plain ring, a soft glow, petal corners or corner brackets), how selected
@@ -222,8 +222,39 @@ and its backdrop. Typefaces never change with the theme.
   frosted orb for empty states.
 - **Scythe**: engraved frames with corner ticks under a moonlit meadow,
   crescent bullets, blade dividers, bracket focus and a crescent loader.
+- **SPEED**, the one light theme: hand-inked on off-white watercolour paper.
+  Square paper sheets with an inked edge and a crimson misprint over grey-teal
+  washes, teal-green and black ink splatter and drips, a white gothic cathedral,
+  faint gear rings that tick round and a crimson sketched wheel; crimson-magenta
+  for accents and a sketched double focus ring, teal washes for selection, ink-splat
+  bullets, crimson checks that stamp on, brush-stroke dividers, a marker swipe
+  under page titles, a ticking gear loader and a stalled-gear empty state.
+- **c**: an engraving on black. Double-ruled frames tipped with blood-red
+  diamonds, a rope-and-knot window frame, an etched diamond lattice, blood-red
+  washes and a slowly turning wheel of sigils, with a rare muted teal; sigil
+  bullets, diamond ticks that fill with blood, knotted rope dividers, a blood glow
+  on focus, a sigil-ring loader and a sigil-seal empty state.
+- **red**: stark black and white with one blood-red brush. Square black blocks
+  inside a white paper margin set with crop marks and an issue line in tracked
+  capitals, a faint stencil cat, and "rika" signed in a dripping red brush hand;
+  the red ring drips under keyboard focus, the current tab and group drip, white
+  rules drip once, page titles sit on a red swash, and the loader paints a stroke.
 - Harness and Nord are flat, Catppuccin Mocha and Gruvbox are matte paper, and
   Dracula and Tokyo Night are glass, each with its own focus, selection and motion.
+- **pretti**: glossy airbrushed graffiti on purple-black under a dark vignette:
+  candy-glass panels with a magenta rim, acid-green primary pills, magenta
+  selections, an acid glow on focus with a little heart, heart and star bullets,
+  heart ticks, candy-chain dividers, ringed targets, hearts, stars and butterflies
+  in the corners, a hypnotic spiral loader and a butterfly empty state.
+- **BloodLuxe** (the light one): cream paper panels rimmed in black over a marbled
+  red, white and blue sky, rose ridges, grass and flames, inside a black barbed-wire
+  window frame; blood-red titles, section rules and focus drip, blood-drop bullets,
+  bead ticks, a marble-orb loader and a thorn-wreathed heart for empty states.
+- **half blood**: storybook heraldry in flat bold colour: navy panels edged in bone
+  over an ultramarine field of white cloud squiggles with a grass hem, inside a
+  bone filigree frame with crossed bones; a sun-eye and a crescent moon, sun-orange
+  actions, sun bullets, green ticks, red drips on titles, rules and focus, a sun-eye
+  loader and a moon asleep on a cloud for empty states.
 
 Surfaces turn opaque under reduced transparency, and every theme's text,
 selected and pressed controls stay at WCAG AA contrast over its backdrop. Graph
@@ -398,6 +429,65 @@ In the desktop app, the tray menu has **New quick note**, and
 compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
+
+### Math
+
+**Study → Math** trains the math quant interviews and tech work test. It has two
+practice modes, timed mental-arithmetic **sprints** and topic **lessons**, over a
+graph of 46 topics in five strands: arithmetic and estimation, counting,
+probability (conditioning, Bayes, first-step analysis), expected value and
+variance, and basic statistics. Every problem is made fresh by a seeded generator
+(`src/kitty/core/math/templates/`) whose exact answer key is cross-checked by
+enumeration or Monte Carlo over hundreds of seeds in the test suite. Topics and
+generators are original and MIT-licensed. The view itself (drawers, Ctrl K, Up
+next) is described under **Math** in *Start here*; this section covers how it
+grades and schedules.
+
+- **Mastery.** A topic is *locked* until every prerequisite is mastered, then
+  *ready*, *learning* after your first graded answer, and *mastered* after three
+  correct first tries in a row. Mastery starts a spaced-review schedule for the
+  topic (FSRS, as in Flashcards); each review is a new problem, graded by
+  correctness and time (wrong = Again, slower than twice the target = Hard, under
+  half = Easy). A missed review is a lapse, never a relock. A correct answer also
+  gives partial credit (normally 0.3, halved when not yet due) to the prerequisites
+  it practises; each whole unit of credit counts as one review. Every state and
+  recommendation says why, e.g. *Unlocked because you mastered Bayes' rule*.
+- **Next.** Due reviews come first (most overdue), then the topic you are learning,
+  then a new ready topic, preferring a different strand from your last practice.
+- **Lessons.** A worked example, the same shape again with its last steps blanked
+  for you to fill, then 3–8 solo problems (fewer once a topic is going well, more
+  after misses); the view ends a lesson after three misses in a row.
+- **Checking.** Only your first decided answer to a problem is graded; you get
+  three tries, and the answer is shown when you solve it or after the third miss.
+  Numbers and fractions are exact in any form (`3/7`, `6/14`, `\frac{3}{7}`,
+  `0.25`, `25%`); decimals for non-terminating answers need the stated significant
+  figures or tolerance. Known slips (dropped carries, $P(+\mid C)$ for $P(C\mid +)$,
+  subtracting variances…) get specific feedback. Algebra answers are LaTeX, checked
+  by SymPy in a separate worker process: both of its LaTeX parsers read the answer,
+  `simplify` and random numeric probes compare it, and a check stops after 5 s.
+  When the answer can't be read, reads two ways (`n^n^2`), lacks significant
+  figures or times out, the checker says so and the try doesn't count.
+- **Sprints.** Zetamac defaults: 120 s; addition (2–100) + (2–100), subtraction as
+  reversed addition, multiplication (2–12) × (2–100), division as reversed
+  multiplication. *Typed* takes each answer the moment it is right; *multiple
+  choice* scores right − wrong. Problems come from a stored seed and are checked in
+  the browser; results keep your best score per mode and a daily streak.
+- **Explain my mistake.** After a wrong answer you can paste your working and ask
+  AI where it went wrong (purpose `math-explain`). It is a normal AI review: you see
+  exactly what is sent (the problem, your answer and working, never the correct
+  answer) and its maximum cost, then approve it within your daily budget. The
+  prompt forbids revealing the answer and treats your working as data. AI never
+  grades. Demo mode has no AI.
+
+API (`workspace` module): `GET /api/math/topics`, `GET /api/math/next`,
+`POST /api/math/problems {topic_id, seed?}`, `POST /api/math/answers {problem_id,
+answer, elapsed_ms}`, `GET /api/math/lessons/<topic_id>`, `POST /api/math/sprints
+{mode: zetamac|mc, duration_s, ops?}`, `POST /api/math/sprints/<id>/result {score,
+wrong, elapsed_ms}`, `GET /api/math/sprints/history?duration_s=&timezone=` and
+`POST /api/math/explain {problem_id, working}` (then `POST /api/ai/run`). The graph
+is authored in `kitty.core.math.topics`, synced into `math_topics`/`math_prereqs`
+(a trigger rejects any prerequisite cycle), and practice lives in `math_mastery`,
+`math_attempts` and `math_sprints` (migration 044).
 
 ### Brain data (`/api/brain`)
 
@@ -589,6 +679,10 @@ export, AI drafts and note types. Review deals the queue as a stacked deck: tap 
 grade's direction (← Again, ↓ Hard, → Good, ↑ Easy). Below the pile a keyboard strip
 shows keycaps 1–4 with each next interval and Space (flip, then Good); they sink as
 you press them.
+Math on a face renders with KaTeX: `\( … \)` and `$…$` inline, `\[ … \]` and
+`$$…$$` as a display line, so imported Anki math decks read as typeset math. A lone
+`$` before a digit or a space stays text, so "$5 and $10" is not read as math. KaTeX
+(MIT) and its fonts are bundled; nothing is fetched from a CDN.
 **Stats** shows memory statistics for the selected scope: today's queue (learning,
 review and new, with suspended, leech and buried cards and a time estimate), a
 30-day due forecast with overdue cards in today, FSRS forgetting curves for weak,
@@ -624,6 +718,48 @@ steps, sound and desktop-notification switches and the time zone, each saved as
 you change it and applied from the next phase. The tabs are Session, Progress,
 Exams & plans, Mind map and Tools (History and Helpers). Unsaved notes or a failed
 save show as a dot on the workspace tab.
+
+**Math** (Study group) opens focus-first like Study: one centred problem, lesson or
+sprint, chosen by **Practice · Sprint · Lessons**. **Practice** shows the one next
+thing, with why: a due topic review (a fresh generated problem) or the next lesson.
+The **Topics** edge on the left (press **[**) slides in the topic graph:
+prerequisites sit above what they unlock, and each topic is coloured locked (dashed,
+padlock), ready (outlined), learning (filled to its progress) or mastered (filled,
+ticked); a mastered topic whose spaced review is due wears an amber ring, and the
+edge counts them. Click or press Enter on a topic for why it is open or locked
+("Locked until you master Bayes' rule"), its next review, what it needs and
+unlocks, and **Start the lesson** or **Review**. **History** and **Settings** share
+the right edge (press **]**): History shows the sprint trend at the current length
+and format, the daily sprint streak and recent runs; Settings sets the sprint format
+(typed or multiple choice), its length (30 s to 10 min; Zetamac's 120 s by default),
+the operations (+ (2–100) + (2–100), − reversed +, × (2–12) × (2–100), ÷
+reversed ×) and **Start a Study focus cycle on Math when I practise**. The mode,
+drawers and settings are remembered.
+**Sprint** puts the problem large inside a countdown ring. Typed: the answer is
+taken the instant it is right, with no Enter, and the score is the number right.
+Multiple choice: four options on keys 1–4, +1 right, −1 wrong. When the time is up
+the run is saved and the results card shows the score, the rate per minute, the
+best and the trend line; **R** restarts. **Stop** abandons a run without saving it.
+Problems come from the backend; answers are checked in the browser, so the next
+problem appears at once.
+A **lesson** runs **Example · Guided · Solo**: a worked example, then the same kind
+of problem with the step you fill highlighted and the later ones faded, then 3–8
+problems on your own. Three misses in a row end it early. Guided blanks never count
+toward mastery; graded solo answers and reviews do.
+**Answers**: numbers and fractions are plain text with a live echo ("3/7 ≈
+0.4286", "0.43 · 2 s.f."); fractions compare exactly. Algebra goes in a MathLive
+field (MIT; its sounds and the KaTeX fonts are bundled) and is checked by SymPy on
+your computer. Each check adds a feedback line: correct, a named common mistake,
+not equivalent, or "Couldn't decide" (nothing is marked). Only the first decided
+answer is graded; you can retry until it is right or the answer is shown after the
+third miss. After a wrong answer, **Explain my mistake** takes your working and
+sends it through the reviewed AI flow: you see the model, the maximum cost and the
+exact text, approve, and the explanation appears as a bubble. It points at the
+first faulty step and never gives the answer; the checker still grades.
+Launchers: Ctrl K **Mental math sprint** and **Next math lesson**, and the home **Up
+next** rows **Math: next lesson** (or **Math: review due**) and, on a day without a
+sprint yet, the sprint-streak nudge. While a Study cycle runs, the Math header shows
+its phase, subject and time ("Focus · Math · 18:02").
 
 **Mind maps** have one editor, reached from Notes → **Map** (the page's own map),
 Study → **Mind map** and the **Mind maps** view; Ctrl K finds any map by its title and

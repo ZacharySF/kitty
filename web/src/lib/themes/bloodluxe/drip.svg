@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="22" viewBox="0 0 96 22" preserveAspectRatio="none">
+  <!-- Thick glossy drips hanging from a ragged lip; used as a mask, so only alpha matters. -->
+  <path fill="#000" d="M0 0 H96 V3.2 C90 3.6 88 4.6 87 6 V15.5 a2.6 2.6 0 0 1 -5.2 0 V6.4 C80 4.4 74 4 68 4.4
+    C64 4.6 63 5.6 62.6 7.4 V9.6 a2.2 2.2 0 0 1 -4.4 0 V6.8 C57 4.6 50 4.2 44 4.6 C40 5 39.2 6 39 8.4 V19 a2.8 2.8 0 0 1 -5.6 0
+    V7.6 C33 5 28 4.4 22 4.6 C18.4 4.8 17.6 5.8 17.4 7.6 V11.4 a2.2 2.2 0 0 1 -4.4 0 V7 C12.6 4.6 6 3.8 0 3.6 Z" />
+</svg>

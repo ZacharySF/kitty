@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20" viewBox="0 0 80 20" preserveAspectRatio="none">
+  <!-- Thin storybook drips with round beads; painted in drip red. -->
+  <g fill="#ee2a2f">
+    <rect x="0" y="0" width="80" height="2.4" />
+    <path d="M6 2 h2.6 v9 a1.9 1.9 0 1 1 -2.6 0 Z" />
+    <path d="M21 2 h2.2 v4 a1.5 1.5 0 1 1 -2.2 0 Z" />
+    <path d="M33 2 h3 v13 a2.2 2.2 0 1 1 -3 0 Z" />
+    <path d="M50 2 h2.4 v6.5 a1.7 1.7 0 1 1 -2.4 0 Z" />
+    <path d="M66 2 h2.8 v10.5 a2 2 0 1 1 -2.8 0 Z" />
+  </g>
+</svg>
