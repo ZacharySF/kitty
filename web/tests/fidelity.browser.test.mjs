@@ -59,7 +59,9 @@ before(async () => {
         "/api": {
           target: origin,
           changeOrigin: true,
-          configure: (proxy) => proxy.on("proxyReq", (request) => request.setHeader("Origin", origin)),
+          ws: true,
+          // Rika's stream upgrades through the same proxy; the backend compares Origin exactly.
+          configure: (proxy) => { for (const event of ["proxyReq", "proxyReqWs"]) proxy.on(event, (request) => request.setHeader("Origin", origin)); },
         },
       },
     },
@@ -74,7 +76,7 @@ after(async () => {
   backend?.kill();
 });
 
-/** A returning user's profile on `hash` with the dock hidden and `theme` applied. */
+/** A returning user's profile on `hash` with `theme` applied. */
 async function open(hash, theme) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 } });
   await context.route("**/api/account", (route) =>
@@ -84,7 +86,6 @@ async function open(hash, theme) {
   );
   await context.addInitScript((id) => {
     localStorage.setItem("kitty.theme", id);
-    localStorage.setItem("kitty.dock", JSON.stringify({ mode: "hidden", shown: "terminal", size: null, offset: { right: 16, bottom: 16 } }));
   }, theme);
   const page = await context.newPage();
   const problems = [];

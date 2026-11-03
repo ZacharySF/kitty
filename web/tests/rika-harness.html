@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Browser fixture for tests/rika.browser.test.mjs: the real Rika UI; the test routes its API. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Rika harness</title>
+    <style>
+      html, body { margin: 0; }
+      /* Like .workbench, the page ends above the Rika bar (--rika-space). */
+      #view { height: calc(100vh - var(--rika-space, 0px)); box-sizing: border-box; padding: 24px; }
+    </style>
+  </head>
+  <body>
+    <main id="view"><h1>Page</h1></main>
+    <div id="rika"></div>
+    <script type="module" src="./rikaHarness.js"></script>
+  </body>
+</html>

@@ -143,6 +143,8 @@ const shortcutGroups: ShortcutGroup[] = [
         "Pick a node on the atlas, Sections on the stage, or Ctrl / ⌘ + K",
       ],
       ["?", "Show keyboard help"],
+      ["Ctrl + J", "Open or close Rika's history drawer (anywhere but a terminal)"],
+      ["Enter in the Rika bar", "Ask Rika; the reply lands as a toast above the bar"],
       ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
       ["Ctrl + Shift + F", "Toggle panel fullscreen inside terminal views"],
       ["Escape", "Close dialog or details; leave a text field"],

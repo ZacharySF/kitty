@@ -62,7 +62,9 @@ before(async () => {
         "/api": {
           target: origin,
           changeOrigin: true,
-          configure: (proxy) => proxy.on("proxyReq", (request) => request.setHeader("Origin", origin)),
+          ws: true,
+          // Rika's stream upgrades through the same proxy; the backend compares Origin exactly.
+          configure: (proxy) => { for (const event of ["proxyReq", "proxyReqWs"]) proxy.on(event, (request) => request.setHeader("Origin", origin)); },
         },
       },
     },
@@ -86,9 +88,6 @@ async function open(hash, { viewport = VIEWPORT } = {}) {
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
-  await context.addInitScript(() => localStorage.setItem("kitty.dock", JSON.stringify({
-    mode: "hidden", shown: "terminal", float: false, step: "m", size: null, offset: { right: 16, bottom: 16 },
-  })));
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));

@@ -17,6 +17,8 @@
     onhelp,
     onnewcard,
     onreload,
+    onterminal,
+    onrika,
   }: {
     enabled: readonly string[];
     onclose: () => void;
@@ -27,6 +29,10 @@
     /** Opens the quick-add flashcard popover; absent when Flashcards is off. */
     onnewcard?: () => void;
     onreload: () => void;
+    /** Opens a terminal in a Tern window; absent when the Terminal module is off. */
+    onterminal?: () => void;
+    /** Opens Rika's history drawer. */
+    onrika: () => void;
   } = $props();
 
   const LIMIT = 6;
@@ -52,6 +58,8 @@
     ...(applyai ? [{ label: "Add job", meta: "Action", icon: "jobs", run: () => onadd() }] : []),
     ...(onnewcard ? [{ label: "New card", meta: "Flashcards", icon: "flashcards", run: () => onnewcard() }] : []),
     ...(mapsOn ? [{ label: "New mind map", meta: "Action", icon: "schema", run: () => openMap() }] : []),
+    ...(onterminal ? [{ label: "Open terminal", meta: "Tern window", icon: "terminal", run: () => onterminal() }] : []),
+    { label: "Rika history", meta: "Rika", icon: "kitty", run: () => onrika() },
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
   ]);

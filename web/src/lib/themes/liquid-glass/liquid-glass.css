@@ -41,8 +41,8 @@
   background: var(--backdrop), color-mix(in srgb, var(--solid-void) 42%, transparent);
 }
 
-/* The frame's own glass: the atlas, the top bar and the dock. */
-:root[data-theme="liquid-glass"] body :is(.atlas, .workbench-top, .dock) {
+/* The frame's own glass: the atlas, the top bar and the Rika bar. */
+:root[data-theme="liquid-glass"] body :is(.atlas, .workbench-top, .rika-bar) {
   background: var(--surface-fill);
   border-color: var(--surface-border);
   backdrop-filter: var(--surface-blur);

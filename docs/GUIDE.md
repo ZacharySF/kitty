@@ -123,27 +123,16 @@ after 30 seconds and is issued only by the header-protected `POST
 /api/terminal/session`. A development `kitty-web` uses `KITTY_HERDR=<herdr 0.9.5
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
-**Dock.** With the module on, the bottom of the window holds the dock: herdr's
-client in a transparent terminal drawn in the Harness colours (**Terminal**) or
-**Agents** (one card per detected herdr agent with its working / blocked / done /
-idle state, read from `GET /api/terminal/activity`, which never starts herdr).
-Docked (the default) it spans the window's width at a fixed height and the page
-ends above it, so nothing is covered. Its height is not dragged: **S**, **M** and
-**L** in its header set a quarter, two fifths or three fifths of the window in one
-step (M at first). **Hide** leaves only a thin handle along the bottom edge; click
-it to bring back what was shown. **Float** detaches the dock into a glass card in
-the bottom-right corner that leaves the page the whole window: drag its header to
-move it and its top-left corner grip to resize it (or focus the grip and use the
-arrow keys); the card previews the move or new outline while you drag and settles
-on release, and always stays on screen. Hidden while floating, it is a small pill
-in the corner; **Dock** puts it back at the bottom. The view, docked height,
-float choice and card size and position are remembered per browser profile;
-notification toasts stack above the dock, handle, card or pill. **Open herdr view**, or the **herdr** node under Plan in the
-atlas, opens the whole session in the workspace tab. In a terminal, bare keys
-(including `f`) go to the shell; **Ctrl+Shift+F** fullscreens the terminal panel and
-**Esc** returns.
+**Terminals.** There is no terminal dock: the bottom of the window is the Rika bar
+(see **Rika** below). Terminals open as native Tern windows: **Open terminal** in
+Ctrl K, or ask Rika ("open a terminal"). Without a usable Tern, Open terminal
+shows the **Tern** view, which says why. The **herdr** node under Plan in the atlas
+opens the whole herdr session in the workspace tab, in a transparent terminal drawn
+in the Harness colours. In a terminal, bare keys (including `f`) go to the shell;
+**Ctrl+Shift+F** fullscreens the terminal panel and **Esc** returns. The v0.3.25
+dock state (`kitty.dock` in the browser profile) is no longer read or written.
 
-**Agents (Q2/Q9).** In either terminal surface, **New Agent tab** starts the chosen
+**Agents (Q2/Q9).** In the herdr view, **New Agent tab** starts the chosen
 installed coding agent in a new herdr tab labelled **Agent**, in this rika!
 workspace's directory. The chooser defaults to **omp**, also supports **claude**
 and **codex**, and remembers the last choice in this browser profile. rika! does
@@ -167,11 +156,10 @@ list workspaces, create a separately labelled tab with `tab create --workspace
 <id> --cwd <directory> --label <name> --no-focus`, then target the returned
 `root_pane.pane_id` explicitly. Read herdr's own skill before controlling panes.
 Never rely on another client's focused pane or switch to the `default` session.
-Their tabs appear live in the terminal and herdr view, and **Agents** in the dock
+Their tabs appear live in the herdr view, and Rika's history drawer (**Agents**)
 shows one card per detected agent: its state, task (the pane's title), last output
-line, a 30-second output sparkline and how long it has been working or blocked. A
-blocked agent's **Open pane** focuses that pane and switches the dock to the
-terminal. Local CLI/socket access grants full shell access as your user.
+line and how long it has been in that state; **Open window** focuses its Tern window.
+Local CLI/socket access grants full shell access as your user.
 
 **Tern (optional).** With the module on, the **Tern** node under Plan shows
 [Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the bundled
@@ -278,7 +266,7 @@ configuration from disk; saves in My profile reload it automatically.
 
 The first-run welcome offers **Continue locally** or an optional Google identity
 connection, followed by a skippable guided tour of workspace panels, modules,
-Atlas, quick notes and Study (plus the terminal dock when present). Completion is
+Atlas, quick notes, Study and the Rika bar. Completion is
 remembered per workspace. Reopen either flow in **Settings → Account** (**Connect
 Google** or **Take the tour**; **Setup guide** links to the Google setup document).
 Google is not required for local/offline use and does not secure the local API or
@@ -298,6 +286,35 @@ from public examples; edits disappear when the process exits. External discovery
 browser filling, Gmail, notifications and paid operations are disabled. Synthetic
 text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
 be registered inside the disposable workspace.
+
+### Rika
+
+**Rika** is rika!'s own agent (docs/rika-design.md). It lives in the **Rika bar**,
+the slim bar along the bottom of the window: type a request in **Ask Rika…** and
+press Enter. While Rika writes its reply the whole bar breathes with a soft ring of
+light (under Reduce motion the ring stays lit and still). Each reply lands as a toast
+above the bar, in the reminder toasts' look, with the reply, its tier chip (**fast**,
+**standard** or **deep**: the model size Rika chose) and what it did; anything it
+changed in the app carries **Undo**. Reminder toasts stack above Rika's.
+
+**History** on the bar, or **Ctrl+J** from anywhere but a terminal, opens the history
+drawer on the right: **Conversation** holds every request and reply, the action
+cards Rika ran (Undo while it can still be undone) and its approvals. Anything
+outward or irreversible (starting a worker agent, running a command, sending,
+deleting what Trash cannot restore, changing settings) waits for **Approve** or
+**Reject** on an approval card that says what will happen and, for paid model runs,
+the estimated cost. The drawer opens by itself when Rika asks for an approval and
+closes once you decide; one you opened yourself stays open. **Agents** holds a live
+card per worker agent (omp, Claude Code, Codex) in herdr or Tern: state, task, last
+output line, a timer and **Open window**.
+
+Running worker agents also show as chips on the right of the bar, a state dot and
+name each (working, blocked, idle, done); a chip opens that agent's Tern window.
+Past four agents the chips collapse to one count, which opens the drawer's Agents.
+When Rika opens a page ("open calendar"), the workspace tab navigates there. In the
+website demo Rika is a scripted responder that exercises the same tools and never
+calls a model. Voice input (hold Space) comes later; the bar draws no Space keycap
+or hint.
 
 ### Controls and surfaces
 
@@ -514,7 +531,7 @@ offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting, and
-fills the window above the dock.
+fills the window above the Rika bar.
 A page is the theme's flat background colour with no grid; the pill's **⋯ → Paper**
 adds lines, a grid, dots or Cornell margins when you want them.
 Its tools sit in one floating pill at the bottom of the canvas: select, pen,
@@ -920,7 +937,7 @@ confirmed right-click deletion; removing a map node does not delete its source.
 **Keyboard:** Ctrl+Alt opens Plan, Ctrl+X Study, Ctrl+C Job search and Ctrl+V
 Settings outside editors, selections and dialogs. Native cut/copy/paste remains
 unchanged while editing. F1–F10 navigation is removed. Ctrl/⌘K opens command and
-job search; `?` shows contextual shortcuts. Arrow keys navigate
+job search; Ctrl+J opens or closes Rika's history; `?` shows contextual shortcuts. Arrow keys navigate
 jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `k` queue state, `R` resume, `e` notes, `s` status, `u` undo, `d` deadline,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,

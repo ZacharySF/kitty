@@ -1,0 +1,50 @@
+/* Rika's shared chips: a reply's tier and a worker agent's state (docs/rika-design.md Q12, Q19). */
+.rika-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--tone, var(--muted)) 45%, transparent);
+  border-radius: 999px;
+  color: var(--tone, var(--muted));
+  font: 500 9.5px/1.6 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.rika-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--tone, var(--muted));
+}
+[data-state="working"] > .rika-dot {
+  animation: rika-dot 1.6s ease-in-out infinite;
+}
+@keyframes rika-dot {
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 18%, transparent);
+  }
+}
+:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="fast"] {
+  --tone: var(--c2, var(--accent));
+}
+:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="standard"] {
+  --tone: var(--c3, var(--accent));
+}
+:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="deep"] {
+  --tone: var(--c1, var(--accent));
+}
+:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="working"] {
+  --tone: var(--accent);
+}
+:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="blocked"] {
+  --tone: var(--warning);
+}
+:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="done"] {
+  --tone: var(--success);
+}
+:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="idle"] {
+  --tone: var(--muted);
+}

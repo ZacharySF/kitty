@@ -918,7 +918,7 @@
   .map-stage {
     position: relative;
     /* Fits under the top bar, header and strip so the floating controls stay on screen. */
-    height: clamp(320px, calc(100dvh - var(--workbench-top, 0px) - var(--dock-space, 0px) - 230px), 720px);
+    height: clamp(320px, calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 230px), 720px);
     border-top: 1px solid var(--hairline);
     border-radius: 0 0 var(--r-panel) var(--r-panel);
     overflow: hidden;

@@ -1,6 +1,6 @@
 /**
  * Svelte action: publishes `--fit-h` on the node, the height that makes it end at the bottom of
- * the window above the dock, whatever bars or notices sit above it (the workbench bar, a demo
+ * the window above the Rika bar, whatever bars or notices sit above it (the workbench bar, a demo
  * banner, an error line). Canvas-like views (the Notes stage, the mind-map editor) size from it
  * so the page itself never scrolls. Remeasures on resize and when anything above changes size.
  */

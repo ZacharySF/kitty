@@ -1,6 +1,10 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
+/** Only this local dev page may reach the API: a loopback host and, when sent, its own origin. */
+const localPage = (host = "", origin?: string) =>
+  /^(127\.0\.0\.1|localhost):\d+$/.test(host) && (!origin || origin === `http://${host}`);
+
 export default defineConfig(({ mode }) => {
   const backendOrigin =
     mode === "demo" ? "http://127.0.0.1:8768" : "http://127.0.0.1:8765";
@@ -12,12 +16,7 @@ export default defineConfig(({ mode }) => {
         configureServer(server) {
           server.middlewares.use((request, response, next) => {
             if (request.url?.startsWith("/api")) {
-              const host = request.headers.host || "";
-              const origin = request.headers.origin;
-              if (
-                !/^(127\.0\.0\.1|localhost):\d+$/.test(host) ||
-                (origin && origin !== `http://${host}`)
-              ) {
+              if (!localPage(request.headers.host, request.headers.origin)) {
                 response.writeHead(403, { "Content-Type": "application/json" });
                 response.end(
                   JSON.stringify({
@@ -40,9 +39,19 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: backendOrigin,
           changeOrigin: true,
+          // Rika's stream (/api/rika/stream) is a WebSocket through the same proxy.
+          ws: true,
           configure(proxy) {
             proxy.on("proxyReq", (request) => {
               // The middleware rejects foreign browser origins before this rewrite.
+              request.setHeader("Origin", backendOrigin);
+            });
+            // Upgrades skip the middleware, so the same check runs here; browsers always send Origin.
+            proxy.on("proxyReqWs", (request, incoming, socket) => {
+              if (!incoming.headers.origin || !localPage(incoming.headers.host, incoming.headers.origin)) {
+                socket.destroy();
+                return;
+              }
               request.setHeader("Origin", backendOrigin);
             });
           },
