@@ -1,9 +1,17 @@
-"""Gmail OAuth: read-only scope, local token, automatic refresh.
+"""Gmail OAuth: local tokens with automatic refresh, read-only unless opted in.
 
 The client secret (a "Desktop app" OAuth client I create in Google Cloud
-Console) lives in config/gmail_client.json and the token in
-data/gmail_token.json; both are gitignored. The only scope ever requested is
-gmail.readonly, so this tool can read mail but never send, delete or label it.
+Console) lives in config/gmail_client.json; tokens live under data/; all are
+gitignored. Two tokens, never mixed:
+
+* data/gmail_token.json (`kitty gmail auth`): gmail.readonly only. Job-status
+  sync (`kitty gmail check`, Insights) uses only this token, so it can read
+  mail but never send, draft, delete or label it.
+* data/gmail_compose_token.json (`kitty gmail auth --compose`, or Connect in
+  Settings → Rika → Email): opt-in, for Rika's email drafts (design Q16), with
+  gmail.readonly plus gmail.compose, which lets Rika create, update, delete and
+  send drafts; Rika sends only a reply you tapped Send on or a kind you turned
+  auto-send on for. Nothing else uses it.
 """
 
 from __future__ import annotations
@@ -19,8 +27,11 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 from kitty.settings import Settings
 
-#: The one scope this tool asks for. Never widen it.
+#: The job-status token's one scope. Never widen it.
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+#: Rika's separate opt-in token: read the inbox and manage drafts (create, update,
+#: delete, send). Only kitty.core.rika.mail uses it.
+COMPOSE_SCOPES = [*SCOPES, "https://www.googleapis.com/auth/gmail.compose"]
 
 SETUP_STEPS = """\
 Gmail is not set up. One-time setup (about 5 minutes):
@@ -64,14 +75,18 @@ def client_path(settings: Settings) -> Path:
     return settings.config_dir / "gmail_client.json"
 
 
-def token_path(settings: Settings) -> Path:
+def token_path(settings: Settings, *, compose: bool = False) -> Path:
     """Where the access/refresh token is stored (under data/, so gitignored)."""
-    return settings.data_dir / "gmail_token.json"
+    return settings.data_dir / ("gmail_compose_token.json" if compose else "gmail_token.json")
 
 
-def setup_state(settings: Settings) -> GmailSetup:
-    """Which of the two files exist."""
-    client, token = client_path(settings), token_path(settings)
+def _command(compose: bool) -> str:
+    return "kitty gmail auth --compose" if compose else "kitty gmail auth"
+
+
+def setup_state(settings: Settings, *, compose: bool = False) -> GmailSetup:
+    """Which of the two files exist (the compose token's when `compose`)."""
+    client, token = client_path(settings), token_path(settings, compose=compose)
     return GmailSetup(client, token, client.exists(), token.exists())
 
 
@@ -82,49 +97,51 @@ def _save_token(credentials: Credentials, path: Path) -> None:
     os.chmod(path, 0o600)
 
 
-def run_consent_flow(settings: Settings) -> Path:
+def run_consent_flow(settings: Settings, *, compose: bool = False) -> Path:
     """Open the browser consent page and save the resulting token.
 
-    Raises GmailSetupError (with the setup steps) when the client file is
+    `compose` asks for Rika's separate drafting token instead of the read-only
+    one. Raises GmailSetupError (with the setup steps) when the client file is
     missing or is not a Desktop-app client.
     """
     client = client_path(settings)
     if not client.exists():
         raise GmailSetupError(f"{SETUP_STEPS}\n\nMissing: {client}")
     try:
-        flow = InstalledAppFlow.from_client_secrets_file(str(client), scopes=SCOPES)
+        flow = InstalledAppFlow.from_client_secrets_file(str(client), scopes=COMPOSE_SCOPES if compose else SCOPES)
     except ValueError as exc:
         raise GmailSetupError(
             f"{client} is not a Desktop-app OAuth client ({exc}). "
             "Create one with application type 'Desktop app' and download it again."
         ) from exc
     credentials = flow.run_local_server(port=0, open_browser=True)
-    path = token_path(settings)
+    path = token_path(settings, compose=compose)
     _save_token(credentials, path)
     return path
 
 
-def load_credentials(settings: Settings) -> Credentials:
+def load_credentials(settings: Settings, *, compose: bool = False) -> Credentials:
     """The saved token, refreshed (and re-saved) when it has expired."""
-    state = setup_state(settings)
+    state = setup_state(settings, compose=compose)
+    command = _command(compose)
     if not state.client_present:
         raise GmailSetupError(f"{SETUP_STEPS}\n\nMissing: {state.client_path}")
     if not state.token_present:
-        raise GmailSetupError("Gmail is not authorised yet: run `kitty gmail auth`.")
+        raise GmailSetupError(f"Gmail is not authorised yet: run `{command}`.")
     try:
-        credentials = Credentials.from_authorized_user_file(str(state.token_path), SCOPES)
+        credentials = Credentials.from_authorized_user_file(str(state.token_path), COMPOSE_SCOPES if compose else SCOPES)
     except (ValueError, OSError) as exc:
         raise GmailSetupError(
-            f"Could not read {state.token_path} ({exc}): run `kitty gmail auth` again."
+            f"Could not read {state.token_path} ({exc}): run `{command}` again."
         ) from exc
     if not credentials.valid:
         if not credentials.refresh_token:
-            raise GmailSetupError("The Gmail token cannot be refreshed: run `kitty gmail auth` again.")
+            raise GmailSetupError(f"The Gmail token cannot be refreshed: run `{command}` again.")
         try:
             credentials.refresh(Request())
         except RefreshError as exc:
             raise GmailSetupError(
-                f"The Gmail token expired or was revoked ({exc}): run `kitty gmail auth` again."
+                f"The Gmail token expired or was revoked ({exc}): run `{command}` again."
             ) from exc
         except GoogleAuthError as exc:
             raise GmailSetupError(f"Could not refresh the Gmail token: {exc}") from exc
@@ -132,6 +149,6 @@ def load_credentials(settings: Settings) -> Credentials:
     return credentials
 
 
-def authorized_session(settings: Settings) -> AuthorizedSession:
+def authorized_session(settings: Settings, *, compose: bool = False) -> AuthorizedSession:
     """An HTTP session that sends the token and refreshes it when needed."""
-    return AuthorizedSession(load_credentials(settings))
+    return AuthorizedSession(load_credentials(settings, compose=compose))

@@ -232,3 +232,57 @@ def test_rika_tables_keep_their_conversation_and_tier_settings(tmp_path):
         assert conn.execute("SELECT count(*) FROM rika_approvals").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_rika_goals_mail_and_memory_tables(tmp_path):
+    """046: routing memory, goals and their matches, the brief, mail drafts, preferences and the FTS index."""
+    import sqlite3
+
+    conn = connect(tmp_path / "goals.sqlite")
+    try:
+        migrate(conn)
+        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,created_at,tokens_in,tokens_cached,tokens_out,"
+                     "route_json) VALUES('r','c','rika','ok','t1',1180,960,64,'{\"path\":[\"add_card\"]}')")
+        conn.execute("INSERT INTO rika_routes(signature,label,tier,path_json,created_at,updated_at)"
+                     " VALUES('add_card','Add card','fast','[\"add_card\"]','t','t')")
+        conn.execute("INSERT INTO rika_route_shapes(shape,signature,updated_at) VALUES('add card','add_card','t')")
+        conn.execute("INSERT INTO rika_shortcuts(template,signature,tool,created_at,updated_at)"
+                     " VALUES('card {front} / {back}','add_card','add_card','t','t')")
+        conn.execute("DELETE FROM rika_routes WHERE signature='add_card'")
+        assert conn.execute("SELECT count(*) FROM rika_route_shapes").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM rika_shortcuts").fetchone()[0] == 0
+
+        conn.execute("INSERT INTO goals(id,title,created_at,updated_at) VALUES(1,'Internship','t','t')")
+        row = conn.execute("SELECT status,measures_json,revision FROM goals").fetchone()
+        assert tuple(row) == ("active", "[]", 1)
+        conn.execute("INSERT INTO goal_links(goal_id,kind,ref,created_at) VALUES(1,'job','4','t')")
+        conn.execute("INSERT INTO goal_matches(goal_id,kind,ref,title,score,created_at) VALUES(1,'job','5','Intern',0.8,'t')")
+        conn.execute("INSERT INTO rika_briefs(day,created_at,summary_json) VALUES('2026-11-03','t','{}')")
+        conn.execute("INSERT INTO rika_mail_messages(id,thread_id,sender_email,received_at,kind,needs_reply,fetched_at)"
+                     " VALUES('m1','t1','maya@example.invalid','t','scheduling',1,'t')")
+        conn.execute("INSERT INTO rika_mail_drafts(id,mail_id,to_address,subject,body,kind,status,created_at,updated_at)"
+                     " VALUES('d1','m1','maya@example.invalid','Re: onsite','Tue works','scheduling','draft','t','t')")
+        assert [tuple(r) for r in conn.execute("SELECT kind,auto_send FROM rika_mail_settings ORDER BY kind")] == [
+            ("confirmation", 0), ("scheduling", 0), ("thanks", 0)]
+        assert conn.execute("SELECT hold_seconds FROM rika_mail_config").fetchone()[0] == 30
+        conn.execute("INSERT INTO rika_preferences(text,source,created_at,updated_at) VALUES('Evenings after 9pm are free','stated','t','t')")
+        conn.execute("INSERT INTO rika_index(title,body,source,ref,at) VALUES('Portfolio plan','ship the case study','page','1','t')")
+        assert conn.execute("SELECT ref FROM rika_index WHERE rika_index MATCH 'studies'").fetchone()[0] == "1"
+        for statement in (
+            "INSERT INTO goals(title,status,created_at,updated_at) VALUES('x','maybe','t','t')",
+            "INSERT INTO goal_links(goal_id,kind,ref,created_at) VALUES(1,'planet','1','t')",
+            "INSERT INTO goal_links(goal_id,kind,ref,created_at) VALUES(99,'job','1','t')",
+            "INSERT INTO rika_routes(signature,label,tier,path_json,created_at,updated_at) VALUES('x','x','huge','[]','t','t')",
+            "INSERT INTO rika_mail_drafts(id,to_address,subject,body,kind,status,created_at,updated_at)"
+            " VALUES('d2','a','s','b','scheduling','lost','t','t')",
+            "INSERT INTO rika_mail_settings(kind,auto_send) VALUES('personal',1)",
+            "UPDATE rika_mail_config SET hold_seconds=1",
+            "INSERT INTO rika_preferences(text,source,created_at,updated_at) VALUES('','stated','t','t')",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(statement)
+        conn.execute("DELETE FROM goals WHERE id=1")
+        assert conn.execute("SELECT count(*) FROM goal_links").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM goal_matches").fetchone()[0] == 0
+    finally:
+        conn.close()

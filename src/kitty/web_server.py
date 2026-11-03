@@ -136,7 +136,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), (None, "web_desktop"),
-    (None, "web_account"), (None, "web_rika"),
+    (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
     ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
 
@@ -664,6 +664,10 @@ def _serve(settings: Settings, static_dir: Path, port: int) -> None:
             from kitty.core import demo
 
             demo.seed(workspace.conn, settings, workspace.config)
+        if settings.demo:
+            from kitty.core.rika import demo_seed
+
+            demo_seed.seed(workspace.conn)
         app = WebApplication(settings, workspace.config, static_dir)
     with LocalHTTPServer(app, port) as server:
         print(f"rika! {'synthetic demo ' if settings.demo else ''}website: {server.origin}", flush=True)
