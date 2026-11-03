@@ -164,3 +164,218 @@ def test_history_pages_backwards(demo, stream):
     assert [item["kind"] for item in everything] == ["message", "message", "action"] * 3
     status, body = demo.request("/api/rika/history?before=" + quote(page["next_before"]))
     assert status == 200 and body["items"] == everything[:5]
+
+
+# Voice and brain dumps (phase 2a) ----------------------------------------------
+
+from kitty.core.rika import voice as voice_engine  # noqa: E402
+from kitty.core.rika.dumps import DEMO_DUMP, DEMO_LINES  # noqa: E402
+
+
+def _audio(stream, seconds: float, chunk: float = 0.25) -> None:
+    for _ in range(int(seconds / chunk)):
+        send_frame(stream.connection, 2, b"\x00\x00" * int(voice_engine.SAMPLE_RATE * chunk))
+
+
+def _control(stream, **message) -> None:
+    send_frame(stream.connection, 1, json.dumps(message).encode())
+
+
+def test_voice_streams_over_the_rika_socket_and_the_spoken_request_routes_fast(demo, stream):
+    status, state = demo.request("/api/rika/voice")
+    assert status == 200 and state["engine"] == "demo" and state["installed"] and state["speech"] is None
+    assert {item["id"] for item in state["models"]} == {"tiny", "base", "small"} and state["model"] == "base"
+    _control(stream, type="voice.start", session="hold-1", mode="command")
+    _audio(stream, 1.5)
+    partial = stream.until(lambda event: event["type"] == "voice.partial" and event["text"])[-1]
+    assert partial["session"] == "hold-1" and voice_engine.DEMO_COMMAND.startswith(partial["text"])
+    _control(stream, type="voice.stop")
+    final = stream.until(lambda event: event["type"] == "voice.final")[-1]
+    assert final["text"] == voice_engine.DEMO_COMMAND and final["mode"] == "command" and final["duration"] == 1.5
+    assert demo.request("/api/rika/history")[1]["items"] == []  # hearing stores nothing by itself
+    status, sent = demo.request("/api/rika/messages", {"text": final["text"], "spoken": True})
+    events = stream.reply()
+    assert kinds(events, "message")[0]["message"]["source"] == "voice"
+    [tier] = kinds(events, "tier")
+    assert tier["tier"] == "fast"
+    reply = events[-1]["message"]
+    assert reply["text"].startswith("Added the task Read chapter 3")
+    status, spoken = demo.request(f"/api/rika/speech/{reply['id']}")
+    assert status == 200 and spoken == {"text": reply["text"], "audio": None}  # the demo never starts a process
+
+
+def test_only_replies_to_spoken_requests_are_spoken(demo, stream):
+    demo.request("/api/rika/messages", {"text": "add a node Cells"})
+    reply = stream.reply()[-1]["message"]
+    assert demo.request(f"/api/rika/speech/{reply['id']}")[0] == 409
+    assert demo.request("/api/rika/speech/" + "0" * 32)[0] == 404
+    assert demo.request("/api/rika/messages", {"text": "hi", "spoken": "yes"})[0] == 400
+
+
+def test_a_fake_engine_streams_chunks_segments_and_the_final_text_to_that_page_only(demo, stream):
+    class Engine:
+        hears_audio = False
+        def transcribe(self, pcm, *, start, final, memory):
+            seconds = len(pcm) // voice_engine.BYTES_PER_SECOND
+            return f"{'final' if final else 'chunk'} {seconds}s" if seconds else ""  # like Whisper on no audio
+
+    demo.app.rika.voice.factory = lambda mode: Engine()
+    other = Stream(demo)
+    try:
+        _control(stream, type="voice.start", session="fake", mode="dump")
+        _audio(stream, 1.0)
+        assert stream.until(lambda event: event["type"] == "voice.partial")[-1]["text"] == "chunk 1s"
+        _audio(stream, 1.0)
+        _control(stream, type="voice.stop")
+        events = stream.until(lambda event: event["type"] == "voice.final")
+        # Silent frames may end the phrase at 2 s just before the stop arrives: then the
+        # committed chunk is the whole text, and the empty rest adds nothing.
+        assert events[-1]["text"] in ("final 2s", "chunk 2s") and events[-1]["mode"] == "dump"
+        assert events[-1]["duration"] == 2.0 and events[-1]["segments"][-1]["end"] == 2.0
+        assert [event["state"] for event in kinds(events, "voice.state")][-1] == "finishing"
+        demo.request("/api/rika/messages", {"text": "add a node Seen"})
+        assert all(not event["type"].startswith("voice.") for event in other.reply())
+    finally:
+        other.connection.close()
+
+
+def test_the_socket_accepts_only_voice_messages_from_the_page(demo):
+    for frame_opcode, payload in ((1, b'{"type": "voice.start", "session": "x", "mode": "sing"}'),
+                                  (1, b'{"type": "token"}'), (2, b"\x00\x00\x00")):
+        status, _headers, connection, rest = _connect(demo)
+        assert status == 101
+        send_frame(connection, frame_opcode, payload)
+        assert FrameReader(connection, rest).closed()[:2] == (1003).to_bytes(2, "big")
+        connection.close()
+
+
+def test_voice_settings_choose_the_model_and_the_demo_downloads_nothing(demo):
+    status, state = demo.request("/api/rika/voice", {"model": "tiny"})
+    assert status == 200 and state["model"] == "tiny"
+    assert demo.request("/api/rika/voice", {"model": "huge"})[0] == 400
+    assert demo.request("/api/rika/voice/model", {})[0] == 409
+    assert demo.request("/api/rika/voice", {"model": "base"}, headers={"X-Kitty-Request": None})[0] == 403
+
+
+def _segments():
+    clock, segments = 0.0, []
+    for line in DEMO_LINES:
+        length = len(line.split()) / voice_engine.DEMO_RATE
+        segments.append({"start": round(clock, 2), "end": round(clock + length, 2), "text": line})
+        clock += length
+    return segments, round(clock, 2)
+
+
+def _dump(demo, stream):
+    segments, duration = _segments()
+    status, sent = demo.request("/api/rika/dumps", {"transcript": DEMO_DUMP, "segments": segments, "duration": duration})
+    assert status == 200, sent
+    events = stream.reply()
+    return sent, events
+
+
+def test_a_brain_dump_in_the_demo_makes_one_plan_grouped_by_area_and_a_dump_note(demo, stream):
+    sent, events = _dump(demo, stream)
+    dump = kinds(events, "message")[0]["message"]
+    assert dump["source"] == "dump" and dump["text"] == DEMO_DUMP
+    [tier] = kinds(events, "tier")
+    assert (tier["tier"], tier["model"]) == ("standard", "demo")
+    [event] = kinds(events, "plan")
+    plan = event["plan"]
+    assert plan["status"] == "pending" and plan["request_id"] == sent["message_id"]
+    assert [item["area"] for item in plan["items"]] == [
+        "notes", "tasks", "tasks", "calendar", "calendar", "calendar", "cards", "jobs", "agents"]
+    asks = [item for item in plan["items"] if item["question"]]
+    assert len(asks) == 1 and asks[0]["question"]["text"] == "Which Tuesday?" and len(asks[0]["question"]["choices"]) == 2
+    assert [item["outward"] for item in plan["items"]].count(True) == 1 and plan["items"][-1]["outward"]
+    assert all(item["source"] in DEMO_LINES and "calls" not in item for item in plan["items"])
+    assert events[-1]["message"]["text"].startswith("One plan from your brain dump: 9 items in notes, tasks, calendar")
+    assert plan["note"]["title"].startswith("Brain dump · ")
+    with closing(connect(demo.app.settings.db_path)) as conn:
+        texts = [row["text"] for row in conn.execute("SELECT text FROM note_blocks WHERE page_id=? ORDER BY ordering",
+                                                     (plan["note"]["page_id"],))]
+        notebook = conn.execute("SELECT n.title FROM note_pages p JOIN note_notebooks n ON n.id=p.notebook_id"
+                                " WHERE p.id=?", (plan["note"]["page_id"],)).fetchone()["title"]
+    assert notebook == "Brain dumps"
+    assert any(text.startswith("Transcript · ") for text in texts)
+    assert "0:00 " + DEMO_LINES[0] in texts and any(DEMO_LINES[-1] in text for text in texts)
+    history = demo.request("/api/rika/history")[1]["items"]
+    assert [item["kind"] for item in history] == ["message", "message", "plan"]
+
+
+def test_approving_ticked_items_runs_them_and_the_dump_note_links_everything_it_made(demo, stream):
+    _sent, events = _dump(demo, stream)
+    plan = kinds(events, "plan")[0]["plan"]
+    ticked = [item["id"] for item in plan["items"] if item["area"] != "agents"]
+    group = next(item for item in plan["items"] if item["question"])
+    assert demo.request(f"/api/rika/plans/{plan['id']}", {"decision": "approve", "items": []})[0] == 400
+    assert demo.request(f"/api/rika/plans/{plan['id']}", {"decision": "approve", "items": ["nope"]})[0] == 400
+    status, body = demo.request(f"/api/rika/plans/{plan['id']}",
+                                {"decision": "approve", "items": ticked, "choices": {group["id"]: 1}})
+    assert status == 200 and body["plan"]["status"] == "running"
+    events = stream.reply()
+    done = kinds(events, "plan")[-1]["plan"]
+    assert done["status"] == "applied"
+    results = {item["area"] + ":" + item["title"]: item["result"] for item in done["items"]}
+    assert results["agents:omp on the habit tracker"]["status"] == "skipped"
+    assert all(result["status"] == "done" for key, result in results.items() if not key.startswith("agents"))
+    actions = kinds(events, "action")
+    assert len(actions) == 11 and all(event["action"]["reversible"] for event in actions)
+    assert len(demo.request("/api/rika/agents")[1]["agents"]) == 5  # the unticked worker never started
+    reply = events[-1]["message"]
+    assert reply["text"].startswith("Done: 8 items in notes, tasks, calendar, cards and jobs.")
+    assert done["note"]["title"] in reply["text"]
+    with closing(connect(demo.app.settings.db_path)) as conn:
+        texts = [row["text"] for row in conn.execute("SELECT text FROM note_blocks WHERE page_id=?",
+                                                     (done["note"]["page_id"],))]
+        study = conn.execute("SELECT start FROM calendar_events WHERE title='Study group'").fetchone()["start"]
+    assert "Created from this dump" in texts
+    assert "[[CS 220 · Final project idea]]" in texts
+    assert any(text.startswith("[Orgo midterm (") and text.endswith(")](#calendar)") for text in texts)
+    assert "[SN1 or SN2: which wins?](#flashcards)" in texts and "[Apply to the Stripe internship](#calendar)" in texts
+    assert {"Calendar", "Tasks", "Cards", "Notes", "Jobs"} <= set(texts) and "Agents" not in texts
+    tuesday = group["question"]["choices"][1].removeprefix("Next ")
+    from datetime import datetime
+    assert datetime.fromisoformat(study).strftime("%a %-d %b") == tuesday
+    assert demo.request(f"/api/rika/plans/{plan['id']}", {"decision": "dismiss"})[0] == 409
+
+
+def test_dismissing_a_plan_keeps_the_transcript_and_makes_nothing(demo, stream):
+    _sent, events = _dump(demo, stream)
+    plan = kinds(events, "plan")[0]["plan"]
+    assert demo.request(f"/api/rika/plans/{plan['id']}", {"decision": "dismiss", "items": []})[0] == 400
+    status, body = demo.request(f"/api/rika/plans/{plan['id']}", {"decision": "dismiss"})
+    assert status == 200 and body["plan"]["status"] == "dismissed"
+    assert stream.until(lambda event: event["type"] == "plan")[-1]["plan"]["status"] == "dismissed"
+    with closing(connect(demo.app.settings.db_path)) as conn:
+        texts = [row["text"] for row in conn.execute("SELECT text FROM note_blocks WHERE page_id=?", (plan["note"]["page_id"],))]
+        assert conn.execute("SELECT count(*) FROM calendar_events").fetchone()[0] == 0
+    assert "Nothing was created from this dump: the plan was dismissed" in texts
+    assert any(text.startswith("Transcript · ") for text in texts)
+
+
+def test_a_typed_dump_in_the_demo_is_planned_phrase_by_phrase(demo, stream):
+    text = "Add a task Read chapter 3 tomorrow. New card Mitosis / Cell division. Okay that's all."
+    status, _sent = demo.request("/api/rika/dumps", {"transcript": text, "segments": [], "duration": 12})
+    assert status == 200
+    plan = kinds(stream.reply(), "plan")[0]["plan"]
+    assert [(item["area"], item["title"]) for item in plan["items"]] == [
+        ("tasks", "Add a task Read chapter 3 tomorrow"), ("cards", "New card Mitosis / Cell division")]
+    for body in ({"transcript": "", "segments": [], "duration": 1},
+                 {"transcript": "hi", "segments": [{"start": 2, "end": 1, "text": "x"}], "duration": 1},
+                 {"transcript": "hi", "segments": [], "duration": -1}, {"transcript": "hi", "segments": []}):
+        assert demo.request("/api/rika/dumps", body)[0] == 400
+
+
+def test_undo_all_reverts_everything_a_plan_made_newest_first(demo, stream):
+    _sent, events = _dump(demo, stream)
+    plan = kinds(events, "plan")[0]["plan"]
+    ticked = [item["id"] for item in plan["items"] if item["area"] != "agents"]
+    demo.request(f"/api/rika/plans/{plan['id']}", {"decision": "approve", "items": ticked})
+    actions = [event["action"] for event in kinds(stream.reply(), "action")]
+    results = [demo.request(f"/api/rika/actions/{action['id']}/undo", {}) for action in reversed(actions)]
+    assert [status for status, _body in results] == [200] * len(actions), [body for _status, body in results]
+    with closing(connect(demo.app.settings.db_path)) as conn:
+        assert conn.execute("SELECT count(*) FROM calendar_events WHERE deleted=0").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM note_pages WHERE title='CS 220 · Final project idea'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM flash_notes WHERE archived=0").fetchone()[0] == 0

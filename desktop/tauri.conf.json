@@ -27,7 +27,7 @@
     },
     "linux": {
       "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "xdg-utils", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio", "pkexec"], "conflicts": ["kitty-workspace"], "replaces": ["kitty-workspace"] },
-      "appimage": { "bundleMediaFramework": false }
+      "appimage": { "bundleMediaFramework": true }
     }
   },
   "plugins": {

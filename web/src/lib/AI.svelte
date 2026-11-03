@@ -3,6 +3,7 @@
   import { api, type TaskRecord } from "./api";
   import AIReview from "./AIReview.svelte";
   import { activeModules } from "./modules.svelte";
+  import RikaVoiceSettings from "./rika/RikaVoiceSettings.svelte";
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
   type Model = {
@@ -223,6 +224,7 @@
         Failed/time-out requests may be billed and stay reserved against the
         cap.
       </p>
+      <RikaVoiceSettings />
     {:else}<p>Loading AI settings…</p>{/if}
   </section>
   {#if workspaceTools}<section class="panel ai-panel">
