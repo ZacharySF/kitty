@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""kitty! activity hook for Claude Code and Codex (docs/agent-skills-design.md Q3 B).
+
+kitty! passes it per launch only (Claude ``--settings`` hooks, Codex ``-c hooks``), never
+in the user's own config. Each PreToolUse event arrives as JSON on stdin; the hook
+reports the tool's name, and the skill's name when the tool loads one, as display-only
+tokens on this herdr pane:
+
+    herdr pane report-metadata $HERDR_PANE_ID --source kitty:activity
+        --token kitty-tool=<tool> [--token kitty-skill=<skill>] --ttl-ms 600000
+
+Nothing else leaves the event. A repeat of the same tool and skill within two seconds is
+not reported again. Any failure is silent: the agent never waits on kitty!.
+Usage: python3 kitty-activity-hook claude|codex
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+SOURCE = "kitty:activity"
+TTL_MS = "600000"
+MIN_INTERVAL = 2.0
+NAME = re.compile(r"[^\w.:@/+-]+")
+SKILL_FILE = re.compile(r"/skills/(?:\.system/)?([A-Za-z0-9][\w.-]{0,79})/SKILL\.md")
+
+
+def clean(value):
+    return NAME.sub("", value.strip())[:80] if isinstance(value, str) else ""
+
+
+def main():
+    kind = sys.argv[1] if len(sys.argv) > 1 else ""
+    pane = os.environ.get("HERDR_PANE_ID", "")
+    if kind not in ("claude", "codex") or not pane:
+        return
+    try:
+        event = json.loads(sys.stdin.read(1_000_000) or "{}")
+    except ValueError:
+        return
+    if not isinstance(event, dict) or event.get("hook_event_name", "PreToolUse") != "PreToolUse":
+        return
+    tool = clean(event.get("tool_name"))
+    if not tool:
+        return
+    data = event.get("tool_input")
+    skill = ""
+    if kind == "claude" and tool == "Skill" and isinstance(data, dict):
+        skill = clean(data.get("skill"))
+    elif kind == "codex":
+        match = SKILL_FILE.search(data if isinstance(data, str) else json.dumps(data))
+        skill = clean(match[1]) if match else ""
+    folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "activity")
+    state = os.path.join(folder, re.sub(r"[^\w.-]", "_", pane) + ".last")
+    stamp = tool + "\t" + skill
+    try:
+        with open(state, encoding="utf-8") as handle:
+            if handle.read() == stamp and time.time() - os.path.getmtime(state) < MIN_INTERVAL:
+                return
+    except OSError:
+        pass
+    try:
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        with open(state, "w", encoding="utf-8") as handle:
+            handle.write(stamp)
+    except OSError:
+        pass
+    arguments = [os.environ.get("HERDR_BIN_PATH") or "herdr", "pane", "report-metadata", pane,
+                 "--source", SOURCE, "--token", "kitty-tool=" + tool, "--ttl-ms", TTL_MS]
+    if skill:
+        arguments += ["--token", "kitty-skill=" + skill]
+    try:
+        subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+if __name__ == "__main__":
+    main()

@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
-    webview::NewWindowResponse,
+    webview::{NewWindowResponse, PermissionKind, PermissionResponse},
     Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use url::Url;
@@ -82,8 +82,17 @@ fn external_url(url: &Url) -> bool {
 fn open_external(url: &Url) {
     if external_url(url) {
         // open passes the checked URL as an argument, not shell source. There is
-        // deliberately no frontend shell, file, opener, or notification command.
+        // deliberately no frontend shell, file, opener, or notification command; the
+        // one file the owner pipe may open is a listed SKILL.md (open_skill).
         let _ = open::that_detached(url.as_str());
+    }
+}
+
+/// The agent skills view's "Open file": the owner pipe already accepted only an absolute
+/// path named SKILL.md; it must still be a regular file when it opens.
+fn open_skill(path: &Path) {
+    if path.is_file() {
+        let _ = open::that_detached(path);
     }
 }
 
@@ -249,6 +258,7 @@ fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
         owner::Command::NewQuickNote => open_quick_note(app, "quick-note".into()),
         owner::Command::KeepRunning(enabled) => set_background(app, enabled),
         owner::Command::Quit => request_quit(app),
+        owner::Command::OpenSkill(path) => open_skill(&path),
     }
 }
 
@@ -327,6 +337,14 @@ fn main() {
                 .on_navigation(move |url| {
                     if local_url(url, &navigation_origin) { true }
                     else { open_external(url); false }
+                })
+                // Rika's voice input (docs/rika-design.md Q5): WebKitGTK denies getUserMedia
+                // unless the app allows it. The window only shows rika!'s own loopback origin
+                // (navigation above), audio is transcribed on this computer, and the page
+                // opens the microphone only while Space is held or a brain dump runs.
+                .on_permission_request(|_webview, kind| match kind {
+                    PermissionKind::Microphone => PermissionResponse::Allow,
+                    _ => PermissionResponse::Default,
                 })
                 .on_new_window(move |url, _features| {
                     match quick_note_target(&url, &note_origin) {

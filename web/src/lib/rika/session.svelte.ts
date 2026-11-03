@@ -1,5 +1,6 @@
 import { api } from "../api";
-import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaMessage, type StreamEvent } from "./rika";
+import { Mic, MicError } from "./mic";
+import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
 
 /** How long a finished reply's toast stays before it leaves for the drawer. */
 export const RIKA_TOAST_MS = 9000;
@@ -8,12 +9,28 @@ const RETRY_MS = [500, 1000, 2000, 5000, 10_000];
 
 export type RikaToast = { id: number; message: string; left: number };
 export type DrawerSection = "conversation" | "agents";
+/**
+ * Voice input: `starting` while the microphone opens, `loading` while the backend gets
+ * its model ready (downloading it on first use), `listening`, then `finishing` while the
+ * last words are transcribed.
+ */
+export type VoiceState = {
+  phase: "idle" | "starting" | "loading" | "listening" | "finishing";
+  mode: VoiceMode;
+  session: string;
+  partial: string;
+  segments: Segment[];
+  /** Typed text the spoken words continue. */
+  prefix: string;
+};
+const IDLE: VoiceState = { phase: "idle", mode: "command", session: "", partial: "", segments: [], prefix: "" };
 
 /**
- * The browser side of Rika (docs/rika-design.md Q2 D, Q19, Q20): the conversation,
- * its actions and approvals, the live worker agents, the reply toasts and the history
- * drawer. One socket (`/api/rika/stream`) carries every live event; REST loads history
- * and agents and sends requests, decisions, undos and opens.
+ * The browser side of Rika (docs/rika-design.md Q2 D, Q3–Q8, Q19, Q20): the conversation,
+ * its actions, approvals and brain-dump plans, voice input, the live worker agents, the
+ * reply toasts and the history drawer. One socket (`/api/rika/stream`) carries every
+ * live event and the microphone's audio; REST loads history and agents and sends
+ * requests, dumps, decisions, undos and opens.
  */
 export class RikaSession {
   entries = $state<Entry[]>([]);
@@ -23,6 +40,9 @@ export class RikaSession {
   error = $state("");
   connected = $state(false);
   drawer = $state<{ open: boolean; section: DrawerSection; auto: boolean }>({ open: false, section: "conversation", auto: false });
+  voice = $state<VoiceState>({ ...IDLE });
+  /** The Whisper model's first-use download, while it runs. */
+  model = $state<{ received: number; total: number } | null>(null);
   /** Requests sent whose reply has not started yet. */
   private waiting = $state<string[]>([]);
   private nextBefore: string | null = null;
@@ -32,14 +52,20 @@ export class RikaSession {
   private retryTimer = 0;
   private stopped = true;
   private onnavigate: (view: string) => void = () => {};
+  private mic: Mic | null = null;
+  private nextVoice = 1;
+  /** Replies already spoken back (Q6 C), so a repeated final event speaks once. */
+  private said = new Set<string>();
 
   readonly pending = $derived(this.entries.filter((entry): entry is Entry & { kind: "approval" } => entry.kind === "approval" && entry.status === "pending"));
+  readonly pendingPlans = $derived(this.entries.filter((entry): entry is Entry & { kind: "plan" } => entry.kind === "plan" && entry.status === "pending"));
   /** Replies still being written (not those paused on an approval), or requests not yet answered. */
   readonly streaming = $derived(
     this.waiting.length > 0 ||
       this.entries.some((entry) => entry.kind === "message" && entry.role === "rika" && entry.status === "pending" &&
         !this.pending.some((approval) => String(approval.message_id) === String(entry.id))),
   );
+  readonly listening = $derived(this.voice.phase !== "idle");
 
   /** Connects; returns the disconnect. `onnavigate` runs Rika's "open view" client actions. */
   start(onnavigate: (view: string) => void): () => void {
@@ -54,6 +80,7 @@ export class RikaSession {
   stop() {
     this.stopped = true;
     window.clearTimeout(this.retryTimer);
+    this.endVoice();
     this.socket?.close();
     this.socket = null;
     this.connected = false;
@@ -77,6 +104,8 @@ export class RikaSession {
       if (this.socket !== socket) return;
       this.connected = false;
       this.socket = null;
+      // The backend's transcription belonged to this socket; whatever was being said is lost.
+      if (this.listening) this.voiceFailed("Rika's connection dropped while listening; nothing was sent");
       if (this.stopped) return;
       this.retryTimer = window.setTimeout(() => this.connect(), RETRY_MS[Math.min(this.retry, RETRY_MS.length - 1)]);
       this.retry += 1;
@@ -107,10 +136,21 @@ export class RikaSession {
 
   apply(event: StreamEvent) {
     switch (event.type) {
-      case "message":
-        if (event.message.role === "rika") this.reply(event.message.id, event.message.reply_to, () => ({ status: "done", ...event.message }));
-        else this.upsert({ kind: "message", ...event.message });
+      case "message": {
+        const message = event.message;
+        if (message.role !== "rika") {
+          this.upsert({ kind: "message", ...message });
+          break;
+        }
+        this.reply(message.id, message.reply_to, () => ({ status: "done", ...message }));
+        // The request's own message event (with its source) always comes before its reply's.
+        const request = message.reply_to == null ? undefined : this.message(message.reply_to);
+        if (message.status !== "pending" && request?.source === "voice" && !this.said.has(String(message.id))) {
+          this.said.add(String(message.id));
+          void this.speak(message);
+        }
         break;
+      }
       case "token":
         this.reply(event.message_id, event.reply_to, (current) => ({ text: (current?.text ?? "") + event.text, status: "pending" }));
         break;
@@ -129,28 +169,168 @@ export class RikaSession {
       case "navigate":
         this.onnavigate(event.view);
         break;
+      case "plan":
+        this.plan(event.plan);
+        break;
+      case "voice.model":
+        this.model = event.state === "downloading" ? { received: event.received, total: event.total } : null;
+        if (event.state === "failed" && event.message) this.error = event.message;
+        break;
+      case "voice.state":
+      case "voice.partial":
+      case "voice.segment":
+      case "voice.final":
+      case "voice.error":
+        this.heard(event);
+        break;
     }
   }
 
-  async send(text: string, tier?: RikaMessage["tier"]) {
+  async send(text: string, tier?: RikaMessage["tier"], spoken = false) {
     const request = text.trim();
     if (!request) return false;
+    const body: Record<string, unknown> = { text: request };
+    if (tier) body.tier = tier;
+    if (spoken) body.spoken = true;
+    return this.request("/rika/messages", body, request, spoken ? "voice" : "typed");
+  }
+
+  /** Sends a brain dump's transcript; its dump note is saved and its plan comes back as a `plan` event. */
+  async dump(transcript: string, segments: Segment[], duration: number) {
+    if (!transcript.trim()) {
+      this.error = "Rika heard nothing in that brain dump";
+      this.releaseAuto();
+      return false;
+    }
+    const sent = await this.request("/rika/dumps", { transcript, segments, duration }, transcript, "dump");
+    if (!sent) this.releaseAuto();
+    return sent;
+  }
+
+  private async request(path: string, body: Record<string, unknown>, text: string, source: RikaMessage["source"]) {
     this.error = "";
     const ticket = `local:${Date.now()}:${Math.random()}`;
     // Stamped before sending: an instant reply must not sort above the request it answers.
     const sentAt = new Date().toISOString();
     this.waiting = [...this.waiting, ticket];
     try {
-      const sent = await api<{ conversation_id: Id; message_id: Id }>("/rika/messages", tier ? { text: request, tier } : { text: request });
+      const sent = await api<{ conversation_id: Id; message_id: Id }>(path, body);
       // The reply's first event names the user message it answers.
       this.waiting = this.waiting.map((item) => (item === ticket ? String(sent.message_id) : item));
       if (!this.message(sent.message_id))
-        this.upsert({ kind: "message", id: sent.message_id, conversation_id: sent.conversation_id, role: "user", text: request, created_at: sentAt });
+        this.upsert({ kind: "message", id: sent.message_id, conversation_id: sent.conversation_id, role: "user", text, source, created_at: sentAt });
       return true;
     } catch (cause) {
       this.waiting = this.waiting.filter((item) => item !== ticket);
       this.error = (cause as Error).message;
       return false;
+    }
+  }
+
+  // Voice -----------------------------------------------------------------------
+
+  /**
+   * Opens the microphone and streams it to the backend (Q3 A, Q5 A). A command is sent as
+   * a spoken request when it ends; a brain dump (Q7 A) shows its live transcript in the
+   * drawer, which opens by itself, and is planned when it ends.
+   */
+  async listen(mode: VoiceMode, prefix = "") {
+    if (this.listening) return;
+    this.error = "";
+    const session = `v${Date.now().toString(36)}${this.nextVoice++}`;
+    this.voice = { ...IDLE, phase: "starting", mode, session, prefix };
+    if (mode === "dump") this.openAuto();
+    const mic = (this.mic = new Mic());
+    try {
+      await mic.start((pcm) => {
+        if (this.voice.session === session && this.voice.phase !== "finishing") this.socket?.send(pcm);
+      });
+    } catch (cause) {
+      if (this.mic === mic) this.voiceFailed(cause instanceof MicError ? cause.message : "The microphone could not be opened");
+      return;
+    }
+    if (this.voice.session !== session) return mic.stop(); // cancelled while the microphone opened
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return this.voiceFailed("Rika is offline; try again in a moment");
+    socket.send(JSON.stringify({ type: "voice.start", session, mode: this.voice.mode }));
+    if (this.voice.phase === "finishing") socket.send(JSON.stringify({ type: "voice.stop" }));
+    else this.voice = { ...this.voice, phase: "loading" };
+  }
+
+  /** A held command became a brain dump: keep listening, with the transcript in the drawer. */
+  latch() {
+    if (!this.listening || this.voice.mode === "dump") return;
+    this.voice = { ...this.voice, mode: "dump" };
+    if (this.voice.phase !== "starting") this.socket?.send(JSON.stringify({ type: "voice.mode", mode: "dump" }));
+    this.openAuto();
+  }
+
+  /** Stop listening and send what was said (the backend transcribes the rest first). */
+  finish() {
+    if (!this.listening || this.voice.phase === "finishing") return;
+    const starting = this.voice.phase === "starting";
+    this.voice = { ...this.voice, phase: "finishing" };
+    this.mic?.stop();
+    this.mic = null;
+    if (!starting) this.socket?.send(JSON.stringify({ type: "voice.stop" }));
+  }
+
+  /** Drop what is being said; nothing is sent. */
+  cancel() {
+    if (!this.listening) return;
+    if (this.voice.phase !== "starting") this.socket?.send(JSON.stringify({ type: "voice.cancel" }));
+    const dump = this.voice.mode === "dump";
+    this.endVoice();
+    if (dump) this.releaseAuto();
+  }
+
+  private endVoice() {
+    this.mic?.stop();
+    this.mic = null;
+    this.voice = { ...IDLE };
+  }
+
+  private voiceFailed(message: string) {
+    const dump = this.voice.mode === "dump";
+    this.endVoice();
+    this.error = message;
+    if (dump) this.releaseAuto();
+  }
+
+  private heard(event: Extract<StreamEvent, { session: string }>) {
+    if (event.session !== this.voice.session) return;
+    switch (event.type) {
+      case "voice.state":
+        if (event.state === "listening" && this.voice.phase !== "finishing") this.voice = { ...this.voice, phase: "listening" };
+        break;
+      case "voice.partial":
+        this.voice = { ...this.voice, partial: event.text };
+        break;
+      case "voice.segment":
+        this.voice = { ...this.voice, segments: [...this.voice.segments, { start: event.start, end: event.end, text: event.text }] };
+        break;
+      case "voice.error":
+        this.voiceFailed(event.message);
+        break;
+      case "voice.final": {
+        const { mode, prefix } = this.voice;
+        this.endVoice();
+        if (mode === "dump") void this.dump(event.text, event.segments, event.duration);
+        else if (event.text.trim()) void this.send(`${prefix} ${event.text}`.trim(), undefined, true);
+        else this.error = "Rika heard nothing; hold Space and speak";
+        break;
+      }
+    }
+  }
+
+  /** Approve the ticked items of a plan (with the chosen answer to its question) or dismiss it. */
+  async decidePlan(id: Id, decision: "approve" | "dismiss", items: string[] = [], choices: Record<string, number> = {}) {
+    try {
+      const body = decision === "approve" ? { decision, items, choices } : { decision };
+      const { plan } = await api<{ plan: RikaPlan }>(`/rika/plans/${encodeURIComponent(String(id))}`, body);
+      this.plan(plan);
+    } catch (cause) {
+      this.error = (cause as Error).message;
     }
   }
 
@@ -161,6 +341,11 @@ export class RikaSession {
     } catch (cause) {
       this.error = (cause as Error).message;
     }
+  }
+
+  /** Undoes several actions newest first, so each one finds the state it left. */
+  async undoAll(ids: Id[]) {
+    for (const id of [...ids].reverse()) await this.undo(id);
   }
 
   async undo(id: Id) {
@@ -180,6 +365,11 @@ export class RikaSession {
     } catch (cause) {
       this.error = (cause as Error).message;
     }
+  }
+
+  /** Opens one of the app's views (a dump note's links, the Agents cards' "All agent skills" link). */
+  navigate(view: string) {
+    this.onnavigate(view);
   }
 
   showDrawer(section: DrawerSection = this.drawer.section) {
@@ -205,11 +395,39 @@ export class RikaSession {
     return this.entries.find((entry): entry is Entry & { kind: "message" } => entry.kind === "message" && String(entry.id) === String(id));
   }
 
-  /** Q20 A: an approval opens the drawer by itself; deciding the last one closes what it opened. */
+  /** Q20 A: a pending approval opens the drawer by itself; deciding the last one closes what it opened. */
   private approval(approval: RikaApproval) {
     this.upsert({ kind: "approval", ...approval });
-    if (approval.status === "pending" && !this.drawer.open) this.drawer = { open: true, section: "conversation", auto: true };
-    else if (approval.status !== "pending" && this.drawer.open && this.drawer.auto && !this.pending.length) this.closeDrawer();
+    if (approval.status === "pending") this.openAuto();
+    else this.releaseAuto();
+  }
+
+  /** Q20 A: a brain dump's plan opens the drawer by itself too, and deciding it closes what that opened. */
+  private plan(plan: RikaPlan) {
+    this.upsert({ kind: "plan", ...plan });
+    if (plan.status === "pending") this.openAuto();
+    else this.releaseAuto();
+  }
+
+  private openAuto() {
+    if (!this.drawer.open) this.drawer = { open: true, section: "conversation", auto: true };
+    else if (this.drawer.section !== "conversation") this.drawer = { ...this.drawer, section: "conversation" };
+  }
+
+  /** Closes a drawer that opened by itself once nothing in it waits for the user. */
+  private releaseAuto() {
+    const dumping = this.listening && this.voice.mode === "dump";
+    if (this.drawer.open && this.drawer.auto && !this.pending.length && !this.pendingPlans.length && !dumping) this.closeDrawer();
+  }
+
+  /** Q6 C: a reply to something said aloud is spoken back as a short summary, when a local engine can. */
+  private async speak(reply: RikaMessage) {
+    try {
+      const { audio } = await api<{ text: string; audio: string | null }>(`/rika/speech/${encodeURIComponent(String(reply.id))}`);
+      if (audio) await new Audio(audio).play();
+    } catch {
+      // Speech is a courtesy: without it the reply is still in its toast.
+    }
   }
 
   private upsert(entry: Entry) {

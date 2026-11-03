@@ -1,7 +1,8 @@
 """The tier router (design Q12): each request goes to the smallest tier that can do it.
 
-* **fast**: talk, simple edits and classification (and, in phase 2, every voice reply);
-* **standard**: planning;
+* **fast**: talk, simple edits and classification, and every spoken request (Q12:
+  voice always uses the quickest tier);
+* **standard**: planning, including a brain dump's plan;
 * **deep**: multi-step work across many tools, or a retry of work that failed.
 
 Routing is a local heuristic, so the router itself costs no tokens. The loop then
@@ -45,12 +46,14 @@ class Decision:
     reason: str
 
 
-def route(text: str, *, override: str | None = None, failed_before: bool = False) -> Decision:
+def route(text: str, *, override: str | None = None, failed_before: bool = False, spoken: bool = False) -> Decision:
     """The tier for one request."""
     if override is not None:
         if override not in TIERS:
             raise ValueError("Choose the fast, standard or deep tier")
         return Decision(override, "override")
+    if spoken:
+        return Decision("fast", "voice")
     if failed_before or _RETRY.search(text):
         return Decision("deep", "retry")
     clauses = [part for part in _CLAUSES.split(text.strip()) if part.strip()]

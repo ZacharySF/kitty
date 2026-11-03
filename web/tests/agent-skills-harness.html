@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Browser fixture for tests/agentSkills.browser.test.mjs: the real Rika UI, the new-agent
+     strip and the All agent skills view; the test routes their API. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Agent skills harness</title>
+    <style>
+      html, body { margin: 0; }
+      #view { height: calc(100vh - var(--rika-space, 0px)); box-sizing: border-box; overflow: auto; padding: 0 24px 24px; }
+    </style>
+  </head>
+  <body>
+    <main id="view"><div id="agents"></div><div id="skills"></div></main>
+    <div id="rika"></div>
+    <script type="module" src="./agentSkillsHarness.js"></script>
+  </body>
+</html>
