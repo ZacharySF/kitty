@@ -200,8 +200,12 @@ def test_search_spans_the_workspace_and_keeps_note_text_private_unless_allowed(c
     run(ctx, "add_card", front="What does a ribosome do?", back="Makes proteins")
     run(ctx, "create_event", title="Ribosome lab", start="2026-11-06T10:00")
     run(ctx, "add_map_topic", label="Ribosome")
-    found = run(ctx, "search", query="ribosome").data
+    result = run(ctx, "search", query="ribosome")
+    found = result.data
     assert len(found["blocks"]) == len(found["cards"]) == len(found["events"]) == len(found["maps"]) == 1
+    assert result.summary == ("Found 5 matches for ribosome: Cell notes (page), Ribosome lab (event), "
+                              "What does a ribosome do? (card), Mind map (mind map) and 1 more")
+    assert run(ctx, "search", query="zebra").summary == "Nothing matches zebra"
     assert found["blocks"][0]["text"] is None
     ctx.conn.execute("UPDATE note_preferences SET allow_ai=1")
     assert run(ctx, "search", query="ribosome").data["blocks"][0]["text"] == "ribosome function"

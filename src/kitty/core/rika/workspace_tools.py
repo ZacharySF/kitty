@@ -41,6 +41,11 @@ VIEW_ALIASES = {
 #: Canvas defaults of a new sticky note, matching the Notes view's (web/src/lib/Notes.svelte).
 STICKY = {"color": "#e7dfef", "fill": "#fff2a8", "width": 3, "w": 240, "h": 180, "fontSize": 20}
 SEARCH_LIMIT = 10
+#: Matches the search summary names, in order: (result kind, label, title field).
+_NAMED = (("pages", "page", "title"), ("events", "event", "title"), ("tasks", "task", "title"),
+          ("cards", "card", "front"), ("maps", "mind map", "title"), ("subjects", "subject", "name"),
+          ("study_tasks", "study task", "title"), ("jobs", "job", "title"))
+SUMMARY_NAMES = 4
 
 
 def _allow_ai(conn) -> bool:
@@ -551,9 +556,13 @@ def _search(ctx: Context, args: dict) -> Result:
             " WHERE j.title LIKE ? ESCAPE '\\' OR c.display_name LIKE ? ESCAPE '\\' ORDER BY j.last_seen_at DESC LIMIT ?",
             (pattern, pattern, SEARCH_LIMIT))]
     total = sum(len(items) for items in results.values())
-    kinds = ", ".join(f"{len(items)} {name.replace('_', ' ')}" for name, items in results.items() if items)
-    return Result(f"Found {total} match{'es' if total != 1 else ''} for {args['query']}" + (f": {kinds}" if kinds else ""),
-                  results)
+    if not total:
+        return Result(f"Nothing matches {args['query']}", results)
+    names = [f"{item[field]} ({label})" for kind, label, field in _NAMED for item in results.get(kind, [])]
+    shown = names[:SUMMARY_NAMES]
+    rest = total - len(shown)
+    return Result(f"Found {total} match{'es' if total != 1 else ''} for {args['query']}: " + ", ".join(shown)
+                  + (f" and {rest} more" if rest else ""), results)
 
 
 # Declarations -----------------------------------------------------------------
