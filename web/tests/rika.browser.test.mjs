@@ -181,7 +181,8 @@ test("Enter sends; the reply lands as a toast with its tier, and the drawer hold
   assert.equal(await page.getByRole("textbox", { name: "Ask Rika" }).inputValue(), "");
   assert.equal((await toast.locator("[data-tier]").innerText()).toLowerCase(), "fast");
   assert.ok(await toast.getByRole("button", { name: "Undo" }).isVisible());
-  // The toast sits above the bar, in the notification stack's corner.
+  // The toast sits above the bar, in the notification stack's corner, once it has risen into place.
+  await toast.evaluate((node) => Promise.all(node.getAnimations().map((animation) => animation.finished)));
   const [card, bar] = await Promise.all([toast.boundingBox(), page.getByRole("region", { name: "Rika" }).boundingBox()]);
   assert.ok(card.y + card.height <= bar.y, "the toast overlaps the bar");
   assert.ok(card.x + card.width > 1100, "the toast is not on the right");

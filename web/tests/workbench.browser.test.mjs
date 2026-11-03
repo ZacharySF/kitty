@@ -2712,7 +2712,7 @@ describe("Rika against the demo's scripted responder", () => {
     await ask(page, "open calendar");
     await page.waitForFunction(() => location.hash === "#calendar");
     await page.keyboard.press("Control+k");
-    const search = page.getByRole("dialog").getByRole("textbox");
+    const search = page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox");
     await search.fill("Open terminal");
     await search.press("Enter");
     // Without a usable Tern the request fails and the Tern view says why.

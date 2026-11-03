@@ -18,6 +18,11 @@
     const date = new Date(value ?? "");
     return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
+  // While open, the drawer's room on the right keeps the toasts beside it (Q2 D).
+  $effect(() => {
+    document.documentElement.style.setProperty("--rika-drawer", "calc(min(400px, 100vw - 1.5rem) + 0.75rem)");
+    return () => document.documentElement.style.removeProperty("--rika-drawer");
+  });
   // New entries scroll into view, so an approval that opened the drawer is in sight.
   $effect(() => {
     void rika.entries.length;

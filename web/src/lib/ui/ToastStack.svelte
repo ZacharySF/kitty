@@ -90,7 +90,9 @@
 <style>
   .toasts {
     position: fixed;
-    right: 16px;
+    /* Rika's history drawer, while open, keeps the stack beside it rather than under it. */
+    right: calc(16px + var(--rika-drawer, 0px));
+    transition: right 200ms;
     bottom: calc(max(16px, calc(var(--rika-space, 0px) + 12px)) + var(--offset));
     z-index: 40;
     display: grid;

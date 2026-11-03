@@ -287,9 +287,10 @@ browser filling, Gmail, notifications and paid operations are disabled. Syntheti
 text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
 be registered inside the disposable workspace.
 
-### Rika
+### The Rika bar
 
-**Rika** is rika!'s own agent (docs/rika-design.md). It lives in the **Rika bar**,
+**Rika** is rika!'s own agent; what it can do, its tiers and what it asks first are
+under **Rika** in the AI settings section below. It lives in the **Rika bar**,
 the slim bar along the bottom of the window: type a request in **Ask Rika…** and
 press Enter. While Rika writes its reply the whole bar breathes with a soft ring of
 light (under Reduce motion the ring stays lit and still). Each reply lands as a toast
@@ -300,10 +301,9 @@ changed in the app carries **Undo**. Reminder toasts stack above Rika's.
 **History** on the bar, or **Ctrl+J** from anywhere but a terminal, opens the history
 drawer on the right: **Conversation** holds every request and reply, the action
 cards Rika ran (Undo while it can still be undone) and its approvals. Anything
-outward or irreversible (starting a worker agent, running a command, sending,
-deleting what Trash cannot restore, changing settings) waits for **Approve** or
-**Reject** on an approval card that says what will happen and, for paid model runs,
-the estimated cost. The drawer opens by itself when Rika asks for an approval and
+outward or irreversible waits for **Approve** or **Reject** on an approval card
+that says what will happen and, when it has one, the estimated cost. The drawer
+opens by itself when Rika asks for an approval and
 closes once you decide; one you opened yourself stays open. **Agents** holds a live
 card per worker agent (omp, Claude Code, Codex) in herdr or Tern: state, task, last
 output line, a timer and **Open window**.
@@ -311,10 +311,9 @@ output line, a timer and **Open window**.
 Running worker agents also show as chips on the right of the bar, a state dot and
 name each (working, blocked, idle, done); a chip opens that agent's Tern window.
 Past four agents the chips collapse to one count, which opens the drawer's Agents.
-When Rika opens a page ("open calendar"), the workspace tab navigates there. In the
-website demo Rika is a scripted responder that exercises the same tools and never
-calls a model. Voice input (hold Space) comes later; the bar draws no Space keycap
-or hint.
+When Rika opens a page ("open calendar"), the workspace tab navigates there; when an
+agent has no Tern window to focus, its chip opens the herdr view. Voice input (hold
+Space) comes later; the bar draws no Space keycap or hint.
 
 ### Controls and surfaces
 
@@ -945,8 +944,10 @@ the Rika bar, and it does the work through the app's own functions.
   maximum cost in the same ledger as the reviewed requests. It is sent with those
   prices as the provider's ceiling, with no fallbacks and no retries. Providers
   must decline data collection. What you ask Rika is sent, along with what its
-  tools return for that request. Note text is included only while the Notes
-  privacy setting allows AI; otherwise Rika gets titles and ids only. Text that
+  tools return for that request. Note text is included only while **Allow
+  selected-text AI sharing** (Notes → Privacy & storage) is on: then Rika can read
+  the notes a request needs, never whole notebooks at once, and selected-text
+  requests work as before; while it is off, Rika gets titles and ids only. Text that
   tools return is treated as data, never as instructions.
 - **Worker agents** (Terminal module). When you approve **start**, Rika:
   1. runs rika!'s herdr session headless if no page attached it;

@@ -2168,7 +2168,7 @@
 {#if privacyOpen}
   <EditDrawer title="Privacy & storage" onclose={() => (privacyOpen = false)}>
     <div class="drawer-group">
-      <label class="drawer-check" title="Only text you select is ever sent; whole notebooks never are"><input type="checkbox" bind:checked={prefs.allow_ai} />Allow selected-text AI sharing</label>
+      <label class="drawer-check" title="While on, AI requests get the text you select, and Rika can read the notes a request needs; never whole notebooks at once"><input type="checkbox" bind:checked={prefs.allow_ai} />Allow selected-text AI sharing</label>
       <label class="drawer-field" title="0 removes unused references as soon as you clean up">Unused reference retention (days)<input type="number" min="0" max="3650" bind:value={prefs.retention_days} /></label>
     </div>
     <div class="drawer-group">
