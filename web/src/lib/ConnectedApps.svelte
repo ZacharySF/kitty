@@ -41,7 +41,7 @@
 
 <Panel title="Connected apps" aria-label="Connected apps">
     <div class="connected">
-      <p class="muted">Programs such as the kitty Tern plugin or the kitty browser extension can capture notes and read titles once you approve them here. Each one gets its own token, limited to what it asked for; revoking it ends its access.</p>
+      <p class="muted">Programs such as the rika! plugin for Tern or the rika! browser extension can capture notes and read titles once you approve them here. Each one gets its own token, limited to what it asked for; revoking it ends its access.</p>
       {#if connected?.requests.length}
         <h3>Waiting for your approval</h3>
         <ul class="rows">

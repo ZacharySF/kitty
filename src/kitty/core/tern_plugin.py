@@ -166,7 +166,7 @@ def install(runtime: TernRuntime, root: Path) -> dict:
     """Copy the shipped plugin into the workspace and link it into the user's Tern."""
     shipped = shipped_dir()
     if shipped is None:
-        raise PluginError("This rika! was built without the kitty Tern plugin")
+        raise PluginError("This rika! was built without its plugin for Tern")
     plugins = _plugins_folder(runtime)
     if (plugins / PLUGIN_ID).exists():
         raise PluginError(f"Tern already has a plugin installed as {plugins / PLUGIN_ID}; "
