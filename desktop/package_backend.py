@@ -49,7 +49,7 @@ def main() -> None:
     ]
     # These adapters load data/native libraries dynamically. Optional packages
     # are collected only when present in the project's locked environment.
-    for module in ("jobspy", "curl_cffi", "tls_client", "textual", "mcp", "google.auth", "google_auth_oauthlib", "fsrs", "icalendar", "pymupdf", "PIL", "zstandard"):
+    for module in ("jobspy", "curl_cffi", "tls_client", "textual", "mcp", "google.auth", "google_auth_oauthlib", "fsrs", "sympy", "mpmath", "lark", "antlr4", "icalendar", "pymupdf", "PIL", "zstandard"):
         if importlib.util.find_spec(module) is not None:
             command.extend(["--collect-all", module])
     command.append(str(desktop / "backend.py"))
