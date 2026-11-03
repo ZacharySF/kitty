@@ -71,36 +71,33 @@ jobs:
             tests/test_web_profile.py tests/test_web_resumes.py tests/test_web_insights.py \
             tests/test_web_terminal.py tests/test_herdr_bundle.py
           cargo test --manifest-path desktop/Cargo.toml --locked
-      - name: Build signed installers and draft public release
+      - name: Build signed installers
         uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # linuxdeploy's rpath rewrite crashes the static-pie herdr sidecar; see the wrapper.
           PATCHELF: ${{ github.workspace }}/desktop/appimage_patchelf.py
         with:
-          owner: ZacharySF
-          repo: kitty-releases
-          # A source-repository SHA is not a valid target in the public repository.
-          releaseCommitish: main
           projectPath: desktop
           tauriScript: ${{ github.workspace }}/web/node_modules/.bin/tauri
           args: --bundles appimage,deb -- --locked
-          tagName: ${{ steps.version.outputs.tag }}
-          releaseName: rika! ${{ steps.version.outputs.tag }} (Linux x86_64)
-          releaseBody: |
-            Download the .deb for Ubuntu 22.04+ / compatible Debian-based desktops, or the AppImage for other compatible Linux desktops.
-            Install once, then launch rika! from your application menu. The native tray menu checks for signed updates.
-            Application updates preserve the separate local workspace; do not delete that workspace when replacing the application.
-            AppImage users: keep the file in a writable directory and enable its executable permission in your file manager.
-            Only installers, signatures and updater metadata are published here; rika! source remains private. Bundles include LearnHarness's corresponding source and licenses.
-          releaseDraft: true
-          prerelease: false
-          generateReleaseNotes: false
-          releaseAssetNamePattern: kitty_[version]_[arch][ext]
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: true
+      - name: Upload installers to the draft public release
+        # tauri-action reported large uploads as successful while none reached the release
+        # (v0.3.31); scripts/publish-desktop-release.py uploads with gh and checks every asset.
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Download the .deb for Ubuntu 22.04+ / compatible Debian-based desktops, or the AppImage for other compatible Linux desktops.
+          Install once, then launch rika! from your application menu. The native tray menu checks for signed updates.
+          Application updates preserve the separate local workspace; do not delete that workspace when replacing the application.
+          AppImage users: keep the file in a writable directory and enable its executable permission in your file manager.
+          Only installers, signatures and updater metadata are published here; rika! source remains private. Bundles include LearnHarness's corresponding source and licenses.
+          NOTES
+          uv run --no-project python scripts/publish-desktop-release.py --tag "$RELEASE_TAG" \
+            --notes release-notes.md --title "rika! $RELEASE_TAG (Linux x86_64)"
       - name: Validate actual uploaded installers and updater metadata
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
