@@ -170,9 +170,14 @@ export async function setPreferences(patch: PreferencePatch): Promise<boolean> {
   }
 }
 
-/** Choose the base theme (`theme.base`). */
-export function setTheme(id: ThemeId): Promise<boolean> {
-  return setPreferences({ theme: { base: id } });
+/**
+ * Choose the base theme (`theme.base`): applied at once, saved to the build; settles once the
+ * save answered and the theme's motif module is in.
+ */
+export async function setTheme(id: ThemeId): Promise<boolean> {
+  const saved = await setPreferences({ theme: { base: id } });
+  await lookApplied();
+  return saved;
 }
 
 /** Show the build editor's checked look in this window only (null: the active build). */

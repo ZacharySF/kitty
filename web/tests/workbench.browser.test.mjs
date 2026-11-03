@@ -821,7 +821,8 @@ describe("study focus-first", () => {
     assert.deepEqual(await rect(timer), card, "opening a drawer moved the timer");
     assert.equal(await left.evaluate((node) => getComputedStyle(node).position), "absolute");
     const [l, r] = await Promise.all([rect(left), rect(right)]);
-    assert.ok(Math.abs(l.left - area.left) < 1 && Math.abs(r.right - area.right) < 1, "drawers do not sit on the page edges");
+    assert.ok(Math.abs(l.left - area.left) < 1 && Math.abs(r.right - area.right) < 1,
+      `drawers (${l.left}–${r.right}) do not sit on the page edges (${area.left}–${area.right})`);
     assert.ok(await right.getByRole("textbox", { name: "Session notes" }).isVisible(), "session notes are not in the guide drawer");
     assert.equal(await page.getByRole("button", { name: "Guide & notes", exact: true }).getAttribute("aria-expanded"), "true");
     assert.ok(await page.getByRole("button", { name: "Guide & notes", exact: true }).isVisible(), "the edge tab is hidden by its drawer");
@@ -1845,9 +1846,9 @@ describe("notes tabs and floating outline", () => {
     await library.waitFor({ state: "hidden" });
     // Write three blocks; the floating outline lists them and jumps to one. The block editor
     // offers "Start writing…" on a page without blocks, else its first block takes the caret.
-    const start = page.getByRole("button", { name: /^Start writing/ });
-    if (await start.count()) await start.click();
-    else await page.getByRole("textbox", { name: "Block 1", exact: true }).click();
+    const first = page.getByRole("button", { name: /^Start writing/ }).or(page.getByRole("textbox", { name: "Block 1", exact: true })).first();
+    await first.waitFor();
+    await first.click();
     await page.keyboard.type("Alpha: the first idea");
     await page.keyboard.press("Enter");
     await page.keyboard.type("Beta topic, second");
