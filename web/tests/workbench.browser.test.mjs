@@ -758,7 +758,8 @@ describe("study focus-first", () => {
     assert.ok(Math.abs((area.top + area.bottom) / 2 - (card.top + card.bottom) / 2) < 24, "the timer is not centred vertically");
     const overflow = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
     assert.ok(overflow <= 1, `the Study page scrolls ${overflow}px at 1440×900`);
-    assert.ok(area.bottom <= 900 && area.bottom >= 880, `the session page ends at ${area.bottom}, not at the window bottom`);
+    const floor = await visibleBottom(page);
+    assert.ok(area.bottom <= floor && area.bottom >= floor - 20, `the session page ends at ${area.bottom}, not just above the Rika bar at ${floor}`);
     for (const name of ["Subjects & tasks", "Guide & notes"]) {
       const edge = page.getByRole("button", { name, exact: true });
       assert.ok(await edge.isVisible(), `${name} edge tab is hidden`);
@@ -2507,7 +2508,7 @@ describe("one mind-map editor", () => {
     const region = await rect(schema), stage = await rect(schema.locator("svg.stage"));
     assert.ok(stage.top - region.top <= 48, `the canvas starts ${Math.round(stage.top - region.top)}px down`);
     assert.ok(Math.abs(stage.bottom - region.bottom) <= 2 && Math.abs(stage.left - region.left) <= 2 && Math.abs(stage.right - region.right) <= 2, "the canvas does not fill the editor");
-    assert.ok(region.bottom >= DEFAULT.height - 24, `the editor ends at ${Math.round(region.bottom)}px`);
+    assert.ok(region.bottom >= (await visibleBottom(page)) - 24, `the editor ends at ${Math.round(region.bottom)}px, not just above the Rika bar`);
     assert.equal(await schema.locator("p:visible").count(), 0, "help text is shown at rest");
     assert.equal(await schema.locator("select, summary, details").count(), 0, "native selects or fold-outs remain");
     // The building tools are the Notes canvas pill itself.
