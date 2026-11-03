@@ -20,7 +20,8 @@ before(async () => {
   server = await createServer({ root, logLevel: "error", server: { host: "127.0.0.1", port: 0 } });
   await server.listen();
   base = server.resolvedUrls.local[0];
-  browser = await chromium.launch();
+  // A fake microphone (a steady tone) that needs no permission prompt.
+  browser = await chromium.launch({ args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
 });
 after(async () => {
   await browser?.close();
@@ -47,6 +48,21 @@ async function until(condition, label) {
   assert.fail(`timed out waiting for ${label}`);
 }
 
+/** A brain dump's plan as the backend sends it (kitty.core.rika.dumps.public_items). */
+const planItem = (id, area, title, extra = {}) => ({ id, area, title, detail: "", source: "", count: 1, outward: false, question: null, choice: null, picked: null, result: null, ...extra });
+const PLAN = {
+  id: 77, duration: 9, note: { page_id: 5, title: "Brain dump · Tue 3 Nov, 21:14" }, status: "pending", decided_at: null,
+  items: [
+    planItem("i1", "notes", "CS 220 · Final project idea", { source: "Random idea for the CS 220 project" }),
+    planItem("i2", "calendar", "Orgo midterm", { detail: "Fri 6 Nov · 10:00", source: "Orgo midterm is Friday at ten." }),
+    planItem("i3", "calendar", "Study group", { detail: "19:00 · Library 3B", question: { text: "Which Tuesday?", choices: ["This Tue 3 Nov", "Next Tue 10 Nov"] }, choice: 0 }),
+    planItem("i4", "cards", "Orgo: SN1 and SN2", { count: 2, source: "Make me cards on SN1 and SN2." }),
+    planItem("i5", "agents", "omp on the habit tracker", { outward: true }),
+  ],
+};
+const LINKS = { i1: ["[[CS 220 · Final project idea]]"], i2: ["[Orgo midterm (Fri 6 Nov, 10:00)](#calendar)"],
+  i3: ["[Study group (Tue 10 Nov, 19:00)](#calendar)"], i4: ["[SN1 or SN2?](#flashcards)", "[E1 or E2?](#flashcards)"], i5: [] };
+
 /**
  * A scripted Rika backend for one browser context: a fake for this test harness only.
  * "add a task …" applies a reversible action; "start an agent" waits for an approval.
@@ -54,6 +70,8 @@ async function until(condition, label) {
  */
 async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
   const posts = [];
+  const gets = [];
+  let plan = null;
   let socket;
   let ids = 100;
   let hold = false;
@@ -81,19 +99,91 @@ async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
       send({ type: "message", message: { id, role: "rika", reply_to: userId, text: "I can't do that in this harness.", tier: "fast", status: "done", created_at: now() } });
     }
   }
-  await context.routeWebSocket("**/api/rika/stream", (ws) => { socket = ws; });
+  // Voice (Q3, Q5): the page streams PCM after voice.start; the stand-in "hears" a script,
+  // one more word per 0.25 s of audio, and one dump line per second.
+  const voice = { controls: [], bytes: 0, session: null, mode: null, said: 0 };
+  const COMMAND = "Add a task buy milk";
+  const DUMP = ["Orgo midterm is Friday at ten.", "Make me cards on SN1 and SN2.", "Ask Priya for the export today."];
+  const spokenSoFar = () => COMMAND.split(" ").slice(0, Math.floor(voice.bytes / 8000)).join(" ");
+  const finalOf = () => voice.mode === "dump"
+    ? { text: DUMP.join(" "), segments: DUMP.map((text, index) => ({ start: index * 3, end: index * 3 + 3, text })), duration: 9 }
+    : { text: COMMAND, segments: [{ start: 0, end: 2, text: COMMAND }], duration: 2 };
+  const voiced = (event) => send({ ...event, session: voice.session, mode: voice.mode });
+  await context.routeWebSocket("**/api/rika/stream", (ws) => {
+    socket = ws;
+    ws.onMessage((message) => {
+      if (typeof message !== "string") {
+        if (!voice.session) return;
+        voice.bytes += message.length;
+        if (voice.mode === "dump") {
+          while (voice.said < Math.min(DUMP.length, Math.floor(voice.bytes / 32000))) {
+            voiced({ type: "voice.segment", index: voice.said, start: voice.said * 3, end: voice.said * 3 + 3, text: DUMP[voice.said] });
+            voice.said += 1;
+          }
+          voiced({ type: "voice.partial", text: "and um" });
+        } else voiced({ type: "voice.partial", text: spokenSoFar() });
+        return;
+      }
+      const control = JSON.parse(message);
+      voice.controls.push(control);
+      if (control.type === "voice.start") {
+        Object.assign(voice, { session: control.session, mode: control.mode, bytes: 0, said: 0 });
+        voiced({ type: "voice.state", state: "loading" });
+        voiced({ type: "voice.state", state: "listening" });
+      } else if (control.type === "voice.mode") {
+        voice.mode = control.mode;
+        voiced({ type: "voice.state", state: "listening" });
+      } else if (control.type === "voice.stop") {
+        voiced({ type: "voice.state", state: "finishing" });
+        voiced({ type: "voice.final", ...finalOf() });
+        voice.session = null;
+      } else if (control.type === "voice.cancel") {
+        voiced({ type: "voice.state", state: "cancelled" });
+        voice.session = null;
+      }
+    });
+  });
   await context.route("**/api/rika/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const body = request.postData() ? JSON.parse(request.postData()) : undefined;
     if (request.method() === "POST") posts.push({ path, body, header: request.headers()["x-kitty-request"] });
+    else gets.push(path);
     if (request.method() === "GET" && path === "/api/rika/history") return route.fulfill({ json: { items: history, has_more: false, next_before: null } });
     if (request.method() === "GET" && path === "/api/rika/agents") return route.fulfill({ json: { agents } });
     if (path === "/api/rika/messages") {
       const userId = ++ids;
       await route.fulfill({ json: { conversation_id: 1, message_id: userId } });
-      send({ type: "message", message: { id: userId, role: "user", text: body.text, created_at: now() } });
+      send({ type: "message", message: { id: userId, role: "user", text: body.text, source: body.spoken ? "voice" : "typed", created_at: now() } });
       setTimeout(() => reply(userId, body.text), 30);
+      return;
+    }
+    const spoken = path.match(/^\/api\/rika\/speech\/(\d+)$/);
+    if (spoken) return route.fulfill({ json: { text: "Added “buy milk” to your tasks.", audio: "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=" } });
+    if (path === "/api/rika/dumps") {
+      const userId = ++ids;
+      await route.fulfill({ json: { conversation_id: 1, message_id: userId } });
+      send({ type: "message", message: { id: userId, role: "user", text: body.transcript, source: "dump", created_at: now() } });
+      setTimeout(() => {
+        const replyId = ++ids;
+        plan = { ...PLAN, message_id: replyId, request_id: userId, created_at: now() };
+        send({ type: "tier", message_id: replyId, reply_to: userId, tier: "standard", model: "demo" });
+        send({ type: "plan", plan });
+        send({ type: "message", message: { id: replyId, role: "rika", reply_to: userId, text: "One plan from your brain dump: 5 items in notes, calendar, cards and agents.", tier: "standard", status: "done", created_at: now() } });
+      }, 30);
+      return;
+    }
+    const decided = path.match(/^\/api\/rika\/plans\/(\d+)$/);
+    if (decided) {
+      const picked = new Set(body.items ?? []);
+      const running = { ...plan, status: body.decision === "approve" ? "running" : "dismissed", items: plan.items.map((item) => ({ ...item, picked: picked.has(item.id) })) };
+      await route.fulfill({ json: { plan: running } });
+      if (body.decision !== "approve") return;
+      setTimeout(() => {
+        const items = running.items.map((item) => ({ ...item, choice: body.choices?.[item.id] ?? item.choice,
+          result: item.picked ? { status: "done", summary: item.title, links: LINKS[item.id] } : { status: "skipped", summary: "Not ticked", links: [] } }));
+        send({ type: "plan", plan: { ...running, status: "applied", items } });
+      }, 30);
       return;
     }
     const approval = path.match(/^\/api\/rika\/approvals\/(\d+)$/);
@@ -131,12 +221,19 @@ async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
     holdTurns: () => (hold = true),
     release: () => { hold = false; held?.(); held = null; },
     connected: () => Boolean(socket),
+    voice,
+    gets,
   };
 }
 
 async function harness({ reducedMotion, ...options } = {}) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 800 }, reducedMotion });
   const rika = await fakeRika(context, options);
+  // Spoken replies are recorded instead of played.
+  await context.addInitScript(() => {
+    window.__played = [];
+    HTMLMediaElement.prototype.play = function play() { window.__played.push(this.src); return Promise.resolve(); };
+  });
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -346,6 +443,133 @@ test("earlier history loads into the drawer, oldest first", async () => {
   assert.match(texts[1], /3 flashcard decks and the CUDA take-home\./);
   assert.match(texts[1], /standard/i);
   assert.equal(await toasts(page).count(), 0, "history raised toasts");
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+// Voice and brain dumps (Q3 A, Q4 C, Q5 A, Q6 C, Q7 A, Q8 A, Q20 A) ------------------
+
+const field = (page) => page.getByRole("textbox", { name: "Ask Rika" });
+const listeningMode = (page) => page.evaluate(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening ?? null);
+
+test("a Space tap types a space; a hold past 0.3 s listens, the bar breathes, and letting go sends it spoken", async () => {
+  const { page, bar, rika, problems, context } = await harness();
+  await field(page).fill("hi");
+  await field(page).press("Space");
+  assert.equal(await field(page).inputValue(), "hi ", "a tap did not type its space");
+  assert.equal(await listeningMode(page), null);
+  await field(page).fill("");
+  await page.keyboard.down(" ");
+  await page.waitForTimeout(200);
+  assert.equal(await listeningMode(page), null, "listening began before 0.3 s");
+  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening === "command");
+  assert.notEqual((await ring(bar)).animation, "none", "the bar does not breathe while listening");
+  await until(() => rika.voice.bytes > 16000, "microphone audio on the socket");
+  assert.deepEqual(rika.voice.controls[0], { type: "voice.start", session: rika.voice.controls[0].session, mode: "command" });
+  await page.waitForFunction(() => document.querySelector('[aria-label="Ask Rika"]').placeholder.startsWith("Add a task"));
+  // Q5: no keycap or hint, even while listening.
+  assert.equal(await bar.locator("kbd").count(), 0);
+  assert.doesNotMatch(await bar.innerText(), /space|hold/i);
+  assert.equal(await field(page).inputValue(), "", "holding typed spaces");
+  await page.keyboard.up(" ");
+  await until(() => rika.posts.some((post) => post.path === "/api/rika/messages"), "the spoken request");
+  assert.deepEqual(rika.posts.at(-1).body, { text: "Add a task buy milk", spoken: true });
+  assert.ok(rika.voice.controls.some((control) => control.type === "voice.stop"));
+  await toasts(page).getByText("Added “buy milk” to your tasks.").waitFor();
+  assert.equal(await listeningMode(page), null);
+  // Q6 C: the reply to a spoken request is spoken back.
+  await page.waitForFunction(() => window.__played.length === 1);
+  assert.ok(rika.gets.some((path) => /^\/api\/rika\/speech\/\d+$/.test(path)));
+  assert.match(await page.evaluate(() => window.__played[0]), /^data:audio\/wav;base64,/);
+  await page.keyboard.press("Control+j");
+  await drawer(page).getByText(/· spoken/).waitFor();
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a typed request is never spoken; Escape drops what is being said", async () => {
+  const { page, rika, problems, context } = await harness();
+  await ask(page, "Add a task buy milk");
+  await toasts(page).getByText("Added “buy milk” to your tasks.").waitFor();
+  await field(page).fill("remind me");
+  await page.keyboard.down(" ");
+  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening === "command");
+  await until(() => rika.voice.controls.some((control) => control.type === "voice.start"), "voice.start");
+  await page.keyboard.press("Escape");
+  await page.keyboard.up(" ");
+  await until(() => rika.voice.controls.some((control) => control.type === "voice.cancel"), "voice.cancel");
+  assert.equal(await listeningMode(page), null);
+  assert.equal(await field(page).inputValue(), "remind me", "Escape lost the typed words");
+  await page.waitForTimeout(150);
+  assert.equal(rika.posts.filter((post) => post.path === "/api/rika/messages").length, 1);
+  assert.equal(rika.gets.filter((path) => path.startsWith("/api/rika/speech/")).length, 0);
+  assert.deepEqual(await page.evaluate(() => window.__played), []);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a long hold becomes a brain dump: the drawer opens by itself with the live transcript, the plan arrives grouped by area", async () => {
+  const { page, rika, problems, context } = await harness();
+  await field(page).focus();
+  await page.keyboard.down(" ");
+  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening === "dump", null, { timeout: 12_000 });
+  await page.keyboard.up(" ");
+  assert.ok(rika.voice.controls.some((control) => control.type === "voice.mode" && control.mode === "dump"));
+  const history = drawer(page);
+  const transcript = history.getByRole("region", { name: "Brain dump transcript" });
+  await transcript.getByText("Make me cards on SN1 and SN2.").waitFor({ timeout: 10_000 });
+  assert.equal(await listeningMode(page), "dump", "letting go ended the dump");
+  await field(page).press("Space"); // the next Space ends it
+  await until(() => rika.posts.some((post) => post.path === "/api/rika/dumps"), "the dump");
+  const dump = rika.posts.find((post) => post.path === "/api/rika/dumps").body;
+  assert.equal(dump.transcript, "Orgo midterm is Friday at ten. Make me cards on SN1 and SN2. Ask Priya for the export today.");
+  assert.equal(dump.segments.length, 3);
+  assert.equal(dump.duration, 9);
+  const plan = history.getByRole("article", { name: "Brain dump plan" });
+  await plan.waitFor();
+  assert.deepEqual(await plan.getByRole("region").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))),
+    ["Notes", "Calendar", "Cards", "Agents"]);
+  assert.equal(await plan.getByRole("checkbox", { checked: true }).count(), 9);
+  assert.ok(await plan.getByRole("button", { name: "Approve all 5" }).isVisible());
+  assert.match(await plan.innerText(), /Rika asks|Which Tuesday\?/);
+  assert.match(await plan.innerText(), /Approving starts it/);
+  // Untick the worker and choose next Tuesday, then approve the rest.
+  await plan.getByRole("checkbox", { name: "omp on the habit tracker" }).uncheck();
+  await plan.getByRole("button", { name: "Next Tue 10 Nov" }).click();
+  await plan.getByRole("button", { name: "Approve 4 of 5" }).click();
+  assert.deepEqual(rika.posts.at(-1), { path: "/api/rika/plans/77", body: { decision: "approve", items: ["i1", "i2", "i3", "i4"], choices: { i3: 1 } }, header: "1" });
+  // Q20 A: the drawer that opened by itself closes once the plan is decided.
+  await history.waitFor({ state: "detached" });
+  await page.keyboard.press("Control+j");
+  const done = drawer(page).getByRole("article", { name: "Brain dump plan" });
+  await done.getByText("Done", { exact: true }).waitFor();
+  assert.match(await done.innerText(), /Study group \(Tue 10 Nov, 19:00\)/);
+  assert.match(await done.innerText(), /SN1 or SN2\? · E1 or E2\?/);
+  assert.match(await done.innerText(), /Dump note: Brain dump · Tue 3 Nov, 21:14/);
+  await done.getByRole("button", { name: "Orgo midterm (Fri 6 Nov, 10:00)" }).click();
+  await page.waitForFunction(() => window.rikaHarness.navigations.includes("calendar"));
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("Brain dump mode from the drawer keeps listening until Done; ticking an area off and Dismiss make nothing", async () => {
+  const { page, rika, problems, context } = await harness();
+  await page.keyboard.press("Control+j");
+  const history = drawer(page);
+  await history.getByRole("button", { name: "Brain dump" }).click();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening === "dump");
+  await until(() => rika.voice.controls.length > 0, "voice.start");
+  assert.equal(rika.voice.controls[0].mode, "dump");
+  await history.getByRole("region", { name: "Brain dump transcript" }).getByText("Orgo midterm is Friday at ten.").waitFor({ timeout: 10_000 });
+  await history.getByRole("button", { name: "Done · make plan" }).click();
+  const plan = history.getByRole("article", { name: "Brain dump plan" });
+  await plan.waitFor();
+  await plan.getByRole("checkbox", { name: "All of Calendar" }).uncheck();
+  assert.ok(await plan.getByRole("button", { name: "Approve 3 of 5" }).isVisible());
+  await plan.getByRole("button", { name: "Dismiss" }).click();
+  assert.deepEqual(rika.posts.at(-1).body, { decision: "dismiss" });
+  await plan.getByText("Dismissed").waitFor();
+  assert.ok(await history.isVisible(), "a drawer opened by hand closed by itself");
   assert.deepEqual(problems, []);
   await context.close();
 });

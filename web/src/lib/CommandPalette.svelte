@@ -3,6 +3,7 @@
   import Icon from "./Icon.svelte";
   import { api, type Job } from "./api";
   import { navigationGroups, visibleNavigation, type View } from "./workspace";
+  import { rika } from "./rika/session.svelte";
 
   /**
    * Spotlight-style palette (Ctrl K): one large field, nothing else until you type,
@@ -60,6 +61,7 @@
     ...(mapsOn ? [{ label: "New mind map", meta: "Action", icon: "schema", run: () => openMap() }] : []),
     ...(onterminal ? [{ label: "Open terminal", meta: "Tern window", icon: "terminal", run: () => onterminal() }] : []),
     { label: "Rika history", meta: "Rika", icon: "kitty", run: () => onrika() },
+    { label: "Brain dump", meta: "Rika · talk, then one plan", icon: "kitty", run: () => void rika.listen("dump") },
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
   ]);

@@ -49,7 +49,9 @@ def main() -> None:
     ]
     # These adapters load data/native libraries dynamically. Optional packages
     # are collected only when present in the project's locked environment.
-    for module in ("jobspy", "curl_cffi", "tls_client", "textual", "mcp", "google.auth", "google_auth_oauthlib", "fsrs", "icalendar", "pymupdf", "PIL", "zstandard"):
+    # faster_whisper, ctranslate2, av and tokenizers are Rika's on-device speech engine.
+    for module in ("jobspy", "curl_cffi", "tls_client", "textual", "mcp", "google.auth", "google_auth_oauthlib", "fsrs", "icalendar", "pymupdf", "PIL", "zstandard",
+                   "faster_whisper", "ctranslate2", "av", "tokenizers"):
         if importlib.util.find_spec(module) is not None:
             command.extend(["--collect-all", module])
     command.append(str(desktop / "backend.py"))

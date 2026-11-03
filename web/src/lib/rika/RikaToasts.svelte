@@ -5,8 +5,11 @@
   /**
    * Q2 D: each Rika reply lands as a toast above the bar in the notification stack's look:
    * the reply text, its tier chip, what it did, and Undo for anything reversible. A reply
-   * still being written holds its toast; the drawer keeps everything after it leaves.
+   * that did many things (a brain dump's plan) lists the first few and offers one Undo
+   * all. A reply still being written holds its toast; the drawer keeps everything after
+   * it leaves.
    */
+  const SHOWN = 3;
   const time = (value: string) => {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -19,7 +22,8 @@
   {#snippet toast(toast)}
     {@const reply = rika.message(toast.message)}
     {@const actions = rika.actionsOf(toast.message)}
-    {@const asks = rika.pending.filter((approval) => String(approval.message_id) === toast.message)}
+    {@const undoable = actions.filter((action) => action.reversible && action.status === "done")}
+    {@const asks = [...rika.pending, ...rika.pendingPlans].filter((ask) => String(ask.message_id) === toast.message)}
     <div class="top">
       <i class="dot" aria-hidden="true"></i>
       <span>Rika</span>
@@ -28,17 +32,20 @@
       <button class="x" aria-label="Dismiss Rika reply" onclick={() => rika.dismiss(toast.id)}>×</button>
     </div>
     <p class="reply" class:thinking={!reply?.text}>{reply?.text || "Thinking…"}</p>
-    {#each actions as action (action.id)}
+    {#each actions.slice(0, SHOWN) as action (action.id)}
       <span class="body did" data-status={action.status}>
         {action.summary}{#if action.status === "undone"}<em>Undone</em>{:else if action.status === "failed"}<em>Failed</em>{/if}
       </span>
     {/each}
-    {#if asks.length || actions.some((action) => action.reversible && action.status === "done")}
+    {#if actions.length > SHOWN}<span class="body did">{actions.length - SHOWN} more in Rika history</span>{/if}
+    {#if asks.length || undoable.length}
       <div class="acts">
         {#if asks.length}<button class="pill primary" onclick={() => rika.showDrawer("conversation")}>Review</button>{/if}
-        {#each actions.filter((action) => action.reversible && action.status === "done") as action (action.id)}
-          <button class="pill" title={action.summary} onclick={() => rika.undo(action.id)}>Undo</button>
-        {/each}
+        {#if undoable.length === 1}
+          <button class="pill" title={undoable[0].summary} onclick={() => rika.undo(undoable[0].id)}>Undo</button>
+        {:else if undoable.length}
+          <button class="pill" title={`Undo all ${undoable.length} changes`} onclick={() => rika.undoAll(undoable.map((action) => action.id))}>Undo all</button>
+        {/if}
       </div>
     {/if}
   {/snippet}

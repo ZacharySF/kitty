@@ -263,3 +263,96 @@ def test_the_demo_never_calls_openrouter_even_with_a_key_and_models(build, works
     app.rika.submit(workspace.conn, "new card Mitosis / Cell division", tier="deep")
     assert of(until(events, finished), "action")[0]["action"]["tool"] == "add_card"
     assert openrouter.requests == [] and no_network == []
+
+
+# Voice and brain dumps ----------------------------------------------------------
+
+def test_a_spoken_request_goes_to_the_fast_tier_even_when_it_plans(build, workspace, openrouter):
+    openrouter.replies = [_text("Monday: kinematics.")]
+    app, events = build()
+    app.rika.submit(workspace.conn, "plan my week around the physics exam", spoken=True)
+    seen = until(events, finished)
+    assert of(seen, "message")[0]["message"]["source"] == "voice"
+    assert [event["tier"] for event in of(seen, "tier")] == ["fast"]
+    assert openrouter.requests[0][1]["model"] == "synthetic/fast"
+    reply = of(seen, "message")[-1]["message"]
+    assert app.rika.speak(workspace.conn, reply["id"])["text"] == "Monday: kinematics."
+
+
+def _plan_reply(items: list[dict]) -> bytes:
+    return _text(json.dumps({"items": items}))
+
+
+DUMP = "um so the physics exam is friday at nine and make me a card on Newton's second law"
+
+
+def test_a_brain_dump_is_planned_on_the_standard_tier_and_bad_items_are_dropped(build, workspace, openrouter):
+    openrouter.replies = [_plan_reply([
+        {"area": "cards", "title": "Newton's second law", "detail": "1 card", "source": "make me a card",
+         "calls": [{"tool": "add_card", "args": {"front": "Newton's second law?", "back": "F = ma"}}]},
+        {"area": "calendar", "title": "Physics exam", "detail": "Fri 09:00", "source": "physics exam is friday",
+         "calls": [{"tool": "create_event", "args": {"title": "Physics exam", "start": "2026-11-06T09:00"}}]},
+        {"area": "calendar", "title": "Wrong tool", "calls": [{"tool": "add_card", "args": {"front": "x", "back": "y"}}]},
+        {"area": "gossip", "title": "Not an area", "calls": []},
+    ])]
+    app, events = build()
+    sent = app.rika.dump(workspace.conn, DUMP, [{"start": 0, "end": 6.5, "text": DUMP}], 6.5)
+    seen = until(events, finished)
+    [tier] = of(seen, "tier")
+    assert (tier["tier"], tier["model"]) == ("standard", "synthetic/standard")
+    _headers, body = openrouter.requests[0]
+    assert "tools" not in body and body["messages"][1]["content"] == f"[0:00] {DUMP}"
+    assert "untrusted data" in body["messages"][0]["content"] and "add_card" in body["messages"][0]["content"]
+    plan = of(seen, "plan")[0]["plan"]
+    assert [(item["area"], item["title"]) for item in plan["items"]] == [
+        ("calendar", "Physics exam"), ("cards", "Newton's second law")]
+    assert plan["request_id"] == sent["message_id"] and plan["note"] is not None
+    assert not of(seen, "action")  # nothing happens before the plan is approved
+    reply = of(seen, "message")[-1]["message"]
+    assert reply["status"] == "done" and reply["cost_usd"] == pytest.approx(0.0001)
+
+
+def test_an_unreadable_plan_escalates_once_then_gives_up_keeping_the_note(build, workspace, openrouter):
+    openrouter.replies = [_text("Sure! Here's what I'd do."), _text("still not json"), _text("nope")]
+    app, events = build()
+    app.rika.dump(workspace.conn, DUMP, [], 6.5)
+    seen = until(events, finished)
+    assert [event["tier"] for event in of(seen, "tier")] == ["standard", "deep"]
+    reply = of(seen, "message")[-1]["message"]
+    assert reply["status"] == "failed" and "dump note" in reply["text"] and not of(seen, "plan")
+    assert workspace.conn.execute("SELECT count(*) FROM note_pages WHERE title LIKE 'Brain dump · %'").fetchone()[0] == 1
+
+
+def test_approving_a_plan_is_the_approval_for_its_ticked_outward_items(build, workspace, monkeypatch):
+    app, events = build(demo=True, modules=("workspace", "terminal"))
+    from kitty.core.rika.dumps import DEMO_DUMP
+
+    app.rika.dump(workspace.conn, DEMO_DUMP, [], 40)
+    plan = of(until(events, finished), "plan")[0]["plan"]
+    agent = next(item for item in plan["items"] if item["area"] == "agents")
+    app.rika.decide_plan(workspace.conn, plan["id"], "approve", [agent["id"]])
+    seen = until(events, finished)
+    assert not of(seen, "approval")
+    [action] = of(seen, "action")
+    assert action["action"]["tool"] == "start_worker" and action["action"]["summary"].startswith("Started omp")
+    done = of(seen, "plan")[-1]["plan"]
+    assert [item["result"]["status"] for item in done["items"]].count("done") == 1
+    assert app.rika.agents.list()[-1]["task"].startswith("Fix the failing login tests")
+    with pytest.raises(RikaError) as again:
+        app.rika.decide_plan(workspace.conn, plan["id"], "approve", [agent["id"]])
+    assert again.value.status == 409
+
+
+def test_a_plan_item_that_fails_is_reported_and_the_rest_still_run(build, workspace):
+    app, events = build(demo=True)
+    app.rika.dump(workspace.conn, "Add a task Read chapter 3 tomorrow. Add a topic Cells.", [], 5)
+    plan = of(until(events, finished), "plan")[0]["plan"]
+    assert [item["area"] for item in plan["items"]] == ["notes", "tasks"]
+    workspace.conn.execute("UPDATE calendar_calendars SET timezone='Not/AZone' WHERE id='personal'")
+    app.rika.decide_plan(workspace.conn, plan["id"], "approve", [item["id"] for item in plan["items"]])
+    seen = until(events, finished)
+    done = of(seen, "plan")[-1]["plan"]
+    statuses = {item["area"]: item["result"]["status"] for item in done["items"]}
+    assert statuses == {"notes": "done", "tasks": "failed"}
+    reply = of(seen, "message")[-1]["message"]
+    assert reply["status"] == "done" and "1 failed" in reply["text"]

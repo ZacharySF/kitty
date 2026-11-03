@@ -232,3 +232,42 @@ def test_rika_tables_keep_their_conversation_and_tier_settings(tmp_path):
         assert conn.execute("SELECT count(*) FROM rika_approvals").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_rika_voice_adds_message_sources_plans_and_the_voice_model(tmp_path):
+    """045: how a request reached Rika, brain-dump plans, and the Whisper model setting."""
+    import shutil
+    import sqlite3
+
+    early = tmp_path / "before-voice"
+    early.mkdir()
+    for migration in available_migrations():
+        if migration.version < 45:
+            shutil.copy(migration.path, early / migration.path.name)
+    conn = connect(tmp_path / "voice.sqlite")
+    try:
+        migrate(conn, early)
+        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,created_at) VALUES('old','c','user','hi','t0')")
+        migrate(conn)
+        assert conn.execute("SELECT source FROM rika_messages WHERE id='old'").fetchone()[0] == "typed"
+        assert conn.execute("SELECT rika_voice_model FROM ai_settings WHERE id=1").fetchone()[0] == "base"
+        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,source,created_at) VALUES('d','c','user','dump','dump','t1')")
+        conn.execute("INSERT INTO rika_messages(id,conversation_id,role,text,reply_to,created_at) VALUES('r','c','rika','','d','t2')")
+        conn.execute("INSERT INTO rika_plans(id,message_id,request_id,items_json,segments_json,duration_s,created_at)"
+                     " VALUES('p','r','d','[]','[]',12.5,'t3')")
+        assert conn.execute("SELECT status FROM rika_plans").fetchone()[0] == "pending"
+        for statement in (
+            "INSERT INTO rika_messages(id,conversation_id,role,text,source,created_at) VALUES('x','c','user','','sung','t')",
+            "INSERT INTO rika_plans(id,message_id,request_id,items_json,segments_json,duration_s,created_at)"
+            " VALUES('q','r','d','[]','[]',-1,'t')",
+            "INSERT INTO rika_plans(id,message_id,request_id,items_json,segments_json,duration_s,status,created_at)"
+            " VALUES('q','r','d','[]','[]',1,'maybe','t')",
+            "INSERT INTO rika_plans(id,message_id,request_id,items_json,segments_json,duration_s,created_at)"
+            " VALUES('q','missing','d','[]','[]',1,'t')",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(statement)
+        conn.execute("DELETE FROM rika_messages WHERE id='d'")
+        assert conn.execute("SELECT count(*) FROM rika_plans").fetchone()[0] == 0
+    finally:
+        conn.close()

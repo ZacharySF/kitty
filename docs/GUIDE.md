@@ -312,8 +312,30 @@ Running worker agents also show as chips on the right of the bar, a state dot an
 name each (working, blocked, idle, done); a chip opens that agent's Tern window.
 Past four agents the chips collapse to one count, which opens the drawer's Agents.
 When Rika opens a page ("open calendar"), the workspace tab navigates there; when an
-agent has no Tern window to focus, its chip opens the herdr view. Voice input (hold
-Space) comes later; the bar draws no Space keycap or hint.
+agent has no Tern window to focus, its chip opens the herdr view.
+
+**Talk to Rika.** Hold **Space** in the bar's field for at least 0.3 s and speak;
+let go and Rika gets what you said (a quick tap still types a space; words typed
+first lead the spoken request). While it listens the whole bar breathes and the field
+shows the words as they are heard; **Escape** drops them and nothing is sent. The
+bar draws no Space keycap or hint: the breathing ring is the only sign. Keep holding
+for 8 s and it becomes a **brain dump**, which keeps listening after you let go;
+press Space again to finish. **Brain dump** in the history drawer or in Ctrl K starts
+one directly. A dump's transcript grows live in the drawer, which opens by itself;
+**Done · make plan** ends it (Cancel drops it). Rika then puts **one plan** in the
+drawer, grouped by area (notes, tasks, calendar, cards, jobs, agents), every item
+ticked and showing the words it came from. Untick what was misheard (or a whole
+area), answer its one question if it asks one, then **Approve all** or **Approve
+N of M**; **Dismiss** makes nothing. The drawer closes by itself once you decide.
+Each dump is kept as a note in the **Brain dumps** notebook: the timestamped
+transcript, and once the plan has run, links under **Created from this dump** to
+everything it made (`[[Page]]` links, and links into Calendar, Flashcards, Study and
+the herdr view).
+
+When you spoke to Rika, it also speaks back a short summary of its reply (its first
+sentences), if a local speech engine is installed: Piper with a voice model
+(`KITTY_PIPER_VOICE`, or an `.onnx` voice in `data/voice/piper/`), else
+espeak-ng or espeak. Without one Rika stays silent. Typed requests are never spoken.
 
 ### Controls and surfaces
 
@@ -890,8 +912,8 @@ and failed requests are not automatically retried. Paid calls are disabled in de
 the Rika bar, and it does the work through the app's own functions.
 
 - **Tiers.** Each request goes to the smallest tier that can do it:
-  - **fast** for talk and simple edits;
-  - **standard** for planning ("plan my week");
+  - **fast** for talk, simple edits, and everything you say aloud;
+  - **standard** for planning ("plan my week") and a brain dump's plan;
   - **deep** for multi-step requests (three or more steps, or a very long request) and retries after a failed reply.
 
   A tool call that fails validation, or a reply that comes back cut off or empty,
@@ -949,6 +971,26 @@ the Rika bar, and it does the work through the app's own functions.
   the notes a request needs, never whole notebooks at once, and selected-text
   requests work as before; while it is off, Rika gets titles and ids only. Text that
   tools return is treated as data, never as instructions.
+- **Voice, on this computer.** Speech-to-text is [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+  (OpenAI's multilingual Whisper, CTranslate2 int8 on the CPU) inside rika!'s own
+  backend; audio never leaves the machine. While you talk the page streams 16 kHz
+  PCM from the microphone over `/api/rika/stream`; the backend transcribes the open
+  stretch every second, commits it as a segment at a pause (or every 20 s), and
+  transcribes the rest when you stop, so a ten-minute dump is written out as you go.
+  The first time you talk, the chosen model downloads once into the workspace's
+  `data/voice/` folder, pinned to a Hugging Face revision and checked against its
+  SHA-256, with its progress in the bar. **Settings → AI → Rika's voice** picks
+  **Tiny** (75 MB), **Base** (145 MB, the default) or **Small** (484 MB), can
+  download it ahead of time, and says which speech engine, if any, reads replies
+  aloud. A command listens for at most a minute, a brain dump for 30 minutes.
+- **Brain dumps.** The transcript is saved as the dump note first. The standard
+  tier then answers with a JSON plan whose items may call only that area's tools
+  (notes: pages, blocks, canvas nodes, mind-map topics; tasks: calendar and study
+  tasks; calendar: events; cards: flashcards; jobs: tasks and events; agents: start
+  a worker). Invalid items are dropped; an unreadable plan moves up one tier.
+  Approving runs the ticked items through the same tools as any request, so in-app
+  changes come with Undo, and approving the plan is the approval for its ticked
+  outward items (starting a worker).
 - **Worker agents** (Terminal module). When you approve **start**, Rika:
   1. runs rika!'s herdr session headless if no page attached it;
   2. starts omp, Claude Code or Codex in an Agent tab;
@@ -958,21 +1000,34 @@ the Rika bar, and it does the work through the app's own functions.
   in Tern panes. **Open** focuses the agent and shows it in a Tern window: a herdr
   agent appears through a Tern tab attached to rika!'s herdr session. Without
   Tern, the page opens the herdr view. Quit stops the session Rika started.
-- **Demo.** The demo never calls OpenRouter. The simple phrases above work.
-  Anything else gets a scripted reply. The Agents list shows five scripted agents,
+- **Demo.** The demo never calls OpenRouter, downloads no voice model and starts no
+  speech engine. The simple phrases above work. Anything else gets a scripted reply.
+  Holding Space "hears" the canned `Add a task Read chapter 3 tomorrow`, and a brain
+  dump hears a canned student's week with a scripted plan in every area (a typed
+  dump is planned phrase by phrase). The Agents list shows five scripted agents,
   and an approved start adds one more. No process starts.
 - **API.** These routes are header-protected like the rest of the site, and none
   is an ingress route:
-  - `POST /api/rika/messages {text, tier?}`
+  - `POST /api/rika/messages {text, tier?, spoken?}`
+  - `POST /api/rika/dumps {transcript, segments, duration}`
+  - `POST /api/rika/plans/<id> {decision: approve, items, choices?}` or `{decision: dismiss}`
   - `GET /api/rika/history?before=`
   - `POST /api/rika/approvals/<id> {decision}`
   - `POST /api/rika/actions/<id>/undo`
   - `GET /api/rika/agents`
   - `POST /api/rika/agents/<id>/open`
+  - `GET|POST /api/rika/voice` (the voice model), `POST /api/rika/voice/model` (download it now)
+  - `GET /api/rika/speech/<reply id>` (the spoken summary of a reply to a spoken request)
 
   Replies stream over the same-origin WebSocket `/api/rika/stream` as token,
-  message, action, approval, tier, navigate and agents events. Migration 037 keeps
-  the conversation, actions with their undo payloads, and approvals.
+  message, action, approval, plan, tier, navigate, agents and voice.model events.
+  The page may send it only voice input: `voice.start`, binary PCM frames,
+  `voice.mode`, `voice.stop` and `voice.cancel`; transcripts (`voice.partial`,
+  `voice.segment`, `voice.final`) answer that page only and nothing is stored until
+  the page sends the words as a request. Migration 037 keeps the conversation,
+  actions with their undo payloads, and approvals; migration 045 adds how each
+  request arrived (typed, voice or dump), the brain-dump plans and the voice model
+  setting.
 
 The website supports:
 
@@ -1264,6 +1319,18 @@ executables without a dynamic loader byte-identical to the pinned release.
 The dependency environment exposes matching GStreamer base/good plugins for WebKit
 timer audio. Sound also needs an available output device and a Start/Enable sound
 gesture while rika! is open.
+
+Rika's voice input uses the webview's microphone. WebKitGTK refuses `getUserMedia`
+unless the app answers its permission request, so the main window allows microphone
+requests (`on_permission_request` in `desktop/src/main.rs`; camera, location and
+the rest keep WebKit's default refusal). rika!'s loopback origin counts as secure,
+and WebKitGTK 2.52 has media streams on by default. Capture goes through WebKit's
+GStreamer and needs both **gst-plugins-base** and **gst-plugins-good**: with base
+alone the microphone fails to start. The `.deb` depends on them, and the AppImage
+bundles the build host's GStreamer plugins (`bundleMediaFramework`), because
+NixOS's `appimage-run` provides only base and ugly. The backend sidecar freezes
+faster-whisper with its native CTranslate2, PyAV and tokenizers libraries
+(`desktop/package_backend.py`); the Whisper model itself is downloaded on first use.
 
 ### Publish a desktop release (maintainers)
 

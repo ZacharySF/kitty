@@ -24,6 +24,7 @@ dependencies = [
     "zstandard>=0.23",
     "Pillow>=11",
     "PyMuPDF>=1.25",
+    "faster-whisper>=1.1",
 ]
 
 [project.scripts]

@@ -7,10 +7,18 @@ A turn creates the reply message, routes it to a tier and then, in order of cost
 3. otherwise the OpenRouter tool-calling loop runs on the tier's model, escalating one
    tier when a tool call fails validation or the reply comes back incomplete.
 
+A spoken request (design Q5, Q6) routes to the fast tier; the page then asks for a
+short spoken summary of the reply (:meth:`Rika.speak`). A brain dump (Q7, Q8) is a
+turn of its own: its transcript is saved as a dump note, the standard tier (or the
+demo's script) makes one plan grouped by area, and once the user approves some or all
+of it a further turn runs the ticked items through the ordinary tools and links what
+they made into the note.
+
 Outward or irreversible tools, and model requests above today's budget, create an
-approval and pause the turn until the user decides (or it expires). Everything the
-page needs is published on :class:`Hub` as stream events:
-``token``, ``message``, ``action``, ``approval``, ``tier``, ``navigate`` and ``agents``.
+approval and pause the turn until the user decides (or it expires); approving a plan
+approves the outward items ticked in it. Everything the page needs is published on
+:class:`Hub` as stream events: ``token``, ``message``, ``action``, ``approval``,
+``plan``, ``tier``, ``navigate``, ``agents`` and ``voice.model``.
 """
 from __future__ import annotations
 
@@ -25,9 +33,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from kitty.core.rika import commands, llm, router, store, tools as toolset
+from kitty.core.rika import commands, dumps, llm, router, speech, store, tools as toolset
 from kitty.core.rika.agents import Agents
 from kitty.core.rika.tools import Context, ToolError
+from kitty.core.rika.voice import Voice
 from kitty.db import connect
 
 log = logging.getLogger(__name__)
@@ -104,6 +113,13 @@ class _Job:
     text: str
     created_at: str
     override: str | None
+    #: message, dump (make a brain dump's plan) or plan (run an approved plan).
+    kind: str = "message"
+    spoken: bool = False
+    segments: list[dict] | None = None
+    duration: float = 0.0
+    note: tuple[int, str] | None = None
+    plan_id: str | None = None
 
 
 class _Turn:
@@ -128,6 +144,7 @@ class Rika:
         self.app = app
         self.hub = Hub()
         self.agents = Agents(app)
+        self.voice = Voice(app, self.hub.publish)
         self._jobs: queue.Queue[_Job | None] = queue.Queue()
         self._waiting: dict[str, threading.Event] = {}
         self._closed = threading.Event()
@@ -148,21 +165,86 @@ class Rika:
 
     # Requests -----------------------------------------------------------------
 
-    def submit(self, conn, text: Any, *, tier: Any = None, conversation_id: Any = None) -> dict:
+    def _conversation(self, conn, conversation_id: Any) -> str:
+        if conversation_id is not None and not isinstance(conversation_id, str):
+            raise RikaError(400, "Use a valid conversation id")
+        try:
+            return store.conversation_for(conn, conversation_id)
+        except LookupError as exc:
+            raise RikaError(404, str(exc)) from None
+
+    def submit(self, conn, text: Any, *, tier: Any = None, conversation_id: Any = None, spoken: Any = False) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > TEXT_MAX or "\x00" in text:
             raise RikaError(400, f"Say something of at most {TEXT_MAX} characters")
         if tier is not None and tier not in router.TIERS:
             raise RikaError(400, "Choose the fast, standard or deep tier")
-        if conversation_id is not None and not isinstance(conversation_id, str):
-            raise RikaError(400, "Use a valid conversation id")
+        if not isinstance(spoken, bool):
+            raise RikaError(400, "spoken is true or false")
+        conversation = self._conversation(conn, conversation_id)
+        message = store.add_message(conn, conversation_id=conversation, role="user", text=text.strip(),
+                                    source="voice" if spoken else "typed")
+        self.hub.publish({"type": "message", "message": message})
+        self._jobs.put(_Job(conversation, message["id"], message["text"], message["created_at"], tier, spoken=spoken))
+        return {"conversation_id": conversation, "message_id": message["id"]}
+
+    def dump(self, conn, transcript: Any, segments: Any, duration: Any, *, conversation_id: Any = None) -> dict:
+        """Keep a brain dump's transcript as a dump note and queue its plan (Q7 A, Q8 A)."""
         try:
-            conversation = store.conversation_for(conn, conversation_id)
+            text, lines, seconds = dumps.validate_dump(transcript, segments, duration)
+        except dumps.PlanError as exc:
+            raise RikaError(400, str(exc)) from None
+        conversation = self._conversation(conn, conversation_id)
+        message = store.add_message(conn, conversation_id=conversation, role="user", text=text, source="dump")
+        note = None
+        if "workspace" in self.app.modules:
+            page, block = dumps.create_note(conn, transcript=text, segments=lines, duration=seconds)
+            note = (page["id"], block)
+        self.hub.publish({"type": "message", "message": message})
+        self._jobs.put(_Job(conversation, message["id"], text, message["created_at"], None, kind="dump",
+                            segments=lines, duration=seconds, note=note))
+        return {"conversation_id": conversation, "message_id": message["id"]}
+
+    def decide_plan(self, conn, ident: str, decision: Any, items: Any = None, choices: Any = None) -> dict:
+        """Approve a plan's ticked items (they run on the worker) or dismiss the whole plan."""
+        if decision not in ("approve", "dismiss"):
+            raise RikaError(400, "Decide approve or dismiss")
+        try:
+            record = store.plan_record(conn, ident)
+            if decision == "approve":
+                chosen = dumps.choose(record["items"], items, choices)
+            elif items is not None or choices is not None:
+                raise dumps.PlanError("Dismissing takes no items")
+            else:
+                chosen = [dict(entry, picked=False) for entry in record["items"]]
+            plan = store.start_plan(conn, ident, "running" if decision == "approve" else "dismissed", chosen)
         except LookupError as exc:
             raise RikaError(404, str(exc)) from None
-        message = store.add_message(conn, conversation_id=conversation, role="user", text=text.strip())
-        self.hub.publish({"type": "message", "message": message})
-        self._jobs.put(_Job(conversation, message["id"], message["text"], message["created_at"], tier))
-        return {"conversation_id": conversation, "message_id": message["id"]}
+        except dumps.PlanError as exc:
+            raise RikaError(400, str(exc)) from None
+        except PermissionError as exc:
+            raise RikaError(409, str(exc)) from None
+        if decision == "dismiss" and record["note_page_id"] is not None:
+            dumps.fill_note(conn, record["note_page_id"], record["note_block_id"], chosen, dismissed=True)
+        self.hub.publish({"type": "plan", "plan": plan})
+        if decision == "approve":
+            request = store.message(conn, record["request_id"])
+            self._jobs.put(_Job(request["conversation_id"], request["id"], request["text"], request["created_at"], None,
+                                kind="plan", plan_id=ident))
+        return plan
+
+    def speak(self, conn, ident: str) -> dict:
+        """A short spoken summary of a reply to a spoken request (Q6 C); audio is None without a local engine."""
+        try:
+            reply = store.message(conn, ident)
+            request = store.message(conn, reply["reply_to"]) if reply["role"] == "rika" and reply["reply_to"] else None
+        except LookupError as exc:
+            raise RikaError(404, str(exc)) from None
+        if request is None or request["source"] != "voice":
+            raise RikaError(409, "Rika speaks only replies to what you said aloud")
+        if reply["status"] == "pending":
+            raise RikaError(409, "This reply is still being written")
+        text = speech.summary(reply["text"])
+        return {"text": text, "audio": speech.synthesize(self.app, text)}
 
     def decide(self, conn, ident: str, decision: Any) -> dict:
         status = {"approve": "approved", "reject": "rejected"}.get(decision) if isinstance(decision, str) else None
@@ -217,21 +299,13 @@ class Rika:
                                   reply_to=job.user_id, status="pending")
         turn = _Turn(conn, job, reply)
         try:
-            decision = router.route(job.text, override=job.override,
-                                    failed_before=store.failed_before(conn, job.conversation_id, job.created_at))
             available = toolset.available(self.app)
-            # An override asks for the model; the demo has none, so its phrases still run.
-            deterministic = job.override is None or self.app.settings.demo
-            plan = commands.parse(job.text, conn, available) if deterministic else None
-            if plan is not None:
-                self._tier(turn, decision.tier if job.override else "fast", "deterministic")
-                self._deterministic(turn, plan, available)
-            elif self.app.settings.demo:
-                self._tier(turn, decision.tier, "demo")
-                for word in commands.DEMO_REPLY.split(" "):
-                    self._token(turn, word if not turn.text else " " + word)
+            if job.kind == "dump":
+                self._make_plan(turn, available)
+            elif job.kind == "plan":
+                self._run_plan(turn, available)
             else:
-                self._model(turn, decision.tier, available)
+                self._request(turn, available)
         except Exception:  # noqa: BLE001
             log.exception("Rika's turn failed")
             turn.failed = True
@@ -241,6 +315,119 @@ class Rika:
                                      status="failed" if turn.failed else "done",
                                      cost_usd=turn.cost if turn.charged else None)
         self.hub.publish({"type": "message", "message": final})
+
+    def _request(self, turn: _Turn, available: dict) -> None:
+        job, conn = turn.job, turn.conn
+        decision = router.route(job.text, override=job.override, spoken=job.spoken,
+                                failed_before=store.failed_before(conn, job.conversation_id, job.created_at))
+        # An override asks for the model; the demo has none, so its phrases still run.
+        deterministic = job.override is None or self.app.settings.demo
+        plan = commands.parse(job.text, conn, available) if deterministic else None
+        if plan is not None:
+            self._tier(turn, decision.tier if job.override else "fast", "deterministic")
+            self._deterministic(turn, plan, available)
+        elif self.app.settings.demo:
+            self._tier(turn, decision.tier, "demo")
+            for word in commands.DEMO_REPLY.split(" "):
+                self._token(turn, word if not turn.text else " " + word)
+        else:
+            self._model(turn, decision.tier, available)
+
+    # Brain dumps --------------------------------------------------------------
+
+    def _make_plan(self, turn: _Turn, available: dict) -> None:
+        """One plan from a dump's transcript: the demo's script, else the standard tier."""
+        job, conn = turn.job, turn.conn
+        if self.app.settings.demo:
+            self._tier(turn, "standard", "demo")
+            items = dumps.demo_plan(conn, job.text, available)
+        else:
+            items = self._plan_with_model(turn, available)
+            if items is None:
+                turn.failed = True
+                if job.note:
+                    self._token(turn, " The transcript is kept in your dump note.")
+                return
+        if not items:
+            self._token(turn, "I heard nothing to plan in that brain dump."
+                        + (" The transcript is kept in your dump note." if job.note else ""))
+            if job.note:
+                with self.app.mutation_lock:
+                    dumps.fill_note(conn, job.note[0], job.note[1], [])
+            return
+        plan = store.add_plan(conn, message_id=turn.id, request_id=job.user_id, items=items,
+                              segments=job.segments or [], duration=job.duration,
+                              note_page_id=job.note[0] if job.note else None,
+                              note_block_id=job.note[1] if job.note else None)
+        self.hub.publish({"type": "plan", "plan": plan})
+        areas = [area for area in dumps.AREAS if any(entry["area"] == area for entry in items)]
+        self._token(turn, f"One plan from your brain dump: {len(items)} item{'s' if len(items) != 1 else ''} in "
+                    f"{_listing(areas)}. Untick anything I misheard, then approve.")
+
+    def _plan_with_model(self, turn: _Turn, available: dict) -> list[dict] | None:
+        """The standard tier's plan, retried one tier up when it is unreadable or every item was invalid."""
+        job, conn = turn.job, turn.conn
+        zone = conn.execute("SELECT timezone FROM calendar_calendars WHERE id='personal'").fetchone()["timezone"]
+        messages = [{"role": "system", "content": dumps.prompt(datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M"),
+                                                                zone, available)},
+                    {"role": "user", "content": dumps.transcript_text(job.segments or [], job.text)}]
+        tier, escalations = "standard", 0
+        while True:
+            reply = self._complete(turn, tier, messages, [], on_token=None)
+            if reply is None:
+                return None
+            try:
+                items, dropped = dumps.parse(reply.text, available)
+                problem = "every item called a tool wrongly" if dropped and not items else ""
+            except dumps.PlanError as exc:
+                items, problem = None, str(exc)
+            if not problem:
+                return items
+            higher, escalations = self._escalate(turn, tier, escalations)
+            if higher == tier:
+                self._token(turn, "I could not turn that brain dump into a plan.")
+                return None
+            tier = higher
+            messages += [{"role": "assistant", "content": reply.text},
+                         {"role": "user", "content": f"That plan was not usable ({problem}). Answer with the JSON plan "
+                                                     "only, using only the listed tools and their arguments."}]
+
+    def _run_plan(self, turn: _Turn, available: dict) -> None:
+        """Run the ticked items of an approved plan, then link what they made into the dump note."""
+        conn = turn.conn
+        record = store.plan_record(conn, turn.job.plan_id)
+        self._tier(turn, "fast", "deterministic")
+        items = record["items"]
+        for entry in items:
+            if not entry.get("picked"):
+                entry["result"] = {"status": "skipped", "summary": "Not ticked", "links": []}
+                continue
+            links, done, error = [], [], None
+            for call in dumps.calls_of(entry):
+                outcome = self._call(turn, call["tool"], call["args"], available, approved=True)
+                if outcome["status"] != "done":
+                    error = outcome.get("error") or outcome.get("reason") or "it did not run"
+                    break
+                done.append(outcome["summary"])
+                links.append(dumps.link(call, outcome))
+            entry["result"] = {"status": "failed" if error else "done", "links": links,
+                               "summary": f"{'; '.join(done) + '; ' if done else ''}failed: {error}" if error else "; ".join(done)}
+        failed = [entry for entry in items if entry["result"]["status"] == "failed"]
+        made = [entry for entry in items if entry["result"]["status"] == "done"]
+        plan = store.finish_plan(conn, record["id"], "applied", items)
+        if record["note_page_id"] is not None:
+            with self.app.mutation_lock:
+                dumps.fill_note(conn, record["note_page_id"], record["note_block_id"], items)
+            plan = store.plan(conn, record["id"])
+        self.hub.publish({"type": "plan", "plan": plan})
+        areas = [area for area in dumps.AREAS if any(entry["area"] == area for entry in made)]
+        text = f"Done: {len(made)} item{'s' if len(made) != 1 else ''}" + (f" in {_listing(areas)}" if areas else "") + "."
+        if failed:
+            turn.failed = not made
+            text += f" {len(failed)} failed: " + "; ".join(f"{entry['title']} ({entry['result']['summary']})" for entry in failed) + "."
+        if plan["note"]:
+            text += f" The note “{plan['note']['title']}” links to everything it made."
+        self._token(turn, text)
 
     def _tier(self, turn: _Turn, tier: str, model: str) -> None:
         if (turn.tier, turn.model) == (tier, model):
@@ -273,8 +460,11 @@ class Rika:
 
     # Tools --------------------------------------------------------------------
 
-    def _call(self, turn: _Turn, name: str, args: Any, available: dict) -> dict:
-        """Validate, approve when outward, run and record one tool call."""
+    def _call(self, turn: _Turn, name: str, args: Any, available: dict, *, approved: bool = False) -> dict:
+        """Validate, approve when outward, run and record one tool call.
+
+        `approved` is a brain-dump plan the user approved with this call ticked: that tap
+        in the history drawer is the approval an outward call waits for (Q9)."""
         tool = available.get(name)
         if tool is None:
             return {"status": "invalid", "error": f"There is no tool called {name}"}
@@ -285,7 +475,7 @@ class Rika:
         except ToolError as exc:
             return {"status": "invalid", "error": str(exc)}
         ctx = Context(self.app, turn.conn)
-        if tool.effect == "outward":
+        if tool.effect == "outward" and not approved:
             try:
                 summary, detail = tool.describe(ctx, args)
             except Exception as exc:  # noqa: BLE001
@@ -349,6 +539,48 @@ class Rika:
             return tier, escalations
         return higher, escalations + 1
 
+    def _complete(self, turn: _Turn, tier: str, messages: list[dict], specs: list[dict], *,
+                  on_token: Any) -> llm.Reply | None:
+        """One model request on `tier` under the budget; None (with the reason said) when it did not run or failed."""
+        conn = turn.conn
+        model = router.models(conn)[tier]
+        self._tier(turn, tier, model)
+        try:
+            call = llm.prepare(self.app, conn, model, messages, specs)
+        except llm.ModelUnavailable as exc:
+            turn.failed = True
+            self._token(turn, str(exc))
+            return None
+        over = not llm.fits_budget(conn, call)
+        if over:
+            approval = self._approve(
+                turn, "openrouter", {"model": model, "tier": tier},
+                f"Spend up to ${call.maximum_cost:.4f} on {model}",
+                "This request is over today's remaining AI budget (Settings → AI). The cost is a ceiling at the "
+                "model's listed prices; the reported cost replaces it afterwards.", call.maximum_cost)
+            if approval["status"] != "approved":
+                self._token(turn, "I stopped there: the next model request was over today's AI budget and was not approved.")
+                return None
+        try:
+            reservation = llm.reserve(conn, call, approved_over_budget=over)
+        except llm.OverBudget as exc:
+            turn.failed = True
+            self._token(turn, str(exc))
+            return None
+        # A new model step separates its text from the previous step's.
+        turn.break_before = True
+        try:
+            reply = llm.stream(call, on_token or (lambda _text: None))
+        except llm.ModelFailed as exc:
+            llm.settle(conn, reservation, None)
+            turn.charged, turn.cost = True, turn.cost + call.maximum_cost
+            turn.failed = True
+            self._token(turn, str(exc))
+            return None
+        llm.settle(conn, reservation, reply)
+        turn.charged, turn.cost = True, turn.cost + (reply.cost if reply.cost is not None else call.maximum_cost)
+        return reply
+
     def _model(self, turn: _Turn, tier: str, available: dict) -> None:
         conn = turn.conn
         messages = [{"role": "system", "content": self._context(conn)},
@@ -357,41 +589,9 @@ class Rika:
         specs = [tool.spec() for tool in available.values()]
         escalations = 0
         for _step in range(MAX_STEPS):
-            model = router.models(conn)[tier]
-            self._tier(turn, tier, model)
-            try:
-                call = llm.prepare(self.app, conn, model, messages, specs)
-            except llm.ModelUnavailable as exc:
-                turn.failed = True
-                self._token(turn, str(exc))
+            reply = self._complete(turn, tier, messages, specs, on_token=lambda text: self._token(turn, text))
+            if reply is None:
                 return
-            over = not llm.fits_budget(conn, call)
-            if over:
-                approval = self._approve(
-                    turn, "openrouter", {"model": model, "tier": tier},
-                    f"Spend up to ${call.maximum_cost:.4f} on {model}",
-                    "This request is over today's remaining AI budget (Settings → AI). The cost is a ceiling at the "
-                    "model's listed prices; the reported cost replaces it afterwards.", call.maximum_cost)
-                if approval["status"] != "approved":
-                    self._token(turn, "I stopped there: the next model request was over today's AI budget and was not approved.")
-                    return
-            try:
-                reservation = llm.reserve(conn, call, approved_over_budget=over)
-            except llm.OverBudget as exc:
-                turn.failed = True
-                self._token(turn, str(exc))
-                return
-            turn.break_before = True
-            try:
-                reply = llm.stream(call, lambda text: self._token(turn, text))
-            except llm.ModelFailed as exc:
-                llm.settle(conn, reservation, None)
-                turn.charged, turn.cost = True, turn.cost + call.maximum_cost
-                turn.failed = True
-                self._token(turn, str(exc))
-                return
-            llm.settle(conn, reservation, reply)
-            turn.charged, turn.cost = True, turn.cost + (reply.cost if reply.cost is not None else call.maximum_cost)
             if reply.tool_calls:
                 messages.append({"role": "assistant", "content": reply.text or None, "tool_calls": [
                     {"id": item["id"], "type": "function", "function": {"name": item["name"], "arguments": item["arguments"]}}
@@ -440,6 +640,11 @@ class Rika:
             if agents != last:
                 last = agents
                 self.hub.publish({"type": "agents", "agents": agents})
+
+
+def _listing(areas: list[str]) -> str:
+    """Areas as a phrase, e.g. notes, tasks and calendar."""
+    return areas[0] if len(areas) == 1 else ", ".join(areas[:-1]) + " and " + areas[-1]
 
 
 def _safe(exc: Exception) -> str:

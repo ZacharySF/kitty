@@ -89,8 +89,10 @@ before(async () => {
   });
   await server.listen();
   base = server.resolvedUrls.local[0];
-  // Home is the Brain, which needs WebGL: software rendering where there is no GPU.
-  browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"] });
+  // Home is the Brain, which needs WebGL: software rendering where there is no GPU. Rika's
+  // voice tests use Chromium's fake microphone, which needs no permission prompt.
+  browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader",
+    "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
 });
 after(async () => {
   await browser?.close();
@@ -2719,6 +2721,106 @@ describe("Rika against the demo's scripted responder", () => {
     // Without a usable Tern the request fails and the Tern view says why.
     await page.waitForFunction(() => location.hash === "#tern");
     assert.deepEqual(opens, [{}]);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  // Voice (Q3 A, Q5 A, Q6 C) and brain dumps (Q7 A, Q8 A, Q20 A). Chromium's fake microphone
+  // feeds a tone; the demo hears its canned transcript, loads no model and speaks nothing.
+  const local = (page) => {
+    const foreign = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (!["data:", "blob:"].includes(url.protocol) && url.origin !== new URL(base).origin) foreign.push(request.url());
+    });
+    return foreign;
+  };
+
+  test("holding Space hears the demo's canned command; it runs on the fast tier and the demo speaks no reply", async () => {
+    const { page, problems, context } = await open("settings", {
+      setup: (context) => context.addInitScript(() => {
+        window.__played = [];
+        HTMLMediaElement.prototype.play = function play() { window.__played.push(this.src); return Promise.resolve(); };
+      }),
+    });
+    const foreign = local(page);
+    const field = page.getByRole("textbox", { name: "Ask Rika" });
+    await field.focus();
+    await page.keyboard.down(" ");
+    await page.waitForFunction(() => document.querySelector('[aria-label="Ask Rika"]').placeholder.startsWith("Add a task"), null, { timeout: 15_000 });
+    assert.equal(await page.getByRole("region", { name: "Rika" }).getAttribute("data-listening"), "command");
+    const spoken = page.waitForResponse((response) => /\/api\/rika\/speech\//.test(response.url()), { timeout: 20_000 });
+    await page.keyboard.up(" ");
+    const toast = replies(page).getByRole("listitem").filter({ hasText: "Added the task Read chapter 3" });
+    await toast.waitFor({ timeout: 15_000 });
+    assert.equal((await toast.locator("[data-tier]").innerText()).toLowerCase(), "fast");
+    assert.deepEqual(await (await spoken).json(), { text: "Added the task Read chapter 3.", audio: null });
+    assert.deepEqual(await page.evaluate(() => window.__played), []);
+    const voice = await page.evaluate(async () => (await fetch("/api/rika/voice")).json());
+    assert.equal(voice.engine, "demo");
+    assert.deepEqual(foreign, []);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("a brain dump from Ctrl K plans by area; approving the ticked items makes them and the dump note links them", async () => {
+    const { page, problems, context } = await open("settings");
+    const foreign = local(page);
+    await page.getByRole("region", { name: "Rika" }).waitFor();
+    await page.keyboard.press("Control+k");
+    const search = page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox");
+    await search.fill("Brain dump");
+    await search.press("Enter");
+    const history = drawer(page);
+    const transcript = history.getByRole("region", { name: "Brain dump transcript" });
+    await transcript.getByText(/orgo midterm/i).waitFor({ timeout: 20_000 });
+    await history.getByRole("button", { name: "Done · make plan" }).click();
+    const plan = history.getByRole("article", { name: "Brain dump plan" });
+    await plan.waitFor({ timeout: 15_000 });
+    assert.deepEqual(await plan.getByRole("region").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))),
+      ["Notes", "Tasks", "Calendar", "Cards", "Jobs", "Agents"]);
+    await plan.getByRole("checkbox", { name: "All of Agents" }).uncheck();
+    await plan.getByRole("button", { name: /^Next / }).click();
+    await plan.getByRole("button", { name: "Approve 8 of 9" }).click();
+    await history.waitFor({ state: "detached" });
+    await replies(page).getByText(/^Done: 8 items in notes, tasks, calendar, cards and jobs\./).waitFor({ timeout: 15_000 });
+    const made = await page.evaluate(async () => {
+      const items = (await (await fetch("/api/rika/history")).json()).items;
+      const plan = items.filter((item) => item.kind === "plan").at(-1);
+      const blocks = (await (await fetch(`/api/notes/pages/${plan.note.page_id}/blocks`)).json()).blocks.map((block) => block.text);
+      return { status: plan.status, results: plan.items.map((item) => item.result.status), blocks };
+    });
+    assert.equal(made.status, "applied");
+    assert.deepEqual(made.results.filter((status) => status === "done").length, 8);
+    assert.ok(made.blocks.includes("Created from this dump"));
+    assert.ok(made.blocks.includes("[[CS 220 · Final project idea]]"));
+    assert.ok(made.blocks.some((text) => /^\[Study group \(.+, 19:00\)\]\(#calendar\)$/.test(text)));
+    assert.ok(made.blocks.some((text) => text.startsWith("Transcript · ")));
+    assert.ok((await page.evaluate(async () => (await (await fetch("/api/rika/agents")).json()).agents.length)) >= 5);
+    // The applied plan shows what each item made.
+    await page.keyboard.press("Control+j");
+    const applied = drawer(page).getByRole("article", { name: "Brain dump plan" });
+    await applied.getByText("Done", { exact: true }).waitFor();
+    assert.equal(await applied.getByRole("button", { name: "CS 220 · Final project idea" }).count(), 1);
+    await page.keyboard.press("Control+j");
+    await drawer(page).waitFor({ state: "detached" });
+    // The plan's toast lists the first changes and offers one Undo all, which reverts them all.
+    const toast = replies(page).getByRole("listitem").filter({ hasText: "Done: 8 items" });
+    await toast.getByText(/^\d+ more in Rika history$/).waitFor();
+    await toast.getByRole("button", { name: "Undo all" }).click();
+    const undone = () => page.evaluate(async () => {
+      const items = (await (await fetch("/api/rika/history")).json()).items;
+      // The approved plan runs as a turn of its own, whose reply holds the actions.
+      const run = items.find((item) => item.kind === "message" && item.role === "rika" && item.text.startsWith("Done: 8 items"));
+      return items.filter((item) => item.kind === "action" && item.message_id === run?.id).map((item) => item.status);
+    });
+    let statuses = [];
+    for (let tries = 0; tries < 80 && !(statuses.length === 11 && statuses.every((status) => status === "undone")); tries += 1) {
+      await page.waitForTimeout(250);
+      statuses = await undone();
+    }
+    assert.deepEqual(statuses, Array(11).fill("undone"));
+    assert.deepEqual(foreign, []);
     assert.deepEqual(problems, []);
     await context.close();
   });

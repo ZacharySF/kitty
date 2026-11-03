@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
-    webview::NewWindowResponse,
+    webview::{NewWindowResponse, PermissionKind, PermissionResponse},
     Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use url::Url;
@@ -327,6 +327,14 @@ fn main() {
                 .on_navigation(move |url| {
                     if local_url(url, &navigation_origin) { true }
                     else { open_external(url); false }
+                })
+                // Rika's voice input (docs/rika-design.md Q5): WebKitGTK denies getUserMedia
+                // unless the app allows it. The window only shows rika!'s own loopback origin
+                // (navigation above), audio is transcribed on this computer, and the page
+                // opens the microphone only while Space is held or a brain dump runs.
+                .on_permission_request(|_webview, kind| match kind {
+                    PermissionKind::Microphone => PermissionResponse::Allow,
+                    _ => PermissionResponse::Default,
                 })
                 .on_new_window(move |url, _features| {
                     match quick_note_target(&url, &note_origin) {

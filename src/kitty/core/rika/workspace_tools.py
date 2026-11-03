@@ -115,12 +115,22 @@ def _read_page(ctx: Context, args: dict) -> Result:
 def _create_page(ctx: Context, args: dict) -> Result:
     page = notes.create_page(ctx.conn, _notebook(ctx.conn, args.get("notebook")), args["title"])
     return Result(f"Created the page {page['title']}", {"page_id": page["id"]},
-                  undo={"page_id": page["id"], "revision": page["revision"]})
+                  undo={"page_id": page["id"], "revision": page["revision"], "title": page["title"]})
 
 
 def _undo_create_page(ctx: Context, undo: dict) -> None:
+    """Deletes the page while it is as Rika made it, or empty again with its title (a block
+    Rika appended to it was undone first, as Undo all does), so nothing of yours is lost."""
     try:
-        notes.delete_page(ctx.conn, undo["page_id"], undo["revision"])
+        page = notes.page(ctx.conn, undo["page_id"])
+    except notes.NotesError:
+        return  # already gone
+    if page["revision"] != undo["revision"]:
+        empty = not page["document"]["elements"] and not note_blocks.get_blocks(ctx.conn, page["id"])["blocks"]
+        if not empty or page["title"] != undo.get("title"):
+            raise ToolError("The page changed since Rika created it, so it was kept")
+    try:
+        notes.delete_page(ctx.conn, page["id"], page["revision"])
     except notes.NotesError:
         raise ToolError("The page changed since Rika created it, so it was kept") from None
 
