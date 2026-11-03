@@ -285,3 +285,30 @@ def test_fifty_thousand_nodes_answer_quickly(app, workspace):
     assert len(result["nodes"]) == 50000 and result["truncated"] is True
     assert result["total"] == {"records": 20000 + seeded, "edits": 40000}
     assert elapsed < 3, elapsed
+
+
+def test_records_created_after_the_block_migration_come_from_blocks(app, workspace):
+    conn = workspace.conn
+    legacy = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+              for table in ("note_pages", "note_blocks", "quick_notes", "documents")}
+    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Chemistry"})
+    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Acids"})
+    root = conn.execute("SELECT block_id FROM note_page_index WHERE id=?", (page["id"],)).fetchone()[0]
+    item = str(uuid.uuid4())
+    blocks.transact(conn, [{"op": "insert", "id": item, "type": "text", "parent": root, "text": "pH"}])
+    blocks.transact(conn, [{"op": "text", "id": item, "text": "pH scale"}])
+    quick = app.mutate(conn, "/api/quick-notes/create", {"body": "later"})
+    document = app.mutate(conn, "/api/documents", {"title": "Lab report", "content": "Body", "format": "text",
+                                                   "notebook_id": notebook["id"]})
+    # The frozen legacy tables never see them: only the block backend does.
+    assert legacy == {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in legacy}
+    result = brain(app, conn)
+    assert_contract(result)
+    nodes = by_id(result)
+    assert nodes[f"notes.page:{page['id']}"]["label"] == "Acids"
+    assert nodes[f"notes.block:{item}"]["parent"] == f"notes.page:{page['id']}"
+    assert nodes[f"quick-notes.note:{quick['id']}"]["type"] == "note"
+    assert nodes[f"documents.document:{document['id']}"]["label"] == "Lab report"
+    item_edits = [node for node in result["nodes"] if node["kind"] == "edit"
+                  and node["parent"] == f"notes.page:{page['id']}" and node["id"].startswith("edit:op_log:")]
+    assert len(item_edits) == 3  # create, insert, update: each op_log row once
