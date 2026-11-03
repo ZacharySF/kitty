@@ -96,6 +96,10 @@
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
   {:else if view === "today"}
     <GraphNavigator bind:this={atlas} {revision} {onview} />
+  {:else if view === "goals"}
+    {#await import("./goals/Goals.svelte")}{@render pending()}{:then { default: Goals }}
+      <Goals {revision} {onview} {onopenjob} />
+    {/await}
   {:else if view === "quick-notes"}
     {#await import("./QuickNotes.svelte")}{@render pending()}{:then { default: QuickNotes }}
       <QuickNotes />

@@ -2,7 +2,7 @@
   import { tick } from "svelte";
   import EditDrawer from "../ui/EditDrawer.svelte";
   import RikaAgents from "./RikaAgents.svelte";
-  import { costLabel, entryKey } from "./rika";
+  import { costLabel, entryKey, holdClock, holdLeft, mailLine, usageReadout } from "./rika";
   import { rika } from "./session.svelte";
 
   /**
@@ -28,6 +28,18 @@
     void rika.entries.length;
     if (rika.drawer.section === "conversation") void tick().then(() => list?.lastElementChild?.scrollIntoView({ block: "end" }));
   });
+  // Q16: a held send counts down while it can still be undone.
+  const MAIL_STATUS = { draft: "Draft", scheduled: "Sending", sent: "Sent", cancelled: "Cancelled", discarded: "Discarded", failed: "Failed" } as const;
+  // A discarded draft leaves the conversation (the stream still says so, for the Email page).
+  const entries = $derived(rika.entries.filter((entry) => entry.kind !== "mail" || entry.status !== "discarded"));
+  let now = $state(Date.now());
+  const holding = $derived(rika.entries.some((entry) => entry.kind === "mail" && entry.status === "scheduled"));
+  $effect(() => {
+    if (!holding) return;
+    now = Date.now();
+    const timer = setInterval(() => (now = Date.now()), 250);
+    return () => clearInterval(timer);
+  });
 </script>
 
 <EditDrawer title="Rika history" {meta} closeLabel="Close Rika history" onclose={() => rika.closeDrawer()}>
@@ -43,19 +55,26 @@
       {#if rika.hasMore}<button class="pill earlier" onclick={() => rika.loadHistory(true)}>Load earlier</button>{/if}
       {#if !rika.entries.length}<p class="note">Ask Rika anything in the bar below. Replies, what Rika did and what it needs you to approve collect here.</p>{/if}
       <ol bind:this={list}>
-        {#each rika.entries as entry (entryKey(entry))}
+        {#each entries as entry (entryKey(entry))}
           <li data-entry={entry.kind}>
             {#if entry.kind === "message" && entry.role === "user"}
               <div class="you"><time>{time(entry.created_at)}</time><p>{entry.text}</p></div>
             {:else if entry.kind === "message"}
+              {@const readout = usageReadout(entry)}
               <div class="said">
                 <i class="mark" aria-hidden="true"></i>
                 <div>
                   <p class:thinking={!entry.text}>{entry.text || "Thinking…"}</p>
                   <span class="meta-line">
-                    {#if entry.tier}<span class="rika-chip" data-tier={entry.tier} title={entry.model}>{entry.tier}</span>{/if}
-                    <time>{time(entry.created_at)}</time>
-                    {#if costLabel(entry.cost_usd)}<span>{costLabel(entry.cost_usd)}</span>{/if}
+                    {#if readout}
+                      <span class="rika-chip" data-tier={readout.tier} title={entry.model}>{readout.label}</span>
+                      <span class="readout">{readout.detail}</span>
+                      <time>{time(entry.created_at)}</time>
+                    {:else}
+                      {#if entry.tier}<span class="rika-chip" data-tier={entry.tier} title={entry.model}>{entry.tier}</span>{/if}
+                      <time>{time(entry.created_at)}</time>
+                      {#if costLabel(entry.cost_usd)}<span>{costLabel(entry.cost_usd)}</span>{/if}
+                    {/if}
                     {#if entry.status === "failed"}<span class="failed">Failed</span>{/if}
                   </span>
                 </div>
@@ -65,6 +84,29 @@
                 <header><span class="kind">{entry.tool.replaceAll("_", " ")}</span><span class="state">{STATUS[entry.status]}</span></header>
                 <p>{entry.summary}</p>
                 {#if entry.reversible && entry.status === "done"}<div class="decide"><button class="pill" onclick={() => rika.undo(entry.id)}>Undo</button></div>{/if}
+              </article>
+            {:else if entry.kind === "mail"}
+              {@const left = holdLeft(entry, now)}
+              <article class="card mail" data-status={entry.status} aria-label={`Reply to ${entry.to}: ${entry.subject}`}>
+                <header><span class="kind">{mailLine(entry)}</span><span class="state">{MAIL_STATUS[entry.status]}</span></header>
+                <p class="to">To <b>{entry.to}</b></p>
+                <p class="subject">{entry.subject}</p>
+                <p class="snippet">{entry.body}</p>
+                {#if entry.status === "scheduled"}
+                  <div class="decide">
+                    {#if left}<button class="pill" onclick={() => rika.mailAction(entry.id, "undo")}>Undo send · {holdClock(left)}</button>{:else}<span class="hold">Sending…</span>{/if}
+                  </div>
+                {:else if entry.status === "sent"}
+                  <p class="sent">Sent — Gmail can't unsend it</p>
+                {:else if entry.status === "draft" || entry.status === "cancelled"}
+                  {#if entry.status === "cancelled" && entry.error}<p class="detail">{entry.error}</p>{/if}
+                  <div class="decide">
+                    <button class="pill" onclick={() => rika.mailAction(entry.id, "discard")}>Discard</button>
+                    <button class="pill primary" onclick={() => rika.mailAction(entry.id, "send")}>Send</button>
+                  </div>
+                {:else if entry.status === "failed" && entry.error}
+                  <p class="failed">{entry.error}</p>
+                {/if}
               </article>
             {:else}
               {@const status = entry.status ?? "pending"}
@@ -263,5 +305,50 @@
     min-height: 26px;
     padding: 3px 12px;
     font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Q13: the per-reply readout stays one quiet mono line beside the tier chip. */
+  .readout {
+    overflow-wrap: anywhere;
+  }
+  /* Q16: a reply draft; violet while held, green once sent, grey once cancelled. */
+  .card.mail {
+    --tone: var(--accent);
+  }
+  .card.mail[data-status="scheduled"] {
+    --tone: var(--c3, var(--violet));
+  }
+  .card.mail[data-status="sent"] {
+    --tone: var(--success);
+  }
+  .card.mail:is([data-status="cancelled"], [data-status="discarded"]) {
+    --tone: var(--subtle);
+  }
+  .card.mail[data-status="failed"] {
+    --tone: var(--danger);
+  }
+  .to {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .to b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .subject {
+    font-weight: 600;
+  }
+  .snippet {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--muted);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+  .hold,
+  .sent {
+    color: var(--muted);
+    font: 10.5px var(--font-mono);
   }
 </style>

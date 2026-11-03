@@ -1,5 +1,5 @@
 import { api } from "../api";
-import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaMessage, type StreamEvent } from "./rika";
+import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type StreamEvent } from "./rika";
 
 /** How long a finished reply's toast stays before it leaves for the drawer. */
 export const RIKA_TOAST_MS = 9000;
@@ -32,6 +32,8 @@ export class RikaSession {
   private retryTimer = 0;
   private stopped = true;
   private onnavigate: (view: string) => void = () => {};
+  /** Other features' stream listeners (the morning brief); each hears every event, even types this session skips. */
+  private listeners = new Set<(event: { type: string }) => void>();
 
   readonly pending = $derived(this.entries.filter((entry): entry is Entry & { kind: "approval" } => entry.kind === "approval" && entry.status === "pending"));
   /** Replies still being written (not those paused on an approval), or requests not yet answered. */
@@ -106,6 +108,7 @@ export class RikaSession {
   }
 
   apply(event: StreamEvent) {
+    for (const listener of this.listeners) listener(event);
     switch (event.type) {
       case "message":
         if (event.message.role === "rika") this.reply(event.message.id, event.message.reply_to, () => ({ status: "done", ...event.message }));
@@ -129,7 +132,16 @@ export class RikaSession {
       case "navigate":
         this.onnavigate(event.view);
         break;
+      case "mail":
+        this.upsert({ ...event.mail, kind: "mail" });
+        break;
     }
+  }
+
+  /** Hears every stream event; returns the unsubscribe. */
+  subscribe(listener: (event: { type: string }) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   async send(text: string, tier?: RikaMessage["tier"]) {
@@ -169,6 +181,18 @@ export class RikaSession {
       this.upsert({ kind: "action", ...action });
     } catch (cause) {
       this.error = (cause as Error).message;
+    }
+  }
+
+  /** Q16: Send (the one tap is the approval; the send is held), Undo-send or Discard a reply draft. */
+  async mailAction(id: string, verb: "send" | "undo" | "discard"): Promise<RikaDraft | null> {
+    try {
+      const { draft } = await api<{ draft: RikaDraft }>(`/rika/mail/drafts/${encodeURIComponent(id)}/${verb}`, {});
+      this.upsert({ ...draft, kind: "mail" });
+      return draft;
+    } catch (cause) {
+      this.error = (cause as Error).message;
+      return null;
     }
   }
 

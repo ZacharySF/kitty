@@ -1,4 +1,5 @@
 <script lang="ts">
+  import BriefChip from "../goals/BriefChip.svelte";
   import { agentChips } from "./rika";
   import { rika } from "./session.svelte";
 
@@ -49,6 +50,7 @@
   <label class="field">
     <input bind:value placeholder="Ask Rika…" aria-label="Ask Rika" spellcheck="false" autocomplete="off" onkeydown={keydown} />
   </label>
+  <BriefChip />
   {#if chips.kind === "count" || chips.agents.length}
     <div class="chips" role="group" aria-label="Running agents">
       {#if chips.kind === "count"}

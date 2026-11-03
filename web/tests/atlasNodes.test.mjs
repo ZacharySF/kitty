@@ -83,6 +83,6 @@ test('hidden choices for a disabled module neither resurrect nor break the atlas
   assert.ok(!ids(both).includes('view:jobs') && !ids(both).includes('view:pipeline'));
   assert.ok(ids(both).includes('view:reminders'));
   assert.deepEqual(JSON.parse(localStorage.getItem(ATLAS_HIDDEN_KEY)), ['jobs', 'pipeline', 'calendar']);
-  // Every module off: only Settings remains and nothing throws.
-  assert.deepEqual(ids(build([], hiddenSections())), ['view:ai', 'view:settings']);
+  // Every module off: the core sections remain (Goals under Plan) and nothing throws.
+  assert.deepEqual(ids(build([], hiddenSections())), ['group:Plan', 'view:ai', 'view:goals', 'view:settings']);
 });

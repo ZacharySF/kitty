@@ -77,6 +77,11 @@ async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
       send({ type: "token", message_id: id, reply_to: userId, text: "Starting omp needs your approval. " });
       turns.set(9, id);
       send({ type: "approval", approval: { id: 9, message_id: id, tool: "start_agent", summary: "Start omp in a herdr pane", detail: "omp runs shell commands in ~/projects/kitty and spends tokens.", cost_usd: 0.42, status: "pending", created_at: now() } });
+    } else if (/^move my study block/i.test(text)) {
+      // Q13: a deterministic reply runs its tool with no model.
+      send({ type: "action", action: { id: 11, message_id: id, tool: "move_event", summary: "Moved “Study: React deck” to 14:00", reversible: true, status: "done", created_at: now() } });
+      send({ type: "message", message: { id, role: "rika", reply_to: userId, text: "Moved “Study: React deck” to 14:00.", tier: "fast", model: "deterministic", cost_usd: null, status: "done", created_at: now(),
+        usage: { tokens_in: 0, tokens_cached: 0, tokens_out: 0, path: ["move_event"], signature: "move-event", remembered: false, shortcut: false } } });
     } else {
       send({ type: "message", message: { id, role: "rika", reply_to: userId, text: "I can't do that in this harness.", tier: "fast", status: "done", created_at: now() } });
     }
@@ -118,6 +123,17 @@ async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
       const action = { id: Number(undo[1]), tool: "add_task", summary: "Added the task “buy milk”", reversible: true, status: "undone" };
       await route.fulfill({ json: { action } });
       send({ type: "action", action });
+      return;
+    }
+    // Q16: Send holds the draft for 30 s; Undo-send cancels it until then; Discard drops it.
+    const mail = path.match(/^\/api\/rika\/mail\/drafts\/([0-9a-z]+)\/(send|undo|discard)$/);
+    if (mail) {
+      const current = history.find((item) => item.kind === "mail" && item.id === mail[1]);
+      if (!current) return route.fulfill({ status: 404, json: { error: "Unknown draft" } });
+      const status = { send: "scheduled", undo: "cancelled", discard: "discarded" }[mail[2]];
+      Object.assign(current, { status, send_after: status === "scheduled" ? new Date(Date.now() + 30_000).toISOString() : null, updated_at: now() });
+      await route.fulfill({ json: { draft: current } });
+      send({ type: "mail", mail: current });
       return;
     }
     // Without Tern, opening a herdr agent answers the view that shows it instead.
@@ -346,6 +362,78 @@ test("earlier history loads into the drawer, oldest first", async () => {
   assert.match(texts[1], /3 flashcard decks and the CUDA take-home\./);
   assert.match(texts[1], /standard/i);
   assert.equal(await toasts(page).count(), 0, "history raised toasts");
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("each reply carries its readout: tier, remembered path, tokens in (cached), out and cost; no model reads Direct", async () => {
+  const history = [
+    { kind: "message", id: 1, role: "user", text: "Add a card: a closure is a function plus its scope", created_at: "2026-11-02T11:05:00Z" },
+    { kind: "message", id: 2, role: "rika", text: "Added to “JavaScript interview”.", tier: "fast", model: "demo/fast", cost_usd: 0.0002, status: "done", reply_to: 1, created_at: "2026-11-02T11:05:02Z",
+      usage: { tokens_in: 1180, tokens_cached: 960, tokens_out: 64, path: ["find_deck", "add_card"], signature: "add-card", remembered: true, shortcut: false } },
+    { kind: "message", id: 3, role: "user", text: "Add a card: hoisting moves declarations up", created_at: "2026-11-02T11:06:00Z" },
+    { kind: "message", id: 4, role: "rika", text: "Added to “JavaScript interview”.", tier: "fast", model: "shortcut", cost_usd: null, status: "done", reply_to: 3, created_at: "2026-11-02T11:06:01Z",
+      usage: { tokens_in: 0, tokens_cached: 0, tokens_out: 0, path: ["find_deck", "add_card"], signature: "add-card", remembered: true, shortcut: true } },
+  ];
+  const { page, problems, context } = await harness({ history });
+  await page.keyboard.press("Control+j");
+  const replies = drawer(page).locator('[data-entry="message"] .said');
+  await replies.first().waitFor();
+  const model = replies.nth(0);
+  assert.equal((await model.locator(".rika-chip").innerText()).toLowerCase(), "fast");
+  await model.getByText("remembered path find_deck → add_card · 1,180 in (960 cached) · 64 out · $0.0002").waitFor();
+  const shortcut = replies.nth(1);
+  assert.equal(await shortcut.locator(".rika-chip").getAttribute("data-tier"), "direct");
+  assert.equal((await shortcut.locator(".rika-chip").innerText()).toLowerCase(), "direct");
+  await shortcut.getByText("find_deck → add_card · 0 tokens · $0").waitFor();
+  await page.keyboard.press("Control+j");
+  // A live deterministic reply: its toast's chip says Direct too.
+  await ask(page, "Move my study block to 2");
+  const toast = toasts(page).getByRole("listitem").filter({ hasText: "Moved “Study: React deck” to 14:00." });
+  await toast.waitFor();
+  assert.equal((await toast.locator("[data-tier]").innerText()).toLowerCase(), "direct");
+  assert.equal(await toast.locator("[data-tier]").getAttribute("title"), "Direct · move_event · 0 tokens · $0");
+  await page.keyboard.press("Control+j");
+  await drawer(page).getByText("move_event · 0 tokens · $0").waitFor();
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a mail item: who and what, Auto-send · scheduling with an Undo-send countdown, and once sent Gmail can't unsend it", async () => {
+  const mail = (id, extra) => ({
+    kind: "mail", id: id.padEnd(32, "0"), mail_id: `m-${id}`, message_id: null, thread_id: null, to: "Maya Chen <maya@example.test>", subject: "Re: Onsite interview: pick a time",
+    body: "Hi Maya,\n\nTuesday after 1pm or Thursday morning both work.\n\nBest,\nAlex", reply_kind: "scheduling", status: "scheduled", auto: true,
+    send_after: new Date(Date.now() + 25_000).toISOString(), sent_at: null, error: null, original: null, created_at: now(), updated_at: now(), ...extra,
+  });
+  const held = mail("a", {});
+  const waiting = mail("b", { to: "Prof. Okafor <okafor@example.test>", subject: "Re: TA cover for Thursday lab?", reply_kind: "question", status: "draft", auto: false, send_after: null, body: "Yes, I can cover Thursday's 3–5 lab." });
+  const { page, rika, problems, context } = await harness({ history: [held, waiting] });
+  await page.keyboard.press("Control+j");
+  const card = drawer(page).getByRole("article", { name: /Reply to Maya Chen/ });
+  await card.waitFor();
+  const text = await card.innerText();
+  assert.match(text, /Maya Chen <maya@example\.test>/);
+  assert.match(text, /Re: Onsite interview: pick a time/);
+  assert.match(text, /Tuesday after 1pm/);
+  assert.match(text, /auto-send · scheduling/i);
+  const undo = card.getByRole("button", { name: /^Undo send · 0:2\d$/ });
+  await undo.waitFor();
+  const first = await undo.innerText();
+  await page.waitForFunction((before) => [...document.querySelectorAll("button")].some((node) => /^Undo send · /.test(node.textContent.trim()) && node.textContent.trim() !== before), first);
+  await undo.click();
+  await card.getByText("Cancelled").waitFor();
+  assert.deepEqual(rika.posts.at(-1), { path: `/api/rika/mail/drafts/${"a".padEnd(32, "0")}/undo`, body: {}, header: "1" });
+  // A draft waits for one tap; Send holds it with the countdown.
+  const okafor = drawer(page).getByRole("article", { name: /Reply to Prof\. Okafor/ });
+  assert.match(await okafor.innerText(), /Reply · question/i);
+  await okafor.getByRole("button", { name: "Send", exact: true }).click();
+  await okafor.getByRole("button", { name: /^Undo send · 0:(2\d|30)$/ }).waitFor();
+  assert.deepEqual(rika.posts.at(-1), { path: `/api/rika/mail/drafts/${"b".padEnd(32, "0")}/send`, body: {}, header: "1" });
+  // The stream says it went out: no more Undo, and the copy says it can't be unsent.
+  rika.send({ type: "mail", mail: { ...held, status: "sent", send_after: null, sent_at: now(), updated_at: now() } });
+  await card.getByText("Sent — Gmail can't unsend it").waitFor();
+  assert.match(await card.innerText(), /Auto-sent · scheduling/i);
+  assert.equal(await card.getByRole("button").count(), 0);
   assert.deepEqual(problems, []);
   await context.close();
 });

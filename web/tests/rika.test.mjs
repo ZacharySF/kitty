@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agentChips, costLabel, entryKey, mergeEntries, rikaSocketUrl } from '../src/lib/rika/rika.ts';
+import { agentChips, costLabel, entryKey, holdLeft, holdClock, mergeEntries, mailLine, rikaSocketUrl, usageReadout, usd } from '../src/lib/rika/rika.ts';
+import { compactTokens, trendPath, trendRange } from '../src/lib/rika/settings/settings.ts';
 
 const agent = (id, status) => ({ id, kind: 'omp', name: `omp ${id}`, status, task: '', line: '', since: 0, where: {} });
 
@@ -43,4 +44,83 @@ test('costs read as dollars; without an estimate there is no cost line', () => {
   assert.equal(costLabel(0), 'free');
   assert.equal(costLabel(null), '');
   assert.equal(costLabel(undefined), '');
+});
+
+const usage = (extra = {}) => ({ tokens_in: 1180, tokens_cached: 960, tokens_out: 64, path: ['find_deck', 'add_card'], signature: 'add-card', remembered: true, shortcut: false, ...extra });
+
+test('a model reply reads tier, remembered path, tokens in (cached), out and cost', () => {
+  assert.deepEqual(usageReadout({ tier: 'fast', model: 'demo/fast', cost_usd: 0.0002, usage: usage() }),
+    { tier: 'fast', label: 'Fast', detail: 'remembered path find_deck → add_card · 1,180 in (960 cached) · 64 out · $0.0002' });
+  // A first-time kind of request has no remembered path; nothing cached prints no cached part.
+  assert.deepEqual(usageReadout({ tier: 'standard', model: 'demo/standard', cost_usd: 0.0041, usage: usage({ remembered: false, tokens_in: 6240, tokens_cached: 0, tokens_out: 610 }) }),
+    { tier: 'standard', label: 'Standard', detail: '6,240 in · 610 out · $0.0041' });
+  // No cost reported yet: the tokens still show.
+  assert.equal(usageReadout({ tier: 'deep', model: 'demo/deep', cost_usd: null, usage: usage({ remembered: false, tokens_cached: null }) }).detail, '1,180 in · 64 out');
+});
+
+test('deterministic and shortcut replies read Direct · path · 0 tokens · $0', () => {
+  const direct = { tokens_in: 0, tokens_cached: 0, tokens_out: 0, path: ['move_event'], signature: 'move', remembered: false, shortcut: false };
+  assert.deepEqual(usageReadout({ tier: 'fast', model: 'deterministic', cost_usd: null, usage: direct }), { tier: 'direct', label: 'Direct', detail: 'move_event · 0 tokens · $0' });
+  assert.deepEqual(usageReadout({ tier: 'fast', model: 'shortcut', cost_usd: null, usage: { ...direct, path: ['find_deck', 'add_card'], shortcut: true } }),
+    { tier: 'direct', label: 'Direct', detail: 'find_deck → add_card · 0 tokens · $0' });
+  assert.equal(usageReadout({ tier: 'fast', model: 'deterministic', cost_usd: null, usage: { ...direct, path: [] } }).detail, '0 tokens · $0');
+  // Without usage (a user message, an older reply) there is no readout.
+  assert.equal(usageReadout({ tier: 'fast', model: 'demo/fast', cost_usd: 0.001, usage: null }), null);
+  assert.equal(usageReadout({ tier: 'fast', model: 'demo/fast' }), null);
+});
+
+test('a scripted demo reply says so with no tier; the morning brief has no token readout', () => {
+  const none = { tokens_in: 0, tokens_cached: 0, tokens_out: 0, path: [], signature: '', remembered: false, shortcut: false };
+  assert.deepEqual(usageReadout({ tier: 'fast', model: 'demo', cost_usd: null, usage: none }), { tier: 'direct', label: 'Demo', detail: 'Scripted demo reply · 0 tokens · $0' });
+  // The brief is written without a model by default: no readout, so only a cost it reports shows.
+  assert.equal(usageReadout({ tier: null, model: 'brief', cost_usd: null, usage: null }), null);
+  assert.equal(usageReadout({ tier: 'fast', model: 'brief', cost_usd: 0.0003, usage: none }), null);
+});
+
+test('readout dollars keep sub-cent precision', () => {
+  assert.equal(usd(0), '$0');
+  assert.equal(usd(0.0002), '$0.0002');
+  assert.equal(usd(0.031), '$0.031');
+  assert.equal(usd(0.5), '$0.50');
+  assert.equal(usd(1.234), '$1.23');
+  assert.equal(usd(0.00002), 'under $0.0001');
+  assert.equal(usd(null), '');
+});
+
+const draft = (extra = {}) => ({ kind: 'mail', id: 'a'.repeat(32), status: 'scheduled', auto: false, reply_kind: 'scheduling', to: 'Maya Chen <maya@example.test>', subject: 'Re: Onsite', body: 'Hi Maya,\n\nTuesday after 1pm works.\n\nBest,\nAlex', send_after: '2026-11-03T10:00:30.000Z', sent_at: null, error: null, ...extra });
+
+test('a held send counts down to its send time, then nothing is left to undo', () => {
+  const at = (iso) => Date.parse(iso);
+  assert.equal(holdLeft(draft(), at('2026-11-03T10:00:00.000Z')), 30);
+  assert.equal(holdLeft(draft(), at('2026-11-03T10:00:29.400Z')), 1);
+  assert.equal(holdLeft(draft(), at('2026-11-03T10:00:31.000Z')), 0);
+  assert.equal(holdLeft(draft({ status: 'sent' }), at('2026-11-03T10:00:00.000Z')), 0);
+  assert.equal(holdLeft(draft({ send_after: null }), at('2026-11-03T10:00:00.000Z')), 0);
+  assert.equal(holdClock(30), '0:30');
+  assert.equal(holdClock(125), '2:05');
+  assert.equal(holdClock(0), '0:00');
+});
+
+test('a mail item names the kind of reply and whether Rika sends it on its own', () => {
+  assert.equal(mailLine(draft({ status: 'sent', auto: true, sent_at: '2026-11-03T10:00:30Z' })), 'Auto-sent · scheduling');
+  assert.equal(mailLine(draft({ status: 'scheduled', auto: true })), 'Auto-send · scheduling');
+  assert.equal(mailLine(draft({ status: 'scheduled', auto: false, reply_kind: 'question' })), 'Reply · question');
+});
+
+test('routing memory numbers: compact tokens and a 14-day trend line', () => {
+  assert.equal(compactTokens(0), '0');
+  assert.equal(compactTokens(640), '640');
+  assert.equal(compactTokens(1180), '1.2k');
+  assert.equal(compactTokens(12_400), '12k');
+  const trend = [0.006, 0.004, 0.002].map((avg_cost_usd, index) => ({ day: `2026-11-0${index + 1}`, requests: 3, avg_cost_usd }));
+  // From zero to the highest day, so a falling cost is drawn to scale.
+  assert.equal(trendPath(trend, 200, 48), 'M0,4 L100,18 L200,32');
+  assert.equal(trendPath([], 200, 48), '');
+  // Days without requests are gaps, not free days; one day draws a level line.
+  assert.equal(trendPath([{ day: '2026-11-01', requests: 0, avg_cost_usd: 0 }], 200, 48), '');
+  assert.equal(trendPath([{ day: '2026-11-01', requests: 0, avg_cost_usd: 0 }, { day: '2026-11-02', requests: 2, avg_cost_usd: 0.001 }], 200, 48), 'M0,4 L200,4');
+  assert.equal(trendPath([{ day: 'a', requests: 1, avg_cost_usd: 0.002 }, { day: 'b', requests: 0, avg_cost_usd: 0 }, { day: 'c', requests: 1, avg_cost_usd: 0.001 }], 200, 48), 'M0,4 L200,25');
+  // Days without requests are skipped for the from → to range.
+  assert.deepEqual(trendRange([{ day: 'a', requests: 0, avg_cost_usd: 0 }, ...trend]), { from: 0.006, to: 0.002 });
+  assert.equal(trendRange([]), null);
 });
