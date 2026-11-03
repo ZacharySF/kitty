@@ -142,7 +142,8 @@
   .field:focus-within {
     border-color: var(--br-lineHot);
   }
-  input {
+  /* Outranks the app's shared field styles: the field box is the label, not the input. */
+  :global(:root body) .field input {
     flex: 1;
     min-width: 0;
     height: 100%;

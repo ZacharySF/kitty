@@ -137,13 +137,15 @@ export class RikaSession {
     if (!request) return false;
     this.error = "";
     const ticket = `local:${Date.now()}:${Math.random()}`;
+    // Stamped before sending: an instant reply must not sort above the request it answers.
+    const sentAt = new Date().toISOString();
     this.waiting = [...this.waiting, ticket];
     try {
       const sent = await api<{ conversation_id: Id; message_id: Id }>("/rika/messages", tier ? { text: request, tier } : { text: request });
       // The reply's first event names the user message it answers.
       this.waiting = this.waiting.map((item) => (item === ticket ? String(sent.message_id) : item));
       if (!this.message(sent.message_id))
-        this.upsert({ kind: "message", id: sent.message_id, conversation_id: sent.conversation_id, role: "user", text: request, created_at: new Date().toISOString() });
+        this.upsert({ kind: "message", id: sent.message_id, conversation_id: sent.conversation_id, role: "user", text: request, created_at: sentAt });
       return true;
     } catch (cause) {
       this.waiting = this.waiting.filter((item) => item !== ticket);
