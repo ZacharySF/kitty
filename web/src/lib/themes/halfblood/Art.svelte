@@ -94,7 +94,8 @@
   .clouds {
     inset: 0 -40px;
     width: calc(100% + 80px);
-    animation: halfblood-drift calc(var(--motion-ms) * 600) ease-in-out infinite alternate;
+    /* A pixel a step: the window-wide layer redraws every few seconds, not every frame. */
+    animation: halfblood-drift calc(var(--motion-ms) * 600) steps(40) infinite alternate;
   }
   .sun,
   .moon {

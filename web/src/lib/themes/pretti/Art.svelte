@@ -6,7 +6,13 @@
    * under the home widgets, the bottom edge, the far corners), never under the right rail's
    * text; the spiral turns and the butterflies flap on the theme's motion. `.ornament`
    * pieces are motif marks (Theme motif off hides them).
+   *
+   * The airbrushed ground and the spray grain are air.source.svg and spray.source.svg
+   * rendered to WebP (scripts/render-theme-art.mjs): as live SVG filters (a 56px blur over
+   * the window) they re-ran on every frame the stars twinkled.
    */
+  import air from "./air-1440.webp";
+  import spray from "./spray-256.webp";
   const uid = $props.id();
   const STAR = "M0-12L3-3.5L12-3.5L5 2L7.5 11L0 5.6L-7.5 11L-5 2L-12-3.5L-3-3.5Z";
   const HEART = "M0 10C-14 1-16-7-10-11C-6-14-2-12 0-8C2-12 6-14 10-11C16-7 14 1 0 10Z";
@@ -37,11 +43,9 @@
 
 <svg class="ground" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
   <defs>
-    <filter id="{uid}-air" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="56" /></filter>
-    <filter id="{uid}-spray" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="1.4" numOctaves="1" seed="4" />
-      <feColorMatrix values="0 0 0 0 1  0 0 0 0 0.6  0 0 0 0 0.9  0 0 0 -2.2 1.35" />
-    </filter>
+    <pattern id="{uid}-spray" width="256" height="256" patternUnits="userSpaceOnUse">
+      <image href={spray} width="256" height="256" />
+    </pattern>
     <radialGradient id="{uid}-heart" cx="0.35" cy="0.3" r="0.8">
       <stop offset="0" stop-color="#ffc2e8" />
       <stop offset="0.35" stop-color="#ff4fb4" />
@@ -53,15 +57,7 @@
     </radialGradient>
   </defs>
 
-  <rect width="1440" height="900" fill="#120a1c" />
-  <g filter="url(#{uid}-air)">
-    <ellipse cx="150" cy="170" rx="260" ry="180" fill="#6fd12a" opacity="0.36" />
-    <ellipse cx="720" cy="560" rx="320" ry="210" fill="#7a3cff" opacity="0.42" />
-    <ellipse cx="1260" cy="250" rx="260" ry="190" fill="#ff3fae" opacity="0.34" />
-    <ellipse cx="1120" cy="820" rx="300" ry="150" fill="#ff3fae" opacity="0.36" />
-    <ellipse cx="230" cy="830" rx="260" ry="120" fill="#b6ff3b" opacity="0.2" />
-    <ellipse cx="480" cy="90" rx="220" ry="80" fill="#b6ff3b" opacity="0.16" />
-  </g>
+  <image href={air} width="1440" height="900" />
 
   <g class="ornament">
     {#each TARGETS as target, index (index)}
@@ -86,7 +82,7 @@
       </g>
     {/each}
   </g>
-  <rect width="1440" height="900" filter="url(#{uid}-spray)" opacity="0.06" />
+  <rect width="1440" height="900" fill="url(#{uid}-spray)" opacity="0.06" />
   <rect width="1440" height="900" fill="url(#{uid}-vignette)" />
 </svg>
 
