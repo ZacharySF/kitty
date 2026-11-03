@@ -203,7 +203,7 @@ typefaces, each with one job: Fraunces for the page title only, Inter for the re
 of the interface (headings, labels, buttons, body) and JetBrains Mono for the
 navigation chrome, key caps, code and tabular figures; Fredoka sets only the
 wordmark. Labels, eyebrows and fold-out labels are Inter semibold in sentence case,
-never italic. The Theme menu persists one of ten dark themes locally. A theme is more
+never italic. The Theme menu persists the chosen theme locally. A theme is more
 than colours: each one also sets what its surfaces are made of (frosted glass,
 matte paper with grain, flat sheets, or square double-ruled frames), its focus
 ring (a plain ring, a soft glow, petal corners or corner brackets), how selected
@@ -222,8 +222,39 @@ and its backdrop. Typefaces never change with the theme.
   frosted orb for empty states.
 - **Scythe**: engraved frames with corner ticks under a moonlit meadow,
   crescent bullets, blade dividers, bracket focus and a crescent loader.
+- **SPEED**, the one light theme: hand-inked on off-white watercolour paper.
+  Square paper sheets with an inked edge and a crimson misprint over grey-teal
+  washes, teal-green and black ink splatter and drips, a white gothic cathedral,
+  faint gear rings that tick round and a crimson sketched wheel; crimson-magenta
+  for accents and a sketched double focus ring, teal washes for selection, ink-splat
+  bullets, crimson checks that stamp on, brush-stroke dividers, a marker swipe
+  under page titles, a ticking gear loader and a stalled-gear empty state.
+- **c**: an engraving on black. Double-ruled frames tipped with blood-red
+  diamonds, a rope-and-knot window frame, an etched diamond lattice, blood-red
+  washes and a slowly turning wheel of sigils, with a rare muted teal; sigil
+  bullets, diamond ticks that fill with blood, knotted rope dividers, a blood glow
+  on focus, a sigil-ring loader and a sigil-seal empty state.
+- **red**: stark black and white with one blood-red brush. Square black blocks
+  inside a white paper margin set with crop marks and an issue line in tracked
+  capitals, a faint stencil cat, and "rika" signed in a dripping red brush hand;
+  the red ring drips under keyboard focus, the current tab and group drip, white
+  rules drip once, page titles sit on a red swash, and the loader paints a stroke.
 - Harness and Nord are flat, Catppuccin Mocha and Gruvbox are matte paper, and
   Dracula and Tokyo Night are glass, each with its own focus, selection and motion.
+- **pretti**: glossy airbrushed graffiti on purple-black under a dark vignette:
+  candy-glass panels with a magenta rim, acid-green primary pills, magenta
+  selections, an acid glow on focus with a little heart, heart and star bullets,
+  heart ticks, candy-chain dividers, ringed targets, hearts, stars and butterflies
+  in the corners, a hypnotic spiral loader and a butterfly empty state.
+- **BloodLuxe** (the light one): cream paper panels rimmed in black over a marbled
+  red, white and blue sky, rose ridges, grass and flames, inside a black barbed-wire
+  window frame; blood-red titles, section rules and focus drip, blood-drop bullets,
+  bead ticks, a marble-orb loader and a thorn-wreathed heart for empty states.
+- **half blood**: storybook heraldry in flat bold colour: navy panels edged in bone
+  over an ultramarine field of white cloud squiggles with a grass hem, inside a
+  bone filigree frame with crossed bones; a sun-eye and a crescent moon, sun-orange
+  actions, sun bullets, green ticks, red drips on titles, rules and focus, a sun-eye
+  loader and a moon asleep on a cloud for empty states.
 
 Surfaces turn opaque under reduced transparency, and every theme's text,
 selected and pressed controls stay at WCAG AA contrast over its backdrop. Graph

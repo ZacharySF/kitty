@@ -1,0 +1,214 @@
+/* ── red (design Q12) ──────────────────────────────────────────────────────
+   Stark black and white with one accent. The window is a hard black block inside a white
+   paper margin (Frame.svelte); surfaces are flat black with white rules and square corners;
+   the only colour is a blood-red brush: the primary action, selection edges, the focus ring
+   and the drips that run from it. Motif: dripping block bullets, brushed red ticks, white
+   rules that drip, a dry-brush swash under page titles. Scoped to :root[data-theme="red"];
+   marks also to :not([data-motif="off"]). */
+
+:root[data-theme="red"] {
+  --red: #d90d1a;
+  --red-paper: #f4f1ea;
+  --red-black: #0a0a0a;
+  /* The paper margin (Frame.svelte); the page and the dock stay inside it. */
+  --red-head: 10px;
+  --red-side: 12px;
+  --red-foot: 22px;
+  --backdrop: none;
+  --hairline: color-mix(in srgb, var(--red-paper) 30%, transparent);
+  --border-fine: color-mix(in srgb, var(--red-paper) 34%, transparent);
+  --r-control: 0px;
+  --r-field: 0px;
+  --r-menu: 0px;
+  --r-item: 0px;
+  --r-chip: 0px;
+  --surface-border: color-mix(in srgb, var(--red-paper) 42%, transparent);
+  --surface-shadow: none;
+  /* Selection: a faint white wash behind a red edge. Pressed: printed in reverse. */
+  --select-fill: color-mix(in srgb, var(--red-paper) 10%, var(--solid-panel));
+  --select-edge: inset 4px 0 0 var(--red);
+  --press-fill: var(--red-paper);
+  --press-ink: var(--red-black);
+  --focus-ring-color: var(--red);
+  --overlay-shadow: 0 0 0 1px var(--red-black), 0 24px 60px -20px #000;
+}
+:root[data-theme="red"] ::selection {
+  background: color-mix(in srgb, var(--red) 55%, transparent);
+  color: #fff;
+}
+
+/* Keep the page and the docked panel inside the paper margin. */
+:root[data-theme="red"] body .workbench {
+  padding-bottom: calc(10px + var(--red-foot) + var(--dock-space, 0px));
+}
+:root[data-theme="red"] body :is(.dock:not(.floating), .dock-handle) {
+  right: var(--red-side);
+  bottom: var(--red-foot);
+  left: var(--red-side);
+}
+:root[data-theme="red"] body .dock-pill {
+  bottom: calc(16px + var(--red-foot));
+}
+
+/* Chrome: black, ruled in white; the current group prints in reverse. */
+:root[data-theme="red"] body .workbench-top {
+  background: var(--red-black);
+}
+:root[data-theme="red"] body .system-bar {
+  border-bottom: 2px solid var(--red-paper);
+}
+:root[data-theme="red"] body .workspace-groups {
+  border-color: var(--red-paper);
+  border-radius: 0;
+  background: var(--red-black);
+}
+:root[data-theme="red"] body .workspace-groups button {
+  border-radius: 0;
+}
+:root[data-theme="red"] body .workspace-groups button[aria-current="page"] {
+  border-color: var(--red-paper);
+  background: var(--red-paper);
+  color: var(--red-black);
+}
+
+/* The primary action is the one red block. */
+:root[data-theme="red"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root[data-theme="red"] body .br-btn[data-variant="solid"] {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+/* Overlays: black blocks with a white rule. */
+:root[data-theme="red"] body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root[data-theme="red"] body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  border-color: color-mix(in srgb, var(--red-paper) 55%, transparent);
+  background: var(--solid-panel);
+}
+
+/* Keyboard focus: the red ring, with blood running off its lower edge. */
+:root[data-theme="red"] .theme-focus[data-focus-style="bracket"]::before {
+  inset: auto;
+  left: calc(var(--focus-out) * -1 + 6px);
+  top: calc(100% + var(--focus-out) - 1px);
+  width: 60px;
+  height: 14px;
+  background: var(--red);
+  -webkit-mask: url("./drips.svg") left top / 60px 14px no-repeat;
+  mask: url("./drips.svg") left top / 60px 14px no-repeat;
+}
+
+/* ── Motif marks ── */
+
+:root[data-theme="red"][data-motif="off"] :is(.theme-art, .theme-frame) [data-ornament] {
+  display: none;
+}
+
+/* Bullets: a square block with a drip, in each subject's own colour. */
+:root[data-theme="red"]:not([data-motif="off"]) span.dot:not(.kitty-loader .dot) {
+  width: 9px;
+  height: 12px;
+  border-radius: 0;
+  -webkit-mask: url("./block.svg") center / contain no-repeat;
+  mask: url("./block.svg") center / contain no-repeat;
+}
+
+/* Ticks: a white square; checked, a red brushed check that runs. */
+:root[data-theme="red"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  border: 1.5px solid var(--red-paper);
+  border-radius: 0;
+  background: var(--red-black);
+  vertical-align: -3px;
+  cursor: pointer;
+}
+:root[data-theme="red"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):checked {
+  background: url("./check.svg") 0 -1px / 17px 17px no-repeat, var(--red-black);
+  animation: red-brush calc(var(--motion-ms) * 2) var(--motion-ease) both;
+}
+:root[data-theme="red"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes red-brush {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+/* Dividers: a white rule with one red brush mark that drips. */
+:root[data-theme="red"]:not([data-motif="off"]) .surface-section + .surface-section {
+  border-top-color: transparent;
+}
+:root[data-theme="red"]:not([data-motif="off"]) hr.rule {
+  height: 14px;
+  margin-block: 2px;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+:root[data-theme="red"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2px;
+  height: 16px;
+  pointer-events: none;
+  background:
+    url("./rule.svg") left top / 400px 16px no-repeat,
+    linear-gradient(color-mix(in srgb, var(--red-paper) 50%, transparent), color-mix(in srgb, var(--red-paper) 50%, transparent)) left 1.4px / 100% 1.2px no-repeat;
+}
+:root[data-theme="red"]:not([data-motif="off"]) hr.rule::before {
+  top: 0;
+}
+
+/* Page titles: a dry red brush swash struck through the foot of the word, behind it, with
+   short drips (not authored content). White on the red still clears 3:1 for large type. */
+:root[data-theme="red"]:not([data-motif="off"]) body main h1:not(.sr-only, :is(.sheet, .authored-preview, [contenteditable]) h1) {
+  position: relative;
+  isolation: isolate;
+}
+:root[data-theme="red"]:not([data-motif="off"]) body main h1:not(.sr-only, :is(.sheet, .authored-preview, [contenteditable]) h1)::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: -4px;
+  top: calc(100% - 0.62em);
+  width: min(100% + 8px, 4.2em);
+  height: 1.05em;
+  pointer-events: none;
+  background: var(--red);
+  -webkit-mask: url("./swash.svg") left top / 100% 100% no-repeat;
+  mask: url("./swash.svg") left top / 100% 100% no-repeat;
+}
+
+/* The current tab and group: a white bar, and blood running off it. */
+:root[data-theme="red"]:not([data-motif="off"]) .workspace-tabbar .tab.active::after {
+  height: 3px;
+  border-radius: 0;
+  background: var(--red-paper);
+  box-shadow: none;
+}
+:root[data-theme="red"]:not([data-motif="off"]) .workspace-tabbar .tab.active::before,
+:root[data-theme="red"]:not([data-motif="off"]) body .workspace-groups button[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 30%;
+  bottom: -9px;
+  width: 22px;
+  height: 9px;
+  pointer-events: none;
+  background: var(--red);
+  -webkit-mask: url("./drips.svg") left top / 22px 9px no-repeat;
+  mask: url("./drips.svg") left top / 22px 9px no-repeat;
+}
+:root[data-theme="red"]:not([data-motif="off"]) body .workspace-groups button[aria-current="page"] {
+  position: relative;
+  overflow: visible;
+}
