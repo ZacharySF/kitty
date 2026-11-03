@@ -50,6 +50,7 @@
   let jobBrowser: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
   let pipeline: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
   let study: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
+  let math: { handleKey: (event: KeyboardEvent) => boolean } | undefined = $state();
   let profile: { hasUnsavedChanges: () => boolean } | undefined = $state();
   let documents: { hasUnsavedChanges: () => boolean } | undefined = $state();
   let settings: { hasUnsavedChanges: () => boolean } | undefined = $state();
@@ -82,6 +83,7 @@
     if (view === "today") return atlas?.handleKey(event) ?? false;
     if (view === "pipeline") return await pipeline?.handleKey(event) ?? false;
     if (view === "study") return await study?.handleKey(event) ?? false;
+    if (view === "math") return math?.handleKey(event) ?? false;
     if (["inbox", "jobs", "queue", "applications", "favorites"].includes(view))
       return await jobBrowser?.handleKey(event) ?? false;
     return false;
@@ -133,6 +135,10 @@
   {:else if view === "study"}
     {#await import("./Study.svelte")}{@render pending()}{:then { default: Study }}
       <Study bind:this={study} {revision} demo={workspace?.demo ?? true} />
+    {/await}
+  {:else if view === "math"}
+    {#await import("./math/MathView.svelte")}{@render pending()}{:then { default: MathView }}
+      <MathView bind:this={math} demo={workspace?.demo ?? true} />
     {/await}
   {:else if view === "flashcards"}
     {#await import("./Flashcards.svelte")}{@render pending()}{:then { default: Flashcards }}

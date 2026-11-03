@@ -3,6 +3,7 @@
   import Icon from "./Icon.svelte";
   import { api, type Job } from "./api";
   import { navigationGroups, visibleNavigation, type View } from "./workspace";
+  import { launchMath, type MathLaunch } from "./math/launch";
 
   /**
    * Spotlight-style palette (Ctrl K): one large field, nothing else until you type,
@@ -48,10 +49,19 @@
     try { sessionStorage.setItem(id ? "kitty.schema.open-map" : "kitty.schema.new-map", id ? String(id) : "1"); } catch { /* Opens the last map. */ }
     onview("schema");
   }
+  const mathOn = $derived(visibleNavigation(enabled).some((item) => item.id === "math"));
+  function openMath(kind: MathLaunch) {
+    launchMath(kind);
+    onview("math");
+  }
   const actions = $derived<Choice[]>([
     ...(applyai ? [{ label: "Add job", meta: "Action", icon: "jobs", run: () => onadd() }] : []),
     ...(onnewcard ? [{ label: "New card", meta: "Flashcards", icon: "flashcards", run: () => onnewcard() }] : []),
     ...(mapsOn ? [{ label: "New mind map", meta: "Action", icon: "schema", run: () => openMap() }] : []),
+    ...(mathOn ? [
+      { label: "Mental math sprint", meta: "Math", icon: "math", run: () => openMath("sprint") },
+      { label: "Next math lesson", meta: "Math", icon: "math", run: () => openMath("lesson") },
+    ] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
   ]);
