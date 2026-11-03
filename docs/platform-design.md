@@ -843,7 +843,9 @@ Code: `integrations/browser/` (the extension, MIT, with its README: `src/backgro
 The stack (block backend through the browser mirror) was merged with main at `82fc9bd`
 (Liquid Glass and the theme engine, the Brain view and `record_events`, quiet hours and the
 notification center, the floating or stepped dock, the fidelity screens, concept maps folded
-into the mind-map editor).
+into the mind-map editor) and again at `1138d48` (v0.3.29: everything you see says rika!,
+while the app ID, update feed, data and commands stay kitty; the stack's views, messages,
+Tern plugin and browser extension follow it).
 
 - **Migrations.** Main's `034_record_events`, `035_calendar_palette_subjects` and
   `036_note_page_maps` keep their numbers; the stack's unreleased 035-039 became
