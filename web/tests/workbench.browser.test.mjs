@@ -239,7 +239,8 @@ describe("the Brain home fills the window above the Rika bar", () => {
       await fitted(page);
       const full = await rect(stage);
       assert.deepEqual([full.top, full.left, full.width, full.height], [0, 0, viewport.width, viewport.height]);
-      assert.equal(await bar.evaluate((node) => getComputedStyle(node).visibility), "hidden", `${size}: the bar shows over the fullscreen panel`);
+      // Hidden, the bar leaves the accessibility tree, so it is found by its class.
+      assert.equal(await page.locator(".rika-bar").evaluate((node) => getComputedStyle(node).visibility), "hidden", `${size}: the bar shows over the fullscreen panel`);
       await page.keyboard.press("Escape");
       await assertAtlasFits(page, `${size} after Escape`);
       await assertSidebarReachable(page, `${size} after Escape`);
