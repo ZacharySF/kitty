@@ -1,8 +1,8 @@
-// A real kitty! server for browser tests that need the Python backend: `kitty-web --demo`
+// A real rika! server for browser tests that need the Python backend: `kitty-web --demo`
 // (a disposable synthetic workspace in a temporary directory; never the owner's data), or
 // `kitty-web --root <dir>` on a temporary workspace the test created, on a free port, plus a
 // Vite dev server for the test harness that proxies /api (HTTP and the live WebSocket) to it
-// with the exact Host and Origin kitty!'s request guard expects.
+// with the exact Host and Origin rika!'s request guard expects.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";

@@ -1,7 +1,7 @@
-// Pairing this browser with kitty! (platform design Q7), driven by the side panel/sidebar:
-// probe the address, ask to pair, show the code kitty! shows too, poll until the person
-// approves it in kitty!, then keep the token. A 401 later (the person revoked this
-// browser, or kitty!'s data was reset) forgets the token and pairs again.
+// Pairing this browser with rika! (platform design Q7), driven by the side panel/sidebar:
+// probe the address, ask to pair, show the code rika! shows too, poll until the person
+// approves it in rika!, then keep the token. A 401 later (the person revoked this
+// browser, or rika!'s data was reset) forgets the token and pairs again.
 import { Kitty, KittyError, normalizeAddress } from "./kitty.ts";
 import type { Settings } from "./settings.ts";
 
@@ -32,7 +32,7 @@ export class Pairing {
     this.name = name;
   }
 
-  /** Where things stand, checking a stored token with kitty! (a 401 starts pairing again). */
+  /** Where things stand, checking a stored token with rika! (a 401 starts pairing again). */
   async check(): Promise<PairingView> {
     const settings = await this.host.load();
     if (settings.pending) return this.poll();
@@ -50,13 +50,13 @@ export class Pairing {
       }
     }
     if (settings.needsPairing && settings.address) return this.connect(settings.address);
-    return { state: "unpaired", message: "Not connected to kitty! yet." };
+    return { state: "unpaired", message: "Not connected to rika! yet." };
   }
 
-  /** Ask kitty! at `input` to pair; the person approves the code in kitty!. */
+  /** Ask rika! at `input` to pair; the person approves the code in rika!. */
   async connect(input: string): Promise<PairingView> {
     const address = normalizeAddress(input);
-    if (!address) return { state: "error", message: "Enter kitty!'s address on this computer, such as http://127.0.0.1:8765." };
+    if (!address) return { state: "error", message: "Enter rika!'s address on this computer, such as http://127.0.0.1:8765." };
     try {
       const kitty = this.host.kitty(address, null);
       await kitty.probe();
@@ -82,7 +82,7 @@ export class Pairing {
     try {
       result = await this.host.kitty(pending.address, null).pairStatus(pending.request);
     } catch {
-      // kitty! is briefly unreachable: keep waiting; kitty! answers "expired" for a request it lost.
+      // rika! is briefly unreachable: keep waiting; rika! answers "expired" for a request it lost.
       return { state: "waiting", code: pending.code, address: pending.address };
     }
     if (result.status === "approved") {
@@ -92,13 +92,13 @@ export class Pairing {
     }
     if (result.status === "pending") return { state: "waiting", code: pending.code, address: pending.address };
     await this.host.save({ pending: null });
-    return { state: "unpaired", message: result.status === "denied" ? "kitty! denied the request." : "The pairing request expired. Connect again." };
+    return { state: "unpaired", message: result.status === "denied" ? "rika! denied the request." : "The pairing request expired. Connect again." };
   }
 
-  /** Forget the token here (revoke it in kitty! → Settings → Connected apps as well). */
+  /** Forget the token here (revoke it in rika! → Settings → Connected apps as well). */
   async forget(): Promise<PairingView> {
     await this.host.save({ token: null, client: null, pending: null, needsPairing: false });
     this.host.changed();
-    return { state: "unpaired", message: "Forgotten here. Revoke it in kitty! → Settings → Connected apps too." };
+    return { state: "unpaired", message: "Forgotten here. Revoke it in rika! → Settings → Connected apps too." };
   }
 }

@@ -28,7 +28,7 @@ def template(tmp_path_factory) -> Path:
 
 
 class Kitty:
-    """A device plus the sync service a kitty! server would run for it."""
+    """A device plus the sync service a rika! server would run for it."""
 
     def __init__(self, folder: Path, name: str, template: Path):
         self.device = Device(folder / name, name, template)

@@ -1,5 +1,5 @@
-// What goes to kitty!: a mirror frame (POST /api/ingress/mirror/frame) or the selection
-// sent to the Inbox (POST /api/ingress/mirror), cut to kitty!'s limits
+// What goes to rika!: a mirror frame (POST /api/ingress/mirror/frame) or the selection
+// sent to the Inbox (POST /api/ingress/mirror), cut to rika!'s limits
 // (src/kitty/core/ingress.py and src/kitty/core/mirror.py) so a long page never fails.
 
 export const LIMITS = { url: 2048, title: 300, text: 200_000, selection: 20_000, imageBytes: 2 * 1024 * 1024 } as const;
@@ -30,14 +30,14 @@ export function dataUrlBytes(dataUrl: string): number {
   return Math.floor((payload.length * 3) / 4) - padding;
 }
 
-/** True for a JPEG, PNG or WebP data URL within kitty!'s screenshot limit. */
+/** True for a JPEG, PNG or WebP data URL within rika!'s screenshot limit. */
 export function fitsImage(dataUrl: string | null | undefined): dataUrl is string {
   return !!dataUrl && /^data:image\/(jpeg|png|webp);base64,/.test(dataUrl) && dataUrlBytes(dataUrl) <= LIMITS.imageBytes;
 }
 
 const title = (value: string, url: string) => cut(value.replace(/\s+/g, " ").trim(), LIMITS.title) || cut(url, LIMITS.title);
 
-/** The frame body for tab `tab` (kitty! keys mirrors by it); an image that does not fit is left out. */
+/** The frame body for tab `tab` (rika! keys mirrors by it); an image that does not fit is left out. */
 export function buildFrame(tab: number | string, page: Extraction, image: string | null): FrameBody {
   const body: FrameBody = {
     tab: String(tab),
@@ -50,7 +50,7 @@ export function buildFrame(tab: number | string, page: Extraction, image: string
   return body;
 }
 
-/** The selection sent to kitty!'s Inbox: a callout with the linked title holding the selection as a quote. */
+/** The selection sent to rika!'s Inbox: a callout with the linked title holding the selection as a quote. */
 export function buildSnapshot(page: Extraction): SnapshotBody {
   return { url: page.url, title: title(page.title, page.url), selection: cut(page.selection.trim(), LIMITS.selection) };
 }

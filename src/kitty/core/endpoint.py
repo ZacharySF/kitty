@@ -1,4 +1,4 @@
-"""Where a running kitty! listens, for paired outside programs (platform design Q7).
+"""Where a running rika! listens, for paired outside programs (platform design Q7).
 
 While the server runs, ``<workspace>/.private/endpoint.json`` holds its current origin
 and the pairing path, nothing else (never a token). The desktop sidecar binds a random

@@ -1,4 +1,4 @@
-"""The sync service one kitty! server runs (Q16): listener, pairing, scheduler, state.
+"""The sync service one rika! server runs (Q16): listener, pairing, scheduler, state.
 
 - **Listener**: a TCP port (``8770`` unless taken or set with ``KITTY_SYNC_PORT``) on
   every interface, so devices on the LAN or the tailnet can reach it. It speaks only
@@ -329,7 +329,7 @@ class SyncService:
         try:
             sock = socket.create_connection((host, port), timeout=CONNECT_TIMEOUT)
         except OSError:
-            raise peers.PeersError("No kitty! answered at that address", 504) from None
+            raise peers.PeersError("No rika! answered at that address", 504) from None
         sock.settimeout(IO_TIMEOUT)
         try:
             channel = channel_core.pair_connect(sock, code=code, private_key=self.identity.private_key)

@@ -107,13 +107,13 @@
       {/if}
     </div>
   {:else}
-    <p class="empty">No tab is being mirrored. In the kitty! browser extension, connect to this kitty! and switch on <em>Mirror this tab</em>.</p>
+    <p class="empty">No tab is being mirrored. In the rika! browser extension, connect to this rika! and switch on <em>Mirror this tab</em>.</p>
   {/if}
   <p class="retention">
-    Mirror frames stay in kitty!'s memory only: the latest screenshot and text of each mirrored tab
+    Mirror frames stay in rika!'s memory only: the latest screenshot and text of each mirrored tab
     {#if retention}(at most {retention.max_mirrors} tabs){/if}. They are dropped when mirroring stops, after
     {retention ? Math.round(retention.expiry_seconds / 60 * 10) / 10 : 2.5} minutes without a frame, when the extension
-    is revoked, or when kitty! stops. Only passages you quote are saved, in the note.
+    is revoked, or when rika! stops. Only passages you quote are saved, in the note.
   </p>
 </aside>
 

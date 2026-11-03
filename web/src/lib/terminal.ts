@@ -9,7 +9,7 @@ export type ThemeRoles = {
 
 /**
  * Q1: a transparent terminal (the page's glass shows through) drawn in theme
- * roles. kitty!'s herdr config uses the same Harness roles for its own chrome.
+ * roles. rika!'s herdr config uses the same Harness roles for its own chrome.
  */
 export function terminalTheme(roles: ThemeRoles): ITheme {
   return {
@@ -64,7 +64,7 @@ export type TerminalActivity = {
   }[];
 };
 
-/** GET /api/terminal/tern (kitty/web_tern.py): the installed Tern and kitty!'s own session. */
+/** GET /api/terminal/tern (kitty/web_tern.py): the installed Tern and rika!'s own session. */
 export type TernBlock = {
   id: number; title: string; cwd: string | null; program: string | null; cols: number | null; rows: number | null;
   focused: boolean; live: boolean; exited: number | null; working: boolean;
@@ -82,16 +82,16 @@ export type TernStatus = {
   running: boolean;
   windows: number;
   sessions: { id: number; name: string; shown: boolean; tabs: { id: number; number: number | null; name: string | null; shown: boolean; blocks: TernBlock[] }[] }[];
-  /** Recent pane starts and exits on kitty!'s daemon, newest first. */
+  /** Recent pane starts and exits on rika!'s daemon, newest first. */
   activity: TernEvent[];
   /** Captures can be saved as quick notes (the Workspace module is on). */
   quick_notes: boolean;
 };
 export type TernEvent = { event: "pane_spawned" | "pane_exited"; pane: number; status: number | null; at: string };
-/** A pane of kitty!'s own Tern session, the only panes kitty! runs, focuses or captures. */
+/** A pane of rika!'s own Tern session, the only panes rika! runs, focuses or captures. */
 export type TernPane = TernBlock & { tab: number | null; shown: boolean };
 
-/** kitty!'s session is named "kitty" (kitty/core/tern.py SESSION). */
+/** rika!'s session is named "kitty" (kitty/core/tern.py SESSION). */
 export function ternPanes(status: TernStatus): TernPane[] {
   return status.sessions.filter((session) => session.name === "kitty")
     .flatMap((session) => session.tabs.flatMap((tab) => tab.blocks.map((block) => ({ ...block, tab: tab.number, shown: tab.shown }))));
@@ -140,12 +140,12 @@ export function ternPluginState(plugin: TernPluginStatus): {
 } {
   const failed = plugin.tern_status?.startsWith("failed") ? `Tern reports: ${plugin.tern_status}` : null;
   const problem = plugin.problems[0] ?? failed;
-  if (!plugin.available) return { label: "This kitty! was built without the Tern plugin", action: null, problem };
+  if (!plugin.available) return { label: "This rika! was built without the Tern plugin", action: null, problem };
   if (!plugin.enabled) return { label: "Turned off in this build (settings.tern.plugin)", action: null, problem };
   if (!plugin.installed) {
-    const label = plugin.linked_elsewhere ? "Tern uses the plugin of another kitty! workspace" : "Not installed in Tern";
+    const label = plugin.linked_elsewhere ? "Tern uses the plugin of another rika! workspace" : "Not installed in Tern";
     return { label, action: "install", problem };
   }
-  if (!plugin.current) return { label: "Installed; this kitty! ships a newer copy", action: "update", problem };
+  if (!plugin.current) return { label: "Installed; this rika! ships a newer copy", action: "update", problem };
   return { label: plugin.version ? `Installed (${plugin.version})` : "Installed", action: null, problem };
 }

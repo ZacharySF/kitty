@@ -1,4 +1,4 @@
-"""Loopback-only website adapter over the shared kitty! core.
+"""Loopback-only website adapter over the shared rika! core.
 
 Run ``kitty-web`` after building ``web/dist``. The API never submits forms,
 starts paid discovery, or exposes configuration/credentials. Demo workspaces use
@@ -491,7 +491,7 @@ class LocalHTTPServer(ThreadingHTTPServer):
 
 class RequestHandler(BaseHTTPRequestHandler):
     server: LocalHTTPServer
-    server_version = "kitty!"
+    server_version = "rika!"
     sys_version = ""
 
     def setup(self) -> None:
@@ -728,7 +728,7 @@ def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = Fals
             with endpoint.published(settings.root, server.origin):
                 # A stop signal right after the announcement must still end serving cleanly.
                 try:
-                    print(f"kitty! {'synthetic demo ' if settings.demo else ''}website: {server.origin}", flush=True)
+                    print(f"rika! {'synthetic demo ' if settings.demo else ''}website: {server.origin}", flush=True)
                     server.serve_forever()
                 except KeyboardInterrupt:
                     pass
@@ -739,7 +739,7 @@ def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = Fals
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--root", type=Path, help="kitty! workspace root")
+    parser.add_argument("--root", type=Path, help="rika! workspace root")
     parser.add_argument("--static-dir", type=Path, help="Built SPA directory (default: web/dist)")
     parser.add_argument("--demo", action="store_true", help="Disposable synthetic workspace; no live discovery")
     parser.add_argument("--safe", action="store_true",

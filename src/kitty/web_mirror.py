@@ -1,4 +1,4 @@
-"""Workspace: the live page mirror (platform design Q11) for kitty!'s windows.
+"""Workspace: the live page mirror (platform design Q11) for rika!'s windows.
 
 The paired browser extension sends frames to the client ingress (kitty.web_clients):
 

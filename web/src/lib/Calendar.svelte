@@ -2102,7 +2102,7 @@
         ><button onclick={() => (importRows = [])}>Cancel</button>{/if}
     </section>
     <section class="panel">
-      <h2 title="Due reminders arrive as toasts and in the bell while kitty runs; quiet hours live in Settings">Reminder notifications</h2>
+      <h2 title="Due reminders arrive as toasts and in the bell while rika! runs; quiet hours live in Settings">Reminder notifications</h2>
       <label
         ><input
           type="checkbox"

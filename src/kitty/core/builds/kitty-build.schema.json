@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kitty.invalid/schema/kitty-build-1.json",
-  "title": "kitty! build",
-  "description": "One shareable kitty! setup (docs/platform-design.md, Q8/Q9): modules, settings, theme tokens, custom CSS and interface preferences. Never notes, keys, credentials, paired clients or devices, or applicant data. Every key except `schema` is optional: a missing key takes its default. Unknown keys are warnings, not errors, so a build made by a newer kitty! still loads; they are ignored.",
+  "title": "rika! build",
+  "description": "One shareable rika! setup (docs/platform-design.md, Q8/Q9): modules, settings, theme tokens, custom CSS and interface preferences. Never notes, keys, credentials, paired clients or devices, or applicant data. Every key except `schema` is optional: a missing key takes its default. Unknown keys are warnings, not errors, so a build made by a newer rika! still loads; they are ignored.",
   "type": "object",
   "required": ["schema"],
   "additionalProperties": false,
   "patternProperties": {
-    "^x-": {"description": "Free extension key; kept in the file, ignored by kitty!."}
+    "^x-": {"description": "Free extension key; kept in the file, ignored by rika!."}
   },
   "$defs": {
     "colorPicks": {
@@ -19,13 +19,13 @@
   },
   "properties": {
     "$schema": {"type": "string", "maxLength": 500, "description": "Optional schema URL for editors; ignored."},
-    "schema": {"const": 1, "description": "Build file format version. This kitty! reads version 1."},
-    "kitty_version": {"type": "string", "maxLength": 40, "pattern": "^[0-9A-Za-z.+-]*$", "description": "The kitty! version the build was made with.", "default": ""},
+    "schema": {"const": 1, "description": "Build file format version. This rika! reads version 1."},
+    "kitty_version": {"type": "string", "maxLength": 40, "pattern": "^[0-9A-Za-z.+-]*$", "description": "The rika! version the build was made with.", "default": ""},
     "name": {"type": "string", "maxLength": 80, "default": ""},
     "author": {"type": "string", "maxLength": 80, "default": ""},
     "description": {"type": "string", "maxLength": 2000, "default": ""},
     "modules": {
-      "description": "Enabled feature modules. Applies the next time kitty! starts.",
+      "description": "Enabled feature modules. Applies the next time rika! starts.",
       "type": "array",
       "uniqueItems": true,
       "items": {"enum": ["applyai", "workspace", "terminal"]},
@@ -101,7 +101,7 @@
         "base": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
-          "description": "A built-in theme. An unknown name (say, from a newer kitty!) is a warning and falls back to the default.",
+          "description": "A built-in theme. An unknown name (say, from a newer rika!) is a warning and falls back to the default.",
           "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "scythe", "liquid-glass"],
           "default": "kitty"
         },
@@ -114,7 +114,7 @@
           "default": {}
         },
         "css": {
-          "description": "Custom CSS, as one string or a list of lines. Scoped to kitty!'s app root; no @import, url() (except data:image), or other remote loads.",
+          "description": "Custom CSS, as one string or a list of lines. Scoped to rika!'s app root; no @import, url() (except data:image), or other remote loads.",
           "anyOf": [
             {"type": "string", "maxLength": 65536},
             {"type": "array", "maxItems": 4000, "items": {"type": "string", "maxLength": 2000}}

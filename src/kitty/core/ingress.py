@@ -1,4 +1,4 @@
-"""What a paired client can do (platform design Q7): capture into kitty! and read titles.
+"""What a paired client can do (platform design Q7): capture into rika! and read titles.
 
 - ``capture``: a quick note (`note`), text-flow blocks appended to the Inbox page
   (`append`), or a snapshot of the web page the user is reading (`mirror`).
@@ -76,7 +76,7 @@ def _inbox(conn: sqlite3.Connection) -> tuple[str, int, list[dict]]:
     if row is not None:
         return row["id"], row["number"], []
     if notes.page_count(conn) >= notes.MAX_PAGES:
-        raise ClientError("Page limit reached; kitty! cannot create the Inbox page", 409)
+        raise ClientError("Page limit reached; rika! cannot create the Inbox page", 409)
     book = conn.execute("SELECT id FROM note_notebooks WHERE title=? ORDER BY id LIMIT 1", (INBOX_TITLE,)).fetchone()
     notebook = book["id"] if book else notes.create_notebook(conn, INBOX_TITLE)["id"]
     number, ops = notes.new_page_ops(conn, notebook, INBOX_TITLE, extra={"inbox": True})

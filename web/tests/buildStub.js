@@ -1,4 +1,4 @@
-// A stand-in for kitty!'s build routes (src/kitty/web_build.py) for browser harnesses that
+// A stand-in for rika!'s build routes (src/kitty/web_build.py) for browser harnesses that
 // answer the API themselves: GET /api/build, POST /api/build/preferences (merged like the
 // server) and GET /api/build/history. The build survives a reload of the page (sessionStorage
 // plays the build file), so harness tests can check that preferences are remembered.

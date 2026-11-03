@@ -28,7 +28,7 @@
   });
 </script>
 
-<svelte:head><title>{note ? noteTitle(note.body) : "Quick note"} · kitty!</title></svelte:head>
+<svelte:head><title>{note ? noteTitle(note.body) : "Quick note"} · rika!</title></svelte:head>
 <main class="quick-note-window">
   {#if ready}
     <QuickNoteCard {note} variant="window" autofocus />

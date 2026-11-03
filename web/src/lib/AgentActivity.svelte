@@ -93,7 +93,7 @@
   {:else if !activity}
     <p class="activity-note" role="status">Reading herdr's agent states…</p>
   {:else if !activity.running}
-    <p class="activity-note" role="status">kitty!'s herdr session is not running. Open the terminal to start it.</p>
+    <p class="activity-note" role="status">rika!'s herdr session is not running. Open the terminal to start it.</p>
   {:else if !agents.length}
     <p class="activity-note" role="status">No agents are running in herdr yet.</p>
   {:else}

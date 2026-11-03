@@ -10,7 +10,7 @@ import { createServer } from "vite";
 import { chromium } from "playwright-core";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-// kitty!'s native window: default 1280×850, minimum 760×500 (desktop/src/main.rs).
+// rika!'s native window: default 1280×850, minimum 760×500 (desktop/src/main.rs).
 const DEFAULT = { width: 1280, height: 850 };
 const MINIMUM = { width: 760, height: 500 };
 let server;

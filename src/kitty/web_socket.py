@@ -1,4 +1,4 @@
-"""Minimal RFC 6455 server side shared by kitty!'s same-origin WebSocket streams.
+"""Minimal RFC 6455 server side shared by rika!'s same-origin WebSocket streams.
 
 The upgrade itself is guarded by ``RequestHandler._upgrade`` (exact Host and Origin);
 each stream additionally demands a single-use token from a header-protected API call,

@@ -60,7 +60,7 @@ LaterStatus = Literal["oa", "interview", "offer", "rejected", "ghosted", "withdr
 APPLYAI = "applyai"
 
 INSTRUCTIONS = (
-    "kitty tracks the owner's internship search. Read tools are safe to call freely. "
+    "rika! tracks the owner's internship search. Read tools are safe to call freely. "
     "Nothing here submits an application: the owner submits every one himself, and "
     "mark_applied only records that he did. Screening answers come only from "
     "config/answers.yaml, which the owner writes; no tool writes or suggests answers. "
@@ -74,7 +74,7 @@ INSTRUCTIONS = (
 
 #: What a client is told when the module that owns every tool is switched off.
 DISABLED_INSTRUCTIONS = (
-    "kitty has no MCP tools in this workspace: they belong to the applyai module, which "
+    "rika! has no MCP tools in this workspace: they belong to the applyai module, which "
     "is disabled. The owner enables it with `kitty modules enable applyai` and restarts "
     "this server."
 )

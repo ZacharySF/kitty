@@ -66,10 +66,10 @@
   ];
   const changes = $derived.by(() => {
     const [mine, theirs] = [event("local"), event("remote")];
-    if (!mine || !theirs) return [{ label: "Event", local: mine ? when(mine) : "Deleted in kitty", remote: theirs ? when(theirs) : "Deleted on Google" }];
+    if (!mine || !theirs) return [{ label: "Event", local: mine ? when(mine) : "Deleted in rika!", remote: theirs ? when(theirs) : "Deleted on Google" }];
     return FIELDS.map(f => ({ label: f.label, local: f.show(mine), remote: f.show(theirs) })).filter(f => f.local !== f.remote);
   });
-  const name = (side: Side) => (side === "local" ? "kitty" : "Google");
+  const name = (side: Side) => (side === "local" ? "rika" : "Google");
 </script>
 
 <article class="ghost" aria-label={`Conflict: ${conflict.local.title}`} style:--block={fill} style:--block-ink={ink}>
@@ -91,7 +91,7 @@
       >
         <small>{name(side)}</small>
         {#if e}<strong>{e.title}</strong><span>{when(e)}{e.location ? ` · ${e.location}` : ""}</span>
-        {:else}<strong>Deleted {side === "local" ? "in kitty" : "on Google"}</strong>{/if}
+        {:else}<strong>Deleted {side === "local" ? "in rika!" : "on Google"}</strong>{/if}
       </button>
     {/each}
   </div>
@@ -106,14 +106,14 @@
           <b class:lost={choice === "local"} data-side="remote" aria-label={`Google: ${change.remote}${choice === "local" ? ", lost" : ""}`}>{change.remote}</b>
         </li>
       {:else}
-        <li class="same">The versions differ only in details kitty does not show here.</li>
+        <li class="same">The versions differ only in details rika! does not show here.</li>
       {/each}
     </ul>
     <div class="acts">
       <button class="pill primary" disabled={!choice || disabled} onclick={() => choice && onresolve(choice)}
-        >{choice === "local" ? "Keep kitty's" : choice === "remote" ? "Use Google's" : "Pick a block"}</button
+        >{choice === "local" ? "Keep rika!'s" : choice === "remote" ? "Use Google's" : "Pick a block"}</button
       >
-      <button class="linkish" disabled={disabled || !conflict.remote} onclick={() => onresolve("duplicate")}>Keep both (save kitty's as a copy)</button>
+      <button class="linkish" disabled={disabled || !conflict.remote} onclick={() => onresolve("duplicate")}>Keep both (save rika!'s as a copy)</button>
     </div>
   </div>
 </article>
@@ -159,7 +159,7 @@
     cursor: pointer;
     transition: opacity 200ms, box-shadow 200ms;
   }
-  /* kitty's version reads like the calendar's own filled block; Google's is its dashed ghost. */
+  /* rika's version reads like the calendar's own filled block; Google's is its dashed ghost. */
   .blk[data-side="local"] {
     left: 6px;
     right: calc(50% + 2px);

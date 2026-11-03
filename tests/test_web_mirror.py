@@ -52,7 +52,7 @@ def send(running, body, token, origin=EXTENSION, path=FRAME):
 
 
 def page_get(running, path):
-    """A GET as kitty!'s own page makes it (an <img> in the Mirror pane)."""
+    """A GET as rika!'s own page makes it (an <img> in the Mirror pane)."""
     return call(running, "GET", path, origin=running.server.origin)
 
 

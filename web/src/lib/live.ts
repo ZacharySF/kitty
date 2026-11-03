@@ -73,7 +73,7 @@ export function whenLive(): Promise<void> {
 }
 
 let deviceId = "";
-/** This kitty!'s device ID (as recorded on every op_log row), once the socket said hello. */
+/** This rika!'s device ID (as recorded on every op_log row), once the socket said hello. */
 export function liveDevice(): string {
   return deviceId;
 }
@@ -85,7 +85,7 @@ export function liveDevice(): string {
  */
 export function transact(message: TxnMessage): Promise<Reply> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => finish(message.txn_id, { type: "reject", txn_id: message.txn_id, status: 0, error: "kitty! is not reachable" }), OFFLINE_MS);
+    const timer = setTimeout(() => finish(message.txn_id, { type: "reject", txn_id: message.txn_id, status: 0, error: "rika! is not reachable" }), OFFLINE_MS);
     replies.set(message.txn_id, (reply) => {
       clearTimeout(timer);
       resolve(reply);
@@ -137,7 +137,7 @@ function receive(raw: string) {
 
 function dropReplies() {
   for (const txnId of [...replies.keys()]) {
-    if (!waiting.some((message) => message.txn_id === txnId)) finish(txnId, { type: "reject", txn_id: txnId, status: 0, error: "Connection to kitty! closed" });
+    if (!waiting.some((message) => message.txn_id === txnId)) finish(txnId, { type: "reject", txn_id: txnId, status: 0, error: "Connection to rika! closed" });
   }
 }
 

@@ -33,7 +33,7 @@
     finally { busy = false; }
   }
   function remove(client: PairedClient) {
-    if (!window.confirm(`Revoke ${client.name}? It loses access to kitty! at once and has to pair again.`)) return;
+    if (!window.confirm(`Revoke ${client.name}? It loses access to rika! at once and has to pair again.`)) return;
     void run(() => revoke(client.id));
   }
   const when = (value: string | null) => (value ? new Date(value).toLocaleString() : "Never");
@@ -79,13 +79,13 @@
           </ul>
         {:else}<p class="muted">No connected apps.</p>{/if}
         {#if connected.address}
-          <p class="muted address">Browser extension: paste <code>{connected.address}</code> into the kitty! side panel (an extension cannot read <code>.private/endpoint.json</code>).
+          <p class="muted address">Browser extension: paste <code>{connected.address}</code> into the rika! side panel (an extension cannot read <code>.private/endpoint.json</code>).
             <Button size="sm" variant="ghost" onclick={() => connected?.address && void navigator.clipboard.writeText(connected.address).catch(() => {})}>Copy address</Button></p>
         {/if}
       {:else if !error}<p class="muted" role="status">Loading connected apps…</p>{/if}
       <Popover label="How apps connect" placement="bottom-start" class="explain">
         {#snippet trigger(props)}<button type="button" class="text-button" {...props}>How apps connect</button>{/snippet}
-        <p>While kitty! runs, it writes its current address to the owner-only <code>.private/endpoint.json</code> in your workspace (never a token). An app reads it, asks to pair and shows a code; you approve here. A browser extension cannot read files, so you paste the address above into it once. Browser extensions connect from their side panel, sidebar or background page, not from scripts inside web pages.</p>
+        <p>While rika! runs, it writes its current address to the owner-only <code>.private/endpoint.json</code> in your workspace (never a token). An app reads it, asks to pair and shows a code; you approve here. A browser extension cannot read files, so you paste the address above into it once. Browser extensions connect from their side panel, sidebar or background page, not from scripts inside web pages.</p>
       </Popover>
       {#if error}<p role="alert">{error}</p>{/if}
     </div>

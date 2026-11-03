@@ -50,7 +50,7 @@
 
 <Panel title="Tags" aria-label="Tags">
     <div class="tags">
-      <p class="muted">When a block mentions a tag's name, alias or keyword, kitty! can suggest the tag or attach it. Each tag can override this.</p>
+      <p class="muted">When a block mentions a tag's name, alias or keyword, rika! can suggest the tag or attach it. Each tag can override this.</p>
       {#if tagsState}
         <fieldset class="modes" disabled={busy}>
           <legend>When a keyword appears</legend>

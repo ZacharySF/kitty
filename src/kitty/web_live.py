@@ -1,7 +1,7 @@
 """Core: live push to every window over one same-origin WebSocket per window.
 
 POST /api/live/session  {}  ->  {"token", "socket"}
-    Header-protected like every mutation, so only kitty!'s own page gets a token.
+    Header-protected like every mutation, so only rika!'s own page gets a token.
 GET  /api/live/socket?token=<token>   (WebSocket upgrade)
     Exact Host and Origin plus a single-use token, as for the terminal.
 

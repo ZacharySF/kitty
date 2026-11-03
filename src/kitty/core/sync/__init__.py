@@ -1,7 +1,7 @@
-"""Peer sync between one person's kitty! devices (docs/platform-design.md, Q16).
+"""Peer sync between one person's rika! devices (docs/platform-design.md, Q16).
 
 - ``noise``: the Noise protocol framework (IK for sync, XXpsk3 for pairing) over the
-  ``cryptography`` primitives kitty! already locks.
+  ``cryptography`` primitives rika! already locks.
 - ``channel``: framing, the encrypted channel, sync handshakes and code pairing (SPAKE2).
 - ``discovery``: LAN discovery over mDNS/DNS-SD (``_kitty-sync._tcp``).
 - ``peers``: this device's identity and the trust list of paired devices.

@@ -889,7 +889,7 @@
       <label class="field wide"><span class="field-label">Interests</span><input bind:value={interests} placeholder="quant, data science, hackathon" /></label>
       <label class="field wide"><span class="field-label">Locations</span><input bind:value={locations} placeholder="College Station, Texas" /></label>
       <label class="check wide"><input type="checkbox" bind:checked={profile.prefer_remote} />Prefer remote</label>
-      <label class="check wide" title={demo ? "Monitoring is off in the demo" : "Checks free public sources while kitty! is open"}
+      <label class="check wide" title={demo ? "Monitoring is off in the demo" : "Checks free public sources while rika! is open"}
         ><input type="checkbox" bind:checked={schedule.enabled} disabled={demo} />Monitor public sources</label>
       <label class="field"><span class="field-label">Every (hours)</span><input type="number" min="6" max="168" bind:value={schedule.interval_hours} /></label>
     </div>

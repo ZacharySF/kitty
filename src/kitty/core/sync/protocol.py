@@ -142,7 +142,7 @@ class Session:
                    "since": int(self.peer["their_seq"]), "port": self.port})
         hello, _ = self.expect("hello")
         if hello.get("v") != VERSION:
-            raise ProtocolError("the other device runs an incompatible kitty! sync version")
+            raise ProtocolError("the other device runs an incompatible rika! sync version")
         if hello.get("device") != self.peer["device_id"]:
             raise ProtocolError("the other device is not the one paired with that key")
         try:
@@ -261,7 +261,7 @@ def pair_exchange(channel: Channel, own: Identity, port: int | None) -> dict:
     channel.send(encode({"type": "pair", "v": VERSION, "device": own.device_id, "name": own.name, "port": port}))
     header, _ = decode(channel.recv())
     if header.get("type") != "pair" or header.get("v") != VERSION:
-        raise ProtocolError("the other device runs an incompatible kitty! sync version")
+        raise ProtocolError("the other device runs an incompatible rika! sync version")
     device = header.get("device")
     if not isinstance(device, str) or not DEVICE_ID.fullmatch(device):
         raise ProtocolError("the other device sent an invalid identity")

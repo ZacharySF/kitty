@@ -48,7 +48,7 @@ test("without Tern installed: an install pointer, no Open action and nothing sta
   const link = view.getByRole("link", { name: /stencil\.so\/tern/ });
   assert.equal(await link.getAttribute("href"), "https://stencil.so/tern");
   assert.equal(await view.getByRole("button", { name: "Open in Tern" }).count(), 0);
-  assert.ok(await view.getByText(/herdr stays kitty!'s built-in terminal/).isVisible());
+  assert.ok(await view.getByText(/herdr stays rika!'s built-in terminal/).isVisible());
   await view.getByRole("button", { name: "Check again" }).click();
   await page.waitForFunction(() => window.ternHarness.calls.filter((call) => call.method === "GET").length >= 2);
   assert.deepEqual(await posts(page), []);
@@ -57,14 +57,14 @@ test("without Tern installed: an install pointer, no Open action and nothing sta
   await context.close();
 });
 
-test("installed but stopped: Open in Tern starts kitty!'s session and shows its panes", async () => {
+test("installed but stopped: Open in Tern starts rika!'s session and shows its panes", async () => {
   const { page, view, problems, context } = await harness("stopped");
   await view.getByText("Tern 0.9.8").waitFor();
   assert.ok(await view.getByText("/home/user/.local/bin/tern").isVisible());
-  assert.ok(await view.getByText(/kitty!'s Tern session is not running/).isVisible());
+  assert.ok(await view.getByText(/rika!'s Tern session is not running/).isVisible());
   await page.evaluate(() => window.ternHarness.reply("/api/terminal/tern/open", "running"));
   await view.getByRole("button", { name: "Open in Tern" }).click();
-  const sessions = view.getByRole("list", { name: "kitty!'s Tern sessions" });
+  const sessions = view.getByRole("list", { name: "rika!'s Tern sessions" });
   await sessions.waitFor();
   const [open] = await posts(page);
   assert.equal(open.url, "/api/terminal/tern/open");
@@ -84,8 +84,8 @@ test("installed but stopped: Open in Tern starts kitty!'s session and shows its 
 test("installed but stopped: the session can start without a window", async () => {
   const { page, view, context } = await harness("stopped");
   await page.evaluate(() => window.ternHarness.reply("/api/terminal/tern/start", { ...window.ternHarness.STATES.running, windows: 0 }));
-  await view.getByRole("button", { name: "Start kitty!'s Tern session" }).click();
-  await view.getByRole("list", { name: "kitty!'s Tern sessions" }).waitFor();
+  await view.getByRole("button", { name: "Start rika!'s Tern session" }).click();
+  await view.getByRole("list", { name: "rika!'s Tern sessions" }).waitFor();
   assert.deepEqual((await posts(page)).map((call) => call.url), ["/api/terminal/tern/start"]);
   assert.ok(await view.getByText("No Tern window open").isVisible());
   await context.close();
@@ -114,7 +114,7 @@ test("a broken path in settings is explained, with the install pointer and a way
 
 test("a failed Open is reported, not hidden", async () => {
   const { page, view, context } = await harness("stopped");
-  await page.evaluate(() => window.ternHarness.reply("/api/terminal/tern/open", { status: 503, error: "kitty!'s Tern daemon did not start" }));
+  await page.evaluate(() => window.ternHarness.reply("/api/terminal/tern/open", { status: 503, error: "rika!'s Tern daemon did not start" }));
   await view.getByRole("button", { name: "Open in Tern" }).click();
   const alert = view.getByRole("alert");
   await alert.waitFor();
@@ -123,12 +123,12 @@ test("a failed Open is reported, not hidden", async () => {
   await context.close();
 });
 
-test("the kitty! plugin for Tern installs and removes from the Tern view", async () => {
+test("the rika! plugin for Tern installs and removes from the Tern view", async () => {
   const { page, view, context } = await harness("stopped");
   const state = view.locator("[data-plugin-state]");
   await view.locator('[data-plugin-state="install"]').waitFor();
   assert.equal((await state.innerText()).trim(), "Not installed in Tern");
-  await view.getByRole("button", { name: "Install kitty! plugin into Tern" }).click();
+  await view.getByRole("button", { name: "Install rika! plugin into Tern" }).click();
   await view.locator('[data-plugin-state="installed"]').waitFor();
   assert.equal((await state.innerText()).trim(), "Installed (0.1.0) · Tern reports: ready");
   await view.getByRole("button", { name: "Remove from Tern" }).click();
@@ -141,7 +141,7 @@ test("the kitty! plugin for Tern installs and removes from the Tern view", async
 test("without Tern there is no plugin panel and nothing asks Tern", async () => {
   const { page, view, context } = await harness("absent");
   await view.getByText("Tern is not installed").waitFor();
-  assert.equal(await view.getByText("kitty! plugin for Tern").count(), 0);
+  assert.equal(await view.getByText("rika! plugin for Tern").count(), 0);
   assert.ok(!(await page.evaluate(() => window.ternHarness.calls.some((call) => call.url.includes("/plugin")))));
   await context.close();
 });

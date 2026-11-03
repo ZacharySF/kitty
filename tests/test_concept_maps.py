@@ -57,7 +57,7 @@ def concept_document():
 
 
 #: Main's own migrations before the block backend (034-036 included): the schema a released
-#: kitty! had when its pages still lived in note_pages with their canvas documents.
+#: rika! had when its pages still lived in note_pages with their canvas documents.
 MAIN_SCHEMA = {"record_events", "calendar_palette_subjects", "note_page_maps"}
 
 

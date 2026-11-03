@@ -1,5 +1,5 @@
 // Browser fixture for tests/tags.browser.test.mjs: mounts a note page (?page=<number>) and
-// Settings → Tags against the real kitty! demo server the test started (synthetic data only).
+// Settings → Tags against the real rika! demo server the test started (synthetic data only).
 import { mount } from "svelte";
 import "/src/styles.css";
 import { loadBuild } from "/src/lib/build.svelte.ts";

@@ -1,6 +1,6 @@
-// How often frames go to kitty!. A mirrored tab sends a frame when it is switched on, then
+// How often frames go to rika!. A mirrored tab sends a frame when it is switched on, then
 // at most one every FRAME_GAP_MS while the page changes or scrolls, and one every
-// HEARTBEAT_MS while it is still (so kitty! keeps it; kitty! drops a mirror after 150 s of
+// HEARTBEAT_MS while it is still (so rika! keeps it; rika! drops a mirror after 150 s of
 // silence). Screenshots across all tabs stay CAPTURE_GAP_MS apart: Chrome allows
 // tabs.captureVisibleTab twice a second.
 

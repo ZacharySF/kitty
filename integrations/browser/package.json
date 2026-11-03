@@ -2,7 +2,7 @@
   "name": "kitty-browser",
   "version": "0.1.0",
   "private": true,
-  "description": "kitty! for the browser: mirror the page you are reading into kitty! and send selections to its Inbox (Firefox and Chromium-family browsers).",
+  "description": "rika! for the browser: mirror the page you are reading into rika! and send selections to its Inbox (Firefox and Chromium-family browsers).",
   "license": "MIT",
   "type": "module",
   "scripts": {

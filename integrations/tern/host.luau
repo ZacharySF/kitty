@@ -1,8 +1,8 @@
 --!strict
--- Host half (runs in Tern's session daemon): the "kitty! Inbox" block.
+-- Host half (runs in Tern's session daemon): the "rika! Inbox" block.
 --
 -- Host halves have no keychain (`tern.secrets` is window-only), so the block never holds
--- kitty!'s token and never calls kitty!. It asks a Tern window for its data through a
+-- rika!'s token and never calls rika!. It asks a Tern window for its data through a
 -- `kitty-tern://inbox?pane=N` link, which the window half claims (window.luau), and shows
 -- what comes back. A block on screen only where no plugin window runs (Tern's web client)
 -- says so after a few tries instead of waiting forever.

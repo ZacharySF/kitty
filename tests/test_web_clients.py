@@ -273,7 +273,7 @@ def test_capture_and_read_need_the_workspace_module(tmp_path):
 def test_the_kitty_tern_plugin_request_sequence(running):
     """The requests integrations/tern/lib/client.luau makes, with the shapes it reads back."""
     tern = {"Accept": "application/json", "User-Agent": "Tern"}
-    # lib/core.luau accepts only a loopback origin with a port, as kitty! publishes it.
+    # lib/core.luau accepts only a loopback origin with a port, as rika! publishes it.
     assert re.fullmatch(r"http://127\.0\.0\.1:\d+", running.server.origin)
     status, ticket, _ = call(running, "POST", "/api/ingress/pair",
                              {"name": "Tern", "kind": "tern-plugin", "scopes": ["capture", "read"]}, headers=tern)

@@ -153,6 +153,6 @@ test('every route, method, header and body matches the contract', async () => {
 test('a refused pairing surfaces the server error text', async () => {
   globalThis.fetch = fakeFetch([], { ok: false, status: 400, body: { error: 'Wrong code or the code expired' } });
   await assert.rejects(enterPairingCode('abcdef', '192.0.2.11'), { message: 'Wrong code or the code expired', status: 400 });
-  globalThis.fetch = fakeFetch([], { ok: false, status: 504, body: { error: 'No kitty! answered at that address' } });
-  await assert.rejects(enterPairingCode('abcdef', '192.0.2.11'), { message: 'No kitty! answered at that address', status: 504 });
+  globalThis.fetch = fakeFetch([], { ok: false, status: 504, body: { error: 'No rika! answered at that address' } });
+  await assert.rejects(enterPairingCode('abcdef', '192.0.2.11'), { message: 'No rika! answered at that address', status: 504 });
 });

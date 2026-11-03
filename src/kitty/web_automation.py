@@ -180,8 +180,8 @@ class AutomationController:
                     row["error"] = "Firefox did not respond in time. Review the application tab before trying again."
                 elif row["error"].startswith(("Firefox not found.", "Firefox requires ", "Firefox did not open ", "Firefox could not start ")):
                     pass  # Static startup diagnostics contain no form or credential values.
-                elif "remote-control session" in message or "remote-controlling the kitty Firefox" in message:
-                    row["error"] = "Another controller holds the kitty Firefox session. Stop its watcher before preparing this run; your tabs stay open."
+                elif "remote-control session" in message or "remote-controlling the rika! Firefox" in message:
+                    row["error"] = "Another controller holds the rika! Firefox session. Stop its watcher before preparing this run; your tabs stay open."
                 else:
                     row["error"] = "Browser preparation failed; review the retained tab or browser setup"
                 row["note"] = row["error"]

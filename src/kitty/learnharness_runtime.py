@@ -34,7 +34,7 @@ class LearnHarnessRuntime:
             node = self.bundle / "node"
             server = self.bundle / "server.js"
             if not node.is_file() or not server.is_file():
-                raise RuntimeError("LearnHarness runtime is missing; reinstall kitty! with the complete desktop package.")
+                raise RuntimeError("LearnHarness runtime is missing; reinstall rika! with the complete desktop package.")
             self._stop()
             self.data.mkdir(parents=True, exist_ok=True, mode=0o700)
             home = self.data / "home"
@@ -63,7 +63,7 @@ class LearnHarnessRuntime:
                     time.sleep(0.1)
             except OSError:
                 self._stop()
-                raise RuntimeError("LearnHarness could not start; reinstall kitty! for this system.") from None
+                raise RuntimeError("LearnHarness could not start; reinstall rika! for this system.") from None
             self._stop()
             raise RuntimeError("LearnHarness did not become ready. Check that port 3210 is free, then try Start again.")
 

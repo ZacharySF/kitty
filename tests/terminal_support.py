@@ -1,6 +1,6 @@
-"""Synthetic herdr stand-in, a kitty! site harness and a minimal RFC 6455 client.
+"""Synthetic herdr stand-in, a rika! site harness and a minimal RFC 6455 client.
 
-The fake mirrors only the herdr v0.9.5 surface kitty! uses: ``herdr --session NAME``
+The fake mirrors only the herdr v0.9.5 surface rika! uses: ``herdr --session NAME``
 launches (or attaches to) a detached server and runs a client on its terminal;
 ``herdr --session NAME session stop NAME`` stops that server. Sockets live where
 herdr keeps them (``$XDG_CONFIG_HOME/herdr/sessions/NAME``). Every invocation is

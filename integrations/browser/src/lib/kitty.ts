@@ -1,9 +1,9 @@
-// kitty!'s client ingress (platform design Q7) as this extension uses it. Only the
+// rika!'s client ingress (platform design Q7) as this extension uses it. Only the
 // background and the side panel/sidebar call it, never a content script: Chrome's Local
-// Network Access rules apply to page contexts, and kitty! refuses web page origins.
+// Network Access rules apply to page contexts, and rika! refuses web page origins.
 //
-// An extension cannot read kitty!'s owner-only .private/endpoint.json (it has no file
-// access), so the person pastes kitty!'s address once (Settings → Connected apps shows
+// An extension cannot read rika!'s owner-only .private/endpoint.json (it has no file
+// access), so the person pastes rika!'s address once (Settings → Connected apps shows
 // it); kitty-web's default is http://127.0.0.1:8765.
 import type { FrameBody, SnapshotBody } from "./frame.ts";
 
@@ -22,7 +22,7 @@ export class KittyError extends Error {
 }
 
 /**
- * kitty!'s origin from what the person typed or pasted, or null. kitty! serves only
+ * rika!'s origin from what the person typed or pasted, or null. rika! serves only
  * on 127.0.0.1 and checks the exact Host, so `localhost` becomes 127.0.0.1; no other
  * host is accepted (page text never leaves this computer).
  */
@@ -50,7 +50,7 @@ export type PairResult =
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
-/** One kitty! at `address`, with this extension's token once paired. */
+/** One rika! at `address`, with this extension's token once paired. */
 export class Kitty {
   readonly address: string;
   private readonly token: string | null;
@@ -72,31 +72,31 @@ export class Kitty {
         method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store", credentials: "omit",
       });
     } catch {
-      throw new KittyError(`kitty! is not reachable at ${this.address}. Is it running?`, 0);
+      throw new KittyError(`rika! is not reachable at ${this.address}. Is it running?`, 0);
     }
     const data = (await response.json().catch(() => null)) as { error?: string } | null;
     if (!response.ok) {
       const retry = Number(response.headers.get("Retry-After"));
-      throw new KittyError(data?.error || `kitty! answered ${response.status}`, response.status, Number.isFinite(retry) && retry > 0 ? retry : null);
+      throw new KittyError(data?.error || `rika! answered ${response.status}`, response.status, Number.isFinite(retry) && retry > 0 ? retry : null);
     }
     return data as T;
   }
 
   /**
-   * Is kitty! at this address? Asks the token route without a token: kitty! answers 401
-   * with its Bearer realm. Anything else is not a kitty! (or not this version).
+   * Is rika! at this address? Asks the token route without a token: rika! answers 401
+   * with its Bearer realm. Anything else is not a rika! (or not this version).
    */
   async probe(): Promise<void> {
     let response: Response;
     try {
       response = await this.fetch(`${this.address}/api/ingress/client`, { cache: "no-store", credentials: "omit" });
     } catch {
-      throw new KittyError(`Nothing answered at ${this.address}. Start kitty! or check the address.`, 0);
+      throw new KittyError(`Nothing answered at ${this.address}. Start rika! or check the address.`, 0);
     }
     const realm = response.headers.get("WWW-Authenticate") ?? "";
     const data = (await response.json().catch(() => null)) as { error?: string } | null;
     if (response.status !== 401 || !(realm.includes('realm="kitty"') || typeof data?.error === "string")) {
-      throw new KittyError(`${this.address} did not answer like kitty! does.`, response.status);
+      throw new KittyError(`${this.address} did not answer like rika! does.`, response.status);
     }
   }
 
@@ -120,7 +120,7 @@ export class Kitty {
     return this.call("POST", "/mirror/stop", { tab: String(tab) });
   }
 
-  /** The selection as a page snapshot in kitty!'s Inbox. */
+  /** The selection as a page snapshot in rika!'s Inbox. */
   snapshot(body: SnapshotBody): Promise<{ page: number; block: string }> {
     return this.call("POST", "/mirror", body);
   }

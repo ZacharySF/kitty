@@ -271,4 +271,4 @@ def _require_tern_plugin(app) -> None:
 
     with closing(connect(app.settings.db_path)) as conn:
         if not project.tern_plugin_enabled(conn):
-            raise APIError(403, "The kitty Tern plugin is turned off in this kitty!'s build (Settings > Build)")
+            raise APIError(403, "The kitty Tern plugin is turned off in this rika!'s build (Settings > Build)")

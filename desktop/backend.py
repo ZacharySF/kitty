@@ -117,7 +117,7 @@ def main() -> None:
     bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     assets = bundle / "website"
     if not (assets / "index.html").is_file():
-        parser.exit(1, "The packaged website is missing; reinstall kitty!.\n")
+        parser.exit(1, "The packaged website is missing; reinstall rika!.\n")
     root = args.workspace.expanduser().resolve()
     package = (bundle / "backend-package.txt").read_text().strip()
     prepare_workspace(root, bundle / "examples", package)

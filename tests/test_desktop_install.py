@@ -53,7 +53,7 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     assert "Terminal=false" in entry
     assert (data / "kitty/application/kitty-workspace").is_file()
     assert (data / "kitty/application/kitty-web").is_file()
-    # The desktop app runs kitty!'s pinned herdr only from beside its own executable.
+    # The desktop app runs rika!'s pinned herdr only from beside its own executable.
     installed_herdr = data / "kitty/application/kitty-herdr"
     assert installed_herdr.read_bytes() == herdr.read_bytes() and os.access(installed_herdr, os.X_OK)
 

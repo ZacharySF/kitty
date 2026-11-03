@@ -42,7 +42,7 @@ const DEFAULTS: Pick<ThemeTokens, "surface" | "focus" | "selection" | "motion" |
 function applyTokens(theme: ThemeTokens): void {
   const root = document.documentElement;
   const { surface, focus, selection, motion, backdrop } = { ...DEFAULTS, ...theme };
-  applyBracketTheme({ name: `kitty! · ${theme.label}`, ...theme.roles }, root, "comfortable");
+  applyBracketTheme({ name: `rika! · ${theme.label}`, ...theme.roles }, root, "comfortable");
   // Bracket derives contrast from opaque hexes first; translucency is layered after.
   for (const role of ["void", "panel", "inset", "raised"] as const) {
     root.style.setProperty(`--solid-${role}`, theme.roles[role]);
@@ -80,7 +80,7 @@ async function applyMotif(id: ThemeId): Promise<void> {
       module = (await load()).default;
     } catch (error) {
       // A missing chunk (e.g. after an update) leaves the engine presets in place.
-      console.warn(`kitty!: the ${id} theme motif did not load`, error);
+      console.warn(`rika!: the ${id} theme motif did not load`, error);
     }
   }
   if (ticket !== pending) return;

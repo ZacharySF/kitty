@@ -1,4 +1,4 @@
-"""Simulated kitty! devices for merge and sync tests: one migrated SQLite database each.
+"""Simulated rika! devices for merge and sync tests: one migrated SQLite database each.
 
 `sync(src, dst)` sends what `dst` lacks of every page `src` holds, the way the sync
 protocol does (version vector per page, Loro updates for the difference), and merges

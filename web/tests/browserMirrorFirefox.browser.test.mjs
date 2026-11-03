@@ -1,8 +1,8 @@
-// The kitty! browser extension's Firefox build (integrations/browser/dist/firefox, rebuilt
+// The rika! browser extension's Firefox build (integrations/browser/dist/firefox, rebuilt
 // here) loaded into a real headless Firefox as a temporary add-on over WebDriver BiDi
-// (`webExtension.install`), with a throwaway profile, against a real kitty! (`kitty-web
+// (`webExtension.install`), with a throwaway profile, against a real rika! (`kitty-web
 // --demo`; tests/kittyServer.js): the sidebar page pairs, mirroring a local article sends
-// frames that kitty! lists, and switching off drops them.
+// frames that rika! lists, and switching off drops them.
 // Playwright's Firefox cannot load extensions, so this drives Firefox directly. It needs a
 // Firefox binary: KITTY_FIREFOX, else `firefox` on PATH (skipped when there is none).
 // Run from web/ with Node >=22 and uv: node --test tests/browserMirrorFirefox.browser.test.mjs
@@ -142,24 +142,24 @@ test("Firefox loads the extension, pairs from its sidebar page and mirrors a tab
   assert.ok(Number.isInteger(tabId), `the article's tab id (tabs: ${tabId})`);
   await send("browsingContext.navigate", { context: panel, url: `${base}?tab=${tabId}`, wait: "complete" });
   const text = (id) => evaluate(panel, `document.getElementById(${JSON.stringify(id)}).textContent.trim()`);
-  await until(async () => (await text("connection")) === "Not connected to kitty! yet.", "the panel is ready");
+  await until(async () => (await text("connection")) === "Not connected to rika! yet.", "the panel is ready");
   assert.equal(await evaluate(panel, "browser.permissions.contains({ origins: ['<all_urls>'] })"), true, "host access granted");
 
   await evaluate(panel, `document.getElementById("address").value = ${JSON.stringify(kitty.origin)}; document.getElementById("connect").click(); true`);
   const code = await until(async () => (await text("code")) || null, "a pairing code");
-  const request = await until(async () => (await kitty.request("/clients")).requests.find((item) => item.code === code), "kitty! lists the request");
-  assert.equal(request.name, "kitty! for Firefox");
+  const request = await until(async () => (await kitty.request("/clients")).requests.find((item) => item.code === code), "rika! lists the request");
+  assert.equal(request.name, "rika! for Firefox");
   assert.match(request.origin, new RegExp(`^moz-extension://${UUID}$`));
   await kitty.request("/clients/approve", { id: request.id });
-  await until(async () => (await text("connection")).startsWith("Connected to kitty!"), "the panel is connected");
+  await until(async () => (await text("connection")).startsWith("Connected to rika!"), "the panel is connected");
 
   await evaluate(panel, `document.getElementById("mirror").click(); true`);
   await send("browsingContext.activate", { context: articleTab });
-  const mirror = await until(async () => (await kitty.request("/mirror")).mirrors[0], "kitty! receives a frame");
+  const mirror = await until(async () => (await kitty.request("/mirror")).mirrors[0], "rika! receives a frame");
   assert.equal(mirror.title, TITLE);
   assert.equal(mirror.url, `${siteOrigin}/article`);
   assert.match(mirror.text, /Paragraph 1 about foxes/);
-  assert.equal(mirror.client.name, "kitty! for Firefox");
+  assert.equal(mirror.client.name, "rika! for Firefox");
   // A screenshot, once the article is the visible tab.
   const shot = await until(async () => (await kitty.request("/mirror")).mirrors[0]?.image, "a screenshot arrives", 20_000);
   assert.equal(shot.type, "image/jpeg");

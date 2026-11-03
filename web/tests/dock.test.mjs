@@ -74,7 +74,7 @@ test('the terminal is transparent and drawn in the given theme roles', () => {
     assert.match(theme[key], /^#[0-9a-f]{6}$/, key);
 });
 
-test('the dock acts only on panes of kitty!\'s own Tern session, with their live state', () => {
+test('the dock acts only on panes of rika!\'s own Tern session, with their live state', () => {
   const block = (id, extra = {}) => ({ id, title: '', cwd: '/w', program: '/run/current-system/sw/bin/bash', cols: 80, rows: 24,
     focused: false, live: true, exited: null, working: false, ...extra });
   const status = { sessions: [
@@ -118,7 +118,7 @@ test('the Tern plugin panel offers install, update or nothing, and shows problem
   });
   assert.deepEqual(ternPluginState(plugin({})), { label: 'Not installed in Tern', action: 'install', problem: null });
   assert.equal(ternPluginState(plugin({ linked_elsewhere: '/other/.private/tern/plugin' })).label,
-    'Tern uses the plugin of another kitty! workspace');
+    'Tern uses the plugin of another rika! workspace');
   const installed = plugin({ installed: true, installed_version: '0.1.0', current: true, tern_status: 'ready' });
   assert.deepEqual(ternPluginState(installed), { label: 'Installed (0.1.0)', action: null, problem: null });
   assert.equal(ternPluginState({ ...installed, current: false }).action, 'update');

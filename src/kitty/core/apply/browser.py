@@ -167,8 +167,8 @@ def busy_message(port: int) -> str:
     holders = session_holders(port)
     if holders:
         return (
-            "Another program is remote-controlling the kitty Firefox (one at a time). "
-            "If it is kitty watching tabs, stop it (Ctrl-C in its terminal, w on the TUI "
+            "Another program is remote-controlling the rika! Firefox (one at a time). "
+            "If it is rika! watching tabs, stop it (Ctrl-C in its terminal, w on the TUI "
             "Apply tab, or quit that TUI). Connected: " + "; ".join(holders)
         )
     return (
@@ -176,8 +176,8 @@ def busy_message(port: int) -> str:
         "controller was identified. It may be a disconnected controller's session. "
         "If its owner is still running, retry close() there; a disconnected direct "
         "BiDi session cannot be reattached. Keep open forms intact. If no owner can "
-        "release it, preserve your work before manually restarting only the kitty "
-        "Firefox window; kitty will not restart it automatically."
+        "release it, preserve your work before manually restarting only the rika! "
+        "Firefox window; rika! will not restart it automatically."
     )
 
 
@@ -219,7 +219,7 @@ def ensure_firefox(settings: Settings, *, wait_seconds: float = 30.0) -> int:
     if not settings.firefox_path:
         raise BrowserError("Firefox not found. Install it or set KITTY_FIREFOX to the binary.")
     if sys.platform == "linux" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-        raise BrowserError("Firefox requires an active desktop display. Launch kitty from your desktop session.")
+        raise BrowserError("Firefox requires an active desktop display. Launch rika! from your desktop session.")
     write_prefs(settings.browser_profile_dir)
     process = _start(own_scope(firefox_command(settings.firefox_path, settings.browser_profile_dir, port)))
     if not _wait_for_port(port, wait_seconds, process):

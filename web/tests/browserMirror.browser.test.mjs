@@ -1,10 +1,10 @@
-// The kitty! browser extension (Q11/Q12) end to end: the real extension
-// (integrations/browser/dist/chromium, rebuilt here) loaded into Chromium, a real kitty!
+// The rika! browser extension (Q11/Q12) end to end: the real extension
+// (integrations/browser/dist/chromium, rebuilt here) loaded into Chromium, a real rika!
 // (`kitty-web --demo`, a disposable synthetic workspace; tests/kittyServer.js) and a local
-// test article. Pair from the extension's panel and approve in kitty!, switch mirroring on,
+// test article. Pair from the extension's panel and approve in rika!, switch mirroring on,
 // see the frame (screenshot, title, text, selection) in the Mirror pane beside a note, quote
 // passages into the note, send a selection to the Inbox, stop on a page with a password
-// field, and pair again after kitty! revokes the extension.
+// field, and pair again after rika! revokes the extension.
 // Run from web/ with Node >=22, uv, npm deps in integrations/browser and Playwright's
 // full Chromium (extensions need it; the headless shell cannot load them):
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
@@ -109,7 +109,7 @@ before(async () => {
   // The side panel follows the active tab; opened as a page it follows the tab it is given.
   await panel.goto(`chrome-extension://${extensionId}/panel.html?tab=${tabId}`);
 
-  // kitty!'s own window, in another browser, as on the desktop.
+  // rika!'s own window, in another browser, as on the desktop.
   kittyBrowser = await chromium.launch();
   const kittyContext = await kittyBrowser.newContext({ viewport: { width: 1400, height: 900 } });
   await kittyContext.route("**/api/account", (route) =>
@@ -139,9 +139,9 @@ after(async () => {
   if (profile) rmSync(profile, { recursive: true, force: true });
 });
 
-test("pair from the panel: the same code in both, approved in kitty!", async () => {
-  await panel.getByText("Not connected to kitty! yet.").waitFor();
-  await panel.getByLabel("kitty!'s address").fill(kitty.origin.replace("127.0.0.1", "localhost"));
+test("pair from the panel: the same code in both, approved in rika!", async () => {
+  await panel.getByText("Not connected to rika! yet.").waitFor();
+  await panel.getByLabel("rika!'s address").fill(kitty.origin.replace("127.0.0.1", "localhost"));
   await panel.getByRole("button", { name: "Connect" }).click();
   const code = await until(async () => (await panel.locator("#code").textContent())?.trim(), "the panel shows a code");
   assert.match(code, /^[A-Z2-9]{3}-[A-Z2-9]{3}$/);
@@ -150,16 +150,16 @@ test("pair from the panel: the same code in both, approved in kitty!", async () 
   await bar.waitFor({ timeout: 20_000 });
   await shot(kittyPage, "2-kitty-pairing-request");
   await kittyPage.getByRole("button", { name: "Approve" }).click();
-  await panel.getByText(/Connected to kitty! at http:\/\/127\.0\.0\.1:\d+ as “kitty! for Chromium”/).waitFor({ timeout: 20_000 });
-  assert.equal(await panel.getByLabel("kitty!'s address").inputValue(), kitty.origin, "localhost became 127.0.0.1");
+  await panel.getByText(/Connected to rika! at http:\/\/127\.0\.0\.1:\d+ as “rika! for Chromium”/).waitFor({ timeout: 20_000 });
+  assert.equal(await panel.getByLabel("rika!'s address").inputValue(), kitty.origin, "localhost became 127.0.0.1");
   const { clients, address } = await kitty.request("/clients");
   assert.equal(address, kitty.origin);
   assert.deepEqual(clients.map((client) => [client.name, client.kind, client.scopes, client.origin]),
-    [["kitty! for Chromium", "browser-extension", ["capture"], `chrome-extension://${extensionId}`]]);
+    [["rika! for Chromium", "browser-extension", ["capture"], `chrome-extension://${extensionId}`]]);
 });
 
 test("mirror the tab: screenshot, title, URL and readable text appear in the Mirror pane", async () => {
-  await panel.getByRole("switch", { name: "Mirror this tab to kitty!" }).check();
+  await panel.getByRole("switch", { name: "Mirror this tab to rika!" }).check();
   await tabPage.bringToFront();
   await kittyPage.getByRole("button", { name: /^Mirror/ }).click();
   const pane = mirrorPane();
@@ -198,7 +198,7 @@ test("quote a passage into the note: a callout linked to the page, with the time
   await kittyPage.getByRole("textbox", { name: /Block/ }).filter({ hasText: PARAGRAPHS[1] }).waitFor();
 });
 
-test("the selection made in the browser reaches kitty! and can be quoted; text selected in the pane too", async () => {
+test("the selection made in the browser reaches rika! and can be quoted; text selected in the pane too", async () => {
   await tabPage.evaluate(() => {
     const range = document.createRange();
     range.selectNodeContents(document.getElementById("p3"));
@@ -228,9 +228,9 @@ test("the selection made in the browser reaches kitty! and can be quoted; text s
   await shot(kittyPage, "5-kitty-quotes-in-note");
 });
 
-test("send the selection to kitty!'s Inbox from the panel", async () => {
-  await panel.getByRole("button", { name: "Send selection to kitty! Inbox" }).click();
-  await panel.getByText(/Sent to kitty!'s Inbox \(page \d+\)/).waitFor({ timeout: 20_000 });
+test("send the selection to rika!'s Inbox from the panel", async () => {
+  await panel.getByRole("button", { name: "Send selection to rika! Inbox" }).click();
+  await panel.getByText(/Sent to rika!'s Inbox \(page \d+\)/).waitFor({ timeout: 20_000 });
   const number = Number(/page (\d+)/.exec(await panel.locator("#send-result").textContent())[1]);
   const inbox = await kitty.request(`/blocks/page?type=page&number=${number}`);
   const head = inbox.blocks.find((block) => block.type === "callout" && block.properties.source_url === `${siteOrigin}/article`);
@@ -238,20 +238,20 @@ test("send the selection to kitty!'s Inbox from the panel", async () => {
   assert.ok(inbox.blocks.some((block) => block.parent_id === head.id && block.type === "quote" && block.text === PARAGRAPHS[2]));
 });
 
-test("a page with a password field stops mirroring; kitty! drops the frame at once", async () => {
+test("a page with a password field stops mirroring; rika! drops the frame at once", async () => {
   await tabPage.goto(`${siteOrigin}/members`);
   await panel.getByText(/Mirroring stopped: This page has a password field/).waitFor({ timeout: 20_000 });
-  assert.equal(await panel.getByRole("switch", { name: "Mirror this tab to kitty!" }).isChecked(), false);
+  assert.equal(await panel.getByRole("switch", { name: "Mirror this tab to rika!" }).isChecked(), false);
   await mirrorPane().getByText("No tab is being mirrored.", { exact: false }).waitFor({ timeout: 20_000 });
   assert.deepEqual((await kitty.request("/mirror")).mirrors, []);
-  // Nothing from the members page reached kitty!: no mirror, no block.
+  // Nothing from the members page reached rika!: no mirror, no block.
   assert.ok(!(await pageBlocks()).some((block) => /Members/.test(block.text)));
   await shot(panel, "6-panel-stopped-password-field");
 });
 
-test("revoked in kitty!: the next frame gets 401 and the panel pairs again by itself", async () => {
+test("revoked in rika!: the next frame gets 401 and the panel pairs again by itself", async () => {
   await tabPage.goto(`${siteOrigin}/article`);
-  const toggle = panel.getByRole("switch", { name: "Mirror this tab to kitty!" });
+  const toggle = panel.getByRole("switch", { name: "Mirror this tab to rika!" });
   await until(async () => !(await toggle.isDisabled()), "the switch is available again");
   await toggle.check();
   await tabPage.bringToFront();
@@ -262,8 +262,8 @@ test("revoked in kitty!: the next frame gets 401 and the panel pairs again by it
   await tabPage.mouse.wheel(0, 600);
   const code = await until(async () => (await panel.locator("#code").isVisible()) && (await panel.locator("#code").textContent())?.trim(),
     "the panel shows a new pairing code", 30_000);
-  const waiting = await until(async () => (await kitty.request("/clients")).requests.find((request) => request.code === code), "kitty! lists the new request");
-  assert.equal(waiting.name, "kitty! for Chromium");
+  const waiting = await until(async () => (await kitty.request("/clients")).requests.find((request) => request.code === code), "rika! lists the new request");
+  assert.equal(waiting.name, "rika! for Chromium");
   await shot(panel, "7-panel-pairing-again");
   assert.deepEqual(problems, []);
 });

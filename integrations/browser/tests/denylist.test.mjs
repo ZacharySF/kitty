@@ -1,4 +1,4 @@
-// The deny list: what is never mirrored or sent to kitty!.
+// The deny list: what is never mirrored or sent to rika!.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { checkPage, parseRule, parseRules, passwordField } from "../src/lib/denylist.ts";

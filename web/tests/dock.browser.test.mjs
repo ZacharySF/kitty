@@ -397,7 +397,7 @@ test("without an installed Tern nothing Tern-related renders in the dock", async
   await context.close();
 });
 
-test("an installed Tern lists kitty!'s panes in the dock: run a line, focus, capture, open the note", async () => {
+test("an installed Tern lists rika!'s panes in the dock: run a line, focus, capture, open the note", async () => {
   const { page, problems, context } = await harness(undefined, "?tern=1");
   const posted = (url) => page.evaluate((target) => window.dockHarness.calls
     .filter((call) => call.url === target && call.method === "POST")
@@ -426,7 +426,7 @@ test("an installed Tern lists kitty!'s panes in the dock: run a line, focus, cap
   assert.equal(await tern.getByRole("button", { name: "Run" }).isDisabled(), true);
 
   await tern.getByRole("button", { name: "Focus make check in Tern" }).click();
-  await tern.getByRole("status").filter({ hasText: "Showing make check in kitty!'s Tern window." }).waitFor();
+  await tern.getByRole("status").filter({ hasText: "Showing make check in rika!'s Tern window." }).waitFor();
   assert.deepEqual(await posted("/api/terminal/tern/focus"), [{ body: { block: 5 }, guarded: true }]);
 
   await tern.getByRole("button", { name: "Capture echo kitty-$((6*7)) to a quick note" }).click();

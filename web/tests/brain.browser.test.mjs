@@ -489,7 +489,7 @@ describe("home is the Brain or the 2D atlas", () => {
 
   for (const [saved, shown] of [["3d", "brain"], ["brain", "brain"], ["2d", "2d"]]) {
     test(`an old shared look of ${saved} opens home as ${shown}`, async () => {
-      // Saved by a kitty! from before builds; moved into the build on first start.
+      // Saved by a rika! from before builds; moved into the build on first start.
       const { page, problems, context } = await open({ storage: { "kitty.graph.look": saved } });
       await mount(page, "atlas");
       if (shown === "brain") await brainReady(page);

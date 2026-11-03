@@ -1,5 +1,5 @@
 --!strict
--- Pure logic of the kitty! plugin, shared by both halves and unit-tested without Tern
+-- Pure logic of the rika! plugin, shared by both halves and unit-tested without Tern
 -- (tests/core_test.luau). Nothing here touches the `tern` API.
 
 local core = {}
@@ -10,8 +10,8 @@ core.CLIENT_NAME = "Tern"
 --- Links between the halves: the Inbox block asks the window half for data with
 --- `cx:open("kitty-tern://inbox?pane=N")`, which the window's `tern.route.link` claims.
 core.LINK = "kitty-tern://"
---- kitty!'s ingress limits (src/kitty/core/ingress.py, quick_notes.py), counted here in
---- bytes, which is never fewer than kitty!'s characters.
+--- rika!'s ingress limits (src/kitty/core/ingress.py, quick_notes.py), counted here in
+--- bytes, which is never fewer than rika!'s characters.
 core.MAX_BLOCK_TEXT = 20000
 core.MAX_NOTE_TEXT = 64 * 1024
 core.MAX_PAGE_TEXT = 200000
@@ -34,8 +34,8 @@ local function trim(text: string): string
 end
 core.trim = trim
 
---- `<workspace>/.private` for the copy kitty! installs at `<workspace>/.private/tern/plugin`,
---- or nil for a package that kitty! did not install (a developer's own link).
+--- `<workspace>/.private` for the copy rika! installs at `<workspace>/.private/tern/plugin`,
+--- or nil for a package that rika! did not install (a developer's own link).
 function core.private_dir(plugin_dir: string): string?
 	local dir = string.gsub(plugin_dir, "[/\\]+$", "")
 	return string.match(dir, "^(.+[/\\]%.private)[/\\]tern[/\\]plugin$")
@@ -50,48 +50,48 @@ end
 --- rewritten file cannot send the token anywhere else.
 function core.parse_endpoint(data: any): (Endpoint?, string?)
 	if type(data) ~= "table" or type(data.origin) ~= "string" or type(data.pairing) ~= "string" then
-		return nil, "kitty!'s endpoint file is not readable"
+		return nil, "rika!'s endpoint file is not readable"
 	end
 	local origin: string, pairing: string = data.origin, data.pairing
 	local port = string.match(origin, "^http://127%.0%.0%.1:(%d+)$") or string.match(origin, "^http://%[::1%]:(%d+)$")
 	local number = port and tonumber(port)
 	if not number or number < 1 or number > 65535 then
-		return nil, "kitty!'s endpoint file names an address that is not this computer"
+		return nil, "rika!'s endpoint file names an address that is not this computer"
 	end
 	if pairing ~= "/api/ingress/pair" then
-		return nil, "kitty!'s endpoint file is from an unknown kitty! version"
+		return nil, "rika!'s endpoint file is from an unknown rika! version"
 	end
 	local endpoint: Endpoint = { origin = origin, pairing = pairing :: string }
 	return endpoint, nil
 end
 
---- What one HTTP exchange with kitty! came to. `decoded` is the JSON body when it parsed.
+--- What one HTTP exchange with rika! came to. `decoded` is the JSON body when it parsed.
 function core.classify(status: number, err: string?, decoded: any): Outcome
 	if err then
 		return {
 			kind = "offline",
 			status = 0,
 			data = nil,
-			message = "kitty! isn't running or can't be reached. Start kitty!, then try again.",
+			message = "rika! isn't running or can't be reached. Start rika!, then try again.",
 		}
 	end
 	local server = if type(decoded) == "table" and type(decoded.error) == "string" then decoded.error else nil
 	if status >= 200 and status < 300 then
 		return { kind = "ok", status = status, data = decoded, message = "" }
 	elseif status == 401 then
-		return { kind = "unauthorized", status = status, data = nil, message = "kitty! no longer accepts this Tern's token" }
+		return { kind = "unauthorized", status = status, data = nil, message = "rika! no longer accepts this Tern's token" }
 	elseif status == 403 and server and string.find(server, "turned off", 1, true) then
 		return { kind = "disabled", status = status, data = nil, message = server }
 	elseif status == 403 then
-		return { kind = "forbidden", status = status, data = nil, message = server or "kitty! refused the request" }
+		return { kind = "forbidden", status = status, data = nil, message = server or "rika! refused the request" }
 	elseif status == 429 then
-		return { kind = "busy", status = status, data = nil, message = server or "kitty! is busy; try again later" }
+		return { kind = "busy", status = status, data = nil, message = server or "rika! is busy; try again later" }
 	end
 	return {
 		kind = "failed",
 		status = status,
 		data = nil,
-		message = server or ("kitty! answered HTTP " .. tostring(status)),
+		message = server or ("rika! answered HTTP " .. tostring(status)),
 	}
 end
 
@@ -196,7 +196,7 @@ end
 --- The `/api/ingress/mirror` body for a web page, or nil with the reason it cannot be sent.
 function core.mirror_body(url: any, title: any, text: any, selection: any): ({ [string]: string }?, string?)
 	if type(url) ~= "string" or not (string.match(url, "^https?://[^%s]+$")) or #url > core.MAX_URL then
-		return nil, "Only http and https pages can be sent to kitty!"
+		return nil, "Only http and https pages can be sent to rika!"
 	end
 	local name = if type(title) == "string" then trim((string.gsub(title, "%s+", " "))) else ""
 	if name == "" then
@@ -212,7 +212,7 @@ function core.mirror_body(url: any, title: any, text: any, selection: any): ({ [
 	return body, nil
 end
 
---- kitty! opens a note page at `#notes/<number>` and tasks in its Calendar.
+--- rika! opens a note page at `#notes/<number>` and tasks in its Calendar.
 function core.page_url(origin: string, number: number): string
 	return string.format("%s/#notes/%d", origin, number)
 end

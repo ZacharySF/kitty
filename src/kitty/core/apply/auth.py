@@ -705,7 +705,7 @@ def _guarded_click(
 _GOOGLE_ORIGIN = "https://accounts.google.com"
 _GOOGLE_HANDOFF = (
     " Complete Google sign-in with your reviewed Profile email manually in this SAME "
-    "dedicated kitty! Firefox (not everyday Chrome), then return to this employer "
+    "dedicated rika! Firefox (not everyday Chrome), then return to this employer "
     "application. Keep its tab open; review a new plan and Continue to resume retained "
     "fields. Passwords, consent, account addition and security checks are always manual."
 )

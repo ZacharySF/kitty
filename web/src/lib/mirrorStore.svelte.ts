@@ -33,7 +33,7 @@ export function followMirrors(): void {
     if (stale) void reload();
   });
   onLive("mirror_end", (message: LiveMessage) => { mirrors.list = endMirror(mirrors.list, String(message.id)); });
-  // A (re)connected socket may have missed frames, or kitty! restarted and dropped them all.
+  // A (re)connected socket may have missed frames, or rika! restarted and dropped them all.
   onLive("hello", () => void reload());
   void reload();
 }

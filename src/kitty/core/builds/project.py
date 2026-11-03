@@ -1,6 +1,6 @@
 """The build's settings in SQLite: a projection of the active build file.
 
-The settings rows the rest of kitty! reads (``ai_settings``, ``note_preferences``,
+The settings rows the rest of rika! reads (``ai_settings``, ``note_preferences``,
 ``study_settings``, ``opportunity_settings``, ``tag_settings`` and ``build_state``) are
 written only here, from the build. Their readers (the AI budget check, attachment
 cleanup, the study timer, the monitoring scheduler, the tagger's hot path, history

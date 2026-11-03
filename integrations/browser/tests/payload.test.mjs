@@ -1,4 +1,4 @@
-// Throttling, payload building, message checking, the kitty! client and the manifests.
+// Throttling, payload building, message checking, the rika! client and the manifests.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CaptureGate, FRAME_GAP_MS, HEARTBEAT_MS, Pacer } from "../src/lib/pace.ts";
@@ -34,7 +34,7 @@ test("screenshots across tabs stay at least 600 ms apart (Chrome allows two a se
 const page = (fields = {}) => ({ url: "https://example.com/a", title: "  A   page\n", text: " Body \n\n text ", selection: " picked ", passwordField: false, ...fields });
 const jpeg = (bytes) => `data:image/jpeg;base64,${Buffer.alloc(bytes, 7).toString("base64")}`;
 
-test("a frame is cut to kitty!'s limits and keeps only a screenshot that fits", () => {
+test("a frame is cut to rika!'s limits and keeps only a screenshot that fits", () => {
   const frame = buildFrame(12, page(), jpeg(1000));
   assert.deepEqual(frame, { tab: "12", url: "https://example.com/a", title: "A page", text: "Body \n\n text", selection: "picked", image: jpeg(1000) });
   assert.equal(buildFrame(1, page(), jpeg(LIMITS.imageBytes + 1)).image, undefined);
@@ -85,7 +85,7 @@ test("messages: the panel may ask anything; a web page's tab may only say its pa
   assert.equal(parseMessage({ kind: "status", tabId: 1 }, { id: ID, url: "https://evil.example/" }, ID, BASE), null);
 });
 
-test("kitty!'s address: loopback only, localhost becomes 127.0.0.1, kitty-web's port by default", () => {
+test("rika!'s address: loopback only, localhost becomes 127.0.0.1, kitty-web's port by default", () => {
   assert.equal(normalizeAddress("http://127.0.0.1:8765"), "http://127.0.0.1:8765");
   assert.equal(normalizeAddress("127.0.0.1:41234/#settings"), "http://127.0.0.1:41234");
   assert.equal(normalizeAddress("localhost:9000"), "http://127.0.0.1:9000");
@@ -125,17 +125,17 @@ test("the client sends the token, JSON bodies and no cookies, and turns errors i
 
 test("pairing asks for the capture scope only, without a token", async () => {
   const { fetcher, calls } = fakeFetch(async () => ({ status: 202, body: { status: "pending", request: "r", code: "ABC-DEF", expires_in: 300 } }));
-  await new Kitty("http://127.0.0.1:9", "stale", fetcher).pair("kitty! for Chromium");
+  await new Kitty("http://127.0.0.1:9", "stale", fetcher).pair("rika! for Chromium");
   assert.equal(calls[0].headers.Authorization, undefined);
-  assert.deepEqual(JSON.parse(calls[0].body), { name: "kitty! for Chromium", kind: "browser-extension", scopes: ["capture"] });
+  assert.deepEqual(JSON.parse(calls[0].body), { name: "rika! for Chromium", kind: "browser-extension", scopes: ["capture"] });
 });
 
-test("the probe recognizes kitty! by its 401 and nothing else", async () => {
+test("the probe recognizes rika! by its 401 and nothing else", async () => {
   const kittyLike = fakeFetch(async () => ({ status: 401, body: { error: "A paired client token is required" }, headers: { "WWW-Authenticate": 'Bearer realm="kitty"' } }));
   await new Kitty("http://127.0.0.1:9", null, kittyLike.fetcher).probe();
   assert.equal(kittyLike.calls[0].url, "http://127.0.0.1:9/api/ingress/client");
   const other = fakeFetch(async () => ({ status: 200, body: { hello: "world" } }));
-  await assert.rejects(new Kitty("http://127.0.0.1:9", null, other.fetcher).probe(), /did not answer like kitty!/);
+  await assert.rejects(new Kitty("http://127.0.0.1:9", null, other.fetcher).probe(), /did not answer like rika!/);
   await assert.rejects(new Kitty("http://127.0.0.1:9", null, async () => { throw new TypeError("refused"); }).probe(), /Nothing answered/);
 });
 

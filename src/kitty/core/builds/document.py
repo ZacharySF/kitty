@@ -1,11 +1,11 @@
-"""Reading a build file: JSON with line numbers, the published schema, and kitty!'s own checks.
+"""Reading a build file: JSON with line numbers, the published schema, and rika!'s own checks.
 
 ``check(text)`` never raises for bad input: it returns every problem with the line and
 column of the offending value (or key), so the build editor can mark the line and an
 external editor's save can be reported the same way. Errors make the build unusable
 (the last good one stays active); warnings (an unknown key, an unknown theme) do not.
 
-``normalize`` turns a valid document into the complete build kitty! applies: every known
+``normalize`` turns a valid document into the complete build rika! applies: every known
 key present, defaults filled in, unknown keys dropped, CSS as one string.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from kitty.core.builds import css as css_check
 
 SCHEMA_VERSION = 1
 MAX_BYTES = 256 * 1024
-#: The roles kitty!'s themes (web/src/lib/themes/catalog.ts) define; their tokens must be hex colours.
+#: The roles rika!'s themes (web/src/lib/themes/catalog.ts) define; their tokens must be hex colours.
 COLOR_TOKENS = (
     "void", "panel", "inset", "raised", "line", "lineHot", "ink", "mute", "dim", "structure",
     "signal", "go", "reference", "caution", "alternate", "danger",
@@ -250,8 +250,8 @@ def _schema_problem(error, positions: _Positions) -> list[Problem]:
     if path == ("schema",) or (not path and error.validator == "required"):
         version = error.instance if path else None
         if isinstance(version, int) and not isinstance(version, bool) and version > SCHEMA_VERSION:
-            message = (f"this build uses build format {version}, made by a newer kitty!; "
-                       f"this kitty! reads format {SCHEMA_VERSION}. Update kitty! to use it")
+            message = (f"this build uses build format {version}, made by a newer rika!; "
+                       f"this rika! reads format {SCHEMA_VERSION}. Update rika! to use it")
         else:
             message = f'a build starts with "schema": {SCHEMA_VERSION}'
         return [Problem(message, line, column, "schema")]
@@ -263,7 +263,7 @@ def _schema_problem(error, positions: _Positions) -> list[Problem]:
 
 
 def _semantic(data: dict[str, Any], positions: _Positions) -> list[Problem]:
-    """kitty!'s checks beyond the schema: theme names, token values and the CSS policy."""
+    """rika!'s checks beyond the schema: theme names, token values and the CSS policy."""
     problems: list[Problem] = []
     theme = data.get("theme")
     if not isinstance(theme, dict):
@@ -271,7 +271,7 @@ def _semantic(data: dict[str, Any], positions: _Positions) -> list[Problem]:
     base = theme.get("base")
     if isinstance(base, str) and base not in theme_ids():
         line, column = positions.of(("theme", "base"))
-        problems.append(Problem(f"theme '{base}' is not built into this kitty!; using '{defaults()['theme']['base']}'",
+        problems.append(Problem(f"theme '{base}' is not built into this rika!; using '{defaults()['theme']['base']}'",
                                 line, column, "theme.base", "warning"))
     tokens = theme.get("tokens")
     if isinstance(tokens, dict):
@@ -359,5 +359,5 @@ def require(text: str) -> dict[str, Any]:
 
 
 def dump(data: dict[str, Any]) -> str:
-    """The canonical text kitty! writes: two-space JSON, keys in the order given, final newline."""
+    """The canonical text rika! writes: two-space JSON, keys in the order given, final newline."""
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"

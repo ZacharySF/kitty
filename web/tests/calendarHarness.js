@@ -1,5 +1,5 @@
 // Browser fixture for tests/calendarColors.browser.test.mjs. Mounts the real Calendar
-// view with an in-memory stand-in for kitty!'s calendar API; every record is synthetic.
+// view with an in-memory stand-in for rika!'s calendar API; every record is synthetic.
 import { mount } from "svelte";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";

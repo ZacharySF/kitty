@@ -1,5 +1,5 @@
 // Browser fixture for tests/tern.browser.test.mjs. Mounts the real Tern view with a
-// stand-in kitty! API, so the page never reaches a tern binary or daemon.
+// stand-in rika! API, so the page never reaches a tern binary or daemon.
 import { mount } from "svelte";
 import "/src/styles.css";
 import { loadBuild } from "/src/lib/build.svelte.ts";

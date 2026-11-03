@@ -1,8 +1,8 @@
-# kitty! for the browser
+# rika! for the browser
 
-A browser extension that mirrors the page you are reading into kitty!, beside your notes,
-and sends selections to kitty!'s Inbox. It is platform design Q11 (the live page mirror)
-and Q12 (one codebase for Firefox and Chromium-family browsers). MIT licensed, like kitty!.
+A browser extension that mirrors the page you are reading into rika!, beside your notes,
+and sends selections to rika!'s Inbox. It is platform design Q11 (the live page mirror)
+and Q12 (one codebase for Firefox and Chromium-family browsers). MIT licensed, like rika!.
 
 - **Firefox** (140 or later): a sidebar (`sidebar_action`) and an event page.
 - **Chrome, Brave, Edge, Chromium** (120 or later): a side panel (`chrome.sidePanel`) and a
@@ -15,12 +15,12 @@ opens the panel.
 
 The panel shows:
 
-- **Connection**: kitty!'s address and the pairing code; *Connect* pairs this browser.
-- **This tab**: *Mirror this tab to kitty!* (off until you switch it on, per tab), the reason
-  when a page cannot be mirrored, and *Send selection to kitty! Inbox*.
+- **Connection**: rika!'s address and the pairing code; *Connect* pairs this browser.
+- **This tab**: *Mirror this tab to rika!* (off until you switch it on, per tab), the reason
+  when a page cannot be mirrored, and *Send selection to rika! Inbox*.
 - **Never mirror**: what is always excluded, and your own rules.
 
-While mirroring is on for a tab, the extension sends kitty! the tab's address, title,
+While mirroring is on for a tab, the extension sends rika! the tab's address, title,
 readable text ([Mozilla Readability](https://github.com/mozilla/readability)), your selection
 and a JPEG screenshot (`tabs.captureVisibleTab`). It sends a frame when you switch mirroring
 on, then at most one every 3 seconds while the page changes, scrolls or the selection
@@ -28,14 +28,14 @@ changes, and one a minute while the page is still. Screenshots across all tabs s
 600 ms apart (Chrome allows two a second). A tab in the background sends text only: a browser
 can only capture the visible tab.
 
-In kitty!, open a note (Notes → Writing) and press **Mirror** in the page bar: the latest
+In rika!, open a note (Notes → Writing) and press **Mirror** in the page bar: the latest
 screenshot, the title (a link to the page), the address and the readable text appear in a
 pane beside the note. Quote a paragraph with its *Quote* button, select text in the pane and
 press *Quote selection*, or press *Quote the browser selection*. The quote goes into the note
 after the block your caret was last in (or at the end): a callout headed by the page title,
 linked to the page, and the date and time, holding the passage as a quote.
 
-*Send selection to kitty! Inbox* puts the selection into kitty!'s Inbox page the same way,
+*Send selection to rika! Inbox* puts the selection into rika!'s Inbox page the same way,
 without mirroring.
 
 ## Privacy and retention
@@ -45,43 +45,43 @@ without mirroring.
   (anything that is not `http`/`https`), the browsers' add-on stores, private and incognito
   windows, banking and payment sites, password managers, sign-in pages (by host, such as
   `accounts.google.com`, and by path, such as `/login`), and any page showing a password
-  field. A mirrored tab that reaches one of these stops mirroring, and kitty! drops its frame.
+  field. A mirrored tab that reaches one of these stops mirroring, and rika! drops its frame.
   Add your own rules in the panel: `example.com` (with subdomains), `*.example.com`,
   `*shop*` or `example.com/private`.
-- **kitty! keeps frames in memory only**: the latest screenshot and text of each mirrored tab
+- **rika! keeps frames in memory only**: the latest screenshot and text of each mirrored tab
   (one frame per tab, at most 4 tabs per browser and 8 in all; screenshots at most 2 MiB,
-  JPEG, PNG or WebP, decoded to check them). They are never written to kitty!'s database or
+  JPEG, PNG or WebP, decoded to check them). They are never written to rika!'s database or
   disk. A mirror is dropped when you switch mirroring off, close the tab, reach an excluded
-  page, after 150 seconds without a frame, when you revoke the extension in kitty!, and when
-  kitty! stops. Only passages you quote are saved, as blocks in your note.
-- Everything goes only to kitty! on this computer (`127.0.0.1`): the extension refuses any
+  page, after 150 seconds without a frame, when you revoke the extension in rika!, and when
+  rika! stops. Only passages you quote are saved, as blocks in your note.
+- Everything goes only to rika! on this computer (`127.0.0.1`): the extension refuses any
   other address, and its pages' content security policy allows connections to
   `http://127.0.0.1:*` only.
 
 ## Network calls
 
-Only the background (service worker or event page) and the panel call kitty!. The content
+Only the background (service worker or event page) and the panel call rika!. The content
 script, injected into a tab only while you mirror it or send its selection, reads the page and
 reports changes; it makes no network calls (Chrome's Local Network Access rules apply to page
-contexts, and kitty! refuses web pages' origins anyway). kitty! accepts this extension's
+contexts, and rika! refuses web pages' origins anyway). rika! accepts this extension's
 token only from the extension origin that paired it (CORS answers only that origin).
 
-## Connecting to kitty!
+## Connecting to rika!
 
-kitty! writes its address to the owner-only `.private/endpoint.json` for local programs. A
-browser extension cannot read files, so you paste the address once: kitty! shows it in
+rika! writes its address to the owner-only `.private/endpoint.json` for local programs. A
+browser extension cannot read files, so you paste the address once: rika! shows it in
 **Settings → Connected apps** (with *Copy address*). `kitty-web` uses
 `http://127.0.0.1:8765` by default, which the panel suggests; the desktop app uses its own
-port. `localhost` works too (it becomes `127.0.0.1`, which kitty! requires).
+port. `localhost` works too (it becomes `127.0.0.1`, which rika! requires).
 
-*Connect* first checks that kitty! answers at that address, then asks to pair and shows a
-code. kitty! shows the same code in a bar at the top of every window and in Settings →
+*Connect* first checks that rika! answers at that address, then asks to pair and shows a
+code. rika! shows the same code in a bar at the top of every window and in Settings →
 Connected apps: approve it there. The extension asks only for the `capture` scope. Its token
 is kept in the extension's local storage (`storage.local`).
 
-If kitty! later refuses the token (you revoked the extension, or kitty!'s workspace is new),
+If rika! later refuses the token (you revoked the extension, or rika!'s workspace is new),
 the extension forgets it and pairs again by itself: the panel shows a new code to approve.
-*Forget this connection* forgets the token here; revoke it in kitty! as well.
+*Forget this connection* forgets the token here; revoke it in rika! as well.
 
 ## Building
 
@@ -106,21 +106,21 @@ The end-to-end test loads the Chromium build into Playwright's Chromium against
 
 **Chrome, Brave, Edge, Chromium:** open `chrome://extensions` (`brave://extensions`,
 `edge://extensions`), turn on *Developer mode*, choose *Load unpacked* and pick
-`integrations/browser/dist/chromium`. Pin the kitty! button and press it to open the side
+`integrations/browser/dist/chromium`. Pin the rika! button and press it to open the side
 panel.
 
 **Firefox:** open `about:debugging#/runtime/this-firefox`, choose *Load Temporary Add-on…*
 and pick `integrations/browser/dist/firefox/manifest.json`. The toolbar button (or View →
-Sidebar → kitty!) opens the sidebar. A temporary add-on is removed when Firefox restarts.
+Sidebar → rika!) opens the sidebar. A temporary add-on is removed when Firefox restarts.
 If Firefox holds back access to web pages, switching mirroring on asks for it.
 
-For a permanent Firefox install the add-on must be signed by Mozilla. kitty! is not on
+For a permanent Firefox install the add-on must be signed by Mozilla. rika! is not on
 addons.mozilla.org; sign it yourself as an **unlisted** add-on (self-distributed, not
 public): create API keys at addons.mozilla.org, then
 `npx web-ext sign --source-dir dist/firefox --channel unlisted --api-key … --api-secret …`
 and install the signed `.xpi`. Nothing in this repository submits or signs anything.
 Firefox asks you to consent to the data the manifest declares (browsing activity and website
-content, sent to kitty! on this computer).
+content, sent to rika! on this computer).
 
 ## Opening the panel as a page
 

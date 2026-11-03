@@ -1,5 +1,5 @@
 --!strict
--- The window half's connection to kitty!: finding the running kitty!, pairing, keeping the
+-- The window half's connection to rika!: finding the running rika!, pairing, keeping the
 -- token and sending requests. Everything Tern provides comes in through `deps`, so the unit
 -- tests (tests/client_test.luau) drive it with fakes.
 --
@@ -65,25 +65,25 @@ local function outcome(kind: string, message: string): Outcome
 	return { kind = kind, status = 0, data = nil, message = message }
 end
 
---- The running kitty!'s address, or why there is none.
+--- The running rika!'s address, or why there is none.
 function Client.endpoint(self: Client): (Endpoint?, Outcome?)
 	local path = core.endpoint_path(self.deps.plugin_dir)
 	if not path then
-		return nil, outcome("unconfigured", "This copy of the plugin was not installed by kitty!. Install it from kitty!: Tern → kitty! plugin for Tern.")
+		return nil, outcome("unconfigured", "This copy of the plugin was not installed by rika!. Install it from rika!: Tern → rika! plugin for Tern.")
 	end
 	local ok, text = pcall(self.deps.read_file, path, MAX_ENDPOINT)
 	if not ok then
-		return nil, outcome("offline", "kitty! isn't running. Start kitty!, then try again.")
+		return nil, outcome("offline", "rika! isn't running. Start rika!, then try again.")
 	end
 	local parsed, decoded = pcall(self.deps.json.decode, text)
 	local endpoint, problem = core.parse_endpoint(if parsed then decoded else nil)
 	if not endpoint then
-		return nil, outcome("offline", problem or "kitty!'s endpoint file is not readable")
+		return nil, outcome("offline", problem or "rika!'s endpoint file is not readable")
 	end
 	return endpoint, nil
 end
 
---- The workspace this window's token belongs to: kitty!'s private folder.
+--- The workspace this window's token belongs to: rika!'s private folder.
 function Client.workspace(self: Client): string?
 	return core.private_dir(self.deps.plugin_dir)
 end
@@ -149,14 +149,14 @@ function Client.load(self: Client, cx: any, k: (token: string?, problem: Outcome
 			waiting:cancel()
 		end
 		if err then
-			k(nil, outcome("keychain", "kitty!'s token is in the keychain, which is locked: " .. tostring(err)), later)
+			k(nil, outcome("keychain", "rika!'s token is in the keychain, which is locked: " .. tostring(err)), later)
 			return
 		end
 		if type(value) ~= "string" then
 			local fallback = kv.get("token")
 			value = if type(fallback) == "string" then fallback else nil
 		end
-		-- A keychain delete still in flight must not bring back the token kitty! refused.
+		-- A keychain delete still in flight must not bring back the token rika! refused.
 		if value == self.rejected then
 			value = nil
 		end
@@ -174,7 +174,7 @@ function Client.store(self: Client, cx: any, token: string)
 	local function fallback(later: any, reason: string)
 		kv.set("token", token)
 		kv.set("token_store", "kv")
-		self.on_notice(later, "info", "kitty! token kept in Tern's plugin data", reason)
+		self.on_notice(later, "info", "rika! token kept in Tern's plugin data", reason)
 	end
 	if not secrets then
 		fallback(cx, "This Tern has no keychain access for plugins, so the token is in kv.json, readable by programs running as you.")
@@ -190,7 +190,7 @@ function Client.store(self: Client, cx: any, token: string)
 	end)
 end
 
---- Drop a token kitty! no longer accepts.
+--- Drop a token rika! no longer accepts.
 function Client.forget(self: Client, token: string)
 	self.token = nil
 	self.rejected = token
@@ -229,13 +229,13 @@ function Client.poll(self: Client, endpoint: Endpoint)
 			self.on_paired(cx)
 			settle(self, nil, cx)
 		elseif status == "denied" then
-			settle(self, outcome("denied", "kitty! denied the pairing request."), cx)
+			settle(self, outcome("denied", "rika! denied the pairing request."), cx)
 		elseif status == "expired" or self.deps.now() > pairing.deadline then
-			settle(self, outcome("expired", "The pairing request expired before it was approved in kitty!."), cx)
+			settle(self, outcome("expired", "The pairing request expired before it was approved in rika!."), cx)
 		elseif answer.kind == "disabled" then
 			settle(self, answer, cx)
 		else
-			-- Pending, or kitty! briefly unreachable: ask again until the request expires.
+			-- Pending, or rika! briefly unreachable: ask again until the request expires.
 			self.deps.timer(POLL_MS, function()
 				self:poll(endpoint)
 			end)
@@ -243,7 +243,7 @@ function Client.poll(self: Client, endpoint: Endpoint)
 	end)
 end
 
---- Ask kitty! to pair this Tern. `waiter` runs once the user approved (outcome kind "ok")
+--- Ask rika! to pair this Tern. `waiter` runs once the user approved (outcome kind "ok")
 --- or the request failed; a request already waiting is shared.
 function Client.pair(self: Client, cx: any, endpoint: Endpoint, waiter: Done)
 	local pairing = self.pairing
@@ -256,7 +256,7 @@ function Client.pair(self: Client, cx: any, endpoint: Endpoint, waiter: Done)
 	self:send(endpoint, "POST", endpoint.pairing, body, nil, function(answer, later)
 		local data = answer.data
 		if answer.kind ~= "ok" or type(data) ~= "table" or type(data.request) ~= "string" or type(data.code) ~= "string" then
-			waiter(if answer.kind == "ok" then outcome("failed", "kitty! answered the pairing request oddly") else answer, later)
+			waiter(if answer.kind == "ok" then outcome("failed", "rika! answered the pairing request oddly") else answer, later)
 			return
 		end
 		local seconds = if type(data.expires_in) == "number" then data.expires_in else 300
@@ -277,7 +277,7 @@ end
 -- Requests --------------------------------------------------------------------
 
 --- Send one authenticated request, pairing first when there is no token and once more
---- when kitty! no longer accepts it.
+--- when rika! no longer accepts it.
 function Client.request(self: Client, cx: any, method: string, path: string, body: any, done: Done)
 	local endpoint, problem = self:endpoint()
 	if not endpoint then
@@ -295,7 +295,7 @@ function Client.request(self: Client, cx: any, method: string, path: string, bod
 					elseif self.token then
 						send(self.token, again, true)
 					else
-						done(outcome("unauthorized", "kitty! did not accept the new pairing"), again)
+						done(outcome("unauthorized", "rika! did not accept the new pairing"), again)
 					end
 				end)
 				return
@@ -315,7 +315,7 @@ function Client.request(self: Client, cx: any, method: string, path: string, bod
 				elseif self.token then
 					send(self.token, after, true)
 				else
-					done(outcome("unauthorized", "kitty! did not accept the new pairing"), after)
+					done(outcome("unauthorized", "rika! did not accept the new pairing"), after)
 				end
 			end)
 		end

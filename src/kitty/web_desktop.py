@@ -80,5 +80,5 @@ def post(app, conn, path, body):
     if set(body) != {"command"} or not isinstance(body["command"], str):
         raise APIError(400, "Expected {\"command\": one of the desktop commands}")
     if app.desktop is None:
-        raise APIError(409, "Desktop controls are only available in the kitty! desktop app")
+        raise APIError(409, "Desktop controls are only available in the rika! desktop app")
     return app.desktop.command(body["command"])

@@ -1,5 +1,5 @@
 // Browser fixture for tests/dock.browser.test.mjs. Mounts the real dock with a
-// stand-in kitty! API and WebSocket so the page never reaches a herdr session.
+// stand-in rika! API and WebSocket so the page never reaches a herdr session.
 import { mount } from "svelte";
 import "/src/styles.css";
 import { loadBuild, reloadBuild } from "/src/lib/build.svelte.ts";
@@ -23,7 +23,7 @@ const ACTIVITY = {
   ],
 };
 
-/** Tern is absent unless the page is opened with ?tern=1 (then kitty!'s session has panes). */
+/** Tern is absent unless the page is opened with ?tern=1 (then rika!'s session has panes). */
 const withTern = new URLSearchParams(location.search).has("tern");
 const ternBlock = (id, extra) => ({ id, title: "", cwd: "/sample/workspace", program: "/bin/bash", cols: 120, rows: 30,
   focused: false, live: true, exited: null, working: false, ...extra });

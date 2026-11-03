@@ -1,6 +1,6 @@
 // The live page mirror (platform design Q11): the browser tab the kitty extension mirrors,
 // shown in the Mirror pane beside a note. Frames arrive over the live channel
-// (`mirror`, `mirror_end`; src/kitty/web_mirror.py) and live only in kitty!'s memory.
+// (`mirror`, `mirror_end`; src/kitty/web_mirror.py) and live only in rika!'s memory.
 // Quoting a passage writes a callout (the page title linked to its URL, and the time)
 // holding a quote, through the block editor's own transaction.
 import { appendKeys, pasteAfter, type Edit } from "./blockEdits.ts";

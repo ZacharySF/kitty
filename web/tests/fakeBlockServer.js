@@ -1,4 +1,4 @@
-// An in-memory stand-in for kitty!'s block backend (src/kitty/web_blocks.py, web_live.py) for
+// An in-memory stand-in for rika!'s block backend (src/kitty/web_blocks.py, web_live.py) for
 // browser harnesses: GET /api/blocks/page, the live WebSocket (txn → ack/reject, change to
 // every window), history sessions/preview/restore and Trash. Records are synthetic.
 // It applies operations with the editor's own PageDoc; the real server's semantics are

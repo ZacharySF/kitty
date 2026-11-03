@@ -1,25 +1,25 @@
-"""Terminal module: Stencil Tern beside kitty!'s herdr (kitty.core.tern).
+"""Terminal module: Stencil Tern beside rika!'s herdr (kitty.core.tern).
 
 GET  /api/terminal/tern  ->  status
     {install_url, installed, path, source, override, version, problem, workspace,
      socket, running, windows, sessions: [{id, name, shown, tabs: [{id, number, name,
      shown, blocks: [{id, title, cwd, program, cols, rows, focused, live, exited,
      working}]}]}], activity: [{event, pane, status, at}], quick_notes}
-    Reading never starts Tern; ``running`` is false until kitty!'s daemon runs.
+    Reading never starts Tern; ``running`` is false until rika!'s daemon runs.
     ``activity`` lists recent pane starts and exits, newest first; ``quick_notes``
     says whether captures can be saved (the Workspace module is on).
-POST /api/terminal/tern/start     {}  ->  status   (kitty!'s daemon and session)
+POST /api/terminal/tern/start     {}  ->  status   (rika!'s daemon and session)
 POST /api/terminal/tern/open      {}  ->  status   (plus a native Tern window on it)
-POST /api/terminal/tern/new       {}  ->  status   (a new pane in kitty!'s session)
+POST /api/terminal/tern/new       {}  ->  status   (a new pane in rika!'s session)
 POST /api/terminal/tern/run       {"block": ID, "text": "one line"}  ->  status
-POST /api/terminal/tern/focus     {"block": ID}  ->  status   (raises kitty!'s Tern window, or opens one)
+POST /api/terminal/tern/focus     {"block": ID}  ->  status   (raises rika!'s Tern window, or opens one)
 POST /api/terminal/tern/capture   {"block": ID}  ->  {note_id, block, truncated}
     Saves the pane's plain text (newest 60 KiB) as a quick note; needs the
     Workspace module (409 otherwise).
 POST /api/terminal/tern/settings  {"path": "/abs/tern" | "" | null}  ->  status
     Header-protected like every mutation. Without a usable ``tern`` the actions
-    answer 409 with the install pointer; run/focus/capture answer 409 while kitty!'s
-    daemon is not running, 404 for a block that is not a pane of kitty!'s session
+    answer 409 with the install pointer; run/focus/capture answer 409 while rika!'s
+    daemon is not running, 404 for a block that is not a pane of rika!'s session
     and 400 for a non-integer block or text that is not one line. A daemon that
     cannot start or answer is 503.
 
@@ -88,7 +88,7 @@ def _act(action):
     except TernUnavailable as exc:
         raise _error(503, str(exc)) from None
     except OSError:
-        raise _error(503, "kitty!'s Tern daemon could not start") from None
+        raise _error(503, "rika!'s Tern daemon could not start") from None
 
 
 def _capture(app, conn, block) -> dict:
@@ -123,7 +123,7 @@ def post(app, conn, path, body):
         if path.endswith("/remove"):
             return _plugin(app, conn, tern_plugin.remove)
         if not project.tern_plugin_enabled(conn):
-            raise _error(409, "The kitty Tern plugin is turned off in this kitty!'s build (Settings > Build)")
+            raise _error(409, "The kitty Tern plugin is turned off in this rika!'s build (Settings > Build)")
         return _plugin(app, conn, tern_plugin.install)
     if path == PREFIX + "/settings":
         if not isinstance(body, dict) or set(body) != {"path"} or not isinstance(body["path"], (str, type(None))):

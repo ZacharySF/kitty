@@ -1,5 +1,5 @@
 // Paired outside programs (platform design Q7): the kitty Tern plugin and the browser
-// extension. kitty! approves or denies their pairing requests and revokes their tokens;
+// extension. rika! approves or denies their pairing requests and revokes their tokens;
 // the programs themselves only ever call /api/ingress.
 import { api } from "./api";
 
@@ -29,7 +29,7 @@ export interface PairingRequest {
 export interface ClientsState {
   clients: PairedClient[];
   requests: PairingRequest[];
-  /** This kitty!'s address, which a person pastes into the browser extension. */
+  /** This rika!'s address, which a person pastes into the browser extension. */
   address: string | null;
 }
 

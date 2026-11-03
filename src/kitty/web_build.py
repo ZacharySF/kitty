@@ -3,7 +3,7 @@
 The active build is config/build.json (kitty.core.builds). This extension watches it,
 projects every valid save into SQLite and pushes it to every window over the live
 channel (kitty.web_live), whoever saved it: the build editor, a Settings screen, an
-install or rollback, another kitty! process, or any text editor. A save with an error
+install or rollback, another rika! process, or any text editor. A save with an error
 changes nothing: the last good build stays active and every window shows the problem.
 
 GET  /api/build                 the active build, the file's text and problems, history

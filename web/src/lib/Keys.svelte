@@ -44,7 +44,7 @@
 
 <Panel title="Keys" aria-label="Keys">
     <div class="keys">
-      <p class="muted">API keys kitty! and the programs you start with <code>kitty keys run</code> use. kitty! shows only whether a key is set and where it is stored, never its value.</p>
+      <p class="muted">API keys rika! and the programs you start with <code>kitty keys run</code> use. rika! shows only whether a key is set and where it is stored, never its value.</p>
       {#if keysState && !keysState.keyring}
         <p class="warning" role="note">No OS keyring is available, so keys are stored in an owner-only file under <code>.private/</code> in your workspace.</p>
       {/if}

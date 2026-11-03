@@ -7,7 +7,7 @@ open it, and demo workspaces (a temporary root) never touch the real one. It is
 owner-only and ignored by Git, like the YAML beside it.
 
 Every write is atomic (temporary file, fsync, rename, directory fsync) and happens under
-an exclusive lock on the config directory, so two kitty! processes never interleave
+an exclusive lock on the config directory, so two rika! processes never interleave
 writes. A write never follows a symbolic link. Installs and rollbacks first copy the
 build they replace into ``data/build-history/`` (runtime state, not configuration); the
 newest ``HISTORY_KEEP`` copies are kept.

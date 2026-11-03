@@ -1,4 +1,4 @@
-// What the extension keeps in browser.storage.local: kitty!'s address, the token kitty!
+// What the extension keeps in browser.storage.local: rika!'s address, the token rika!
 // issued when the person approved this browser, a pairing in progress, and the person's
 // own deny-list rules. The token never leaves this storage except as the Authorization
 // header to that address.
@@ -11,7 +11,7 @@ export type Settings = {
   token: string | null;
   client: { id: string; name: string } | null;
   pending: Pending | null;
-  /** kitty! refused the token (revoked or a reinstall of kitty!): the panel pairs again. */
+  /** rika! refused the token (revoked or a reinstall of rika!): the panel pairs again. */
   needsPairing: boolean;
   rules: string[];
 };
@@ -31,7 +31,7 @@ export async function saveSettings(patch: Partial<Settings>): Promise<Settings> 
   return next;
 }
 
-/** kitty! with this browser's token, or null while not paired. */
+/** rika! with this browser's token, or null while not paired. */
 export function connected(settings: Settings): Kitty | null {
   return settings.address && settings.token ? new Kitty(settings.address, settings.token) : null;
 }

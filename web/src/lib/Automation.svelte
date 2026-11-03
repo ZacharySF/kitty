@@ -473,7 +473,7 @@
       saved answers
     </p>
     <p>
-      Check the jobs and resumes below. kitty! fills your saved details and
+      Check the jobs and resumes below. rika! fills your saved details and
       leaves unknown answers blank.
     </p>
     {#if demo}<p class="muted">
@@ -544,7 +544,7 @@
       {#if plan.authentication.mode === "google"}
         <p>Reuse the signed-in Google account <strong>{plan.authentication.google_email}</strong>. Google passwords and permission screens stay manual.</p>
       {:else}
-        <p>kitty! detects sign-in or account creation and uses your saved email and password. No account-type selection is needed.</p>
+        <p>rika! detects sign-in or account creation and uses your saved email and password. No account-type selection is needed.</p>
         {#if plan.authentication.credential_problem}<p class="warning">{plan.authentication.credential_problem}</p>{/if}
       {/if}
       <details>

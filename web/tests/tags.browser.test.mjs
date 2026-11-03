@@ -1,4 +1,4 @@
-// Auto-tags (Q13) end to end in a real browser against a real kitty! server (`kitty-web
+// Auto-tags (Q13) end to end in a real browser against a real rika! server (`kitty-web
 // --demo`: a disposable synthetic workspace; tests/kittyServer.js): the faint underline and
 // Tab to attach, Esc remembered across a reload, Always attach then removal never re-attached,
 // and a tag page's backlinks and Link all.

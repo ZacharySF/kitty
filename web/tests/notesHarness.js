@@ -1,5 +1,5 @@
 // Browser fixture for tests/notes.browser.test.mjs. Mounts the real Notes view with an
-// in-memory stand-in for kitty!'s notes API and block backend (tests/fakeBlockServer.js);
+// in-memory stand-in for rika!'s notes API and block backend (tests/fakeBlockServer.js);
 // every record is synthetic. A page's title, revision and outline blocks live in the block
 // stand-in, as they live in kitty's block tables; its canvas document lives here.
 import { mount } from "svelte";

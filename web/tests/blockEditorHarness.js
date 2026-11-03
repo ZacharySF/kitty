@@ -1,4 +1,4 @@
-// Browser fixture for tests/blockEditor.browser.test.mjs. Mounts kitty!'s block editor with an
+// Browser fixture for tests/blockEditor.browser.test.mjs. Mounts rika!'s block editor with an
 // in-memory stand-in for the block backend (tests/fakeBlockServer.js); every record is synthetic.
 import { mount } from "svelte";
 import "/src/styles.css";

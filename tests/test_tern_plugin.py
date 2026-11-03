@@ -1,8 +1,8 @@
 """Installing the kitty Tern plugin (platform design Q1) against a synthetic ``tern``.
 
 The plugin's own logic is tested in Luau (``integrations/tern/tests``); these tests cover
-kitty!'s side: the shipped package, the copy in the workspace, ``tern plugin link`` aimed
-only at kitty!'s socket, status, removal and the build switch.
+rika!'s side: the shipped package, the copy in the workspace, ``tern plugin link`` aimed
+only at rika!'s socket, status, removal and the build switch.
 """
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def test_install_copies_the_package_into_the_workspace_and_links_it(tmp_path, te
     for folder in (copy.parent, copy, copy / "lib"):
         assert stat.S_IMODE(folder.stat().st_mode) == 0o700
     assert not [item for item in copy.parent.iterdir() if item.name.startswith(".plugin")]
-    # Every `tern plugin` kitty! ran was aimed at kitty!'s own socket, never the user's daemon.
+    # Every `tern plugin` rika! ran was aimed at rika!'s own socket, never the user's daemon.
     links = [item for item in tern.invocations() if item["argv"][:1] == ["plugin"]]
     assert ["plugin", "link", str(copy), "--json"] in [item["argv"] for item in links]
     assert all(item["env"]["TERN_DAEMON_SOCKET"] != str(tern.owner_socket) for item in links)
@@ -111,7 +111,7 @@ def test_installing_again_replaces_a_stale_copy_in_place(tmp_path, tern):
 def test_install_takes_over_a_link_to_another_workspace_and_says_so_before(tmp_path, tern):
     other = tmp_path / "other" / ".private" / "tern" / "plugin"
     other.mkdir(parents=True)
-    (other / "plugin.toml").write_text('schema = 1\nid = "kitty"\nname = "kitty!"\nversion = "0.0.9"\nwindow = "w.luau"\n')
+    (other / "plugin.toml").write_text('schema = 1\nid = "kitty"\nname = "rika!"\nversion = "0.0.9"\nwindow = "w.luau"\n')
     plugins_folder(tmp_path).mkdir(parents=True)
     (plugins_folder(tmp_path) / "kitty.path").write_text(str(other) + "\n")
     settings = make_root(tmp_path, ("terminal",))
@@ -186,7 +186,7 @@ def test_a_symlinked_copy_location_is_refused(tmp_path, tern):
     (private / "plugin").symlink_to(elsewhere)
     with site(settings) as running:
         code, body = running.request(PLUGIN + "/install", {})
-    assert code == 409 and "not kitty!'s plugin folder" in body["error"]
+    assert code == 409 and "not rika!'s plugin folder" in body["error"]
     assert list(elsewhere.iterdir()) == []
 
 

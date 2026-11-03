@@ -1,9 +1,9 @@
 """Paired outside programs and their scoped tokens (platform design Q7).
 
-The kitty Tern plugin and the browser extension reach kitty! through the client
-ingress, not through the page API. A client asks to pair (name, kind, scopes); kitty!
+The kitty Tern plugin and the browser extension reach rika! through the client
+ingress, not through the page API. A client asks to pair (name, kind, scopes); rika!
 shows the request with a short code the client also displays, and the user approves
-or denies it in kitty!. An approved client collects one random 256-bit token on its
+or denies it in rika!. An approved client collects one random 256-bit token on its
 next poll; only the token's SHA-256 is stored. Every later call presents the token and
 reaches only the routes of its granted scopes. Revoking a client ends its token.
 
@@ -175,7 +175,7 @@ class Pairing:
             moment = self._clock()
             self._purge(moment)
             if sum(item.state == "pending" for item in self._requests.values()) >= MAX_WAITING:
-                raise ClientError("Too many pairing requests are waiting; approve or deny them in kitty! first", 429,
+                raise ClientError("Too many pairing requests are waiting; approve or deny them in rika! first", 429,
                                   retry_after=60)
             if len(self._made) >= RATE_LIMIT:
                 raise ClientError("Too many pairing requests; try again later", 429,

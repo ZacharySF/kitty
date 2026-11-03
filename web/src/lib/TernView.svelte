@@ -6,8 +6,8 @@
 
   /**
    * Stencil Tern beside herdr (docs/terminal-dock-design.md, Tern). A truthful status
-   * panel, never a terminal: Tern's web client needs WebGPU, which kitty!'s desktop web
-   * view lacks, so the terminal itself opens in Tern's own window on kitty!'s daemon.
+   * panel, never a terminal: Tern's web client needs WebGPU, which rika!'s desktop web
+   * view lacks, so the terminal itself opens in Tern's own window on rika!'s daemon.
    * Reading the status never starts Tern.
    */
   const POLL_MS = 3000;
@@ -48,7 +48,7 @@
   const size = (cols: number | null, rows: number | null) => (cols && rows ? `${cols}×${rows}` : "");
   const windowsLabel = (count: number) => (count ? `${count} Tern window${count === 1 ? "" : "s"} open` : "No Tern window open");
 
-  /** The kitty! plugin for Tern (platform design Q1). Reading it runs `tern plugin`, so it is read
+  /** The rika! plugin for Tern (platform design Q1). Reading it runs `tern plugin`, so it is read
    *  once per detected Tern and after each action, not on every status poll. */
   let plugin = $state<TernPluginStatus | null>(null);
   let pluginError = $state("");
@@ -84,7 +84,7 @@
   <header>
     <div>
       <h1>Tern</h1>
-      <p>Stencil's native terminal, beside kitty!'s herdr. kitty! runs the Tern you installed on a session of its own; your own Tern sessions are never touched.</p>
+      <p>Stencil's native terminal, beside rika!'s herdr. rika! runs the Tern you installed on a session of its own; your own Tern sessions are never touched.</p>
     </div>
     {#if status?.installed}
       <div class="actions"><Button intent="primary" size="sm" disabled={busy} onclick={() => act("open")}>Open in Tern</Button></div>
@@ -98,25 +98,25 @@
   {:else if !status.installed}
     <Panel title={status.problem ? "Tern cannot be used" : "Tern is not installed"}>
       {#if status.problem}<p class="error" role="alert">{status.problem}</p>{/if}
-      <p>kitty! never bundles Tern: it is Stencil's closed-beta app and needs your own installation and Stencil account.
+      <p>rika! never bundles Tern: it is Stencil's closed-beta app and needs your own installation and Stencil account.
         Install it from <a href={status.install_url} target="_blank" rel="noopener noreferrer">stencil.so/tern</a>,
-        then choose Check again. herdr stays kitty!'s built-in terminal.</p>
+        then choose Check again. herdr stays rika!'s built-in terminal.</p>
       <Button size="sm" disabled={busy} onclick={load}>Check again</Button>
     </Panel>
   {:else}
     <dl class="facts">
       <div><dt>Installed</dt><dd>Tern {status.version}</dd></div>
       <div><dt>{status.source === "settings" ? "From settings" : "On PATH"}</dt><dd><code>{status.path}</code></dd></div>
-      <div><dt>Session</dt><dd>{status.running ? "kitty!'s Tern session is running" : "Not running"}</dd></div>
+      <div><dt>Session</dt><dd>{status.running ? "rika!'s Tern session is running" : "Not running"}</dd></div>
       <div><dt>Windows</dt><dd>{windowsLabel(status.windows)}</dd></div>
     </dl>
     {#if !status.running}
-      <Panel title="kitty!'s Tern session">
-        <p>kitty!'s Tern session is not running. Open in Tern starts it in <code>{status.workspace}</code> and shows it in a Tern window; you can also start it without a window.</p>
-        <Button size="sm" disabled={busy} onclick={() => act("start")}>Start kitty!'s Tern session</Button>
+      <Panel title="rika!'s Tern session">
+        <p>rika!'s Tern session is not running. Open in Tern starts it in <code>{status.workspace}</code> and shows it in a Tern window; you can also start it without a window.</p>
+        <Button size="sm" disabled={busy} onclick={() => act("start")}>Start rika!'s Tern session</Button>
       </Panel>
     {:else}
-      <ul class="sessions" aria-label="kitty!'s Tern sessions">
+      <ul class="sessions" aria-label="rika!'s Tern sessions">
         {#each status.sessions as session (session.id)}
           {#each session.tabs as tab (tab.id)}
             {#each tab.blocks as block (block.id)}
@@ -135,9 +135,9 @@
       <p class="muted">Scripts and agents can drive this session with Tern's own commands:
         <code>TERN_DAEMON_SOCKET={status.socket} tern ls</code></p>
     {/if}
-    <p class="muted">This is a status panel. Tern's web client draws with WebGPU, which kitty!'s window does not provide, so the terminal opens in Tern's own window. Quitting kitty! closes the Tern windows it opened and stops its Tern session.</p>
-    <Panel title="kitty! plugin for Tern">
-      <p>Adds commands to your own Tern that send selections, panes, failed commands and web pages to kitty!'s Inbox, and a kitty! Inbox block.
+    <p class="muted">This is a status panel. Tern's web client draws with WebGPU, which rika!'s window does not provide, so the terminal opens in Tern's own window. Quitting rika! closes the Tern windows it opened and stops its Tern session.</p>
+    <Panel title="rika! plugin for Tern">
+      <p>Adds commands to your own Tern that send selections, panes, failed commands and web pages to rika!'s Inbox, and a rika! Inbox block.
         The first time, Tern asks to pair: approve its code in the bar above or in Settings → Connected apps.</p>
       {#if pluginError}<p class="error" role="alert">{pluginError}</p>{/if}
       {#if plugin}
@@ -149,7 +149,7 @@
           <div class="actions">
             {#if shown.action}
               <Button intent="primary" size="sm" disabled={pluginBusy} onclick={() => pluginAct("install")}>
-                {shown.action === "update" ? "Update the plugin in Tern" : "Install kitty! plugin into Tern"}</Button>
+                {shown.action === "update" ? "Update the plugin in Tern" : "Install rika! plugin into Tern"}</Button>
             {/if}
             {#if plugin.installed}
               <Button size="sm" variant="ghost" disabled={pluginBusy} onclick={() => pluginAct("remove")}>Remove from Tern</Button>
@@ -165,7 +165,7 @@
   {#if status}
     <details bind:open={showPath}>
       <summary>Tern executable</summary>
-      <p class="muted">kitty! uses <code>tern</code> from PATH unless a path is saved here.</p>
+      <p class="muted">rika! uses <code>tern</code> from PATH unless a path is saved here.</p>
       <label class="path">Tern executable path
         <input type="text" spellcheck="false" placeholder="/home/you/.local/bin/tern" bind:value={path} oninput={() => { editedPath = true; }} />
       </label>

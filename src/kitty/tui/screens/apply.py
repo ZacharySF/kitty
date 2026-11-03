@@ -213,7 +213,7 @@ class ApplyScreen(JobActions, Screen):
         if ats == "workday":
             lines.append(f"[{GOLD}]Workday: f inspects guest/session steps; any login or verification stays manual.[/]")
         elif ats in _FILLABLE:
-            lines.append(f"[{MOSS}]{ats}[/]: f fills it in the kitty browser")
+            lines.append(f"[{MOSS}]{ats}[/]: f fills it in the rika! browser")
         else:
             lines.append(f"[{GOLD}]{ats} board: f opens it; fill it by hand[/]")
         lines.append(f"[dim]{escape(job.apply_url or job.url)}[/dim]")

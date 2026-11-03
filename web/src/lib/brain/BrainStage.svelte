@@ -448,7 +448,7 @@
   {:else if status === "missing"}
     <div class="state" role="status">
       <p class="title">The brain needs the newer backend</p>
-      <p>Update kitty to see the Brain; 2D still maps your workspace.</p>
+      <p>Update rika! to see the Brain; 2D still maps your workspace.</p>
     </div>
   {:else if status === "error"}
     <div class="state" role="alert">

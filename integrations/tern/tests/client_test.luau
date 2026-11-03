@@ -6,7 +6,7 @@ local DIR = "/home/u/ws/.private/tern/plugin"
 local ENDPOINT = "/home/u/ws/.private/endpoint.json"
 local ORIGIN = "http://127.0.0.1:8770"
 
--- A fake kitty! behind tern.fetch: `routes["METHOD path"]` answers {status, data} or {error}.
+-- A fake rika! behind tern.fetch: `routes["METHOD path"]` answers {status, data} or {error}.
 local function world(opts: { [string]: any }?)
 	local options = opts or {}
 	local json = support.json()
@@ -107,7 +107,7 @@ local function paths(w): { string }
 end
 
 return function(t: any)
-	t.test("says kitty! isn't running when there is no endpoint file", function()
+	t.test("says rika! isn't running when there is no endpoint file", function()
 		local w = world({ offline = true })
 		local results, done = recorder()
 		w.client:request("cx", "GET", "/api/ingress/recent", nil, done)
@@ -116,7 +116,7 @@ return function(t: any)
 		t.eq(#w.requests, 0)
 	end)
 
-	t.test("refuses a copy kitty! did not install", function()
+	t.test("refuses a copy rika! did not install", function()
 		local w = world({ plugin_dir = "/src/kitty/integrations/tern" })
 		local results, done = recorder()
 		w.client:request("cx", "GET", "/api/ingress/recent", nil, done)
@@ -167,7 +167,7 @@ return function(t: any)
 		t.eq(results[1].kind, "ok")
 	end)
 
-	t.test("pairs again after kitty! revoked the token, then retries once", function()
+	t.test("pairs again after rika! revoked the token, then retries once", function()
 		local w = world({ secrets_store = { token = "kitty_revoked" }, kv = { workspace = "/home/u/ws/.private" } })
 		pairing_routes(w.routes, "kitty_fresh", { "approved" })
 		w.routes["POST /api/ingress/notes"] = function(_, auth)
@@ -181,7 +181,7 @@ return function(t: any)
 		t.eq(w.secrets.token, "kitty_fresh")
 	end)
 
-	t.test("stops after one re-pairing that kitty! still refuses", function()
+	t.test("stops after one re-pairing that rika! still refuses", function()
 		local w = world({ secrets_store = { token = "kitty_revoked" }, kv = { workspace = "/home/u/ws/.private" } })
 		pairing_routes(w.routes, "kitty_fresh", { "approved" })
 		w.routes["POST /api/ingress/notes"] = { status = 401 }
@@ -238,7 +238,7 @@ return function(t: any)
 
 	t.test("reports the build switch that turned the plugin off", function()
 		local w = world()
-		w.routes["POST /api/ingress/pair"] = { status = 403, data = { error = "The kitty Tern plugin is turned off in this kitty!'s build (Settings > Build)" } }
+		w.routes["POST /api/ingress/pair"] = { status = 403, data = { error = "The kitty Tern plugin is turned off in this rika!'s build (Settings > Build)" } }
 		local results, done = recorder()
 		w.client:request("cx", "GET", "/api/ingress/recent", nil, done)
 		t.eq(results[1].kind, "disabled")
@@ -273,7 +273,7 @@ return function(t: any)
 		bare.timers.flush()
 		t.eq(bare.kv.data.token, "kitty_plain")
 		t.eq(bare.kv.data.token_store, "kv")
-		t.eq(bare.notices, { "pairing ABC-DEF 300", "info kitty! token kept in Tern's plugin data", "paired" })
+		t.eq(bare.notices, { "pairing ABC-DEF 300", "info rika! token kept in Tern's plugin data", "paired" })
 
 		local refused = world({ keychain_refuses = true })
 		pairing_routes(refused.routes, "kitty_plain", { "approved" })

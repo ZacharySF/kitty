@@ -26,7 +26,7 @@ ROOT_MARKERS = (
 #: Not Firefox's default 9222, so it never collides with another automated browser.
 DEFAULT_BROWSER_PORT = 9333
 
-#: kitty!'s own named herdr session. Never herdr's "default" session.
+#: rika!'s own named herdr session. Never herdr's "default" session.
 DEFAULT_HERDR_SESSION = "kitty"
 
 
@@ -67,10 +67,10 @@ class Settings:
     firefox_path: str | None = None
     #: Local remote-control port of that browser; the window stays open between runs.
     browser_port: int = DEFAULT_BROWSER_PORT
-    #: The pinned herdr binary kitty! bundles ($KITTY_HERDR; the desktop app sets it).
+    #: The pinned herdr binary rika! bundles ($KITTY_HERDR; the desktop app sets it).
     #: Never a herdr found on PATH.
     herdr_path: str | None = None
-    #: Name of kitty!'s herdr session ($KITTY_HERDR_SESSION).
+    #: Name of rika!'s herdr session ($KITTY_HERDR_SESSION).
     herdr_session: str = DEFAULT_HERDR_SESSION
 
     @property

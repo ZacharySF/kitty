@@ -1,4 +1,4 @@
-// Which pages are never mirrored or sent to kitty! (platform design Q11 privacy rules).
+// Which pages are never mirrored or sent to rika! (platform design Q11 privacy rules).
 //
 // Built in, and not switchable: anything that is not an http(s) web page (browser pages,
 // files, extension pages, the extension stores), private/incognito windows, banking and

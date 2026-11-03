@@ -1,50 +1,50 @@
-# kitty! plugin for Tern
+# rika! plugin for Tern
 
-A [Tern](https://stencil.so/tern) plugin that sends things from Tern to kitty! and shows
-kitty!'s Inbox inside Tern. It is the Tern → kitty! half of platform design Q1; the
-kitty! → Tern half is kitty!'s Tern bridge. MIT licensed, like kitty!.
+A [Tern](https://stencil.so/tern) plugin that sends things from Tern to rika! and shows
+rika!'s Inbox inside Tern. It is the Tern → rika! half of platform design Q1; the
+rika! → Tern half is rika!'s Tern bridge. MIT licensed, like rika!.
 
-kitty! never bundles or downloads Tern (Stencil's closed beta). This plugin only runs in a
+rika! never bundles or downloads Tern (Stencil's closed beta). This plugin only runs in a
 Tern you installed yourself.
 
 ## What it adds
 
-Palette commands (group **kitty!**):
+Palette commands (group **rika!**):
 
 | Command | Sends |
 | --- | --- |
-| Capture selection to kitty! Inbox | The selected text, as a quote, with the pane's title and folder |
-| Capture pane to kitty! Inbox | The focused pane's text (newest 20 000 bytes) as a code block |
-| New kitty! quick note | A line you type, as a kitty! quick note |
-| Send browser page to kitty! Inbox | A Tern browser block's URL, title, readable text and selection, as a page snapshot |
-| Pick from browser page to kitty! Inbox | One element you click in a browser block, as a snapshot with that text |
-| Save failed command output to kitty! | The last failed command line, its exit status and the pane's output (listed only after a failure) |
-| Toggle kitty! offers for failed commands | When on, a failed command shows a toast pointing at the command above (off by default) |
-| Connect to kitty! | Pairs now, or confirms the connection |
+| Capture selection to rika! Inbox | The selected text, as a quote, with the pane's title and folder |
+| Capture pane to rika! Inbox | The focused pane's text (newest 20 000 bytes) as a code block |
+| New rika! quick note | A line you type, as a rika! quick note |
+| Send browser page to rika! Inbox | A Tern browser block's URL, title, readable text and selection, as a page snapshot |
+| Pick from browser page to rika! Inbox | One element you click in a browser block, as a snapshot with that text |
+| Save failed command output to rika! | The last failed command line, its exit status and the pane's output (listed only after a failure) |
+| Toggle rika! offers for failed commands | When on, a failed command shows a toast pointing at the command above (off by default) |
+| Connect to rika! | Pairs now, or confirms the connection |
 
-A **kitty! Inbox** block ("New kitty! Inbox block" in the palette) lists kitty!'s recently
+A **rika! Inbox** block ("New rika! Inbox block" in the palette) lists rika!'s recently
 edited pages and open tasks. Enter or a click opens the page (`#notes/<number>`) or the
-Calendar in kitty!'s web address; `r` or Refresh reloads it, `j`/`k` move.
+Calendar in rika!'s web address; `r` or Refresh reloads it, `j`/`k` move.
 
 ## Installing
 
-In kitty!: **Tern** (under Plan) → **kitty! plugin for Tern** → **Install**. kitty! copies
+In rika!: **Tern** (under Plan) → **rika! plugin for Tern** → **Install**. rika! copies
 this folder to `<workspace>/.private/tern/plugin` and runs `tern plugin link` on the copy.
 Tern's daemons and windows watch their plugins folder, so a running Tern loads it by itself.
-Installing again after a kitty! update replaces the copy; **Remove** unlinks and deletes it.
+Installing again after a rika! update replaces the copy; **Remove** unlinks and deletes it.
 The button is offered while Tern is installed and the build's `settings.tern.plugin` is on.
 
-Why a copy: the plugin finds the running kitty! through `.private/endpoint.json`, two
-folders above the copy, so it needs no setting; and a desktop kitty! unpacks its bundled
+Why a copy: the plugin finds the running rika! through `.private/endpoint.json`, two
+folders above the copy, so it needs no setting; and a desktop rika! unpacks its bundled
 files into a temporary folder that a link must not point into. A link to this folder in a
-checkout loads, but says it was not installed by kitty! when used.
+checkout loads, but says it was not installed by rika! when used.
 
 ## Pairing and the token
 
-The first command that needs kitty! asks kitty! to pair (kind `tern-plugin`, scopes
+The first command that needs rika! asks rika! to pair (kind `tern-plugin`, scopes
 `capture` and `read`) and shows a code in a toast (and in an Inbox block waiting for data).
-Approve the same code in kitty! (the bar at the top, or Settings → Connected apps). The
-command then continues by itself. If kitty! later refuses the token (revoked in Settings →
+Approve the same code in rika! (the bar at the top, or Settings → Connected apps). The
+command then continues by itself. If rika! later refuses the token (revoked in Settings →
 Connected apps), the next command pairs again and retries once.
 
 The token is kept with `tern.secrets` (the system keychain: Secret Service on Linux, the
@@ -56,18 +56,18 @@ plugin reads the token is reported, and the plugin does not pair again behind it
 never answers a write (an unlock prompt left open) leaves the token in that window's memory
 until the window closes.
 
-Turning `settings.tern.plugin` off in kitty!'s build refuses pairing and every request
+Turning `settings.tern.plugin` off in rika!'s build refuses pairing and every request
 without revoking the token; turning it back on needs no new pairing.
 
-## When kitty! is not running
+## When rika! is not running
 
-Every command answers with a toast: "kitty! isn't running. Start kitty!, then try again."
+Every command answers with a toast: "rika! isn't running. Start rika!, then try again."
 (no endpoint file, a stale one after a crash, or a refused connection). The Inbox block shows
 the same message; nothing raises.
 
 ## How it is built
 
-- `window.luau` (each Tern window) owns every request to kitty!, because only window halves
+- `window.luau` (each Tern window) owns every request to rika!, because only window halves
   have `tern.secrets`. `lib/client.luau` finds the endpoint, pairs, keeps the token and
   sends requests with `tern.fetch`.
 - `host.luau` (Tern's session daemon) defines the Inbox block. It holds no token: it asks a

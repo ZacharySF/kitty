@@ -1,11 +1,11 @@
-# kitty! user and operator guide
+# rika! user and operator guide
 
 The full reference: setup, every module, the desktop app, configuration and the
 database. The [README](../README.md) is the short overview.
 
 A local workspace with three optional built-in modules: **ApplyAI** for job discovery,
 application preparation and tracking, **Workspace** for notes, documents, study and
-planning, and **Terminal** for kitty!'s own bundled herdr terminal session. The shell
+planning, and **Terminal** for rika!'s own bundled herdr terminal session. The shell
 and settings work with any combination of modules, or none.
 
 **Two rules the code enforces, not just documents:**
@@ -73,7 +73,7 @@ source .venv/bin/activate    # then just `kitty ...`
 | --- | --- |
 | ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports |
 | Workspace (`workspace`) | Notes, documents/PDFs, canvas, mind maps, backlinks, flashcards, study, calendar, tasks and projects/opportunities |
-| Terminal (`terminal`) | kitty!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window; your installed [Stencil Tern](https://stencil.so/tern), if any, opened on a session of kitty!'s own |
+| Terminal (`terminal`) | rika!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window; your installed [Stencil Tern](https://stencil.so/tern), if any, opened on a session of rika!'s own |
 | Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
@@ -85,7 +85,7 @@ list of the workspace's build file, stored locally (the build file is described 
 {"schema": 1, "modules": ["applyai", "workspace", "terminal"]}
 ```
 
-Save, then **quit and restart Kitty** to activate the change. Refresh/reload does
+Save, then **quit and restart rika!** to activate the change. Refresh/reload does
 not unload running modules, restart workers or discard drafts. Settings → Modules
 marks a module whose saved choice differs from the running session with
 **Restart** (its tooltip says whether it starts or stops). CLI invocations are separate
@@ -120,7 +120,7 @@ rollback. *Open build editor* (or *Edit build* in Ctrl+K) docks the file at the 
 the window: problems are marked at their lines, theme tokens and CSS show in that window
 as you type, and valid text saves itself (Ctrl+S saves at once).
 
-Safe mode shows kitty! without the build's custom CSS and theme tokens: press
+Safe mode shows rika! without the build's custom CSS and theme tokens: press
 Ctrl+Alt+Shift+S (again to turn them back on), open a window with `?safe`, or start
 `kitty-web --safe`. A small control outside the styled page says when custom style or
 safe mode is on and switches it.
@@ -128,19 +128,19 @@ safe mode is on and switches it.
 ### Terminal module
 
 The desktop app bundles a pinned herdr (v0.9.5, Apache-2.0; its licence ships as
-`licenses/herdr/LICENSE`) and never uses a herdr found on `PATH`. kitty! runs it as
+`licenses/herdr/LICENSE`) and never uses a herdr found on `PATH`. rika! runs it as
 its own named session, `kitty` (never herdr's `default` session), so agents can
 reach it with `herdr --session kitty`. Its sockets live where herdr keeps named
-sessions, `~/.config/herdr/sessions/kitty/`: kitty! creates that directory
+sessions, `~/.config/herdr/sessions/kitty/`: rika! creates that directory
 owner-only (0700) and refuses a session whose sockets are not owner-only (0600).
-The Harness colours come from kitty!'s private `.private/herdr/config.toml`
+The Harness colours come from rika!'s private `.private/herdr/config.toml`
 (`HERDR_CONFIG_PATH`), so your own herdr configuration is neither read nor changed.
 Nothing starts until a page opens a terminal. Closing the window with **Keep running
-on close** leaves terminals running and reopening reattaches; **Quit kitty!** (or
-closing the window without that setting, or Ctrl-C on `kitty-web`) stops kitty!'s
+on close** leaves terminals running and reopening reattaches; **Quit rika!** (or
+closing the window without that setting, or Ctrl-C on `kitty-web`) stops rika!'s
 herdr session. With the module off there is no herdr process, socket or route.
 
-The page reaches it through a WebSocket on kitty!'s own loopback origin
+The page reaches it through a WebSocket on rika!'s own loopback origin
 (`/api/terminal/socket`). Browsers cannot add `X-Kitty-Request` to an upgrade, so
 the upgrade requires the exact Host and Origin plus a single-use token that expires
 after 30 seconds and is issued only by the header-protected `POST
@@ -168,9 +168,9 @@ atlas, opens the whole session in the workspace tab. In a terminal, bare keys
 **Esc** returns.
 
 **Agents (Q2/Q9).** In either terminal surface, **New Agent tab** starts the chosen
-installed coding agent in a new herdr tab labelled **Agent**, in this kitty!
+installed coding agent in a new herdr tab labelled **Agent**, in this rika!
 workspace's directory. The chooser defaults to **omp**, also supports **claude**
-and **codex**, and remembers the last choice in this browser profile. kitty! does
+and **codex**, and remembers the last choice in this browser profile. rika! does
 not install agents, configure their provider credentials, send them work, or
 bypass their approval prompts. Open the terminal before starting an agent.
 The header-protected `POST /api/terminal/agents` accepts only the selected kind;
@@ -186,7 +186,7 @@ global skill, agent configuration or existing project instruction file is change
 
 **Attach external agent** shows the actual bundled binary, named session and
 workspace directory (`GET /api/terminal/agents`; reading never starts herdr).
-External agents use herdr's own CLI/socket, not a kitty!-specific control API:
+External agents use herdr's own CLI/socket, not a rika!-specific control API:
 list workspaces, create a separately labelled tab with `tab create --workspace
 <id> --cwd <directory> --label <name> --no-focus`, then target the returned
 `root_pane.pane_id` explicitly. Read herdr's own skill before controlling panes.
@@ -199,35 +199,35 @@ terminal. Local CLI/socket access grants full shell access as your user.
 
 **Tern (optional).** With the module on, the **Tern** node under Plan shows
 [Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the bundled
-default; kitty! never bundles Tern (closed-beta, proprietary) and only runs the
+default; rika! never bundles Tern (closed-beta, proprietary) and only runs the
 `tern` you installed: the one on `PATH`, or the path saved in the view's **Tern
 executable** section (`.private/tern/settings.json`, owner-only). Without it the view
 says so and points to stencil.so/tern; nothing else changes. **Open in Tern** starts
-kitty!'s own Tern daemon on a private socket,
+rika!'s own Tern daemon on a private socket,
 `$XDG_RUNTIME_DIR/kitty/tern-<workspace hash>/daemon.sock` (directory 0700, a
 socket others can reach is refused), gives it a `kitty` session in the workspace
 and opens a native Tern window on it (`tern --dir <workspace>`); your own Tern
 daemon and sessions are never read or changed. On NixOS the AppImage runs inside
 `appimage-run`'s FHS sandbox, whose `/etc/profile` would hide your programs (git,
-nix, python3, agents) from Tern's login-shell panes, so there kitty! starts the
+nix, python3, agents) from Tern's login-shell panes, so there rika! starts the
 daemon and windows outside it as systemd user services (`kitty-tern-<workspace
 hash>`, through `systemd-run --user`) in your session's environment; without
-`systemd-run` they stay kitty!'s children. The view is a status panel (version,
+`systemd-run` they stay rika!'s children. The view is a status panel (version,
 daemon state, sessions, panes and open windows from `tern inspect --json`, which
 never starts anything): Tern's web client needs WebGPU, which the desktop app's
-WebKitGTK view lacks, so kitty! does not embed it. Scripts reach the session with
-`TERN_DAEMON_SOCKET=<socket> tern ls`. Quit closes the Tern windows kitty! opened
+WebKitGTK view lacks, so rika! does not embed it. Scripts reach the session with
+`TERN_DAEMON_SOCKET=<socket> tern ls`. Quit closes the Tern windows rika! opened
 and stops its Tern daemon (Tern restores the layout next time); closing the window
 with **Keep running on close** leaves them running.
 
-The dock's **Agents** view lists the panes of kitty!'s Tern session (only when Tern
+The dock's **Agents** view lists the panes of rika!'s Tern session (only when Tern
 is installed) with their state, including exited panes and their exit status, and
 recent pane starts and exits. **New pane** adds a tab to the session, **Run** types
 one command line into the chosen pane (multi-line or control characters are
-refused), **Focus** shows a pane in kitty!'s Tern window and raises it (opening
+refused), **Focus** shows a pane in rika!'s Tern window and raises it (opening
 one when none is open) and **Capture** saves the pane's text, terminal controls stripped and the
 newest 60 KiB kept, as a quick note (Workspace module) that **Open note** pops out.
-These act only on kitty!'s own daemon and its `kitty` session
+These act only on rika!'s own daemon and its `kitty` session
 (`POST /api/terminal/tern/{new,run,focus,capture}`).
 
 
@@ -398,16 +398,16 @@ bar; move them with the compositor (niri: `Mod`+drag).
 ### Connected apps (pairing)
 
 Outside programs, such as the planned kitty Tern plugin and the browser extension,
-reach kitty! only after you approve them. They never use the page API: its
+reach rika! only after you approve them. They never use the page API: its
 Origin/`X-Kitty-Request` guard stops web pages, but any local program can forge it.
 
-1. While kitty! runs (desktop app or `kitty-web`), it writes its current address to
+1. While rika! runs (desktop app or `kitty-web`), it writes its current address to
    the owner-only `.private/endpoint.json` (0600, in a 0700 `.private`), e.g.
    `{"origin": "http://127.0.0.1:41234", "pairing": "/api/ingress/pair"}`. It never
-   holds a token, and it is removed when kitty! stops.
+   holds a token, and it is removed when rika! stops.
 2. The app sends `POST /api/ingress/pair` with JSON
    `{"name", "kind": "tern-plugin" | "browser-extension", "scopes": ["capture", "read"]}`
-   and shows the returned `code` (e.g. `CWQ-7QT`). kitty! shows the request in a
+   and shows the returned `code` (e.g. `CWQ-7QT`). rika! shows the request in a
    non-blocking bar and in **Settings → Connected apps**; approve only when both
    codes match. Requests expire after five minutes; at most three wait at once and
    ten are accepted per ten minutes (429 with `Retry-After`).
@@ -437,7 +437,7 @@ Network Access rules). Web page origins are always refused.
 
 ### Keys (API keys)
 
-kitty! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:
+rika! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:
 `OPENROUTER`, `ANTHROPIC`, `USAJOBS`, `BRAVE`, or your own (`A-Z`, `0-9`, `_`). A key
 is read from, in order:
 
@@ -480,7 +480,7 @@ arrive as environment variables (source 3).
 
 A tag is a record with a name, optional **aliases** (other names: `#alias` tags too)
 and **keywords**. When a block on a note page mentions a tag's name, an alias or a
-keyword as a whole word (any case; no stemming), kitty! notices it as you write.
+keyword as a whole word (any case; no stemming), rika! notices it as you write.
 Code (inline, fenced, code blocks), URLs, e-mail addresses and existing `#tag`,
 `[[page]]` and `((reference))` tokens never count, and terms shorter than three
 characters are ignored unless the tag allows them.
@@ -535,8 +535,8 @@ no source checkout, Git, npm, system Node, or manual service setup is required.
 Teaching, practice, knowledge graph and settings remain the independent upstream
 app, contained in a cross-origin frame at **http://127.0.0.1:3210**.
 
-Start is explicit, not a login/boot service. Kitty stops only the learning server
-it started when that Kitty instance quits. Learning records and provider
+Start is explicit, not a login/boot service. rika! stops only the learning server
+it started when that rika! instance quits. Learning records and provider
 connections persist separately in the selected workspace's `data/learnharness/`
 (`auth.json` and an isolated `home/`); nothing is imported from another checkout.
 The bundled app in `kitty-web --demo` uses disposable demo storage. A healthy
@@ -566,11 +566,11 @@ disappear; avoid untrusted imports and do not expose the server on a network.
 These audit results describe the reviewed installation on 2026-10-27, not a
 future guarantee.
 
-Kitty checks availability with a bounded HEAD request to the fixed loopback
+rika! checks availability with a bounded HEAD request to the fixed loopback
 endpoint. An explicit protected `POST /api/extensions/learnharness/start` starts
 only the bundled runtime; it accepts no URL, settings or credentials. There is no
 data proxy or credential bridge. The server binds only IPv4 loopback, runs with
-a clean environment and receives no Kitty provider keys, applicant data, resumes
+a clean environment and receives no rika! provider keys, applicant data, resumes
 or browser profiles. The iframe cannot navigate the parent or open provider-login
 popups; use **Open in new tab** for provider connections.
 
@@ -600,9 +600,9 @@ An independent source service remains optional:
 ```
 
 That developer launcher uses `~/Projects/learnharness` with persistent storage in
-its ignored `data/kitty-extension/`, isolated HOME and no inherited Kitty secrets.
+its ignored `data/kitty-extension/`, isolated HOME and no inherited rika! secrets.
 It runs upstream's dev server; start again after reboot. It is not needed by the
-desktop installer. Kitty demo does not reset a separately running service.
+desktop installer. rika!'s demo does not reset a separately running service.
 
 On NixOS, build the desktop in the native toolchain shell:
 
@@ -641,7 +641,7 @@ PDF are saved. These checks describe saved data, not application readiness.
    types** returns). Every job, uncategorized ones included, is in List.
 3. **Select jobs → press Shift+F:** marked jobs (otherwise the opened or focused job) go
    straight to the reviewed autofill plan. Approved preparation opens Firefox and
-   fills known fields. Check each form and submit it yourself; kitty! never submits.
+   fills known fields. Check each form and submit it yourself; rika! never submits.
 
 **Notes** opens today's dated note, reusing the same page on subsequent visits.
 The library (☰, top left) slides over the page as a drawer and is the one
@@ -801,7 +801,7 @@ revision-checked and idempotent. Kanban is removed; existing stored rows are lef
 untouched.
 
 Notes once had its own concept-map mode (cards joined by connectors on a page's
-canvas). On the first start after updating, kitty! copies each such page's concept
+canvas). On the first start after updating, rika! copies each such page's concept
 map into a mind map linked to that page (opened by Map), after first writing an
 owner-only JSON export of those pages to `data/exports/concept-maps-<time>.json`.
 The cards themselves stay on the page's Canvas untouched.
@@ -861,13 +861,13 @@ the same side drawer for the task. Repeat rules, time zone, custom reminder offs
 and Google properties stay in the drawer's expandable sections, with their
 explanations in tooltips. Saving reports through the tab's status dot.
 A task's **＋ Map** action optionally adds it beneath a chosen map node.
-When an event changed both in kitty and in Google Calendar, **Imports & Google**
-draws both versions on a small day grid in the event's colour: kitty's as a solid
+When an event changed both in rika! and in Google Calendar, **Imports & Google**
+draws both versions on a small day grid in the event's colour: rika!'s as a solid
 block, Google's as a dashed ghost (a deleted side shows as an empty dashed block).
 Click the block to keep; the list beside it shows each field that differs and
 strikes out the values you would lose.
-**Keep kitty's** waits for a separately confirmed push, **Use Google's** applies
-Google's version, and **Keep both** saves kitty's as a copy. Calendar settings
+**Keep rika!'s** waits for a separately confirmed push, **Use Google's** applies
+Google's version, and **Keep both** saves rika!'s as a copy. Calendar settings
 conflicts list the differing name, timezone and colour.
 
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
@@ -885,8 +885,8 @@ center, with All/Unread tabs, a source filter, **Mark all read**, and
 use the arrow keys for 15-minute steps). Inside it nothing toasts; reminders are
 held (shown as Held in the center), calendar events can be let through, and when
 the window ends the held items arrive together as one **Morning digest**.
-kitty checks reminders only while it runs: in the desktop app, **Keep running on
-close** keeps it checking from the system tray; when kitty is fully closed,
+rika! checks reminders only while it runs: in the desktop app, **Keep running on
+close** keeps it checking from the system tray; when rika! is fully closed,
 reminders that fell due meanwhile arrive the next time it opens. Read, held and
 snoozed state is remembered per browser profile.
 
@@ -957,7 +957,7 @@ jobs**. Section graphs and schemas draw in 2D or 3D (their own switch, or Settin
 Appearance); every schema starts in Tree, and an explicit layout preference can
 then be changed in **Settings → Graphs**, with the graph physics and **Reset to defaults**. Home has one Study entry and only
 the Jobs section entry, not separate job-action nodes.
-The kitty logo returns home. Clickable schema tabs show section →
+The rika! logo returns home. Clickable schema tabs show section →
 notebook/type → page/job/node; the Back control returns through that hierarchy.
 Advanced layout/physics controls live in Settings, not over the graph.
 Dense graphs retain every node, batch leaves with Three.js InstancedMesh and
@@ -1081,7 +1081,7 @@ workspace tab using the same unsaved-edit confirmation as its close button; the
 last tab returns to a fresh home tab. Ctrl/⌘T opens a new tab. Native browser
 print and reload shortcuts are not intercepted.
 
-**Panel fullscreen:** press F outside text editing to fill the kitty! window with
+**Panel fullscreen:** press F outside text editing to fill the rika! window with
 the focused view or graph. Click a graph to focus its panel first. F or Esc
 restores the layout; changing workspace tabs or navigating also exits panel
 fullscreen. The window's own fullscreen state never changes. Inputs, textareas,
@@ -1125,10 +1125,10 @@ Google sessions. Advanced integrations can explicitly review Google reuse with
 `authentication_mode: google`; the identity comes from **My profile → email**,
 and this mode never loads or sends the private employer password.
 
-- Use the dedicated **Firefox window opened by kitty!**, not everyday Chrome.
+- Use the dedicated **Firefox window opened by rika!**, not everyday Chrome.
   Its `data/firefox` profile persists job-site cookies between preparation runs.
 - If the account is not signed in, finish Google sign-in manually in that Firefox.
-  kitty! can select one exact, already signed-in account on a recognized Google
+  rika! can select one exact, already signed-in account on a recognized Google
   chooser; it never adds an account, enters a Google password, or accepts permissions.
 - After a manual handoff, return to the same employer application tab and review a
   new plan. Retained fields are reused only when the application identity can be
@@ -1181,7 +1181,7 @@ are not supported by these installers.
 - **Ubuntu 22.04+ / compatible Debian-based desktops:** download the `.deb`,
   open it with your graphical software/package installer, and approve installation.
   The package installs its GTK/WebKit, tray and GStreamer dependencies and a
-  **kitty!** application-menu entry. Launch it from that menu, not from a terminal.
+  **rika!** application-menu entry. Launch it from that menu, not from a terminal.
 - **Other compatible Linux desktops:** download the `.AppImage`, move it to a
   permanent writable folder such as `~/Applications`, enable **Allow executing
   file as program** in the file's Properties, and double-click it. Your desktop
@@ -1195,10 +1195,11 @@ are not supported by these installers.
   python3 scripts/install-desktop.py --appimage ~/Downloads/kitty_<version>_amd64.AppImage \
     --appimage-runner ~/.local/share/kitty/appimage-run/bin/appimage-run
   ```
-  The out-link is a garbage-collection root. Then launch **kitty!** from the menu.
+  The out-link is a garbage-collection root. Then launch **rika!** from the menu.
 
-The Linux installer is named **kitty! Workspace** and its Debian package is
-`kitty-workspace`, distinct from the unrelated `kitty` terminal package.
+The Linux installer is named **rika! Workspace** and its Debian package is
+`rika-workspace` (it replaces the pre-rename `kitty-workspace` package on update),
+distinct from the unrelated `kitty` terminal package.
 
 No Python, Node, Rust, repository checkout, or build shell is needed to run the
 downloadable app. The app starts and stops its own backend on a random loopback
@@ -1229,7 +1230,7 @@ replacement beside the installed image, syncs and closes it, then renames it int
 place. This avoids cross-mount rename failures inside NixOS `appimage-run`. The
 previous executable remains beside it as `kitty.AppImage.previous` (or the original
 AppImage name plus `.previous`). Failed staging/replacement leaves the installed
-image unchanged. To recover an older application, quit kitty! and restore that
+image unchanged. To recover an older application, quit rika! and restore that
 previous image to the original filename; do not delete or replace the workspace.
 A network/signature/install failure is not a completed update.
 
@@ -1247,7 +1248,7 @@ python3 scripts/install-desktop.py \
   --appimage ~/.local/share/kitty/application/kitty.AppImage
 ```
 
-Run this with kitty! closed, after installing a release containing these changes.
+Run this with rika! closed, after installing a release containing these changes.
 The installer retains the generated launcher's working runtime environment,
 configured `appimage-run` link and selected workspace, even when invoked from a
 different development dependency shell. Explicit `--workspace` or
@@ -1277,7 +1278,7 @@ nix develop 'path:./desktop#host-toolchain' --offline --command \
 
 The installer copies the built app and its `kitty-web` and `kitty-herdr` sidecars to
 `$XDG_DATA_HOME/kitty/application` (default `~/.local/share/kitty/application`),
-installs the icon and **kitty!** application-menu entry, and creates
+installs the icon and **rika!** application-menu entry, and creates
 `$XDG_BIN_HOME/kitty-workspace` (default `~/.local/bin/kitty-workspace`).
 It captures only runtime library/schema/media settings from the build environment,
 not secrets, and does not depend on the repository at launch. Keep those Nix
@@ -1308,7 +1309,7 @@ executables without a dynamic loader byte-identical to the pinned release.
 
 The dependency environment exposes matching GStreamer base/good plugins for WebKit
 timer audio. Sound also needs an available output device and a Start/Enable sound
-gesture while kitty! is open.
+gesture while rika! is open.
 
 ### Publish a desktop release (maintainers)
 
@@ -1334,7 +1335,7 @@ public releases repository. A guard downloads the actual uploaded files and
 validates the version/tag, nonempty complete assets, signatures and installer-specific
 `linux-x86_64-deb` / `linux-x86_64-appimage` metadata before publishing as latest.
 A failed guard leaves a draft, not a new public updater feed.
-No Kitty source archive, checkout, private workspace or applicant data is uploaded
+No rika! source archive, checkout, private workspace or applicant data is uploaded
 by the workflow. Bundles do include LearnHarness's public corresponding source and
 licenses; GitHub's automatic source archives cover only the releases repository.
 
@@ -1354,9 +1355,9 @@ window. Wayland gives GTK no DPI setting, and WebKitGTK turns that into a negati
 device-pixel ratio (a blank, compressed page), so the app sets a neutral 96 DPI when
 none is present; a DPI you set yourself is kept. An explicit `GDK_BACKEND` is respected.
 The window has no native menu strip. **Settings → Desktop** provides **Check for
-updates**, **Keep running on close**, **New quick note** and **Quit kitty!** (which
+updates**, **Keep running on close**, **New quick note** and **Quit rika!** (which
 saves and stops workers). All remain in the system-tray menu,
-along with **Show kitty!**. Without a system tray, keeping the app running on close
+along with **Show rika!**. Without a system tray, keeping the app running on close
 is unavailable. A browser-only website explains that desktop controls are unavailable.
 The page uses the protected backend API and a fixed command allowlist over the
 shell's private owner pipe; it receives no Tauri IPC permissions.
@@ -1431,7 +1432,7 @@ Additional channels:
   at most `max_topics` (40) per run, 5+ seconds apart. robots.txt disallows the
   `?page=`/`?searchState=` URLs and the terms forbid republishing, so nothing past
   page 1 is read and postings stay in the local database. The site sits behind
-  Cloudflare's bot check, so pages load in headless Firefox through kitty's own driver
+  Cloudflare's bot check, so pages load in headless Firefox through rika!'s own driver
   with a separate profile (`data/hiringcafe-firefox`, never the form filler's
   `data/firefox` or your everyday profile). No user-agent or fingerprint changes and no
   captcha solving: a check that does not clear within 30 seconds stops the run with an
@@ -1605,7 +1606,7 @@ uv run kitty apply --queued                  # everything already in the apply q
 ```
 
 In the TUI: mark rows in the Inbox with `space` and press `f` (or `f` on any job).
-kitty opens each application form in its own Firefox window (a separate profile in
+rika! opens each application form in its own Firefox window (a separate profile in
 `data/firefox/`, so logins stick and my everyday Firefox is never touched), uploads
 the track's resume, fills contact and education fields from `profile.yaml` and
 screening questions from `answers.yaml`, and stops. **It never submits.** The window stays open; I check
@@ -1636,7 +1637,7 @@ resume parsing can overwrite your entries. Login, verification, visible CAPTCHA,
 unsupported controls, validation errors and incomplete uploads remain blockers.
 
 The window is its own program (a separate systemd scope), so closing the terminal
-leaves it open; in the window list its app id is `kitty`. Before filling, kitty
+leaves it open; in the window list its app id is `kitty`. Before filling, rika!
 switches Firefox's remote control to its non-automation mode, so pages see
 `navigator.webdriver = false` (bot checks such as reCAPTCHA read it). That needs
 `--remote-allow-system-access`: while the window is open, any program on this
@@ -1806,7 +1807,7 @@ insertion and location-label punctuation changes. The HTTPS tenant, career site
 and full requisition slug must still match before credentials are written;
 different postings, nested redirects and cross-origin targets are rejected.
 
-Scoped employer email verification reuses Gmail in kitty's dedicated Firefox
+Scoped employer email verification reuses Gmail in rika!'s dedicated Firefox
 profile. If its Gmail tab was closed, preparation opens a normal background tab
 and waits for the saved session; it never copies everyday-browser cookies or
 requires OAuth status-mail setup. A signed-out or ambiguous mailbox is reported
@@ -1892,7 +1893,7 @@ questions the filler logged are listed too.
   Detail and Apply show "like your favorites (+0.45): fpga, track cpu, ...".
 - `kitty autofill [--limit N] [--track T] [--no-watch] [--detach] [--dry-run]` (or `F`
   on the Apply tab, `f` on a ★ job there, or `f` on Inbox / Jobs with nothing marked)
-  fills my favorites' forms in the kitty Firefox, only those in the
+  fills my favorites' forms in the rika! Firefox, only those in the
   track the screen is filtered on (`c` on Inbox / Jobs / Apply; `--track`),
   best first, at most `autofill_cap` per run (config/apply.yaml, default 10), waiting
   `autofill_pause_seconds` (default 15) between jobs. **It never submits.** It skips

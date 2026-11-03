@@ -17,7 +17,7 @@
   import type { BlockData } from "./blockDoc";
   import { quoteSpecs, type Mirror } from "./mirror";
 
-  // A note page's writing view: kitty!'s block editor plus Notes' reference tools
+  // A note page's writing view: rika!'s block editor plus Notes' reference tools
   // (live ((references)), citation contexts, [[page]] and #tag topics, tag pages, unlinked mentions).
   let {
     pageId, pages, references, counts, focusBlock = "", mirror = false,

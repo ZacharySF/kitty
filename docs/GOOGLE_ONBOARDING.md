@@ -1,12 +1,12 @@
 # Optional Google connection and first-run guide
 
-kitty! works locally without an account. The first-run welcome page offers
+rika! works locally without an account. The first-run welcome page offers
 **Continue with Google** and **Continue locally**. Connecting Google identifies
 you in this workspace; it does **not** secure the local API, create a cloud
 workspace, sync data, connect Gmail/Calendar/Drive, configure AI or LearnHarness,
 or sign in to employer sites. Those integrations remain separate.
 
-The browser website and Tauri desktop app both run kitty's local, loopback-only
+The browser website and Tauri desktop app both run rika!'s local, loopback-only
 backend. This feature does not introduce a public/hosted website or a hosted auth
 service. Do not expose the local backend through a public proxy expecting Google
 connection to enforce access control.
@@ -17,11 +17,11 @@ No production credentials are included. Do not reuse inference's OAuth client or
 copy its environment. Use your own Google Cloud project:
 
 1. Open [Google Auth Platform](https://console.cloud.google.com/auth/overview).
-   Select or create the project intended for kitty!.
+   Select or create the project intended for rika!.
 2. In **Branding**, set the app name, support email and developer contact details.
    Follow Google's requirements for your chosen audience and publication status.
 3. In **Audience**, choose the appropriate user type. For an external app in
-   **Testing**, add each account that will test kitty! to **Test users**. An
+   **Testing**, add each account that will test rika! to **Test users**. An
    Internal app is restricted to the selected Google Workspace organization.
 4. In **Data Access**, request only the standard identity scopes:
    `openid`, `email`, `profile`. Do not add Gmail, Drive or Calendar permissions.
@@ -33,14 +33,14 @@ copy its environment. Use your own Google Cloud project:
    secret as confidential, but keep it out of the repository anyway. Never use a
    **Web application** client or its secret in kitty.
 6. Put the following in the selected workspace's private `.env`, or set them in
-   the environment that starts kitty's backend:
+   the environment that starts rika!'s backend:
 
    ```dotenv
    KITTY_GOOGLE_CLIENT_ID=your-desktop-client-id.apps.googleusercontent.com
    KITTY_GOOGLE_CLIENT_SECRET=your-desktop-client-secret
    ```
 
-   Kitty offers **Continue with Google** only when both are set. The secret is
+   rika! offers **Continue with Google** only when both are set. The secret is
    sent only in the backend's token request, never in the authorization URL,
    the web page or logs.
 
@@ -48,13 +48,13 @@ copy its environment. Use your own Google Cloud project:
    `--workspace`, `KITTY_HOME`, or the default desktop workspace—not necessarily
    the source checkout. Never commit this private `.env`. `.env.example` contains
    only empty examples. No JSON credential download needs to be committed.
-7. Restart **your own** kitty instance to load the new configuration. Do not
+7. Restart **your own** rika! instance to load the new configuration. Do not
    restart another running instance or change its workspace. Open
    **Settings → Welcome & account → Connect Google**.
 8. Choose **Continue with Google**, then **Open Google sign-in**. This explicit
    second link avoids popup blockers and opens the system browser in Tauri,
    never an embedded Google login. Complete consent/challenges yourself. Return
-   to kitty when the callback page says sign-in finished. Kitty checks the
+   to rika! when the callback page says sign-in finished. rika! checks the
    result and displays the verified email, or a readable error.
 
 The backend binds a dedicated callback listener directly to a random available
@@ -67,7 +67,7 @@ reach that listener; a remote browser on another machine cannot use it.
 If Google reports `redirect_uri_mismatch`, confirm the client really is a
 **Desktop app** client. If it reports `org_internal`, review Audience. If access
 is refused while Testing, check the configured test-user list. App publishing,
-branding verification and Google account consent belong to the owner; kitty
+branding verification and Google account consent belong to the owner; rika!
 never provisions them automatically.
 
 ## Connection lifetime and security boundary
@@ -80,14 +80,14 @@ never provisions them automatically.
 - The backend exchanges the code directly with Google's HTTPS token endpoint,
   then verifies Google's ID-token signature, issuer, audience and timestamps
   with `google-auth`, plus nonce, verified email and stable `sub`.
-- Only the initiating kitty page holds the separate, one-use completion ticket.
+- Only the initiating rika! page holds the separate, one-use completion ticket.
   The system-browser callback does not gain access to workspace data or create
   a Google session in the Tauri webview.
 - Google access/refresh/ID tokens, authorization codes, nonce and PKCE verifier
   are not persisted. No offline Google access is requested. Codes and provider
   errors are excluded from access logs and user-facing diagnostics.
 - The workspace retains only the verified Google subject, email and display
-  name in local SQLite. The identity label survives restarting kitty until
+  name in local SQLite. The identity label survives restarting rika! until
   **Disconnect Google** clears it. It is a saved identity connection, not proof
   of a fresh Google login on every launch and not a local API login session.
 - **Disconnect Google** clears the identity and pending attempt without deleting
@@ -97,7 +97,7 @@ never provisions them automatically.
 
 ## Onboarding and tutorial
 
-The transparent Harness-style welcome uses the existing kitty theme, controls
+The transparent Harness-style welcome uses the existing Kitty theme, controls
 and typography. After the optional connection step, **Show me around** starts a
 highlighted guide over the actual application:
 
@@ -137,5 +137,5 @@ References:
 
 The inference reference's branded authentication composition, explicit
 availability/error states and first-run guidance informed this UI. Its Better
-Auth/PostgreSQL organization authorization was not copied into kitty's local
+Auth/PostgreSQL organization authorization was not copied into rika!'s local
 single-workspace backend.

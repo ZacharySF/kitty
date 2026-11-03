@@ -5,8 +5,8 @@
   import { ternBlockState, ternEventLabel, ternPaneLabel, ternPanes, ternTarget, type TernStatus } from "./terminal";
 
   /**
-   * The panes of kitty!'s own Tern session in the dock (docs/terminal-dock-design.md,
-   * Tern): their live state, one command line for a pane, focus in kitty!'s Tern
+   * The panes of rika!'s own Tern session in the dock (docs/terminal-dock-design.md,
+   * Tern): their live state, one command line for a pane, focus in rika!'s Tern
    * window and capture to a quick note. Renders nothing unless Tern is installed.
    */
   const POLL_MS = 3000;
@@ -54,7 +54,7 @@
     tern = await api<TernStatus>("/terminal/tern/new", {});
     // The new pane is where the next command goes.
     chosen = ternPanes(tern).find((pane) => !before.has(pane.id))?.id ?? chosen;
-    return "Opened a new pane in kitty!'s Tern session.";
+    return "Opened a new pane in rika!'s Tern session.";
   });
   async function runCommand(event: SubmitEvent) {
     event.preventDefault();
@@ -81,12 +81,12 @@
     <header>
       <p class="heading"><span class="name">Tern</span> <span class="meta">kitty session · {tern.version}{tern.windows ? ` · ${tern.windows} window${tern.windows === 1 ? "" : "s"}` : ""}</span></p>
       <button disabled={busy} onclick={addPane}>New pane</button>
-      <button disabled={busy} onclick={() => update("open", {}, "Opened a Tern window on kitty!'s session.")}>Open in Tern</button>
+      <button disabled={busy} onclick={() => update("open", {}, "Opened a Tern window on rika!'s session.")}>Open in Tern</button>
     </header>
     {#if !tern.running}
-      <p class="tern-note" role="status">kitty!'s Tern session is not running. New pane starts it.</p>
+      <p class="tern-note" role="status">rika!'s Tern session is not running. New pane starts it.</p>
     {:else if !panes.length}
-      <p class="tern-note" role="status">kitty!'s Tern session has no panes. New pane adds one.</p>
+      <p class="tern-note" role="status">rika!'s Tern session has no panes. New pane adds one.</p>
     {:else}
       <ul aria-label="Tern panes">
         {#each panes as pane (pane.id)}
@@ -96,7 +96,7 @@
             <span class="name" title={pane.cwd ?? ""}>{label}</span>
             <span class="state" data-state={live.state}>{live.label}</span>
             <button disabled={busy} aria-label={`Focus ${label} in Tern`}
-              onclick={() => update("focus", { block: pane.id }, `Showing ${label} in kitty!'s Tern window.`)}>Focus</button>
+              onclick={() => update("focus", { block: pane.id }, `Showing ${label} in rika!'s Tern window.`)}>Focus</button>
             {#if tern.quick_notes}
               <button disabled={busy} aria-label={`Capture ${label} to a quick note`} onclick={() => capture(pane.id)}>Capture</button>
             {/if}

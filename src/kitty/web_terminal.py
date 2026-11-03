@@ -1,15 +1,15 @@
-"""Terminal module: kitty!'s herdr session streamed over a same-origin WebSocket.
+"""Terminal module: rika!'s herdr session streamed over a same-origin WebSocket.
 
 GET  /api/terminal/activity  ->  {"running", "workspaces": [{id, label, status, focused, agents}]}
     herdr's own agent states (idle/working/blocked/done/unknown) per workspace,
     read with herdr's CLI; each agent also carries its task (terminal title), last
     output line, output revision and ``since`` (epoch ms its state began). Never
-    starts the session: ``running`` is false while kitty!'s session is not running.
+    starts the session: ``running`` is false while rika!'s session is not running.
 POST /api/terminal/focus  {"pane"}  ->  {"ok"}
     Focuses one agent pane herdr currently lists (the dock's Open pane).
 POST /api/terminal/session  {}  ->  {"token", "socket"}
     Header-protected like every mutation (exact Host/Origin, X-Kitty-Request,
-    application/json), so only kitty!'s own page can obtain a token.
+    application/json), so only rika!'s own page can obtain a token.
 GET  /api/terminal/socket?token=<token>[&cols=<n>&rows=<n>]   (WebSocket upgrade)
     Browsers cannot add X-Kitty-Request to an upgrade. The equivalent same-origin
     proof is the exact Host and Origin (checked by the server) plus a token that
@@ -34,7 +34,7 @@ DEFAULT_SIZE = (80, 24)
 
 
 class Terminal(Tokens):
-    """Per-process token store plus kitty!'s herdr runtime."""
+    """Per-process token store plus rika!'s herdr runtime."""
 
     def __init__(self, runtime: HerdrRuntime):
         super().__init__()
@@ -127,7 +127,7 @@ def upgrade(app, handler, path, query) -> bool:
     except TerminalUnavailable as exc:
         raise _error(503, str(exc)) from None
     except OSError:
-        raise _error(503, "kitty!'s herdr session could not start") from None
+        raise _error(503, "rika!'s herdr session could not start") from None
     try:
         accept(handler, key)
         _pump(handler.connection, client, app.streams_closed)

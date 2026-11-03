@@ -2,7 +2,7 @@
 
 The kitty browser extension sends a *frame* of the tab it mirrors every few seconds while
 the page changes or scrolls: URL, title, readable text, the user's selection and a
-screenshot. kitty! shows the latest frame in the Mirror pane beside a note; quoting a
+screenshot. rika! shows the latest frame in the Mirror pane beside a note; quoting a
 passage from it writes a block through the editor's own transaction.
 
 Retention (stated to the user in the pane, the extension and its README):
@@ -16,7 +16,7 @@ Retention (stated to the user in the pane, the extension and its README):
   least recently updated one is dropped to make room.
 - A mirror is dropped when the extension stops it (mirroring switched off, the tab
   closed or navigated to a denied page), after `EXPIRY` seconds without a frame, when
-  its client is revoked, and when kitty! stops.
+  its client is revoked, and when rika! stops.
 """
 from __future__ import annotations
 

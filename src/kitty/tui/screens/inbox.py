@@ -58,7 +58,7 @@ class InboxScreen(JobActions, Screen):
     ]
     EXTRA_HELP = (
         ("f t g x *", "Act on every marked row, or the cursor row when none are marked"),
-        ("f", "Fill & open: fills each application in the kitty browser; you click submit. "
+        ("f", "Fill & open: fills each application in the rika! browser; you click submit. "
               "With nothing marked and ★ favorites waiting, fills all of them"),
         ("*", "Favorite: similar jobs rank higher everywhere; f (nothing marked) or F fills favorites"),
     )

@@ -72,7 +72,7 @@ def test_problems_point_at_the_offending_line_and_column():
 
 
 def test_a_build_from_a_newer_kitty_or_without_a_version_is_refused_with_a_reason():
-    assert "newer kitty!" in document.check('{"schema": 2}').errors[0].message
+    assert "newer rika!" in document.check('{"schema": 2}').errors[0].message
     assert '"schema": 1' in document.check('{"name": "x"}').errors[0].message
     assert "JSON object" in document.check("[]").errors[0].message
 

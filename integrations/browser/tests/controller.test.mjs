@@ -1,5 +1,5 @@
 // The background's mirroring logic and the panel's pairing, driven with a fake browser,
-// a fake clock and a fake kitty!.
+// a fake clock and a fake rika!.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Controller } from "../src/lib/controller.ts";
@@ -9,7 +9,7 @@ import { FRAME_GAP_MS, HEARTBEAT_MS } from "../src/lib/pace.ts";
 
 const shot = (fill = 1, bytes = 600) => `data:image/jpeg;base64,${Buffer.alloc(bytes, fill).toString("base64")}`;
 
-/** A fake browser with tabs, a manual clock and timers, and a fake kitty! recording requests. */
+/** A fake browser with tabs, a manual clock and timers, and a fake rika! recording requests. */
 function world() {
   let now = 1_000_000;
   let timers = [];
@@ -75,7 +75,7 @@ function world() {
   };
 }
 
-test("switching on sends a frame at once with text, selection and screenshot; off drops it in kitty!", async () => {
+test("switching on sends a frame at once with text, selection and screenshot; off drops it in rika!", async () => {
   const w = world();
   const status = await w.controller.set(1, true);
   assert.equal(status.on, true);
@@ -146,7 +146,7 @@ test("an oversized screenshot is retaken at lower quality, then left out", async
   assert.equal(w.frames()[1].image, undefined);
 });
 
-test("denied pages are never mirrored: switching on refuses, navigating there stops and tells kitty!", async () => {
+test("denied pages are never mirrored: switching on refuses, navigating there stops and tells rika!", async () => {
   const w = world();
   w.tabs.get(1).url = "https://www.paypal.com/myaccount";
   const refused = await w.controller.set(1, true);
@@ -207,7 +207,7 @@ test("a 401 forgets the token so the panel pairs again; frames wait until it doe
   w.controller.schedule(1);
   await w.advance(FRAME_GAP_MS);
   assert.equal(w.sent.length, 1, "nothing is sent while unpaired");
-  assert.match((await w.controller.status(1)).notice, /Connect to kitty!/);
+  assert.match((await w.controller.status(1)).notice, /Connect to rika!/);
   w.settings.token = "kitty_new";
   w.answer = () => ({ mirror: "m", frame: 1, expires_in: 150 });
   await w.controller.recheck();
@@ -215,7 +215,7 @@ test("a 401 forgets the token so the panel pairs again; frames wait until it doe
   assert.equal(w.sent.at(-1).auth, "Bearer kitty_new");
 });
 
-test("kitty! saying 'too fast' retries after Retry-After; unreachable kitty! is shown", async () => {
+test("rika! saying 'too fast' retries after Retry-After; unreachable rika! is shown", async () => {
   const w = world();
   let busy = true;
   w.answer = (path) => {
@@ -264,10 +264,10 @@ test("send selection: refused on denied pages and without a selection, else a sn
   assert.equal(w.sent.length, 1);
   w.settings.token = null;
   w.tabs.get(1).url = w.pages.get(1).url = "https://example.com/a";
-  assert.deepEqual(await w.controller.sendSelection(1), { ok: false, error: "Connect to kitty! first." });
+  assert.deepEqual(await w.controller.sendSelection(1), { ok: false, error: "Connect to rika! first." });
 });
 
-/** A fake panel host for Pairing: settings in memory, kitty! answering from a script. */
+/** A fake panel host for Pairing: settings in memory, rika! answering from a script. */
 function pairingWorld(script) {
   let settings = { address: null, token: null, client: null, pending: null, needsPairing: false, rules: [] };
   let now = 0;
@@ -285,7 +285,7 @@ function pairingWorld(script) {
     kitty: (address, token) => new Kitty(address, token, fetcher),
     now: () => now,
     changed: () => { changes += 1; },
-  }, "kitty! for Chromium");
+  }, "rika! for Chromium");
   return { pairing, calls, get settings() { return settings; }, set settings(value) { settings = value; }, tick: (ms) => { now += ms; }, get changes() { return changes; } };
 }
 
@@ -296,15 +296,15 @@ test("pairing: probe, code, approval, token kept", async () => {
   const w = pairingWorld((path) => {
     if (path === "/client" && !approved) return KITTY_401;
     if (path === "/pair") return { status: 202, body: { status: "pending", request: "secret", code: "K7Q-2MX", expires_in: 300 } };
-    if (path === "/pair/status") return { body: approved ? { status: "approved", token: "kitty_tok", client: { id: "c1", name: "kitty! for Chromium", scopes: ["capture"] } } : { status: "pending" } };
-    return { body: { id: "c1", name: "kitty! for Chromium", scopes: ["capture"] } };
+    if (path === "/pair/status") return { body: approved ? { status: "approved", token: "kitty_tok", client: { id: "c1", name: "rika! for Chromium", scopes: ["capture"] } } : { status: "pending" } };
+    return { body: { id: "c1", name: "rika! for Chromium", scopes: ["capture"] } };
   });
-  assert.deepEqual(await w.pairing.check(), { state: "unpaired", message: "Not connected to kitty! yet." });
+  assert.deepEqual(await w.pairing.check(), { state: "unpaired", message: "Not connected to rika! yet." });
   assert.deepEqual(await w.pairing.connect("localhost:9"), { state: "waiting", code: "K7Q-2MX", address: "http://127.0.0.1:9" });
   assert.deepEqual(w.calls, ["/client", "/pair"]);
   assert.equal((await w.pairing.poll()).state, "waiting");
   approved = true;
-  assert.deepEqual(await w.pairing.poll(), { state: "paired", address: "http://127.0.0.1:9", name: "kitty! for Chromium" });
+  assert.deepEqual(await w.pairing.poll(), { state: "paired", address: "http://127.0.0.1:9", name: "rika! for Chromium" });
   assert.equal(w.settings.token, "kitty_tok");
   assert.equal(w.settings.pending, null);
   assert.equal(w.changes, 1, "the background re-checks mirrored tabs");
@@ -319,12 +319,12 @@ test("pairing: a revoked token (401) is forgotten and pairing starts again by it
   assert.equal(w.settings.pending.request, "again");
 });
 
-test("pairing: denied, expired, wrong addresses and something that is not kitty!", async () => {
+test("pairing: denied, expired, wrong addresses and something that is not rika!", async () => {
   let outcome = "denied";
   const w = pairingWorld((path) => path === "/client" ? KITTY_401
     : path === "/pair" ? { status: 202, body: { status: "pending", request: "r", code: "AAA-BBB", expires_in: 300 } } : { body: { status: outcome } });
   await w.pairing.connect("127.0.0.1:9");
-  assert.deepEqual(await w.pairing.poll(), { state: "unpaired", message: "kitty! denied the request." });
+  assert.deepEqual(await w.pairing.poll(), { state: "unpaired", message: "rika! denied the request." });
   await w.pairing.connect("127.0.0.1:9");
   w.tick(301_000);
   assert.match((await w.pairing.poll()).message, /expired/);
@@ -335,8 +335,8 @@ test("pairing: denied, expired, wrong addresses and something that is not kitty!
   const other = pairingWorld(() => ({ status: 200, body: {} }));
   const result = await other.pairing.connect("127.0.0.1:9");
   assert.equal(result.state, "error");
-  assert.match(result.message, /did not answer like kitty!/);
-  assert.deepEqual(other.calls, ["/client"], "never asks a non-kitty! server to pair");
+  assert.match(result.message, /did not answer like rika!/);
+  assert.deepEqual(other.calls, ["/client"], "never asks a non-rika! server to pair");
   assert.equal((await w.pairing.forget()).state, "unpaired");
   assert.equal(w.settings.token, null);
 });

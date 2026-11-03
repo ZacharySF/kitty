@@ -336,7 +336,7 @@ export function tokenPlan(tokens: Record<string, string>, previous: Iterable<str
   return { roles, set, remove: [...previous].filter((name) => !(name in set)) };
 }
 
-/** Custom CSS as injected: confined to kitty!'s app root, never the safe-mode control. */
+/** Custom CSS as injected: confined to rika!'s app root, never the safe-mode control. */
 export function scopedCss(css: string): string {
   return css.trim() ? `@scope (#app) {\n${css}\n}` : "";
 }

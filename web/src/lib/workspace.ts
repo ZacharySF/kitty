@@ -46,7 +46,7 @@ export function viewEnabled(view: View, enabled: Enabled): boolean {
 export function isView(value: string): value is View {
   return navigation.some(item => item.id === value);
 }
-/** `#notes/<number>`: a link to one note page (the kitty! Inbox block in Tern opens these). */
+/** `#notes/<number>`: a link to one note page (the rika! Inbox block in Tern opens these). */
 export function notePageLink(hash: string): number | null {
   const match = /^notes\/([1-9][0-9]{0,15})$/.exec(hash);
   return match ? Number(match[1]) : null;
@@ -140,7 +140,7 @@ const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Navigate",
     shortcuts: [
-      ["kitty!", "Return to the main schema"],
+      ["rika!", "Return to the main schema"],
       ["Ctrl + Alt / Ctrl + X / Ctrl + C / Ctrl + V", "Plan / Study / Job search / Settings (outside text editing)"],
       ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
       [

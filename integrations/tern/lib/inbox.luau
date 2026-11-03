@@ -1,9 +1,9 @@
 --!strict
--- The kitty! Inbox block's state and view (host half), without Tern's runtime: the view
+-- The rika! Inbox block's state and view (host half), without Tern's runtime: the view
 -- builders come in as `ui` (tern.ui), so tests/inbox_test.luau renders it with fakes.
 --
 -- The block holds no token and makes no request. It asks a Tern window for its data with
--- `cx:open(core.inbox_link(pane))`; the window half fetches kitty!'s recent titles with the
+-- `cx:open(core.inbox_link(pane))`; the window half fetches rika!'s recent titles with the
 -- token in its keychain and sends them back as an action event (`act = "kitty-inbox"`, the
 -- payload JSON in `value`), which `apply` reads. Nothing is saved with the pane.
 
@@ -28,7 +28,7 @@ export type State = {
 local inbox = {}
 
 inbox.ACTION = "kitty-inbox"
-inbox.TITLE = "kitty! Inbox"
+inbox.TITLE = "rika! Inbox"
 inbox.MAX_TRIES = 4
 
 function inbox.new(): State
@@ -86,10 +86,10 @@ function inbox.apply(state: State, payload: any)
 		state.sel = math.clamp(state.sel, 1, math.max(1, #pages + #tasks))
 	elseif payload.state == "pairing" and type(payload.code) == "string" then
 		state.phase, state.code = "pairing", payload.code
-		state.message = "Approve this Tern in kitty!: code " .. payload.code
+		state.message = "Approve this Tern in rika!: code " .. payload.code
 	elseif payload.state == "error" then
 		state.phase = "error"
-		state.message = if text(payload.message) ~= "" then text(payload.message) else "kitty! could not be reached"
+		state.message = if text(payload.message) ~= "" then text(payload.message) else "rika! could not be reached"
 	end
 end
 
@@ -144,21 +144,21 @@ end
 
 function inbox.view(state: State, ui: any): any
 	local main = {}
-	local head = { ui.span("kitty! Inbox", "strong") }
+	local head = { ui.span("rika! Inbox", "strong") }
 	if state.phase == "loading" then
-		table.insert(head, ui.span("  asking kitty!…", "muted"))
+		table.insert(head, ui.span("  asking rika!…", "muted"))
 	end
 	table.insert(main, keyed(ui.text(head), "head"))
 	if state.phase == "pairing" then
-		table.insert(main, keyed(ui.card({ ui.span("Pair with kitty!", "strong") }, {
+		table.insert(main, keyed(ui.card({ ui.span("Pair with rika!", "strong") }, {
 			ui.text({ ui.span("Code "), ui.span(state.code or "", "key") }),
-			ui.text({ ui.span("Approve it in kitty! (the bar at the top, or Settings → Connected apps).", "muted") }),
+			ui.text({ ui.span("Approve it in rika! (the bar at the top, or Settings → Connected apps).", "muted") }),
 		}), "pairing"))
 	elseif state.phase == "error" then
 		table.insert(main, keyed(ui.text({ ui.span(state.message, "error") }), "message"))
 	elseif state.phase == "no-window" then
 		table.insert(main, keyed(ui.text({
-			ui.span("The Inbox fills from a Tern window with the kitty! plugin loaded; open one, then press r.", "muted"),
+			ui.span("The Inbox fills from a Tern window with the rika! plugin loaded; open one, then press r.", "muted"),
 		}), "message"))
 	end
 	if state.phase == "ok" then
@@ -171,7 +171,7 @@ function inbox.view(state: State, ui: any): any
 	end
 	local dock = ui.row({
 		clickable(ui.badge("Refresh", "accent"), "refresh"),
-		clickable(ui.badge("Open kitty!", "muted"), "open-kitty"),
+		clickable(ui.badge("Open rika!", "muted"), "open-kitty"),
 		ui.text({ ui.span("r refresh · j/k move · ↵ open", "muted") }),
 	})
 	return { main = ui.col(main), dock = ui.col({ dock }) }

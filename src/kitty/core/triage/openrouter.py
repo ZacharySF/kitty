@@ -248,7 +248,7 @@ def run_now(conn: sqlite3.Connection, config: Config, plan: TriagePlan, settings
                     break
                 try:
                     response = client.post(BASE_URL, headers={"Authorization": "Bearer " + key,
-                                           "X-OpenRouter-Title": "kitty!"}, json=params)
+                                           "X-OpenRouter-Title": "rika!"}, json=params)
                     response.raise_for_status()
                     data = response.json()
                 except (httpx.HTTPError, ValueError):

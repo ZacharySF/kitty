@@ -1,4 +1,4 @@
-// Q8/Q9 builds in a real browser against a real kitty! server (`kitty-web --root` on a
+// Q8/Q9 builds in a real browser against a real rika! server (`kitty-web --root` on a
 // temporary workspace this test creates; synthetic and disposable). Two pages play two
 // windows; the test writes config/build.json itself to play an outside editor.
 // Run with Node >=22, uv and a matching Playwright Chromium:

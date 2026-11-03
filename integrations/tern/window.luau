@@ -1,13 +1,13 @@
 --!strict
--- Window half: palette commands that send things to kitty!, pairing, and the data behind
--- the host half's Inbox block. Every request to kitty! goes from here (lib/client.luau),
--- because only window halves have the keychain that holds kitty!'s token.
+-- Window half: palette commands that send things to rika!, pairing, and the data behind
+-- the host half's Inbox block. Every request to rika! goes from here (lib/client.luau),
+-- because only window halves have the keychain that holds rika!'s token.
 
 local core = require("./lib/core")
 local Client = require("./lib/client")
 local inbox = require("./lib/inbox")
 
-local GROUP = "kitty!"
+local GROUP = "rika!"
 local PANE_LINES = 2000
 local FAILED_LINES = 200
 
@@ -33,28 +33,28 @@ end
 
 client.on_pairing = function(cx: WindowCx, code: string, seconds: number)
 	local minutes = math.max(1, math.ceil(seconds / 60))
-	cx:toast("info", "kitty! pairing code " .. code,
-		string.format("Approve it in kitty! within %d min: the bar at the top, or Settings → Connected apps.", minutes))
+	cx:toast("info", "rika! pairing code " .. code,
+		string.format("Approve it in rika! within %d min: the bar at the top, or Settings → Connected apps.", minutes))
 	for pane in waiting do
 		push(cx, pane, { state = "pairing", code = code })
 	end
 end
 
 client.on_paired = function(cx: WindowCx)
-	cx:toast("success", "Tern is paired with kitty!")
+	cx:toast("success", "Tern is paired with rika!")
 end
 
 client.on_notice = function(cx: WindowCx, level: string, text: string, sub: string?)
 	cx:toast(level :: any, text, sub)
 end
 
---- Toast the outcome of a send: `success` on ok, kitty!'s reason otherwise.
+--- Toast the outcome of a send: `success` on ok, rika!'s reason otherwise.
 local function report(success: string, detail: ((data: any) -> string?)?)
 	return function(result: core.Outcome, cx: WindowCx)
 		if result.kind == "ok" then
 			cx:toast("success", success, if detail then detail(result.data) else nil)
 		else
-			cx:toast("error", "kitty!: " .. result.message)
+			cx:toast("error", "rika!: " .. result.message)
 		end
 	end
 end
@@ -103,7 +103,7 @@ end)
 
 tern.command({
 	id = "capture-selection",
-	title = "Capture selection to kitty! Inbox",
+	title = "Capture selection to rika! Inbox",
 	group = GROUP,
 	run = function(cx)
 		local selection = cx.session:selection(nil, { max_chars = core.MAX_BLOCK_TEXT })
@@ -113,13 +113,13 @@ tern.command({
 			cx:toast("info", "Select some text in a pane first")
 			return
 		end
-		send_inbox(cx, blocks, "Selection saved to kitty!")
+		send_inbox(cx, blocks, "Selection saved to rika!")
 	end,
 })
 
 tern.command({
 	id = "capture-pane",
-	title = "Capture pane to kitty! Inbox",
+	title = "Capture pane to rika! Inbox",
 	group = GROUP,
 	run = function(cx)
 		local pane = cx.session:focused()
@@ -129,7 +129,7 @@ tern.command({
 			return
 		end
 		if info.kind == "browser" then
-			cx:toast("info", "This is a web page", "Use “Send browser page to kitty! Inbox” instead")
+			cx:toast("info", "This is a web page", "Use “Send browser page to rika! Inbox” instead")
 			return
 		end
 		local blocks = core.pane_blocks(pane_text(cx, pane, PANE_LINES), info.title, info.cwd)
@@ -137,19 +137,19 @@ tern.command({
 			cx:toast("info", "This pane shows no text to capture")
 			return
 		end
-		send_inbox(cx, blocks, "Pane saved to kitty!")
+		send_inbox(cx, blocks, "Pane saved to rika!")
 	end,
 })
 
 tern.command({
 	id = "quick-note",
-	title = "New kitty! quick note",
+	title = "New rika! quick note",
 	group = GROUP,
 	run = function(cx)
-		cx:prompt({ placeholder = "New kitty! quick note", action = "save" }):next(function(text, _err, later)
+		cx:prompt({ placeholder = "New rika! quick note", action = "save" }):next(function(text, _err, later)
 			local body = core.note_body(text)
 			if body and later then
-				client:request(later, "POST", "/api/ingress/notes", body, report("Quick note saved to kitty!"))
+				client:request(later, "POST", "/api/ingress/notes", body, report("Quick note saved to rika!"))
 			end
 		end)
 	end,
@@ -171,13 +171,13 @@ tern.on("command_finished", function(ev: CommandFinishedEvent, cx: WindowCx)
 	}
 	if tern.kv.get("offer_failed") == true then
 		cx:toast("info", string.format("Command failed (exit %d)", ev.status),
-			"Palette: “Save failed command output to kitty!” keeps its output in kitty!'s Inbox")
+			"Palette: “Save failed command output to rika!” keeps its output in rika!'s Inbox")
 	end
 end)
 
 tern.command({
 	id = "save-failed",
-	title = "Save failed command output to kitty!",
+	title = "Save failed command output to rika!",
 	group = GROUP,
 	available = function(_cx)
 		return failed ~= nil
@@ -188,18 +188,18 @@ tern.command({
 			cx:toast("info", "No command has failed in this window yet")
 			return
 		end
-		send_inbox(cx, core.failed_blocks(last.line, last.status, last.text, last.cwd), "Failed command saved to kitty!")
+		send_inbox(cx, core.failed_blocks(last.line, last.status, last.text, last.cwd), "Failed command saved to rika!")
 	end,
 })
 
 tern.command({
 	id = "offer-failed",
-	title = "Toggle kitty! offers for failed commands",
+	title = "Toggle rika! offers for failed commands",
 	group = GROUP,
 	run = function(cx)
 		local on = tern.kv.get("offer_failed") ~= true
 		tern.kv.set("offer_failed", on)
-		cx:toast("info", if on then "kitty! will offer to save failed commands" else "kitty! offers for failed commands are off")
+		cx:toast("info", if on then "rika! will offer to save failed commands" else "rika! offers for failed commands are off")
 	end,
 })
 
@@ -228,7 +228,7 @@ local function with_browser(cx: WindowCx, k: (pane: number, info: PaneInfo, cx: 
 		for i, pane in found do
 			items[i] = { label = if pane.title ~= "" then pane.title else (pane.url or "Web page"), detail = pane.url, pane = pane.pane }
 		end
-		cx:pick({ items = items, placeholder = "Which page to send to kitty!?", action = "send" }):next(function(item, _err, later)
+		cx:pick({ items = items, placeholder = "Which page to send to rika!?", action = "send" }):next(function(item, _err, later)
 			if item and later then
 				local chosen = later.session:pane(item.pane)
 				if chosen then
@@ -242,7 +242,7 @@ end
 local function mirror(cx: WindowCx, url: any, title: any, text: any, selection: any, success: string)
 	local body, problem = core.mirror_body(url, title, text, selection)
 	if not body then
-		cx:toast("info", problem or "This page cannot be sent to kitty!")
+		cx:toast("info", problem or "This page cannot be sent to rika!")
 		return
 	end
 	client:request(cx, "POST", "/api/ingress/mirror", body, report(success, inbox_page))
@@ -250,7 +250,7 @@ end
 
 tern.command({
 	id = "send-page",
-	title = "Send browser page to kitty! Inbox",
+	title = "Send browser page to rika! Inbox",
 	group = GROUP,
 	run = function(cx)
 		with_browser(cx, function(pane, info, now)
@@ -267,7 +267,7 @@ tern.command({
 					return
 				end
 				local text = if type(ok.text) == "string" then ok.text elseif type(ok.tree) == "string" then ok.tree else nil
-				mirror(later, ok.url or info.url, ok.title or info.title, text, selection, "Page sent to kitty!")
+				mirror(later, ok.url or info.url, ok.title or info.title, text, selection, "Page sent to rika!")
 			end)
 		end)
 	end,
@@ -275,11 +275,11 @@ tern.command({
 
 tern.command({
 	id = "pick-page",
-	title = "Pick from browser page to kitty! Inbox",
+	title = "Pick from browser page to rika! Inbox",
 	group = GROUP,
 	run = function(cx)
 		with_browser(cx, function(pane, info, now)
-			now:toast("info", "Click what to send to kitty!", "Escape cancels")
+			now:toast("info", "Click what to send to rika!", "Escape cancels")
 			now.browser:call({ op = "pick", block = pane }):next(function(result, err, later)
 				if not later then
 					return
@@ -295,7 +295,7 @@ tern.command({
 				end
 				local picked = ok.picked
 				local text = picked.text or picked.value or picked.name
-				mirror(later, ok.url or info.url, ok.title or info.title, nil, text, "Picked text sent to kitty!")
+				mirror(later, ok.url or info.url, ok.title or info.title, nil, text, "Picked text sent to rika!")
 			end)
 		end)
 	end,
@@ -305,10 +305,10 @@ tern.command({
 
 tern.command({
 	id = "connect",
-	title = "Connect to kitty!",
+	title = "Connect to rika!",
 	group = GROUP,
 	run = function(cx)
-		client:request(cx, "GET", "/api/ingress/client", nil, report("Tern is connected to kitty!", function(data)
+		client:request(cx, "GET", "/api/ingress/client", nil, report("Tern is connected to rika!", function(data)
 			return if type(data) == "table" and type(data.scopes) == "table"
 				then "Allowed: " .. table.concat(data.scopes, ", ")
 				else nil

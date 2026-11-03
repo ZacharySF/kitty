@@ -101,7 +101,7 @@ async function bundle(target) {
   writeFileSync(join(out, "manifest.json"), `${JSON.stringify(manifest(target, version), null, 2)}\n`);
   const notices = NOTICES.map(([name, file, licence]) =>
     `${name} (${licence})\n${"=".repeat(60)}\n${readFileSync(join(root, "node_modules", name, file), "utf8").trim()}\n`);
-  writeFileSync(join(out, "THIRD_PARTY_NOTICES.txt"), `kitty! for the browser bundles these packages unmodified.\n\n${notices.join("\n\n")}`);
+  writeFileSync(join(out, "THIRD_PARTY_NOTICES.txt"), `rika! for the browser bundles these packages unmodified.\n\n${notices.join("\n\n")}`);
   const archive = join(dist, `kitty-browser-${target}-${version}.zip`);
   writeFileSync(archive, zip(out));
   return archive;

@@ -1,11 +1,11 @@
-// The background's mirroring logic, with the browser and kitty! behind small interfaces so
+// The background's mirroring logic, with the browser and rika! behind small interfaces so
 // node tests drive it with fakes (tests/controller.test.mjs).
 //
 // A tab is mirrored only while the person has switched it on, it is an http(s) page outside
 // the deny list, in a normal (not private) window, without a password field. Each frame
 // carries the URL, title, readable text, selection and, when the tab is the visible one in
 // its window, a JPEG screenshot. Switching off, closing the tab, or reaching a denied page
-// stops it and tells kitty! to drop the frame at once.
+// stops it and tells rika! to drop the frame at once.
 import { checkPage, passwordField, type Verdict } from "./denylist.ts";
 import { buildFrame, buildSnapshot, fitsImage, LIMITS, type Extraction } from "./frame.ts";
 import { type Kitty, KittyError } from "./kitty.ts";
@@ -26,9 +26,9 @@ export interface Browser {
 }
 
 export interface Connection {
-  /** kitty! with this extension's token, or null while not paired. */
+  /** rika! with this extension's token, or null while not paired. */
   kitty(): Promise<Kitty | null>;
-  /** kitty! refused the token (401): forget it, so the panel pairs again. */
+  /** rika! refused the token (401): forget it, so the panel pairs again. */
   unpaired(): Promise<void>;
   rules(): Promise<string[]>;
 }
@@ -43,7 +43,7 @@ export interface Persist {
 
 type Mirroring = { pacer: Pacer; timer: unknown; lastFrame: number | null; notice: string };
 
-/** JPEG qualities tried in turn until a screenshot fits kitty!'s limit. */
+/** JPEG qualities tried in turn until a screenshot fits rika!'s limit. */
 export const QUALITIES = [70, 45];
 
 export class Controller {
@@ -113,7 +113,7 @@ export class Controller {
     return this.status(tabId);
   }
 
-  /** Stop mirroring `tabId`; kitty! drops its frame at once. `reason` is shown in the panel. */
+  /** Stop mirroring `tabId`; rika! drops its frame at once. `reason` is shown in the panel. */
   async stop(tabId: number, reason: string): Promise<void> {
     const state = this.tabs.get(tabId);
     if (reason) this.stopped.set(tabId, reason);
@@ -128,7 +128,7 @@ export class Controller {
     try {
       await kitty?.stop(tabId);
     } catch {
-      // kitty! is gone or the token was revoked: it holds no frame of this tab after either.
+      // rika! is gone or the token was revoked: it holds no frame of this tab after either.
     }
   }
 
@@ -141,7 +141,7 @@ export class Controller {
     state.timer = this.browser.setTimer(() => void this.frame(tabId), delay);
   }
 
-  /** Every minute: a still page sends a frame anyway, so kitty! keeps the mirror. */
+  /** Every minute: a still page sends a frame anyway, so rika! keeps the mirror. */
   heartbeat(): void {
     for (const [tabId, state] of this.tabs) if (state.pacer.quiet(this.browser.now(), HEARTBEAT_MS)) this.schedule(tabId);
   }
@@ -179,7 +179,7 @@ export class Controller {
     let verdict = await this.verdict(tab);
     if (!verdict.ok) return this.stop(tabId, `Mirroring stopped: ${verdict.reason}`);
     const kitty = await this.connection.kitty();
-    if (!kitty) return this.note(tabId, "Connect to kitty! to send frames.");
+    if (!kitty) return this.note(tabId, "Connect to rika! to send frames.");
     let page: Extraction;
     try {
       page = await this.browser.extract(tabId);
@@ -229,7 +229,7 @@ export class Controller {
     if (!(error instanceof KittyError)) return this.note(tabId, "Sending the frame failed.");
     if (error.status === 401) {
       await this.connection.unpaired();
-      return this.note(tabId, "kitty! no longer knows this browser: connect again in the panel.");
+      return this.note(tabId, "rika! no longer knows this browser: connect again in the panel.");
     }
     if (error.status === 429) {
       const state = this.tabs.get(tabId);
@@ -239,14 +239,14 @@ export class Controller {
     this.note(tabId, error.message);
   }
 
-  /** The person's selection in `tabId`, sent to kitty!'s Inbox (a callout linked to the page). */
+  /** The person's selection in `tabId`, sent to rika!'s Inbox (a callout linked to the page). */
   async sendSelection(tabId: number): Promise<SendResult> {
     const tab = await this.browser.tab(tabId);
     if (!tab) return { ok: false, error: "That tab is gone." };
     const verdict = await this.verdict(tab);
     if (!verdict.ok) return { ok: false, error: verdict.reason };
     const kitty = await this.connection.kitty();
-    if (!kitty) return { ok: false, error: "Connect to kitty! first." };
+    if (!kitty) return { ok: false, error: "Connect to rika! first." };
     let page: Extraction;
     try {
       page = await this.browser.extract(tabId);
@@ -263,7 +263,7 @@ export class Controller {
     } catch (error) {
       if (error instanceof KittyError && error.status === 401) {
         await this.connection.unpaired();
-        return { ok: false, error: "kitty! no longer knows this browser: connect again." };
+        return { ok: false, error: "rika! no longer knows this browser: connect again." };
       }
       return { ok: false, error: error instanceof Error ? error.message : "Sending failed." };
     }

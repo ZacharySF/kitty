@@ -685,7 +685,7 @@ def export_page(conn: sqlite3.Connection, data_dir: Path, page_id: int) -> dict:
 def restore(conn: sqlite3.Connection, data_dir: Path, notebook_id: Any, value: Any) -> dict:
     keys(value, {"format", "version", "title", "notebook", "document", "viewport", "attachments", "blocks"}, {"format", "version", "title", "document", "viewport", "attachments"})
     if value["format"] != "kitty-notes" or type(value["version"]) is not int or value["version"] != 1:
-        raise NotesError("Not a kitty notebook export")
+        raise NotesError("Not a rika! notebook export")
     title, view = text(value["title"], 200), viewport(value["viewport"])
     doc = normalize(value["document"])
     from kitty.core import note_blocks

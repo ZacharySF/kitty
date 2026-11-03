@@ -212,7 +212,7 @@
       {:else if !error}<p class="muted" role="status">Loading devices…</p>{/if}
       <Popover label="How device sync works" placement="bottom-start" class="explain">
         {#snippet trigger(props)}<button type="button" class="text-button" {...props}>How device sync works</button>{/snippet}
-        <p>Pairing happens once per device: the code proves both devices belong to you, and each remembers the other's key. Devices then connect to each other directly, on your local network or over Tailscale, and every connection is end-to-end encrypted. Both devices need kitty! running at the same time to sync; changes made offline sync the next time they meet.</p>
+        <p>Pairing happens once per device: the code proves both devices belong to you, and each remembers the other's key. Devices then connect to each other directly, on your local network or over Tailscale, and every connection is end-to-end encrypted. Both devices need rika! running at the same time to sync; changes made offline sync the next time they meet.</p>
       </Popover>
       {#if notice}<p role="status">{notice}</p>{/if}
       {#if error}<p role="alert">{error}</p>{/if}

@@ -1,5 +1,5 @@
 // The background (a Chrome service worker, a Firefox event page): mirrors the tabs the
-// person switched on (lib/controller.ts) and is one of the two places that talk to kitty!
+// person switched on (lib/controller.ts) and is one of the two places that talk to rika!
 // (the other is the side panel/sidebar). Content scripts never do.
 import browser, { type Runtime } from "webextension-polyfill";
 import { Controller, type TabInfo } from "./lib/controller.ts";

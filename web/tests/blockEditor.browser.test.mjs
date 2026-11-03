@@ -1,4 +1,4 @@
-// kitty!'s block editor in a real browser against an in-memory stand-in for the block
+// rika!'s block editor in a real browser against an in-memory stand-in for the block
 // backend (tests/blockEditorHarness.js, tests/fakeBlockServer.js; synthetic data only):
 // typing, split/merge, the / menu, Markdown shortcuts, drag and drop, IME composition,
 // block selection and moves, copy/paste, live changes from another window, History and Trash.

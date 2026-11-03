@@ -25,7 +25,7 @@ export type TabStatus = {
   /** Whether this page may be mirrored or sent at all. */
   verdict: Verdict;
   paired: boolean;
-  /** When the last frame reached kitty! (ms since the epoch). */
+  /** When the last frame reached rika! (ms since the epoch). */
   lastFrame: number | null;
   /** Why mirroring was switched off, or what is going wrong now. */
   notice: string;

@@ -248,14 +248,14 @@
                   <label class="set-label" for={`${uid}-module-${item.id}`}>{item.label}</label>
                   <span class="set-desc one-line" id={`${uid}-module-${item.id}-about`} title={item.description}>{item.description}</span>
                   {#if configured !== modules.enabled.includes(item.id)}
-                    <span class="set-end pending" title={configured ? "Starts after kitty restarts" : "Stops after kitty restarts"}>Restart</span>
+                    <span class="set-end pending" title={configured ? "Starts after rika! restarts" : "Stops after rika! restarts"}>Restart</span>
                   {/if}
                 </div>
               {/each}
             </fieldset>
             {#if modules.error}<p class="set-note" role="alert">Saved selection unreadable ({modules.error}). Saving replaces it.</p>{/if}
             {#if modules.restart_required}
-              <p class="set-note restart" role="status">Restart kitty to apply{#if changes.start.length} · on: {changes.start.join(", ")}{/if}{#if changes.stop.length} · off: {changes.stop.join(", ")}{/if}.</p>
+              <p class="set-note restart" role="status">Restart rika! to apply{#if changes.start.length} · on: {changes.start.join(", ")}{/if}{#if changes.stop.length} · off: {changes.stop.join(", ")}{/if}.</p>
             {/if}
             <div class="set-row foot">
               {#if modulesDirty}<span class="set-desc">Applies after restart; your data is kept.</span>{/if}

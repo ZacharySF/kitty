@@ -116,7 +116,7 @@
       {@render toggle(quiet.enabled, "Quiet hours", quietNow ? "Quiet right now" : "Toasts wait inside the window", (value) => save({ enabled: value }))}
       {@render toggle(quiet.letCalendar, "Let calendar events through", "Calendar reminders still ring", (value) => save({ letCalendar: value }))}
       {@render toggle(quiet.digest, "Morning digest", `Held items arrive at ${clock(quiet.to)}`, (value) => save({ digest: value }))}
-      <p class="held" role="status" title="kitty checks reminders only while it runs. In the desktop app, Keep running on close (Settings → Desktop) keeps checking from the system tray.">
+      <p class="held" role="status" title="rika! checks reminders only while it runs. In the desktop app, Keep running on close (Settings → Desktop) keeps checking from the system tray.">
         {notifier.heldNotices.length ? `Held now: ${digestLine(notifier.heldNotices)}` : "Nothing held right now"}
       </p>
     </div>

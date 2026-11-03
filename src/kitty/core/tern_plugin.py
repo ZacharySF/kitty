@@ -1,6 +1,6 @@
-"""The kitty Tern plugin (platform design Q1): installing kitty!'s plugin into the user's Tern.
+"""The kitty Tern plugin (platform design Q1): installing rika!'s plugin into the user's Tern.
 
-The plugin's source ships with kitty! in ``integrations/tern`` (a desktop build carries it
+The plugin's source ships with rika! in ``integrations/tern`` (a desktop build carries it
 as ``tern-plugin`` beside the website). Installing copies that package to
 ``<workspace>/.private/tern/plugin`` and runs ``tern plugin link`` on the copy:
 
@@ -8,11 +8,11 @@ as ``tern-plugin`` beside the website). Installing copies that package to
   ``<workspace>/.private/endpoint.json``, two directories up, so no setting is needed;
 * it outlives the desktop sidecar's temporary extraction directory, which a link to the
   bundled files themselves would point into;
-* installing again (after a kitty! update) replaces the copy in place, and Tern reloads it.
+* installing again (after a rika! update) replaces the copy in place, and Tern reloads it.
 
 ``tern plugin link`` writes ``<Tern config>/plugins/kitty.path``; Tern's daemons and windows
-watch that folder, so the user's own Tern picks the plugin up without kitty! touching its
-daemon (every ``tern`` kitty! runs is aimed at kitty!'s own socket). kitty! never downloads
+watch that folder, so the user's own Tern picks the plugin up without rika! touching its
+daemon (every ``tern`` rika! runs is aimed at rika!'s own socket). rika! never downloads
 or bundles Tern itself.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ class PluginError(Exception):
 
 
 def shipped_dir() -> Path | None:
-    """The plugin package this kitty! ships, or None when this build has none."""
+    """The plugin package this rika! ships, or None when this build has none."""
     bundle = getattr(sys, "_MEIPASS", None)
     folder = Path(bundle) / "tern-plugin" if bundle else Path(__file__).resolve().parents[3] / "integrations" / "tern"
     return folder if (folder / "plugin.toml").is_file() else None
@@ -93,7 +93,7 @@ def _linked(plugins: Path) -> str | None:
 
 
 def _catalog(runtime: TernRuntime, target: Path) -> tuple[str | None, list[str]]:
-    """The plugin's status in the catalog Tern reports (kitty!'s daemon's, else the folder's),
+    """The plugin's status in the catalog Tern reports (rika!'s daemon's, else the folder's),
     and the folder problems that concern it."""
     try:
         report = json.loads(runtime.plugin("list", "--json"))
@@ -108,7 +108,7 @@ def _catalog(runtime: TernRuntime, target: Path) -> tuple[str | None, list[str]]
 
 
 def status(runtime: TernRuntime, root: Path) -> dict:
-    """What kitty! shipped, what is installed for this workspace and what Tern reports."""
+    """What rika! shipped, what is installed for this workspace and what Tern reports."""
     shipped = shipped_dir()
     target = installed_dir(root)
     copied = (target / "plugin.toml").is_file() and not target.is_symlink()
@@ -144,7 +144,7 @@ def _copy(shipped: Path, target: Path) -> None:
     _private_folder(parent.parent)
     _private_folder(parent)
     if target.is_symlink() or (target.exists() and not target.is_dir()):
-        raise PluginError(f"{target} is not kitty!'s plugin folder")
+        raise PluginError(f"{target} is not rika!'s plugin folder")
     staging = parent / f".plugin-{secrets.token_hex(6)}"
     try:
         for relative in _files(shipped):
@@ -166,7 +166,7 @@ def install(runtime: TernRuntime, root: Path) -> dict:
     """Copy the shipped plugin into the workspace and link it into the user's Tern."""
     shipped = shipped_dir()
     if shipped is None:
-        raise PluginError("This kitty! was built without the kitty Tern plugin")
+        raise PluginError("This rika! was built without the kitty Tern plugin")
     plugins = _plugins_folder(runtime)
     if (plugins / PLUGIN_ID).exists():
         raise PluginError(f"Tern already has a plugin installed as {plugins / PLUGIN_ID}; "
@@ -175,13 +175,13 @@ def install(runtime: TernRuntime, root: Path) -> dict:
     try:
         _copy(shipped, target)
     except OSError as exc:
-        raise PluginError(f"kitty! could not copy the plugin to {target}: {exc.strerror or exc}") from None
+        raise PluginError(f"rika! could not copy the plugin to {target}: {exc.strerror or exc}") from None
     try:
         linked = json.loads(runtime.plugin("link", str(target), "--json"))
     except ValueError:
         raise TernUnavailable("`tern plugin link` did not report the plugin") from None
     if not isinstance(linked, dict) or linked.get("id") != PLUGIN_ID:
-        raise TernUnavailable("`tern plugin link` linked something other than kitty!'s plugin")
+        raise TernUnavailable("`tern plugin link` linked something other than rika!'s plugin")
     return status(runtime, root)
 
 
@@ -194,5 +194,5 @@ def remove(runtime: TernRuntime, root: Path) -> dict:
         try:
             shutil.rmtree(target)
         except OSError as exc:
-            raise PluginError(f"kitty! could not delete {target}: {exc.strerror or exc}") from None
+            raise PluginError(f"rika! could not delete {target}: {exc.strerror or exc}") from None
     return status(runtime, root)

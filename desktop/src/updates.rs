@@ -7,19 +7,19 @@ use tauri_plugin_updater::UpdaterExt;
 use crate::Desktop;
 
 pub fn busy(app: &AppHandle) {
-    app.dialog().message("An update check, download, or installation is already in progress. Please finish its dialog or wait for kitty! to restart before quitting.")
-        .title("kitty! update in progress").show(|_| {});
+    app.dialog().message("An update check, download, or installation is already in progress. Please finish its dialog or wait for rika! to restart before quitting.")
+        .title("rika! update in progress").show(|_| {});
 }
 
 fn status(app: &AppHandle, message: &str) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_title(&format!("kitty! — {message}"));
+        let _ = window.set_title(&format!("rika! — {message}"));
     }
     let _ = app.state::<Desktop>().update_item.set_text(message);
 }
 
 fn message(app: &AppHandle, text: impl Into<String>, kind: MessageDialogKind) {
-    app.dialog().message(text).title("kitty! updates").kind(kind).blocking_show();
+    app.dialog().message(text).title("rika! updates").kind(kind).blocking_show();
 }
 
 pub fn check(app: &AppHandle) {
@@ -35,7 +35,7 @@ pub fn check(app: &AppHandle) {
         }
         app.state::<Desktop>().lifecycle.lock().finish_update();
         status(&app, "Check for updates…");
-        if let Some(window) = app.get_webview_window("main") { let _ = window.set_title("kitty!"); }
+        if let Some(window) = app.get_webview_window("main") { let _ = window.set_title("rika!"); }
     });
 }
 
@@ -44,7 +44,7 @@ async fn run(app: &AppHandle) -> Result<(), String> {
     if appimage.is_none() && !matches!(tauri::utils::platform::bundle_type(),
         Some(tauri::utils::config::BundleType::Deb)) {
         let open = app.dialog().message("This copy was not installed from a supported Linux .deb or AppImage package, so it cannot replace itself safely. Download the current desktop installer from the public releases page; your existing workspace stays in place.")
-            .title("kitty! desktop installers")
+            .title("rika! desktop installers")
             .buttons(MessageDialogButtons::OkCancelCustom("Open downloads".into(), "Cancel".into()))
             .blocking_show();
         if open {
@@ -63,14 +63,14 @@ async fn run(app: &AppHandle) -> Result<(), String> {
     }
     let updater = builder.build().map_err(|error| error.to_string())?;
     let Some(mut update) = updater.check().await.map_err(|error| error.to_string())? else {
-        message(app, "kitty! is up to date.", MessageDialogKind::Info);
+        message(app, "rika! is up to date.", MessageDialogKind::Info);
         return Ok(());
     };
     if update.download_url.scheme() != "https" {
         return Err("The release supplied an insecure download URL; it was rejected.".into());
     }
-    let download = app.dialog().message(format!("kitty! {} is available (installed: {}).\n\nDownload and verify the signed update? Your workspace stays available during the download. You can decline installation after verification.", update.version, update.current_version))
-        .title("kitty! update available")
+    let download = app.dialog().message(format!("rika! {} is available (installed: {}).\n\nDownload and verify the signed update? Your workspace stays available during the download. You can decline installation after verification.", update.version, update.current_version))
+        .title("rika! update available")
         .buttons(MessageDialogButtons::OkCancelCustom("Download update".into(), "Not now".into()))
         .blocking_show();
     if !download { return Ok(()); }
@@ -85,8 +85,8 @@ async fn run(app: &AppHandle) -> Result<(), String> {
         return Err("The application is stopping; the update was not installed.".into());
     }
     status(app, "Signed update verified — ready to install");
-    let install = app.dialog().message(format!("The signed update to kitty! {} has been verified.\n\nInstall and restart now? kitty! will stop accepting new work, wait for accepted operations and active workers to finish, and save your workspace before installation. This can take time; do not force-close the app.\n\nOn Ubuntu, a .deb installation may request administrator authentication. An AppImage must be writable; its previous version is kept beside it as .previous for recovery.", update.version))
-        .title("kitty! verified update ready")
+    let install = app.dialog().message(format!("The signed update to rika! {} has been verified.\n\nInstall and restart now? rika! will stop accepting new work, wait for accepted operations and active workers to finish, and save your workspace before installation. This can take time; do not force-close the app.\n\nOn Ubuntu, a .deb installation may request administrator authentication. An AppImage must be writable; its previous version is kept beside it as .previous for recovery.", update.version))
+        .title("rika! verified update ready")
         .buttons(MessageDialogButtons::OkCancelCustom("Install and restart".into(), "Later".into()))
         .blocking_show();
     if !install { return Ok(()); }
@@ -98,8 +98,8 @@ async fn run(app: &AppHandle) -> Result<(), String> {
     // Keep the disconnected webview out of the way. All control/status remains
     // native; the loopback page receives no updater, dialog, or process IPC rights.
     if let Some(window) = app.get_webview_window("main") { let _ = window.hide(); }
-    app.dialog().message("The signed update is ready. kitty! is finishing accepted operations and saving your workspace, then it will install and restart automatically. Do not force-close it while work is finishing.")
-        .title("kitty! saving before update").show(|_| {});
+    app.dialog().message("The signed update is ready. rika! is finishing accepted operations and saving your workspace, then it will install and restart automatically. Do not force-close it while work is finishing.")
+        .title("rika! saving before update").show(|_| {});
     app.state::<Desktop>().backend.lock().stop();
     app.state::<Desktop>().lifecycle.lock().backend_drained();
     status(app, "Installing verified update…");
@@ -110,7 +110,7 @@ async fn run(app: &AppHandle) -> Result<(), String> {
     if let Err(error) = installed {
         // Installation can fail after changing files. Never revive an old sidecar
         // against a partially replaced installation: restart its installed owner.
-        message(app, format!("The update could not be installed. Your workspace was saved and its workers stopped safely.\n\n{error}\n\nkitty! will now restart to reopen the installed application. If it does not reopen, launch kitty! from your desktop menu, or download the installer again from https://github.com/ZacharySF/kitty-releases/releases/latest . Your workspace has not been deleted. For .deb updates, administrator authentication and working package dependencies are required; for AppImage updates, check directory permissions and free space."), MessageDialogKind::Error);
+        message(app, format!("The update could not be installed. Your workspace was saved and its workers stopped safely.\n\n{error}\n\nrika! will now restart to reopen the installed application. If it does not reopen, launch rika! from your desktop menu, or download the installer again from https://github.com/ZacharySF/kitty-releases/releases/latest . Your workspace has not been deleted. For .deb updates, administrator authentication and working package dependencies are required; for AppImage updates, check directory permissions and free space."), MessageDialogKind::Error);
     }
     app.state::<Desktop>().lifecycle.lock().restart();
     if appimage.is_some() && std::env::var_os("KITTY_DESKTOP_LAUNCHER").is_some() {

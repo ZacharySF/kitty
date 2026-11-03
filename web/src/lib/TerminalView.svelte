@@ -9,7 +9,7 @@
   import TerminalAgents from "./TerminalAgents.svelte";
 
   /**
-   * One herdr client for kitty!'s session (Q1, Q12), drawn transparent in the
+   * One herdr client for rika!'s session (Q1, Q12), drawn transparent in the
    * Harness theme. data-kitty-terminal covers xterm's hidden textarea, so bare
    * letters reach the shell; Ctrl+Shift+F still fullscreens this panel (Q4).
    */

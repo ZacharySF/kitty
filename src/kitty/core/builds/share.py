@@ -120,7 +120,7 @@ def resolve(current: dict[str, Any], incoming_text: str, *, accept_sensitive: bo
 
 
 def export_text(active: dict[str, Any]) -> str:
-    """The shareable file for an active build: complete, stamped with this kitty! version."""
+    """The shareable file for an active build: complete, stamped with this rika! version."""
     build = copy.deepcopy(active)
     build["kitty_version"] = __version__
     ordered = {"schema": build.pop("schema"), "kitty_version": build.pop("kitty_version"), **build}

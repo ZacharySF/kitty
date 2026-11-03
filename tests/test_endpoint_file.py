@@ -1,4 +1,4 @@
-"""The owner-only `.private/endpoint.json` that tells paired programs where kitty! listens."""
+"""The owner-only `.private/endpoint.json` that tells paired programs where rika! listens."""
 from __future__ import annotations
 
 import json

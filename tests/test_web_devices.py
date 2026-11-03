@@ -1,4 +1,4 @@
-"""Settings → Devices routes and an end-to-end sync between two real kitty! web servers.
+"""Settings → Devices routes and an end-to-end sync between two real rika! web servers.
 
 Each server is a full WebApplication on its own synthetic workspace with sync on
 (ephemeral port on 127.0.0.1, no LAN announcement). Pairing goes through the HTTP

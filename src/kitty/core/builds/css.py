@@ -1,15 +1,15 @@
 """Custom CSS and theme token values in a build (Q9): styling only, never code or remote loads.
 
-A build from a stranger may restyle kitty!, but its CSS must not load anything (which
+A build from a stranger may restyle rika!, but its CSS must not load anything (which
 could leak that the build is in use, or exfiltrate attribute values), run anything, or
-escape the scope kitty! wraps it in. The checks work on CSS tokens (CSS Syntax Level 3),
+escape the scope rika! wraps it in. The checks work on CSS tokens (CSS Syntax Level 3),
 not on text, so escapes such as ``u\\72l(`` are decoded before names are compared:
 
 * no ``url()`` except an inline ``data:image`` (PNG, JPEG, GIF, WebP, AVIF) in base64;
 * no function that loads or renders another resource or runs code: ``image()``,
   ``image-set()``, ``cross-fade()``, ``element()``, ``src()``, ``paint()``, ``expression()``;
 * no at-rule except ``@media``, ``@supports`` and ``@container`` (so no ``@import``,
-  ``@font-face`` or ``@namespace``, and no ``@scope`` that could widen kitty!'s own);
+  ``@font-face`` or ``@namespace``, and no ``@scope`` that could widen rika!'s own);
 * no legacy code-running properties (``behavior``, ``-moz-binding``);
 * balanced blocks and brackets, terminated strings and comments: the stylesheet is
   wrapped in ``@scope (#app) { ... }`` by the window, and a stray ``}`` or an open

@@ -1,6 +1,6 @@
 """The block backend (platform design build step 1).
 
-Everything kitty! writes in Notes is a block (Q3): one typed row in ``blocks`` with a
+Everything rika! writes in Notes is a block (Q3): one typed row in ``blocks`` with a
 parent, a fractional order key, JSON properties and plain text. The local server
 applies every change as a transaction (Q6); each transaction appends to the
 append-only ``op_log`` and updates the projection tables that readers use.

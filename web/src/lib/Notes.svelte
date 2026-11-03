@@ -1926,7 +1926,7 @@
     </Popover>
     <button class="icon-button mirror-toggle" aria-pressed={mirrorOpen} disabled={!pageId || noteMode!=="text" || presentation!=="editor"}
       aria-label={mirrors.list.length ? `Mirror (${mirrors.list.length} live)` : "Mirror"}
-      title="Mirror: the browser tab the kitty! extension is mirroring, beside this page"
+      title="Mirror: the browser tab the rika! extension is mirroring, beside this page"
       onclick={()=>mirrorOpen=!mirrorOpen}><Icon name="external" size={15}/>{#if mirrors.list.length}<span class="mirror-live" aria-hidden="true"></span>{/if}</button>
     <OverflowMenu items={pageActions} label="More page actions" />
   </header>

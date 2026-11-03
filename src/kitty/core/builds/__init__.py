@@ -1,8 +1,8 @@
 """Builds (docs/platform-design.md, Q8/Q9): one shareable, schema-versioned file describing
-a kitty!: modules, settings, theme tokens, custom CSS and interface preferences.
+a rika!: modules, settings, theme tokens, custom CSS and interface preferences.
 
 * ``document`` reads a build file (JSON with line numbers, the published schema
-  ``kitty-build.schema.json``, kitty!'s own checks) and normalizes it;
+  ``kitty-build.schema.json``, rika!'s own checks) and normalizes it;
 * ``css`` is the custom CSS and token-value policy;
 * ``store`` is the active file (config/build.json), its lock, atomic writes and history;
 * ``project`` keeps the SQLite settings rows a projection of the active build;
