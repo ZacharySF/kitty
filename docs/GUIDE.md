@@ -870,6 +870,92 @@ after ten minutes, and become invalid when settings change. Notes are not shared
 automatically; output remains a draft. Provider requests disallow data collection,
 and failed requests are not automatically retried. Paid calls are disabled in demo.
 
+**Rika** is rika!'s own agent (design: `docs/rika-design.md`). You type to it in
+the Rika bar, and it does the work through the app's own functions.
+
+- **Tiers.** Each request goes to the smallest tier that can do it:
+  - **fast** for talk and simple edits;
+  - **standard** for planning ("plan my week");
+  - **deep** for multi-step requests (three or more steps, or a very long request) and retries after a failed reply.
+
+  A tool call that fails validation, or a reply that comes back cut off or empty,
+  moves the request up one tier, at most twice. Every reply shows its tier. You
+  can override the tier for one request. Choose each tier's OpenRouter model in
+  **Settings → AI**. Left empty, a tier uses a default for the main model's
+  provider family (Anthropic: Haiku, Sonnet, Opus; OpenAI: GPT-5 mini, GPT-5,
+  GPT-5 pro; Google: Gemini 2.5 Flash and Pro). A tier model must be in the
+  refreshed catalog.
+- **Simple phrases skip the model.** These run their tool directly, free and
+  offline:
+  - `add a node X`, `connect nodes X to Y`
+  - `add a topic X [under Y]`, `rename topic X to Y`, `connect topics X to Y`
+  - `new card front / back`
+  - `add a task X [today|tomorrow]`, `add an event X [tomorrow] [at 4pm]`
+  - `new page X`, `append text to Page`
+  - `new subject X`, `study task X [for Subject]`
+  - `find X`
+  - `open <view>`, `open a terminal`
+  - `start omp|claude|codex [to task]`
+  - `delete page X`
+  - ``run `command` ``
+
+  Anything else goes to the model with Rika's tools.
+- **What it can change.** It can:
+  - create, append to, edit and find note pages and outline blocks;
+  - add, move and connect canvas nodes;
+  - add, connect and rename mind-map topics;
+  - add flashcards;
+  - create calendar events and tasks;
+  - add study subjects and tasks;
+  - open views;
+  - search the whole workspace.
+
+  These changes apply at once, and each one is in the history drawer with
+  **Undo**. Calendar undo uses the calendar's own history and mind-map undo uses
+  the map's own undo snapshot. Undo refuses, and keeps the record, when you edited
+  it since.
+- **What waits for one tap.** Rika asks first, and the reply pauses until you
+  decide, before it:
+  - deletes anything that has no Trash (note pages);
+  - changes which modules load;
+  - starts a worker agent;
+  - runs a shell command;
+  - makes a model request over today's AI budget.
+
+  An approval expires after ten minutes, or when rika! quits.
+- **Budget and privacy.** Model requests reuse the key, catalog prices, routing
+  and daily budget from AI settings. Before it is sent, each request reserves its
+  maximum cost in the same ledger as the reviewed requests. It is sent with those
+  prices as the provider's ceiling, with no fallbacks and no retries. Providers
+  must decline data collection. What you ask Rika is sent, along with what its
+  tools return for that request. Note text is included only while the Notes
+  privacy setting allows AI; otherwise Rika gets titles and ids only. Text that
+  tools return is treated as data, never as instructions.
+- **Worker agents** (Terminal module). When you approve **start**, Rika:
+  1. runs rika!'s herdr session headless if no page attached it;
+  2. starts omp, Claude Code or Codex in an Agent tab;
+  3. hands it a task brief with `herdr agent prompt`.
+
+  `GET /api/rika/agents` merges herdr's agent states with coding agents running
+  in Tern panes. **Open** focuses the agent and shows it in a Tern window: a herdr
+  agent appears through a Tern tab attached to rika!'s herdr session. Without
+  Tern, the page opens the herdr view. Quit stops the session Rika started.
+- **Demo.** The demo never calls OpenRouter. The simple phrases above work.
+  Anything else gets a scripted reply. The Agents list shows five scripted agents,
+  and an approved start adds one more. No process starts.
+- **API.** These routes are header-protected like the rest of the site, and none
+  is an ingress route:
+  - `POST /api/rika/messages {text, tier?}`
+  - `GET /api/rika/history?before=`
+  - `POST /api/rika/approvals/<id> {decision}`
+  - `POST /api/rika/actions/<id>/undo`
+  - `GET /api/rika/agents`
+  - `POST /api/rika/agents/<id>/open`
+
+  Replies stream over the same-origin WebSocket `/api/rika/stream` as token,
+  message, action, approval, tier, navigate and agents events. Migration 037 keeps
+  the conversation, actions with their undo payloads, and approvals.
+
 The website supports:
 
 - Structured daily brief: track goals, deadlines, follow-ups, quiet applications,

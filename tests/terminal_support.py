@@ -2,7 +2,9 @@
 
 The fake mirrors only the herdr v0.9.5 surface rika! uses: ``herdr --session NAME``
 launches (or attaches to) a detached server and runs a client on its terminal;
-``herdr --session NAME session stop NAME`` stops that server. Sockets live where
+``herdr --session NAME session stop NAME`` stops that server; ``herdr --session NAME
+server`` runs it headless. ``workspace create`` adds a focused workspace and ``agent
+prompt PANE TEXT`` accepts a prompt for a listed agent. Sockets live where
 herdr keeps them (``$XDG_CONFIG_HOME/herdr/sessions/NAME``). Every invocation is
 appended to a JSON-lines log so tests can prove what ran, with which environment.
 """
@@ -144,6 +146,25 @@ elif rest in (["workspace", "list"], ["agent", "list"]):
         sys.exit(0)
     items = json.loads(activity).get(kind + "s", [])
     print(json.dumps({{"id": "cli:" + kind + ":list", "result": {{"type": kind + "_list", kind + "s": items}}}}))
+elif rest[:2] == ["workspace", "create"]:
+    if not listening(api):
+        sys.exit(1)
+    activity = json.load(open(ACTIVITY_FILE)) if os.path.exists(ACTIVITY_FILE) else {{}}
+    spaces = activity.setdefault("workspaces", [])
+    for space in spaces:
+        space["focused"] = False
+    space = {{"workspace_id": "w" + str(len(spaces) + 1), "label": rest[rest.index("--label") + 1],
+              "focused": True, "agent_status": "unknown"}}
+    spaces.append(space)
+    with open(ACTIVITY_FILE, "w") as handle:
+        json.dump(activity, handle)
+    print(json.dumps({{"result": {{"type": "workspace_created", "workspace": space}}}}))
+elif rest[:2] == ["agent", "prompt"]:
+    agents = json.load(open(ACTIVITY_FILE)).get("agents", []) if os.path.exists(ACTIVITY_FILE) else []
+    if not listening(api) or not any(item.get("pane_id") == rest[2] for item in agents):
+        print(json.dumps({{"error": {{"code": "agent_not_found", "message": "no agent"}}}}), file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({{"result": {{"type": "agent_prompted", "pane_id": rest[2]}}}}))
 elif rest[:2] == ["agent", "read"] or rest[:2] == ["agent", "focus"]:
     if not listening(api):
         sys.exit(1)

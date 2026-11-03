@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from kitty import web_terminal
+from kitty import web_terminal, websocket
 from kitty.web_server import LocalHTTPServer
 from terminal_support import FakeHerdr, FrameReader, Site, make_root, send_frame, site
 
@@ -261,8 +261,8 @@ def test_handshake_must_be_a_websocket_upgrade(tmp_path, herdr):
         status, _headers, connection, _rest = running.connect(running.token())
         connection.close()
         assert status == 101
-    key_check = base64.b64encode(hashlib.sha1(b"x" + web_terminal.WEBSOCKET_GUID).digest())
-    assert web_terminal.accept_key("x") == key_check.decode()
+    key_check = base64.b64encode(hashlib.sha1(b"x" + websocket.WEBSOCKET_GUID).digest())
+    assert websocket.accept_key("x") == key_check.decode()
 
 
 def test_unmasked_client_frames_close_the_terminal(tmp_path, herdr):
@@ -354,9 +354,9 @@ def test_activity_reports_herdr_agent_states_per_workspace(tmp_path, herdr):
     assert [agent["since"] for space in again["workspaces"] for agent in space["agents"]] == since
     assert body == {"running": True, "workspaces": [
         {"id": "w1", "label": "api", "status": "working", "focused": True, "agents": [
-            {"pane": "w1:p1", "name": "Agent", "status": "working", "task": "π > Synthetic task: tidy the fixture",
-             "line": "run pytest -k fixture · 4 passed", "revision": 3},
-            {"pane": "w1:p2", "name": "Codex", "status": "blocked", "task": "",
+            {"pane": "w1:p1", "name": "Agent", "status": "working", "kind": "omp",
+             "task": "π > Synthetic task: tidy the fixture", "line": "run pytest -k fixture · 4 passed", "revision": 3},
+            {"pane": "w1:p2", "name": "Codex", "status": "blocked", "kind": "codex", "task": "",
              "line": "needs permission: read the synthetic notes", "revision": 1},
         ]},
         # herdr states rika! does not know are shown as unknown, never passed through.
