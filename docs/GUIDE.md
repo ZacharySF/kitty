@@ -123,27 +123,16 @@ after 30 seconds and is issued only by the header-protected `POST
 /api/terminal/session`. A development `kitty-web` uses `KITTY_HERDR=<herdr 0.9.5
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
-**Dock.** With the module on, the bottom of the window holds the dock: herdr's
-client in a transparent terminal drawn in the Harness colours (**Terminal**) or
-**Agents** (one card per detected herdr agent with its working / blocked / done /
-idle state, read from `GET /api/terminal/activity`, which never starts herdr).
-Docked (the default) it spans the window's width at a fixed height and the page
-ends above it, so nothing is covered. Its height is not dragged: **S**, **M** and
-**L** in its header set a quarter, two fifths or three fifths of the window in one
-step (M at first). **Hide** leaves only a thin handle along the bottom edge; click
-it to bring back what was shown. **Float** detaches the dock into a glass card in
-the bottom-right corner that leaves the page the whole window: drag its header to
-move it and its top-left corner grip to resize it (or focus the grip and use the
-arrow keys); the card previews the move or new outline while you drag and settles
-on release, and always stays on screen. Hidden while floating, it is a small pill
-in the corner; **Dock** puts it back at the bottom. The view, docked height,
-float choice and card size and position are remembered per browser profile;
-notification toasts stack above the dock, handle, card or pill. **Open herdr view**, or the **herdr** node under Plan in the
-atlas, opens the whole session in the workspace tab. In a terminal, bare keys
-(including `f`) go to the shell; **Ctrl+Shift+F** fullscreens the terminal panel and
-**Esc** returns.
+**Terminals.** There is no terminal dock: the bottom of the window is the Rika bar
+(see **Rika** below). Terminals open as native Tern windows: **Open terminal** in
+Ctrl K, or ask Rika ("open a terminal"). Without a usable Tern, Open terminal
+shows the **Tern** view, which says why. The **herdr** node under Plan in the atlas
+opens the whole herdr session in the workspace tab, in a transparent terminal drawn
+in the Harness colours. In a terminal, bare keys (including `f`) go to the shell;
+**Ctrl+Shift+F** fullscreens the terminal panel and **Esc** returns. The v0.3.25
+dock state (`kitty.dock` in the browser profile) is no longer read or written.
 
-**Agents (Q2/Q9).** In either terminal surface, **New Agent tab** starts the chosen
+**Agents (Q2/Q9).** In the herdr view, **New Agent tab** starts the chosen
 installed coding agent in a new herdr tab labelled **Agent**, in this rika!
 workspace's directory. The chooser defaults to **omp**, also supports **claude**
 and **codex**, and remembers the last choice in this browser profile. rika! does
@@ -167,11 +156,10 @@ list workspaces, create a separately labelled tab with `tab create --workspace
 <id> --cwd <directory> --label <name> --no-focus`, then target the returned
 `root_pane.pane_id` explicitly. Read herdr's own skill before controlling panes.
 Never rely on another client's focused pane or switch to the `default` session.
-Their tabs appear live in the terminal and herdr view, and **Agents** in the dock
+Their tabs appear live in the herdr view, and Rika's history drawer (**Agents**)
 shows one card per detected agent: its state, task (the pane's title), last output
-line, a 30-second output sparkline and how long it has been working or blocked. A
-blocked agent's **Open pane** focuses that pane and switches the dock to the
-terminal. Local CLI/socket access grants full shell access as your user.
+line and how long it has been in that state; **Open window** focuses its Tern window.
+Local CLI/socket access grants full shell access as your user.
 
 **Tern (optional).** With the module on, the **Tern** node under Plan shows
 [Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the bundled
@@ -215,7 +203,7 @@ typefaces, each with one job: Fraunces for the page title only, Inter for the re
 of the interface (headings, labels, buttons, body) and JetBrains Mono for the
 navigation chrome, key caps, code and tabular figures; Fredoka sets only the
 wordmark. Labels, eyebrows and fold-out labels are Inter semibold in sentence case,
-never italic. The Theme menu persists one of ten dark themes locally. A theme is more
+never italic. The Theme menu persists the chosen theme locally. A theme is more
 than colours: each one also sets what its surfaces are made of (frosted glass,
 matte paper with grain, flat sheets, or square double-ruled frames), its focus
 ring (a plain ring, a soft glow, petal corners or corner brackets), how selected
@@ -234,8 +222,39 @@ and its backdrop. Typefaces never change with the theme.
   frosted orb for empty states.
 - **Scythe**: engraved frames with corner ticks under a moonlit meadow,
   crescent bullets, blade dividers, bracket focus and a crescent loader.
+- **SPEED**, the one light theme: hand-inked on off-white watercolour paper.
+  Square paper sheets with an inked edge and a crimson misprint over grey-teal
+  washes, teal-green and black ink splatter and drips, a white gothic cathedral,
+  faint gear rings that tick round and a crimson sketched wheel; crimson-magenta
+  for accents and a sketched double focus ring, teal washes for selection, ink-splat
+  bullets, crimson checks that stamp on, brush-stroke dividers, a marker swipe
+  under page titles, a ticking gear loader and a stalled-gear empty state.
+- **c**: an engraving on black. Double-ruled frames tipped with blood-red
+  diamonds, a rope-and-knot window frame, an etched diamond lattice, blood-red
+  washes and a slowly turning wheel of sigils, with a rare muted teal; sigil
+  bullets, diamond ticks that fill with blood, knotted rope dividers, a blood glow
+  on focus, a sigil-ring loader and a sigil-seal empty state.
+- **red**: stark black and white with one blood-red brush. Square black blocks
+  inside a white paper margin set with crop marks and an issue line in tracked
+  capitals, a faint stencil cat, and "rika" signed in a dripping red brush hand;
+  the red ring drips under keyboard focus, the current tab and group drip, white
+  rules drip once, page titles sit on a red swash, and the loader paints a stroke.
 - Harness and Nord are flat, Catppuccin Mocha and Gruvbox are matte paper, and
   Dracula and Tokyo Night are glass, each with its own focus, selection and motion.
+- **pretti**: glossy airbrushed graffiti on purple-black under a dark vignette:
+  candy-glass panels with a magenta rim, acid-green primary pills, magenta
+  selections, an acid glow on focus with a little heart, heart and star bullets,
+  heart ticks, candy-chain dividers, ringed targets, hearts, stars and butterflies
+  in the corners, a hypnotic spiral loader and a butterfly empty state.
+- **BloodLuxe** (the light one): cream paper panels rimmed in black over a marbled
+  red, white and blue sky, rose ridges, grass and flames, inside a black barbed-wire
+  window frame; blood-red titles, section rules and focus drip, blood-drop bullets,
+  bead ticks, a marble-orb loader and a thorn-wreathed heart for empty states.
+- **half blood**: storybook heraldry in flat bold colour: navy panels edged in bone
+  over an ultramarine field of white cloud squiggles with a grass hem, inside a
+  bone filigree frame with crossed bones; a sun-eye and a crescent moon, sun-orange
+  actions, sun bullets, green ticks, red drips on titles, rules and focus, a sun-eye
+  loader and a moon asleep on a cloud for empty states.
 
 Surfaces turn opaque under reduced transparency, and every theme's text,
 selected and pressed controls stay at WCAG AA contrast over its backdrop. Graph
@@ -278,7 +297,7 @@ configuration from disk; saves in My profile reload it automatically.
 
 The first-run welcome offers **Continue locally** or an optional Google identity
 connection, followed by a skippable guided tour of workspace panels, modules,
-Atlas, quick notes and Study (plus the terminal dock when present). Completion is
+Atlas, quick notes, Study and the Rika bar. Completion is
 remembered per workspace. Reopen either flow in **Settings → Account** (**Connect
 Google** or **Take the tour**; **Setup guide** links to the Google setup document).
 Google is not required for local/offline use and does not secure the local API or
@@ -298,6 +317,34 @@ from public examples; edits disappear when the process exits. External discovery
 browser filling, Gmail, notifications and paid operations are disabled. Synthetic
 text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
 be registered inside the disposable workspace.
+
+### The Rika bar
+
+**Rika** is rika!'s own agent; what it can do, its tiers and what it asks first are
+under **Rika** in the AI settings section below. It lives in the **Rika bar**,
+the slim bar along the bottom of the window: type a request in **Ask Rika…** and
+press Enter. While Rika writes its reply the whole bar breathes with a soft ring of
+light (under Reduce motion the ring stays lit and still). Each reply lands as a toast
+above the bar, in the reminder toasts' look, with the reply, its tier chip (**fast**,
+**standard** or **deep**: the model size Rika chose) and what it did; anything it
+changed in the app carries **Undo**. Reminder toasts stack above Rika's.
+
+**History** on the bar, or **Ctrl+J** from anywhere but a terminal, opens the history
+drawer on the right: **Conversation** holds every request and reply, the action
+cards Rika ran (Undo while it can still be undone) and its approvals. Anything
+outward or irreversible waits for **Approve** or **Reject** on an approval card
+that says what will happen and, when it has one, the estimated cost. The drawer
+opens by itself when Rika asks for an approval and
+closes once you decide; one you opened yourself stays open. **Agents** holds a live
+card per worker agent (omp, Claude Code, Codex) in herdr or Tern: state, task, last
+output line, a timer and **Open window**.
+
+Running worker agents also show as chips on the right of the bar, a state dot and
+name each (working, blocked, idle, done); a chip opens that agent's Tern window.
+Past four agents the chips collapse to one count, which opens the drawer's Agents.
+When Rika opens a page ("open calendar"), the workspace tab navigates there; when an
+agent has no Tern window to focus, its chip opens the herdr view. Voice input (hold
+Space) comes later; the bar draws no Space keycap or hint.
 
 ### Controls and surfaces
 
@@ -360,6 +407,65 @@ In the desktop app, the tray menu has **New quick note**, and
 compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
+
+### Math
+
+**Study → Math** trains the math quant interviews and tech work test. It has two
+practice modes, timed mental-arithmetic **sprints** and topic **lessons**, over a
+graph of 46 topics in five strands: arithmetic and estimation, counting,
+probability (conditioning, Bayes, first-step analysis), expected value and
+variance, and basic statistics. Every problem is made fresh by a seeded generator
+(`src/kitty/core/math/templates/`) whose exact answer key is cross-checked by
+enumeration or Monte Carlo over hundreds of seeds in the test suite. Topics and
+generators are original and MIT-licensed. The view itself (drawers, Ctrl K, Up
+next) is described under **Math** in *Start here*; this section covers how it
+grades and schedules.
+
+- **Mastery.** A topic is *locked* until every prerequisite is mastered, then
+  *ready*, *learning* after your first graded answer, and *mastered* after three
+  correct first tries in a row. Mastery starts a spaced-review schedule for the
+  topic (FSRS, as in Flashcards); each review is a new problem, graded by
+  correctness and time (wrong = Again, slower than twice the target = Hard, under
+  half = Easy). A missed review is a lapse, never a relock. A correct answer also
+  gives partial credit (normally 0.3, halved when not yet due) to the prerequisites
+  it practises; each whole unit of credit counts as one review. Every state and
+  recommendation says why, e.g. *Unlocked because you mastered Bayes' rule*.
+- **Next.** Due reviews come first (most overdue), then the topic you are learning,
+  then a new ready topic, preferring a different strand from your last practice.
+- **Lessons.** A worked example, the same shape again with its last steps blanked
+  for you to fill, then 3–8 solo problems (fewer once a topic is going well, more
+  after misses); the view ends a lesson after three misses in a row.
+- **Checking.** Only your first decided answer to a problem is graded; you get
+  three tries, and the answer is shown when you solve it or after the third miss.
+  Numbers and fractions are exact in any form (`3/7`, `6/14`, `\frac{3}{7}`,
+  `0.25`, `25%`); decimals for non-terminating answers need the stated significant
+  figures or tolerance. Known slips (dropped carries, $P(+\mid C)$ for $P(C\mid +)$,
+  subtracting variances…) get specific feedback. Algebra answers are LaTeX, checked
+  by SymPy in a separate worker process: both of its LaTeX parsers read the answer,
+  `simplify` and random numeric probes compare it, and a check stops after 5 s.
+  When the answer can't be read, reads two ways (`n^n^2`), lacks significant
+  figures or times out, the checker says so and the try doesn't count.
+- **Sprints.** Zetamac defaults: 120 s; addition (2–100) + (2–100), subtraction as
+  reversed addition, multiplication (2–12) × (2–100), division as reversed
+  multiplication. *Typed* takes each answer the moment it is right; *multiple
+  choice* scores right − wrong. Problems come from a stored seed and are checked in
+  the browser; results keep your best score per mode and a daily streak.
+- **Explain my mistake.** After a wrong answer you can paste your working and ask
+  AI where it went wrong (purpose `math-explain`). It is a normal AI review: you see
+  exactly what is sent (the problem, your answer and working, never the correct
+  answer) and its maximum cost, then approve it within your daily budget. The
+  prompt forbids revealing the answer and treats your working as data. AI never
+  grades. Demo mode has no AI.
+
+API (`workspace` module): `GET /api/math/topics`, `GET /api/math/next`,
+`POST /api/math/problems {topic_id, seed?}`, `POST /api/math/answers {problem_id,
+answer, elapsed_ms}`, `GET /api/math/lessons/<topic_id>`, `POST /api/math/sprints
+{mode: zetamac|mc, duration_s, ops?}`, `POST /api/math/sprints/<id>/result {score,
+wrong, elapsed_ms}`, `GET /api/math/sprints/history?duration_s=&timezone=` and
+`POST /api/math/explain {problem_id, working}` (then `POST /api/ai/run`). The graph
+is authored in `kitty.core.math.topics`, synced into `math_topics`/`math_prereqs`
+(a trigger rejects any prerequisite cycle), and practice lives in `math_mastery`,
+`math_attempts` and `math_sprints` (migration 044).
 
 ### Brain data (`/api/brain`)
 
@@ -514,7 +620,7 @@ offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting, and
-fills the window above the dock.
+fills the window above the Rika bar.
 A page is the theme's flat background colour with no grid; the pill's **⋯ → Paper**
 adds lines, a grid, dots or Cornell margins when you want them.
 Its tools sit in one floating pill at the bottom of the canvas: select, pen,
@@ -551,6 +657,10 @@ export, AI drafts and note types. Review deals the queue as a stacked deck: tap 
 grade's direction (← Again, ↓ Hard, → Good, ↑ Easy). Below the pile a keyboard strip
 shows keycaps 1–4 with each next interval and Space (flip, then Good); they sink as
 you press them.
+Math on a face renders with KaTeX: `\( … \)` and `$…$` inline, `\[ … \]` and
+`$$…$$` as a display line, so imported Anki math decks read as typeset math. A lone
+`$` before a digit or a space stays text, so "$5 and $10" is not read as math. KaTeX
+(MIT) and its fonts are bundled; nothing is fetched from a CDN.
 **Stats** shows memory statistics for the selected scope: today's queue (learning,
 review and new, with suspended, leech and buried cards and a time estimate), a
 30-day due forecast with overdue cards in today, FSRS forgetting curves for weak,
@@ -586,6 +696,48 @@ steps, sound and desktop-notification switches and the time zone, each saved as
 you change it and applied from the next phase. The tabs are Session, Progress,
 Exams & plans, Mind map and Tools (History and Helpers). Unsaved notes or a failed
 save show as a dot on the workspace tab.
+
+**Math** (Study group) opens focus-first like Study: one centred problem, lesson or
+sprint, chosen by **Practice · Sprint · Lessons**. **Practice** shows the one next
+thing, with why: a due topic review (a fresh generated problem) or the next lesson.
+The **Topics** edge on the left (press **[**) slides in the topic graph:
+prerequisites sit above what they unlock, and each topic is coloured locked (dashed,
+padlock), ready (outlined), learning (filled to its progress) or mastered (filled,
+ticked); a mastered topic whose spaced review is due wears an amber ring, and the
+edge counts them. Click or press Enter on a topic for why it is open or locked
+("Locked until you master Bayes' rule"), its next review, what it needs and
+unlocks, and **Start the lesson** or **Review**. **History** and **Settings** share
+the right edge (press **]**): History shows the sprint trend at the current length
+and format, the daily sprint streak and recent runs; Settings sets the sprint format
+(typed or multiple choice), its length (30 s to 10 min; Zetamac's 120 s by default),
+the operations (+ (2–100) + (2–100), − reversed +, × (2–12) × (2–100), ÷
+reversed ×) and **Start a Study focus cycle on Math when I practise**. The mode,
+drawers and settings are remembered.
+**Sprint** puts the problem large inside a countdown ring. Typed: the answer is
+taken the instant it is right, with no Enter, and the score is the number right.
+Multiple choice: four options on keys 1–4, +1 right, −1 wrong. When the time is up
+the run is saved and the results card shows the score, the rate per minute, the
+best and the trend line; **R** restarts. **Stop** abandons a run without saving it.
+Problems come from the backend; answers are checked in the browser, so the next
+problem appears at once.
+A **lesson** runs **Example · Guided · Solo**: a worked example, then the same kind
+of problem with the step you fill highlighted and the later ones faded, then 3–8
+problems on your own. Three misses in a row end it early. Guided blanks never count
+toward mastery; graded solo answers and reviews do.
+**Answers**: numbers and fractions are plain text with a live echo ("3/7 ≈
+0.4286", "0.43 · 2 s.f."); fractions compare exactly. Algebra goes in a MathLive
+field (MIT; its sounds and the KaTeX fonts are bundled) and is checked by SymPy on
+your computer. Each check adds a feedback line: correct, a named common mistake,
+not equivalent, or "Couldn't decide" (nothing is marked). Only the first decided
+answer is graded; you can retry until it is right or the answer is shown after the
+third miss. After a wrong answer, **Explain my mistake** takes your working and
+sends it through the reviewed AI flow: you see the model, the maximum cost and the
+exact text, approve, and the explanation appears as a bubble. It points at the
+first faulty step and never gives the answer; the checker still grades.
+Launchers: Ctrl K **Mental math sprint** and **Next math lesson**, and the home **Up
+next** rows **Math: next lesson** (or **Math: review due**) and, on a day without a
+sprint yet, the sprint-streak nudge. While a Study cycle runs, the Math header shows
+its phase, subject and time ("Focus · Math · 18:02").
 
 **Mind maps** have one editor, reached from Notes → **Map** (the page's own map),
 Study → **Mind map** and the **Mind maps** view; Ctrl K finds any map by its title and
@@ -870,6 +1022,94 @@ after ten minutes, and become invalid when settings change. Notes are not shared
 automatically; output remains a draft. Provider requests disallow data collection,
 and failed requests are not automatically retried. Paid calls are disabled in demo.
 
+**Rika** is rika!'s own agent (design: `docs/rika-design.md`). You type to it in
+the Rika bar, and it does the work through the app's own functions.
+
+- **Tiers.** Each request goes to the smallest tier that can do it:
+  - **fast** for talk and simple edits;
+  - **standard** for planning ("plan my week");
+  - **deep** for multi-step requests (three or more steps, or a very long request) and retries after a failed reply.
+
+  A tool call that fails validation, or a reply that comes back cut off or empty,
+  moves the request up one tier, at most twice. Every reply shows its tier. You
+  can override the tier for one request. Choose each tier's OpenRouter model in
+  **Settings → AI**. Left empty, a tier uses a default for the main model's
+  provider family (Anthropic: Haiku, Sonnet, Opus; OpenAI: GPT-5 mini, GPT-5,
+  GPT-5 pro; Google: Gemini 2.5 Flash and Pro). A tier model must be in the
+  refreshed catalog.
+- **Simple phrases skip the model.** These run their tool directly, free and
+  offline:
+  - `add a node X`, `connect nodes X to Y`
+  - `add a topic X [under Y]`, `rename topic X to Y`, `connect topics X to Y`
+  - `new card front / back`
+  - `add a task X [today|tomorrow]`, `add an event X [tomorrow] [at 4pm]`
+  - `new page X`, `append text to Page`
+  - `new subject X`, `study task X [for Subject]`
+  - `find X`
+  - `open <view>`, `open a terminal`
+  - `start omp|claude|codex [to task]`
+  - `delete page X`
+  - ``run `command` ``
+
+  Anything else goes to the model with Rika's tools.
+- **What it can change.** It can:
+  - create, append to, edit and find note pages and outline blocks;
+  - add, move and connect canvas nodes;
+  - add, connect and rename mind-map topics;
+  - add flashcards;
+  - create calendar events and tasks;
+  - add study subjects and tasks;
+  - open views;
+  - search the whole workspace.
+
+  These changes apply at once, and each one is in the history drawer with
+  **Undo**. Calendar undo uses the calendar's own history and mind-map undo uses
+  the map's own undo snapshot. Undo refuses, and keeps the record, when you edited
+  it since.
+- **What waits for one tap.** Rika asks first, and the reply pauses until you
+  decide, before it:
+  - deletes anything that has no Trash (note pages);
+  - changes which modules load;
+  - starts a worker agent;
+  - runs a shell command;
+  - makes a model request over today's AI budget.
+
+  An approval expires after ten minutes, or when rika! quits.
+- **Budget and privacy.** Model requests reuse the key, catalog prices, routing
+  and daily budget from AI settings. Before it is sent, each request reserves its
+  maximum cost in the same ledger as the reviewed requests. It is sent with those
+  prices as the provider's ceiling, with no fallbacks and no retries. Providers
+  must decline data collection. What you ask Rika is sent, along with what its
+  tools return for that request. Note text is included only while **Allow
+  selected-text AI sharing** (Notes → Privacy & storage) is on: then Rika can read
+  the notes a request needs, never whole notebooks at once, and selected-text
+  requests work as before; while it is off, Rika gets titles and ids only. Text that
+  tools return is treated as data, never as instructions.
+- **Worker agents** (Terminal module). When you approve **start**, Rika:
+  1. runs rika!'s herdr session headless if no page attached it;
+  2. starts omp, Claude Code or Codex in an Agent tab;
+  3. hands it a task brief with `herdr agent prompt`.
+
+  `GET /api/rika/agents` merges herdr's agent states with coding agents running
+  in Tern panes. **Open** focuses the agent and shows it in a Tern window: a herdr
+  agent appears through a Tern tab attached to rika!'s herdr session. Without
+  Tern, the page opens the herdr view. Quit stops the session Rika started.
+- **Demo.** The demo never calls OpenRouter. The simple phrases above work.
+  Anything else gets a scripted reply. The Agents list shows five scripted agents,
+  and an approved start adds one more. No process starts.
+- **API.** These routes are header-protected like the rest of the site, and none
+  is an ingress route:
+  - `POST /api/rika/messages {text, tier?}`
+  - `GET /api/rika/history?before=`
+  - `POST /api/rika/approvals/<id> {decision}`
+  - `POST /api/rika/actions/<id>/undo`
+  - `GET /api/rika/agents`
+  - `POST /api/rika/agents/<id>/open`
+
+  Replies stream over the same-origin WebSocket `/api/rika/stream` as token,
+  message, action, approval, tier, navigate and agents events. Migration 037 keeps
+  the conversation, actions with their undo payloads, and approvals.
+
 The website supports:
 
 - Structured daily brief: track goals, deadlines, follow-ups, quiet applications,
@@ -920,7 +1160,7 @@ confirmed right-click deletion; removing a map node does not delete its source.
 **Keyboard:** Ctrl+Alt opens Plan, Ctrl+X Study, Ctrl+C Job search and Ctrl+V
 Settings outside editors, selections and dialogs. Native cut/copy/paste remains
 unchanged while editing. F1–F10 navigation is removed. Ctrl/⌘K opens command and
-job search; `?` shows contextual shortcuts. Arrow keys navigate
+job search; Ctrl+J opens or closes Rika's history; `?` shows contextual shortcuts. Arrow keys navigate
 jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `k` queue state, `R` resume, `e` notes, `s` status, `u` undo, `d` deadline,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,

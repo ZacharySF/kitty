@@ -14,6 +14,7 @@
 <script lang="ts">
   import { api } from "../api";
   import { GRADES } from "./GradeKeys.svelte";
+  import { typesetHtml } from "../math/tex";
 
   type Detail = {
     id: number;
@@ -102,7 +103,7 @@
     </header>
     <button class="face" class:flipped onclick={() => (flipped = !flipped)} aria-label="Flip card preview">
       <span class="side">{flipped ? "Back" : "Front"} · click to flip</span>
-      <span class="text" class:question={!flipped}>{@html flipped ? card.back : card.front}</span>
+      <span class="text" class:question={!flipped}>{@html typesetHtml(flipped ? card.back : card.front)}</span>
     </button>
     <div class="memory">
       {#each meters as meter}

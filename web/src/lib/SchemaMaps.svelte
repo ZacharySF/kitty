@@ -2598,12 +2598,12 @@
 </section>
 
 <style>
-  /* Q18: one surface that fills its tab above the dock (or its host, embedded in Notes). */
+  /* Q18: one surface that fills its tab above the Rika bar (or its host, embedded in Notes). */
   .schema {
     position: relative;
     display: flex;
     flex-direction: column;
-    height: var(--map-height, var(--fit-h, calc(100dvh - var(--workbench-top, 0px) - var(--dock-space, 0px) - 34px)));
+    height: var(--map-height, var(--fit-h, calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 34px)));
     min-height: 420px;
     overflow: hidden;
     color: var(--ink);

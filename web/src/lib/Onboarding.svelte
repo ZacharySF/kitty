@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { api, type Bootstrap } from "./api";
-  import { DOCK_SELECTOR, tutorialSteps, type AccountState } from "./onboarding";
+  import { tutorialSteps, type AccountState } from "./onboarding";
   import type { View } from "./workspace";
   import Icon from "./Icon.svelte";
   import ThemePicker from "./ThemePicker.svelte";
@@ -11,8 +11,7 @@
   let mode = $state<"welcome" | "tour" | "finish" | null>(null);
   let welcomeStep = $state(0);
   let stepIndex = $state(0);
-  let dockPresent = $state(false);
-  const steps = $derived(tutorialSteps(workspace?.modules.enabled ?? [], dockPresent));
+  const steps = $derived(tutorialSteps(workspace?.modules.enabled ?? []));
   const step = $derived(steps[Math.min(stepIndex, steps.length - 1)]);
   let dialog = $state<HTMLDialogElement>();
   let error = $state("");
@@ -59,11 +58,10 @@
     const target = document.querySelector(step.selector);
     if (!target) { rect = null; return; }
     // Keep the spotlight on the part of the target that is actually visible between the
-    // workspace header and the dock, where the dock covers its column.
+    // workspace header and the Rika bar along the bottom.
     let bounds = target.getBoundingClientRect();
-    const dock = document.querySelector('[data-kitty-panel="dock"]');
-    const card = dock && !dock.contains(target) ? dock.getBoundingClientRect() : null;
-    const floor = card && card.left < bounds.right && card.right > bounds.left ? Math.min(window.innerHeight, card.top) : window.innerHeight;
+    const bar = document.querySelector(".rika-bar");
+    const floor = bar && !bar.contains(target) ? Math.min(window.innerHeight, bar.getBoundingClientRect().top) : window.innerHeight;
     // Views render after the step changes, so retry a few times until the target is in sight.
     if (reveals < 3) {
       const header = document.querySelector(".workbench-top");
@@ -164,7 +162,6 @@
   function startTour() {
     originalView = (window.location.hash.slice(1).split("/")[0] || "today") as View;
     originalScroll = window.scrollY;
-    dockPresent = !!document.querySelector(DOCK_SELECTOR);
     stepIndex = 0; error = ""; mode = "tour";
   }
   async function beginTour() {

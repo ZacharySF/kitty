@@ -2,8 +2,9 @@
 
 GET  /api/terminal/activity  ->  {"running", "workspaces": [{id, label, status, focused, agents}]}
     herdr's own agent states (idle/working/blocked/done/unknown) per workspace,
-    read with herdr's CLI; each agent also carries its task (terminal title), last
-    output line, output revision and ``since`` (epoch ms its state began). Never
+    read with herdr's CLI; each agent also carries its kind (herdr's agent name, e.g.
+    omp), task (terminal title), last output line, output revision and ``since`` (epoch
+    ms its state began). Never
     starts the session: ``running`` is false while rika!'s session is not running.
 POST /api/terminal/focus  {"pane"}  ->  {"ok"}
     Focuses one agent pane herdr currently lists (the dock's Open pane).
@@ -21,9 +22,6 @@ Binary messages carry terminal bytes both ways. A text message resizes the pty:
 """
 from __future__ import annotations
 
-import base64
-import binascii
-import hashlib
 import json
 import os
 import secrets
@@ -33,16 +31,11 @@ import threading
 import time
 
 from kitty.core.terminal import CODING_AGENTS, HerdrRuntime, TerminalClient, TerminalNotRunning, TerminalUnavailable
+from kitty.websocket import Closed, Reader, accept, check_upgrade, frame
 
 SOCKET_PATH = "/api/terminal/socket"
 TOKEN_TTL = 30.0
-WEBSOCKET_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-MAX_MESSAGE = 1024 * 1024
 DEFAULT_SIZE = (80, 24)
-
-
-def accept_key(key: str) -> str:
-    return base64.b64encode(hashlib.sha1(key.encode("ascii") + WEBSOCKET_GUID).digest()).decode("ascii")
 
 
 class Terminal:
@@ -144,16 +137,7 @@ def upgrade(app, handler, path, query) -> bool:
     headers = handler.headers
     if set(query) - {"token", "cols", "rows"}:
         raise _error(400, "Unexpected terminal parameters")
-    if (headers.get("Upgrade", "").lower() != "websocket"
-            or "upgrade" not in [part.strip().lower() for part in headers.get("Connection", "").split(",")]
-            or headers.get_all("Sec-WebSocket-Version", []) != ["13"]):
-        raise _error(400, "Expected a WebSocket version 13 upgrade")
-    key = headers.get_all("Sec-WebSocket-Key", [])
-    try:
-        if len(key) != 1 or len(base64.b64decode(key[0], validate=True)) != 16:
-            raise ValueError
-    except (ValueError, binascii.Error):
-        raise _error(400, "Invalid Sec-WebSocket-Key") from None
+    key = check_upgrade(headers)
     cols, rows = _size(query)
     if not app.terminal.consume(query.get("token", "")):
         raise _error(403, "Terminal token is missing, expired or already used")
@@ -164,109 +148,30 @@ def upgrade(app, handler, path, query) -> bool:
     except OSError:
         raise _error(503, "rika!'s herdr session could not start") from None
     try:
-        # RFC 6455 needs an HTTP/1.1 response; WebKit ignores this server's HTTP/1.0 default.
-        handler.protocol_version = "HTTP/1.1"
-        handler.send_response(101)
-        handler.send_header("Upgrade", "websocket")
-        handler.send_header("Connection", "Upgrade")
-        handler.send_header("Sec-WebSocket-Accept", accept_key(key[0]))
-        handler.end_headers()
-        handler.wfile.flush()
-        handler.close_connection = True
+        accept(handler, key)
         _pump(handler.connection, client, app.streams_closed)
     finally:
         client.close()
     return True
 
 
-class _Closed(Exception):
-    def __init__(self, code: int):
-        self.code = code
-
-
-def _frame(opcode: int, payload: bytes) -> bytes:
-    length = len(payload)
-    if length < 126:
-        header = struct.pack("!BB", 0x80 | opcode, length)
-    elif length < 65536:
-        header = struct.pack("!BBH", 0x80 | opcode, 126, length)
-    else:
-        header = struct.pack("!BBQ", 0x80 | opcode, 127, length)
-    return header + payload
-
-
-class _Reader:
-    """Incremental RFC 6455 parser for masked client frames."""
-
-    def __init__(self):
-        self.buffer = bytearray()
-        self.fragments: list[bytes] = []
-        self.kind = 0
-
-    def feed(self, data: bytes):
-        self.buffer += data
-        while True:
-            if len(self.buffer) < 2:
-                return
-            first, second = self.buffer[0], self.buffer[1]
-            opcode, length, offset = first & 0x0F, second & 0x7F, 2
-            if first & 0x70 or not second & 0x80:
-                raise _Closed(1002)
-            if length == 126:
-                if len(self.buffer) < 4:
-                    return
-                length, offset = struct.unpack_from("!H", self.buffer, 2)[0], 4
-            elif length == 127:
-                if len(self.buffer) < 10:
-                    return
-                length, offset = struct.unpack_from("!Q", self.buffer, 2)[0], 10
-            if length > MAX_MESSAGE:
-                raise _Closed(1009)
-            if len(self.buffer) < offset + 4 + length:
-                return
-            mask = self.buffer[offset:offset + 4]
-            start = offset + 4
-            payload = bytes(byte ^ mask[index % 4] for index, byte in
-                            enumerate(self.buffer[start:start + length]))
-            del self.buffer[:start + length]
-            final = bool(first & 0x80)
-            if opcode >= 8:
-                if not final or length > 125 or opcode not in (8, 9, 10):
-                    raise _Closed(1002)
-                yield opcode, payload
-                continue
-            if opcode in (1, 2):
-                if self.fragments:
-                    raise _Closed(1002)
-                self.kind = opcode
-            elif opcode != 0 or not self.fragments and not self.kind:
-                raise _Closed(1002)
-            self.fragments.append(payload)
-            if sum(map(len, self.fragments)) > MAX_MESSAGE:
-                raise _Closed(1009)
-            if final:
-                message, self.fragments, kind = b"".join(self.fragments), [], self.kind
-                self.kind = 0
-                yield kind, message
-
-
 def _resize(client: TerminalClient, payload: bytes) -> None:
     try:
         message = json.loads(payload)
     except ValueError:
-        raise _Closed(1007) from None
+        raise Closed(1007) from None
     cols, rows = (message.get("cols"), message.get("rows")) if isinstance(message, dict) else (None, None)
     if (not isinstance(message, dict) or set(message) != {"type", "cols", "rows"}
             or message["type"] != "resize"
             or not all(type(value) is int and 1 <= value <= 1000 for value in (cols, rows))):
-        raise _Closed(1008)
+        raise Closed(1008)
     client.resize(cols, rows)
 
 
 def _pump(connection, client: TerminalClient, closing: threading.Event) -> None:
     """Relay until the page closes, the client exits, or the server shuts down."""
     connection.settimeout(None)
-    reader = _Reader()
+    reader = Reader()
     code = 1000
     try:
         while not closing.is_set():
@@ -278,7 +183,7 @@ def _pump(connection, client: TerminalClient, closing: threading.Event) -> None:
                     data = b""
                 if not data:
                     break
-                connection.sendall(_frame(2, data))
+                connection.sendall(frame(2, data))
             if connection in ready:
                 data = connection.recv(65536)
                 if not data:
@@ -291,17 +196,17 @@ def _pump(connection, client: TerminalClient, closing: threading.Event) -> None:
                     elif opcode == 1:
                         _resize(client, payload)
                     elif opcode == 9:
-                        connection.sendall(_frame(10, payload))
+                        connection.sendall(frame(10, payload))
                     elif opcode == 8:
                         code = struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1000
-                        raise _Closed(code)
+                        raise Closed(code)
         else:
             code = 1001
-    except _Closed as closed:
+    except Closed as closed:
         code = closed.code
     except OSError:
         return
     try:
-        connection.sendall(_frame(8, struct.pack("!H", code)))
+        connection.sendall(frame(8, struct.pack("!H", code)))
     except OSError:
         pass

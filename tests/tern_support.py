@@ -8,7 +8,10 @@ The fake mirrors only the Tern 0.9.8 surface rika! uses:
 * ``tern inspect --json`` and ``tern new session NAME --cwd DIR --json`` talk to the
   daemon named by ``$TERN_DAEMON_SOCKET`` and fail like Tern when none listens;
 * ``tern --dir DIR`` is a native window: it attaches to that daemon as a window
-  client until it is terminated.
+  client until it is terminated;
+* ``tern new tab SESSION --cwd DIR --keep-open --json -- COMMAND...`` adds a tab whose
+  block runs ``sh -c COMMAND`` (``command`` is the joined line, as Tern reports it);
+  ``tern focus BLOCK`` focuses a block and fails like Tern for an unknown one.
 
 Beside it, fake ``systemd-run --user --wait`` and ``systemctl --user stop`` stand in
 for the user's systemd manager, which runs a command as a transient service in the
@@ -32,7 +35,7 @@ import time
 from pathlib import Path
 
 FAKE_TERN = r'''
-import json, os, signal, socket, sys, threading, time
+import json, os, shlex, signal, socket, sys, threading, time
 LOG = {log!r}
 MODE_FILE = {mode_file!r}
 argv = sys.argv[1:]
@@ -119,6 +122,29 @@ def daemon(path):
                     "focused": True, "live": True}}], "splits": {{"Leaf": ids[2]}}}}]}})
                 save()
                 reply = {{"session": ids[0], "tab": ids[1], "block": ids[2]}}
+            elif message["op"] == "tab":
+                session = next((item for item in state["sessions"] if item["name"] == message["session"]), None)
+                if session is None:
+                    reply = {{"error": "no session"}}
+                else:
+                    tab, block = state["next"], state["next"] + 1
+                    state["next"] += 2
+                    line = shlex.join(message["command"])
+                    session["tabs"].append({{"id": tab, "number": len(session["tabs"]) + 1, "name": None,
+                        "shown": False, "zoomed": False, "blocks": [{{"id": block, "title": "", "cwd": message["cwd"],
+                        "program": "/bin/sh", "args": ["-c", line], "command": line, "cols": 80, "rows": 24,
+                        "exited": None, "keep_open": True, "focused": True, "live": True}}],
+                        "splits": {{"Leaf": block}}}})
+                    save()
+                    reply = {{"session": session["id"], "tab": tab, "block": block}}
+            elif message["op"] == "focus":
+                found = [block for session in state["sessions"] for tab in session["tabs"] for block in tab["blocks"]
+                         if str(block["id"]) == message["block"]]
+                for session in state["sessions"]:
+                    for tab in session["tabs"]:
+                        for block in tab["blocks"]:
+                            block["focused"] = bool(found) and block is found[0]
+                reply = {{"block": found[0]["id"]}} if found else {{"error": "no block"}}
             else:
                 panes = [{{"pane": block["id"], "working": block["id"] == 3, "quiet_ms": 10}}
                          for session in state["sessions"] for tab in session["tabs"] for block in tab["blocks"]]
@@ -144,6 +170,19 @@ elif argv == ["inspect", "--json"]:
         print(json.dumps(request({{"op": "inspect"}})))
 elif argv[:2] == ["new", "session"] and "--cwd" in argv:
     print(json.dumps(request({{"op": "new", "name": argv[2], "cwd": argv[argv.index("--cwd") + 1]}})))
+elif argv[:2] == ["new", "tab"] and "--" in argv:
+    reply = request({{"op": "tab", "session": argv[2], "cwd": argv[argv.index("--cwd") + 1],
+                     "command": argv[argv.index("--") + 1:]}})
+    if "error" in reply:
+        sys.stderr.write("tern new: " + reply["error"] + "\n")
+        sys.exit(1)
+    print(json.dumps(reply))
+elif argv[:1] == ["focus"] and len(argv) == 2:
+    reply = request({{"op": "focus", "block": argv[1]}})
+    if "error" in reply:
+        sys.stderr.write("tern focus: " + reply["error"] + "\n")
+        sys.exit(1)
+    print(json.dumps(reply))
 elif argv[:1] == ["--dir"] and len(argv) == 2:
     client = connect()
     client.sendall((json.dumps({{"op": "window", "pid": os.getpid()}}) + "\n").encode())

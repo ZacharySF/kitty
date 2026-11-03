@@ -1,0 +1,238 @@
+/* ── pretti (design Q12) ───────────────────────────────────────────────────
+   Glossy airbrushed graffiti on purple-black under a dark vignette: candy-gloss glass
+   panels with a sprayed highlight and a magenta rim, acid-green primary pills, magenta
+   selections, chrome-pink titles. Motif: heart and star bullets, heart ticks, candy-chain
+   dividers with a heart, a heart on the focus glow, a spiral loader. Scoped to
+   :root[data-theme="pretti"]; marks also to :not([data-motif="off"]). */
+
+:root[data-theme="pretti"] {
+  --pt-acid: #b6ff3b;
+  --pt-pink: #ff4fb4;
+  --pt-violet: #b57bff;
+  --pt-ink-dark: #1a0b24;
+  --pt-gloss: linear-gradient(180deg, rgb(255 255 255 / 0.13), rgb(255 255 255 / 0.03) 50%, rgb(255 255 255 / 0) 51%);
+  --backdrop:
+    radial-gradient(120% 90% at 50% 45%, transparent 55%, rgb(5 0 10 / 0.6) 100%),
+    radial-gradient(50vmax 40vmax at 12% 16%, color-mix(in srgb, var(--pt-acid) 12%, transparent), transparent 70%),
+    radial-gradient(50vmax 40vmax at 86% 24%, color-mix(in srgb, var(--pt-pink) 14%, transparent), transparent 70%);
+  --surface-fill:
+    linear-gradient(180deg, rgb(255 236 250 / 0.08), rgb(255 236 250 / 0) 34%),
+    radial-gradient(90% 60% at 100% 100%, color-mix(in srgb, var(--pt-violet) 9%, transparent), transparent 70%),
+    var(--br-panel);
+  --surface-border: color-mix(in srgb, var(--pt-pink) 34%, transparent);
+  --surface-blur: blur(16px) saturate(160%);
+  --surface-shadow:
+    inset 0 1px 0 rgb(255 214 240 / 0.24),
+    inset 0 0 26px rgb(181 123 255 / 0.1),
+    0 16px 38px -14px rgb(5 0 10 / 0.7);
+  --hairline: color-mix(in srgb, var(--pt-violet) 38%, transparent);
+  --focus-ring-color: var(--pt-acid);
+  --select-fill: var(--pt-gloss), color-mix(in srgb, var(--pt-pink) 32%, var(--solid-panel));
+  --select-edge: inset 0 0 0 1px color-mix(in srgb, var(--pt-pink) 60%, transparent), 0 0 14px color-mix(in srgb, var(--pt-pink) 26%, transparent);
+  --heart: url("./heart-mask.svg");
+  --star: url("./star-mask.svg");
+}
+:root[data-theme="pretti"] ::selection {
+  background: color-mix(in srgb, var(--pt-pink) 48%, transparent);
+}
+
+/* ── Chrome: a candy top bar ── */
+:root[data-theme="pretti"] body .system-bar {
+  border-bottom-color: color-mix(in srgb, var(--pt-pink) 42%, transparent);
+  box-shadow: 0 8px 14px -12px color-mix(in srgb, var(--pt-pink) 70%, transparent);
+}
+:root[data-theme="pretti"] body .wordmark .word {
+  color: var(--pt-acid);
+  text-shadow: 0 1.5px 0 #3a0f4f, 0 0 12px color-mix(in srgb, var(--pt-acid) 40%, transparent);
+}
+:root[data-theme="pretti"] body .brand-dot {
+  color: var(--pt-pink);
+}
+:root[data-theme="pretti"] body .brand-mark {
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffd1ef, var(--pt-pink) 45%, #8a1a7a);
+  color: var(--pt-ink-dark);
+  box-shadow: 0 0 0 2px var(--solid-void), 0 0 0 3.5px var(--pt-acid);
+}
+:root[data-theme="pretti"] body :is(.workspace-groups, .system-command, .schema-tab, .schema-back) {
+  border-color: color-mix(in srgb, var(--pt-pink) 38%, transparent);
+  background: var(--pt-gloss), color-mix(in srgb, #241338 90%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12);
+}
+:root[data-theme="pretti"] body .workspace-groups button[aria-current="page"] {
+  background: linear-gradient(180deg, #efffc4 0%, #c8ff66 42%, var(--pt-acid) 54%, #8be024 100%);
+  color: var(--pt-ink-dark);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--pt-acid) 50%, transparent);
+}
+:root[data-theme="pretti"] body .workspace-tabbar {
+  border-bottom-color: color-mix(in srgb, var(--pt-violet) 42%, transparent);
+}
+:root[data-theme="pretti"] body .workspace-tabbar .tab.active::after {
+  height: 3px;
+  background: linear-gradient(90deg, var(--pt-acid), var(--pt-pink));
+  box-shadow: 0 0 12px var(--pt-pink);
+}
+
+/* ── Controls: candy gloss pills ── */
+:root[data-theme="pretti"] body :is(.button, .br-btn, .pill):not([data-variant="solid"]):not(.primary):not([aria-pressed="true"]):not(.toggle-group *):not([data-variant="ghost"]):not([data-variant="link"]) {
+  border-color: color-mix(in srgb, var(--pt-pink) 40%, transparent);
+  background: var(--pt-gloss), color-mix(in srgb, #2a1745 88%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.14);
+}
+:root[data-theme="pretti"] body :is(.button, .br-btn, .pill):not([data-variant="solid"]):not(.primary):not([aria-pressed="true"]):not(.toggle-group *):hover:not(:disabled) {
+  border-color: var(--pt-pink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2), 0 0 12px color-mix(in srgb, var(--pt-pink) 45%, transparent);
+}
+:root[data-theme="pretti"] body .toggle-group {
+  border-color: color-mix(in srgb, var(--pt-pink) 38%, transparent);
+  background: color-mix(in srgb, #1a0d2b 92%, transparent);
+}
+:root[data-theme="pretti"] body :is(.pill, .button, .br-btn[data-variant="solid"]).primary,
+:root[data-theme="pretti"] body .br-btn[data-variant="solid"] {
+  border-color: #e2ff9a;
+  background: linear-gradient(180deg, #efffc4 0%, #c8ff66 40%, var(--pt-acid) 52%, #8be024 100%);
+  color: var(--pt-ink-dark);
+  box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.12), 0 0 16px color-mix(in srgb, var(--pt-acid) 42%, transparent);
+}
+:root[data-theme="pretti"] body :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select, .br-input) {
+  border-color: color-mix(in srgb, var(--pt-violet) 48%, transparent);
+}
+
+/* Overlays: the same candy glass, deeper. */
+:root[data-theme="pretti"] body :is(dialog, [role="dialog"], [role="menu"], [role="listbox"]),
+:root[data-theme="pretti"] body :is([popover], .color-popover, .page-actions-menu, .br-tooltip, .br-toast, .tab-menu) {
+  border-color: color-mix(in srgb, var(--pt-pink) 40%, transparent);
+  background: var(--pt-gloss), color-mix(in srgb, var(--solid-panel) 94%, transparent);
+}
+
+/* Page titles: chrome pink with a plum drop line and an acid haze. */
+:root[data-theme="pretti"] body main :is(h1, .section-header h2) {
+  color: #ffc4ea;
+  text-shadow: 0 2px 0 #3a0f4f, 0 0 16px rgb(182 255 59 / 0.28);
+}
+
+/* Home widgets and Study's columns sit on candy glass too, so the graffiti ground never runs
+   under their text. */
+:root[data-theme="pretti"] body :is(.home-widget, .study .column:not(.column .column), .study-guide) {
+  border: 1px solid var(--surface-border);
+  border-radius: var(--r-panel);
+  background: var(--surface-fill);
+  box-shadow: var(--surface-shadow);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
+}
+:root[data-theme="pretti"] body .home-widget {
+  padding: 2px 12px 8px;
+}
+
+/* The candy rim: magenta light on the top-left edge, acid green glancing off the bottom-right.
+   Only outer surfaces; one nested inside another is unboxed (Q2). */
+:root[data-theme="pretti"] body :is(.br-panel, .br-card):not(:is(.surface, .panel, .br-panel, .br-card) *)::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.3px;
+  pointer-events: none;
+  background: linear-gradient(140deg,
+    color-mix(in srgb, var(--pt-pink) 85%, white) 0%,
+    color-mix(in srgb, var(--pt-pink) 30%, transparent) 20%,
+    transparent 45%, transparent 72%,
+    color-mix(in srgb, var(--pt-acid) 55%, transparent) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+
+/* ── Motif marks ── */
+
+/* Heart and star bullets, alternating, each in its own colour. */
+:root[data-theme="pretti"]:not([data-motif="off"]) span.dot:not(.kitty-loader .dot) {
+  width: 12px;
+  height: 11px;
+  border-radius: 0;
+  -webkit-mask: var(--heart) center / contain no-repeat;
+  mask: var(--heart) center / contain no-repeat;
+}
+:root[data-theme="pretti"]:not([data-motif="off"]) :nth-child(even) > span.dot:not(.kitty-loader .dot) {
+  height: 12px;
+  -webkit-mask-image: var(--star);
+  mask-image: var(--star);
+}
+
+/* Heart ticks: an outlined heart that fills glossy pink when done. */
+:root[data-theme="pretti"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]) {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  flex: none;
+  width: 18px;
+  height: 16px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: url("./heart-open.svg") center / contain no-repeat;
+  vertical-align: -3px;
+  cursor: pointer;
+}
+:root[data-theme="pretti"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):checked {
+  background-image: url("./heart-gloss.svg");
+  filter: drop-shadow(0 0 4px rgb(255 79 180 / 0.6));
+  animation: pretti-pop calc(var(--motion-ms) * 1.6) var(--motion-ease) both;
+}
+:root[data-theme="pretti"]:not([data-motif="off"]) input[type="checkbox"]:not([role="switch"]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes pretti-pop {
+  0% { transform: scale(0.4); }
+  100% { transform: scale(1); }
+}
+
+/* Candy-chain dividers: a dotted magenta chain that parts around a glossy heart. */
+:root[data-theme="pretti"]:not([data-motif="off"]) .surface-section + .surface-section {
+  border-top-color: transparent;
+}
+:root[data-theme="pretti"]:not([data-motif="off"]) hr.rule {
+  position: relative;
+  height: 14px;
+  margin-block: 4px;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+:root[data-theme="pretti"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before,
+:root[data-theme="pretti"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::after {
+  content: "";
+  position: absolute;
+  top: -7px;
+  height: 14px;
+  pointer-events: none;
+}
+:root[data-theme="pretti"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::before {
+  left: 0;
+  right: 0;
+  background: radial-gradient(circle, color-mix(in srgb, var(--pt-pink) 80%, transparent) 1.4px, transparent 1.9px) 0 50% / 8px 8px repeat-x;
+  -webkit-mask: linear-gradient(90deg, transparent, #000 12%, #000 calc(50% - 14px), transparent calc(50% - 13px), transparent calc(50% + 13px), #000 calc(50% + 14px), #000 88%, transparent);
+  mask: linear-gradient(90deg, transparent, #000 12%, #000 calc(50% - 14px), transparent calc(50% - 13px), transparent calc(50% + 13px), #000 calc(50% + 14px), #000 88%, transparent);
+}
+:root[data-theme="pretti"]:not([data-motif="off"]) :is(.surface-section + .surface-section, hr.rule)::after {
+  left: calc(50% - 8px);
+  width: 16px;
+  background: url("./heart-gloss.svg") center / contain no-repeat;
+}
+:root[data-theme="pretti"]:not([data-motif="off"]) hr.rule::before,
+:root[data-theme="pretti"]:not([data-motif="off"]) hr.rule::after {
+  top: 0;
+}
+
+/* Focus: the acid glow, with a little glossy heart stuck on its top-right corner. */
+:root[data-theme="pretti"]:not([data-motif="off"]) .theme-focus[data-focus-style="glow"]::after {
+  content: "";
+  top: calc(var(--focus-out) * -1 - 8px);
+  right: calc(var(--focus-out) * -1 - 8px);
+  width: 14px;
+  height: 12px;
+  background: url("./heart-gloss.svg") center / contain no-repeat;
+  filter: drop-shadow(0 0 4px rgb(255 79 180 / 0.7));
+}

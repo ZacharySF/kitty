@@ -2168,7 +2168,7 @@
 {#if privacyOpen}
   <EditDrawer title="Privacy & storage" onclose={() => (privacyOpen = false)}>
     <div class="drawer-group">
-      <label class="drawer-check" title="Only text you select is ever sent; whole notebooks never are"><input type="checkbox" bind:checked={prefs.allow_ai} />Allow selected-text AI sharing</label>
+      <label class="drawer-check" title="While on, AI requests get the text you select, and Rika can read the notes a request needs; never whole notebooks at once"><input type="checkbox" bind:checked={prefs.allow_ai} />Allow selected-text AI sharing</label>
       <label class="drawer-field" title="0 removes unused references as soon as you clean up">Unused reference retention (days)<input type="number" min="0" max="3650" bind:value={prefs.retention_days} /></label>
     </div>
     <div class="drawer-group">
@@ -2298,7 +2298,7 @@
   .error-banner { display: flex; align-items: center; gap: 8px; margin: 8px 12px 0; padding: 6px 6px 6px 12px; border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent); border-radius: var(--r-field); color: var(--warning); font-size: 12.5px; overflow-wrap: anywhere; }
   .error-banner > span { flex: 1; }
 
-  /* The canvas and map fill the window above the dock under whatever sits above the page (fitHeight). */
+  /* The canvas and map fill the window above the Rika bar under whatever sits above the page (fitHeight). */
   .notebook-layout { --stage-h: var(--fit-h, 480px); position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .notebook-layout > .canvas-main { flex: 1; }
   /* Q43: the library slides over the page instead of taking a column. */
@@ -2383,7 +2383,7 @@
   .map-stage { display: flex; flex-direction: column; height: var(--stage-h); min-height: 0; overflow: hidden; }
   .map-stage > :global(*) { flex: 1; min-height: 0; }
 
-  /* Canvas: the stage fills the window above the dock; the tools float in its bottom pill. */
+  /* Canvas: the stage fills the window above the Rika bar; the tools float in its bottom pill. */
   .canvas-stage { position: relative; height: var(--stage-h); min-width: 0; overflow: hidden; background: var(--solid-void); }
   .canvas-stage:fullscreen { width: 100vw; height: 100dvh; min-width: 0; min-height: 0; background: var(--solid-void); color: var(--ink); }
   .canvas-stage canvas { display: block; touch-action: none; cursor: crosshair; outline-offset: -3px; }

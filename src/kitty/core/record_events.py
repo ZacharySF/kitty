@@ -43,6 +43,7 @@ NON_CONTENT_PREFIXES = frozenset({
     "sources", "finder", "reports", "mail", "triage", "postings", "dashboard", "job-options",
     "pipeline", "backlinks", "atlas", "brain", "desktop", "terminal", "extensions", "tasks",
     "bootstrap",
+    "math",  # practice controls; math_attempts and math_sprints are their own history
 })
 #: Non-content routes inside content sections.
 SKIP = tuple(re.compile(pattern) for pattern in (

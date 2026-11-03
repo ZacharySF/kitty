@@ -16,9 +16,9 @@ export interface TutorialStep {
   unavailable?: boolean;
 }
 
-export const DOCK_SELECTOR = '[data-kitty-panel="dock"], .dock-handle, .dock-pill';
+export const RIKA_SELECTOR = '[data-tutorial="rika"]';
 
-export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): TutorialStep[] {
+export function tutorialSteps(enabled: ModuleId[]): TutorialStep[] {
   const workspace = enabled.includes("workspace");
   return [
     { id: "workspace", title: "A workspace that follows your train of thought.",
@@ -47,9 +47,11 @@ export function tutorialSteps(enabled: ModuleId[], dockPresent: boolean): Tutori
         : "Focus sessions, notes, flashcards and the optional LearnHarness extension belong to Study & planning. Turn the module on in Settings and restart to explore them.",
       tip: "A Google connection does not configure LearnHarness, AI services or Calendar sync.",
       view: workspace ? "study" : "settings", selector: workspace ? '[data-kitty-panel="view"]:not([hidden])' : '[data-tutorial="modules"]', unavailable: !workspace },
-    ...(enabled.includes("terminal") && dockPresent ? [{ id: "terminal", title: "Your terminal, close at hand.",
-      text: "The terminal dock keeps your shell at the bottom of the window, beside the work. Use its controls to change its height, float it as a card or tuck it away. This tour never starts a shell or an agent for you.",
-      tip: "Ctrl + Shift + F expands a focused terminal panel · Esc returns",
-      view: "today" as View, selector: DOCK_SELECTOR }] : []),
+    { id: "rika", title: "Ask Rika.",
+      text: enabled.includes("terminal")
+        ? "Rika is rika!'s own agent. Type in the bar at the bottom and press Enter: it adds tasks and events, opens pages, opens terminals as Tern windows and starts worker agents. What it changes has Undo; anything outward waits for your approval. This tour never sends Rika anything."
+        : "Rika is rika!'s own agent. Type in the bar at the bottom and press Enter: it adds tasks and events and opens pages. What it changes has Undo; anything outward waits for your approval. This tour never sends Rika anything.",
+      tip: "Replies land just above the bar · Ctrl + J opens Rika's history",
+      view: "today", selector: RIKA_SELECTOR },
   ];
 }

@@ -452,7 +452,7 @@
     return () => pane.setStatus(null);
   });
 
-  /** Sizes the session page to the window above the dock, so it never scrolls. */
+  /** Sizes the session page to the window above the Rika bar, so it never scrolls. */
   function fill(node: HTMLElement) {
     let frame = 0;
     const size = () => {

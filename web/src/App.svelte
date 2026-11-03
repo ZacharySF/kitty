@@ -26,6 +26,8 @@
   import ThemeLayer from "./lib/themes/ThemeLayer.svelte";
   import { APPEARANCE_EVENT, savedAppearance, type Appearance } from "./lib/appearance";
   import QuickCard from "./lib/flashcards/QuickCard.svelte";
+  import Rika from "./lib/rika/Rika.svelte";
+  import { rika } from "./lib/rika/session.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -184,6 +186,10 @@
     else schemaRoot();
   }
   function openJob(id: number) { if (applyai && navigate("jobs")) activeTab.initialJobId = id; }
+  /** Q1 C: terminals open as Tern windows; without a usable Tern, the Tern view says why. */
+  async function openTerminal() {
+    try { await api("/terminal/tern/open", {}); } catch { navigate("tern"); }
+  }
   function openNotice(notice: Notice) {
     if (notice.target.kind === "calendar") navigate("calendar");
     else if (notice.target.job_id !== null && applyai) openJob(notice.target.job_id);
@@ -464,7 +470,7 @@
   </main>
 </div>
 {#if notifySources}<NotificationToasts onopen={openNotice} /><NotificationCenter onopen={openNotice} />{/if}
-{#if terminal}{#await import("./lib/Dock.svelte") then { default: Dock }}<Dock onherdr={() => navigate("herdr")} />{/await}{/if}
+{#if workspace}<Rika onnavigate={next => { if (isView(next) && next !== view) navigate(next); }} />{/if}
 {#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
 {#if guide && applyai}<dialog
     bind:this={guideDialog}
@@ -498,6 +504,8 @@
     onhelp={() => (help = true)}
     onnewcard={studyTools ? () => (quickCard = { deck: null }) : undefined}
     onreload={() => void reload()}
+    onterminal={terminal ? () => void openTerminal() : undefined}
+    onrika={() => rika.showDrawer()}
   />{/if}
 {#if help}<KeyboardHelp {enabled} onclose={() => (help = false)} />{/if}
 {#if quickCard && studyTools}<QuickCard deck={quickCard.deck} onclose={() => (quickCard = null)} />{/if}

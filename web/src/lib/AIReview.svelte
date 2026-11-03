@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import { api, type TaskRecord } from "./api";
   import type { MindMapFeedbackRequest } from "./mindMapFeedback";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -11,6 +12,8 @@
     demo = false,
     onresult,
     mindMap,
+    preview: request,
+    draft,
     active = true,
     previewLabel = "Review AI request",
   }: {
@@ -19,6 +22,10 @@
     demo?: boolean;
     onresult?: (text: string) => void;
     mindMap?: MindMapFeedbackRequest;
+    /** A feature's own preview route that builds the reviewed text server-side (e.g. `/math/explain`). */
+    preview?: { path: string; body: Record<string, unknown> };
+    /** Renders the returned draft instead of the plain text block. */
+    draft?: Snippet<[string]>;
     active?: boolean;
     previewLabel?: string;
   } = $props();
@@ -42,7 +49,7 @@
   let cost = $state<number | null>(null);
   let reviewedRequest = $state("");
   let outputRequest = $state("");
-  const requestKey = $derived(JSON.stringify(mindMap ?? { purpose, text }));
+  const requestKey = $derived(JSON.stringify(request ?? mindMap ?? { purpose, text }));
   const stale = $derived(reviewedRequest !== requestKey);
   $effect(() => {
     if (!active) approved = false;
@@ -50,16 +57,18 @@
   async function preview() {
     if (!active || busy || demo || (mindMap && (!mindMap.question.trim() || !mindMap.graph.nodes.length))) return;
     const selectedRequest = requestKey;
-    const body = mindMap
-      ? JSON.parse(selectedRequest) as MindMapFeedbackRequest
-      : { purpose, text };
+    const body = request
+      ? request.body
+      : mindMap
+        ? JSON.parse(selectedRequest) as MindMapFeedbackRequest
+        : { purpose, text };
     busy = true;
     error = "";
     approved = false;
     review = null;
     try {
       review = await api<Review>(
-        mindMap ? "/ai/mind-map/preview" : "/ai/preview",
+        request ? request.path : mindMap ? "/ai/mind-map/preview" : "/ai/preview",
         body,
       );
       reviewedRequest = selectedRequest;
@@ -164,7 +173,7 @@
       {#if outputRequest !== requestKey}
         <p role="status">This draft belongs to an earlier selection or question, not the current one. Review and send again for new feedback.</p>
       {/if}
-      <pre class="draft">{output}</pre>
+      {#if draft}{@render draft(output)}{:else}<pre class="draft">{output}</pre>{/if}
       <small
         >Reported cost: {cost === null
           ? "not provided; maximum remains reserved"

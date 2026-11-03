@@ -2,6 +2,7 @@
   import { api } from "./api";
   import HomeWidget from "./HomeWidget.svelte";
   import { activeModules } from "./modules.svelte";
+  import { launchMath, type MathLaunch } from "./math/launch";
   import { viewEnabled, type View } from "./workspace";
 
   /**
@@ -14,7 +15,9 @@
   type Event = { id: string; occurrence?: string; title: string; start: string; all_day: boolean; calendar_id: string; source_key?: string | null };
   type Task = { id: string; title: string; due: string; status: string };
   type Reminder = { id: number; kind: string; due_at: string; label: string };
-  type Row = { key: string; title: string; kind: string; at: number; allDay: boolean; when: string; tone: string; view: View; overdue?: boolean };
+  type Row = { key: string; title: string; kind: string; at: number; allDay: boolean; when: string; tone: string; view: View; overdue?: boolean; launch?: MathLaunch };
+  type MathNext = { kind: "lesson" | "review" | null; topic_id?: string; title?: string };
+  type MathHistory = { sprints: { finished_at: string }[]; streak_days: number };
 
   const DAY = 86_400_000;
   /** Calendar copies from other modules, named by the key their source gives them. */
@@ -59,7 +62,7 @@
     const tomorrow = today + DAY;
     const end = today + 8 * DAY;
     try {
-      const [calendar, cards, reminders] = await Promise.all([
+      const [calendar, cards, reminders, mathNext, sprints] = await Promise.all([
         viewEnabled("calendar", enabled)
           ? api<{ events: Event[]; tasks: Task[]; calendars: { id: string; color: string }[] }>(`/calendar?${new URLSearchParams({
               start: new Date(tomorrow).toISOString(),
@@ -69,6 +72,11 @@
           : null,
         viewEnabled("flashcards", enabled) ? api<{ stats: { due: number } }>("/flashcards") : null,
         viewEnabled("reminders", enabled) ? api<{ due: Reminder[]; upcoming: Reminder[] }>("/reminders") : null,
+        // Math is a nudge, not a deadline: if it can't be read, the rest of Up next still shows.
+        viewEnabled("math", enabled) ? api<MathNext>("/math/next").catch(() => null) : null,
+        viewEnabled("math", enabled)
+          ? api<MathHistory>(`/math/sprints/history?${new URLSearchParams({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" })}`).catch(() => null)
+          : null,
       ]);
       if (serial !== request) return;
       now = Date.now();
@@ -83,6 +91,13 @@
           overdue: allDay ? at < today : at < now });
       }
       if (cards?.stats.due) next.push({ key: "cards", title: "Flashcards", kind: "Cards", at: today, allDay: true, when: `${cards.stats.due} due`, tone: "var(--c4)", view: "flashcards" });
+      if (mathNext?.kind)
+        next.push({ key: "math:next", title: mathNext.kind === "lesson" ? "Math: next lesson" : "Math: review due", kind: "Math", at: today, allDay: true,
+          when: mathNext.title ?? "", tone: "var(--c3)", view: "math", launch: mathNext.kind === "lesson" ? "lesson" : "practice" });
+      // The streak nudge only shows on a day without a sprint yet.
+      if (sprints?.sprints.length && !sprints.sprints.some((run) => Date.parse(run.finished_at) >= today))
+        next.push({ key: "math:streak", title: sprints.streak_days ? `Sprint today to keep your ${sprints.streak_days}-day streak` : "Start a sprint streak today",
+          kind: "Sprint", at: today, allDay: true, when: "mental math", tone: "var(--c3)", view: "math", launch: "sprint" });
       for (const reminder of [...(reminders?.due ?? []), ...(reminders?.upcoming ?? [])]) {
         const at = Date.parse(reminder.due_at);
         if (!(at < end)) continue;
@@ -123,7 +138,7 @@
       {#each rows.slice(0, limit) as row (row.key)}
         {@const chip = soon(row)}
         <li>
-          <button type="button" onclick={() => onview(row.view)}>
+          <button type="button" onclick={() => { if (row.launch) launchMath(row.launch); onview(row.view); }}>
             <span class="check" style:--tone={row.tone} aria-hidden="true"></span>
             <span class="what">
               <strong>{row.title}</strong>
