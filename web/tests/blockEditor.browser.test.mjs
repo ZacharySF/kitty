@@ -10,6 +10,8 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { THEMES } from "../src/lib/themes/catalog.ts";
+import { textContrast } from "./textContrast.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 let server;
@@ -342,18 +344,87 @@ test("History names who made each session, filters by actor and undoes one agent
   const who = () => sessions.locator(".who").allTextContents();
   await until(async () => (await who()).includes("Agent · claude-code"), "the agent's session is named");
   assert.deepEqual(await who(), ["You", "Agent · claude-code", "You"]);
-  await dialog.getByRole("combobox", { name: "Filter by actor" }).selectOption({ label: "Agent · claude-code" });
+  // The Show filter is the themed Select (no native menu), each actor with its colour dot.
+  assert.equal(await dialog.locator("select").count(), 0, "no native select");
+  await dialog.getByRole("combobox", { name: "Filter by actor" }).click();
+  const option = page.getByRole("option", { name: "Agent · claude-code" });
+  assert.equal(await option.locator(".dot").evaluate((dot) => getComputedStyle(dot).backgroundColor),
+    await sessions.locator('.who[data-actor="claude"]').evaluate((who) => getComputedStyle(who.querySelector("svg")).color));
+  await option.click();
   await until(async () => JSON.stringify(await who()) === '["Agent · claude-code"]', "the filter hides the person's sessions");
   await dialog.getByRole("button", { name: "Undo agent session Agent · claude-code" }).click();
   const plan = dialog.getByRole("region", { name: "Undo agent session" });
-  await assert.doesNotReject(plan.getByText("Reverts 1 block the agent changed in 2 transactions").waitFor());
-  assert.match(await plan.innerText(), /1 block changed by someone else since stay as they are/);
+  await assert.doesNotReject(plan.getByText("1 block goes back").waitFor());
+  assert.match(await plan.locator(".counts").innerText(), /1 block goes back · 1 kept as is · from 2 edits/);
+  // Each reverted block: its text now, struck through, then the text it goes back to.
+  const reverted = plan.getByRole("list", { name: "Goes back" }).getByRole("listitem");
+  assert.equal(await reverted.count(), 1);
+  assert.equal(await reverted.locator("del").textContent(), "Alpha, rewritten by the agent.");
+  assert.equal(await reverted.locator("ins").textContent(), "Alpha block about hash rings.");
+  assert.match(await reverted.innerText(), /back to/);
+  const marks = await reverted.evaluate((item) => {
+    const [del, ins] = [item.querySelector("del"), item.querySelector("ins")].map((node) => getComputedStyle(node));
+    return { strike: del.textDecorationLine, plain: ins.textDecorationLine, delColor: del.color, insColor: ins.color };
+  });
+  assert.equal(marks.strike, "line-through");
+  assert.equal(marks.plain, "none");
+  assert.notEqual(marks.delColor, marks.insColor, "before and after read apart");
+  const kept = plan.getByRole("list", { name: "Kept as is" }).getByRole("listitem");
+  assert.match(await kept.innerText(), /Bravo, rewritten by the agent\. Mine\.[\s\S]*changed by someone else since/);
   assert.deepEqual(await page.evaluate(() => window.blockHarness.server.undos), [{ session: "agent-session-1", dry_run: true }]);
-  await plan.getByRole("button", { name: "Undo agent session" }).click();
+  await plan.getByRole("button", { name: "Undo 1 block" }).click();
   await assert.doesNotReject(dialog.getByRole("status").filter({ hasText: "Undid the agent session: 1 block reverted" }).waitFor());
   await until(async () => (await texts(page))[0] === "Alpha block about hash rings.", "the agent's untouched edit is reverted");
   assert.equal((await texts(page))[1], "Bravo, rewritten by the agent. Mine.");
   await dialog.getByRole("button", { name: "Close history" }).click();
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("History gives every actor kind its own theme colour and icon, AA on every theme", async () => {
+  const { page, problems, context } = await open();
+  await page.evaluate(() => {
+    const { server, id } = window.blockHarness;
+    const actors = [
+      { kind: "agent", name: "claude-code", session: "s-claude" }, { kind: "agent", name: "codex-mcp-client", session: "s-codex" },
+      { kind: "agent", name: "omp", session: "s-omp" }, { kind: "agent", name: "rika!", session: "rika:c1" },
+      { kind: "agent", name: "kitty notes", session: "s-cli" }, { kind: "client", name: "Phone", session: "c1" },
+      { kind: "system", name: "migration", session: null }, { kind: "peer", name: "Laptop", session: null },
+    ];
+    actors.forEach((actor, at) => server.commit([{ op: "text", id: id(1 + (at % 4)), text: `Edit ${at} by ${actor.kind}.` }],
+      actor.kind === "peer" ? "harness-device-0002" : undefined, actor));
+  });
+  await page.getByRole("button", { name: "Open history" }).click();
+  const sessions = page.getByRole("dialog", { name: /History/ }).getByRole("navigation", { name: "Editing sessions" });
+  await until(async () => (await sessions.locator(".who").count()) === 9, "every actor's session is listed");
+  const looks = () => sessions.locator(".who").evaluateAll((items) => items.map((item) => ({
+    look: item.dataset.actor, text: getComputedStyle(item).color, icon: item.querySelector("svg") ? getComputedStyle(item.querySelector("svg")).color : null,
+  })));
+  const found = await looks();
+  assert.deepEqual(found.map((item) => item.look).sort(),
+    ["agent", "claude", "client", "codex", "omp", "peer", "rika", "system", "user"]);
+  assert.ok(found.every((item) => item.icon), "every actor has an icon");
+  const colourOf = (items, look) => items.find((item) => item.look === look).icon;
+  const distinct = async (theme) => {
+    const items = await looks();
+    const kinds = ["user", "agent", "client", "system", "peer"].map((look) => colourOf(items, look));
+    assert.equal(new Set(kinds).size, 5, `${theme}: the five kinds share a colour ${kinds}`);
+    const agents = ["agent", "claude", "codex", "rika"].map((look) => colourOf(items, look));
+    assert.equal(new Set(agents).size, 4, `${theme}: agent sub-kinds share a colour ${agents}`);
+  };
+  for (const theme of THEMES) {
+    await page.evaluate((id) => window.blockHarness.setTheme(id), theme.id);
+    await page.waitForFunction((id) => document.documentElement.dataset.theme === id, theme.id);
+    // Colours transition on a theme switch; measure once they have settled (ambient art loops forever: not those).
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition)
+      .map((animation) => animation.finished.catch(() => {}))));
+    if (["kitty", "liquid-glass", "speed", "bloodluxe"].includes(theme.id)) await distinct(theme.label);
+    const ratios = await sessions.locator(".who").evaluateAll((items, [measure, grounds]) => {
+      const contrast = new Function(`return (${measure})`)();
+      return items.map((item) => ({ look: item.dataset.actor, ratio: contrast(item, grounds) }));
+    }, [textContrast.toString(), [theme.roles.void, theme.roles.panel, theme.roles.inset]]);
+    assert.deepEqual(ratios.filter((item) => item.ratio < 4.5), [], `${theme.label}: actor names below AA`);
+  }
   assert.deepEqual(problems, []);
   await context.close();
 });

@@ -142,6 +142,10 @@ def test_undo_reverts_the_agents_untouched_edits_and_keeps_and_reports_the_perso
     assert not plan["applied"] and conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0] == before
     assert {item["id"]: item["fields"] for item in plan["reverted"]} == {alpha: ["text"], added: ["created"]}
     assert [(item["id"], item["fields"]) for item in plan["conflicts"]] == [(beta, ["text"])]
+    # Each reverted block reports its text now, the text it goes back to and whether it stays
+    # live afterwards (false: to Trash), for a before/after.
+    texts = {item["id"]: (item["current"], item["text"], item["live"]) for item in plan["reverted"]}
+    assert texts == {alpha: ("alpha (agent)", "alpha", True), added: ("agent's new block", "agent's new block", False)}
 
     result = sessions.undo_session(conn, AGENT.session)
     assert result["applied"] and result["transactions"] == 3 and result["reverted_count"] == 2

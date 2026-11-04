@@ -1,8 +1,10 @@
 // Browser fixture for tests/blockEditor.browser.test.mjs. Mounts rika!'s block editor with an
 // in-memory stand-in for the block backend (tests/fakeBlockServer.js); every record is synthetic.
 import { mount } from "svelte";
+import "@nunera/bracket/styles.css";
 import "/src/styles.css";
-import { loadBuild } from "/src/lib/build.svelte.ts";
+import "/src/lib/themes/engine.css";
+import { loadBuild, setTheme } from "/src/lib/build.svelte.ts";
 import { createBuildStub } from "./buildStub.js";
 import { keysBetween } from "/src/lib/blockKeys.ts";
 import { createBlockServer } from "./fakeBlockServer.js";
@@ -41,7 +43,7 @@ const opened = [];
 await loadBuild();
 mount(BlockEditorHarness, { target: document.getElementById("view"), props: { opened } });
 window.blockHarness = {
-  server, opened, PAGE, OTHER, id,
+  server, opened, PAGE, OTHER, id, setTheme,
   /** The page as the server holds it: [type, text, depth] in reading order. */
   outline(page = PAGE) {
     const state = server.state(page);

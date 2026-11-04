@@ -72,4 +72,15 @@ export const ICONS: Record<string, IconDef> = {
   "tool-line": plain("M5 19 19 5"),
   "tool-arrow": plain("M5 19 19 5M10 5h9v9"),
   "tool-connector": plain("M6 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM18 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM8 15.5c4 0 4-7.5 8-7.5"),
+  // Who made an edit (actors.ts), keyed `actor-<look id>`: the person, an agent and the clients
+  // that run agents (omp's π, a starburst, code brackets, the cat), an app, rika!'s gear, a device.
+  "actor-user": plain("M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4.5 20.5a7.5 7.5 0 0 1 15 0"),
+  "actor-agent": plain("M5 8h14v12H5ZM12 4v4M9 13h.01M15 13h.01M9.5 17h5"),
+  "actor-omp": plain("M4 7h16M9 7v13M15 7v10a3 3 0 0 0 3 3h1"),
+  "actor-claude": plain("M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"),
+  "actor-codex": plain("M8 6 3 12l5 6M16 6l5 6-5 6M13.5 4l-3 16"),
+  "actor-rika": plain("M4 10V3l5 4a10 10 0 0 1 6 0l5-4v7a8 8 0 1 1-16 0ZM9 12h.01M15 12h.01"),
+  "actor-client": plain("M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0ZM12 17v4"),
+  "actor-system": plain("M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.2 2.2M16.2 16.2l2.2 2.2M5.6 18.4l2.2-2.2M16.2 7.8l2.2-2.2"),
+  "actor-peer": plain("M3 5h13v9H3ZM1 17h17M19 9h3v11h-3Z"),
 };
