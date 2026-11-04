@@ -78,6 +78,8 @@ def test_a_worker_starts_only_after_approval_gets_its_brief_and_opens_in_tern(tm
         assert herdr_agent["where"] == {"herdr_pane": prompt[2]} and herdr_agent["kind"] == "claude"
         assert herdr_agent["status"] == "idle" and herdr_agent["task"] == "fix the parser"
         assert tern_agent["kind"] == "codex" and set(tern_agent["where"]) == {"tern_pane"}
+        # The fake herdr never runs the launcher shim: no exchange, so neither card is mediated.
+        assert herdr_agent["guarantee"] == "none" and tern_agent["guarantee"] == "none"
 
         # Open shows the herdr pane through a Tern tab attached to rika!'s session, once.
         for _ in range(2):

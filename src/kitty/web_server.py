@@ -808,9 +808,11 @@ def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = Fals
 
             demo.seed(workspace.conn, settings, workspace.config)
         if settings.demo:
+            from kitty.core import agent_demo
             from kitty.core.rika import demo_seed
 
             demo_seed.seed(workspace.conn)
+            agent_demo.seed_demo(workspace.conn, settings.root)
         app = WebApplication(settings, workspace.config, static_dir, safe=safe)
     # A plain `kill` stops kitty-web like Ctrl+C: workers drain and the endpoint file goes.
     signal.signal(signal.SIGTERM, _interrupt)

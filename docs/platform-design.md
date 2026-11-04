@@ -1124,13 +1124,26 @@ mediator and journal), `src/kitty/core/agent_policy.py` (purpose labels, policie
   journal rows in the window, pinned `((id@seq))` citations in live text, or user holds, with a
   200k-row size cap that releases the oldest reasons (holds marked `size_cap`); journal rows no
   reason covers are deleted.
+- **UI.** Settings → Agents (`web/src/lib/agents/`, Connections group, `#settings/agents`):
+  the host's kernel, Landlock ABI, guarantee and what stays open; the sessions table, one
+  opening in the side drawer with its journal (newest first, Older pages by `next`), held state,
+  planted files, Hold/Release and End (confirmed); the policy's version, mode and source in a
+  mono editor, Simulate (flips, counts, replayed) and Apply, enabled only for the exact source
+  last simulated and confirmed; retention, purposes and tools read-only. A guarantee badge
+  (Full / Attribution only / Not mediated: success, warning, error roles plus a mark of its
+  own, `GuaranteeBadge.svelte`) is on Rika's drawer cards, the Rika bar chips (Rika's roster
+  carries `guarantee` from the same `pane_guarantees` as `/api/terminal/activity`) and the
+  new-Agent-tab notice (`mediation`). `kitty-web --demo` seeds five synthetic sessions, a
+  policy version 1 and one hold (`src/kitty/core/agent_demo.py`); it never runs the launcher.
 - **Tests.** `tests/test_agent_bypass.py` (the battery, each check skipped below the ABI it
-  needs), `tests/test_agent_mediation.py`, updated terminal tests.
+  needs), `tests/test_agent_mediation.py`, updated terminal tests;
+  `web/tests/agentMediation.browser.test.mjs` (harness) and the demo's Agents page in
+  `web/tests/settings.browser.test.mjs`.
 - **Not built / limits.** herdr pane proxy (a Full tab cannot open panes; herdr's skill is
   withheld and activity hooks stay silent); planted files outside the workspace root are not
   prevented (no Landlock rule can exclude one name inside a writable tree); bubblewrap and
   AppArmor fallbacks of the kernel matrix; copies an agent keeps after a legitimate read;
-  egress after a read; same-user programs outside a tab. Settings → Agents UI is not built yet.
+  egress after a read; same-user programs outside a tab.
 
 ## Verified facts
 

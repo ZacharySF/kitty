@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { GUARANTEE_LABELS, guaranteeOf } from "../agents/agents";
+  import GuaranteeBadge from "../agents/GuaranteeBadge.svelte";
   import { nowText } from "../agentSkills";
   import BriefChip from "../goals/BriefChip.svelte";
   import { SpaceHold } from "./hold";
@@ -119,9 +121,11 @@
           ><i class="rika-dot" aria-hidden="true"></i>{chips.count} agents</button>
       {:else}
         {#each chips.agents as agent (agent.id)}
-          <button class="rika-agent-chip" data-state={agent.status} aria-label={`${agent.name}, ${agent.status}${agent.now ? `, ${nowText(agent.now)}` : ""}: open its window`}
-            title={[agent.task || agent.name, agent.now ? nowText(agent.now) : "", agent.now?.intent ?? ""].filter(Boolean).join("\n")} onclick={() => rika.open(agent)}
-            ><i class="rika-dot" aria-hidden="true"></i>{agent.name}</button>
+          {@const guarantee = agent.guarantee ? GUARANTEE_LABELS[guaranteeOf(agent.guarantee)] : ""}
+          <button class="rika-agent-chip" data-state={agent.status} data-guarantee={agent.guarantee ? guaranteeOf(agent.guarantee) : undefined}
+            aria-label={`${agent.name}, ${agent.status}${agent.now ? `, ${nowText(agent.now)}` : ""}${guarantee ? `, ${guarantee}` : ""}: open its window`}
+            title={[agent.task || agent.name, agent.now ? nowText(agent.now) : "", agent.now?.intent ?? "", guarantee ? `Guarantee: ${guarantee}` : ""].filter(Boolean).join("\n")} onclick={() => rika.open(agent)}
+            ><i class="rika-dot" aria-hidden="true"></i><span class="name">{agent.name}</span>{#if agent.guarantee}<GuaranteeBadge guarantee={agent.guarantee} compact />{/if}</button>
         {/each}
       {/if}
     </div>
@@ -254,6 +258,14 @@
     color: var(--ink);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .rika-agent-chip .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rika-agent-chip :global(.guarantee) {
+    margin: 0 -4px 0 -2px;
   }
   .rika-agent-chip[data-state="blocked"] {
     border-color: color-mix(in srgb, var(--warning) 50%, var(--hairline));

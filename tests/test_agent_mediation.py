@@ -418,3 +418,31 @@ def test_settings_simulates_applies_holds_and_ends(tmp_path):
         status, ended = running.request("/api/agents/sessions/end", {"id": session["id"]})
         assert status == 200 and ended["session"]["state"] == "ended"
         assert ingress_call(running, "POST", "/api/ingress/agent/call", {"tool": "list_tags"}, token=token)[0] == 401
+
+
+def test_the_demo_seed_covers_every_guarantee_with_a_paged_journal_a_hold_and_a_planted_file(tmp_path):
+    from kitty.core import agent_demo
+
+    settings = make_root(tmp_path, ("workspace",))
+    with site(settings) as running:
+        with closing(connect(settings.db_path)) as conn:
+            agent_demo.seed_demo(conn, settings.root)
+            agent_demo.seed_demo(conn, settings.root)  # once
+        status, overview = running.request("/api/agents")
+        assert status == 200 and overview["policy"]["version"] == 1 and "codex only reads" in overview["policy"]["source"]
+        sessions = {item["name"]: item for item in overview["sessions"]}
+        assert len(sessions) == 5
+        assert {item["guarantee"] for item in sessions.values()} == {"full", "attribution", "none"}
+        assert {item["state"] for item in sessions.values()} == {"confined", "unconfined", "ended", "refused"}
+        busy = sessions["omp-3f2a91c4"]
+        assert busy["accesses"] == 230 and busy["held"] and not busy["token"]
+        status, detail = running.request(f"/api/agents/session?id={busy['id']}")
+        assert status == 200 and len(detail["journal"]) == 200 and detail["next"] and detail["held"]
+        assert detail["planted"] == [{"path": str(settings.root / "projects" / "parser" / ".envrc"), "change": "created"}]
+        older = running.request(f"/api/agents/session?id={busy['id']}&before={detail['next']}")[1]
+        assert len(older["journal"]) == 30 and older["next"] is None
+        # Version 1 refused the old codex session's writes; the built-in policy would allow them.
+        old = running.request(f"/api/agents/session?id={sessions['codex-a19c3f60']['id']}")[1]
+        assert [row["tool"] for row in old["journal"] if row["decision"] == "deny"] == ["update_block", "append_blocks"]
+        simulated = running.request("/api/agents/policy/simulate", {"source": agent_policy.DEFAULT_SOURCE})[1]
+        assert simulated["counts"] == {"allow_to_deny": 0, "deny_to_allow": 2} and simulated["replayed"] == 256
