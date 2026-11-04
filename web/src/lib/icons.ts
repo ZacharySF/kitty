@@ -20,6 +20,7 @@ export const ICONS: Record<string, IconDef> = {
     path: "M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18ZM3.5 9.5c4 2 13 2 17 0M3.5 14.5c4-2 13-2 17 0M12 3c-3.5 4-3.5 14 0 18M12 3c3.5 4 3.5 14 0 18",
     accents: [[19.6, 4.4, 2.6]],
   },
+  goals: { path: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM17.5 12a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0", accents: [[12, 12, 2.8]] },
   calendar: { path: "M4 5h16v16H4ZM4 10h16M8 3v4M16 3v4M8 14h2M14 14h2M8 18h2", accents: [[15, 18, 3]] },
   opportunities: { path: "m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3Z", accents: [[19.2, 4.8, 2.8]] },
   study: { path: "M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3ZM12 6v16M6 9h3M15 9h3", accents: [[16.5, 15, 3.2]] },

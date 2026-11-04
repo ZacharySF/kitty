@@ -3,8 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_QUIET, QUIET_KEY, calendarNotice, clock, digestLine, emptyLedger, holds, inQuietHours,
-  jobNotice, quietSpan, readQuiet, step, writeQuiet,
+  DEFAULT_QUIET, QUIET_KEY, SOURCE_LABEL, calendarNotice, clock, digestLine, emptyLedger, holds, inQuietHours,
+  jobNotice, quietSpan, readQuiet, rikaNotice, step, writeQuiet,
 } from '../src/lib/notify.ts';
 
 function memory(initial = {}) {
@@ -97,4 +97,28 @@ test('a snoozed reminder hides until its snooze ends, then toasts again', () => 
   assert.deepEqual(after.toasts.map(n => n.key), [lecture.key]);
   assert.deepEqual(after.visible.map(n => n.key), [lecture.key]);
   assert.deepEqual(after.ledger.snoozed, {});
+});
+
+// Q15 A: Rika's urgent goal matches (GET /api/rika/alerts) are a third source.
+const stripe = rikaNotice({ id: 41, key: 'rika:41', title: 'Stripe closes tonight: Frontend Intern', body: '94% fit for “Summer internship”',
+  due_at: '2026-11-01T23:59:00Z', goal_id: 3, view: 'jobs', created_at: '2026-11-01T06:10:00Z' });
+
+test('an urgent Rika match becomes a notice keyed by its match', () => {
+  assert.deepEqual(stripe, { key: 'rika:41', source: 'rika', title: 'Stripe closes tonight: Frontend Intern', body: '94% fit for “Summer internship”',
+    due: '2026-11-01T23:59:00Z', target: { kind: 'rika', id: 41, goal_id: 3, view: 'jobs' } });
+  assert.equal(rikaNotice({ id: 2, key: 'rika:2', title: 't', body: 'b', due_at: null, goal_id: 1, view: null, created_at: '2026-11-01T06:00:00Z' }).due, '2026-11-01T06:00:00Z');
+  assert.equal(SOURCE_LABEL.rika, 'Rika');
+});
+
+test('quiet hours hold Rika alerts like job search, even when calendar rings through', () => {
+  const ringing = { ...night, letCalendar: true };
+  assert.equal(holds(ringing, stripe, 23 * 60), true);
+  const held = step(emptyLedger(), [lecture, stripe], ringing, at(23));
+  assert.deepEqual(held.toasts.map(n => n.key), [lecture.key]);
+  assert.deepEqual(held.ledger.held, [stripe.key]);
+  const morning = step(held.ledger, [lecture, stripe], ringing, at(8));
+  assert.deepEqual(morning.digest.map(n => n.key), [stripe.key]);
+  assert.equal(digestLine([lecture, followup, stripe]), '1 calendar · 1 job search · 1 rika');
+  const day = step(emptyLedger(), [stripe], DEFAULT_QUIET, at(10));
+  assert.deepEqual(day.toasts.map(n => n.key), [stripe.key]);
 });

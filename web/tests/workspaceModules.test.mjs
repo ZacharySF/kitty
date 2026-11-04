@@ -6,10 +6,10 @@ import {shortcutsFor,viewEnabled,visibleGroups,visibleNavigation,visibleRelation
 const ids=(items)=>items.map(item=>item.id);
 const labels=(groups)=>groups.map(group=>group.label);
 
-test('all modules off leaves only the core views and the Settings group',()=>{
-  assert.deepEqual(ids(visibleNavigation([])).sort(),['ai','settings','today']);
-  assert.deepEqual(labels(visibleGroups([])),['Settings']);
-  assert.deepEqual(visibleGroups([])[0].views,['settings','ai']);
+test('all modules off leaves only the core views: the atlas home and Goals in Plan, and Settings',()=>{
+  assert.deepEqual(ids(visibleNavigation([])).sort(),['ai','goals','settings','today']);
+  assert.deepEqual(labels(visibleGroups([])),['Plan','Settings']);
+  assert.deepEqual(visibleGroups([]).map(group=>group.views),[['today','goals'],['settings','ai']]);
   assert.deepEqual(visibleRelations([]),[]);
 });
 
@@ -22,7 +22,7 @@ test('each module alone exposes only its own views',()=>{
   assert.ok(applyaiOnly.includes('jobs')&&applyaiOnly.includes('profile')&&applyaiOnly.includes('reminders'));
   assert.ok(!applyaiOnly.includes('notes')&&!applyaiOnly.includes('calendar'));
   assert.deepEqual(labels(visibleGroups(['applyai'])),['Plan','Job search','Settings']);
-  assert.deepEqual(visibleGroups(['applyai'])[0].views,['today','reminders']);
+  assert.deepEqual(visibleGroups(['applyai'])[0].views,['today','goals','reminders']);
   assert.equal(viewEnabled('study',['applyai']),false);
   assert.equal(viewEnabled('study',['workspace']),true);
   assert.equal(viewEnabled('ai',[]),true);
@@ -35,7 +35,7 @@ test('the herdr, Tern and All agent skills views are Plan nodes owned by the Ter
     assert.ok(!ids(visibleNavigation(['applyai','workspace'])).includes(view));
     assert.ok(visibleGroups(['applyai','workspace','terminal']).find(group=>group.label==='Plan').views.includes(view));
   }
-  assert.deepEqual(visibleGroups(['terminal']).map(group=>[group.label,group.views]),[['Plan',['today','herdr','tern','agent-skills']],['Settings',['settings','ai']]]);
+  assert.deepEqual(visibleGroups(['terminal']).map(group=>[group.label,group.views]),[['Plan',['today','goals','herdr','tern','agent-skills']],['Settings',['settings','ai']]]);
   assert.ok(visibleRelations(['terminal']).some(([a,b])=>a==='herdr'&&b==='tern'));
   assert.ok(visibleRelations(['terminal']).some(([a,b])=>a==='tern'&&b==='agent-skills'));
 });
@@ -60,7 +60,7 @@ test('keyboard help lists only reachable shortcuts',()=>{
   assert.ok(titles(['applyai']).includes('Job decisions'));
   assert.ok(!titles(['applyai']).includes('Study'));
   const navigate=(enabled)=>shortcutsFor(enabled).find(group=>group.title==='Navigate').shortcuts;
-  assert.ok(navigate([]).some(([keys])=>keys==='Ctrl + V'));
+  assert.ok(navigate([]).some(([keys])=>keys==='Ctrl + Alt / Ctrl + V'));
   assert.ok(!navigate([]).some(([keys])=>keys.includes('Ctrl + X')||keys.includes('Ctrl + C')));
   assert.ok(navigate(['applyai']).some(([keys])=>keys.includes('Ctrl + C')));
 });

@@ -126,6 +126,9 @@ async function open(hash, { viewport = DEFAULT, modules, theme, storage, setup }
       body.modules.configured = modules;
       await route.fulfill({ response, json: body });
     });
+  // The demo's urgent Rika match would toast over the bottom-right of every page; the
+  // notification tests serve their own (mockReminders) and goals.browser tests the real one.
+  await context.route("**/api/rika/alerts", (route) => route.fulfill({ json: { alerts: [] } }));
   await setup?.(context);
   const page = await context.newPage();
   const problems = [];
@@ -1052,9 +1055,10 @@ describe("home rails", () => {
       assert.ok(s.width > l.width && s.width > r.width, `the atlas (${s.width}px) is not the widest column`);
       for (const [name, box] of [["left", l], ["right", r]])
         assert.ok(Math.abs(box.top - s.top) <= 1 && Math.abs(box.bottom - s.bottom) <= 1, `${name} rail is not as tall as the atlas`);
-      // The rails hold only widgets: Today and Quick note, Agents and Up next.
+      // The rails hold only widgets: the morning brief, Today and Quick note, Agents and Up next.
       const titles = (rail) => rail.locator(":scope > section h3").allInnerTexts();
-      assert.deepEqual(await titles(left), ["Today", "Quick note"]);
+      await left.getByRole("region", { name: "Morning brief" }).waitFor();
+      assert.deepEqual(await titles(left), ["Morning brief", "Today", "Quick note"]);
       assert.deepEqual(await titles(right), ["Agents", "Up next"]);
       for (const rail of [left, right]) {
         assert.equal(await rail.getByRole("searchbox").count(), 0, "a rail still holds the section search");
@@ -2657,7 +2661,8 @@ describe("Rika against the demo's scripted responder", () => {
     await ask(page, "add a task Buy oat milk");
     const toast = replies(page).getByRole("listitem").filter({ hasText: /oat milk/i });
     await toast.getByRole("button", { name: "Undo" }).waitFor();
-    assert.match(await toast.locator("[data-tier]").innerText(), /fast|standard|deep/i);
+    // A phrase runs its tool with no model, so its chip reads Direct (Q13 readout).
+    assert.match(await toast.locator("[data-tier]").innerText(), /^direct$/i);
     await page.keyboard.press("Control+j");
     const history = drawer(page);
     await history.getByText("add a task Buy oat milk").waitFor();
@@ -3211,10 +3216,11 @@ describe("mind-map pen", () => {
   });
 });
 
-/** Serves the two reminder sources from fixtures; `calls` records snoozes and clears. */
-async function mockReminders(context, { calendar = [], job = [] } = {}) {
+/** Serves the reminder sources from fixtures (Rika's alerts, none by default); `calls` records snoozes and clears. */
+async function mockReminders(context, { calendar = [], job = [], rika = [] } = {}) {
   const state = { calendar: [...calendar], job: [...job], calls: [] };
   await context.route("**/api/calendar/reminders", (route) => route.fulfill({ json: { items: state.calendar } }));
+  await context.route("**/api/rika/alerts", (route) => route.fulfill({ json: { alerts: rika } }));
   await context.route("**/api/calendar/reminders/dismiss", (route) => {
     const body = route.request().postDataJSON();
     state.calls.push(["dismiss", body.event_id]);

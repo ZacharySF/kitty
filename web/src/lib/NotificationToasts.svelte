@@ -4,7 +4,7 @@
   import ToastStack from "./ui/ToastStack.svelte";
 
   let { onopen }: { onopen: (notice: Notice) => void } = $props();
-  const TONE = { calendar: "var(--c1, var(--violet))", job: "var(--c4, var(--violet))" } as const;
+  const TONE = { calendar: "var(--c1, var(--violet))", job: "var(--c4, var(--violet))", rika: "var(--c2, var(--violet))" } as const;
 
   function open(toast: Toast) {
     notifier.dismiss(toast.id);
@@ -26,7 +26,7 @@
     {@const source = toast.notice?.source}
     <div class="top">
       <i class="dot" aria-hidden="true"></i>
-      <span>{source ? SOURCE_LABEL[source] : "Quiet hours"}</span>
+      <span>{source === "rika" ? "Rika · strong match" : source ? SOURCE_LABEL[source] : "Quiet hours"}</span>
       {#if toast.notice}<span class="when">{when(toast.notice)}</span>{/if}
       <button class="x" aria-label="Dismiss notification" onclick={() => notifier.dismiss(toast.id)}>×</button>
     </div>
@@ -40,7 +40,7 @@
     <div class="acts">
       {#if toast.notice}
         <button class="pill" onclick={() => toast.notice && notifier.snooze(toast.notice)}
-          >{toast.notice.source === "calendar" ? "Snooze 10 min" : "Snooze a day"}</button
+          >{toast.notice.source === "job" ? "Snooze a day" : "Snooze 10 min"}</button
         >
       {/if}
       <button class="pill primary" onclick={() => open(toast)}>Open</button>
