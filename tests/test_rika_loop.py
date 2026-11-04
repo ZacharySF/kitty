@@ -356,3 +356,133 @@ def test_a_plan_item_that_fails_is_reported_and_the_rest_still_run(build, worksp
     assert statuses == {"notes": "done", "tasks": "failed"}
     reply = of(seen, "message")[-1]["message"]
     assert reply["status"] == "done" and "1 failed" in reply["text"]
+
+
+# Routing memory, prompt caching and memory (Q13, Q18) --------------------------
+
+def _counted(name: str, args: dict, *, prompt=1000, cached=600, completion=40, cost=0.0002) -> bytes:
+    """One tool call with OpenRouter's usage, including cached prompt tokens."""
+    return _sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "type": "function",
+                                                        "function": {"name": name, "arguments": json.dumps(args)}}]},
+                              "finish_reason": "tool_calls"}]},
+                {"choices": [], "usage": {"prompt_tokens": prompt, "completion_tokens": completion, "cost": cost,
+                                          "prompt_tokens_details": {"cached_tokens": cached}}})
+
+
+def _said(text: str, *, prompt=1200, cached=1000, completion=10, cost=0.0001) -> bytes:
+    return _sse({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]},
+                {"choices": [], "usage": {"prompt_tokens": prompt, "completion_tokens": completion, "cost": cost,
+                                          "prompt_tokens_details": {"cached_tokens": cached}}})
+
+
+def test_a_model_turn_records_tokens_cost_and_path_on_the_reply_and_a_route(build, workspace, openrouter):
+    from kitty.core.rika import routes
+
+    openrouter.replies = [_counted("add_card", {"front": "Mitosis", "back": "Cell division"}), _said("Added it.")]
+    app, events = build()
+    sent = app.rika.submit(workspace.conn, "could you make me a flashcard about mitosis")
+    seen = until(events, finished)
+    assert of(seen, "message")[0]["message"]["usage"] is None  # the user's own message
+    reply = of(seen, "message")[-1]["message"]
+    assert reply["usage"] == {"tokens_in": 2200, "tokens_cached": 1600, "tokens_out": 50, "path": ["add_card"],
+                              "signature": "add_card", "remembered": False, "shortcut": False}
+    assert reply["cost_usd"] == pytest.approx(0.0003) and reply["reply_to"] == sent["message_id"]
+    assert [item for item in store.history(workspace.conn)["items"] if item["kind"] == "message"][-1]["usage"] == reply["usage"]
+    [route] = routes.listing(workspace.conn)
+    assert (route["signature"], route["tier"], route["uses"], route["avg_tokens"]) == ("add_card", "fast", 1, 2250)
+    assert route["avg_cost_usd"] == pytest.approx(0.0003)
+    app.rika.submit(workspace.conn, "add a node Photosynthesis")
+    direct = of(until(events, finished), "message")[-1]["message"]
+    assert direct["model"] == "deterministic" and direct["tier"] == "fast" and direct["cost_usd"] is None
+    assert direct["usage"] == {"tokens_in": 0, "tokens_cached": 0, "tokens_out": 0, "path": ["add_canvas_node"],
+                               "signature": "add_canvas_node", "remembered": False, "shortcut": False}
+    assert {item["signature"]: item["tier"] for item in routes.listing(workspace.conn)}["add_canvas_node"] == "direct"
+
+
+def test_the_next_request_of_the_same_kind_starts_on_the_remembered_tier(build, workspace, openrouter):
+    openrouter.replies = [_tool_call("add_card", '{"front": "Mitosis"}'),
+                          _counted("add_card", {"front": "Mitosis", "back": "Cell division"}), _said("Done.")]
+    app, events = build()
+    app.rika.submit(workspace.conn, "please make me a flashcard about mitosis")
+    assert of(until(events, finished), "message")[-1]["message"]["tier"] == "standard"
+    openrouter.replies = [_counted("add_card", {"front": "Osmosis", "back": "Water"}), _said("Done.")]
+    app.rika.submit(workspace.conn, "make a card about osmosis")
+    seen = until(events, finished)
+    assert [body["model"] for _headers, body in openrouter.requests[3:]] == ["synthetic/standard"] * 2
+    assert [event["tier"] for event in of(seen, "tier")] == ["standard"]
+    assert of(seen, "message")[-1]["message"]["usage"]["remembered"] is True
+    # An override still wins over the memory.
+    openrouter.replies = [_said("Sure.")]
+    app.rika.submit(workspace.conn, "make a card about diffusion", tier="fast")
+    assert of(until(events, finished), "message")[-1]["message"]["usage"]["remembered"] is False
+    assert openrouter.requests[-1][1]["model"] == "synthetic/fast"
+
+
+def test_a_shortcut_seen_twice_runs_with_no_model_and_undoing_it_forgets_it(build, workspace, openrouter):
+    from kitty.core.rika import routes, tools
+
+    app, events = build()
+    for front, back in (("Mitosis", "Cell division"), ("Meiosis", "Halving")):
+        openrouter.replies = [_counted("add_card", {"front": front, "back": back}), _said("Added.")]
+        app.rika.submit(workspace.conn, f"quiz me later on {front}, answer {back}")
+        assert of(until(events, finished), "message")[-1]["message"]["usage"]["shortcut"] is False
+    sent = len(openrouter.requests)
+    app.rika.submit(workspace.conn, "Quiz me later on Osmosis, answer Water moving.")
+    seen = until(events, finished)
+    assert len(openrouter.requests) == sent  # the mock transport was not hit
+    assert [(event["tier"], event["model"]) for event in of(seen, "tier")] == [("fast", "shortcut")]
+    [action] = of(seen, "action")
+    reply = of(seen, "message")[-1]["message"]
+    assert reply["model"] == "shortcut" and reply["usage"]["shortcut"] is True and reply["usage"]["tokens_in"] == 0
+    assert reply["text"] == action["action"]["summary"] + "."
+    assert workspace.conn.execute("SELECT count(*) FROM flash_notes").fetchone()[0] == 3
+    app.rika.undo(workspace.conn, action["action"]["id"])
+    assert routes.shortcut(workspace.conn, "quiz me later on Osmosis, answer Water moving", tools.registry()) is None
+
+
+def test_anthropic_requests_cache_the_stable_prompt_and_carry_preferences_and_memory(build, workspace, openrouter):
+    from kitty.core.rika import memory
+
+    workspace.conn.execute("INSERT INTO ai_models VALUES('anthropic/claude-haiku-4.5','haiku','0.000001','0.000002',"
+                           "200000,?)", (web_ai._now().isoformat(),))
+    workspace.conn.execute("UPDATE ai_settings SET rika_fast_model='anthropic/claude-haiku-4.5' WHERE id=1")
+    memory.add_preference(workspace.conn, "Keep replies short", source="added")
+    notebook = notes.create_notebook(workspace.conn, "Notes")["id"]
+    for index in range(12):
+        notes.create_page(workspace.conn, notebook, f"Filler {index}")
+    notes.create_page(workspace.conn, notebook, "Chlorophyll")
+    openrouter.replies = [_said("It absorbs light.")]
+    app, events = build()
+    app.rika.submit(workspace.conn, "what did I note about chlorophyll")
+    until(events, finished)
+    messages = openrouter.requests[0][1]["messages"]
+    stable, volatile = messages[0]["content"]
+    assert messages[0]["role"] == "system" and stable["cache_control"] == {"type": "ephemeral"}
+    assert "You are Rika" in stable["text"] and "- Keep replies short" in stable["text"]
+    assert "remember_preference" in stable["text"] and "Today is" not in stable["text"]
+    assert "Today is" in volatile["text"] and "cache_control" not in volatile
+    assert messages[-1] == {"role": "user", "content": "what did I note about chlorophyll"}
+    recalled = messages[-2]
+    assert recalled["role"] == "user" and "untrusted" in recalled["content"] and "Chlorophyll" in recalled["content"]
+    # Other providers cache on their own: the system prompt stays one string.
+    workspace.conn.execute("UPDATE ai_settings SET rika_fast_model='synthetic/fast' WHERE id=1")
+    openrouter.replies = [_said("Hello.")]
+    app.rika.submit(workspace.conn, "hello")
+    until(events, finished)
+    system = openrouter.requests[1][1]["messages"][0]
+    assert isinstance(system["content"], str) and "Keep replies short" in system["content"] and "Today is" in system["content"]
+
+
+def test_remember_is_a_deterministic_phrase_and_its_undo_forgets_the_preference(build, workspace, no_network):
+    from kitty.core.rika import memory
+
+    app, events = build()
+    app.rika.submit(workspace.conn, "remember that I study best in the mornings")
+    seen = until(events, finished)
+    [action] = of(seen, "action")
+    assert action["action"]["tool"] == "remember_preference" and action["action"]["reversible"] is True
+    assert of(seen, "message")[-1]["message"]["text"] == "Remembered: I study best in the mornings."
+    assert [(item["text"], item["source"]) for item in memory.preferences(workspace.conn)] == [
+        ("I study best in the mornings", "stated")]
+    app.rika.undo(workspace.conn, action["action"]["id"])
+    assert memory.preferences(workspace.conn) == [] and no_network == []

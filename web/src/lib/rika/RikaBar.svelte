@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { nowText } from "../agentSkills";
+  import BriefChip from "../goals/BriefChip.svelte";
   import { SpaceHold } from "./hold";
   import { agentChips, downloadLabel } from "./rika";
   import { rika } from "./session.svelte";
@@ -110,6 +111,7 @@
   <label class="field">
     <input bind:this={input} bind:value placeholder={heard} aria-label="Ask Rika" aria-busy={listening} spellcheck="false" autocomplete="off" onkeydown={keydown} />
   </label>
+  <BriefChip />
   {#if chips.kind === "count" || chips.agents.length}
     <div class="chips" role="group" aria-label="Running agents">
       {#if chips.kind === "count"}

@@ -16,6 +16,7 @@ const repository = fileURLToPath(new URL("../..", import.meta.url));
 const DEFAULT = { width: 1280, height: 850 };
 const GUIDE = "https://github.com/ZacharySF/kitty/blob/main/docs/GOOGLE_ONBOARDING.md";
 const PAGES = ["Appearance", "Desktop", "Quiet hours", "Account", "Modules", "Graphs"];
+const RIKA_PAGES = ["Routing memory", "Email", "Memory"];
 
 let backend;
 let server;
@@ -102,7 +103,7 @@ const region = (page, name) => page.getByRole("region", { name, exact: true });
 const shownPages = (page) => page.evaluate((names) =>
   [...document.querySelectorAll("section[aria-label]")]
     .filter((node) => names.includes(node.getAttribute("aria-label")) && node.getClientRects().length)
-    .map((node) => node.getAttribute("aria-label")), PAGES);
+    .map((node) => node.getAttribute("aria-label")), [...PAGES, ...RIKA_PAGES]);
 
 /** Elements inside `scope` drawn as their own box: a visible border all round over a painted fill. */
 const nestedBoxes = (locator) => locator.evaluate((scope) => {
@@ -132,15 +133,15 @@ describe("settings index", () => {
     const title = page.getByRole("heading", { level: 1, name: "Settings" });
     assert.match(await title.evaluate((node) => getComputedStyle(node).fontFamily), /Fraunces/);
     const items = index(page).locator("a, button");
-    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 8);
+    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 11);
     assert.deepEqual(await items.allTextContents().then((texts) => texts.map((text) => text.trim())),
-      [...PAGES, "Profile & saved answers", "AI & privacy"]);
+      [...PAGES, "Profile & saved answers", "AI & privacy", ...RIKA_PAGES]);
     for (const item of await items.all()) assert.equal(await item.locator("svg").count(), 1, "index item without its icon");
     const groups = await index(page).locator("h2").evaluateAll((nodes) => nodes.map((node) => {
       const style = getComputedStyle(node);
       return { text: node.textContent.trim(), family: style.fontFamily, weight: style.fontWeight, transform: style.textTransform, italic: style.fontStyle };
     }));
-    assert.deepEqual(groups.map((group) => group.text), ["General", "Workspace", "Careers & AI"]);
+    assert.deepEqual(groups.map((group) => group.text), ["General", "Workspace", "Careers & AI", "Rika"]);
     for (const group of groups) {
       assert.match(group.family, /^"?Inter/, `${group.text} is not Inter`);
       assert.equal(group.weight, "600");
@@ -205,7 +206,7 @@ describe("settings index", () => {
     await region(page, "Account").waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#settings/account");
     await find.fill("");
-    assert.equal((await names()).length, 8);
+    assert.equal((await names()).length, 11);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -306,7 +307,7 @@ describe("settings pages", () => {
   test("every page is one surface with hairline sections, no nested boxes and no native select", async () => {
     const { page, problems, context } = await open("settings");
     await index(page).waitFor();
-    for (const name of PAGES) {
+    for (const name of [...PAGES, ...RIKA_PAGES]) {
       await index(page).getByRole("link", { name, exact: true }).click();
       const shown = region(page, name);
       await shown.waitFor();
@@ -338,6 +339,46 @@ describe("settings pages", () => {
     await desktop.getByText(/desktop app/).waitFor();
     const words = (await desktop.locator(".br-panel__header ~ *").innerText()).trim().split(/\s+/).length;
     assert.ok(words <= 12, `Desktop prints ${words} words in the browser`);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Rika pages and the drawer readout show the demo's own routing memory, mailbox, index and replies", async () => {
+    const { page, problems, context } = await open("settings/rika-routing");
+    const routing = region(page, "Routing memory");
+    const card = routing.locator("tbody tr").filter({ hasText: "Add card" }).first();
+    await card.waitFor();
+    assert.equal(await card.locator(".shortcut").count(), 1, "the demo's shortcut has no badge");
+    assert.match(await routing.innerText(), /Avg cost per request · 14 days/);
+    assert.match(await routing.innerText(), /cache hits \d+%/);
+
+    await index(page).getByRole("link", { name: "Email", exact: true }).click();
+    const email = region(page, "Email");
+    await email.getByText("Demo mailbox — nothing is really sent").waitFor();
+    for (const name of ["Scheduling", "Confirmations", "Thanks"])
+      assert.equal(await email.getByRole("switch", { name: `Auto-send ${name}` }).getAttribute("aria-checked"), "false");
+    const maya = email.getByRole("listitem", { name: /Re: Onsite interview: pick a time/ });
+    await maya.waitFor();
+    assert.match(await maya.innerText(), /Maya Chen/);
+    assert.equal(await maya.getByRole("button", { name: "Send", exact: true }).count(), 1);
+    await email.getByText(/Gmail's API can't delay or undo a send/).waitFor();
+
+    await index(page).getByRole("link", { name: "Memory", exact: true }).click();
+    const memory = region(page, "Memory");
+    await memory.getByRole("list", { name: "Preferences" }).getByRole("textbox").first().waitFor();
+    await memory.getByRole("searchbox", { name: "Search what Rika knows" }).fill("intern");
+    await memory.getByRole("list", { name: "Search results" }).getByRole("listitem").filter({ hasText: /jobs/i }).first().waitFor();
+    await memory.getByText(/Note text stays local|Notes AI sharing is on/).waitFor();
+
+    // A deterministic demo reply reads Direct · its tool · 0 tokens · $0 in the drawer.
+    const ask = page.getByRole("textbox", { name: "Ask Rika" });
+    await ask.fill("add a task review the Rika readout");
+    await ask.press("Enter");
+    await page.getByRole("list", { name: "Rika replies" }).getByText("Added the task review the Rika readout.").waitFor();
+    await page.getByRole("button", { name: "Rika history", exact: true }).click();
+    const reply = page.getByRole("dialog", { name: "Rika history" }).locator(".said").filter({ hasText: "Added the task review the Rika readout." });
+    await reply.getByText("create_task · 0 tokens · $0").waitFor();
+    assert.equal(await reply.locator(".rika-chip").getAttribute("data-tier"), "direct");
     assert.deepEqual(problems, []);
     await context.close();
   });

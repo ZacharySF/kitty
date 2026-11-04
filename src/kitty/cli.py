@@ -1587,15 +1587,26 @@ app.add_typer(proposals_app, name="proposals")
 
 
 @gmail_app.command("auth")
-def gmail_auth() -> None:
-    """Open the browser consent page (read-only scope) and save the token to data/."""
+def gmail_auth(
+    compose: Annotated[bool, typer.Option(
+        "--compose", help="Authorise Rika's separate drafting token (read + drafts and sending) instead.")] = False,
+) -> None:
+    """Open the browser consent page (read-only scope) and save the token to data/.
+
+    With --compose, save Rika's separate opt-in token (gmail.readonly + gmail.compose) to
+    data/gmail_compose_token.json; the job-status check keeps using only the read-only token.
+    """
     from kitty.core.gmail import auth as gmail_auth_core
 
     try:
-        path = gmail_auth_core.run_consent_flow(_settings())
+        path = gmail_auth_core.run_consent_flow(_settings(), compose=compose)
     except gmail_auth_core.GmailSetupError as exc:
         error_console.print(escape(str(exc)), highlight=False, soft_wrap=True)
         raise typer.Exit(code=1) from exc
+    if compose:
+        console.print(f"[green]Gmail connected for Rika's drafts (read + compose).[/green] Token saved to {path}.")
+        console.print("Rika saves replies as Gmail drafts; auto-send stays off per kind until you turn it on.")
+        return
     console.print(f"[green]Gmail authorised (read-only).[/green] Token saved to {path}.")
     console.print("Next: [bold]kitty gmail check[/bold]")
 

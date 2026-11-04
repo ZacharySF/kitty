@@ -8,6 +8,13 @@ output limit, at the catalog prices), committed in the shared ``ai_reviews`` led
 before the network call, and is sent with those prices as the provider ceiling and
 no fallbacks or retries. A request that would exceed today's remaining budget only
 runs after the user approves it (the loop asks). Demo mode never gets here.
+
+Prompt caching: the loop sends the system prompt as two text parts, the stable
+instructions and preferences first and the volatile date line second (:func:`system`).
+Anthropic and Gemini models need an explicit breakpoint, so the stable part carries
+``cache_control: {type: 'ephemeral'}`` (OpenRouter's prompt-caching format); other
+providers cache repeated prefixes on their own and get the parts joined as one string.
+The reply reports prompt, cached and completion tokens from OpenRouter's ``usage``.
 """
 from __future__ import annotations
 
@@ -27,6 +34,8 @@ BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 PURPOSE = "rika"
 FRAMING = 1024
 TIMEOUT = 120
+#: Model prefixes whose providers cache only at explicit ``cache_control`` breakpoints.
+EXPLICIT_CACHE = ("anthropic/", "google/gemini")
 #: Tests swap in an ``httpx.MockTransport``; None is the real network.
 transport: httpx.BaseTransport | None = None
 
@@ -58,6 +67,9 @@ class Reply:
     tool_calls: list[dict] = field(default_factory=list)
     finish_reason: str | None = None
     cost: Decimal | None = None
+    tokens_in: int | None = None
+    tokens_cached: int | None = None
+    tokens_out: int | None = None
 
 
 def _web_ai():
@@ -86,7 +98,8 @@ def prepare(app, conn: sqlite3.Connection, model_id: str, messages: list[dict], 
         raise ModelUnavailable("Model prices expired; refresh the model list in Settings → AI")
     prompt, completion = Decimal(model["prompt_price"]), Decimal(model["completion_price"])
     body = {
-        "model": model_id, "messages": messages, "max_tokens": settings["max_output_tokens"], "stream": True,
+        "model": model_id, "messages": _cacheable(model_id, messages), "max_tokens": settings["max_output_tokens"],
+        "stream": True,
         "provider": {"sort": settings["routing"], "data_collection": "deny", "require_parameters": True,
                      "allow_fallbacks": False,
                      "max_price": {"prompt": float(prompt * 1_000_000), "completion": float(completion * 1_000_000),
@@ -145,6 +158,40 @@ def _cost(usage) -> Decimal | None:
     return value if value.is_finite() and value >= 0 else None
 
 
+def system(stable: str, volatile: str) -> dict:
+    """A system message whose first part stays the same between requests (cacheable)."""
+    return {"role": "system", "content": [{"type": "text", "text": stable}, {"type": "text", "text": volatile}]}
+
+
+def _cacheable(model_id: str, messages: list[dict]) -> list[dict]:
+    """The messages as `model_id`'s provider caches them: a breakpoint after the stable
+    system part where caching is explicit, else that system message as one string."""
+    explicit = model_id.startswith(EXPLICIT_CACHE)
+    shaped = []
+    for message in messages:
+        parts = message.get("content")
+        if message.get("role") == "system" and isinstance(parts, list) and parts:
+            if explicit:
+                message = {**message, "content": [{**parts[0], "cache_control": {"type": "ephemeral"}}, *parts[1:]]}
+            else:
+                message = {**message, "content": "\n\n".join(part["text"] for part in parts)}
+        shaped.append(message)
+    return shaped
+
+
+def _count(value) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _tokens(reply: Reply, usage) -> None:
+    if not isinstance(usage, dict):
+        return
+    details = usage.get("prompt_tokens_details")
+    reply.tokens_in = _count(usage.get("prompt_tokens"))
+    reply.tokens_cached = _count(details.get("cached_tokens")) if isinstance(details, dict) else None
+    reply.tokens_out = _count(usage.get("completion_tokens"))
+
+
 def stream(call: Call, on_token: Callable[[str], None]) -> Reply:
     """Send one request and stream its text; tool calls are assembled from their deltas."""
     reply, calls = Reply(), {}
@@ -164,6 +211,7 @@ def stream(call: Call, on_token: Callable[[str], None]) -> Reply:
                         raise ModelFailed("OpenRouter declined the request; it may have been billed and was not retried")
                     if "usage" in chunk:
                         reply.cost = _cost(chunk["usage"])
+                        _tokens(reply, chunk["usage"])
                     for choice in chunk.get("choices") or []:
                         delta = choice.get("delta") or {}
                         if isinstance(delta.get("content"), str) and delta["content"]:
