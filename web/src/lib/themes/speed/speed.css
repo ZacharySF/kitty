@@ -11,9 +11,12 @@
   --spd-ink: #141716;
   --spd-paper: #f8f7f3;
   --spd-misprint: 3px 3px 0 -0.5px color-mix(in srgb, var(--spd-crimson) 58%, transparent);
-  /* Paper fibres: dark noise, where the engine's grain is white. */
-  --spd-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .1 0 0 0 0 .12 0 0 0 0 .11 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  --backdrop: var(--spd-grain), linear-gradient(180deg, #efeee9, #e8e8e2);
+  /* Paper fibres: dark noise, where the engine's grain is white (grain.source.svg, rendered
+     by scripts/render-theme-art.mjs: an SVG filter here re-ran on every sheet repaint). */
+  --spd-grain: url("./grain-160.webp");
+  /* No grain on the root: the art's fibre layer grains the whole window once, on its own
+     layer, so repaints of the page over it never redraw a full-window noise tile. */
+  --backdrop: linear-gradient(180deg, #efeee9, #e8e8e2);
   --hairline: color-mix(in srgb, var(--spd-ink) 26%, transparent);
   --border-fine: color-mix(in srgb, var(--spd-ink) 30%, transparent);
   --r-control: 2px;

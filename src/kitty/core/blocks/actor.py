@@ -1,4 +1,4 @@
-"""Who made a block transaction: the ``actor`` columns of ``op_log`` (migration 050).
+"""Who made a block transaction: the ``actor`` columns of ``op_log`` (migration 051).
 
 Every ``op_log`` row records, besides the device it was written on, the kind of actor
 that wrote it, a display name and (for agents and clients) a session:

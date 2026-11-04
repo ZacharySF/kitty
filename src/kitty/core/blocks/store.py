@@ -135,7 +135,7 @@ def _has_crdt(conn: sqlite3.Connection) -> bool:
 
 
 def _has_actor(conn: sqlite3.Connection) -> bool:
-    """Whether op_log records actors (migrations before 050 transact without them)."""
+    """Whether op_log records actors (migrations before 051 transact without them)."""
     return conn.execute("SELECT 1 FROM pragma_table_info('op_log') WHERE name='actor'").fetchone() is not None
 
 

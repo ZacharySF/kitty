@@ -1,6 +1,9 @@
 // Run with Node >=22.6: node --experimental-strip-types --test tests/themes.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readdirSync, readFileSync} from 'node:fs';
+import {basename, dirname, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {DEFAULT_THEME, THEMES, getTheme} from '../src/lib/themes/catalog.ts';
 import {FOCUS_STYLES, MIN_SURFACE_ALPHA, MOTION_STYLES, SELECTION_STYLES, SURFACE_STYLES} from '../src/lib/themes/contract.ts';
 
@@ -213,4 +216,22 @@ test('half blood is flat heraldic colour on an ultramarine field with a sun-oran
   assert.ok(hue(roles.signal) > 50 && hue(roles.signal) < 80, `accent ${roles.signal} is sun orange`);
   assert.ok(graph.some((color) => hue(color) > 120 && hue(color) < 150), 'a grass green data colour');
   assert.ok(graph.some((color) => hue(color) < -90 && hue(color) > -120 && luminance(color) > 0.4), 'a pale moon blue data colour');
+});
+
+test('theme art runs no live SVG filters or filtered data-URI tiles; each painted source has its WebP', () => {
+  // Turbulence, displacement and blur filters re-ran on every repaint of the fixed art layer
+  // (2–10 fps in Chromium, worse in WebKitGTK); scripts/render-theme-art.mjs renders them.
+  const root = fileURLToPath(new URL('../src/lib/themes/', import.meta.url));
+  const files = readdirSync(root, {recursive: true}).filter((name) => /\.(svelte|css|ts|svg)$/.test(name));
+  for (const name of files.filter((file) => !file.endsWith('.source.svg'))) {
+    const text = readFileSync(join(root, name), 'utf8');
+    assert.doesNotMatch(text, /<filter[\s>]|%3Cfilter|feTurbulence|feDisplacementMap|feGaussianBlur/, `${name} runs an SVG filter`);
+  }
+  const sources = files.filter((file) => file.endsWith('.source.svg'));
+  assert.ok(sources.length > 0);
+  for (const source of sources) {
+    const stem = basename(source, '.source.svg');
+    const rendered = readdirSync(join(root, dirname(source))).filter((file) => file.startsWith(`${stem}-`) && file.endsWith('.webp'));
+    assert.ok(rendered.length > 0, `${source} is rendered (node scripts/render-theme-art.mjs)`);
+  }
 });

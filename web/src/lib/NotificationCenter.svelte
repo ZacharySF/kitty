@@ -56,6 +56,7 @@
     <ul>
       {#each items as notice (notice.key)}
         {@const unread = !notifier.ledger.read.includes(notice.key)}
+        {@const clearLabel = notice.source === "job" ? "Done" : notice.source === "rika" ? "Not relevant" : "Dismiss"}
         <li class:unread data-source={notice.source}>
           <button class="item" onclick={() => open(notice)}>
             <span class="meta">
@@ -66,8 +67,8 @@
             <strong>{notice.title}</strong>
             <small>{notice.body}{#if unread}<span class="sr-only"> · unread</span>{/if}</small>
           </button>
-          <button class="clear" onclick={() => notifier.clear(notice)} aria-label={`${notice.source === "job" ? "Mark done" : "Dismiss"}: ${notice.title}`}
-            >{notice.source === "job" ? "Done" : "Dismiss"}</button
+          <button class="clear" onclick={() => notifier.clear(notice)} aria-label={`${notice.source === "job" ? "Mark done" : clearLabel}: ${notice.title}`}
+            >{clearLabel}</button
           >
         </li>
       {:else}
@@ -188,6 +189,10 @@
   li[data-source="job"],
   .chip[data-source="job"] {
     --tone: var(--c4, var(--violet));
+  }
+  li[data-source="rika"],
+  .chip[data-source="rika"] {
+    --tone: var(--c2, var(--violet));
   }
   li:hover {
     background: color-mix(in srgb, var(--ink) 6%, transparent);

@@ -88,9 +88,10 @@ before(async () => {
     `user_pref("browser.shell.checkDefaultBrowser", false);`,
     `user_pref("datareporting.policy.dataSubmissionEnabled", false);`,
   ].join("\n"));
-  // --remote-allow-system-access lets BiDi open the extension's own moz-extension:// page.
+  // System access lets BiDi open the extension's own moz-extension:// page: the switch
+  // before Firefox 159, MOZ_REMOTE_ALLOW_SYSTEM_ACCESS from 159 on.
   firefox = spawn(binary, ["--headless", "--no-remote", "--profile", profile, "--remote-debugging-port", "0", "--remote-allow-system-access", "about:blank"],
-    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, MOZ_HEADLESS: "1" } });
+    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, MOZ_HEADLESS: "1", MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: "1" } });
   let output = "";
   const endpoint = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Firefox did not start:\n${output}`)), 60_000);

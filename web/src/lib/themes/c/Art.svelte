@@ -5,7 +5,14 @@
    * tracery arch rising behind the page, and a large astrological wheel of sigils that turns
    * very slowly (calm motion; Reduce motion stills it). Muted teal appears only as two small
    * planets. The engraving stays faint enough for dim text over it. Original drawing.
+   *
+   * The bleeding washes and the scratch grain are bleed.source.svg and scratch.source.svg
+   * rendered to WebP (scripts/render-theme-art.mjs): as live SVG filters they re-ran on
+   * every frame of the wheel's turn. The lattice and the line art stay vector.
    */
+  import bleed from "./bleed-1600.webp";
+  import scratch from "./scratch-256.webp";
+
   const SIGILS = [
     "M-5 0a5 5 0 1 0 10 0a5 5 0 1 0-10 0M0-5v10M-5 0h10",
     "M3-5a5 5 0 1 0 0 10a4 4 0 1 1 0-10",
@@ -32,25 +39,14 @@
     <pattern id="c-hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
       <path d="M0 0v4" stroke="#f1ece8" stroke-opacity="0.42" stroke-width="0.7" />
     </pattern>
-    <filter id="c-bleed" x="-30%" y="-30%" width="160%" height="160%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.011" numOctaves="3" seed="21" result="noise" />
-      <feDisplacementMap in="SourceGraphic" in2="noise" scale="110" xChannelSelector="R" yChannelSelector="G" result="bled" />
-      <feGaussianBlur in="bled" stdDeviation="16" />
-    </filter>
-    <filter id="c-scratch" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="1" seed="8" />
-      <feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 -1.6 1.25" />
-    </filter>
+    <pattern id="c-scratch" width="256" height="256" patternUnits="userSpaceOnUse">
+      <image href={scratch} width="256" height="256" />
+    </pattern>
   </defs>
 
   <rect width="1600" height="1000" fill="url(#c-lattice)" />
 
-  <g filter="url(#c-bleed)">
-    <ellipse cx="900" cy="560" rx="380" ry="250" fill="#6a0d18" opacity="0.6" />
-    <ellipse cx="180" cy="880" rx="300" ry="140" fill="#560a14" opacity="0.62" />
-    <ellipse cx="1440" cy="120" rx="260" ry="110" fill="#620c17" opacity="0.5" />
-    <ellipse cx="420" cy="140" rx="200" ry="70" fill="#4a0810" opacity="0.5" />
-  </g>
+  <image href={bleed} width="1600" height="1000" />
 
   <!-- Gothic tracery: a pointed arch with cusps and a quatrefoil, rising behind the page. -->
   <g transform="translate(560 1000)" fill="none" stroke="#f1ece8" stroke-opacity="0.13" stroke-width="1">
@@ -75,7 +71,7 @@
     {/each}
   </g>
 
-  <rect width="1600" height="1000" filter="url(#c-scratch)" opacity="0.05" />
+  <rect width="1600" height="1000" fill="url(#c-scratch)" opacity="0.05" />
 </svg>
 
 <!-- The wheel: engraved rings, twelve sigils, a hexagram scored in red, two teal planets. -->

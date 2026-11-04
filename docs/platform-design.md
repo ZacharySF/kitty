@@ -1030,7 +1030,7 @@ the §11 limit "MCP and CLI expose the job-search module only". Code:
 
 The paper's §13 step 4 ("Agent writes also stamp an actor column on their op_log rows") and
 §14.3 (pinned citations, "undo everything this agent session did"). Code:
-`src/kitty/core/blocks/actor.py`, migration `050_op_log_actor.sql`,
+`src/kitty/core/blocks/actor.py`, migration `051_op_log_actor.sql`,
 `src/kitty/core/blocks/sessions.py`, `history.page_history`/`history.citations`.
 
 - **Actor columns.** `op_log` gains `actor` (user, agent, client, system, peer; CHECK),
@@ -1042,11 +1042,11 @@ The paper's §13 step 4 ("Agent writes also stamp an actor column on their op_lo
   command or `KITTY_AGENT_SESSION` (`KITTY_AGENT_NAME`); rika!'s assistant is agent `rika!`
   with session `rika:<conversation>`; paired-client captures are the client (pairing name,
   session = client ID); migrations' Python steps and compaction purges are system.
-- **Migration 050** adds the columns and classifies existing rows: the block migrations'
+- **Migration 051** adds the columns and classifies existing rows: the block migrations'
   rows (`op_log_migrated`) system/migration, other devices' rows peer (named from `peers`),
   compaction purges (purges plus the revision bump) system/compaction, the rest user. The
   backfill lifts `op_log_append_only` and recreates it unchanged in the same transaction.
-  049 is main's `rika_goals`, not yet merged into the stack (explained gap).
+  050 is claimed by rika! math phase 2 (`050_math_books`), not on main yet (explained gap).
 - **Peer sync** carries actors: each `pages` item lists `actors` (who wrote the pusher's rows
   for that page after `since`, merges from the puller left out; peer rows contribute what they
   carried), and the puller records the merged row as `peer` (the paired name) with `via`.

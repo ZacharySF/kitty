@@ -1,6 +1,6 @@
 import { api, socketProtocols } from "../api";
 import { Mic, MicError } from "./mic";
-import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
+import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
 
 /** How long a finished reply's toast stays before it leaves for the drawer. */
 export const RIKA_TOAST_MS = 9000;
@@ -56,6 +56,8 @@ export class RikaSession {
   private nextVoice = 1;
   /** Replies already spoken back (Q6 C), so a repeated final event speaks once. */
   private said = new Set<string>();
+  /** Other features' stream listeners (the morning brief); each hears every event, even types this session skips. */
+  private listeners = new Set<(event: { type: string }) => void>();
 
   readonly pending = $derived(this.entries.filter((entry): entry is Entry & { kind: "approval" } => entry.kind === "approval" && entry.status === "pending"));
   readonly pendingPlans = $derived(this.entries.filter((entry): entry is Entry & { kind: "plan" } => entry.kind === "plan" && entry.status === "pending"));
@@ -138,6 +140,7 @@ export class RikaSession {
   }
 
   apply(event: StreamEvent) {
+    for (const listener of this.listeners) listener(event);
     switch (event.type) {
       case "message": {
         const message = event.message;
@@ -186,7 +189,16 @@ export class RikaSession {
       case "voice.error":
         this.heard(event);
         break;
+      case "mail":
+        this.upsert({ ...event.mail, kind: "mail" });
+        break;
     }
+  }
+
+  /** Hears every stream event; returns the unsubscribe. */
+  subscribe(listener: (event: { type: string }) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   async send(text: string, tier?: RikaMessage["tier"], spoken = false) {
@@ -357,6 +369,18 @@ export class RikaSession {
       this.upsert({ kind: "action", ...action });
     } catch (cause) {
       this.error = (cause as Error).message;
+    }
+  }
+
+  /** Q16: Send (the one tap is the approval; the send is held), Undo-send or Discard a reply draft. */
+  async mailAction(id: string, verb: "send" | "undo" | "discard"): Promise<RikaDraft | null> {
+    try {
+      const { draft } = await api<{ draft: RikaDraft }>(`/rika/mail/drafts/${encodeURIComponent(id)}/${verb}`, {});
+      this.upsert({ ...draft, kind: "mail" });
+      return draft;
+    } catch (cause) {
+      this.error = (cause as Error).message;
+      return null;
     }
   }
 

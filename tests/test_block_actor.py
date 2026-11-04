@@ -255,9 +255,9 @@ def test_from_row_reads_a_peer_rows_carried_actors(workspace):
     assert from_row(row) == Actor("peer", "Laptop", None, (Actor("agent", "claude", "s1"),))
 
 
-# Migration 050 --------------------------------------------------------------------------
+# Migration 051 --------------------------------------------------------------------------
 
-def test_migration_050_classifies_the_rows_already_written_and_keeps_the_log_append_only(tmp_path):
+def test_migration_051_classifies_the_rows_already_written_and_keeps_the_log_append_only(tmp_path):
     import shutil
 
     from kitty.db import connect, migrate
@@ -266,7 +266,7 @@ def test_migration_050_classifies_the_rows_already_written_and_keeps_the_log_app
     before = tmp_path / "before"
     before.mkdir()
     for migration in available_migrations():
-        if migration.version < 50:
+        if migration.version < 51:
             shutil.copy(migration.path, before / migration.path.name)
     conn = connect(tmp_path / "data" / "kitty.db")
     migrate(conn, before)

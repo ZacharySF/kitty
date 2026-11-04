@@ -4,12 +4,15 @@
  * hours until a morning digest hands it over. Delivery state is remembered per browser
  * profile, so a reload never re-toasts what you have already seen.
  */
-export type Source = "calendar" | "job";
+export type Source = "calendar" | "job" | "rika";
 export type CalendarReminder = { event_id: string; occurrence: string; minutes: number; title: string; due: string };
 export type JobReminder = { id: number; kind: string; due_at: string; note: string | null; job_id: number | null; label: string };
+/** An urgent (strong and time-sensitive) goal match from `GET /api/rika/alerts` (docs/rika-design.md Q15 A). */
+export type RikaAlert = { id: number | string; key: string; title: string; body: string; due_at: string | null; goal_id: number | string; view: string | null; created_at: string };
 export type Target =
   | { kind: "calendar"; event_id: string; occurrence: string; minutes: number }
-  | { kind: "job"; id: number; job_id: number | null };
+  | { kind: "job"; id: number; job_id: number | null }
+  | { kind: "rika"; id: number | string; goal_id: number | string; view: string | null };
 export type Notice = { key: string; source: Source; title: string; body: string; due: string; target: Target };
 
 /** Quiet hours as minutes of the local day; `from === to` is an empty window. */
@@ -20,7 +23,7 @@ export const LEDGER_KEY = "kitty.notify.ledger";
 export const SYSTEM_KEY = "kitty.notify.system";
 /** Fired on `window` when quiet hours change, so the running notifier re-checks at once. */
 export const QUIET_EVENT = "kitty:quiet-hours";
-export const SOURCE_LABEL: Record<Source, string> = { calendar: "Calendar", job: "Job search" };
+export const SOURCE_LABEL: Record<Source, string> = { calendar: "Calendar", job: "Job search", rika: "Rika" };
 
 /**
  * What has happened to each notice key. `snoozed` maps a key to the ISO time it returns;
@@ -84,9 +87,21 @@ export function jobNotice(item: JobReminder): Notice {
   };
 }
 
-/** "2 calendar · 1 job search" */
+/** Rika's alert key names its goal match, so each match toasts once. */
+export function rikaNotice(alert: RikaAlert): Notice {
+  return {
+    key: alert.key,
+    source: "rika",
+    title: alert.title,
+    body: alert.body,
+    due: alert.due_at ?? alert.created_at,
+    target: { kind: "rika", id: alert.id, goal_id: alert.goal_id, view: alert.view },
+  };
+}
+
+/** "2 calendar · 1 job search · 1 rika" */
 export function digestLine(notices: Notice[]): string {
-  return (["calendar", "job"] as const)
+  return (["calendar", "job", "rika"] as const)
     .map(source => [source, notices.filter(n => n.source === source).length] as const)
     .filter(([, count]) => count)
     .map(([source, count]) => `${count} ${SOURCE_LABEL[source].toLowerCase()}`)

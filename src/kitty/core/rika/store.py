@@ -1,10 +1,12 @@
-"""Rika's conversation, actions, approvals and brain-dump plans (migrations 037, 045).
+"""Rika's conversation, actions, approvals and brain-dump plans (migrations 037, 045, 049).
 
 Public shapes, shared by ``GET /api/rika/history`` and the stream's events:
 
 * message ``{kind:'message', id, conversation_id, role:'user'|'rika', text, reply_to,
   tier, model, status:'pending'|'done'|'failed', source:'typed'|'voice'|'dump',
-  cost_usd, created_at}``;
+  cost_usd, usage, created_at}``, where ``usage`` is ``{tokens_in, tokens_cached,
+  tokens_out, path, signature, remembered, shortcut}`` for a finished Rika reply
+  (migration 049) and null otherwise;
 * action ``{kind:'action', id, message_id, tool, summary, reversible,
   status:'done'|'undone'|'failed', created_at}``; its undo payload stays private;
 * approval ``{kind:'approval', id, message_id, tool, summary, detail, cost_usd,
@@ -46,7 +48,18 @@ def _message(row: sqlite3.Row) -> dict[str, Any]:
     return {"kind": "message", "id": row["id"], "conversation_id": row["conversation_id"], "role": row["role"],
             "text": row["text"], "reply_to": row["reply_to"], "tier": row["tier"], "model": row["model"],
             "status": row["status"], "source": row["source"], "cost_usd": _money(row["cost_usd"]),
-            "created_at": row["created_at"]}
+            "usage": _usage(row), "created_at": row["created_at"]}
+
+
+def _usage(row: sqlite3.Row) -> dict[str, Any] | None:
+    """A Rika reply's tokens and route (migration 049); None for user messages and unfinished replies."""
+    counts = (row["tokens_in"], row["tokens_cached"], row["tokens_out"])
+    if row["role"] != "rika" or (row["route_json"] is None and counts == (None, None, None)):
+        return None
+    route = json.loads(row["route_json"]) if row["route_json"] else {}
+    return {"tokens_in": counts[0], "tokens_cached": counts[1], "tokens_out": counts[2],
+            "path": route.get("path", []), "signature": route.get("signature", ""),
+            "remembered": bool(route.get("remembered")), "shortcut": bool(route.get("shortcut"))}
 
 
 def _action(row: sqlite3.Row) -> dict[str, Any]:
@@ -87,11 +100,13 @@ def add_message(conn: sqlite3.Connection, *, conversation_id: str, role: str, te
 
 
 def update_message(conn: sqlite3.Connection, ident: str, **fields: Any) -> dict[str, Any]:
-    allowed = {"text", "tier", "model", "status", "cost_usd"}
+    allowed = {"text", "tier", "model", "status", "cost_usd", "tokens_in", "tokens_cached", "tokens_out", "route_json"}
     if set(fields) - allowed:
         raise ValueError("Unknown message field")
     if "cost_usd" in fields and fields["cost_usd"] is not None:
         fields["cost_usd"] = str(fields["cost_usd"])
+    if isinstance(fields.get("route_json"), dict):
+        fields["route_json"] = json.dumps(fields["route_json"], ensure_ascii=False)
     with transaction(conn):
         conn.execute("UPDATE rika_messages SET " + ",".join(f"{key}=?" for key in fields) + " WHERE id=?",
                      (*fields.values(), ident))
@@ -258,10 +273,12 @@ def recover(conn: sqlite3.Connection) -> None:
 
 def history(conn: sqlite3.Connection, before: str | None = None, limit: int = HISTORY_PAGE) -> dict[str, Any]:
     """The newest `limit` items older than `before`, returned oldest first."""
+    from kitty.core.rika import mail
+
     bound = before or "~"  # sorts after every ISO timestamp
     items: list[tuple[str, dict]] = []
     for table, shape in (("rika_messages", _message), ("rika_actions", _action), ("rika_approvals", _approval),
-                         ("rika_plans", lambda row: _plan(row, conn))):
+                         ("rika_plans", lambda row: _plan(row, conn)), (mail.HISTORY_TABLE, mail.draft_shape)):
         for row in conn.execute(f"SELECT * FROM {table} WHERE created_at<? ORDER BY created_at DESC LIMIT ?",
                                 (bound, limit + 1)).fetchall():
             items.append((row["created_at"], shape(row)))
