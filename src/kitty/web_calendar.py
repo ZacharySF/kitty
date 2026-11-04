@@ -1,10 +1,15 @@
-"""Loopback calendar extension. OAuth runs outside the request mutation lock."""
+"""Loopback calendar extension. OAuth runs outside the request mutation lock.
+
+Google previews propose effects (kitty.core.effects) as the person at this rika! window
+session; the matching sync/operation request approves one by ``effect_id`` and ``digest``.
+"""
 from __future__ import annotations
 
 import re
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
+from kitty import web_effects
 from kitty.core import calendar, calendar_google as google, study
 from kitty.db import connect
 
@@ -94,7 +99,7 @@ def post(app, conn, path, body):
             calendar.fail('Confirm disconnecting the separate Calendar token')
         return google.disconnect(app.settings, body.get('revoke') is True)
     if path == '/api/calendar/google/preview':
-        return google.preview_sync(conn, body, applyai='applyai' in app.modules)
+        return google.preview_sync(conn, body, actor=web_effects.user(app), applyai='applyai' in app.modules)
     if path == '/api/calendar/google/unselect':
         return google.unselect(conn, body)
     if path == '/api/calendar/google/authorize':
@@ -110,19 +115,20 @@ def post(app, conn, path, body):
         # Each background operation owns its SQLite connection. Consent and network
         # IO never hold WebApplication.mutation_lock across browser authorization.
         applyai = 'applyai' in app.modules
+        actor = web_effects.user(app)
 
         def work():
             with closing(connect(app.settings.db_path)) as owned:
                 if path.endswith('/operation/preview'):
-                    return google.preview_operation(app.settings, body)
+                    return google.preview_operation(app.settings, owned, body, actor=actor)
                 if path.endswith('/sync'):
-                    return google.sync(app.settings, owned, body, applyai=applyai)
+                    return google.sync(app.settings, owned, body, actor=actor, applyai=applyai)
                 if path.endswith('/resolve-calendar'):
                     return google.resolve_calendar(app.settings, owned, body)
                 if path.endswith('/resolve'):
                     return google.resolve_conflict(app.settings, owned, body)
                 if path.endswith('/select'):
                     return google.select_calendar(app.settings, owned, body)
-                return google.operation(app.settings, body)
+                return google.operation(app.settings, owned, body, actor=actor)
         return {'task': app.tasks.start('calendar-google', work)}
     return None

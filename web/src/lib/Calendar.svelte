@@ -236,7 +236,14 @@
   let syncDirection = $state("pull");
   let sendUpdates = $state("none");
   let syncApproved = $state(false);
-  let syncPreview = $state<Record<string, unknown> | null>(null);
+  /** A proposed Google write (kitty effects kernel): approving sends back exactly this id and digest. */
+  type ProposedEffect = { id: string; digest: string; expires_at: string };
+  type SyncPreview = {
+    calendars: Record<string, unknown>[];
+    events: Record<string, unknown>[];
+    effect: ProposedEffect;
+  };
+  let syncPreview = $state<SyncPreview | null>(null);
   let pendingGoogle = $state<{
     resource?: string;
     action?: string;
@@ -275,6 +282,7 @@
     recipients: string[];
     items: Record<string, unknown>[];
     notes: string[];
+    effect: ProposedEffect;
   };
   let operationRequest = $state<Record<string, unknown> | null>(null);
   let operationReview = $state<OperationReview | null>(null);
@@ -1259,6 +1267,20 @@
       googleResult = null;
     });
   }
+  /** A sync request; a push approves the frozen preview's proposal by its id and digest (single use). */
+  function syncRequest(full = false) {
+    return {
+      calendar_ids: linked,
+      direction: syncDirection,
+      send_updates: sendUpdates,
+      confirmed: true,
+      external_approved: syncApproved,
+      ...(syncDirection === "both" && syncPreview
+        ? { effect_id: syncPreview.effect.id, digest: syncPreview.effect.digest }
+        : {}),
+      ...(full ? { full: true } : {}),
+    };
+  }
   async function pollTask() {
     if (!googleTask || googleTask.status !== "running") return;
     await run(async () => {
@@ -1476,9 +1498,11 @@
   }
   async function sendReviewedOperation() {
     if (!operationRequest || !operationReview) return;
+    // The server sends the reviewed request only if this proposal is unchanged and unused.
     const body = {
       ...operationRequest,
-      review: operationReview,
+      effect_id: operationReview.effect.id,
+      digest: operationReview.effect.digest,
       confirmed: true,
       external_approved: true,
       clear_confirmed: clearConfirmed,
@@ -2273,10 +2297,10 @@
           googleTask?.status === "running"}
         onclick={() =>
           run(async () => {
-            syncPreview = await api<Record<string, unknown>>(
-              "/calendar/google/preview",
-              { calendar_ids: linked },
-            );
+            syncPreview = await api<SyncPreview>("/calendar/google/preview", {
+              calendar_ids: linked,
+              send_updates: sendUpdates,
+            });
             syncApproved = false;
           })}>Prepare all pending writes & recipients for review</button
       >
@@ -2284,7 +2308,11 @@
           <summary
             >Frozen sync preview · all dates, including deleted events</summary
           >
-          <pre class="results">{JSON.stringify(syncPreview, null, 2)}</pre>
+          <pre class="results">{JSON.stringify(
+              { calendars: syncPreview.calendars, events: syncPreview.events },
+              null,
+              2,
+            )}</pre>
         </details>{/if}
       <label
         ><input
@@ -2304,14 +2332,8 @@
             !syncApproved ||
             googleTask?.status === "running"}
           onclick={() =>
-            googleWork("/calendar/google/sync", {
-              calendar_ids: linked,
-              direction: syncDirection,
-              send_updates: sendUpdates,
-              confirmed: true,
-              external_approved: syncApproved,
-              review: syncPreview,
-            })}>Run reviewed sync</button
+            googleWork("/calendar/google/sync", syncRequest())}
+          >Run reviewed sync</button
         ><button
           disabled={demo ||
             !googleStatus?.authorized ||
@@ -2320,15 +2342,8 @@
             !syncApproved ||
             googleTask?.status === "running"}
           onclick={() =>
-            googleWork("/calendar/google/sync", {
-              calendar_ids: linked,
-              direction: syncDirection,
-              send_updates: sendUpdates,
-              confirmed: true,
-              external_approved: syncApproved,
-              review: syncPreview,
-              full: true,
-            })}>Full refresh</button
+            googleWork("/calendar/google/sync", syncRequest(true))}
+          >Full refresh</button
         >
       </div>
       {#each googleStatus?.calendar_conflicts || [] as conflict}<article

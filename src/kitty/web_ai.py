@@ -1,16 +1,31 @@
-"""Explicitly reviewed, single-use OpenRouter requests; no automatic note sharing."""
+"""Explicitly reviewed, single-use OpenRouter requests; no automatic note sharing.
+
+A preview proposes an ``ai_request`` effect (kitty.core.effects): its payload is the
+exact plan that runs (purpose, model, text, system prompt, output limit, prices,
+routing, maximum cost) and its one precondition is the AI settings/key fingerprint,
+never the key. /api/ai/run approves and executes that digest inline; the executor
+checks the request's budget and the remaining daily budget and reserves the maximum
+cost in the ``ai_reviews`` spend ledger (state running) inside the same transaction,
+so an underfunded run commits nothing and stays runnable. The OpenRouter task starts
+only after that commit and settles the ledger row (keyed by the effect id).
+"""
 from __future__ import annotations
 
 import hashlib
 import json
 import re
 import secrets
+import sqlite3
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import httpx
 
+from kitty import web_effects
+from kitty.core import effects
 from kitty.core import keys as keystore
 from kitty.core.builds import project, store
 from kitty.core.rika import router
@@ -110,13 +125,19 @@ def _settings(conn):
     return dict(conn.execute('SELECT * FROM ai_settings WHERE id=1').fetchone())
 
 
+def _binding(settings, key):
+    return hashlib.sha256(json.dumps([settings, hashlib.sha256(key.encode()).hexdigest()], sort_keys=True).encode()).hexdigest()
+
+
 def _fingerprint(app, settings):
-    return hashlib.sha256(json.dumps([settings, hashlib.sha256(_key(app).encode()).hexdigest()], sort_keys=True).encode()).hexdigest()
+    return _binding(settings, _key(app))
 
 
 def _spent(conn):
-    rows = conn.execute("SELECT reserved_usd,actual_usd,state FROM ai_reviews WHERE created_at>=? AND state!='pending'", (_now().date().isoformat(),)).fetchall()
-    # Failed/timed-out requests can have been billed; reserve them conservatively.
+    rows = conn.execute("SELECT reserved_usd,actual_usd FROM ai_reviews WHERE created_at>=?", (_now().date().isoformat(),)).fetchall()
+    # Every ledger row is a reservation made before a request could be sent (legacy
+    # unused 'pending' rows reserve 0). Failed/timed-out requests can have been billed;
+    # reserve them conservatively.
     return sum((Decimal(row['actual_usd']) if row['actual_usd'] is not None else Decimal(row['reserved_usd']) for row in rows), Decimal(0))
 
 
@@ -257,16 +278,62 @@ def _review(app, conn, purpose, text):
     plan = {'purpose': purpose, 'model': model['id'], 'text': text, 'system_prompt': system,
             'max_output_tokens': output_bound, 'maximum_cost_usd': str(cost),
             'prompt_price': model['prompt_price'], 'completion_price': model['completion_price'], 'routing': settings['routing']}
-    review_id = secrets.token_hex(16)
-    expires = (_now() + timedelta(minutes=10)).isoformat()
-    with transaction(conn):
-        conn.execute('INSERT INTO ai_reviews(id,purpose,plan_json,fingerprint,expires_at,created_at) VALUES(?,?,?,?,?,?)',
-                     (review_id, purpose, json.dumps(plan), _fingerprint(app, settings), expires, _now().isoformat()))
-    return {**plan, 'maximum_cost_usd': float(cost), 'review_id': review_id, 'expires_at': expires,
+    try:
+        effect = effects.propose(conn, REQUEST.name, plan, actor=web_effects.user(app), ctx=_Context(app, conn))
+    except effects.EffectError as exc:
+        raise _effect_error(exc) from None
+    return {**plan, 'maximum_cost_usd': float(cost),
+            'effect': {'id': effect.id, 'digest': effect.digest, 'expires_at': effect.expires_at},
             'privacy_notice': _status(app, conn)['privacy_notice']}
 
 
-def _completion(app, review_id, plan, key):
+@dataclass(frozen=True)
+class _Context:
+    """What the ``ai_request`` kind reads: the app (for the key) and the connection."""
+
+    app: Any
+    conn: sqlite3.Connection
+
+
+class _Underfunded(effects.Refused):
+    """The executor's budget refusal: it rolls back, so the proposal stays runnable."""
+
+
+_STALE = 'AI review is expired, already used, or settings changed; review again'
+
+
+def _effect_error(exc):
+    if exc.status == 409 and not isinstance(exc, _Underfunded):
+        return _error(409, _STALE)
+    return _error(exc.status, str(exc))
+
+
+def _request_preconditions(ctx, plan):
+    # A hash of the settings row and the key's SHA-256; the key itself is never stored.
+    return {'ai_settings': _fingerprint(ctx.app, _settings(ctx.conn))}
+
+
+def _reserve(ctx, effect):
+    """Inside the approval's transaction: check both budgets, then reserve the maximum cost."""
+    plan, conn = effect.payload, ctx.conn
+    settings, key = _settings(conn), _key(ctx.app)
+    effect.require('ai_settings', _binding(settings, key))  # the key sent is the one fingerprinted
+    cost = Decimal(plan['maximum_cost_usd'])
+    if cost > Decimal(effect.options['budget_usd']) or _spent(conn) + cost > Decimal(settings['daily_budget_usd']):
+        raise _Underfunded('Reviewed maximum cost exceeds the approved request or remaining daily budget')
+    conn.execute("INSERT INTO ai_reviews(id,purpose,plan_json,fingerprint,expires_at,created_at,state,reserved_usd)"
+                 " VALUES(?,?,?,?,?,?,'running',?)",
+                 (effect.id, plan['purpose'], json.dumps(plan), effect.expected('ai_settings'), effect.expires_at,
+                  _now().isoformat(), str(cost)))
+    return key
+
+
+REQUEST = effects.REGISTRY.register(effects.Executable(
+    name='ai_request', title='Paid AI request', proposers=frozenset({'user'}),
+    preconditions=_request_preconditions, review='inline', lifetime=timedelta(minutes=10), run=_reserve))
+
+
+def _completion(app, ledger_id, plan, key):
     try:
         with httpx.Client(timeout=90, follow_redirects=False) as client:
             response = client.post(BASE_URL + '/chat/completions',
@@ -287,12 +354,12 @@ def _completion(app, review_id, plan, key):
         raw_cost = data.get('usage', {}).get('cost')
         cost = _number(raw_cost, 'Reported cost', 0, 100) if raw_cost is not None else None
         with closing(connect(app.settings.db_path)) as conn, transaction(conn):
-            conn.execute("UPDATE ai_reviews SET state='completed',actual_usd=?,completed_at=? WHERE id=?", (str(cost) if cost is not None else None, _now().isoformat(), review_id))
+            conn.execute("UPDATE ai_reviews SET state='completed',actual_usd=?,completed_at=? WHERE id=?", (str(cost) if cost is not None else None, _now().isoformat(), ledger_id))
         return {'text': text, 'model': plan['model'], 'cost_usd': float(cost) if cost is not None else None,
                 'warning': 'Draft only: verify facts and apply changes yourself. Missing cost reports remain reserved against the daily budget.'}
     except Exception:
         with closing(connect(app.settings.db_path)) as conn, transaction(conn):
-            conn.execute("UPDATE ai_reviews SET state='failed',completed_at=? WHERE id=?", (_now().isoformat(), review_id))
+            conn.execute("UPDATE ai_reviews SET state='failed',completed_at=? WHERE id=?", (_now().isoformat(), ledger_id))
         raise _error(502, 'AI request failed or timed out. It may have been billed; no automatic retry was made.') from None
 
 
@@ -418,28 +485,25 @@ def post(app, conn, path, body):
             raise _error(403, 'Explicit approval is needed for external model discovery; unavailable in demo')
         return {'task': app.tasks.start('openrouter-models', lambda: _refresh_models(app))}
     if path == '/api/ai/run':
-        _keys(body, {'review_id', 'confirmed', 'budget_usd'})
+        _keys(body, {'effect_id', 'digest', 'confirmed', 'budget_usd'})
         if app.settings.demo or body.get('confirmed') is not True:
             raise _error(403, 'Paid AI calls require explicit approval outside demo mode')
-        if not isinstance(body.get('review_id'), str) or not re.fullmatch(r'[0-9a-f]{32}', body['review_id']):
-            raise _error(400, 'Use a valid AI review identifier')
-        with transaction(conn, immediate=True):
-            row = conn.execute('SELECT * FROM ai_reviews WHERE id=?', (body['review_id'],)).fetchone()
-            settings = _settings(conn)
-            if row is None or row['state'] != 'pending' or datetime.fromisoformat(row['expires_at']) <= _now() or row['fingerprint'] != _fingerprint(app, settings):
-                raise _error(409, 'AI review is expired, already used, or settings changed; review again')
-            plan = json.loads(row['plan_json'])
-            cost = Decimal(plan['maximum_cost_usd'])
-            budget = _number(body.get('budget_usd'), 'Request budget', 0, 100)
-            if cost > budget or _spent(conn) + cost > Decimal(settings['daily_budget_usd']):
-                raise _error(409, 'Reviewed maximum cost exceeds the approved request or remaining daily budget')
-            conn.execute("UPDATE ai_reviews SET state='running',reserved_usd=? WHERE id=?", (str(cost), row['id']))
-        key = _key(app)
+        budget = _number(body.get('budget_usd'), 'Request budget', 0, 100)
         try:
-            task = app.tasks.start('openrouter-inference', lambda: _completion(app, row['id'], plan, key))
+            # Approval, both budget checks and the ledger reservation commit together, or not at all.
+            effect, key = effects.approve_and_execute(conn, body.get('effect_id'), body.get('digest'), kinds={REQUEST.name},
+                                                      actor=web_effects.user(app), ctx=_Context(app, conn),
+                                                      options={'budget_usd': str(budget)})
+        except effects.EffectError as exc:
+            raise _effect_error(exc) from None
+        plan = effect.payload
+        try:
+            task = app.tasks.start('openrouter-inference', lambda: _completion(app, effect.id, plan, key))
         except Exception:
+            # Nothing was sent: release the reservation. The effect is used; review again.
             with transaction(conn):
-                conn.execute("UPDATE ai_reviews SET state='pending',reserved_usd='0' WHERE id=?", (row['id'],))
+                conn.execute("UPDATE ai_reviews SET state='failed',reserved_usd='0',actual_usd='0',completed_at=? WHERE id=? AND state='running'",
+                             (_now().isoformat(), effect.id))
             raise
         return {'task': task}
     return None

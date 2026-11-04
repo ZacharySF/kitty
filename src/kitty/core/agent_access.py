@@ -16,6 +16,11 @@ refused with 403 after its denials are journaled and its writes rolled back. In
 `TOOLS` is the one list of what agents may call: the MCP notes tools (kitty.mcp_server),
 ``kitty notes`` and the HTTP route ``POST /api/ingress/agent/call`` are the same tools.
 Each needs one token scope: ``notes.read``, ``search`` or ``notes.write``.
+
+Agents propose effects here (kitty.core.effects: ``propose_delete_block``, a write of
+that block for the policy) and read back only their own session's (``get_effect``).
+No tool approves, executes or denies one: only the owner does, in rika!'s own window
+behind its UI secret, which an agent token never is.
 """
 from __future__ import annotations
 
@@ -25,9 +30,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from kitty.core import agent_policy, block_api
+from kitty.core import agent_policy, block_api, effect_kinds, effects
 from kitty.core.blocks import BlockError, history, sessions
-from kitty.core.blocks.actor import Actor, acting
+from kitty.core.blocks.actor import Actor, acting, current
 
 SCOPES = ("notes.read", "notes.write", "search")
 MAX_ARGUMENTS = 16
@@ -164,6 +169,43 @@ def _sessions(conn, args, session):
     return {**sessions.list_sessions(conn, kind="agent", limit=args["limit"]), "current": session}
 
 
+# --------------------------------------------------------------------------- effects
+
+#: The effect kinds an agent proposes and reads back here.
+EFFECT_KINDS = frozenset({effect_kinds.DELETE_BLOCK.name})
+PROPOSED = "Waiting for the owner's approval in rika!'s pending approvals. You cannot approve it."
+
+
+def effect_state(conn: sqlite3.Connection, effect: effects.Effect) -> dict:
+    """A stored effect as its proposer sees it: state, preview and every transition."""
+    return {**effect.as_dict(), "events": effects.events(conn, effect.id)}
+
+
+def propose_delete_block(conn: sqlite3.Connection, block: Any, reason: Any) -> dict:
+    """Propose, as the current actor, moving `block` and its children to Trash."""
+    try:
+        effect = effects.propose(conn, effect_kinds.DELETE_BLOCK.name, {"block": block, "reason": reason},
+                                 actor=current(), ctx=effect_kinds.Context(conn))
+    except effects.EffectError as exc:
+        raise AccessError(str(exc), exc.status) from None
+    return {**effect_state(conn, effect), "notice": PROPOSED}
+
+
+def get_effect(conn: sqlite3.Connection, effect_id: Any, session: str) -> dict:
+    """One effect agent `session` proposed; any other is not found."""
+    try:
+        effect = effects.get(conn, effect_id)
+    except effects.EffectError as exc:
+        raise AccessError(str(exc), exc.status) from None
+    if effect.kind not in EFFECT_KINDS or effect.actor.session != session:
+        raise AccessError("Effect not found", 404)
+    return effect_state(conn, effect)
+
+
+def _effect_records(conn, result):
+    return _labelled(conn, [result["payload"]["block"]])
+
+
 TOOLS: dict[str, Tool] = {tool.name: tool for tool in (
     Tool("list_pages", "notes.read", "read",
          {"query": ("", _any), "kind": (None, _any), "limit": (50, _int(1, block_api.MAX_LIST))},
@@ -213,6 +255,10 @@ TOOLS: dict[str, Tool] = {tool.name: tool for tool in (
          lambda conn, a, s: block_api.tag_block(conn, a["block"], a["tag"], create=a["create"]), _receipt_records),
     Tool("undo_agent_session", "notes.write", "write", {"session": (None, _any), "dry_run": (False, _bool)}, _undo,
          lambda conn, r: _labelled(conn, [item["id"] for item in r["reverted"]])),
+    Tool("propose_delete_block", "notes.write", "write", {"block": (_REQUIRED, _any), "reason": (None, _any)},
+         lambda conn, a, s: propose_delete_block(conn, a["block"], a["reason"]), _effect_records),
+    Tool("get_effect", "notes.read", "read", {"effect_id": (_REQUIRED, _any)},
+         lambda conn, a, s: get_effect(conn, a["effect_id"], s), _effect_records),
 )}
 
 

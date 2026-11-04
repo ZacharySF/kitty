@@ -51,7 +51,7 @@ COMMAND_MODULES: dict[str, str] = dict.fromkeys(
 #: What `kitty` runs inside a rika! Agent tab (KITTY_AGENT_TOKEN set): the commands that
 #: are clients of rika!'s mediated API. Everything else needs the database, which the
 #: tab cannot open.
-AGENT_TAB_COMMANDS = ("notes", "mcp")
+AGENT_TAB_COMMANDS = ("notes", "mcp", "effects")
 
 
 def _agent_tab() -> bool:
@@ -96,8 +96,8 @@ class _ModuleGroup(TyperGroup):
             # rika! checks the modules itself; the tab cannot read the workspace.
             if args and args[0] not in AGENT_TAB_COMMANDS:
                 raise _module_error([
-                    f"[bold red]In a rika! Agent tab, kitty runs only {' and '.join(AGENT_TAB_COMMANDS)}[/bold red]",
-                    "They reach rika!'s notes through its API with this tab's KITTY_AGENT_TOKEN.",
+                    f"[bold red]In a rika! Agent tab, kitty runs only {', '.join(AGENT_TAB_COMMANDS)}[/bold red]",
+                    "They reach rika!'s notes and effects through its API with this tab's KITTY_AGENT_TOKEN.",
                 ])
             return super().resolve_command(ctx, args)
         module = COMMAND_MODULES.get(args[0]) if args else None
@@ -2335,6 +2335,120 @@ def notes_citations(
     _emit(result, as_json, "\n".join(lines))
 
 
+# ------------------------------------------------------------------ effects (proposals)
+
+effects_app = typer.Typer(no_args_is_help=True, help=(
+    "Propose effects for the owner to approve in rika!'s pending approvals (kitty.core.effects). "
+    "Proposals are made as an agent session (one per command, or KITTY_AGENT_SESSION); "
+    "nothing here approves or executes one, and submit_application never executes. "
+    "In a rika! Agent tab (KITTY_AGENT_TOKEN) propose-delete and show go through rika!'s mediated API."))
+app.add_typer(effects_app, name="effects")
+
+
+@contextmanager
+def _effects() -> Iterator:
+    """The workspace and this command's agent actor; refusals print and exit 1."""
+    from kitty.core import effects
+    from kitty.core.blocks.actor import cli_agent
+
+    try:
+        agent = cli_agent()
+    except ValueError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=1) from None
+    workspace = _open()
+    try:
+        yield workspace, agent
+    except effects.EffectError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=1) from None
+    finally:
+        workspace.close()
+
+
+def _no_tab_route(command: str) -> None:
+    """Refuse a command that has no mediated route inside a rika! Agent tab."""
+    if _agent_tab():
+        error_console.print(f"[bold red]kitty effects {command} does not run in a rika! Agent tab[/bold red] "
+                            "(only propose-delete and show reach rika! through the tab's token)")
+        raise typer.Exit(code=1)
+
+
+def _effect_line(effect: dict) -> str:
+    actor = effect["actor"]
+    who = actor["name"] or actor["kind"]
+    return f"{effect['state']:<9} {escape(effect['title'])}  by {escape(who)}  [dim]{effect['id']}[/dim]"
+
+
+def _proposed(result: dict, as_json: bool) -> None:
+    _emit(result, as_json, _effect_line(result) + "\nWaiting for approval in rika!'s pending approvals.")
+
+
+@effects_app.command("propose-delete")
+def effects_propose_delete(
+    block: Annotated[str, typer.Argument(help="The block's ID (a text block of a note page).")],
+    reason: Annotated[Optional[str], typer.Option("--reason", help="Why, shown to the owner.")] = None,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Propose moving a block and its children to Trash; it runs only once the owner approves it."""
+    from kitty.core import agent_access
+
+    _proposed(_note_call("propose_delete_block", lambda conn: agent_access.propose_delete_block(conn, block, reason),
+                         block=block, reason=reason), as_json)
+
+
+@effects_app.command("propose-submit")
+def effects_propose_submit(
+    job_id: Annotated[int, typer.Argument(help="The job's number.")],
+    reason: Annotated[Optional[str], typer.Option("--reason", help="Why, shown to the owner.")] = None,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Ask the owner to submit an application himself: it shows what would be submitted and never executes."""
+    from kitty.core import agent_access, effect_kinds, effects
+
+    _no_tab_route("propose-submit")
+    with _effects() as (workspace, agent):
+        effect = effects.propose(workspace.conn, "submit_application", {"job_id": job_id, "reason": reason},
+                                 actor=agent, ctx=effect_kinds.Context(workspace.conn, workspace.config))
+        result = agent_access.effect_state(workspace.conn, effect)
+    _proposed(result, as_json)
+
+
+@effects_app.command("list")
+def effects_list(as_json: Annotated[bool, _JSON_OPTION] = False) -> None:
+    """Effects waiting in the pending approvals, oldest first, and the latest decided ones."""
+    from kitty.core import effect_kinds, effects  # noqa: F401 (registers the kinds listed here)
+
+    _no_tab_route("list")
+    with _effects() as (workspace, _agent):
+        pending = [effect.as_dict() for effect in effects.pending(workspace.conn)]
+        recent = [effect.as_dict() for effect in effects.recent(workspace.conn)]
+    lines = [_effect_line(effect) for effect in pending + recent]
+    _emit({"pending": pending, "recent": recent}, as_json, "\n".join(lines) if lines else "No effects.")
+
+
+@effects_app.command("show")
+def effects_show(
+    effect_id: Annotated[str, typer.Argument(help="The effect's ID.")],
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """One effect: what it does, its preconditions and every state it went through (in an
+    Agent tab, only one this tab proposed)."""
+    import json
+
+    from kitty.core import agent_access, effect_kinds, effects  # noqa: F401 (registers the kinds shown here)
+
+    if _agent_tab():
+        result = _note_call("get_effect", None, effect_id=effect_id)
+    else:
+        with _effects() as (workspace, _agent):
+            result = agent_access.effect_state(workspace.conn, effects.get(workspace.conn, effect_id))
+    lines = [_effect_line(result), escape(json.dumps(result["preview"], indent=2, ensure_ascii=False))]
+    lines += [f"  {event['at']}  {event['state']}  {escape(event['actor']['name'] or event['actor']['kind'])}"
+              for event in result["events"]]
+    _emit(result, as_json, "\n".join(lines))
+
+
 # ------------------------------------------------------------------ policy (agent mediation)
 
 policy_app = typer.Typer(no_args_is_help=True, help=(
@@ -2424,7 +2538,6 @@ def policy_apply(
     finally:
         workspace.close()
     console.print(f"Policy version {result['version']} is in force ({result['policy']['mode']}).")
-
 
 
 def main() -> None:

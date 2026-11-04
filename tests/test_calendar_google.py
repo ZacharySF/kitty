@@ -12,8 +12,11 @@ import pytest
 import requests
 
 from kitty import web_calendar
-from kitty.core import calendar, calendar_google as google
+from kitty.core import calendar, calendar_google as google, effects
+from kitty.core.blocks.actor import Actor
 from kitty.web_server import APIError, WebApplication
+
+USER = Actor('user', None, 'ui-test')
 
 
 class Provider:
@@ -227,12 +230,17 @@ def linked(workspace):
     return google.select_calendar(workspace.settings, workspace.conn, {'google_id': 'remote', 'confirmed': True})
 
 
-def sync(workspace, cal, direction='pull', **changes):
+def approval(review):
+    """What the UI sends back to approve a preview: its proposal's id and digest."""
+    return {'effect_id': review['effect']['id'], 'digest': review['effect']['digest']}
+
+
+def sync(workspace, cal, direction='pull', effect=None, **changes):
     body = {'confirmed': True, 'calendar_ids': [cal['id']], 'direction': direction, **changes}
     if direction == 'both':
         body.setdefault('external_approved', True)
-        body.setdefault('review', google.preview_sync(workspace.conn, body))
-    return google.sync(workspace.settings, workspace.conn, body)
+        body.update(approval({'effect': effect} if effect else google.preview_sync(workspace.conn, body, actor=USER)))
+    return google.sync(workspace.settings, workspace.conn, body, actor=USER)
 
 
 def local_event(workspace, cal, **changes):
@@ -246,10 +254,22 @@ def edit(workspace, item, **changes):
     return calendar.edit_event(workspace.conn, item['id'], {'revision': item['revision'], 'changes': changes})
 
 
-def approved(settings, body, **extra):
+def preview(workspace, body):
+    return google.preview_operation(workspace.settings, workspace.conn, body, actor=USER)
+
+
+def operate(workspace, body):
+    return google.operation(workspace.settings, workspace.conn, body, actor=USER)
+
+
+def approved(workspace, body, **extra):
     """Apply exactly the server-built preview, as the UI does after review."""
-    review = google.preview_operation(settings, body)
-    return google.operation(settings, {**body, 'confirmed': True, 'external_approved': True, 'review': review, **extra})
+    review = preview(workspace, body)
+    return operate(workspace, {**body, 'confirmed': True, 'external_approved': True, **approval(review), **extra})
+
+
+def states(workspace, review):
+    return [event['state'] for event in effects.events(workspace.conn, review['effect']['id'])]
 
 
 
@@ -296,24 +316,43 @@ def test_sync_create_update_delete_requires_fresh_all_date_recipient_review(work
                        attendees=[{'email': 'guest@example.invalid', 'optional': True}])
     body = {'calendar_ids': [cal['id']], 'confirmed': True, 'direction': 'both'}
     with pytest.raises(APIError, match='Explicitly approve'):
-        google.sync(workspace.settings, workspace.conn, body)
-    with pytest.raises(APIError, match='fresh sync preview'):
-        google.sync(workspace.settings, workspace.conn, {**body, 'external_approved': True})
-    app = SimpleNamespace(modules=workspace.config.modules)
+        google.sync(workspace.settings, workspace.conn, body, actor=USER)
+    with pytest.raises(APIError, match='fresh sync preview') as error:
+        google.sync(workspace.settings, workspace.conn, {**body, 'external_approved': True}, actor=USER)
+    assert error.value.status == 409
+    app = SimpleNamespace(modules=workspace.config.modules, ui_session='ui-test')
     review = web_calendar.post(app, workspace.conn, '/api/calendar/google/preview', body)
     assert review['events'][0]['attendees'] == ['guest@example.invalid']
     assert review['events'][0]['start'].startswith('2028-')
+    assert set(review['effect']) == {'id', 'digest', 'expires_at'}
     item = edit(workspace, item, title='Reviewed later')
-    with pytest.raises(APIError) as error:
-        sync(workspace, cal, 'both', review=review)
+    with pytest.raises(APIError, match='differ from the reviewed preview') as error:
+        sync(workspace, cal, 'both', effect=review['effect'])
     assert error.value.status == 409 and provider.writes == []
-    assert sync(workspace, cal, 'both', send_updates='all')['pushed'] == 1
+    assert states(workspace, review) == ['proposed', 'refused']
+    # A refusal is final: the same preview cannot be approved again, even unchanged.
+    with pytest.raises(APIError, match='fresh sync preview') as error:
+        sync(workspace, cal, 'both', effect=review['effect'])
+    assert error.value.status == 409 and provider.writes == []
+    # The notification policy is part of what was reviewed.
+    stale = google.preview_sync(workspace.conn, {**body, 'send_updates': 'none'}, actor=USER)
+    with pytest.raises(APIError, match='differ from the reviewed preview'):
+        sync(workspace, cal, 'both', effect=stale['effect'], send_updates='all')
+    assert provider.writes == []
+    reviewed = google.preview_sync(workspace.conn, {**body, 'send_updates': 'all'}, actor=USER)
+    assert sync(workspace, cal, 'both', effect=reviewed['effect'], send_updates='all')['pushed'] == 1
+    assert states(workspace, reviewed) == ['proposed', 'approved', 'executed']
     created = provider.writes[-1]
     assert created['method'] == 'POST' and created['data']['id'] == item['id']
     assert created['data']['attendees'][0]['optional'] is True
     assert created['query']['sendUpdates'] == ['all']
-    old_etag = provider.events[item['id']]['etag']
+    # Single use: the executed preview cannot push again.
+    writes = len(provider.writes)
     item = edit(workspace, item, title='Changed locally')
+    with pytest.raises(APIError, match='already executed') as error:
+        sync(workspace, cal, 'both', effect=reviewed['effect'], send_updates='all')
+    assert error.value.status == 409 and len(provider.writes) == writes
+    old_etag = provider.events[item['id']]['etag']
     assert sync(workspace, cal, 'both')['pushed'] == 1
     assert provider.writes[-1]['etag'] == old_etag
     assert provider.events[item['id']]['summary'] == 'Changed locally'
@@ -322,6 +361,37 @@ def test_sync_create_update_delete_requires_fresh_all_date_recipient_review(work
     assert provider.writes[-1]['method'] == 'DELETE' and provider.writes[-1]['etag']
     assert provider.events[item['id']]['status'] == 'cancelled'
     assert sync(workspace, cal)['conflicts'] == 0
+
+
+def test_event_changed_after_approval_is_skipped_during_the_push(workspace, provider, monkeypatch):
+    cal = linked(workspace)
+    item = local_event(workspace, cal)
+    body = {'calendar_ids': [cal['id']], 'confirmed': True, 'direction': 'both', 'external_approved': True}
+    review = google.preview_sync(workspace.conn, body, actor=USER)
+    assert [v['id'] for v in review['events']] == [item['id']]
+    metadata = google._calendar_metadata
+
+    def edited_meanwhile(client, conn, current, direction):
+        # The approval has committed; a concurrent edit lands before this calendar's push.
+        edit(workspace, calendar.get_event(conn, item['id']), title='Edited after approval')
+        return metadata(client, conn, current, direction)
+
+    monkeypatch.setattr(google, '_calendar_metadata', edited_meanwhile)
+    result = google.sync(workspace.settings, workspace.conn, {**body, **approval(review)}, actor=USER)
+    assert states(workspace, review) == ['proposed', 'approved', 'executed']
+    assert result['pushed'] == 0 and provider.writes == []
+    assert result['errors'] == [{'event_id': item['id'], 'error': 'Event changed after approval; prepare a fresh sync preview.'}]
+
+
+def test_sync_approves_only_a_push_preview(workspace, provider):
+    cal = linked(workspace)
+    local_event(workspace, cal)
+    change = preview(workspace, {'resource': 'events', 'action': 'quickAdd', 'calendar_id': 'remote',
+                                 'data': {'text': 'Study block'}, 'params': {'sendUpdates': 'none'}})
+    with pytest.raises(APIError, match='not a reviewed') as error:
+        sync(workspace, cal, 'both', effect=change['effect'])
+    assert error.value.status == 409 and provider.writes == []
+    assert states(workspace, change) == ['proposed']
 
 
 @pytest.mark.parametrize('choice', ['local', 'remote', 'duplicate'])
@@ -454,27 +524,27 @@ def test_optional_google_tasks_reviewed_crud_and_etags(workspace, provider, reso
     body = {'resource': resource, 'action': 'create', 'calendar_id': 'list1', 'data': {'title': 'Synthetic task'},
             'confirmed': True, 'external_approved': True}
     with pytest.raises(APIError, match='optional Google Tasks'):
-        google.operation(workspace.settings, body)
+        operate(workspace, body)
     assert provider.calls == []
     _, token = google.paths(workspace.settings)
     google._private_write(token, json.dumps({'scopes': [google.CALENDAR_SCOPE, google.TASKS_SCOPE]}))
     for approval in ('confirmed', 'external_approved'):
         with pytest.raises(APIError, match='explicitly approve'):
-            google.operation(workspace.settings, {**body, approval: False})
-    created = approved(workspace.settings, body)
-    read = google.operation(workspace.settings, {'resource': resource, 'action': 'get', 'calendar_id': 'list1', 'id': created['id']})
+            operate(workspace, {**body, approval: False})
+    created = approved(workspace, body)
+    read = operate(workspace, {'resource': resource, 'action': 'get', 'calendar_id': 'list1', 'id': created['id']})
     assert read['title'] == 'Synthetic task'
-    listed = google.operation(workspace.settings, {'resource': resource, 'action': 'list', 'calendar_id': 'list1'})
+    listed = operate(workspace, {'resource': resource, 'action': 'list', 'calendar_id': 'list1'})
     assert listed['items'][0]['id'] == created['id']
     update = {**body, 'action': 'update', 'id': created['id'], 'etag': read['etag'], 'data': {'title': 'Revised'}}
-    changed = approved(workspace.settings, update)
+    changed = approved(workspace, update)
     assert changed['title'] == 'Revised' and provider.writes[-1]['etag'] == read['etag']
     with pytest.raises(APIError) as error:
-        approved(workspace.settings, update)
+        approved(workspace, update)
     assert error.value.status == 412
-    assert approved(workspace.settings, {**body, 'action': 'delete', 'id': created['id'],
+    assert approved(workspace, {**body, 'action': 'delete', 'id': created['id'],
                                          'etag': changed['etag'], 'data': {}})['ok']
-    assert google.operation(workspace.settings, {'resource': resource, 'action': 'list', 'calendar_id': 'list1'})['items'] == []
+    assert operate(workspace, {'resource': resource, 'action': 'list', 'calendar_id': 'list1'})['items'] == []
 
 
 def test_event_resource_rsvp_attendee_confirmation_and_provider_error_privacy(workspace, provider):
@@ -483,30 +553,30 @@ def test_event_resource_rsvp_attendee_confirmation_and_provider_error_privacy(wo
             'data': {'attendees': [{'email': 'self@example.invalid', 'responseStatus': 'accepted'}]},
             'params': {'sendUpdates': 'none'}, 'confirmed': True, 'external_approved': True}
     with pytest.raises(APIError, match='explicitly approve'):
-        google.operation(workspace.settings, {**body, 'external_approved': False})
+        operate(workspace, {**body, 'external_approved': False})
     with pytest.raises(APIError, match='ETag'):
-        google.operation(workspace.settings, {**body, 'etag': None})
+        operate(workspace, {**body, 'etag': None})
     assert provider.calls == []
-    review = google.preview_operation(workspace.settings, body)
+    review = preview(workspace, body)
     assert review['recipients'] == ['self@example.invalid'] and review['if_match'] == remote['etag']
-    result = google.operation(workspace.settings, {**body, 'review': review})
+    result = operate(workspace, {**body, **approval(review)})
     assert result['attendees'][0]['responseStatus'] == 'accepted'
     assert provider.writes[-1]['query']['sendUpdates'] == ['none']
     provider.fail[('PATCH', '/calendar/v3/calendars/remote/events/event1')] = 403
     with pytest.raises(APIError) as error:
-        approved(workspace.settings, {**body, 'etag': result['etag']})
+        approved(workspace, {**body, 'etag': result['etag']})
     assert error.value.status == 403 and 'synthetic-private' not in str(error.value)
 
 
 def test_readonly_resources_and_unsupported_actions_are_truthful(workspace, provider):
-    assert google.operation(workspace.settings, {'resource': 'colors'})['calendar']['1']['background'] == '#123abc'
-    assert google.operation(workspace.settings, {'resource': 'settings'})['items'][0]['id'] == 'timezone'
-    assert google.operation(workspace.settings, {'resource': 'freebusy', 'action': 'freebusy',
+    assert operate(workspace, {'resource': 'colors'})['calendar']['1']['background'] == '#123abc'
+    assert operate(workspace, {'resource': 'settings'})['items'][0]['id'] == 'timezone'
+    assert operate(workspace, {'resource': 'freebusy', 'action': 'freebusy',
                                                  'data': {'items': [{'id': 'remote'}], 'timeMin': '2026-10-01T00:00:00Z',
                                                           'timeMax': '2026-10-02T00:00:00Z'}})['calendars']['remote']['busy'] == []
     for resource, action in [('settings', 'update'), ('calendars', 'list'), ('tasklists', 'clear'), ('events', 'stop')]:
         with pytest.raises(APIError, match='Unsupported action'):
-            google.operation(workspace.settings, {'resource': resource, 'action': action})
+            operate(workspace, {'resource': resource, 'action': action})
 
 
 def test_public_event_resource_editor_creates_reads_updates_and_deletes_reviewed_payload(workspace, provider):
@@ -514,7 +584,8 @@ def test_public_event_resource_editor_creates_reads_updates_and_deletes_reviewed
         def start(self, kind, work):
             return {'kind': kind, 'status': 'completed', 'result': work()}
 
-    app = SimpleNamespace(settings=workspace.settings, tasks=ImmediateTasks(), modules=workspace.config.modules)
+    app = SimpleNamespace(settings=workspace.settings, tasks=ImmediateTasks(), modules=workspace.config.modules,
+                          ui_session='ui-test')
     body = {'resource': 'events', 'calendar_id': 'remote', 'action': 'create', 'meet': True,
             'params': {'sendUpdates': 'externalOnly'},
             'data': {'summary': 'Reviewed appointment', 'start': {'date': '2026-11-01'}, 'end': {'date': '2026-11-02'},
@@ -524,17 +595,17 @@ def test_public_event_resource_editor_creates_reads_updates_and_deletes_reviewed
     assert review['recipients'] == ['guest@example.invalid'] and provider.writes == []
     request_id = review['body']['conferenceData']['createRequest']['requestId']
     created = web_calendar.post(app, workspace.conn, '/api/calendar/google/operation',
-                                {**body, 'review': review, 'confirmed': True, 'external_approved': True})['task']['result']
+                                {**body, **approval(review), 'confirmed': True, 'external_approved': True})['task']['result']
     assert created['summary'] == 'Reviewed appointment'
     assert created['conferenceData']['createRequest'] == {'requestId': request_id, 'conferenceSolutionKey': {'type': 'hangoutsMeet'}}
     assert provider.writes[-1]['query']['sendUpdates'] == ['externalOnly']
     assert provider.writes[-1]['query']['conferenceDataVersion'] == ['1']
-    read = google.operation(workspace.settings, {'resource': 'events', 'calendar_id': 'remote', 'action': 'get', 'id': created['id']})
-    changed = approved(workspace.settings, {**body, 'action': 'update', 'id': created['id'],
+    read = operate(workspace, {'resource': 'events', 'calendar_id': 'remote', 'action': 'get', 'id': created['id']})
+    changed = approved(workspace, {**body, 'action': 'update', 'id': created['id'],
                                             'etag': read['etag'], 'meet': False, 'data': {'summary': 'Revised appointment'}})
     assert changed['summary'] == 'Revised appointment'
     assert provider.writes[-1]['etag'] == read['etag']
-    assert approved(workspace.settings, {**body, 'action': 'delete', 'id': created['id'],
+    assert approved(workspace, {**body, 'action': 'delete', 'id': created['id'],
                                          'etag': changed['etag'], 'meet': False, 'data': {}})['ok']
     assert provider.events[created['id']]['status'] == 'cancelled'
 
@@ -612,10 +683,10 @@ def test_operation_preview_requires_authorization_with_setup_guidance(workspace)
     body = {'resource': 'events', 'action': 'quickAdd', 'calendar_id': 'remote', 'data': {'text': 'Lunch tomorrow noon'},
             'params': {'sendUpdates': 'none'}}
     with pytest.raises(APIError, match='upload the client then authorize') as error:
-        google.preview_operation(workspace.settings, body)
+        preview(workspace, body)
     assert error.value.status == 409
     with pytest.raises(APIError, match='Read actions run directly'):
-        google.preview_operation(workspace.settings, {'resource': 'events', 'action': 'list', 'calendar_id': 'remote'})
+        preview(workspace, {'resource': 'events', 'action': 'list', 'calendar_id': 'remote'})
 
 
 def test_mutations_require_the_frozen_server_preview_and_reject_drift(workspace, provider):
@@ -624,20 +695,33 @@ def test_mutations_require_the_frozen_server_preview_and_reject_drift(workspace,
                      'attendees': [{'email': 'guest@example.invalid'}]},
             'confirmed': True, 'external_approved': True}
     with pytest.raises(APIError, match='Prepare the exact operation preview') as error:
-        google.operation(workspace.settings, body)
+        operate(workspace, body)
     assert error.value.status == 409 and provider.calls == []
-    review = google.preview_operation(workspace.settings, body)
+    review = preview(workspace, body)
     assert provider.writes == []
     tampered = [{**body, 'data': {**body['data'], 'summary': 'Changed after review'}},
                 {**body, 'data': {**body['data'], 'attendees': [{'email': 'guest@example.invalid'}, {'email': 'extra@example.invalid'}]}},
                 {**body, 'params': {'sendUpdates': 'all'}}]
     for changed in tampered:
         with pytest.raises(APIError, match='differs from the reviewed preview') as error:
-            google.operation(workspace.settings, {**changed, 'review': review})
+            operate(workspace, {**changed, **approval(review)})
         assert error.value.status == 409
-    assert provider.writes == []
-    created = google.operation(workspace.settings, {**body, 'review': review})
+    assert provider.writes == [] and states(workspace, review) == ['proposed']
+    with pytest.raises(APIError, match='differs from this one') as error:
+        operate(workspace, {**body, **approval(review), 'digest': '0' * 64})
+    assert error.value.status == 409 and provider.writes == []
+    review = preview(workspace, body)
+    created = operate(workspace, {**body, **approval(review)})
     assert created['summary'] == 'Reviewed' and len(provider.writes) == 1
+    assert states(workspace, review) == ['proposed', 'approved', 'executed']
+    # Single use: approving the executed preview again sends nothing.
+    with pytest.raises(APIError, match='already executed') as error:
+        operate(workspace, {**body, **approval(review)})
+    assert error.value.status == 409 and len(provider.writes) == 1
+    # Only the reviewed request travels: approval alone (no resent fields) sends exactly it.
+    review = preview(workspace, body)
+    again = operate(workspace, {'confirmed': True, 'external_approved': True, **approval(review)})
+    assert again['summary'] == 'Reviewed' and provider.writes[-1]['data']['summary'] == 'Reviewed'
 
 
 def test_event_move_previews_exact_source_target_and_recipients(workspace, provider):
@@ -645,18 +729,19 @@ def test_event_move_previews_exact_source_target_and_recipients(workspace, provi
     body = {'resource': 'events', 'action': 'move', 'calendar_id': 'remote', 'id': remote['id'], 'etag': remote['etag'],
             'params': {'destination': 'archive@example.invalid', 'sendUpdates': 'none'}}
     with pytest.raises(APIError, match='Destination calendar ID'):
-        google.preview_operation(workspace.settings, {**body, 'params': {'sendUpdates': 'none'}})
+        preview(workspace, {**body, 'params': {'sendUpdates': 'none'}})
     with pytest.raises(APIError, match='explicitly approve'):
-        google.operation(workspace.settings, {**body, 'confirmed': True})
-    review = google.preview_operation(workspace.settings, body)
+        operate(workspace, {**body, 'confirmed': True})
+    review = preview(workspace, body)
     assert review['method'] == 'POST' and review['url'].endswith('/calendars/remote/events/event1/move')
     assert review['body'] is None and review['if_match'] == remote['etag']
     assert review['current']['id'] == 'event1' and review['recipients'] == ['guest@example.invalid', 'owner@example.invalid']
     provider.events['event1'] = provider.stamp(provider.events['event1'])
     with pytest.raises(APIError) as error:
-        google.operation(workspace.settings, {**body, 'review': review, 'confirmed': True, 'external_approved': True})
+        operate(workspace, {**body, **approval(review), 'confirmed': True, 'external_approved': True})
     assert error.value.status == 412 and provider.writes == []
-    moved = approved(workspace.settings, {**body, 'etag': provider.events['event1']['etag']})
+    assert states(workspace, review) == ['proposed']
+    moved = approved(workspace, {**body, 'etag': provider.events['event1']['etag']})
     write = provider.writes[-1]
     assert write['path'].endswith('/event1/move') and write['data'] is None
     assert write['query'] == {'destination': ['archive@example.invalid'], 'sendUpdates': ['none']}
@@ -668,14 +753,14 @@ def test_event_import_and_quick_add_send_exact_reviewed_payload(workspace, provi
             'end': {'date': '2026-11-02'}, 'attendees': [{'email': 'guest@example.invalid'}]}
     body = {'resource': 'events', 'action': 'import', 'calendar_id': 'remote', 'data': data}
     with pytest.raises(APIError, match='Import iCalUID'):
-        google.preview_operation(workspace.settings, {**body, 'data': {**data, 'iCalUID': ''}})
+        preview(workspace, {**body, 'data': {**data, 'iCalUID': ''}})
     with pytest.raises(APIError, match='only default event type'):
-        google.preview_operation(workspace.settings, {**body, 'data': {**data, 'eventType': 'birthday'}})
+        preview(workspace, {**body, 'data': {**data, 'eventType': 'birthday'}})
     with pytest.raises(APIError, match='Unsupported Google query parameter'):
-        google.preview_operation(workspace.settings, {**body, 'params': {'sendUpdates': 'all'}})
-    review = google.preview_operation(workspace.settings, body)
+        preview(workspace, {**body, 'params': {'sendUpdates': 'all'}})
+    review = preview(workspace, body)
     assert review['body'] == {**data} and review['recipients'] == ['guest@example.invalid']
-    imported = approved(workspace.settings, body)
+    imported = approved(workspace, body)
     assert imported['iCalUID'] == data['iCalUID']
     assert provider.writes[-1]['path'] == '/calendar/v3/calendars/remote/events/import'
     assert provider.writes[-1]['data'] == review['body'] and 'sendUpdates' not in provider.writes[-1]['query']
@@ -683,13 +768,13 @@ def test_event_import_and_quick_add_send_exact_reviewed_payload(workspace, provi
     quick = {'resource': 'events', 'action': 'quickAdd', 'calendar_id': 'remote',
              'data': {'text': 'Study block tomorrow 9am'}, 'params': {'sendUpdates': 'none'}}
     with pytest.raises(APIError, match='embedded email'):
-        google.preview_operation(workspace.settings, {**quick, 'data': {'text': 'Meet guest@example.invalid at noon'}})
+        preview(workspace, {**quick, 'data': {'text': 'Meet guest@example.invalid at noon'}})
     with pytest.raises(APIError, match='sendUpdates=none'):
-        google.preview_operation(workspace.settings, {**quick, 'params': {'sendUpdates': 'all'}})
-    review = google.preview_operation(workspace.settings, quick)
+        preview(workspace, {**quick, 'params': {'sendUpdates': 'all'}})
+    review = preview(workspace, quick)
     assert review['body'] is None and review['recipients'] == []
     assert review['params'] == {'sendUpdates': 'none', 'text': 'Study block tomorrow 9am'}
-    created = approved(workspace.settings, quick)
+    created = approved(workspace, quick)
     assert created['summary'] == 'Study block tomorrow 9am'
     assert provider.writes[-1]['path'].endswith('/events/quickAdd') and provider.writes[-1]['data'] is None
     assert provider.writes[-1]['query'] == {'sendUpdates': ['none'], 'text': ['Study block tomorrow 9am']}
@@ -701,7 +786,7 @@ def test_watch_rejects_non_public_https_receivers(workspace, provider, address):
     body = {'resource': 'events', 'action': 'watch', 'calendar_id': 'remote', 'webhook_confirmed': True,
             'data': {'id': 'channel1', 'type': 'web_hook', 'address': address}}
     with pytest.raises(APIError, match='public HTTPS receiver'):
-        google.preview_operation(workspace.settings, body)
+        preview(workspace, body)
     assert provider.calls == []
 
 
@@ -709,15 +794,15 @@ def test_watch_requires_receiver_confirmation_and_channel_stop_uses_returned_ids
     channel = {'id': 'channel1', 'type': 'web_hook', 'address': 'https://hooks.example.com/kitty', 'params': {'ttl': '3600'}}
     body = {'resource': 'events', 'action': 'watch', 'calendar_id': 'remote', 'data': channel}
     with pytest.raises(APIError, match='public HTTPS webhook receiver is ready'):
-        google.preview_operation(workspace.settings, body)
+        preview(workspace, body)
     body['webhook_confirmed'] = True
-    review = google.preview_operation(workspace.settings, body)
+    review = preview(workspace, body)
     assert review['body'] == channel and 'https://hooks.example.com/kitty' in review['notes'][0]
     assert provider.writes == []
-    result = approved(workspace.settings, body)
+    result = approved(workspace, body)
     assert provider.writes[-1]['path'] == '/calendar/v3/calendars/remote/events/watch' and provider.writes[-1]['data'] == channel
     stop = {'resource': 'channels', 'action': 'stop', 'data': {'id': result['id'], 'resourceId': result['resourceId']}}
-    assert approved(workspace.settings, stop)['ok'] and provider.channels == {}
+    assert approved(workspace, stop)['ok'] and provider.channels == {}
 
 
 def test_google_tasks_move_and_clear_list_completed_items_before_confirmation(workspace, provider):
@@ -725,25 +810,25 @@ def test_google_tasks_move_and_clear_list_completed_items_before_confirmation(wo
     provider.tasks['open'] = provider.stamp({'id': 'open', 'title': 'Open task', 'status': 'needsAction'})
     provider.tasks['done'] = provider.stamp({'id': 'done', 'title': 'Done task', 'status': 'completed'})
     with pytest.raises(APIError, match='cannot be represented'):
-        google.preview_operation(workspace.settings, {'resource': 'tasks', 'action': 'create', 'calendar_id': 'list1',
+        preview(workspace, {'resource': 'tasks', 'action': 'create', 'calendar_id': 'list1',
                                                       'data': {'title': 'Repeat', 'repeat_frequency': 'DAILY'}})
     move = {'resource': 'tasks', 'action': 'move', 'calendar_id': 'list1', 'id': 'open', 'etag': provider.tasks['open']['etag'],
             'params': {'destinationTasklist': 'list2', 'previous': 'done'}}
-    review = google.preview_operation(workspace.settings, move)
+    review = preview(workspace, move)
     assert review['url'].endswith('/lists/list1/tasks/open/move') and review['body'] is None and review['current']['title'] == 'Open task'
-    approved(workspace.settings, move)
+    approved(workspace, move)
     assert provider.writes[-1]['query'] == {'destinationTasklist': ['list2'], 'previous': ['done']}
 
     clear = {'resource': 'tasks', 'action': 'clear', 'calendar_id': 'list1', 'etag': provider.tasklists['list1']['etag']}
-    review = google.preview_operation(workspace.settings, clear)
+    review = preview(workspace, clear)
     assert [v['id'] for v in review['items']] == ['done'] and review['url'].endswith('/lists/list1/clear')
     with pytest.raises(APIError, match='Confirm clearing all 1 listed items'):
-        google.operation(workspace.settings, {**clear, 'review': review, 'confirmed': True, 'external_approved': True})
+        operate(workspace, {**clear, **approval(review), 'confirmed': True, 'external_approved': True})
     assert provider.writes[-1]['path'].endswith('/move')
-    approved(workspace.settings, clear, clear_confirmed=True)
+    approved(workspace, clear, clear_confirmed=True)
     assert provider.writes[-1]['path'] == '/tasks/v1/lists/list1/clear' and provider.tasks['done']['hidden'] is True
-    assert google.preview_operation(workspace.settings, clear)['items'] == []
-    assert approved(workspace.settings, clear)['ok']
+    assert preview(workspace, clear)['items'] == []
+    assert approved(workspace, clear)['ok']
 
 
 def test_calendar_clear_lists_every_event_and_requires_explicit_confirmation(workspace, provider):
@@ -751,23 +836,24 @@ def test_calendar_clear_lists_every_event_and_requires_explicit_confirmation(wor
     provider.add_event('event2', summary='Second')
     body = {'resource': 'calendars', 'action': 'clear', 'calendar_id': 'remote', 'etag': provider.calendar['etag']}
     with pytest.raises(APIError, match='ETag'):
-        google.preview_operation(workspace.settings, {**body, 'etag': ''})
-    review = google.preview_operation(workspace.settings, body)
+        preview(workspace, {**body, 'etag': ''})
+    review = preview(workspace, body)
     assert [v['id'] for v in review['items']] == ['event1', 'event2'] and review['recipients'] == ['guest@example.invalid']
     assert review['body'] is None and 'all 2 listed events' in review['notes'][0]
-    request = {**body, 'review': review, 'confirmed': True, 'external_approved': True}
+    request = {**body, **approval(review), 'confirmed': True, 'external_approved': True}
     with pytest.raises(APIError, match='Confirm clearing all 2 listed items'):
-        google.operation(workspace.settings, request)
+        operate(workspace, request)
     provider.add_event('event3', summary='Added after review')
     with pytest.raises(APIError, match='differs from the reviewed preview') as error:
-        google.operation(workspace.settings, {**request, 'clear_confirmed': True})
+        operate(workspace, {**request, 'clear_confirmed': True})
     assert error.value.status == 409 and provider.writes == []
-    approved(workspace.settings, body, clear_confirmed=True)
+    assert states(workspace, review) == ['proposed', 'refused']
+    approved(workspace, body, clear_confirmed=True)
     assert provider.writes[-1] == {'method': 'POST', 'path': '/calendar/v3/calendars/remote/clear', 'query': {},
                                    'data': None, 'etag': provider.calendar['etag']}
     assert provider.events == {}
-    assert google.preview_operation(workspace.settings, body)['items'] == []
-    assert approved(workspace.settings, body)['ok']
+    assert preview(workspace, body)['items'] == []
+    assert approved(workspace, body)['ok']
 
 
 def test_palette_slots_and_subject_links_stay_local_through_google_sync(workspace, provider):

@@ -23,10 +23,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Literal, Mapping, Sequence
+from typing import Callable, Literal, Sequence
 from urllib.parse import urlsplit
 
 from kitty.config import Config
+from kitty.core import effects
 from kitty.core import jobs as jobs_core
 from kitty.core import questions as questions_core
 from kitty.core import resumes as resumes_core
@@ -176,56 +177,82 @@ class ApprovalError(UnsafeAction):
 APPROVAL_CHANGED = "Preparation approval changed or is missing; review the plan again before filling."
 
 
-@dataclass(frozen=True)
-class FillApproval:
-    """Immutable reviewed job and resume identity; never resolve a new default."""
+#: The effect kind of a reviewed web preparation run (kitty.core.effects); kitty.web_automation
+#: registers it. Its executed effect is the run's approval.
+PREPARATION_KIND = "prepare_applications"
 
-    job_id: int
-    url: str
-    apply_url: str | None
-    company: str
-    tracks: tuple[str, ...]
-    resume_id: int | None
-    file_hash: str | None
-    file_path: str | None
 
-    def resume(self, conn: sqlite3.Connection, settings: Settings, job: Job) -> Resume | None:
-        if (job.id, job.url, job.apply_url, job.company_name, tuple(job.tracks)) != (
-            self.job_id, self.url, self.apply_url, self.company, self.tracks
-        ):
+def job_precondition(job_id: int) -> str:
+    """The precondition of a prepare_applications effect binding one job."""
+    return f"job:{job_id}"
+
+
+def job_binding(job: Job, resume: Resume | None) -> dict:
+    """A job's reviewed identity and its chosen resume's registered row, as reviewed."""
+    return {
+        "id": job.id, "url": job.url, "apply_url": job.apply_url, "company": job.company_name,
+        "tracks": list(job.tracks),
+        "resume": None if resume is None else {
+            "id": resume.id, "file_hash": resume.file_hash, "file_path": resume.file_path,
+        },
+    }
+
+
+def approved_resume(
+    approval: effects.Effect, conn: sqlite3.Connection, settings: Settings, job: Job,
+) -> Resume | None:
+    """Re-check a job against the executed approval and return its approved resume.
+
+    The stored (append-only) effect is the authority, not the caller's copy: it must be
+    the executed prepare_applications effect with the same digest. The job's identity
+    and the approved resume row must still equal the reviewed binding, and the file on
+    disk must still hash to the reviewed bytes. A new default is never resolved.
+    """
+    try:
+        stored = effects.get(conn, approval.id)
+    except effects.EffectError:
+        raise ApprovalError(APPROVAL_CHANGED) from None
+    if stored.kind != PREPARATION_KIND or stored.state != "executed" or stored.digest != approval.digest:
+        raise ApprovalError(APPROVAL_CHANGED)
+    name = job_precondition(job.id)
+    reviewed = stored.preconditions.get(name)
+    if not isinstance(reviewed, dict):
+        raise ApprovalError(APPROVAL_CHANGED)
+    resume = resumes_core.get_resume(conn, reviewed["resume"]["id"]) if reviewed.get("resume") else None
+    try:
+        stored.require(name, job_binding(job, resume))
+    except effects.Refused:
+        raise ApprovalError(APPROVAL_CHANGED) from None
+    if resume is None:
+        return None
+    try:
+        path = resume_file(settings, resume)
+        if not path.is_file() or resumes_core.file_hash(path) != resume.file_hash:
             raise ApprovalError(APPROVAL_CHANGED)
-        if self.resume_id is None:
-            return None
-        resume = resumes_core.get_resume(conn, self.resume_id)
-        if resume is None or (resume.file_hash, resume.file_path) != (self.file_hash, self.file_path):
-            raise ApprovalError(APPROVAL_CHANGED)
-        try:
-            path = resume_file(settings, resume)
-            if not path.is_file() or resumes_core.file_hash(path) != self.file_hash:
-                raise ApprovalError(APPROVAL_CHANGED)
-        except OSError:
-            raise ApprovalError(APPROVAL_CHANGED) from None
-        return resume
+    except OSError:
+        raise ApprovalError(APPROVAL_CHANGED) from None
+    return resume
 
 
 def _upload_approved(
-    frame: Frame, key: str, path: Path, approval: FillApproval,
+    frame: Frame, key: str, path: Path, approval: effects.Effect, job_id: int,
     conn: sqlite3.Connection, settings: Settings,
 ) -> None:
-    job = jobs_core.get_job(conn, approval.job_id)
-    if job is None or approval.resume(conn, settings, job) is None:
+    job = jobs_core.get_job(conn, job_id)
+    resume = approved_resume(approval, conn, settings, job) if job is not None else None
+    if resume is None:
         raise ApprovalError(APPROVAL_CHANGED)
     try:
         content = path.read_bytes()
     except OSError:
         raise ApprovalError(APPROVAL_CHANGED) from None
-    if hashlib.sha256(content).hexdigest() != approval.file_hash:
+    if hashlib.sha256(content).hexdigest() != resume.file_hash:
         raise ApprovalError(APPROVAL_CHANGED)
     # Firefox can read its File object at the later human submit, after the worker
     # exits. Keep a private, content-addressed artifact instead of a temporary or
     # mutable library path. Never overwrite an existing approved artifact.
     folder = settings.data_dir / "approved_resumes"
-    frozen = folder / f"{approval.file_hash}.pdf"
+    frozen = folder / f"{resume.file_hash}.pdf"
     try:
         if folder.is_symlink():
             raise ApprovalError(APPROVAL_CHANGED)
@@ -243,7 +270,7 @@ def _upload_approved(
             raise ApprovalError(APPROVAL_CHANGED)
         with os.fdopen(os.open(frozen, os.O_RDONLY | os.O_NOFOLLOW), "rb") as handle:
             digest = hashlib.file_digest(handle, "sha256").hexdigest()
-        if digest != approval.file_hash:
+        if digest != resume.file_hash:
             raise ApprovalError(APPROVAL_CHANGED)
     except OSError:
         raise ApprovalError(APPROVAL_CHANGED) from None
@@ -492,7 +519,7 @@ def _recover_page(recovery, before, result, *, retry, absorb, verify) -> bool:
 
 def fill_job(
     page: Tab, conn: sqlite3.Connection, settings: Settings, config: Config, job: Job,
-    *, resume_tab: bool = False, approval: FillApproval | None = None,
+    *, resume_tab: bool = False, approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
     recovery_planner=None, progress=None, stop=None,
 ) -> FillReport:
@@ -511,7 +538,8 @@ def fill_job(
                         ats=ats, resume_label=None, filled=[], unanswered=[], status="attempted",
                         resumed=resume_tab, resume_id=job.resume_id if resume_tab else None)
     try:
-        resume = approval.resume(conn, settings, job) if approval is not None else choose_resume(conn, config, job)
+        resume = (approved_resume(approval, conn, settings, job) if approval is not None
+                  else choose_resume(conn, config, job))
     except ApprovalError as exc:
         return _error_report(job.id, job, str(exc))
     resume_path = resume_file(settings, resume) if resume is not None else None
@@ -552,7 +580,7 @@ def fill_job(
             current = jobs_core.get_job(conn, job.id)
             if current is None:
                 raise ApprovalError(APPROVAL_CHANGED)
-            approval.resume(conn, settings, current)
+            approved_resume(approval, conn, settings, current)
         recovery.checkpoint()
 
     def verify_email(*, started=None, sent=False):
@@ -760,7 +788,7 @@ def fill_job(
                 page, config, resume_path, company=job.company_name,
                 tracks=job.tracks, jurisdiction=jurisdiction, preserve_existing=resume_tab,
                 upload_resume=(lambda frame, key, path: _upload_approved(
-                    frame, key, path, approval, conn, settings
+                    frame, key, path, approval, job.id, conn, settings
                 )) if approval is not None else None,
                 checkpoint=recovery.checkpoint,
             )
@@ -1043,7 +1071,7 @@ def _fill_all(
     bidi: Bidi, conn: sqlite3.Connection, settings: Settings, config: Config,
     job_ids: list[int], say: Callable[[str], None], *, keep_open: bool,
     watch: Watch | None = None, background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
-    approvals: Mapping[int, FillApproval] | None = None,
+    approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
     recovery_planner=None, on_report=None, stop=None,
 ) -> list[FillReport]:
@@ -1054,7 +1082,7 @@ def _fill_all(
     behind the current one and the first is not brought forward afterwards.
     """
     if eligibility_override is not None and (
-        eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approvals is not None
+        eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approval is not None
     ):
         raise ApprovalError(APPROVAL_CHANGED)
     reports: list[FillReport] = []
@@ -1077,12 +1105,9 @@ def _fill_all(
             reports.append(_blocked_report(job, blocker))
             publish()
             continue
-        approval = approvals.get(job_id) if approvals is not None else None
-        if approvals is not None:
+        if approval is not None:
             try:
-                if approval is None:
-                    raise ApprovalError(APPROVAL_CHANGED)
-                approval.resume(conn, settings, job)
+                approved_resume(approval, conn, settings, job)
             except ApprovalError as exc:
                 reports.append(_error_report(job_id, job, str(exc)))
                 publish()
@@ -1135,7 +1160,7 @@ def _fill_and_watch(
     job_ids: list[int], say: Callable[[str], None], *, keep_open: bool,
     on_filled: Callable[[list[FillReport]], None], watch: Watch | None,
     background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
-    approvals: Mapping[int, FillApproval] | None = None,
+    approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
     recovery_planner=None, on_report=None, stop=None,
 ) -> list[FillReport]:
@@ -1148,7 +1173,7 @@ def _fill_and_watch(
     if watch is not None and watch.tabs:
         watch.tabs[:] = reattach(bidi, watch.tabs)
     reports = _fill_all(bidi, conn, settings, config, job_ids, say, keep_open=keep_open,
-                        watch=watch, background=background, pause=pause, approvals=approvals,
+                        watch=watch, background=background, pause=pause, approval=approval,
                         eligibility_override=eligibility_override, recovery_planner=recovery_planner,
                         on_report=on_report, stop=stop)
     on_filled(reports)
@@ -1174,7 +1199,7 @@ def fill_jobs(
     watch: Watch | None = None,
     background: bool = False,
     pause: float = PAUSE_BETWEEN_JOBS,
-    approvals: Mapping[int, FillApproval] | None = None,
+    approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
 ) -> list[FillReport]:
     """Open each job's application form in the kitty Firefox window and fill it.
@@ -1190,13 +1215,16 @@ def fill_jobs(
     `headless=True` uses a throwaway invisible browser instead (tests, smoke
     runs); its tabs stay open only while a watch runs. `background` opens
     the tabs behind the one in front (autofill), and `pause` is the wait in
-    seconds between two jobs. Web callers supply immutable `approvals`; all are
-    checked before opening Firefox and again before each upload. CLI/TUI callers
-    without approvals retain their normal pinned-or-default selection.
+    seconds between two jobs. Web callers supply the executed `approval` effect
+    (kitty.core.effects, kind prepare_applications): every job must be bound in it,
+    and each job's identity, its approved resume row and the resume bytes are
+    re-checked against the stored effect before opening Firefox, before each job and
+    again at each upload. CLI/TUI callers without an approval retain their normal
+    pinned-or-default selection.
     Closed and ineligible jobs return blocked reports before browser access.
     The typed CLI-only compatibility override can inspect ineligible forms,
     but cannot authenticate, report readiness, or add them to submission watching.
-    It cannot be combined with reviewed web approvals.
+    It cannot be combined with a reviewed web approval.
     """
     say = progress or (lambda message: None)
     stop = watch.stop if watch is not None else None
@@ -1214,7 +1242,7 @@ def fill_jobs(
     conn = connect(settings.db_path)
     try:
         if eligibility_override is not None and (
-            eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approvals is not None
+            eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approval is not None
         ):
             raise ApprovalError(APPROVAL_CHANGED)
         # Entirely excluded runs require no browser session. Mixed runs retain
@@ -1229,21 +1257,20 @@ def fill_jobs(
         if len(local_reports) == len(job_ids):
             report_filled(local_reports)
             return local_reports
-        if approvals is not None:
+        if approval is not None:
             for job_id in job_ids:
                 job = jobs_core.get_job(conn, job_id)
                 if job is not None and preparation_blocker(job, eligibility_override=eligibility_override):
                     continue
-                approval = approvals.get(job_id)
-                if job is None or approval is None:
+                if job is None:
                     raise ApprovalError(APPROVAL_CHANGED)
-                approval.resume(conn, settings, job)
+                approved_resume(approval, conn, settings, job)
         recovery_ai, recovery_budget = model_planner(config)
         if headless:
             with headless_firefox(settings) as bidi:
                 return _fill_and_watch(bidi, conn, settings, config, job_ids, say,
                                        keep_open=watch is not None, on_filled=report_filled,
-                                       watch=watch, background=background, pause=pause, approvals=approvals,
+                                       watch=watch, background=background, pause=pause, approval=approval,
                                        eligibility_override=eligibility_override, recovery_planner=recovery_ai,
                                        on_report=on_report, stop=stop)
         say("opening the rika! Firefox window")
@@ -1257,7 +1284,7 @@ def fill_jobs(
         try:
             return _fill_and_watch(bidi, conn, settings, config, job_ids, say, keep_open=True,
                                    on_filled=report_filled, watch=watch, background=background,
-                                   pause=pause, approvals=approvals, eligibility_override=eligibility_override,
+                                   pause=pause, approval=approval, eligibility_override=eligibility_override,
                                    recovery_planner=recovery_ai, on_report=on_report, stop=stop)
         finally:
             bidi.close()                  # ends remote control only: the window and tabs stay

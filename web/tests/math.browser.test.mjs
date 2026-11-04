@@ -414,7 +414,11 @@ describe("answers", () => {
 
   test("Explain my mistake: working, then the reviewed AI request with its cost, approval, and the explanation bubble", async () => {
     const { page, problems, context, math } = await open("math", { ai: true, storage: { "kitty.math.drawers": JSON.stringify({ left: true, right: "" }) } });
-    await context.route("**/api/ai/run", (route) => route.fulfill({ json: { task: { id: "task-1", kind: "openrouter-inference", status: "running", started_at: new Date().toISOString(), finished_at: null, result: null, error: null } } }));
+    const runs = [];
+    await context.route("**/api/ai/run", (route) => {
+      runs.push(route.request().postDataJSON());
+      return route.fulfill({ json: { task: { id: "task-1", kind: "openrouter-inference", status: "running", started_at: new Date().toISOString(), finished_at: null, result: null, error: null } } });
+    });
     await context.route("**/api/tasks/task-1", (route) => route.fulfill({ json: {
       id: "task-1", kind: "openrouter-inference", status: "completed", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), error: null,
       result: { text: "Your second line divides each term by $x$ instead of by $(x+1)$.", cost_usd: 0.0004 },
@@ -444,6 +448,7 @@ describe("answers", () => {
     const bubble = explain.getByRole("note", { name: "Explanation" });
     await bubble.waitFor();
     assert.match(await bubble.innerText(), /divides each term by/);
+    assert.deepEqual(runs, [{ effect_id: "a".repeat(32), digest: "b".repeat(64), confirmed: true, budget_usd: 0.01 }]);
     assert.ok(await bubble.locator(".katex").count() >= 2, "the explanation's math is not rendered");
     assert.deepEqual(problems, []);
     await context.close();

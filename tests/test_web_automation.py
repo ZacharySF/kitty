@@ -1,17 +1,21 @@
 """Isolated browser-adapter regressions: synthetic credentials, no browser or HTTP requests."""
 from __future__ import annotations
 
+import dataclasses
 import json
+import sqlite3
 import threading
 from collections import Counter
 from dataclasses import replace
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
 from kitty import web_automation as web
-from kitty.core import applications, favorites, form_questions, jobs, resumes
+from kitty import web_effects
+from kitty.core import applications, effect_kinds, effects, favorites, form_questions, jobs, resumes
 from kitty.core.apply.filler import FillReport
 from kitty.core.apply.watch import PageView, WatchedTab, watch_tabs
 from kitty.db import connect
@@ -21,7 +25,8 @@ from kitty.web_server import APIError
 @pytest.fixture
 def app(workspace):
     controller = web.AutomationController(workspace.settings)
-    result = SimpleNamespace(settings=workspace.settings, config=workspace.config, automation=controller)
+    result = SimpleNamespace(settings=workspace.settings, config=workspace.config, automation=controller,
+                             ui_session="ui-test")
     yield result
     controller.close()
 
@@ -60,10 +65,17 @@ def finish(controller):
 
 
 
+def reviewed(plan):
+    """Start's reference to the plan's proposed effect: exactly the reviewed digest."""
+    return {"effect_id": plan["effect"]["id"], "digest": plan["effect"]["digest"]}
+
+
 def controller_plan(app, posting):
+    """The controller's input: an executed prepare_applications effect for the posting."""
     conn = connect(app.settings.db_path)
     try:
-        return web.preparation_plan(app, conn, {"mode": "selected", "job_ids": [posting.id]})
+        plan = web.post(app, conn, "/api/automation/plan", {"mode": "selected", "job_ids": [posting.id]})
+        return web.approve(app, conn, reviewed(plan)).effect
     finally:
         conn.close()
 
@@ -119,7 +131,8 @@ def test_external_actions_require_exact_confirmation(app, workspace, posting, mo
     for route in ("/api/automation/start", "/api/questions/collect"):
         body = {"confirmed": confirmation}
         if route.endswith("/start"):
-            body.update(mode="selected", job_ids=[posting.id])
+            body.update(reviewed(web.post(app, workspace.conn, "/api/automation/plan",
+                                          {"mode": "selected", "job_ids": [posting.id]})))
         with pytest.raises(APIError) as caught:
             web.post(app, workspace.conn, route, body)
         assert caught.value.status == 400
@@ -236,11 +249,64 @@ def test_only_observed_confirmation_records_submission(app, workspace, posting, 
 
 def test_stale_plan_is_rejected_before_browser(app, workspace, posting, monkeypatch):
     monkeypatch.setattr(web.filler, "fill_jobs", lambda *a, **k: pytest.fail("Browser must not start"))
-    with pytest.raises(APIError) as caught:
+    plan = web.post(app, workspace.conn, "/api/automation/plan", {"mode": "selected", "job_ids": [posting.id]})
+    with pytest.raises(APIError, match="review the plan again") as caught:
         web.post(app, workspace.conn, "/api/automation/start", {
-            "mode": "selected", "job_ids": [posting.id], "confirmed": True, "fingerprint": "stale",
+            **reviewed(plan), "digest": "0" * 64, "confirmed": True,
         })
     assert caught.value.status == 409
+
+
+def test_plan_proposes_an_hour_long_inline_effect_and_start_uses_it_once(app, workspace, posting, monkeypatch):
+    captured = []
+    monkeypatch.setattr(app.automation, "start", lambda config, approval, **k: captured.append((approval, k)))
+    plan = web.post(app, workspace.conn, "/api/automation/plan", {"mode": "selected", "job_ids": [posting.id]})
+    assert "fingerprint" not in plan and set(plan["effect"]) == {"id", "digest", "expires_at"}
+    proposed = effects.get(workspace.conn, plan["effect"]["id"])
+    assert proposed.kind == "prepare_applications" and proposed.state == "proposed"
+    assert proposed.payload == {"mode": "selected", "track": None, "cap": proposed.payload["cap"],
+                                "job_ids": [posting.id], "authentication_mode": "auto"}
+    assert proposed.preconditions["job_ids"] == [posting.id] and f"job:{posting.id}" in proposed.preconditions
+    assert web.PREPARE_APPLICATIONS.lifetime == timedelta(hours=1)
+    assert web.PREPARE_APPLICATIONS.review == "inline"
+    # Inline kinds are reviewed here, never in the pending-approvals list.
+    assert plan["effect"]["id"] not in [item.id for item in effects.pending(workspace.conn)]
+    web.post(app, workspace.conn, "/api/automation/start", {**reviewed(plan), "confirmed": True, "watch": False})
+    approval, options = captured[0]
+    assert approval.state == "executed" and approval.id == plan["effect"]["id"]
+    assert options == {"watch": False, "background": False}
+    recorded = [event for event in effects.events(workspace.conn, approval.id) if event["state"] == "approved"]
+    assert recorded[0]["detail"]["options"] == {
+        "watch": False, "background": False, "authorize_authentication": False, "authorize_recovery_ai": False,
+    }
+    with pytest.raises(APIError, match="review the plan again") as caught:
+        web.post(app, workspace.conn, "/api/automation/start", {**reviewed(plan), "confirmed": True})
+    assert caught.value.status == 409 and len(captured) == 1
+
+
+def test_refusal_is_final_even_if_the_change_is_reverted(app, workspace, posting, monkeypatch):
+    monkeypatch.setattr(app.automation, "start", lambda *a, **k: pytest.fail("Refused review started browser"))
+    plan = web.post(app, workspace.conn, "/api/automation/plan", {"mode": "selected", "job_ids": [posting.id]})
+    workspace.conn.execute("UPDATE jobs SET url=? WHERE id=?", ("https://example.invalid/moved", posting.id))
+    with pytest.raises(APIError, match="review the plan again") as caught:
+        web.post(app, workspace.conn, "/api/automation/start", {**reviewed(plan), "confirmed": True})
+    assert {"precondition": f"job:{posting.id}"} in caught.value.problems
+    workspace.conn.execute("UPDATE jobs SET url=? WHERE id=?", (posting.url, posting.id))
+    with pytest.raises(APIError, match="review the plan again"):
+        web.post(app, workspace.conn, "/api/automation/start", {**reviewed(plan), "confirmed": True})
+    assert effects.get(workspace.conn, plan["effect"]["id"]).state == "refused"
+
+
+def test_start_refuses_another_kinds_effect(app, workspace, posting, monkeypatch):
+    monkeypatch.setattr(app.automation, "start", lambda *a, **k: pytest.fail("Another kind started browser"))
+    other = effects.propose(workspace.conn, "submit_application", {"job_id": posting.id},
+                            actor=web_effects.user(app), ctx=effect_kinds.Context(workspace.conn, app.config))
+    with pytest.raises(APIError, match="Preparation approval is required") as caught:
+        web.post(app, workspace.conn, "/api/automation/start", {
+            "effect_id": other.id, "digest": other.digest, "confirmed": True,
+        })
+    assert caught.value.status == 409
+    assert effects.get(workspace.conn, other.id).state == "proposed"
 
 
 def test_questions_log_list_and_collection_counters(app, workspace, posting, monkeypatch):
@@ -295,7 +361,7 @@ def test_authentication_requires_separate_explicit_authorization(app, workspace,
     body = {"mode": "selected", "job_ids": [posting.id]}
     plan = web.post(app, workspace.conn, "/api/automation/preflight", body)
     web.post(app, workspace.conn, "/api/automation/start", {
-        **body, "confirmed": True, "fingerprint": plan["fingerprint"],
+        **reviewed(plan), "confirmed": True,
     })
     assert not captured[0].apply.authentication.enabled
     assert app.config.apply.authentication.enabled
@@ -309,7 +375,7 @@ def test_changed_registered_resume_blocks_upload(app, workspace, posting, pdf_pa
     monkeypatch.setattr(web.filler, "fill_jobs", lambda *a, **k: pytest.fail("Changed PDF must not be uploaded"))
     with pytest.raises(APIError, match="review the plan again") as caught:
         web.post(app, workspace.conn, "/api/automation/start", {
-            **body, "confirmed": True, "fingerprint": plan["fingerprint"],
+            **reviewed(plan), "confirmed": True,
         })
     assert caught.value.status == 409
 
@@ -326,15 +392,29 @@ def test_watcher_disconnect_is_not_reported_as_success(app, posting, monkeypatch
     assert "secret" not in state["error"]
 
 
-@pytest.mark.parametrize("fingerprint", [None, "", False, [], 42])
-def test_start_requires_review_fingerprint(app, workspace, posting, monkeypatch, fingerprint):
+@pytest.mark.parametrize("field", ["effect_id", "digest"])
+@pytest.mark.parametrize("value", [None, "", False, [], 42])
+def test_start_requires_reviewed_effect(app, workspace, posting, monkeypatch, field, value):
     monkeypatch.setattr(web.filler, "fill_jobs", lambda *a, **k: pytest.fail("Browser must not start"))
-    body = {"mode": "selected", "job_ids": [posting.id], "confirmed": True}
-    if fingerprint is not None:
-        body["fingerprint"] = fingerprint
+    plan = web.post(app, workspace.conn, "/api/automation/plan", {"mode": "selected", "job_ids": [posting.id]})
+    body = {**reviewed(plan), "confirmed": True}
+    if value is None:
+        del body[field]
+    else:
+        body[field] = value
     with pytest.raises(APIError, match="review the plan again") as caught:
         web.post(app, workspace.conn, "/api/automation/start", body)
     assert caught.value.status == 409
+    assert effects.get(workspace.conn, plan["effect"]["id"]).state == "proposed"
+
+
+def test_start_with_unknown_effect_requires_review(app, workspace, monkeypatch):
+    monkeypatch.setattr(web.filler, "fill_jobs", lambda *a, **k: pytest.fail("Browser must not start"))
+    for effect_id in ("stale", "a" * 32):
+        with pytest.raises(APIError, match="Preparation approval is required") as caught:
+            web.post(app, workspace.conn, "/api/automation/start",
+                     {"effect_id": effect_id, "digest": "0" * 64, "confirmed": True})
+        assert caught.value.status == 409
 
 
 @pytest.mark.parametrize("change", ["default", "registered", "posting_url", "apply_url", "profile", "answers", "apply"])
@@ -342,7 +422,7 @@ def test_review_binds_resume_urls_and_config(app, workspace, posting, pdf_pair, 
     body = {"mode": "selected", "job_ids": [posting.id]}
     plan = web.post(app, workspace.conn, "/api/automation/preflight", body)
     assert plan["jobs"][0]["resume"]["available"]
-    assert len(plan["fingerprint"]) == 64
+    assert len(plan["effect"]["digest"]) == 64
     if change == "default":
         workspace.conn.execute("UPDATE resume_default_overrides SET resume_id=?", (pdf_pair[1].id,))
     elif change == "registered":
@@ -362,12 +442,12 @@ def test_review_binds_resume_urls_and_config(app, workspace, posting, pdf_pair, 
     else:
         app.config = replace(app.config, apply=app.config.apply.model_copy(update={"watch_hours": 7}))
     current = web.post(app, workspace.conn, "/api/automation/preflight", body)
-    assert current["fingerprint"] != plan["fingerprint"]
+    assert current["effect"]["digest"] != plan["effect"]["digest"]
     assert current["jobs"][0]["resume"]["available"]
     monkeypatch.setattr(web.filler, "fill_jobs", lambda *a, **k: pytest.fail("Stale review must not start browser"))
     with pytest.raises(APIError, match="review the plan again") as caught:
         web.post(app, workspace.conn, "/api/automation/start", {
-            **body, "confirmed": True, "fingerprint": plan["fingerprint"],
+            **reviewed(plan), "confirmed": True,
         })
     assert caught.value.status == 409
 
@@ -375,17 +455,19 @@ def test_review_binds_resume_urls_and_config(app, workspace, posting, pdf_pair, 
 def test_default_changed_after_start_keeps_approved_resume(app, workspace, posting, pdf_pair, monkeypatch):
     entered, proceed = threading.Event(), threading.Event()
     seen = []
-    def fill(settings, config, ids, *, approvals, on_filled, **kwargs):
+    def fill(settings, config, ids, *, approval, on_filled, **kwargs):
         entered.set()
         assert proceed.wait(3)
         owned = connect(settings.db_path)
         try:
             job = jobs.get_job(owned, posting.id)
             assert web.filler.choose_resume(owned, config, job).id == pdf_pair[1].id
-            approved = approvals[posting.id].resume(owned, settings, job)
+            approved = web.filler.approved_resume(approval, owned, settings, job)
             seen.append(approved.id)
-            with pytest.raises(TypeError):
-                approvals[posting.id] = approvals[posting.id]
+            with pytest.raises(dataclasses.FrozenInstanceError):
+                approval.preconditions = {}
+            with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+                owned.execute("UPDATE effects SET preconditions='{}' WHERE id=?", (approval.id,))
             on_filled([report(posting.id)])
         finally:
             owned.close()
@@ -393,7 +475,7 @@ def test_default_changed_after_start_keeps_approved_resume(app, workspace, posti
     body = {"mode": "selected", "job_ids": [posting.id]}
     plan = web.post(app, workspace.conn, "/api/automation/preflight", body)
     web.post(app, workspace.conn, "/api/automation/start", {
-        **body, "confirmed": True, "fingerprint": plan["fingerprint"],
+        **reviewed(plan), "confirmed": True,
     })
     try:
         assert entered.wait(3)
@@ -419,8 +501,7 @@ def test_review_enables_only_chosen_run_account_action(
     assert "Synthetic-Web-Pass" not in serialized and "web.synthetic@" not in serialized
     assert "credential_binding" not in serialized
     web.post(app, workspace.conn, "/api/automation/start", {
-        **body, "confirmed": True, "authorize_authentication": True,
-        "fingerprint": plan["fingerprint"],
+        **reviewed(plan), "confirmed": True, "authorize_authentication": True,
     })
     policy = captured[0].apply.authentication
     assert policy.enabled and policy.account_mode == mode
@@ -439,23 +520,28 @@ def test_account_authorization_is_bound_to_review(
 ):
     body = {"mode": "selected", "job_ids": [posting.id], "authentication_mode": "create"}
     plan = web.post(app, workspace.conn, "/api/automation/preflight", body)
-    if change == "password":
+    start = reviewed(plan)
+    if change == "mode":
+        # The account mode is in the reviewed payload: another mode is another effect.
+        start["effect_id"] = web.post(app, workspace.conn, "/api/automation/preflight",
+                                      {**body, "authentication_mode": "login"})["effect"]["id"]
+    elif change == "password":
         saved_credentials.write_text("APPLICATION_ACCOUNT_EMAIL=web.synthetic@example.invalid\n"
                                      "APPLICATION_ACCOUNT_PASSWORD=Changed-Synthetic-Password\n")
     elif change == "email":
         saved_credentials.write_text("APPLICATION_ACCOUNT_EMAIL=changed.synthetic@example.invalid\n"
                                      "APPLICATION_ACCOUNT_PASSWORD=Synthetic-Web-Pass#42\n")
-    elif change == "mode":
-        body["authentication_mode"] = "login"
     else:
         workspace.conn.execute("UPDATE jobs SET apply_url=? WHERE id=?",
                                ("https://different.example/register", posting.id))
     monkeypatch.setattr(app.automation, "start", lambda *a, **k: pytest.fail("Stale account review"))
     with pytest.raises(APIError, match="review the plan again") as caught:
         web.post(app, workspace.conn, "/api/automation/start", {
-            **body, "confirmed": True, "authorize_authentication": True, "fingerprint": plan["fingerprint"],
+            **start, "confirmed": True, "authorize_authentication": True,
         })
     assert caught.value.status == 409
+    if change in ("password", "email"):
+        assert {"precondition": "credentials"} in caught.value.problems
 
 
 def test_account_review_requires_saved_credentials_and_refuses_public_password(
@@ -467,8 +553,10 @@ def test_account_review_requires_saved_credentials_and_refuses_public_password(
     monkeypatch.setattr(app.automation, "start", lambda *a, **k: pytest.fail("No credential approval"))
     with pytest.raises(APIError, match="Saved credentials are unavailable"):
         web.post(app, workspace.conn, "/api/automation/start", {
-            **body, "confirmed": True, "authorize_authentication": True, "fingerprint": plan["fingerprint"],
+            **reviewed(plan), "confirmed": True, "authorize_authentication": True,
         })
+    # A start the plan cannot run commits nothing: the review stays pending.
+    assert effects.get(workspace.conn, plan["effect"]["id"]).state == "proposed"
     for extra in ({"password": "Synthetic"}, {"approved_origins": ["*"]}):
         with pytest.raises(APIError, match="Unknown parameter"):
             web.post(app, workspace.conn, "/api/automation/preflight", {**body, **extra})
@@ -484,7 +572,7 @@ def test_credentials_changed_after_start_are_rejected_before_browser_access(
     body = {"mode": "selected", "job_ids": [posting.id], "authentication_mode": "create"}
     plan = web.post(app, workspace.conn, "/api/automation/preflight", body)
     web.post(app, workspace.conn, "/api/automation/start", {
-        **body, "confirmed": True, "authorize_authentication": True, "fingerprint": plan["fingerprint"],
+        **reviewed(plan), "confirmed": True, "authorize_authentication": True,
     })
     saved_credentials.write_text("APPLICATION_ACCOUNT_EMAIL=web.synthetic@example.invalid\n"
                                  "APPLICATION_ACCOUNT_PASSWORD=Changed-After-Start\n")
@@ -509,7 +597,7 @@ def test_google_review_uses_profile_identity_without_employer_password(
     assert auth["google_available"] and not auth["credentials_available"]
     assert "https://accounts.google.com" not in auth["approved_origins"]
     web.post(app, workspace.conn, "/api/automation/start", {
-        **body, "confirmed": True, "authorize_authentication": True, "fingerprint": plan["fingerprint"],
+        **reviewed(plan), "confirmed": True, "authorize_authentication": True,
     })
     policy = captured[0].apply.authentication
     assert policy.account_mode == "google" and policy._google_email == app.config.profile.email
@@ -524,6 +612,7 @@ def test_google_account_action_identity_and_employer_are_review_bound(
 ):
     body = {"mode": "selected", "job_ids": [posting.id], "authentication_mode": "google"}
     plan = web.post(app, workspace.conn, "/api/automation/preflight", body)
+    start = reviewed(plan)
     if change == "email":
         app.config = replace(app.config, profile=app.config.profile.model_copy(
             update={"email": "different@example.invalid"}))
@@ -531,11 +620,12 @@ def test_google_account_action_identity_and_employer_are_review_bound(
         workspace.conn.execute("UPDATE jobs SET apply_url=? WHERE id=?",
                                ("https://different.example/login", posting.id))
     else:
-        body["authentication_mode"] = "login"
+        start["effect_id"] = web.post(app, workspace.conn, "/api/automation/preflight",
+                                      {**body, "authentication_mode": "login"})["effect"]["id"]
     monkeypatch.setattr(app.automation, "start", lambda *a, **k: pytest.fail("Stale Google approval"))
     with pytest.raises(APIError, match="review the plan again"):
         web.post(app, workspace.conn, "/api/automation/start", {
-            **body, "confirmed": True, "authorize_authentication": True, "fingerprint": plan["fingerprint"],
+            **start, "confirmed": True, "authorize_authentication": True,
         })
 
 
@@ -545,7 +635,7 @@ def test_google_action_without_checkbox_remains_manual(app, workspace, posting, 
     body = {"mode": "selected", "job_ids": [posting.id], "authentication_mode": "google"}
     plan = web.post(app, workspace.conn, "/api/automation/preflight", body)
     web.post(app, workspace.conn, "/api/automation/start", {
-        **body, "confirmed": True, "fingerprint": plan["fingerprint"],
+        **reviewed(plan), "confirmed": True,
     })
     assert not captured[0].apply.authentication.enabled
     assert captured[0].apply.authentication._google_email is None
@@ -577,8 +667,7 @@ def test_selected_exclusion_precedes_credentials_and_keeps_actual_reason(
     }]
     with pytest.raises(APIError) as caught:
         web.post(app, workspace.conn, "/api/automation/start", {
-            "mode": "selected", "job_ids": [posting.id], "fingerprint": plan["fingerprint"],
-            "confirmed": True,
+            **reviewed(plan), "confirmed": True,
         })
     assert caught.value.status == 409
     assert app.automation.snapshot()["reports"] == []
@@ -615,7 +704,7 @@ def test_new_ineligibility_invalidates_review_before_browser_or_credentials(
     monkeypatch.setattr(web.filler, "fill_jobs", lambda *a, **kw: pytest.fail("Stale review cannot start browser"))
     with pytest.raises(APIError) as caught:
         web.post(app, workspace.conn, "/api/automation/start", {
-            **body, "confirmed": True, "fingerprint": plan["fingerprint"],
+            **reviewed(plan), "confirmed": True,
         })
     assert caught.value.status == 409
     assert app.automation.snapshot()["running"] is False
@@ -651,7 +740,7 @@ def test_remote_recovery_requires_available_review_before_browser(app, workspace
     plan = web.post(app, workspace.conn, '/api/automation/preflight', body)
     with pytest.raises(APIError) as error:
         web.post(app, workspace.conn, '/api/automation/start', {
-            **body, 'confirmed': True, 'fingerprint': plan['fingerprint'], 'authorize_recovery_ai': True,
+            **reviewed(plan), 'confirmed': True, 'authorize_recovery_ai': True,
         })
     assert error.value.status == 409
     assert workspace.conn.execute('SELECT COUNT(*) FROM ai_reviews').fetchone()[0] == 0
@@ -672,7 +761,7 @@ def test_recovery_policy_or_price_drift_invalidates_review(app, workspace, posti
     monkeypatch.setattr(app.automation, 'start', lambda *a, **k: pytest.fail('Stale recovery review started browser'))
     with pytest.raises(APIError) as error:
         web.post(app, workspace.conn, '/api/automation/start', {
-            **body, 'confirmed': True, 'fingerprint': plan['fingerprint'], 'authorize_recovery_ai': True,
+            **reviewed(plan), 'confirmed': True, 'authorize_recovery_ai': True,
         })
     assert error.value.status == 409
     assert workspace.conn.execute('SELECT COUNT(*) FROM ai_reviews').fetchone()[0] == 0
@@ -704,7 +793,7 @@ def test_recovery_reservation_is_released_if_worker_never_started(app, workspace
     monkeypatch.setattr(app.automation, 'start', fail_before_start)
     with pytest.raises(RuntimeError):
         web.post(app, workspace.conn, '/api/automation/start', {
-            **body, 'confirmed': True, 'fingerprint': plan['fingerprint'], 'authorize_recovery_ai': True,
+            **reviewed(plan), 'confirmed': True, 'authorize_recovery_ai': True,
         })
     assert web_ai._spent(workspace.conn) == 0
     assert workspace.conn.execute('SELECT state FROM ai_reviews').fetchone()[0] == 'failed'

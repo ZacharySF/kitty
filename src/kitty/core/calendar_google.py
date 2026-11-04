@@ -2,20 +2,26 @@
 
 No credential or provider error body crosses the API boundary. Sync uses ETags
 and local revisions; divergent edits become review records, never last-writer wins.
+
+Every Google write is an effect (kitty.core.effects) approved in Calendar's own view:
+``google_calendar_push`` freezes the pending local writes of a both-direction sync and
+``google_resource_change`` the live review of one exact resource-editor request. A
+preview proposes the effect; the person's approval carries its id and digest, and the
+kernel refuses it, for good, when anything reviewed changed.
 """
 from __future__ import annotations
 
 import json
 import os
 import ipaddress
-import re
 import tempfile
+from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
-from kitty.core import calendar as local
+from kitty.core import calendar as local, effects
 from kitty.db.connection import transaction
 
 CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar'
@@ -498,20 +504,64 @@ def _apply_remote(conn, calendar_id, remote, mapping=None):
                  (calendar_id, remote['id'], ident, remote.get('etag'), event['revision'], json.dumps(remote), json.dumps(remote)))
 
 
-def preview_sync(conn, body, *, applyai=True):
-    """Freeze local writes and recipients, including events outside the UI range."""
+EFFECT_LIFETIME = timedelta(minutes=30)
+SEND_UPDATES = {'none', 'all', 'externalOnly'}
+SYNC_DRIFT = 'Local calendar changes differ from the reviewed preview; prepare and approve a fresh sync preview'
+SYNC_FRESH = 'prepare and approve a fresh sync preview'
+
+
+@dataclass(frozen=True)
+class _Local:
+    """What a push's preconditions read: the connection and whether ApplyAI events count."""
+
+    conn: object
+    applyai: bool
+
+
+def _effect_ref(effect):
+    """What the UI sends back to approve exactly this proposal."""
+    return {'id': effect.id, 'digest': effect.digest, 'expires_at': effect.expires_at}
+
+
+def _refused(exc, drift, fresh):
+    """A kernel refusal in this module's error style: anything reviewed that changed means review again."""
+    local.fail(drift if exc.changed else f'{str(exc).rstrip(".")}; {fresh}', exc.status)
+
+
+def _proposed(conn, body, kind, fresh):
+    """The stored proposal of `kind` this approval names (never another kind's effect)."""
+    try:
+        effect = effects.get(conn, body.get('effect_id'))
+    except effects.EffectError as exc:
+        _refused(exc, fresh, fresh)
+    if effect.kind != kind.name:
+        local.fail(f'This is not a reviewed {kind.title.lower()}; {fresh}', 409)
+    return effect
+
+
+def _sync_request(body):
+    """The push being proposed: which linked calendars, and the attendee email policy."""
     selected = body.get('calendar_ids', [])
     if not isinstance(selected, list) or not selected or any(not isinstance(v, str) for v in selected):
         local.fail('Select at least one linked calendar')
+    updates = body.get('send_updates', 'none')
+    if updates not in SEND_UPDATES:
+        local.fail('Invalid email update policy')
+    return {'calendar_ids': sorted(set(selected)), 'send_updates': updates}
+
+
+def _pending_writes(ctx, payload):
+    """Every pending local write and its recipients, including events outside the UI range."""
+    conn = ctx.conn
     review = {'calendars': [], 'events': []}
-    for calendar_id in sorted(set(selected)):
+    for calendar_id in payload['calendar_ids']:
         cal = local._get_calendar(conn, calendar_id)
         if not cal['google_id']:
             local.fail('Only linked calendars can sync')
         review['calendars'].append({k: cal[k] for k in ('id', 'revision', 'name', 'timezone', 'color')})
         rows = conn.execute('SELECT e.*,m.google_id,m.synced_revision,m.remote_json FROM calendar_events e LEFT JOIN calendar_google_events m ON m.event_id=e.id WHERE e.calendar_id=? AND (m.event_id IS NULL OR e.revision!=m.synced_revision) ORDER BY e.id', (calendar_id,))
         for row in rows:
-            if not applyai and local.applyai_sourced(row['source_key']):
+            if not ctx.applyai and local.applyai_sourced(row['source_key']):
                 continue
             if row['deleted'] and not row['google_id']:
                 continue
@@ -531,27 +581,61 @@ def preview_sync(conn, body, *, applyai=True):
     return review
 
 
-def sync(settings, conn, body, *, applyai=True):
+def _push_approved(ctx, effect):
+    """Approving records the push; the push itself is network work after the claim commits."""
+    return None
+
+
+PUSH = effects.REGISTRY.register(effects.Executable(
+    name='google_calendar_push', title='Google Calendar push', proposers=frozenset({'user'}),
+    preconditions=_pending_writes, review='inline', lifetime=EFFECT_LIFETIME, run=_push_approved,
+))
+
+
+def preview_sync(conn, body, *, actor, applyai=True):
+    """Propose a push whose preconditions freeze every pending local write and its recipients."""
+    payload = _sync_request(body)
+    try:
+        effect = effects.propose(conn, PUSH.name, payload, actor=actor, ctx=_Local(conn, applyai))
+    except effects.EffectError as exc:
+        local.fail(str(exc), exc.status)
+    return {**effect.preconditions, 'effect': _effect_ref(effect)}
+
+
+def sync(settings, conn, body, *, actor, applyai=True):
     if body.get('confirmed') is not True:
         local.fail('Confirm fetching Google data and the selected push direction')
     direction = body.get('direction', 'pull')
     if direction not in {'pull', 'both'}:
         local.fail('Sync direction must be pull or both')
     updates = body.get('send_updates', 'none')
-    if updates not in {'none', 'all', 'externalOnly'}:
+    if updates not in SEND_UPDATES:
         local.fail('Invalid email update policy')
     if direction == 'both' and body.get('external_approved') is not True:
         local.fail('Explicitly approve Google event changes and possible attendee notifications')
     selected = body.get('calendar_ids', [])
     if not isinstance(selected, list) or not selected:
         local.fail('Select at least one linked calendar')
-    review = preview_sync(conn, body, applyai=applyai)
-    if direction == 'both' and body.get('review') != review:
-        local.fail('Local calendar changes differ from the reviewed preview; prepare and approve a fresh sync preview', 409)
-    reviewed = {v['id']: v['revision'] for v in review['events']}
-    reviewed_calendars = {v['id']: v['revision'] for v in review['calendars']}
+    proposal = None
+    if direction == 'both':
+        if 'effect_id' not in body:
+            local.fail('Prepare and approve a fresh sync preview before pushing local changes', 409)
+        proposal = _proposed(conn, body, PUSH, SYNC_FRESH)
+        if _sync_request(body) != proposal.payload:
+            local.fail(SYNC_DRIFT, 409)
+        selected = proposal.payload['calendar_ids']
     result = {'pulled': 0, 'pushed': 0, 'conflicts': 0, 'errors': []}
     with session(settings) as client:
+        reviewed, reviewed_calendars = {}, {}
+        if proposal is not None:
+            try:
+                approved, _ = effects.approve_and_execute(conn, proposal.id, body.get('digest'), kinds={PUSH.name},
+                                                          actor=actor, ctx=_Local(conn, applyai))
+            except effects.EffectError as exc:
+                _refused(exc, SYNC_DRIFT, SYNC_FRESH)
+            # Each calendar and event is pushed only at the revision approved here.
+            reviewed = {v['id']: v['revision'] for v in approved.preconditions['events']}
+            reviewed_calendars = {v['id']: v['revision'] for v in approved.preconditions['calendars']}
         for calendar_id in selected:
             cal = local._get_calendar(conn, calendar_id)
             if not cal['google_id']:
@@ -822,12 +906,10 @@ def _brief(value):
     return {key: value[key] for key in keys if key in value}
 
 
-def _reviewed_meet_request(body):
-    """Reuse the reviewed Meet requestId so applying matches the frozen preview."""
-    value = body.get('review')
-    for key in ('body', 'conferenceData', 'createRequest', 'requestId'):
-        value = value.get(key) if isinstance(value, dict) else None
-    return value if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{32}', value) else uuid4().hex
+def _meet_request(body):
+    """The proposal's Meet requestId: generated once at preview, so applying sends the reviewed one."""
+    value = body.get('meet_request_id')
+    return value if isinstance(value, str) and value else uuid4().hex
 
 
 def _special_event(data, current=None, *, creating=False, replacing=False):
@@ -1026,7 +1108,7 @@ def _plan(settings, body):
     if resource == 'events' and body.get('meet'):
         if action not in {'create', 'update', 'replace', 'import'}:
             local.fail('Meet creation requires event create/update/replace/import')
-        data = {**data, 'conferenceData': {'createRequest': {'requestId': _reviewed_meet_request(body), 'conferenceSolutionKey': {'type': 'hangoutsMeet'}}}}
+        data = {**data, 'conferenceData': {'createRequest': {'requestId': _meet_request(body), 'conferenceSolutionKey': {'type': 'hangoutsMeet'}}}}
     return {'resource': resource, 'action': action, 'read': read, 'method': method, 'path': path, 'params': params,
             'data': data, 'etag': etag, 'tasks': tasks, 'preflight': preflight}
 
@@ -1084,18 +1166,61 @@ def _require_clear_confirmation(body, items):
         local.fail(f'Confirm clearing all {len(items)} listed items; this cannot be undone from rika!')
 
 
-def preview_operation(settings, body):
-    """Freeze the exact request, live target, recipients and clear listing for approval."""
-    plan = _plan(settings, body)
-    if plan['read']:
+OPERATION_FIELDS = ('resource', 'action', 'calendar_id', 'id', 'etag', 'data', 'params', 'meet', 'notify', 'webhook_confirmed')
+OPERATION_DRIFT = 'Google request or live target differs from the reviewed preview; prepare and approve a fresh preview'
+OPERATION_FRESH = 'prepare and approve a fresh preview'
+
+
+@dataclass(frozen=True)
+class _Remote:
+    """What a resource change's preconditions read: live Google state through this client."""
+
+    settings: object
+    client: object
+
+
+def _operation_request(body):
+    """The exact request fields of a resource-editor body (never its approval flags)."""
+    return {key: body[key] for key in OPERATION_FIELDS if key in body}
+
+
+def _live_review(ctx, payload):
+    """The exact request, live target (ETag GET preflight), recipients and clear listing, read now."""
+    return {'review': _review(ctx.client, _plan(ctx.settings, payload), payload)}
+
+
+def _change_approved(ctx, effect):
+    """Approving records the change; the reviewed body is sent after the claim commits."""
+    return effect.preconditions['review']['body']
+
+
+CHANGE = effects.REGISTRY.register(effects.Executable(
+    name='google_resource_change', title='Google resource change', proposers=frozenset({'user'}),
+    preconditions=_live_review, review='inline', remote=True, lifetime=EFFECT_LIFETIME, run=_change_approved,
+))
+
+
+def preview_operation(settings, conn, body, *, actor):
+    """Propose one exact change whose preconditions freeze the live review for approval."""
+    payload = _operation_request(body)
+    if payload.get('meet'):
+        payload['meet_request_id'] = uuid4().hex
+    if _plan(settings, payload)['read']:
         local.fail('Read actions run directly; previews are for external changes')
     with session(settings) as client:
-        return _review(client, plan, body)
+        try:
+            effect = effects.propose(conn, CHANGE.name, payload, actor=actor, ctx=_Remote(settings, client))
+        except effects.EffectError as exc:
+            local.fail(str(exc), exc.status)
+    return {**effect.preconditions['review'], 'effect': _effect_ref(effect)}
 
 
-def operation(settings, body):
+def operation(settings, conn, body, *, actor):
     """Explicit, exact reviewed Google resource operations; no arbitrary URL proxy."""
-    plan = _plan(settings, body)
+    proposal = _proposed(conn, body, CHANGE, OPERATION_FRESH) if 'effect_id' in body else None
+    if proposal is not None and (sent := _operation_request(body)) and sent != _operation_request(proposal.payload):
+        local.fail(OPERATION_DRIFT, 409)
+    plan = _plan(settings, proposal.payload if proposal is not None else body)
     if plan['read']:
         with session(settings) as client:
             if plan['action'] in {'list', 'instances'} and plan['resource'] != 'colors':
@@ -1103,13 +1228,16 @@ def operation(settings, body):
             return _send(client, plan, plan['data'] if plan['method'] == 'POST' else None)
     if body.get('confirmed') is not True or body.get('external_approved') is not True:
         local.fail('Review and explicitly approve this exact external change')
-    reviewed = body.get('review')
-    if not isinstance(reviewed, dict):
+    if proposal is None:
         local.fail('Prepare the exact operation preview, review it, then approve that frozen request', 409)
-    _require_clear_confirmation(body, reviewed.get('items'))
+    # The reviewed listing is confirmed here; approval then requires the live listing to equal it.
+    listed = proposal.preconditions['review']['items']
+    _require_clear_confirmation(body, listed)
     with session(settings) as client:
-        review = _review(client, plan, body)
-        if review != reviewed:
-            local.fail('Google request or live target differs from the reviewed preview; prepare and approve a fresh preview', 409)
-        _require_clear_confirmation(body, review['items'])
-        return _send(client, plan, review['body'])
+        try:
+            _, reviewed_body = effects.approve_and_execute(
+                conn, proposal.id, body.get('digest'), kinds={CHANGE.name}, actor=actor, ctx=_Remote(settings, client),
+                options={'clear_confirmed': True} if listed else None)
+        except effects.EffectError as exc:
+            _refused(exc, OPERATION_DRIFT, OPERATION_FRESH)
+        return _send(client, plan, reviewed_body)

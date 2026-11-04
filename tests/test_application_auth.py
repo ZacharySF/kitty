@@ -492,7 +492,7 @@ def test_website_review_registers_from_account_landing_then_fills(workspace, sit
     job = _job(space, site)
     captured = []
     app = SimpleNamespace(
-        settings=space.settings, config=space.config,
+        settings=space.settings, config=space.config, ui_session="ui-test",
         automation=SimpleNamespace(start=lambda config, *a, **k: captured.append(config)),
     )
     body = {"mode": "selected", "job_ids": [job.id], "authentication_mode": "create"}
@@ -500,7 +500,8 @@ def test_website_review_registers_from_account_landing_then_fills(workspace, sit
     assert plan["authentication"]["credentials_available"]
     assert plan["authentication"]["approved_origins"] == [site.origin]
     web_automation.post(app, space.conn, "/api/automation/start", {
-        **body, "confirmed": True, "authorize_authentication": True, "fingerprint": plan["fingerprint"],
+        "effect_id": plan["effect"]["id"], "digest": plan["effect"]["digest"],
+        "confirmed": True, "authorize_authentication": True,
     })
     report = fill_job(page, space.conn, space.settings, captured[0], job)
     assert _posts(site) == [("/session", {"email": [EMAIL], "password": [PASSWORD], "confirm": [PASSWORD]})]
@@ -910,7 +911,7 @@ def test_website_default_account_flow_needs_review_not_mode_selection(workspace,
     job = _job(space, site, "/account")
     captured = []
     app = SimpleNamespace(
-        settings=space.settings, config=space.config,
+        settings=space.settings, config=space.config, ui_session="ui-test",
         automation=SimpleNamespace(start=lambda config, *args, **kwargs: captured.append(config)),
     )
     body = {"mode": "selected", "job_ids": [job.id]}
@@ -921,7 +922,8 @@ def test_website_default_account_flow_needs_review_not_mode_selection(workspace,
     assert plan["authentication"]["approved_origins"] == [site.origin]
     assert not captured and _posts(site) == []
     web_automation.post(app, space.conn, "/api/automation/start", {
-        **body, "confirmed": True, "authorize_authentication": True, "fingerprint": plan["fingerprint"],
+        "effect_id": plan["effect"]["id"], "digest": plan["effect"]["digest"],
+        "confirmed": True, "authorize_authentication": True,
     })
     assert captured[0].apply.authentication.account_mode == "auto"
     report = fill_job(page, space.conn, space.settings, captured[0], job)

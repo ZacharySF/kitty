@@ -757,7 +757,7 @@ API (`workspace` module): `GET /api/math/topics`, `GET /api/math/next`,
 `GET /api/math/lessons/<topic_id>`, `POST /api/math/sprints {mode: zetamac|mc,
 duration_s, ops?}`, `POST /api/math/sprints/<id>/result {score, wrong,
 elapsed_ms}`, `GET /api/math/sprints/history?duration_s=&timezone=`,
-`POST /api/math/explain {problem_id, working}` (then `POST /api/ai/run`);
+`POST /api/math/explain {problem_id, working}` (then `POST /api/ai/run {effect_id, digest, confirmed, budget_usd}` with the returned `effect`);
 textbook: `GET /api/math/textbook?topic_id=`, `GET /api/math/textbook/<id>`,
 `POST /api/math/textbook/problems {exercise_id}`, `POST /api/math/textbook/answers
 {problem_id, answer, elapsed_ms}`, `POST /api/math/textbook/ratings {exercise_id,
@@ -2731,6 +2731,47 @@ and the existing `/api/blocks/page`; `POST /api/blocks/pages/create`, `/insert`,
 `/update`, `/move`, `/delete`, `/inbox` (see `src/kitty/web_blocks.py`). The MCP server and
 the CLI still open the database directly; a window sees their writes through the live
 channel, which follows the log.
+
+### Proposed effects and the pending approvals
+
+An agent can ask instead of acting (`kitty.core.effects`, the effects kernel). Each
+request is an *effect*: a kind, an exact payload, the *preconditions* it was proposed
+against (for a block deletion: the block and everything under it) and who proposed it.
+It waits in rika!'s **pending approvals**, a non-blocking prompt at the top of every
+view showing what would happen, the agent, and the values that are checked again
+before it runs. **Approve** binds to that exact proposal (its SHA-256 digest); the
+approval is single-use, lasts two minutes and belongs to this rika! window session.
+Before it runs, every precondition is read again: if the block was edited, gained a
+child or vanished, the effect is **refused** and the agent has to propose it again.
+Proposals expire (a block deletion after an hour). Agents can propose, never approve:
+approving and executing exist only behind the UI secret.
+
+| Tool / command | What it proposes |
+|---|---|
+| `propose_delete_block(block, reason?)` / `kitty effects propose-delete <BLOCK> [--reason]` | move a block and its children to Trash |
+| `propose_submit_application(job_id, reason?)` / `kitty effects propose-submit <JOB>` | that **you** submit an application |
+| `get_effect(effect_id)`, `get_application_proposal(effect_id)` / `kitty effects show <ID>`, `kitty effects list` | a proposal's state and transitions |
+
+`submit_application` has no executor and none can be registered: it shows exactly what
+would be submitted (posting, application URL, the resume that would be attached and
+the preparation state), and **Approve (I'll submit it myself)** only records your
+decision and tells you to submit it in your browser. Mark the job applied afterwards.
+Over HTTP (UI secret): `GET /api/effects`; `POST /api/effects/approve`, `/execute`
+(`submit_application` answers 400: it has no executor) and `/deny`.
+
+In a rika! Agent tab (`KITTY_AGENT_TOKEN`) `propose_delete_block` and `get_effect`
+go through rika!'s mediator like the notes tools: `kitty mcp`, `kitty effects
+propose-delete` / `show` and `POST /api/ingress/agent/call` propose as the tab's
+session, the proposal is journaled (a write of that block, so the agent policy can
+refuse it), and `get_effect` shows only that session's proposals. `propose-submit` and
+`list` do not run in a tab. The token never approves: the approval routes take only
+the UI secret of rika!'s own window.
+
+The views that already asked before acting use the same kernel for their own Approve:
+an AI request's preview and run, application preparation's plan and start, and Google
+Calendar's push preview and sync / exact resource operations. Their flows are
+unchanged; a change between preview and approval refuses the run. Each route approves
+only its own kind of effect: an effect ID from another view is refused (403).
 
 ## Resumes and the resume coach
 

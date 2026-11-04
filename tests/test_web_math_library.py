@@ -72,6 +72,7 @@ def test_textbook_problems_never_reach_explain_my_mistake(website, workspace):
     website.request("/api/math/textbook/answers", {"problem_id": problem["problem_id"], "answer": "123456789", "elapsed_ms": 4000})
     status, _, _ = website.request("/api/math/explain", {"problem_id": problem["problem_id"], "working": "my steps"})
     assert status == 404
+    assert workspace.conn.execute("SELECT count(*) FROM effects").fetchone()[0] == 0
     assert workspace.conn.execute("SELECT count(*) FROM ai_reviews").fetchone()[0] == 0
 
 

@@ -2,22 +2,37 @@
 
 One controller owns a browser worker for the server lifetime. Stop releases remote
 control, not the retained Firefox tabs. Plans/preflight are local snapshots, not
-proof that a live form is ready. Required approval fingerprints bind the reviewed
-selection, URLs, resume bytes and configuration; changes require a fresh review.
-Only core confirmation rules record submissions.
+proof that a live form is ready.
+
+Every plan proposes a ``prepare_applications`` effect (kitty.core.effects, reviewed
+inline here). Its payload is the selection (mode, track, cap, requested job IDs,
+account mode); its preconditions bind the selected jobs, each job's identity and
+chosen resume row (``job:<id>``), resume availability, the account plan, the saved
+credential binding and the recovery offer/model (both hashed) and the profile,
+answers, apply and tracks configuration (hashed). Start approves and executes exactly
+that digest once: anything changed since the review refuses it, and the person reviews
+again. The browser run that follows re-checks every job, its approved resume row and
+the resume bytes against the stored executed effect (kitty.core.apply.filler).
+Only core confirmation rules record submissions::
+
+    POST /api/automation/plan | /preflight  {mode?, track?, limit?, job_ids?, authentication_mode?}
+        -> {mode, track, cap, job_ids, jobs, left, authentication, recovery, note,
+            effect: {id, digest, expires_at}, demo, watch_hours, firefox_configured, known_answers}
+    POST /api/automation/start  {effect_id, digest, confirmed: true, watch?, background?,
+                                 authorize_authentication?, authorize_recovery_ai?} -> status
 """
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
+import sqlite3
 import threading
-from dataclasses import asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from types import MappingProxyType, SimpleNamespace
+from types import SimpleNamespace
 
-from kitty.core import form_questions, jobs, questions
+from kitty import web_effects
+from kitty.core import effects, form_questions, jobs, questions
 from kitty.config import AuthenticationSettings, _authentication_origin
 from kitty.core.apply import autofill, filler
 from kitty.core.apply.credentials import CredentialError, credential_binding, load_credentials
@@ -25,6 +40,12 @@ from kitty.core.apply.urls import detect_ats
 from kitty.core.apply.watch import Watch, WatchedTab
 from kitty.db import connect
 from kitty.db.connection import transaction
+
+APPROVAL_REQUIRED = "Preparation approval is required; review the plan again before filling"
+#: Configuration a reviewed preparation depends on (bound hashed, never stored as is).
+CONFIG_SECTIONS = ("profile", "answers", "apply", "tracks")
+#: Start's choices, recorded on the approval (not part of the digest).
+START_OPTIONS = ("watch", "background", "authorize_authentication", "authorize_recovery_ai")
 
 
 def _authentication_plan(app, selected: list[dict], mode: str) -> tuple[dict, str | None]:
@@ -116,7 +137,8 @@ class AutomationController:
         with self._lock:
             return copy.deepcopy(self._state)
 
-    def start(self, config, plan: dict, *, watch: bool = True, background: bool = False) -> dict:
+    def start(self, config, approval: effects.Effect, *, watch: bool = True, background: bool = False) -> dict:
+        """Run the executed prepare_applications effect's jobs (see `approve`)."""
         if self.settings.demo:
             raise _error(403, "Browser automation is disabled in demo mode")
         with self._lock:
@@ -124,10 +146,11 @@ class AutomationController:
                 raise _error(409, "Browser controller is shutting down")
             if self._state["running"] and self._state["phase"] != "watching":
                 raise _error(409, "A browser worker is active; stop it and wait before starting another")
-            if not plan["job_ids"]:
+            job_ids = list(approval.preconditions.get("job_ids") or [])
+            if not job_ids:
                 raise _error(409, "No eligible jobs in this preparation plan")
-            approvals = MappingProxyType(dict(plan.get("_approvals", {})))
-            if set(approvals) != set(plan["job_ids"]):
+            if (approval.kind != filler.PREPARATION_KIND or approval.state != "executed"
+                    or any(filler.job_precondition(job_id) not in approval.preconditions for job_id in job_ids)):
                 raise _error(409, filler.APPROVAL_CHANGED)
             previous = self._thread if self._state["running"] else None
             if previous is not None:
@@ -142,7 +165,7 @@ class AutomationController:
                 raise _error(409, "The previous browser worker is stopping; wait for it before preparing again")
             captured = copy.deepcopy(config)
             self._state = {
-                "running": True, "phase": "filling", "job_ids": list(plan["job_ids"]),
+                "running": True, "phase": "filling", "job_ids": list(job_ids),
                 "reports": [], "observed": [], "error": None, "started_at": _stamp(),
                 "finished_at": None, "watched_count": 0,
                 "activity": None, "last_activity_at": _stamp(),
@@ -153,7 +176,7 @@ class AutomationController:
                 tabs=self._tabs, on_start=self._watching, on_applied=self._applied,
             )
             self._thread = threading.Thread(
-                target=self._run, args=(captured, list(plan["job_ids"]), approvals, self._watch, background, observe),
+                target=self._run, args=(captured, job_ids, approval, self._watch, background, observe),
                 name="kitty-web-browser", daemon=True,
             )
             try:
@@ -219,7 +242,8 @@ class AutomationController:
             with self._lock:
                 self._state["error"] = "Browser observation disconnected; review tabs and record submissions manually"
 
-    def _run(self, config, ids: list[int], approvals, watch: Watch, background: bool, observe: bool) -> None:
+    def _run(self, config, ids: list[int], approval: effects.Effect, watch: Watch, background: bool,
+             observe: bool) -> None:
         def filled(reports):
             self._filled(reports)
             # Keep the core's cancellation and retained-tab handling even for
@@ -229,7 +253,7 @@ class AutomationController:
         try:
             filler.fill_jobs(self.settings, config, ids, watch=watch, progress=self._progress,
                              on_filled=filled, on_report=self._filled, background=background,
-                             pause=config.apply.autofill_pause_seconds, approvals=approvals)
+                             pause=config.apply.autofill_pause_seconds, approval=approval)
         except filler.ApprovalError:
             with self._lock:
                 self._state["error"] = filler.APPROVAL_CHANGED
@@ -285,12 +309,23 @@ def _selection(app, conn, body: dict) -> tuple[str, str | None, int, list[int]]:
     return mode, track, cap, list(dict.fromkeys(ids))
 
 
-def preparation_plan(app, conn, body: dict) -> dict:
+def _payload(app, conn, body: dict) -> dict:
+    """The prepare_applications payload: the requested selection and account mode."""
     mode, track, cap, ids = _selection(app, conn, body)
     auth_mode = body.get("authentication_mode", "google" if
                          app.config.apply.authentication.account_mode == "google" else "auto")
     if auth_mode not in ("auto", "configured", "login", "create", "google"):
         raise _error(400, "authentication_mode must be auto, configured, login, create, or google")
+    return {"mode": mode, "track": track, "cap": cap, "job_ids": ids, "authentication_mode": auth_mode}
+
+
+def _plan(app, conn, payload: dict) -> dict:
+    """The plan for a payload, read from current state, with the preconditions it binds.
+
+    Private keys (``_preconditions``, ``_credential_binding``, ``_recovery_model``) never
+    leave the server; credential and recovery bindings enter the preconditions hashed.
+    """
+    mode, track, cap, ids = payload["mode"], payload["track"], payload["cap"], payload["job_ids"]
     left: list[dict] = []
     if mode == "favorites":
         planned = autofill.plan_run(conn, app.config, limit=cap, track=track)
@@ -308,7 +343,7 @@ def preparation_plan(app, conn, body: dict) -> dict:
             candidates.sort(key=lambda job: (job.fill_state == "ready", job.tier != "A"))
         ids = [job.id for job in candidates]
     selected = []
-    approvals = {}
+    bindings = {}
     for job_id in ids:
         job = jobs.get_job(conn, job_id)
         if job is None:
@@ -331,11 +366,7 @@ def preparation_plan(app, conn, body: dict) -> dict:
         resume = filler.choose_resume(conn, app.config, job)
         from kitty.web_server import _pdf_available
         available = resume is not None and _pdf_available(app.settings, resume)
-        approvals[job.id] = filler.FillApproval(
-            job.id, job.url, job.apply_url, job.company_name, tuple(job.tracks),
-            resume.id if resume else None, resume.file_hash if resume else None,
-            resume.file_path if resume else None,
-        )
+        bindings[filler.job_precondition(job.id)] = filler.job_binding(job, resume)
         selected.append({
             "id": job.id, "company": job.company_name, "title": job.title,
             "url": job.url, "apply_url": job.apply_url,
@@ -345,24 +376,158 @@ def preparation_plan(app, conn, body: dict) -> dict:
                        "available": available} if resume else None,
             "warnings": [] if available else ["No verified registered PDF; upload must be reviewed manually"],
         })
-    authentication, credential_binding = _authentication_plan(app, selected, auth_mode)
+    authentication, credential_binding = _authentication_plan(app, selected, payload["authentication_mode"])
     from kitty import web_ai
     recovery, recovery_model = web_ai.recovery_offer(app, conn)
-    fingerprint = hashlib.sha256(json.dumps({
-        "mode": mode, "track": track, "cap": cap,
-        "jobs": [asdict(approval) for approval in approvals.values()],
-        "available": [job["resume"]["available"] if job["resume"] else None for job in selected],
-        "authentication": authentication, "credential_binding": credential_binding,
-        "recovery": recovery, "recovery_model": recovery_model,
-        "config": {name: getattr(app.config, name).model_dump(mode="json")
-                   for name in ("profile", "answers", "apply", "tracks")},
-    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return {"mode": mode, "track": track, "cap": cap, "job_ids": [job["id"] for job in selected],
-            "jobs": selected, "left": left, "fingerprint": fingerprint, "_approvals": approvals,
-            "authentication": authentication,
-            "recovery": recovery, "_recovery_model": recovery_model,
+    preconditions = {
+        "job_ids": [job["id"] for job in selected],
+        **bindings,
+        "available": {str(job["id"]): job["resume"]["available"] if job["resume"] else None for job in selected},
+        "authentication": authentication,
+        "credentials": effects.hashed(credential_binding) if credential_binding is not None else None,
+        "recovery": recovery,
+        "recovery_model": effects.hashed(recovery_model) if recovery_model is not None else None,
+        **{f"config:{name}": effects.hashed(getattr(app.config, name).model_dump(mode="json"))
+           for name in CONFIG_SECTIONS},
+    }
+    return {"mode": mode, "track": track, "cap": cap, "job_ids": preconditions["job_ids"],
+            "jobs": selected, "left": left, "authentication": authentication, "recovery": recovery,
+            "_preconditions": preconditions, "_recovery_model": recovery_model,
             "_credential_binding": credential_binding,
             "note": "Historical local snapshot only, not live readiness. Reviewed resume bytes, URLs, answers, account choice and saved credentials are bound to this plan; changes require review again. Unknown answers stay blank. Final application Submit stays manual; separately authorized account requests may be sent."}
+
+
+def preparation_plan(app, conn, body: dict) -> dict:
+    """The plan a request body would propose, read now (no effect is recorded)."""
+    return _plan(app, conn, _payload(app, conn, body))
+
+
+@dataclass
+class Review:
+    """What prepare_applications reads: a config snapshot and settings (`app`) and the
+    connection. `plan` is the plan built by the latest precondition read."""
+
+    app: Any
+    conn: sqlite3.Connection
+    plan: dict | None = None
+
+
+def _preconditions(ctx: Review, payload: dict) -> dict:
+    ctx.plan = _plan(ctx.app, ctx.conn, payload)
+    return ctx.plan["_preconditions"]
+
+
+def _account_policy(config, plan: dict) -> AuthenticationSettings:
+    """The run's account policy when the person authorized account actions for it."""
+    auth = plan["authentication"]
+    mode = auth["mode"]
+    if mode == "google":
+        if not auth["google_available"]:
+            raise _error(409, "Set your job Google email in Profile and review again")
+    elif not auth["credentials_available"]:
+        raise _error(409, "Saved credentials are unavailable; fix the private credential file and review again")
+    origins = auth["configured_origins"] if mode == "configured" else auth["approved_origins"]
+    if not origins or (mode == "configured" and not config.apply.authentication.enabled):
+        raise _error(400, "Review the exact HTTPS account destinations before preparing applications")
+    policy = AuthenticationSettings(
+        enabled=True, approved_origins=origins,
+        allow_account_creation=auth["allow_account_creation"],
+        allow_account_terms=auth["allow_account_terms"],
+        account_mode=config.apply.authentication.account_mode if mode == "configured" else mode,
+        existing_account_origins=auth["existing_account_origins"],
+        email_verification=auth["email_verification"],
+        manual_account_origins=auth["manual_account_origins"],
+    )
+    policy._credential_binding = plan["_credential_binding"]
+    if mode == "google":
+        policy._google_email = auth["google_email"]
+    return policy
+
+
+def _run(ctx: Review, effect: effects.Effect) -> dict:
+    """Inside the claim: refuse a start this plan cannot run (nothing commits then, so the
+    review stays usable) and hand the controller the run's plan and account policy."""
+    plan = ctx.plan
+    # The executor only uses the plan whose preconditions matched the approved digest.
+    if plan is None or effects.digest(effect.kind, effect.payload, plan["_preconditions"]) != effect.digest:
+        raise effects.Refused(filler.APPROVAL_CHANGED)
+    if not plan["job_ids"]:
+        raise _error(409, "No eligible jobs in this preparation plan")
+    options = effect.options
+    policy = (_account_policy(ctx.app.config, plan) if options.get("authorize_authentication")
+              else AuthenticationSettings())
+    if any(job["resume"] and not job["resume"]["available"] for job in plan["jobs"]):
+        raise _error(409, "A selected resume is unavailable or changed; choose a verified PDF and review the plan again")
+    if options.get("authorize_recovery_ai") and plan["_recovery_model"] is None:
+        raise _error(409, "Model-assisted recovery is unavailable; review AI settings first")
+    return {"plan": plan, "authentication": policy}
+
+
+PREPARE_APPLICATIONS = effects.REGISTRY.register(effects.Executable(
+    name=filler.PREPARATION_KIND, title="Prepare applications in Firefox (you submit)",
+    proposers=frozenset({"user"}), validate=lambda ctx, raw: _payload(ctx.app, ctx.conn, raw),
+    preconditions=_preconditions, review="inline", lifetime=timedelta(hours=1), run=_run,
+))
+
+
+def propose(app, conn, body: dict) -> dict:
+    """Propose the plan for review: the public plan and its effect's id, digest and expiry."""
+    ctx = Review(SimpleNamespace(config=copy.deepcopy(app.config), settings=app.settings), conn)
+    try:
+        effect = effects.propose(conn, PREPARE_APPLICATIONS.name, body, actor=web_effects.user(app), ctx=ctx)
+    except effects.EffectError as exc:
+        raise _error(exc.status, str(exc)) from None
+    plan = {key: value for key, value in ctx.plan.items() if not key.startswith("_")}
+    return {**plan, "effect": {"id": effect.id, "digest": effect.digest, "expires_at": effect.expires_at},
+            "demo": app.settings.demo, "watch_hours": ctx.app.config.apply.watch_hours,
+            "firefox_configured": bool(app.settings.firefox_path),
+            "known_answers": len(ctx.app.config.answers.answers)}
+
+
+@dataclass(frozen=True)
+class Approved:
+    """An executed preparation: the run's config snapshot (carrying the reviewed account
+    policy), the executed effect the filler re-checks against, its plan and Start's options."""
+
+    config: Any
+    effect: effects.Effect
+    plan: dict
+    options: dict
+
+
+def approve(app, conn, body: dict) -> Approved:
+    """Approve and execute the reviewed prepare_applications effect, once.
+
+    A missing or unknown effect is APPROVAL_REQUIRED; a refused (anything it binds
+    changed), expired, already used or different digest is APPROVAL_CHANGED, with the
+    changed precondition names under ``problems``: review the plan again.
+    """
+    effect_id, presented = body.get("effect_id"), body.get("digest")
+    if not isinstance(effect_id, str) or not effect_id or not isinstance(presented, str) or not presented:
+        raise _error(409, APPROVAL_REQUIRED)
+    try:
+        stored = effects.get(conn, effect_id)
+    except effects.UnknownEffect:
+        raise _error(409, APPROVAL_REQUIRED) from None
+    if stored.kind != PREPARE_APPLICATIONS.name:
+        raise _error(409, APPROVAL_REQUIRED)
+    options = {"watch": body.get("watch", True),
+               "background": body.get("background", stored.payload["mode"] != "selected"),
+               "authorize_authentication": body.get("authorize_authentication", False),
+               "authorize_recovery_ai": body.get("authorize_recovery_ai", False)}
+    ctx = Review(SimpleNamespace(config=copy.deepcopy(app.config), settings=app.settings), conn)
+    try:
+        effect, result = effects.approve_and_execute(conn, stored.id, presented, kinds={PREPARE_APPLICATIONS.name},
+                                                     actor=web_effects.user(app), ctx=ctx, options=options)
+    except effects.Refused as exc:
+        from kitty.web_server import APIError
+        raise APIError(409, filler.APPROVAL_CHANGED,
+                       problems=[{"precondition": name} for name in exc.changed]) from None
+    except effects.EffectError as exc:
+        raise _error(exc.status, str(exc)) from None
+    config = ctx.app.config
+    config.apply.authentication = result["authentication"]
+    return Approved(config, effect, result["plan"], options)
 
 
 def get(app, conn, path: str, query: dict) -> dict | None:
@@ -388,69 +553,28 @@ def get(app, conn, path: str, query: dict) -> dict | None:
 
 
 def post(app, conn, path: str, body: dict) -> dict | None:
-    if path in {"/api/automation/plan", "/api/automation/preflight", "/api/automation/start"}:
-        allowed = {"mode", "track", "limit", "job_ids", "authentication_mode"}
-        if path.endswith("/start"):
-            allowed |= {"confirmed", "watch", "background", "authorize_authentication", "authorize_recovery_ai", "fingerprint"}
-        _keys(body, allowed)
-        if path.endswith("/start"):
-            _confirm(app, body)
-            for key in ("watch", "background", "authorize_authentication", "authorize_recovery_ai"):
-                if key in body and type(body[key]) is not bool:
-                    raise _error(400, f"{key} must be a boolean")
-        captured = copy.deepcopy(app.config)
-        plan = preparation_plan(SimpleNamespace(config=captured, settings=app.settings), conn, body)
-        if path.endswith("/start"):
-            if not isinstance(body.get("fingerprint"), str) or not body["fingerprint"]:
-                raise _error(409, "Preparation approval is required; review the plan again before filling")
-            if body["fingerprint"] != plan["fingerprint"]:
-                raise _error(409, filler.APPROVAL_CHANGED)
-            if body.get("authorize_authentication") is True:
-                auth = plan["authentication"]
-                mode = auth["mode"]
-                if mode == "google":
-                    if not auth["google_available"]:
-                        raise _error(409, "Set your job Google email in Profile and review again")
-                elif not auth["credentials_available"]:
-                    raise _error(409, "Saved credentials are unavailable; fix the private credential file and review again")
-                origins = (auth["configured_origins"] if mode == "configured"
-                           else auth["approved_origins"])
-                if not origins or (mode == "configured" and not captured.apply.authentication.enabled):
-                    raise _error(400, "Review the exact HTTPS account destinations before preparing applications")
-                policy = AuthenticationSettings(
-                    enabled=True, approved_origins=origins,
-                    allow_account_creation=auth["allow_account_creation"],
-                    allow_account_terms=auth["allow_account_terms"],
-                    account_mode=(captured.apply.authentication.account_mode
-                                  if mode == "configured" else mode),
-                    existing_account_origins=auth["existing_account_origins"],
-                    email_verification=auth["email_verification"],
-                    manual_account_origins=auth["manual_account_origins"],
-                )
-                policy._credential_binding = plan["_credential_binding"]
-                if mode == "google":
-                    policy._google_email = auth["google_email"]
-            else:
-                policy = AuthenticationSettings()
-            captured.apply.authentication = policy
-            if any(job["resume"] and not job["resume"]["available"] for job in plan["jobs"]):
-                raise _error(409, "A selected resume is unavailable or changed; choose a verified PDF and review the plan again")
-            grant = None
-            if body.get("authorize_recovery_ai") is True:
-                from kitty import web_ai
-                grant = web_ai.reserve_recovery(app, conn, plan["_recovery_model"])
-                captured.apply.recovery._model_grant = grant
-            try:
-                return app.automation.start(captured, plan, watch=body.get("watch", True),
-                                            background=body.get("background", plan["mode"] != "selected"))
-            except Exception:
-                if grant is not None:
-                    web_ai.cancel_recovery_reservation(conn, grant["reservation_id"])
-                raise
-        return {**{key: value for key, value in plan.items() if not key.startswith("_")},
-                "demo": app.settings.demo, "watch_hours": captured.apply.watch_hours,
-                "firefox_configured": bool(app.settings.firefox_path),
-                "known_answers": len(captured.answers.answers)}
+    if path in {"/api/automation/plan", "/api/automation/preflight"}:
+        _keys(body, {"mode", "track", "limit", "job_ids", "authentication_mode"})
+        return propose(app, conn, body)
+    if path == "/api/automation/start":
+        _keys(body, {"effect_id", "digest", "confirmed", *START_OPTIONS})
+        _confirm(app, body)
+        for key in START_OPTIONS:
+            if key in body and type(body[key]) is not bool:
+                raise _error(400, f"{key} must be a boolean")
+        approved = approve(app, conn, body)
+        grant = None
+        if approved.options["authorize_recovery_ai"]:
+            from kitty import web_ai
+            grant = web_ai.reserve_recovery(app, conn, approved.plan["_recovery_model"])
+            approved.config.apply.recovery._model_grant = grant
+        try:
+            return app.automation.start(approved.config, approved.effect, watch=approved.options["watch"],
+                                        background=approved.options["background"])
+        except Exception:
+            if grant is not None:
+                web_ai.cancel_recovery_reservation(conn, grant["reservation_id"])
+            raise
     if path == "/api/automation/stop":
         _keys(body, set())
         return app.automation.stop()

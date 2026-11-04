@@ -44,7 +44,8 @@
     last_activity_at?: string | null;
   };
   type Plan = {
-    fingerprint: string;
+    /** The proposed prepare_applications effect: Start approves exactly this digest, once. */
+    effect: { id: string; digest: string; expires_at: string };
     mode: string;
     track: string | null;
     cap: number;
@@ -128,7 +129,6 @@
   let dialog: HTMLDialogElement;
   let cancel = $state<HTMLButtonElement>();
   let questionPanel = $state<{ focusQuestion: () => void }>();
-  let planInput = $state<Record<string, unknown>>({});
   let timer: ReturnType<typeof setTimeout> | undefined;
   let mounted = $state(false);
   let observedCount = 0;
@@ -184,7 +184,7 @@
     allowAuth = false;
     allowRecoveryAI = false;
     try {
-      planInput = {
+      const planInput = {
         mode,
         ...(track && !ids ? { track } : {}),
         limit,
@@ -212,12 +212,12 @@
     error = "";
     try {
       status = await api<Status>("/automation/start", {
-        ...planInput,
+        effect_id: plan.effect.id,
+        digest: plan.effect.digest,
         confirmed: true,
         watch: watching,
         authorize_authentication: allowAuth,
         authorize_recovery_ai: allowRecoveryAI,
-        fingerprint: plan.fingerprint,
       });
       dialog.close();
       onchanged?.();

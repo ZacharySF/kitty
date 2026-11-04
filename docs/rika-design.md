@@ -196,7 +196,7 @@ B lost because it makes a consumer agent depend on a terminal tool. C lost becau
 ## Verified facts
 
 - Meta Muse (2026-09): a personal agent that acts across your apps, with real-time voice and approval of critical actions ([Meta newsroom](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent), [ai.meta.com/muse](https://ai.meta.com/muse)).
-- kitty!'s AI layer is OpenRouter-based: the key is in `.private/openrouter-key` or `OPENROUTER_API_KEY`, with budgets, `ai_reviews` approvals and price ceilings (`src/kitty/web_ai.py`, `src/kitty/core/triage/openrouter.py`, `config.py`).
+- kitty!'s AI layer is OpenRouter-based: the key is in `.private/openrouter-key` or `OPENROUTER_API_KEY`, with budgets, reviewed `ai_request` effects (the effects kernel) over the `ai_reviews` spend ledger, and price ceilings (`src/kitty/web_ai.py`, `src/kitty/core/triage/openrouter.py`, `config.py`).
 - The Tauri webview (WebKitGTK) has no Web Speech API, so speech-to-text needs its own engine.
 - herdr's `agent list` carries each agent's session pointer and status, and kitty! polls it every 3 s (`HerdrRuntime.activity()` in `src/kitty/core/terminal.py`). Tern panes come from `tern inspect --json` (`src/kitty/core/tern.py`).
 - Tern runs as systemd user services outside the NixOS AppImage sandbox (v0.3.23), so panes see the user's tools.
