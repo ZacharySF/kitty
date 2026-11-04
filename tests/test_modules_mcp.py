@@ -10,7 +10,7 @@ from mcp import Client
 from mcp.server.mcpserver.exceptions import ToolError
 
 from kitty import mcp_server
-from kitty.mcp_server import KittyTools, build_server
+from kitty.mcp_server import KittyTools, WorkspaceTools, build_server
 from kitty.modules import save_modules
 
 
@@ -22,19 +22,27 @@ def _tool_names(server) -> list[str]:
     return asyncio.run(listing())
 
 
-def _public_tools() -> list[str]:
+def _public_tools(owner=KittyTools) -> list[str]:
     return [
-        name for name, _member in inspect.getmembers(KittyTools, inspect.isfunction)
+        name for name, _member in inspect.getmembers(owner, inspect.isfunction)
         if not name.startswith("_")
     ]
 
 
-
-@pytest.mark.parametrize("modules", [(), ("workspace",)])
-def test_no_tool_is_advertised_without_applyai(workspace, modules):
-    names, instructions = _tool_names(build_server(workspace.settings, modules))
+def test_no_tool_is_advertised_without_a_module_that_owns_tools(workspace):
+    names, instructions = _tool_names(build_server(workspace.settings, ()))
     assert names == []
-    assert "applyai" in (instructions or "")
+    assert "applyai" in (instructions or "") and "workspace" in (instructions or "")
+
+
+@pytest.mark.parametrize("modules, owners", [
+    (("applyai",), (KittyTools,)), (("workspace",), (WorkspaceTools,)), (("applyai", "workspace"), (KittyTools, WorkspaceTools)),
+])
+def test_each_module_advertises_exactly_its_own_tools(workspace, modules, owners):
+    names, instructions = _tool_names(build_server(workspace.settings, modules))
+    assert sorted(names) == sorted(name for owner in owners for name in _public_tools(owner))
+    assert ("notes tools" in instructions) == ("workspace" in modules)
+    assert ("internship search" in instructions) == ("applyai" in modules)
 
 
 @pytest.mark.parametrize("modules", [(), ("workspace",)])
@@ -50,20 +58,21 @@ def test_disabled_tools_cannot_be_called_through_the_protocol(workspace, modules
     assert isinstance(outcome, Exception) or outcome.is_error
 
 
-def test_direct_calls_are_refused_before_any_feature_work(workspace, monkeypatch):
+@pytest.mark.parametrize("owner, module", [(KittyTools, "applyai"), (WorkspaceTools, "workspace")])
+def test_direct_calls_are_refused_before_any_feature_work(workspace, monkeypatch, owner, module):
     def forbidden(*_args, **_kwargs):
         raise AssertionError("a disabled tool opened the workspace")
 
     monkeypatch.setattr(mcp_server, "open_workspace", forbidden)
-    tools = KittyTools(workspace.settings, ())
-    for name in _public_tools():
+    tools = owner(workspace.settings, tuple(other for other in ("applyai", "workspace") if other != module))
+    for name in _public_tools(owner):
         method = getattr(tools, name)
         kwargs = {
             parameter: 1 if parameter.endswith("_id") else "x"
             for parameter, spec in inspect.signature(method).parameters.items()
             if spec.default is inspect.Parameter.empty
         }
-        with pytest.raises(ToolError, match="applyai.*disabled|disabled.*applyai"):
+        with pytest.raises(ToolError, match=f"{module}.*disabled|disabled.*{module}"):
             method(**kwargs)
 
 

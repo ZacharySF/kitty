@@ -3,7 +3,7 @@
     text: string; references?: Record<string,string>; onpage:(title:string)=>void;
     ontopic:(kind:"page"|"tag",topic:string)=>void; onreference:(id:string)=>void;
   } = $props();
-  const parts = $derived(Array.from(text.matchAll(/\[\[([^\]\n|]+)(?:\|([^\]\n]+))?\]\]|(?<![\p{L}\p{N}_#])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)|\(\(([0-9a-f-]{36})\)\)|\{\{embed:([0-9a-f-]{36})\}\}/giu)));
+  const parts = $derived(Array.from(text.matchAll(/\[\[([^\]\n|]+)(?:\|([^\]\n]+))?\]\]|(?<![\p{L}\p{N}_#])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)|\(\(([0-9a-f-]{36})(?:@[0-9]{1,18})?\)\)|\{\{embed:([0-9a-f-]{36})\}\}/giu)));
 </script>
 {#each parts as part,index}
   {text.slice(index ? parts[index-1].index! + parts[index-1][0].length : 0,part.index)}

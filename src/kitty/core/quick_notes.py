@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from contextlib import nullcontext
 from typing import Any
 
 from kitty.core import blocks
@@ -80,7 +81,7 @@ def get(conn: sqlite3.Connection, note_id: Any) -> dict:
 
 def create(conn: sqlite3.Connection, body: Any = "", tint: Any = "rose") -> dict:
     text, color = _body(body), _tint(tint)
-    with transaction(conn, immediate=True):
+    with (nullcontext() if conn.in_transaction else transaction(conn, immediate=True)):
         number = conn.execute("SELECT COALESCE(MAX(json_extract(properties,'$.number')),0)+1 FROM blocks "
                               "WHERE type='quick_note' AND parent_id IS NULL").fetchone()[0]
         _apply(conn, [{"op": "insert", "id": str(uuid.uuid4()), "type": "quick_note", "parent": None, "text": text,
