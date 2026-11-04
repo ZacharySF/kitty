@@ -10,7 +10,8 @@ import { createBuildStub } from "./buildStub.js";
 import { rika } from "/src/lib/rika/session.svelte.ts";
 import RikaSettingsHarness from "./RikaSettingsHarness.svelte";
 
-const build = createBuildStub();
+// A test may seed the stand-in build (for example its theme) before the first load.
+const build = createBuildStub(window.__harnessBuild ?? {});
 const served = window.fetch.bind(window);
 window.fetch = (url, init = {}) => build.fetch(url, init) ?? served(url, init);
 await loadBuild();
