@@ -215,13 +215,15 @@ def test_cors_answers_only_the_recorded_extension_origin(running):
 
 
 def test_captures_land_in_the_op_log_and_push_to_open_windows(running):
-    _, token = pair(running, scopes=("capture", "read"))
+    client, token = pair(running, scopes=("capture", "read"))
     window = Client(running)
     try:
         status, note, _ = call(running, "POST", "/api/ingress/notes", {"text": "Quick from Tern"}, token=token)
         assert status == 200 and note["body"] == "Quick from Tern"
         change = window.expect("change")
         assert change["root"] == {"type": "quick_note", "number": note["id"]}
+        # History records the capture under the paired client, by its pairing name.
+        assert change["actor"] == {"kind": "client", "name": "Tern plugin", "session": client["id"]}
 
         status, inbox, _ = call(running, "POST", "/api/ingress/inbox",
                                 {"blocks": [{"text": "first capture"}, {"type": "to_do", "text": "follow up"}]}, token=token)

@@ -91,3 +91,44 @@ def test_notes_tools_need_the_workspace_module(workspace, modules):
     names, outcome = asyncio.run(run())
     assert "get_page" not in names and "append_blocks" not in names
     assert isinstance(outcome, Exception) or outcome.is_error
+
+
+def test_writes_are_one_agent_session_named_by_the_client_and_undo_agent_session_reverts_it(workspace):
+    from mcp_types import Implementation
+
+    from kitty.core.blocks.actor import USER, acting
+
+    async def run():
+        server = build_server(workspace.settings, ("workspace",))
+        async with Client(server, client_info=Implementation(name="claude-code", version="9.9")) as client:
+            async def call(name, **arguments):
+                result = await client.call_tool(name, arguments)
+                return json.loads(result.content[0].text), result.is_error
+
+            made, _ = await call("create_page", title="Agent page", blocks=["first", "second"])
+            first, second = (item["id"] for item in made["blocks"])
+            await call("update_block", block=first, text="first, rewritten")
+            await call("update_block", block=second, text="second, rewritten")
+            with acting(USER):  # the person fixes one of them in a window
+                block_api.update_block(workspace.conn, second, text="second, fixed by hand")
+            listed, _ = await call("list_agent_sessions")
+            cited, _ = await call("check_citations", cites=[f"(({first}@{made['seq']}))"])
+            plan, _ = await call("undo_agent_session", dry_run=True)
+            done, error = await call("undo_agent_session")
+            return made, second, listed, cited, plan, done, error
+
+    made, second, listed, cited, plan, done, error = asyncio.run(run())
+    rows = workspace.conn.execute("SELECT DISTINCT actor, actor_name, actor_session FROM op_log WHERE page_id=? ORDER BY seq",
+                                  (made["page_id"],)).fetchall()
+    session = listed["current"]
+    assert [tuple(row) for row in rows] == [("agent", "claude-code", session), ("user", None, None),
+                                            ("agent", "claude-code", f"{session}:undo")]
+    assert [item["session"] for item in listed["sessions"]] == [session]
+    assert cited["citations"][0]["status"] == "changed"
+    assert not plan["applied"] and plan["transactions"] == 3
+    assert not error and done["applied"]
+    assert {item["id"]: item["fields"] for item in done["conflicts"]} == {made["page_id"]: [], second: ["text"]}
+    texts = [row[0] for row in workspace.conn.execute(
+        "SELECT text FROM blocks WHERE page_id=? AND parent_id IS NOT NULL AND deleted_at IS NULL ORDER BY order_key", (made["page_id"],))]
+    # The agent's untouched block goes to Trash; the page it created stays, holding the person's edit.
+    assert texts == ["second, fixed by hand"]

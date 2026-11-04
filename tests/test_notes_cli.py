@@ -77,3 +77,31 @@ def test_notes_belong_to_the_workspace_module(home):
     save_modules(home / "config", ["applyai"])
     result = run("notes", "ls")
     assert result.exit_code == 1 and "workspace module" in plain(result)
+
+
+def test_each_command_is_an_agent_session_unless_one_is_named_and_one_session_undoes(home, monkeypatch):
+    made = data("notes", "new", "Agent page", "first")
+    appended = data("notes", "append", made["page_id"], "second")
+    listed = data("notes", "sessions")["sessions"]
+    assert len(listed) == 2 and {item["actor"]["name"] for item in listed} == {"kitty notes"}
+    monkeypatch.setenv("KITTY_AGENT_SESSION", "nightly-run-1")
+    monkeypatch.setenv("KITTY_AGENT_NAME", "nightly")
+    data("notes", "append", made["page_id"], "third")
+    data("notes", "append", made["page_id"], "fourth")
+    newest = data("notes", "sessions")["sessions"][0]
+    assert newest["session"] == "nightly-run-1" and newest["actor"]["name"] == "nightly" and newest["transactions"] == 2
+
+    plan = run("notes", "undo-session", "nightly-run-1", "--dry-run")
+    assert plan.exit_code == 0 and "Would revert 2 block(s) from 2 transaction(s)" in plain(plan)
+    done = data("notes", "undo-session", "nightly-run-1")
+    assert done["applied"] and done["reverted_count"] == 2
+    texts = [block["text"] for block in data("notes", "show", made["page_id"])["blocks"]]
+    assert texts == ["first", "second"]
+    cite = appended["blocks"][0]["cite"]
+    assert data("notes", "citations", cite)["citations"][0]["status"] == "unchanged"
+    monkeypatch.setenv("KITTY_AGENT_SESSION", "not ok!")
+    refused = run("notes", "ls")
+    assert refused.exit_code == 1 and "KITTY_AGENT_SESSION" in plain(refused)
+    monkeypatch.delenv("KITTY_AGENT_SESSION")
+    missing = run("notes", "undo-session", "no-such-session")
+    assert missing.exit_code == 1 and "No kept history" in plain(missing)

@@ -82,6 +82,14 @@ def test_a_deterministic_phrase_runs_its_tool_with_no_model(build, workspace, no
     assert no_network == []
 
 
+def test_rikas_block_writes_are_an_agent_session_per_conversation(build, workspace, no_network):
+    app, events = build()
+    sent = app.rika.submit(workspace.conn, "Add a node Photosynthesis.")
+    until(events, finished)
+    rows = {tuple(row) for row in workspace.conn.execute("SELECT actor, actor_name, actor_session FROM op_log")}
+    assert rows == {("agent", "rika!", f"rika:{sent['conversation_id']}")}
+
+
 def test_an_outward_tool_pauses_for_approval_and_runs_once_approved(build, workspace):
     page = notes.create_page(workspace.conn, notes.create_notebook(workspace.conn, "Notes")["id"], "Draft")
     app, events = build()

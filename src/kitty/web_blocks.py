@@ -9,9 +9,15 @@ Pages, history and Trash (kitty.core.blocks.history); a page is ``page=<block id
 GET  /api/blocks/page?<page>                    what the block editor loads: root, live blocks
                                                 in reading order, revision, the ``seq`` it reflects,
                                                 and tag ``suggestions``/``tags`` (names) for its blocks
-GET  /api/blocks/history?<page>                 editing sessions and daily snapshots
+GET  /api/blocks/history?<page>&actor=&session=  editing sessions (per device and actor: user, agent,
+                                                client, system, peer) and daily snapshots; actor (a kind)
+                                                and session keep only those transactions
 GET  /api/blocks/history/preview?<page>&seq=<n>  the page as it was after transaction n
 POST /api/blocks/history/restore  {<page>, "seq"}  appends a transaction restoring it
+GET  /api/blocks/sessions?kind=&limit=          agent (or `kind`) sessions, most recent first
+POST /api/blocks/sessions/undo  {session, dry_run?}  reverts one session as one new transaction,
+                                                keeping and reporting what others changed since
+GET  /api/blocks/citations?cites=<id@seq,...>    pinned citations: changed since, then/now, word diff
 GET  /api/blocks/trash                           blocks in Trash, newest first
 POST /api/blocks/trash/restore    {"id"}         brings one back
 
@@ -45,7 +51,7 @@ import threading
 from contextlib import closing
 
 from kitty.core import block_api, blocks
-from kitty.core.blocks import history, tagging
+from kitty.core.blocks import history, sessions, tagging
 from kitty.db import connect
 from kitty.db.connection import transaction
 
@@ -129,9 +135,16 @@ def get(app, conn, path, query):
                 state.update(tagging.page_suggestions(conn, state))
             return state
         if path == "/api/blocks/history":
-            if set(query) - {"page", "type", "number"}:
+            if set(query) - {"page", "type", "number", "actor", "session"}:
                 raise blocks.BlockError("Unexpected history parameters")
-            return history.page_history(conn, _page(conn, query))
+            return history.page_history(conn, _page(conn, query), actor=query.get("actor"), session=query.get("session"))
+        if path == "/api/blocks/sessions":
+            _fields(query, {"kind", "limit"})
+            kind = query.get("kind", "agent")
+            return sessions.list_sessions(conn, kind=None if kind == "all" else kind, limit=_limit(query, 50))
+        if path == "/api/blocks/citations":
+            _fields(query, {"cites"}, {"cites"})
+            return history.citations(conn, [item for item in query["cites"].split(",") if item])
         if path == "/api/blocks/history/preview":
             if set(query) - {"page", "type", "number", "seq"}:
                 raise blocks.BlockError("Unexpected preview parameters")
@@ -160,6 +173,9 @@ def post(app, conn, path, body):
             if set(body) - {"page", "type", "number", "seq"}:
                 raise blocks.BlockError("Unexpected restore fields")
             return history.restore(conn, _page(conn, body), _sequence(body.get("seq")))
+        if path == "/api/blocks/sessions/undo":
+            _fields(body, {"session", "dry_run"}, {"session"})
+            return sessions.undo_session(conn, body["session"], dry_run=body.get("dry_run", False))
         if path == "/api/blocks/trash/restore":
             if set(body) != {"id"}:
                 raise blocks.BlockError("Restore needs the block id from Trash")

@@ -80,3 +80,44 @@ def test_a_write_from_another_process_reaches_an_open_window(running):
         assert any(op.get("text") == "from an agent" for op in change["ops"])
     finally:
         window.close()
+
+
+def test_agent_writes_show_their_actor_live_in_history_and_one_session_undoes_over_http(running):
+    from kitty.core.blocks.actor import Actor, acting
+
+    agent = Actor("agent", "claude-code", "http-agent-session")
+    window = Client(running)
+    try:
+        status, made = running.request("/api/blocks/pages/create", {"title": "Shared", "blocks": ["one", "two"]})
+        assert status == 200 and window.expect("change")["actor"] == {"kind": "user", "name": None, "session": None}
+        one, two = (item["id"] for item in made["blocks"])
+        with closing(connect(running.app.settings.db_path)) as conn, acting(agent):
+            block_api.update_block(conn, one, text="one (agent)")
+            block_api.update_block(conn, two, text="two (agent)")
+        assert window.expect("change")["actor"] == agent.as_dict()
+        status, _ = running.request("/api/blocks/update", {"id": two, "text": "two (mine)"})
+        assert status == 200
+        status, seen = running.request(f"/api/blocks/history?page={made['page_id']}&actor=agent")
+        assert status == 200 and [item["actor"]["session"] for item in seen["sessions"]] == [agent.session]
+        status, every = running.request(f"/api/blocks/history?page={made['page_id']}")
+        assert [item["actor"]["kind"] for item in every["sessions"]] == ["user", "agent", "user"]
+        status, listed = running.request("/api/blocks/sessions")
+        assert status == 200 and [item["session"] for item in listed["sessions"]] == [agent.session]
+        status, plan = running.request("/api/blocks/sessions/undo", {"session": agent.session, "dry_run": True})
+        assert status == 200 and not plan["applied"] and plan["reverted_count"] == 1 and plan["conflict_count"] == 1
+        status, done = running.request("/api/blocks/sessions/undo", {"session": agent.session})
+        assert status == 200 and done["applied"]
+        undo = window.expect("change")
+        while undo["txn_id"] != done["txn_id"]:
+            undo = window.expect("change")
+        assert undo["actor"]["kind"] == "user"
+        status, page = running.request(f"/api/blocks/page?page={made['page_id']}")
+        assert [block["text"] for block in page["blocks"] if block["type"] == "text"] == ["one", "two (mine)"]
+        status, cited = running.request(f"/api/blocks/citations?cites={one}@{made['seq']},{two}@{made['seq']}")
+        assert status == 200 and [item["status"] for item in cited["citations"]] == ["unchanged", "changed"]
+        status, _ = running.request("/api/blocks/sessions/undo", {"session": agent.session, "extra": 1})
+        assert status == 400
+        status, _ = running.request("/api/blocks/history?page=" + made["page_id"] + "&actor=robot")
+        assert status == 400
+    finally:
+        window.close()

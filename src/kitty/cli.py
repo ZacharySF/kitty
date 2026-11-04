@@ -2034,7 +2034,9 @@ def index_rebuild() -> None:
 
 # ------------------------------------------------------------------ notes (blocks)
 
-notes_app = typer.Typer(no_args_is_help=True, help="Read, search and write notes as blocks (kitty.core.block_api).")
+notes_app = typer.Typer(no_args_is_help=True, help=(
+    "Read, search and write notes as blocks (kitty.core.block_api). Writes are recorded as an agent "
+    "session in History: one per command, or KITTY_AGENT_SESSION (named by KITTY_AGENT_NAME)."))
 app.add_typer(notes_app, name="notes")
 
 _JSON_OPTION = typer.Option("--json", help="Machine-readable output (with ((id@seq)) citations).")
@@ -2045,12 +2047,19 @@ _MARKERS = {"heading_1": "# ", "heading_2": "## ", "heading_3": "### ", "bullete
 
 @contextmanager
 def _blocks() -> Iterator:
-    """A connection for one notes command; refusals print and exit 1."""
+    """A connection for one notes command, writing as its agent session; refusals print and exit 1."""
     from kitty.core.blocks import BlockError
+    from kitty.core.blocks.actor import acting, cli_agent
 
+    try:
+        agent = cli_agent()
+    except ValueError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=1) from None
     workspace = _open()
     try:
-        yield workspace.conn
+        with acting(agent):
+            yield workspace.conn
     except BlockError as exc:
         error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
         raise typer.Exit(code=1) from None
@@ -2197,6 +2206,63 @@ def notes_quick(
     with _blocks() as conn:
         result = block_api.quick_note(conn, _texts([text])[0])
     _emit(result, as_json, f"Quick note {result['number']}: {_written(result)}")
+
+
+@notes_app.command("sessions")
+def notes_sessions(
+    kind: Annotated[str, typer.Option("--kind", help="agent (default), client, user, system, peer or all.")] = "agent",
+    limit: Annotated[int, typer.Option("--limit", min=1, max=200)] = 20,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Agent sessions in the kept history, most recent first (undo one with undo-session)."""
+    from kitty.core.blocks import sessions
+
+    with _blocks() as conn:
+        result = sessions.list_sessions(conn, kind=None if kind == "all" else kind, limit=limit)
+    lines = [f"{escape(item['session'])}  {escape(item['actor']['name'] or item['actor']['kind'])}"
+             f"{' via ' + escape(item['device']) if item['device'] else ''}  {item['start'][:16]} – {item['end'][:16]}  "
+             f"{item['transactions']} transaction(s) on {item['page_count']} page(s)" for item in result["sessions"]]
+    _emit(result, as_json, "\n".join(lines) or "No sessions in the kept history.")
+
+
+@notes_app.command("undo-session")
+def notes_undo_session(
+    session: Annotated[str, typer.Argument(help="The session ID (from `kitty notes sessions` or History).")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Only report what would be reverted.")] = False,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Revert everything one agent session wrote, as one new transaction; later edits by others are kept and listed."""
+    from kitty.core.blocks import sessions
+
+    with _blocks() as conn:
+        result = sessions.undo_session(conn, session, dry_run=dry_run)
+    verb = "Would revert" if dry_run else "Reverted" if result["applied"] else "Nothing to revert:"
+    lines = [f"{verb} {result['reverted_count']} block(s) from {result['transactions']} transaction(s)"
+             + (f" (seq {', '.join(str(value) for value in result['seq'].values())})" if result.get("seq") else "")]
+    lines += [f"  reverted {escape(item['text'][:60]) or item['id']}: {', '.join(item['fields'])}" for item in result["reverted"]]
+    lines += [f"  kept {escape((item.get('text') or '')[:60]) or item.get('id') or 'seq ' + str(item.get('seq'))}: "
+              f"{escape('; '.join(item['reasons']))}" for item in result["conflicts"]]
+    _emit(result, as_json, "\n".join(lines))
+
+
+@notes_app.command("citations")
+def notes_citations(
+    cites: Annotated[list[str], typer.Argument(help="Pinned citations, ((id@seq)) or id@seq.")],
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Whether each cited block changed since the cited seq, and how (word diff: {-old-}{+new+})."""
+    from kitty.core.blocks import history
+
+    with _blocks() as conn:
+        result = history.citations(conn, cites)
+    lines = []
+    for item in result["citations"]:
+        lines.append(f"{escape(item['cite'])}  {item['status']}" + (f" (changed at seq {item['seq']})" if item["changed"] else ""))
+        if item["diff"]:
+            lines.append("  " + "".join(escape(part["text"]) if part["op"] == "equal" else
+                                       f"[red]{{-{escape(part['text'])}-}}[/red]" if part["op"] == "delete" else
+                                       f"[green]{{+{escape(part['text'])}+}}[/green]" for part in item["diff"]))
+    _emit(result, as_json, "\n".join(lines))
 
 
 def main() -> None:

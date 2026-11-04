@@ -8,6 +8,9 @@ import type { Op } from "./blockDoc";
 import type { Reply, TxnMessage } from "./blockSync";
 
 export type BlockRoot = { type: string; number: number | null } | null;
+/** Who made a transaction (src/kitty/core/blocks/actor.py): the person, an agent session, a paired
+ * client, rika! itself or a paired device (`via`: the actors whose changes that merge carried). */
+export type Actor = { kind: "user" | "agent" | "client" | "system" | "peer"; name: string | null; session: string | null; via?: Actor[] };
 export type BlockChange = {
   type: "change";
   seq: number;
@@ -15,6 +18,7 @@ export type BlockChange = {
   page_id: string;
   at: string;
   device_id: string;
+  actor?: Actor;
   root: BlockRoot;
   ops: Op[];
 };

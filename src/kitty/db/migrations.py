@@ -156,14 +156,19 @@ def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[Mig
             if step is None:
                 conn.executescript(f"BEGIN;\n{migration.sql}\n{record}")
             else:
+                # Block transactions a conversion writes are rika!'s own (kitty.core.blocks.actor).
+                from kitty.core.blocks.actor import MIGRATION, acting
+
                 convert, after = step
                 conn.execute("BEGIN IMMEDIATE")
                 if not after:
-                    convert(conn)
+                    with acting(MIGRATION):
+                        convert(conn)
                 for statement in _statements(migration.sql):
                     conn.execute(statement)
                 if after:
-                    convert(conn)
+                    with acting(MIGRATION):
+                        convert(conn)
                 conn.execute(record)
             broken = conn.execute("PRAGMA foreign_key_check").fetchall()
             if broken:

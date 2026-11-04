@@ -22,6 +22,7 @@ from kitty.db.migrations import MIGRATIONS_DIR, available_migrations
 #: Numbers deliberately left out, with the reason. Add one only with its reason.
 EXPLAINED_GAPS = {
     21: "never used: no 021 file exists in any branch's history (parallel features skipped it)",
+    49: "main's 049_rika_goals (v0.3.33), not merged into the platform stack yet; the stack went on at 050",
 }
 #: Main's own migrations after the last one the block backend builds on (released in v0.3.2x-0.3.31).
 MAIN_ONLY = {"record_events", "calendar_palette_subjects", "note_page_maps", "rika", "math", "rika_voice"}

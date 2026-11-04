@@ -389,3 +389,29 @@ test("a live change never overwrites an unsaved local edit", async () => {
   assert.deepEqual(problems, []);
   await context.close();
 });
+
+test("a pinned citation says when its source changed since and shows the change", async () => {
+  const { page, problems, context } = await notes();
+  await page.waitForFunction(() => window.notesHarness.sockets.some((socket) => socket.readyState === 1));
+  await block(page, 1).waitFor();
+  // An agent cites block 4 of "Raft notes" as of seq 2 (that page's first transaction); then it changes.
+  await page.evaluate(() => {
+    const { server } = window.notesHarness;
+    const agent = { kind: "agent", name: "claude-code", session: "agent-session-1" };
+    server.commit([{ op: "text", id: "40000000-0000-4000-8000-000000000003",
+      text: "Replication details live in ((40000000-0000-4000-8000-000000000004@2))." }], undefined, agent);
+  });
+  await page.waitForTimeout(600);
+  assert.equal(await page.getByRole("button", { name: /source changed since/ }).count(), 0, "an unchanged source is not flagged");
+  await page.evaluate(() => window.notesHarness.editElsewhere(2, { text: "A leader replicates log entries to a majority." }));
+  const badge = page.getByRole("button", { name: "source changed since" });
+  await assert.doesNotReject(badge.waitFor());
+  await badge.click();
+  const panel = page.getByRole("region", { name: "Source changed since" });
+  await assert.doesNotReject(panel.waitFor());
+  assert.equal(await panel.locator("del").textContent(), "A leader replicates log entries to followers.");
+  assert.equal(await panel.locator("ins").textContent(), "A leader replicates log entries to a majority.");
+  assert.match(await panel.innerText(), /Cited at seq 2; changed at seq \d+/);
+  assert.deepEqual(problems, []);
+  await context.close();
+});

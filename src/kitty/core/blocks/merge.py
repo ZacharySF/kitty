@@ -8,7 +8,9 @@ a ``text`` splice before it when its text did, ``purge`` for one that is gone) a
 Loro update bytes. So History, live push to every window, block refs, topics and
 tags see a merge exactly like a local edit, and windows update live. *Always* tags
 attach to merged text like to typed text; the revision windows use to detect stale
-edits moves only when content changed.
+edits moves only when content changed. Each row's actor is the peer (named as paired),
+carrying in ``via`` the actors whose changes the other device sent for that page, so an
+agent session there stays visible, and undoable, here.
 
 Merging is deterministic: the projection is a function of the Loro document alone,
 and every fix-up below is computed from it, so two devices that hold the same
@@ -32,9 +34,9 @@ from typing import Iterable
 
 from loro import ExportMode, VersionVector
 
-from kitty.core.blocks import crdt
+from kitty.core.blocks import crdt, tagging
 from kitty.core.blocks import store as _store
-from kitty.core.blocks import tagging
+from kitty.core.blocks.actor import Actor, merged_via
 from kitty.core.blocks.crdt import LOCAL_KEYS, LoroPageDoc, canonical
 from kitty.core.blocks.pagedoc import Block, is_edit_key
 from kitty.db.connection import transaction
@@ -205,8 +207,12 @@ class _Merge:
                 self.reconcile(doc, crdt.notebook_of(doc.loro, page_id))
 
 
-def merge(conn: sqlite3.Connection, updates: dict[str, Iterable[bytes]], *, origin: str, at: str | None = None) -> dict:
+def merge(conn: sqlite3.Connection, updates: dict[str, Iterable[bytes]], *, origin: str, at: str | None = None,
+          actors: dict[str, Iterable[Actor]] | None = None) -> dict:
     """Import Loro updates (``{page_id: [bytes]}``) from device `origin` as one transaction.
+
+    ``actors`` names, per page, who made the changes on the other device; each merged
+    row records them as its peer actor's ``via``.
 
     Returns ``{"seq": {page_id: seq}, "pages": [page_id, ...] (changed), "revisions"}``.
     """
@@ -232,7 +238,12 @@ def merge(conn: sqlite3.Connection, updates: dict[str, Iterable[bytes]], *, orig
         merging.separate_copies()
         tagging.annotate(conn, work.docs, work.record)
         revisions = work.bump(set())
-        seqs = work.write(origin, str(uuid.uuid4()))
+        try:
+            named = conn.execute("SELECT name FROM peers WHERE device_id=?", (origin,)).fetchone()
+        except sqlite3.OperationalError:  # before migration 040
+            named = None
+        via = {page_id: merged_via(items) for page_id, items in (actors or {}).items()}
+        seqs = work.write(origin, str(uuid.uuid4()), Actor("peer", named[0] if named else None), via)
     return {"seq": seqs, "pages": sorted(merging.reconciled), "revisions": revisions}
 
 
