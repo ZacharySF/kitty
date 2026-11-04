@@ -50,8 +50,13 @@ The private checkpoint records progress, not new authorization.
   Retained forms preserve manual values and attachments; unknown layouts stop.
 - The filler uses dedicated local Firefox/WebDriver BiDi, not everyday-browser
   cookies. The local remote-control port grants powerful access; isolate its profile.
-- Gmail uses read-only OAuth and proposes status changes; explicit confirmation
-  is required. CSV exports escape formula-leading cells.
+- Job-status Gmail sync uses only the read-only OAuth token (`data/gmail_token.json`,
+  gmail.readonly) and proposes status changes; explicit confirmation is required.
+  Rika's email drafts use a separate opt-in token (`data/gmail_compose_token.json`,
+  gmail.readonly + gmail.compose, `kitty gmail auth --compose` or Connect in
+  Settings → Rika → Email); a reply is sent only after a Send tap or for a kind
+  whose auto-send the user confirmed on, held locally first for Undo-send.
+  CSV exports escape formula-leading cells.
 - Tests must use isolated public examples and synthetic data, never the user's
   runtime YAML, saved jobs, mail or resumes. Do not report checks that were not run.
 - Before committing, run the full pytest suite and resolve failures. Record only

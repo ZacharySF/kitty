@@ -1,5 +1,6 @@
 <script lang="ts">
   import ToastStack from "../ui/ToastStack.svelte";
+  import { usageReadout } from "./rika";
   import { rika, RIKA_TOAST_MS } from "./session.svelte";
 
   /**
@@ -24,10 +25,12 @@
     {@const actions = rika.actionsOf(toast.message)}
     {@const undoable = actions.filter((action) => action.reversible && action.status === "done")}
     {@const asks = [...rika.pending, ...rika.pendingPlans].filter((ask) => String(ask.message_id) === toast.message)}
+    {@const readout = reply ? usageReadout(reply) : null}
     <div class="top">
       <i class="dot" aria-hidden="true"></i>
       <span>Rika</span>
-      {#if reply?.tier}<span class="rika-chip" data-tier={reply.tier} title={reply.model}>{reply.tier}</span>{/if}
+      {#if readout}<span class="rika-chip" data-tier={readout.tier} title={`${readout.label} · ${readout.detail}`}>{readout.label}</span>
+      {:else if reply?.tier}<span class="rika-chip" data-tier={reply.tier} title={reply.model}>{reply.tier}</span>{/if}
       <span class="when">{reply ? time(reply.created_at) : ""}</span>
       <button class="x" aria-label="Dismiss Rika reply" onclick={() => rika.dismiss(toast.id)}>×</button>
     </div>

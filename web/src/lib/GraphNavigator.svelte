@@ -10,6 +10,8 @@
   import HomeUpNext from "./HomeUpNext.svelte";
   import HomeWidget from "./HomeWidget.svelte";
   import TodayAgenda from "./TodayAgenda.svelte";
+  import HomeBrief from "./goals/HomeBrief.svelte";
+  import { morningBrief } from "./goals/brief.svelte";
   import Select from "./ui/Select.svelte";
   import {
     navigation,
@@ -71,6 +73,9 @@
   /** Q13: the rails hold only widgets; the right one also carries the modules-off notice. */
   const upNext = $derived((["calendar", "flashcards", "reminders"] as View[]).some((view) => viewEnabled(view, enabled)));
   const hasRight = $derived(terminal || upNext || !enabled.length);
+  /** Q15 A: the morning brief leads the left rail, which shows for it even with Study tools off. */
+  $effect(() => morningBrief.start());
+  const hasLeft = $derived(workspaceTools || !!morningBrief.brief);
   const sections = $derived(atlasSections(visibleGroups(enabled), navigation));
   let hidden = $state(hiddenSections());
   const listed = (view: string): view is View =>
@@ -359,14 +364,17 @@
 <div
   class="atlas"
   class:list-mode={mode === "list"}
-  class:with-left={workspaceTools}
+  class:with-left={hasLeft}
   class:with-right={hasRight}
   class:rail-collapsed={hasRight && collapsed}
 >
-  {#if workspaceTools}
+  {#if hasLeft}
     <aside class="rail" aria-label="Home widgets">
-      <TodayAgenda id={`${atlasId}-agenda`} {revision} {onview} />
-      <HomeQuickNote id={`${atlasId}-note`} {onview} />
+      <HomeBrief id={`${atlasId}-brief`} />
+      {#if workspaceTools}
+        <TodayAgenda id={`${atlasId}-agenda`} {revision} {onview} />
+        <HomeQuickNote id={`${atlasId}-note`} {onview} />
+      {/if}
     </aside>
   {/if}
   <div

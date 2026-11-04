@@ -1,14 +1,15 @@
 /**
  * The running notifier behind the toast stack, the bell and quiet hours (Q60). It polls
- * every reminder source the active modules provide and runs `step` over what is due.
+ * every reminder source the active modules provide, plus Rika's urgent goal matches
+ * (docs/rika-design.md Q15 A), and runs `step` over what is due.
  * It lives in the page, so it only checks while kitty is open: in the desktop app,
  * **Keep running on close** keeps the hidden window (and this notifier) running.
  */
 import { api } from "./api";
 import { buildStore, onBuildChange } from "./build.svelte";
 import {
-  DEFAULT_QUIET, QUIET_EVENT, SYSTEM_KEY, calendarNotice, digestLine, emptyLedger, jobNotice, readLedger, quietOf, step,
-  writeLedger, type CalendarReminder, type JobReminder, type Ledger, type Notice, type QuietHours,
+  DEFAULT_QUIET, QUIET_EVENT, SYSTEM_KEY, calendarNotice, digestLine, emptyLedger, jobNotice, readLedger, quietOf, rikaNotice, step,
+  writeLedger, type CalendarReminder, type JobReminder, type Ledger, type Notice, type QuietHours, type RikaAlert,
 } from "./notify";
 
 export type Toast = { id: number; notice: Notice | null; digest: Notice[] | null; left: number };
@@ -28,12 +29,12 @@ class Notifier {
   drawer = $state(false);
   readonly unread = $derived(this.visible.filter(n => !this.ledger.read.includes(n.key)).length);
   readonly heldNotices = $derived(this.visible.filter(n => this.ledger.held.includes(n.key)));
-  private sources = { calendar: false, job: false };
+  private sources = { calendar: false, job: false, rika: false };
   private nextToast = 1;
   private busy = false;
 
   /** Starts polling the sources the active modules provide; returns the stop function. */
-  start(sources: { calendar: boolean; job: boolean }): () => void {
+  start(sources: { calendar: boolean; job: boolean; rika: boolean }): () => void {
     this.sources = sources;
     this.ledger = readLedger(localStorage);
     this.quiet = quietOf(buildStore.build.ui.notifications.quiet);
@@ -65,11 +66,12 @@ class Notifier {
     if (this.busy) return;
     this.busy = true;
     try {
-      const [calendar, job] = await Promise.all([
+      const [calendar, job, rika] = await Promise.all([
         this.sources.calendar ? api<{ items: CalendarReminder[] }>("/calendar/reminders") : null,
         this.sources.job ? api<{ due: JobReminder[] }>("/reminders") : null,
+        this.sources.rika ? api<{ alerts: RikaAlert[] }>("/rika/alerts") : null,
       ]);
-      const notices = [...(calendar?.items.map(calendarNotice) ?? []), ...(job?.due.map(jobNotice) ?? [])];
+      const notices = [...(calendar?.items.map(calendarNotice) ?? []), ...(job?.due.map(jobNotice) ?? []), ...(rika?.alerts.map(rikaNotice) ?? [])];
       const result = step(this.ledger, notices, this.quiet, new Date());
       this.visible = result.visible;
       this.save(result.ledger);
@@ -112,7 +114,7 @@ class Notifier {
     this.read(...this.visible.map(n => n.key));
   }
 
-  /** Calendar reminders come back in ten minutes; job-search reminders move a day (the reminders API). */
+  /** Calendar reminders and Rika alerts come back in ten minutes; job-search reminders move a day (the reminders API). */
   async snooze(notice: Notice) {
     this.toasts = this.toasts.filter(toast => toast.notice?.key !== notice.key);
     try {
@@ -125,11 +127,12 @@ class Notifier {
     }
   }
 
-  /** Dismisses a calendar reminder or marks a job-search reminder done. */
+  /** Dismisses a calendar reminder, marks a job-search reminder done, or marks a Rika match not relevant. */
   async clear(notice: Notice) {
     const { target } = notice;
     try {
       if (target.kind === "job") await api(`/reminders/${target.id}/complete`, {});
+      else if (target.kind === "rika") await api(`/goals/matches/${encodeURIComponent(String(target.id))}`, { decision: "dismiss" });
       else await api("/calendar/reminders/dismiss", { event_id: target.event_id, occurrence: target.occurrence, minutes: target.minutes });
       this.toasts = this.toasts.filter(toast => toast.notice?.key !== notice.key);
       await this.refresh();

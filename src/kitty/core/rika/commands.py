@@ -51,6 +51,10 @@ PATTERNS = (
                  r"(?: (?:to|on|for) (?P<task>.+))?")),
     ("delete_page", _(r"delete (?:the )?page (?P<title>.+)")),
     ("command", _(r"run `(?P<command>[^`]+)`(?: in (?P<cwd>/\S+))?")),
+    ("remember", _(r"remember (?:that )?(?P<text>.+)")),
+    ("goal", _(r"(?:new|add(?: a)?|create(?: a)?)(?: new)? goal:? (?P<title>.+)")),
+    ("morning_brief", _(r"(?:(?:show |read )?(?:me )?(?:the |my |today'?s |today’s )?morning brief|"
+                        r"what(?:'s|’s| is) new for my goals\??)")),
 )
 
 
@@ -145,4 +149,11 @@ def _plan(name: str, match: re.Match, conn: sqlite3.Connection) -> Plan | None:
         if group["cwd"]:
             args["cwd"] = group["cwd"]
         return Plan([("run_command", args)])
+    if name == "remember":
+        text = group["text"].strip()
+        return Plan([("remember_preference", {"text": text[:1].upper() + text[1:]})])
+    if name == "goal":
+        return Plan([("create_goal", {"title": group["title"]})])
+    if name == "morning_brief":
+        return Plan([("morning_brief", {})])
     return None

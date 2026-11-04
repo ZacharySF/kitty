@@ -82,9 +82,10 @@ def test_rika_product_name_keeps_updater_and_package_identity():
     assert config["mainBinaryName"] == "kitty-workspace"
     assert config["plugins"]["updater"]["endpoints"] == [
         "https://github.com/ZacharySF/kitty-releases/releases/latest/download/latest.json"]
-    # Asset names (parsed by the release guard) stay pinned, independent of productName.
-    assert "releaseAssetNamePattern: kitty_[version]_[arch][ext]" in workflow
-    assert "releaseName: rika! ${{ steps.version.outputs.tag }} (Linux x86_64)" in workflow
+    # Asset names (parsed by the release guard) stay pinned, independent of productName: the
+    # publish step uploads under kitty_<version>_amd64.* (tests/test_publish_desktop_release.py).
+    assert "scripts/publish-desktop-release.py" in workflow
+    assert '--title "rika! $RELEASE_TAG (Linux x86_64)"' in workflow
     # Tauri names the .deb package (kebab-case productName) and its /usr/lib folder after productName;
     # the new package takes over the old kitty-workspace package so dpkg -i updates in place.
     assert '= rika-workspace' in workflow

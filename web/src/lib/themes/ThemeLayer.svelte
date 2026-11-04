@@ -86,13 +86,16 @@
 
 <style>
   /* Behind every surface, above the root's backdrop (like PetalDrift). The module's art
-     positions itself inside this window-sized box. */
+     positions itself inside this window-sized box, which is its own compositing layer:
+     scrolling, typing and the page's own motion above it never repaint the art. */
   .theme-art {
     position: fixed;
     inset: 0;
     z-index: -1;
     overflow: hidden;
     pointer-events: none;
+    contain: strict;
+    will-change: transform;
   }
   /* Above everything, edges only, never in the pointer's way; it ends above the Rika bar. */
   .theme-frame {

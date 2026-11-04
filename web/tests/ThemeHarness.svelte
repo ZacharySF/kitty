@@ -7,6 +7,9 @@
 
   let view = $state("week");
   let done = $state(true);
+  // `?long`: a long scrolling list of panel rows, for the performance budget (themes.browser.test.mjs).
+  const long = new URLSearchParams(location.search).has("long");
+  const ROWS = Array.from({ length: 400 }, (_, index) => index);
 </script>
 
 <ThemeLayer />
@@ -48,6 +51,13 @@
     <EmptyState level={3} title="Nothing due"><p>Next review at 18:00.</p></EmptyState>
     <Loader kind="view" label="Waking the brain…" />
   </section>
+  {#if long}
+    <section class="panel long-list" data-long-list>
+      {#each ROWS as row (row)}
+        <div class="surface-section long-row"><span class="dot" style:background={`var(--c${(row % 6) + 1})`}></span> Review card {row + 1} · <span class="muted">due in {row % 9} days</span></div>
+      {/each}
+    </section>
+  {/if}
 </div>
 
 <style>
@@ -78,4 +88,6 @@
   [role="tab"], [role="option"] { padding: 5px 10px; border: 0; border-radius: 8px; color: var(--ink); }
   [role="tab"][aria-selected="false"] { background: transparent; }
   .listbox { display: grid; gap: 2px; margin-top: 8px; padding: 4px; border: 1px solid var(--hairline); border-radius: 12px; }
+  .long-list { grid-column: 1 / -1; display: block; height: 320px; overflow: auto; }
+  .long-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
 </style>
