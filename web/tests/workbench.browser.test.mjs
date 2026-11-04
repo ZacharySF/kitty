@@ -2762,7 +2762,11 @@ describe("Rika against the demo's scripted responder", () => {
     await page.keyboard.up(" ");
     const toast = replies(page).getByRole("listitem").filter({ hasText: "Added the task Read chapter 3" });
     await toast.waitFor({ timeout: 15_000 });
-    assert.equal((await toast.locator("[data-tier]").innerText()).toLowerCase(), "fast");
+    // Q13: the phrase runs with no model, so its chip reads Direct; the reply's tier stays fast.
+    assert.equal((await toast.locator("[data-tier]").innerText()).toLowerCase(), "direct");
+    assert.match(await toast.locator("[data-tier]").getAttribute("title"), / · 0 tokens · \$0$/);
+    const history = await page.evaluate(async () => (await fetch("/api/rika/history")).json());
+    assert.equal(history.items.filter((item) => item.kind === "message" && item.role === "rika").at(-1).tier, "fast");
     assert.deepEqual(await (await spoken).json(), { text: "Added the task Read chapter 3.", audio: null });
     assert.deepEqual(await page.evaluate(() => window.__played), []);
     const voice = await page.evaluate(async () => (await fetch("/api/rika/voice")).json());
