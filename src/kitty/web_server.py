@@ -147,7 +147,8 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
-    ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_keys"),
+    ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_agents"),
+    (None, "web_keys"),
     (None, "web_devices"), (None, "web_search"),
     (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
     ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
@@ -807,9 +808,11 @@ def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = Fals
 
             demo.seed(workspace.conn, settings, workspace.config)
         if settings.demo:
+            from kitty.core import agent_demo
             from kitty.core.rika import demo_seed
 
             demo_seed.seed(workspace.conn)
+            agent_demo.seed_demo(workspace.conn, settings.root)
         app = WebApplication(settings, workspace.config, static_dir, safe=safe)
     # A plain `kill` stops kitty-web like Ctrl+C: workers drain and the endpoint file goes.
     signal.signal(signal.SIGTERM, _interrupt)

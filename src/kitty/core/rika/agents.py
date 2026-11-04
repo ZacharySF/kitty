@@ -2,10 +2,12 @@
 rika!'s herdr session, surfaced through Tern windows, plus coding agents a Tern pane runs.
 
 An agent is ``{id, kind, name, status: working|blocked|idle|done, task, line, since,
-where: {herdr_pane} | {tern_pane}, now}``; ``id`` is ``herdr:<pane>`` or ``tern:<block>``
+where: {herdr_pane} | {tern_pane}, now, guarantee}``; ``id`` is ``herdr:<pane>`` or ``tern:<block>``
 and ``since`` is epoch ms its status began. ``now`` is what it is using now
 (kitty.web_agent_skills: ``{skill, tool, intent, via, label}``), or None while
-"Show agent skills and activity" is off for its kind.
+"Show agent skills and activity" is off for its kind. ``guarantee`` is the mediation
+guarantee of the newest launch in its pane (kitty.core.agent_sessions.pane_guarantees:
+full, attribution or none), as /api/terminal/activity names it.
 
 Starting one (after the user approved it) runs herdr headless when no page has
 attached it (the herdr dock is gone), starts the agent through
@@ -21,6 +23,7 @@ import os
 import re
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -49,16 +52,18 @@ def brief(task: str, cwd: Path) -> str:
 def _demo_roster() -> list[dict[str, Any]]:
     start = _now_ms()
     rows = [
-        ("omp", "omp · parser", "working", "Refactor the PDF parser", "Running tests 14/32", {"herdr_pane": "demo:w1:p2"}, 4),
+        ("omp", "omp · parser", "working", "Refactor the PDF parser", "Running tests 14/32", {"herdr_pane": "demo:w1:p2"}, 4, "full"),
         ("claude", "claude · essay", "blocked", "Outline the history essay", "Keep the three-part structure? (y/n)",
-         {"herdr_pane": "demo:w1:p3"}, 11),
-        ("codex", "codex · flashcards", "idle", "Import the biology deck", "Waiting for input", {"tern_pane": "demo:5"}, 26),
-        ("omp", "omp · calendar", "done", "Sync the exam dates", "Added 4 events; all tests pass", {"herdr_pane": "demo:w1:p4"}, 48),
-        ("claude", "claude · notes", "working", "Summarise lecture 7", "Reading notes/lecture-7.md", {"tern_pane": "demo:6"}, 2),
+         {"herdr_pane": "demo:w1:p3"}, 11, "full"),
+        ("codex", "codex · flashcards", "idle", "Import the biology deck", "Waiting for input", {"tern_pane": "demo:5"}, 26,
+         "attribution"),
+        ("omp", "omp · calendar", "done", "Sync the exam dates", "Added 4 events; all tests pass", {"herdr_pane": "demo:w1:p4"}, 48,
+         "full"),
+        ("claude", "claude · notes", "working", "Summarise lecture 7", "Reading notes/lecture-7.md", {"tern_pane": "demo:6"}, 2, "none"),
     ]
     return [{"id": f"{'herdr' if 'herdr_pane' in where else 'tern'}:{next(iter(where.values()))}", "kind": kind,
              "name": name, "status": status, "task": task, "line": line, "since": start - minutes * 60_000,
-             "where": where} for kind, name, status, task, line, where, minutes in rows]
+             "where": where, "guarantee": guarantee} for kind, name, status, task, line, where, minutes, guarantee in rows]
 
 
 def _tern_kind(block: dict) -> str | None:
@@ -108,6 +113,14 @@ class Agents:
         skills = self._skills
         return skills.now({"id": agent["id"], "kind": agent["kind"], **signals}) if skills is not None else None
 
+    def _guarantees(self, host: str) -> dict[str, str]:
+        """Pane -> guarantee of its newest launch (the cards' badges, as /api/terminal/activity)."""
+        from kitty.core.agent_sessions import pane_guarantees
+        from kitty.db import connect
+
+        with closing(connect(self.app.settings.db_path)) as conn:
+            return pane_guarantees(conn, host)
+
     def _herdr_agents(self) -> list[dict[str, Any]]:
         from kitty.core.terminal import TerminalUnavailable
 
@@ -117,13 +130,14 @@ class Agents:
             activity = self._herdr.activity(signals=True)
         except TerminalUnavailable:
             return []
-        found = []
+        found, guarantees = [], self._guarantees("herdr")
         for space in activity["workspaces"]:
             for card in space["agents"]:
                 agent = {"id": f"herdr:{card['pane']}", "kind": card.get("kind") or card["name"].split("-")[0],
                          "name": card["name"], "status": card["status"] if card["status"] in STATUSES else "idle",
                          "task": card["task"] or self._briefs.get(card["pane"], "").split("\n")[0][:200],
-                         "line": card["line"], "since": card["since"], "where": {"herdr_pane": card["pane"]}}
+                         "line": card["line"], "since": card["since"], "where": {"herdr_pane": card["pane"]},
+                         "guarantee": guarantees.get(card["pane"], "none")}
                 found.append({**agent, "now": self._now(agent, card.get("signals") or {})})
         return found
 
@@ -136,7 +150,7 @@ class Agents:
             status = self._tern.status()
         except TernUnavailable:
             return []
-        now, seen, found = _now_ms(), {}, []
+        now, seen, found, guarantees = _now_ms(), {}, [], self._guarantees("tern")
         for session in status["sessions"]:
             for tab in session["tabs"]:
                 for block in tab["blocks"]:
@@ -149,7 +163,7 @@ class Agents:
                     seen[block["id"]] = (state, since)
                     agent = {"id": f"tern:{block['id']}", "kind": kind, "name": block["title"] or kind,
                              "status": state, "task": block["title"], "line": "", "since": since,
-                             "where": {"tern_pane": block["id"]}}
+                             "where": {"tern_pane": block["id"]}, "guarantee": guarantees.get(str(block["id"]), "none")}
                     found.append({**agent, "now": self._now(agent, {"cwd": block.get("cwd")})})
         self._tern_states = seen
         return found
@@ -170,21 +184,33 @@ class Agents:
         if self.app.settings.demo:
             with self._lock:
                 pane = f"demo:w1:p{len(self._demo) + 2}"
+                # The demo never runs kitty-agent-launch, so its new workers are not mediated.
                 agent = {"id": f"herdr:{pane}", "kind": kind, "name": f"{kind} · {task[:24]}", "status": "working",
-                         "task": task[:200], "line": "Reading the brief", "since": _now_ms(), "where": {"herdr_pane": pane}}
+                         "task": task[:200], "line": "Reading the brief", "since": _now_ms(), "where": {"herdr_pane": pane},
+                         "guarantee": "none"}
                 self._demo.append(agent)
             return {**agent, "now": self._now(agent, {})}
         if self._herdr is None:
             raise AgentError("Worker agents need the Terminal module")
+        from kitty.core.agent_sessions import GUARANTEE_LABELS, LaunchError
+        from kitty.db import connect
+
         try:
             self._herdr.serve(cwd)
-            started = self._herdr.start_agent(kind, cwd, extra)
+            with closing(connect(self.app.settings.db_path)) as conn:
+                launch = self.app.agent_launches.prepare(conn, host="herdr", kind=kind, cwd=cwd,
+                                                         ancestor=self._herdr.pane_shell, origin=self.app.origin)
+            started = self._herdr.start_agent(kind, cwd, extra, launch)
+            with closing(connect(self.app.settings.db_path)) as conn:
+                mediation = self.app.agent_launches.outcome(conn, launch.session)
+            self._herdr.label(started["tab"], f"Agent · {GUARANTEE_LABELS[mediation['guarantee']]}")
             self._herdr.prompt(started["pane"], brief(task, cwd))
-        except TerminalUnavailable as exc:
+        except (TerminalUnavailable, LaunchError) as exc:
             raise AgentError(str(exc)) from None
         self._briefs[started["pane"]] = task
         agent = {"id": f"herdr:{started['pane']}", "kind": kind, "name": started["name"], "status": "working",
-                 "task": task[:200], "line": "", "since": _now_ms(), "where": {"herdr_pane": started["pane"]}}
+                 "task": task[:200], "line": "", "since": _now_ms(), "where": {"herdr_pane": started["pane"]},
+                 "guarantee": mediation["guarantee"]}
         return {**agent, "now": self._now(agent, {"pane": started["pane"]})}
 
     # Opening ------------------------------------------------------------------

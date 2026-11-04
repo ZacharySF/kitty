@@ -38,6 +38,7 @@ dependencies = [
 [project.scripts]
 kitty = "kitty.cli:main"
 kitty-web = "kitty.web_server:main"
+kitty-agent-launch = "kitty.agent_launch:main"
 
 [dependency-groups]
 dev = [

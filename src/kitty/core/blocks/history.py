@@ -24,7 +24,7 @@ from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
-from kitty.core.blocks import crdt
+from kitty.core.blocks import crdt, retention
 from kitty.core.blocks.actor import COMPACTION, KINDS, from_row
 from kitty.core.blocks.convert import props_diff
 from kitty.core.blocks.pagedoc import (
@@ -273,8 +273,12 @@ def restore_from_trash(conn: sqlite3.Connection, bid) -> dict:
     return transact(conn, [{"op": "restore", "id": block_id(bid)}])
 
 
-def compact(conn: sqlite3.Connection, now: datetime | None = None, days: int | None = None) -> dict:
-    """Purge expired Trash, then fold op_log rows older than the window into daily snapshots."""
+def compact(conn: sqlite3.Connection, now: datetime | None = None, days: int | None = None,
+            cap: int = retention.MAX_RETAINED) -> dict:
+    """Purge expired Trash, then fold op_log rows older than the window into daily snapshots.
+
+    Retention reasons (kitty.core.blocks.retention) clamp the fold below their floor, and
+    journal rows no reason covers any more are deleted; `cap` is the reasons' size cap."""
     now = now or datetime.now(timezone.utc)
     cutoff = (now - timedelta(days=retention_days(conn) if days is None else days)).isoformat()
     with (nullcontext() if conn.in_transaction else transaction(conn, immediate=True)):
@@ -289,6 +293,13 @@ def compact(conn: sqlite3.Connection, now: datetime | None = None, days: int | N
         if last is not None and acknowledged is not None:
             # Never fold rows a paired device has not confirmed it holds (Q16).
             last = min(last, acknowledged) if acknowledged > horizon else None
+        kept = retention.floor(conn, cutoff, cap=cap, release=True, now=now)
+        if last is not None and kept["floor"] is not None:
+            # Like a replication slot: never fold a row a journal row, citation or hold still needs.
+            last = min(last, kept["floor"] - 1)
+            if last <= horizon:
+                last = None
+        pruned = retention.prune_journal(conn, cutoff)
         folded = snapshots = 0
         if last is not None:
             _cover_crdt(conn, horizon, last, now.isoformat())
@@ -311,7 +322,10 @@ def compact(conn: sqlite3.Connection, now: datetime | None = None, days: int | N
                         snapshots += 1
             conn.execute("UPDATE block_history SET horizon_seq=?,horizon_at=? WHERE id=1", (last, cutoff))
             folded = conn.execute("DELETE FROM op_log WHERE seq<=?", (last,)).rowcount
-    return {"folded": folded, "snapshots": snapshots, "purged": len(expired), "horizon_seq": max(horizon, last or 0)}
+    return {"folded": folded, "snapshots": snapshots, "purged": len(expired), "horizon_seq": max(horizon, last or 0),
+            "floor": kept["floor"], "retained": sorted({item["reason"] for item in kept["reasons"]}),
+            "released": [{key: item[key] for key in ("reason", "seq")} for item in kept["released"]],
+            "journal_pruned": pruned}
 
 
 def _acknowledged(conn: sqlite3.Connection) -> int | None:

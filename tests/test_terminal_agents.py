@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
 from terminal_support import FrameReader, make_root, site
 from test_web_terminal import herdr, refused  # shared isolated executable fixture
+
+from kitty.core import agent_sessions
 
 
 def attach(running):
@@ -65,6 +68,11 @@ def test_agent_has_its_own_labelled_tab_and_the_bundled_skill(tmp_path, herdr, k
             assert launched["kind"] == kind
             # The activity strip shows herdr's agent name, so it names the coding agent.
             assert launched["name"].startswith(f"{kind}-")
+            # The fake herdr never runs the pane's shim, so the launch exchange never happens:
+            # the tab gets no token and says so (kitty.core.agent_sessions).
+            mediation = launched["mediation"]
+            assert (mediation["state"], mediation["guarantee"]) == ("pending", "none")
+            assert "no token" in mediation["message"]
             activity = running.request("/api/terminal/activity")[1]
             [agent] = activity["workspaces"][0]["agents"]
             assert {key: agent[key] for key in ("pane", "name", "status")} == {"pane": "w7:p2", "name": launched["name"], "status": "idle"}
@@ -79,15 +87,26 @@ def test_agent_has_its_own_labelled_tab_and_the_bundled_skill(tmp_path, herdr, k
     assert args[args.index("--workspace") + 1] == "w7"
     assert args[args.index("--cwd") + 1] == str(settings.root)
     assert args[args.index("--label") + 1] == "Agent"
+    env = dict(item.split("=", 1) for item in (args[index + 1] for index, value in enumerate(args) if value == "--env"))
+    assert len(env["KITTY_LAUNCH_NONCE"]) == 43 and env["KITTY_LAUNCH_ORIGIN"].startswith("http://127.0.0.1:")
+    bin_dir = settings.root / ".private" / "herdr" / "bin"
+    assert env["PATH"].split(os.pathsep)[0] == str(bin_dir) == env["KITTY_LAUNCH_SHIMS"]
+    shim = (bin_dir / kind).read_text()
+    assert "kitty.agent_launch" in shim and f"--kind {kind}" in shim and (bin_dir / kind).stat().st_mode & 0o777 == 0o700
+    renames = [call["argv"][2:] for call in herdr.invocations() if call["argv"][2:4] == ["tab", "rename"]]
+    assert renames == [["tab", "rename", "w7:t2", "Agent · Not mediated"]]
     starts = [call for call in herdr.invocations() if call["argv"][2:4] == ["agent", "start"]]
     assert len(starts) == 1
     args = starts[0]["argv"]
     assert args[args.index("--pane") + 1] == "w7:p2"
     assert args[args.index("--kind") + 1] == kind
-    # The skill is an emitted interface: the bundled runtime's skill reaches the agent,
-    # rather than a kitty-authored replacement or a global skill installation.
+    # The skill is an emitted interface: herdr's own skill reaches the agent where its
+    # socket stays reachable; a Full tab (socket closed) gets rika!'s mediation note.
     skill = settings.root / ".private" / "herdr" / "SKILL.md"
-    assert skill.read_text() == herdr.skill
+    if agent_sessions.host_guarantee()["guarantee"] == "full":
+        assert skill.read_text() == agent_sessions.MEDIATION_NOTE
+    else:
+        assert skill.read_text() == herdr.skill + "\n\n" + agent_sessions.MEDIATION_NOTE
     assert skill.stat().st_mode & 0o777 == 0o600
     assert str(skill) in " ".join(args[args.index("--") + 1:])
 

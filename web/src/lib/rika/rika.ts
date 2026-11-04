@@ -3,6 +3,7 @@
  * helpers the bar, its toasts and the history drawer share.
  */
 import type { AgentNow } from "../agentSkills";
+import type { Guarantee } from "../agents/agents";
 
 export type Id = number | string;
 export type Tier = "fast" | "standard" | "deep";
@@ -58,6 +59,8 @@ export type RikaAgent = {
   where: { herdr_pane?: string; tern_pane?: string };
   /** What it uses now (agent skills); null while "Show agent skills and activity" is off for its kind. */
   now?: AgentNow | null;
+  /** The mediation guarantee of its pane's newest launch (Settings → Agents); absent from older servers. */
+  guarantee?: Guarantee;
 };
 
 /** Q7 A: the six areas a brain dump's plan is grouped by, in order. */

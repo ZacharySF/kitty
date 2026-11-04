@@ -17,7 +17,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
 const DEFAULT = { width: 1280, height: 850 };
 const GUIDE = "https://github.com/ZacharySF/kitty/blob/main/docs/GOOGLE_ONBOARDING.md";
-const PAGES = ["Appearance", "Desktop", "Quiet hours", "Build", "Account", "Modules", "Graphs", "Tags", "Connected apps", "Keys", "Devices"];
+const PAGES = ["Appearance", "Desktop", "Quiet hours", "Build", "Account", "Modules", "Graphs", "Tags", "Connected apps", "Agents", "Keys", "Devices"];
 const RIKA_PAGES = ["Routing memory", "Email", "Memory"];
 /** The pages' own regions (their components keep their names; Build's is "Build settings"). */
 const REGIONS = [...PAGES, ...RIKA_PAGES, "Build settings"];
@@ -142,7 +142,7 @@ describe("settings index", () => {
     const title = page.getByRole("heading", { level: 1, name: "Settings" });
     assert.match(await title.evaluate((node) => getComputedStyle(node).fontFamily), /Fraunces/);
     const items = index(page).locator("a, button");
-    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 16);
+    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 17);
     assert.deepEqual(await items.allTextContents().then((texts) => texts.map((text) => text.trim())),
       [...PAGES, "Profile & saved answers", "AI & privacy", ...RIKA_PAGES]);
     for (const item of await items.all()) assert.equal(await item.locator("svg").count(), 1, "index item without its icon");
@@ -215,7 +215,7 @@ describe("settings index", () => {
     await region(page, "Account").waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#settings/account");
     await find.fill("");
-    assert.equal((await names()).length, 16);
+    assert.equal((await names()).length, 17);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -392,6 +392,37 @@ describe("settings pages", () => {
     const reply = page.getByRole("dialog", { name: "Rika history" }).locator(".said").filter({ hasText: "Added the task review the Rika readout." });
     await reply.getByText("create_task · 0 tokens · $0").waitFor();
     assert.equal(await reply.locator(".rika-chip").getAttribute("data-tier"), "direct");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Agents shows the demo's synthetic sessions: every guarantee, a paged journal, a held session with a planted file, a replay", async () => {
+    const { page, problems, context } = await open("settings/agents");
+    const agents = region(page, "Agents");
+    const sessions = agents.getByRole("region", { name: "Sessions" });
+    const rows = sessions.locator("tbody tr");
+    await rows.first().waitFor();
+    assert.equal(await rows.count(), 5);
+    for (const label of ["Full", "Attribution only", "Not mediated"])
+      assert.ok(await sessions.getByRole("img", { name: `Guarantee: ${label}`, exact: true }).count() >= 1, `no ${label} session`);
+    await agents.getByRole("region", { name: "This computer" }).getByRole("img", { name: /^Guarantee: / }).waitFor();
+    await agents.getByRole("button", { name: "omp-3f2a91c4", exact: true }).click();
+    const drawer = page.getByRole("dialog", { name: "omp-3f2a91c4" });
+    const journal = drawer.getByRole("list", { name: "Journal" });
+    await journal.waitFor();
+    assert.equal(await journal.getByRole("listitem").count(), 200);
+    await drawer.getByRole("button", { name: "Older" }).click();
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Journal"] li').length === 230);
+    const planted = drawer.getByRole("list", { name: "Planted files" });
+    assert.match(await planted.innerText(), /^\.envrc\s+created$/);
+    assert.match(await planted.locator("code").getAttribute("title"), /\/projects\/parser\/\.envrc$/);
+    await drawer.getByRole("button", { name: "Release", exact: true }).waitFor();
+    await drawer.getByRole("button", { name: "Close session" }).click();
+    const policy = agents.getByRole("region", { name: "Policy" });
+    assert.match(await policy.innerText(), /Version 1/);
+    await policy.getByRole("button", { name: "Simulate", exact: true }).click();
+    await page.getByRole("region", { name: "Simulation" }).getByText("256 replayed · no decision changes").waitFor();
+    assert.equal(await policy.getByRole("button", { name: "Apply", exact: true }).isDisabled(), true);
     assert.deepEqual(problems, []);
     await context.close();
   });

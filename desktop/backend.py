@@ -110,13 +110,18 @@ def serve(root: Path, assets: Path, package: str, *, safe: bool = False) -> None
 
 
 def main() -> None:
+    bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    if sys.argv[1:2] == ["agent-launch"]:
+        # An Agent tab's shim (kitty.core.agent_sessions.launcher_command): confine, then exec the agent.
+        package = (bundle / "backend-package.txt").read_text().strip()
+        importlib.import_module(f"{package}.agent_launch").main(sys.argv[2:])
+        return
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", required=True, type=Path)
     parser.add_argument("--safe", action="store_true",
                         help="Start every window without the build's custom CSS and theme.")
     args = parser.parse_args()
-    bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     assets = bundle / "website"
     if not (assets / "index.html").is_file():
         parser.exit(1, "The packaged website is missing; reinstall rika!.\n")

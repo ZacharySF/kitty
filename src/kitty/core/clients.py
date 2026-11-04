@@ -33,7 +33,11 @@ from typing import Any
 #: What a client may be granted: `capture` writes quick notes, inbox blocks and page
 #: mirror snapshots; `read` lists recent page and task titles.
 SCOPES = ("capture", "read")
+#: Kinds a program may ask to pair as.
 KINDS = ("tern-plugin", "browser-extension")
+#: An agent tab's token (kitty.core.agent_sessions): never paired, issued once its
+#: launcher has confined itself; its scopes are the mediator's (kitty.core.agent_access).
+AGENT_KIND = "agent-session"
 REQUEST_TTL = 300
 MAX_WAITING = 3
 RATE_LIMIT = 10
@@ -116,7 +120,9 @@ def authenticate(conn: sqlite3.Connection, token: Any) -> dict | None:
 
 
 def listing(conn: sqlite3.Connection) -> list[dict]:
-    return [_client(row) for row in conn.execute("SELECT * FROM clients WHERE revoked_at IS NULL ORDER BY created_at, id")]
+    """Live paired clients (agent-session tokens are listed under Settings → Agents instead)."""
+    return [_client(row) for row in conn.execute(
+        "SELECT * FROM clients WHERE revoked_at IS NULL AND kind<>? ORDER BY created_at, id", (AGENT_KIND,))]
 
 
 def revoke(conn: sqlite3.Connection, client_id: Any) -> None:
