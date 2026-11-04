@@ -231,6 +231,11 @@ test("the mind-map module opens Notes in Map mode with the editor filling the st
 test("the canvas stage ends above the window bottom and its pill ⋯ holds paper, layers and file actions", async () => {
   const { page, problems, context } = await notes();
   await mode(page, "Canvas").click();
+  // The stage is sized to the window after the mode switch lays out; measure once it settles.
+  await page.waitForFunction((min) => {
+    const el = [...document.querySelectorAll("[aria-label]")].find((node) => /^Infinite drawing canvas/.test(node.getAttribute("aria-label")));
+    return el && el.getBoundingClientRect().height >= min;
+  }, 320, { timeout: 5000 }).catch(() => {});
   const stage = await box(canvas(page));
   assert.ok(stage.y + stage.height <= DEFAULT.height, `the canvas runs to ${Math.round(stage.y + stage.height)}px, under the window edge`);
   assert.ok(stage.height >= 320, "the canvas is squashed");
