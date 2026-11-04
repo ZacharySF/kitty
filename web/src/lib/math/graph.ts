@@ -27,6 +27,36 @@ const LABEL = 30;
 const PAD = 34;
 /** Wider layers wrap so the graph keeps to the drawer's width. */
 const PER_ROW = 4;
+/** Past this many topics the drawer opens on one strand: the whole graph is too tall to read. */
+const WHOLE = 30;
+export const STRANDS: Record<string, string> = {
+  arithmetic: "Arithmetic and estimation",
+  counting: "Counting",
+  probability: "Probability",
+  ev: "Expected value and variance",
+  statistics: "Statistics",
+  linalg: "Linear algebra",
+  calculus: "Calculus",
+  discrete: "Discrete math",
+};
+
+export function strandLabel(strand: string): string {
+  return STRANDS[strand] ?? strand.charAt(0).toUpperCase() + strand.slice(1);
+}
+
+/** One strand's topics with their prerequisites from other strands (`outside`, drawn as context); "" is every topic. */
+export function strandView(topics: Topic[], strand: string): { topics: Topic[]; outside: string[] } {
+  if (!strand) return { topics, outside: [] };
+  const inside = new Set(topics.filter((topic) => topic.strand === strand).map((topic) => topic.id));
+  const outside = new Set(topics.filter((topic) => inside.has(topic.id)).flatMap((topic) => topic.prereqs.filter((id) => !inside.has(id))));
+  return { topics: topics.filter((topic) => inside.has(topic.id) || outside.has(topic.id)), outside: topics.filter((topic) => outside.has(topic.id)).map((topic) => topic.id) };
+}
+
+/** A small graph opens whole; a large one on the strand of the selected topic. */
+export function defaultStrand(topics: Topic[], selected: string): string {
+  if (topics.length <= WHOLE) return "";
+  return (topics.find((topic) => topic.id === selected) ?? topics[0])?.strand ?? "";
+}
 
 export function isDue(topic: Topic, now: number): boolean {
   return topic.state === "mastered" && !!topic.due_at && Date.parse(topic.due_at) <= now;

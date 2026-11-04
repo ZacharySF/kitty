@@ -223,8 +223,11 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
         const before = replay(entry, rows[0].seq - 1), after = replay(entry, rows[rows.length - 1].seq);
         for (const id of new Set(rows.flatMap((row) => row.ops.filter((op) => op.op === "text").map((op) => op.id)))) {
           const now = entry.doc.get(id).text, item = { id, page_id: entry.doc.pageId, text: now };
-          if (now === after.get(id).text) { reverted.push({ ...item, fields: ["text"] }); ops.push({ op: "text", id, text: before.get(id).text }); }
-          else if (now !== before.get(id).text) conflicts.push({ ...item, fields: ["text"], reasons: ["changed by someone else since"] });
+          // As kitty reports it: the text now, the text it goes back to, and live afterwards.
+          if (now === after.get(id).text) {
+            reverted.push({ id, page_id: entry.doc.pageId, current: now, text: before.get(id).text, live: true, fields: ["text"] });
+            ops.push({ op: "text", id, text: before.get(id).text });
+          } else if (now !== before.get(id).text) conflicts.push({ ...item, fields: ["text"], reasons: ["changed by someone else since"] });
         }
       }
       if (!transactions) return json({ error: "No kept history belongs to that session" }, 404);
@@ -245,7 +248,7 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
         return { cite: `((${cite}))`, id, cited_seq: Number(cited), seq: changed ? seq : Number(cited), changed,
           status: was === null ? "unknown" : changed ? "changed" : "unchanged", then: was === null ? null : { type: "text", text: was },
           now: now === null ? null : { type: "text", text: now },
-          diff: changed ? [{ op: "delete", text: was }, { op: "insert", text: now }] : [] };
+          diff: changed ? wordDiff(was, now ?? "") : [] };
       });
       return json({ citations });
     }
@@ -268,4 +271,16 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
   };
   server.pageOf = pageOf;
   return server;
+}
+
+/** A one-change stand-in for kitty.core.blocks.history.word_diff: the same tokens, a common prefix and suffix kept. */
+function wordDiff(before, after) {
+  const words = (text) => text.match(/\s+|[\p{L}\p{N}_]+|[^\p{L}\p{N}_\s]/gu) ?? [];
+  const old = words(before), next = words(after);
+  let start = 0, end = 0;
+  while (start < old.length && start < next.length && old[start] === next[start]) start += 1;
+  while (end < old.length - start && end < next.length - start && old[old.length - 1 - end] === next[next.length - 1 - end]) end += 1;
+  const parts = [["equal", old.slice(0, start)], ["delete", old.slice(start, old.length - end)], ["insert", next.slice(start, next.length - end)],
+    ["equal", old.slice(old.length - end)]];
+  return parts.filter(([, tokens]) => tokens.length).map(([op, tokens]) => ({ op, text: tokens.join("") }));
 }

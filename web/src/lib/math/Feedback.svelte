@@ -19,6 +19,7 @@
 
 <script lang="ts">
   import MathText from "./MathText.svelte";
+  import { asMath } from "./tex";
 
   /** Feedback lines (design Q4 B), newest first; older ones fade. */
   let { lines }: { lines: FeedbackLine[] } = $props();
@@ -37,7 +38,7 @@
         {#if line.verdict.feedback}<p class="why"><MathText inline text={line.verdict.feedback} /></p>{/if}
         {#if tone === "undecided" && !line.verdict.feedback}<p class="why">Nothing was marked: check it yourself or write it another way.</p>{/if}
         {#if line.verdict.canonical && (line.verdict.correct || line.verdict.revealed)}
-          <p class="why answer">{line.verdict.correct ? "Exactly" : "The answer"}: <MathText inline text={line.verdict.canonical} /></p>
+          <p class="why answer">{line.verdict.correct ? "Exactly" : "The answer"}: <MathText inline text={asMath(line.verdict.canonical)} /></p>
         {/if}
       </div>
     </div>

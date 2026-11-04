@@ -22,7 +22,6 @@ from kitty.db.migrations import MIGRATIONS_DIR, available_migrations
 #: Numbers deliberately left out, with the reason. Add one only with its reason.
 EXPLAINED_GAPS = {
     21: "never used: no 021 file exists in any branch's history (parallel features skipped it)",
-    50: "claimed by rika! math phase 2 (050_math_books, feat/math-phase2), not on main yet; op_log_actor took 051",
 }
 #: Main's own migrations after the last one the block backend builds on (released in v0.3.2x-0.3.31).
 MAIN_ONLY = {"record_events", "calendar_palette_subjects", "note_page_maps", "rika", "math", "rika_voice"}

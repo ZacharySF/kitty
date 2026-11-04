@@ -1054,8 +1054,10 @@ The paper's §13 step 4 ("Agent writes also stamp an actor column on their op_lo
   row mixes everything the batch carried for that page: an agent session is undoable on the
   other device only for rows whose `via` is that session alone (mixed ones are reported).
 - **History** groups sessions by device and actor (`actor` on each session; `actor=` kind and
-  `session=` filters on `GET /api/blocks/history`); the History dialog names each session,
-  filters by actor, and offers **Undo this agent session…** on agent sessions (a dry run is
+  `session=` filters on `GET /api/blocks/history`); the History dialog names each session with
+  its actor's icon and theme role (`web/src/lib/actors.ts`: user, agent, and the agent sub-kinds
+  omp, claude, codex and rika by client name; client, system, peer), filters by actor (the
+  themed Select), and offers **Undo this agent session…** on agent sessions (a dry run is
   shown first). `GET /api/blocks/sessions` lists sessions; live `change` messages carry `actor`.
 - **Undo one session** (`sessions.undo_session`, `POST /api/blocks/sessions/undo`, MCP
   `undo_agent_session`, `kitty notes undo-session`): rebuilds each touched block's state before
@@ -1065,6 +1067,8 @@ The paper's §13 step 4 ("Agent writes also stamp an actor column on their op_lo
   else's later change, kept and reported. Blocks the agent created go to Trash only if
   unchanged and not holding others' blocks. The inverse is planned against the current pages
   and applied as ONE `transact`; an agent undoing its own session records it as `<session>:undo`.
+  Each reverted entry carries the block's text now (`current`), the text it goes back to
+  (`text`) and `live` afterwards, which History shows as a struck-through "now" over "back to".
 - **Pinned citations** (`history.citations`, `GET /api/blocks/citations`, MCP
   `check_citations`, `kitty notes citations`): the block as of `seq` (like `preview`) against
   now, by content (type, text, content properties, Trash; not tags or view state), with the
@@ -1072,8 +1076,9 @@ The paper's §13 step 4 ("Agent writes also stamp an actor column on their op_lo
   and opens the diff in the side panel; it rechecks after every live change.
 - **Tests:** `tests/test_block_actor.py`, plus actor cases in `test_sync_service.py`,
   `test_web_block_api.py`, `test_mcp_blocks.py`, `test_notes_cli.py`, `test_web_clients.py`,
-  `test_rika_loop.py`; browser: `blockEditor.browser.test.mjs` (History actors, filter, undo)
-  and `notes.browser.test.mjs` (source changed since).
+  `test_rika_loop.py`; browser: `blockEditor.browser.test.mjs` (History actors, their colours
+  and AA contrast on every theme, filter, undo plan before/after) and `notes.browser.test.mjs`
+  (source changed since: the pill, the word diff's marks and their contrast on every theme).
 
 ## Verified facts
 
