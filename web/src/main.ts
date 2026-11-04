@@ -1,8 +1,10 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
 import QuickNoteWindow from "./QuickNoteWindow.svelte";
-import { applySavedTheme } from "./lib/themes";
-import { applySavedAppearance } from "./lib/appearance";
+import BuildStatus from "./lib/BuildStatus.svelte";
+import { loadBuild, lookApplied, toggleSafe } from "./lib/build.svelte";
+import { isSafeShortcut } from "./lib/buildCore";
+import { keepLive } from "./lib/live";
 import "@nunera/bracket/styles.css";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/fraunces/full.css";
@@ -13,10 +15,29 @@ import "katex/dist/katex.min.css";
 import "./styles.css";
 import "./lib/themes/engine.css";
 
-applySavedAppearance();
+// Safe mode (Q9) answers before anything else, even inside the terminal or an editor.
+window.addEventListener("keydown", (event) => {
+  if (!isSafeShortcut(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!event.repeat) toggleSafe();
+}, true);
 
-// `#quick-note[/<id>]` is a standalone floating note, not a workspace view.
-const quickNote = /^#quick-note(\/|$)/.test(window.location.hash);
-if (quickNote) document.documentElement.dataset.surface = "quick-note";
-// The saved theme's motif module (a small lazy chunk) is in before the first paint.
-void applySavedTheme().finally(() => mount(quickNote ? QuickNoteWindow : App, { target: document.getElementById("app")! }));
+async function start() {
+  // The build carries the theme, appearance and interface preferences: load it before the first paint.
+  await loadBuild();
+  // The theme's motif module (a small lazy chunk) is in before the first paint too.
+  await lookApplied();
+  // Every window stays on the live channel for build pushes.
+  keepLive();
+  // `#quick-note[/<id>]` is a standalone floating note, not a workspace view.
+  const quickNote = /^#quick-note(\/|$)/.test(window.location.hash);
+  if (quickNote) document.documentElement.dataset.surface = "quick-note";
+  mount(quickNote ? QuickNoteWindow : App, { target: document.getElementById("app")! });
+  // Outside #app, so the build's custom CSS (scoped to #app) can never hide it.
+  const status = document.createElement("div");
+  status.id = "kitty-build-status";
+  document.body.append(status);
+  mount(BuildStatus, { target: status });
+}
+void start();

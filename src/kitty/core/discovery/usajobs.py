@@ -1,8 +1,8 @@
 """Adapter for USAJOBS, the federal job board (https://developer.usajobs.gov).
 
 GET https://data.usajobs.gov/api/search with three headers: Host, User-Agent
-(my email, as USAJOBS asks) and Authorization-Key (USAJOBS_API_KEY from .env,
-which Settings.load() puts into the environment). Without a key the adapter
+(my email, as USAJOBS asks) and Authorization-Key (the USAJOBS key from kitty Keys:
+keyring, owner-only file or USAJOBS_API_KEY in .env). Without a key the adapter
 reports an error without touching the network, so a missing key never looks
 like "0 jobs".
 
@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import replace
 from datetime import datetime
 from urllib.parse import urlencode
 
+from kitty.core import keys
 from kitty.core.discovery.base import AdapterResult, BoardOutcome, NormalizedJob, summarize_boards
 from kitty.core.discovery.context import DiscoverContext
 from kitty.core.discovery.http import HttpError, RateLimited
@@ -115,9 +117,12 @@ class UsaJobsAdapter:
         self.ctx = ctx
 
     def fetch(self, since: datetime | None) -> AdapterResult:
-        key = os.environ.get("USAJOBS_API_KEY", "").strip()
+        try:
+            key = keys.read(self.ctx.settings, "USAJOBS")
+        except keys.KeysError as exc:
+            return AdapterResult([], "error", f"USAJOBS key: {exc}")
         if not key:
-            return AdapterResult([], "error", "USAJOBS_API_KEY is not set in .env")
+            return AdapterResult([], "error", "USAJOBS key is not set (kitty keys set USAJOBS, or USAJOBS_API_KEY in .env)")
         email = os.environ.get("USAJOBS_EMAIL", "").strip() or self.ctx.config.profile.email
         source = self.ctx.config.sources.sources.get(self.name)
         options = source.options if source else {}
@@ -137,6 +142,8 @@ class UsaJobsAdapter:
                 outcomes.append(BoardOutcome(query_name(query), "rate_limited", error="skipped after a 429"))
                 continue
             outcome, found, items = self._run_query(http, query, per_page, max_pages)
+            if outcome.error:  # never let the key reach a stored error
+                outcome = replace(outcome, error=keys.redact(outcome.error, key))
             if outcome.status == "error" and _REJECTED.search(outcome.error or ""):
                 return AdapterResult([], "error", f"USAJOBS rejected the API key or email: {outcome.error}")
             outcomes.append(outcome)

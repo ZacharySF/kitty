@@ -11,6 +11,8 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { routeBuild } from "./buildRoutes.mjs";
+import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -35,6 +37,7 @@ const PAPER = {
 };
 
 let backend;
+let secret;
 let server;
 let browser;
 let base;
@@ -57,18 +60,20 @@ before(async () => {
     cwd: repository,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const origin = await new Promise((resolve, reject) => {
+  const { origin, code } = await new Promise((resolve, reject) => {
     let output = "";
     const timer = setTimeout(() => reject(new Error(`demo backend did not start:\n${output}`)), 120_000);
     const read = (chunk) => {
       output += chunk;
-      const match = output.match(/website: (http:\/\/\S+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      const found = announcement(output);
+      if (found) { clearTimeout(timer); resolve(found); }
     };
     backend.stdout.on("data", read);
     backend.stderr.on("data", read);
     backend.once("exit", (code) => { clearTimeout(timer); reject(new Error(`demo backend exited (${code}):\n${output}`)); });
   });
+  // The link's one-time code, spent as a browser tab spends it; pages get the secret as rika!'s windows do.
+  secret = await exchange(origin, code);
   server = await createServer({
     root,
     logLevel: "error",
@@ -102,15 +107,20 @@ after(async () => {
 
 /** Opens a fresh profile on `hash`. `modules: []` is a core-only workspace. The profile is a
  *  returning user: the first-run welcome guide (covered by its own tests) is already done.
- *  `storage` seeds localStorage before the first load; `setup(context)` adds routes or init
- *  scripts before the first page load. */
-async function open(hash, { viewport = DEFAULT, modules, theme, storage, setup } = {}) {
+ *  Interface preferences come from the demo's build with this window's own layered on top:
+ *  `build` seeds that layer and every preference the page saves lands in it (returned as
+ *  `prefs`), so one test's theme or look never leaks into the shared backend.
+ *  `storage` seeds device-state localStorage before the first load; `setup(context)` adds
+ *  routes or init scripts before the first page load. */
+async function open(hash, { viewport = DEFAULT, modules, theme, storage, setup, build } = {}) {
   const context = await browser.newContext({ viewport });
+  await authorize(context, secret);
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
+  const prefs = await routeBuild(context, structuredClone(build ?? {}));
   if (storage)
     await context.addInitScript((entries) => {
       // Only the first load is seeded: a reload keeps what the page saved since.
@@ -135,14 +145,23 @@ async function open(hash, { viewport = DEFAULT, modules, theme, storage, setup }
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL(`#${hash}`, base).href);
   if (typeof theme === "string")
-    await page.evaluate(async (id) => (await import("/src/lib/themes/index.ts")).setTheme(id), theme);
+    await page.evaluate(async (id) => (await import("/src/lib/build.svelte.ts")).setTheme(id), theme);
   else if (theme)
     await page.evaluate(async (palette) => {
-      const [{ THEMES }, { setTheme }] = await Promise.all([import("/src/lib/themes/catalog.ts"), import("/src/lib/themes/index.ts")]);
+      const [{ THEMES }, build] = await Promise.all([import("/src/lib/themes/catalog.ts"), import("/src/lib/build.svelte.ts")]);
       THEMES.push(palette);
-      setTheme(palette.id);
+      await build.setTheme(palette.id);
     }, theme);
-  return { page, problems, context };
+  return { page, problems, context, prefs };
+}
+
+/** Polls until `read()` (a preference the page saved into its build layer) equals `value`. */
+async function prefIs(read, value, what) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (JSON.stringify(read()) === JSON.stringify(value)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.deepEqual(read(), value, what);
 }
 
 const rect = (locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON());
@@ -546,7 +565,7 @@ describe("study timer", () => {
 
 describe("study guide", () => {
   test("the guide drawer shows only the current phase; Full guide opens all 14 steps as phase columns, with the rail remembered", async () => {
-    const { page, problems, context } = await open("study", { setup: (context) => context.addInitScript(() => {
+    const { page, problems, context, prefs } = await open("study", { setup: (context) => context.addInitScript(() => {
       if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); localStorage.removeItem("kitty-study-draft"); sessionStorage.setItem("seeded", "1"); }
     }) });
     await page.getByRole("region", { name: "Session timer" }).waitFor();
@@ -573,7 +592,7 @@ describe("study guide", () => {
     await guide.getByRole("radio", { name: "Rail" }).click();
     await guide.locator('[data-guide-view="rail"]').waitFor();
     assert.equal(await guide.locator('[data-guide-view="columns"]').count(), 0);
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.study.guide-view")), "rail");
+    await prefIs(() => prefs.ui?.study?.guide_view, "rail", "the guide view is not saved to the build");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -583,12 +602,12 @@ describe("study guide", () => {
 function seedDeck(page, name, cards) {
   return page.evaluate(async ({ name, cards }) => {
     const post = async (path, body) => {
-      const response = await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) });
+      const response = await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       return data;
     };
-    const overview = await (await fetch("/api/flashcards", { cache: "no-store" })).json();
+    const overview = await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
     const basic = overview.types.find((type) => type.kind === "basic");
     const { deck } = await post("/flashcards/deck", { name, settings: {} });
     for (const [front, back] of cards) await post("/flashcards/note", { deck_id: deck.id, type_id: basic.id, fields: { Front: front, Back: back }, tags: [] });
@@ -660,7 +679,7 @@ describe("flashcard review", () => {
     assert.equal(await top.getAttribute("aria-label"), "Flip card");
     await top.click();
     await stack.getByText(/Lima|Santiago|Sucre|Quito/).waitFor();
-    const latest = () => page.evaluate(async () => (await (await fetch("/api/flashcards/history", { cache: "no-store" })).json()).reviews[0] ?? null);
+    const latest = () => page.evaluate(async () => (await (await fetch("/api/flashcards/history", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).reviews[0] ?? null);
     /** The grade of the next recorded review, once the following card is on the pile. */
     const gradedAfter = async (before, count) => {
       await page.waitForFunction((text) => !document.body.innerText.includes(text), count);
@@ -699,7 +718,7 @@ describe("Liquid Glass theme", () => {
   test("panels are clear, neutral, lit glass like macOS/iOS, never rainbow-tinted, and their text stays readable", async () => {
     const { page, problems, context } = await open("settings");
     await page.locator(".br-panel").first().waitFor();
-    await page.evaluate(async () => (await import("/src/lib/themes/index.ts")).setTheme("liquid-glass"));
+    await page.evaluate(async () => (await import("/src/lib/build.svelte.ts")).setTheme("liquid-glass"));
     await page.waitForFunction(() => document.documentElement.dataset.theme === "liquid-glass");
     const glass = await page.evaluate(() => {
       const panel = document.querySelector(".br-panel");
@@ -783,7 +802,8 @@ describe("study focus-first", () => {
     assert.deepEqual(await rect(timer), card, "opening a drawer moved the timer");
     assert.equal(await left.evaluate((node) => getComputedStyle(node).position), "absolute");
     const [l, r] = await Promise.all([rect(left), rect(right)]);
-    assert.ok(Math.abs(l.left - area.left) < 1 && Math.abs(r.right - area.right) < 1, "drawers do not sit on the page edges");
+    assert.ok(Math.abs(l.left - area.left) < 1 && Math.abs(r.right - area.right) < 1,
+      `drawers (${l.left}–${r.right}) do not sit on the page edges (${area.left}–${area.right})`);
     assert.ok(await right.getByRole("textbox", { name: "Session notes" }).isVisible(), "session notes are not in the guide drawer");
     assert.equal(await page.getByRole("button", { name: "Guide & notes", exact: true }).getAttribute("aria-expanded"), "true");
     assert.ok(await page.getByRole("button", { name: "Guide & notes", exact: true }).isVisible(), "the edge tab is hidden by its drawer");
@@ -820,7 +840,7 @@ describe("study focus-first", () => {
     const { page, problems, context } = await open("study");
     const timer = page.getByRole("region", { name: "Session timer" });
     await timer.waitFor();
-    const settings = () => page.evaluate(async () => (await (await fetch("/api/study")).json()).settings);
+    const settings = () => page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).settings);
     const before = await settings();
     await timer.getByRole("button", { name: "Timer settings" }).click();
     const popover = page.getByRole("dialog", { name: "Timer settings" });
@@ -829,12 +849,12 @@ describe("study focus-first", () => {
     const focus = popover.getByRole("group", { name: "Focus length" });
     assert.equal((await focus.locator("output").textContent()).replace(/\s+/g, " ").trim(), `${Math.round(before.focus_seconds / 60)} min`);
     await focus.getByRole("button", { name: "Longer focus" }).click();
-    await page.waitForFunction(async (seconds) => (await (await fetch("/api/study")).json()).settings.focus_seconds !== seconds, before.focus_seconds);
+    await page.waitForFunction(async (seconds) => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).settings.focus_seconds !== seconds, before.focus_seconds);
     assert.equal((await settings()).focus_seconds % 300, 0, "the stepper does not move in 5-minute steps");
     const sound = popover.getByRole("switch", { name: "Sound at phase end" });
     assert.equal(await sound.getAttribute("aria-checked"), String(before.sound));
     await sound.click();
-    await page.waitForFunction(async (on) => (await (await fetch("/api/study")).json()).settings.sound === on, !before.sound);
+    await page.waitForFunction(async (on) => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).settings.sound === on, !before.sound);
     await page.waitForFunction((on) => document.querySelector('[role="switch"][aria-checked]')?.getAttribute("aria-checked") === String(on), !before.sound);
     assert.equal(await popover.getByRole("switch", { name: "Desktop notifications" }).count(), 1);
     const zone = popover.getByRole("combobox", { name: "Timezone" });
@@ -844,7 +864,7 @@ describe("study focus-first", () => {
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     // Restore the demo's settings for the other tests.
-    await page.evaluate(async (settings) => fetch("/api/study/settings", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(settings) }), before);
+    await page.evaluate(async (settings) => fetch("/api/study/settings", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(settings) }), before);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -858,7 +878,7 @@ describe("study progress", () => {
     // A fixed past Wednesday keeps the week and month deterministic.
     const [major, minor] = await page.evaluate(async (stamp) => {
       const post = async (path, body) => {
-        const response = await fetch(`/api/study/${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) });
+        const response = await fetch(`/api/study/${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) });
         return (await response.json()).item;
       };
       const major = await post("subjects", { name: `Major ${stamp}`, color: "#d05080" });
@@ -906,7 +926,7 @@ describe("study plans", () => {
     const stamp = Date.now();
     await page.evaluate(async (stamp) => {
       const call = async (path, body) => {
-        const response = await fetch(`/api/study${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) } : undefined);
+        const response = await fetch(`/api/study${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) } : { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } });
         const result = await response.json();
         if (!response.ok) throw new Error(`${path}: ${JSON.stringify(result)}`);
         return result;
@@ -975,7 +995,7 @@ describe("study exams", () => {
     await page.getByRole("region", { name: "Session timer" }).waitFor();
     const stamp = Date.now();
     await page.evaluate(async (stamp) => {
-      await fetch("/api/study/subjects", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify({ name: `Quick ${stamp}`, color: "#40a080" }) });
+      await fetch("/api/study/subjects", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify({ name: `Quick ${stamp}`, color: "#40a080" }) });
       window.dispatchEvent(new CustomEvent("kitty-study-changed"));
     }, stamp);
     await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Exams & plans", exact: true }).click();
@@ -985,7 +1005,7 @@ describe("study exams", () => {
     assert.equal(await popover.locator("select, textarea").count(), 0, "the quick-add has a native select or a notes field");
     await popover.getByRole("textbox", { name: "Add exam" }).fill(`Quick exam ${stamp}`);
     const day = await page.evaluate(async () => {
-      const { stats } = await (await fetch("/api/study")).json();
+      const { stats } = await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
       return new Date(Date.parse(`${stats.today}T12:00:00Z`) + 9 * 86_400_000).toISOString().slice(0, 10);
     });
     await popover.getByLabel("Exam date").fill(day);
@@ -1019,17 +1039,17 @@ describe("study streak", () => {
     await page.getByRole("region", { name: "Session timer" }).waitFor();
     await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
     const ring = page.getByRole("region", { name: "Study streak" });
-    const before = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
+    const before = await page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).stats);
     await ring.getByRole("button").click();
     const editor = page.getByRole("dialog", { name: "Log study" });
     await editor.getByRole("button", { name: "Cancel", exact: true }).click();
-    assert.equal(await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats.session_count), before.session_count);
+    assert.equal(await page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).stats.session_count), before.session_count);
     await ring.getByRole("button").click();
     await editor.getByLabel("Started").fill(new Date(Date.now() - 20 * 60_000).toISOString());
     await editor.getByLabel("Minutes studied").fill("15");
     await editor.getByRole("button", { name: "Save", exact: true }).click();
     await ring.getByText("Today's study is logged.", { exact: true }).waitFor();
-    const saved = await page.evaluate(async () => (await (await fetch("/api/study")).json()).stats);
+    const saved = await page.evaluate(async () => (await (await fetch("/api/study", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).stats);
     assert.equal(saved.session_count, before.session_count + 1);
     assert.ok(saved.daily_streak >= 1);
     assert.equal(await ring.locator("path.filled").count(), saved.daily_streak);
@@ -1245,7 +1265,7 @@ describe("home widgets", () => {
     const notes = await note.getByRole("listitem").allTextContents();
     assert.equal(notes.length, 3);
     assert.match(notes[0], /fourth thought/);
-    const saved = await page.evaluate(() => fetch("/api/quick-notes").then((r) => r.json()));
+    const saved = await page.evaluate(() => fetch("/api/quick-notes", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } }).then((r) => r.json()));
     assert.ok(saved.notes.some((item) => item.body === "first thought"), "quick note was not saved");
 
     // Job-search and study readouts no longer sit on home.
@@ -1339,7 +1359,7 @@ describe("home widgets", () => {
 
 describe("appearance settings", () => {
   test("Settings → Appearance: one panel with a live preview, presets that set everything, single changes after, saved and applied before mount", async () => {
-    const { page, problems, context } = await open("settings/appearance");
+    const { page, problems, context, prefs } = await open("settings/appearance");
     await context.addInitScript(() => {
       new MutationObserver((_, observer) => {
         if (!document.getElementById("app")?.firstElementChild) return;
@@ -1352,7 +1372,7 @@ describe("appearance settings", () => {
     const preview = panel.getByRole("img", { name: /preview/i });
     const radio = (name) => panel.getByRole("radio", { name, exact: true });
     const root = (key) => page.evaluate((key) => document.documentElement.dataset[key], key);
-    const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem("kitty.appearance") ?? "null"));
+    const saved = () => prefs.ui?.appearance ?? null;
     const titleFont = () => page.getByRole("heading", { level: 1, name: "Settings" }).evaluate((node) => getComputedStyle(node).fontFamily);
     const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
 
@@ -1360,9 +1380,9 @@ describe("appearance settings", () => {
     for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
     assert.equal(await panel.getByRole("group", { name: "Home" }).getByRole("radio").count(), 2, "home offers Brain and 2D only");
     await radio("2D map").check();
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "2d");
+    await prefIs(() => prefs.ui?.home?.look, "2d", "home look not saved to the build");
     await radio("Brain").check();
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.look")), "brain");
+    await prefIs(() => prefs.ui?.home?.look, "brain", "home look not saved to the build");
     assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), true);
     assert.match(await titleFont(), /Fraunces/);
     assert.equal(await bodySize(), "13px");
@@ -1376,20 +1396,21 @@ describe("appearance settings", () => {
     assert.doesNotMatch(await titleFont(), /Fraunces/);
     assert.equal(await root("motion"), "reduced");
     assert.equal(await preview.getAttribute("data-title-font"), "plain");
-    assert.deepEqual(await saved(), { titleFont: "plain", density: "compact", motion: "reduced", motif: false, background: "nebula" });
+    await prefIs(saved, { title_font: "plain", density: "compact", motion: "reduced", motif: false, background: "nebula" }, "Minimal not saved to the build");
+    assert.equal(prefs.theme?.base, "harness");
 
     // Any single setting still changes afterwards; the preset no longer matches.
     await radio("Comfortable · 14px").check();
     assert.equal(await bodySize(), "14px");
     assert.equal(await preview.getAttribute("data-density"), "comfortable");
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "false");
-    assert.equal((await saved()).density, "comfortable");
-    assert.equal((await saved()).titleFont, "plain", "changing density reset another setting");
+    await prefIs(() => saved()?.density, "comfortable", "density not saved");
+    assert.equal(saved().title_font, "plain", "changing density reset another setting");
 
     // Cozy: petal drift behind the app and 3D section graphs; reduced motion pauses the petals.
     await panel.getByRole("button", { name: /^Cozy/ }).click();
     assert.equal(await radio("3D").isChecked(), true);
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.look")), "3d");
+    await prefIs(() => prefs.ui?.graph?.look, "3d", "Cozy did not save 3D section graphs to the build");
     const petals = page.locator(".petal-drift");
     await petals.waitFor({ state: "attached" });
     assert.ok((await petals.locator("svg").count()) >= 8, "too few petals");
@@ -1409,7 +1430,7 @@ describe("appearance settings", () => {
     const atMount = await page.evaluate(() => window.__atMount);
     assert.equal(atMount.background, "petals");
     assert.equal(atMount.density, cozy.density);
-    assert.equal(atMount.titleFont, cozy.titleFont);
+    assert.equal(atMount.titleFont, cozy.title_font);
     assert.equal(await panel.getByRole("button", { name: /^Cozy/ }).getAttribute("aria-pressed"), "true");
     assert.deepEqual(problems, []);
     await context.close();
@@ -1537,12 +1558,12 @@ describe("calendar redesign", () => {
   /** Creates an event through the real API; returns it. */
   const addEvent = (page, body) => page.evaluate(async (event) => {
     const response = await fetch("/api/calendar/events", {
-      method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" },
+      method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
       body: JSON.stringify({ calendar_id: "personal", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...event }),
     });
     return response.json();
   }, body);
-  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/themes/index.ts")).setTheme(theme), id);
+  const setTheme = (page, id) => page.evaluate(async (theme) => (await import("/src/lib/build.svelte.ts")).setTheme(theme), id);
   /** WCAG contrast of an element's text colour against its own background, plus that background's alpha. */
   const textContrast = (locator) => locator.evaluate((node) => {
     const ctx = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
@@ -1697,7 +1718,7 @@ describe("calendar redesign", () => {
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     await addEvent(page, { title: "Plan busy 1", start: at(1, 8), end: at(1, 9) });
     await addEvent(page, { title: "Plan busy 2", start: at(1, 9), end: at(1, 10, 30) });
-    await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" },
+    await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
       body: JSON.stringify({ title: "Plan me", priority: "normal", status: "todo" }) }));
     await page.reload();
     const pill = page.getByRole("toolbar", { name: "Calendar range" });
@@ -1763,7 +1784,7 @@ describe("calendar redesign", () => {
     await drawer.waitFor({ state: "detached" });
     const saved = await page.evaluate(async () => {
       const from = new Date(Date.now() - 864e5).toISOString(), to = new Date(Date.now() + 9 * 864e5).toISOString();
-      const snap = await fetch(`/api/calendar?start=${from}&end=${to}&timezone=UTC`).then((r) => r.json());
+      const snap = await fetch(`/api/calendar?start=${from}&end=${to}&timezone=UTC`, { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } }).then((r) => r.json());
       const event = snap.events.find((e) => e.title === "Lunch with Mira" && e.location === "Café Rose");
       if (!event) return null;
       const start = new Date(event.start);
@@ -1808,8 +1829,11 @@ describe("notes tabs and floating outline", () => {
     assert.deepEqual(await rect(title), before, "opening the library moved the page");
     await page.keyboard.press("Escape");
     await library.waitFor({ state: "hidden" });
-    // Write three blocks; the floating outline lists them and jumps to one.
-    await page.getByRole("button", { name: "Start writing a text note" }).click();
+    // Write three blocks; the floating outline lists them and jumps to one. The block editor
+    // offers "Start writing…" on a page without blocks, else its first block takes the caret.
+    const first = page.getByRole("button", { name: /^Start writing/ }).or(page.getByRole("textbox", { name: "Block 1", exact: true })).first();
+    await first.waitFor();
+    await first.click();
     await page.keyboard.type("Alpha: the first idea");
     await page.keyboard.press("Enter");
     await page.keyboard.type("Beta topic, second");
@@ -2157,7 +2181,7 @@ describe("notes canvas background", () => {
     const kitty = await sample();
     assert.equal(kitty.void, "#1a1319", "the default theme is not Kitty");
     assert.deepEqual(kitty.colours, [kitty.void], "the empty canvas is not one flat void colour (grid, dots or nebula showed)");
-    await page.evaluate(async () => (await import("/src/lib/themes/index.ts")).setTheme("harness"));
+    await page.evaluate(async () => (await import("/src/lib/build.svelte.ts")).setTheme("harness"));
     await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim() === "#141414");
     await page.waitForFunction(() => {
       const node = document.querySelector("canvas[aria-label^='Infinite drawing canvas']");
@@ -2555,6 +2579,8 @@ describe("one mind-map editor", () => {
   test("Ctrl K opens a map in the editor by its title and offers New mind map", async () => {
     const { page, problems, context } = await open("calendar");
     await page.evaluate(async () => { const { api } = await import("/src/lib/api.ts"); await api("/schema/create", { title: "Palette map", mode: "study" }); });
+    // The app mounts once the build (and its theme's motif) has loaded; Ctrl K needs it mounted.
+    await page.locator("#app .workbench").waitFor();
     await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog", { name: "Search rika!" });
     await palette.getByRole("combobox").fill("palette map");
@@ -2562,6 +2588,7 @@ describe("one mind-map editor", () => {
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector('.schema input[aria-label="Map title"]')?.value === "Palette map");
     assert.equal(await page.evaluate(() => location.hash), "#schema");
+    await palette.waitFor({ state: "hidden" });
     await page.keyboard.press("Control+k");
     await palette.getByRole("combobox").fill("new mind map");
     await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("New mind map"));
@@ -2636,10 +2663,10 @@ describe("pipeline swimlanes", () => {
     await cell("Quant", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
     // The status history is append-only: the move and its undo are both recorded.
     const jobId = await page.evaluate(async () => {
-      const board = await (await fetch("/api/pipeline")).json();
+      const board = await (await fetch("/api/pipeline", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
       return Object.values(board.columns).flat().find((card) => card.company_name.startsWith("Tidewater")).job_id;
     });
-    const history = await page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()).application.history, jobId);
+    const history = await page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`, { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).application.history, jobId);
     assert.ok(history.some((event) => event.undoes_event_id), "undo did not append a reverting event");
     assert.deepEqual(problems, []);
     await context.close();
@@ -2670,7 +2697,7 @@ describe("Rika against the demo's scripted responder", () => {
     await action.getByRole("button", { name: "Undo" }).waitFor();
     await toast.getByRole("button", { name: "Undo" }).click();
     await action.getByText("Undone").waitFor();
-    const items = await page.evaluate(async () => (await (await fetch("/api/rika/history")).json()).items);
+    const items = await page.evaluate(async () => (await (await fetch("/api/rika/history", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).items);
     assert.ok(items.some((item) => item.kind === "action" && item.status === "undone"), "the undo was not recorded");
     assert.deepEqual(problems, []);
     await context.close();
@@ -2765,11 +2792,11 @@ describe("Rika against the demo's scripted responder", () => {
     // Q13: the phrase runs with no model, so its chip reads Direct; the reply's tier stays fast.
     assert.equal((await toast.locator("[data-tier]").innerText()).toLowerCase(), "direct");
     assert.match(await toast.locator("[data-tier]").getAttribute("title"), / · 0 tokens · \$0$/);
-    const history = await page.evaluate(async () => (await fetch("/api/rika/history")).json());
+    const history = await page.evaluate(async () => (await fetch("/api/rika/history", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json());
     assert.equal(history.items.filter((item) => item.kind === "message" && item.role === "rika").at(-1).tier, "fast");
     assert.deepEqual(await (await spoken).json(), { text: "Added the task Read chapter 3.", audio: null });
     assert.deepEqual(await page.evaluate(() => window.__played), []);
-    const voice = await page.evaluate(async () => (await fetch("/api/rika/voice")).json());
+    const voice = await page.evaluate(async () => (await fetch("/api/rika/voice", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json());
     assert.equal(voice.engine, "demo");
     assert.deepEqual(foreign, []);
     assert.deepEqual(problems, []);
@@ -2798,9 +2825,9 @@ describe("Rika against the demo's scripted responder", () => {
     await history.waitFor({ state: "detached" });
     await replies(page).getByText(/^Done: 8 items in notes, tasks, calendar, cards and jobs\./).waitFor({ timeout: 15_000 });
     const made = await page.evaluate(async () => {
-      const items = (await (await fetch("/api/rika/history")).json()).items;
+      const items = (await (await fetch("/api/rika/history", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).items;
       const plan = items.filter((item) => item.kind === "plan").at(-1);
-      const blocks = (await (await fetch(`/api/notes/pages/${plan.note.page_id}/blocks`)).json()).blocks.map((block) => block.text);
+      const blocks = (await (await fetch(`/api/notes/pages/${plan.note.page_id}/blocks`, { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).blocks.map((block) => block.text);
       return { status: plan.status, results: plan.items.map((item) => item.result.status), blocks };
     });
     assert.equal(made.status, "applied");
@@ -2809,7 +2836,7 @@ describe("Rika against the demo's scripted responder", () => {
     assert.ok(made.blocks.includes("[[CS 220 · Final project idea]]"));
     assert.ok(made.blocks.some((text) => /^\[Study group \(.+, 19:00\)\]\(#calendar\)$/.test(text)));
     assert.ok(made.blocks.some((text) => text.startsWith("Transcript · ")));
-    assert.ok((await page.evaluate(async () => (await (await fetch("/api/rika/agents")).json()).agents.length)) >= 5);
+    assert.ok((await page.evaluate(async () => (await (await fetch("/api/rika/agents", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).agents.length)) >= 5);
     // The applied plan shows what each item made.
     await page.keyboard.press("Control+j");
     const applied = drawer(page).getByRole("article", { name: "Brain dump plan" });
@@ -2822,7 +2849,7 @@ describe("Rika against the demo's scripted responder", () => {
     await toast.getByText(/^\d+ more in Rika history$/).waitFor();
     await toast.getByRole("button", { name: "Undo all" }).click();
     const undone = () => page.evaluate(async () => {
-      const items = (await (await fetch("/api/rika/history")).json()).items;
+      const items = (await (await fetch("/api/rika/history", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).items;
       // The approved plan runs as a turn of its own, whose reply holds the actions.
       const run = items.find((item) => item.kind === "message" && item.role === "rika" && item.text.startsWith("Done: 8 items"));
       return items.filter((item) => item.kind === "action" && item.message_id === run?.id).map((item) => item.status);
@@ -2847,8 +2874,8 @@ describe("flashcard memory stats", () => {
     await seedDeck(page, "Stats deck", [["Sun?", "Star"], ["Moon?", "Satellite"], ["Mars?", "Planet"], ["Io?", "Moon"]]);
     // One card graduates straight to review (Easy), one stays in learning (Again).
     await page.evaluate(async () => {
-      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) })).json();
-      const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === "Stats deck");
+      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) })).json();
+      const deck = (await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).decks.find((item) => item.name === "Stats deck");
       for (const rating of [4, 1]) {
         const { card } = await post("/flashcards/review", { deck_id: deck.id, search: "", mode: "regular" });
         await post("/flashcards/reveal", { token: card.token });
@@ -2943,8 +2970,8 @@ describe("flashcard card browser", () => {
     await views.waitFor();
     await seedDeck(page, "Browser deck", [["Capital of Peru?", "Lima"], ["Capital of Kenya?", "Nairobi"], ["Capital of Japan?", "Tokyo"]]);
     await page.evaluate(async () => {
-      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) })).json();
-      const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === "Browser deck");
+      const post = async (path, body) => (await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) })).json();
+      const deck = (await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).decks.find((item) => item.name === "Browser deck");
       const { card } = await post("/flashcards/review", { deck_id: deck.id, search: "", mode: "regular" });
       await post("/flashcards/reveal", { token: card.token });
       await post("/flashcards/grade", { token: card.token, rating: 4, duration_ms: 5000 });
@@ -2992,8 +3019,8 @@ describe("flashcard card browser", () => {
 
 /** The fronts saved in deck `name`, read back through the API. */
 const deckFronts = (page, name) => page.evaluate(async (name) => {
-  const deck = (await (await fetch("/api/flashcards", { cache: "no-store" })).json()).decks.find((item) => item.name === name);
-  return (await (await fetch(`/api/flashcards/fronts?deck_id=${deck.id}`, { cache: "no-store" })).json()).fronts;
+  const deck = (await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).decks.find((item) => item.name === name);
+  return (await (await fetch(`/api/flashcards/fronts?deck_id=${deck.id}`, { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).fronts;
 }, name);
 const focused = (locator) => locator.evaluate((node) => node === document.activeElement);
 
@@ -3346,19 +3373,16 @@ describe("notifications", () => {
   });
 
   test("quiet hours on a 24-hour dial hold notifications, then deliver one morning digest", async () => {
-    const { page, problems, context } = await open("settings/quiet-hours", {
-      setup: async (context) => {
-        await mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] });
-        // A window that started an hour ago and ends within 15 minutes; calendar events do not ring through.
-        await context.addInitScript(() => {
-          const now = new Date();
-          const minute = now.getHours() * 60 + now.getMinutes();
-          const from = ((Math.floor((minute - 60) / 15) * 15) + 1440) % 1440;
-          const to = (Math.ceil((minute + 1) / 15) * 15) % 1440;
-          if (!localStorage.getItem("kitty.notify.quiet"))
-            localStorage.setItem("kitty.notify.quiet", JSON.stringify({ enabled: true, from, to, letCalendar: false, digest: true }));
-        });
-      },
+    const { page, problems, context, prefs } = await open("settings/quiet-hours", {
+      setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
+      // A window that started an hour ago and ends within 15 minutes; calendar events do not ring through.
+      build: { ui: { notifications: { quiet: (() => {
+        const now = new Date();
+        const minute = now.getHours() * 60 + now.getMinutes();
+        const from = ((Math.floor((minute - 60) / 15) * 15) + 1440) % 1440;
+        const to = (Math.ceil((minute + 1) / 15) * 15) % 1440;
+        return { enabled: true, from, to, let_calendar: false, digest: true };
+      })() } } },
     });
     const panel = page.locator(".br-panel").filter({ has: page.locator(".br-panel__header", { hasText: /^Quiet hours$/ }) });
     await panel.waitFor();
@@ -3388,9 +3412,8 @@ describe("notifications", () => {
     await center.waitFor({ state: "hidden" });
     // The choices are remembered.
     await panel.getByRole("switch", { name: "Let calendar events through" }).click();
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("kitty.notify.quiet")));
-    assert.equal(saved.letCalendar, true);
-    assert.equal(saved.to, (before - 30 + 1440) % 1440);
+    await prefIs(() => prefs.ui.notifications.quiet.let_calendar, true, "the switch is not saved to the build");
+    assert.equal(prefs.ui.notifications.quiet.to, (before - 30 + 1440) % 1440);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -3401,7 +3424,7 @@ describe("job-search report", () => {
     const { page, problems, context } = await open("reports");
     const card = page.getByRole("article", { name: "Job-search summary" });
     await card.waitFor();
-    const { summary, sections } = await page.evaluate(async () => (await fetch("/api/reports")).json());
+    const { summary, sections } = await page.evaluate(async () => (await fetch("/api/reports", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json());
     const text = async () => (await card.textContent()).replace(/\s+/g, " ");
     // Week: the weekly total against the target, the streak, an inline sparkline and a next step.
     assert.equal(await card.getByRole("radio", { name: "Week" }).getAttribute("aria-checked"), "true");

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { buildStore, setPreferences } from "../build.svelte";
   import { Button } from "@nunera/bracket";
   import EmptyState from "../EmptyState.svelte";
   import OverflowMenu from "../ui/OverflowMenu.svelte";
@@ -34,12 +35,10 @@
   const returns = $derived(data.guides.filter((guide) => guide.state.next_review));
   const subjectName = (id: number | null | undefined) => data.subjects.find((item) => item.id === id)?.name || "Unassigned";
 
-  const VIEW_KEY = "kitty.study.plan-view";
-  let view = $state<"timeline" | "days">("timeline");
-  try { if (localStorage.getItem(VIEW_KEY) === "days") view = "days"; } catch { /* Timeline by default. */ }
+  // Timeline or days: a build preference (ui.study.plans_view).
+  const view = $derived(buildStore.build.ui.study.plans_view);
   function setView(next: "timeline" | "days") {
-    view = next;
-    try { localStorage.setItem(VIEW_KEY, next); } catch { /* The choice still applies in this session. */ }
+    void setPreferences({ ui: { study: { plans_view: next } } });
   }
 
   let selectedId = $state<number | null>(null);

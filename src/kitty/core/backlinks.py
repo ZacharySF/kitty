@@ -1,30 +1,34 @@
 """Deterministic local backlinks between schema-map nodes and other local records.
 
-Matching is token based: labels and scanned text are casefolded, split on
+Matching is token based: labels and record text are casefolded, split on
 non-alphanumeric boundaries and lightly singularized, so ``Neural network``
 matches ``neural-networks`` but never ``unneural``. ``[[Wikilink]]`` text naming a
-node label is an explicit link and ranks first. Every scan is bounded per source,
-per record and in total; missing tables (older databases) are skipped. Snippets
-redact links, e-mail addresses, file paths and long token-like strings. Nothing
-leaves the machine and no AI is involved; source records are only read.
+node label is an explicit link and ranks first. Candidates come from the full-text
+index (kitty.core.search): a phrase query finds every record that can contain the
+label, over all records (no per-source, per-record or total caps), and the token
+matcher above confirms each one in recency order. Only the number of references a
+node or term shows is bounded (``PER_NODE``, ``PER_TERM``), and ``truncated`` says
+when more exist. Snippets redact links, e-mail addresses, file paths and long
+token-like strings. Nothing leaves the machine and no AI is involved; source records
+are only read.
 """
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import math
 import re
-import sqlite3
 import uuid
 
-from kitty.core import calendar, schema_maps
+from kitty.core import notes, schema_maps, search
 from kitty.db.connection import transaction
 
 PER_NODE = 12
 PER_TERM = 24
-RECENT = {'note_page': 1000, 'study_subject': 500, 'study_project': 500, 'study_task': 1000,
-          'calendar_event': 2000, 'calendar_task': 2000, 'flashcard_deck': 3000, 'job': 2000}
+#: Related records: the most distinctive terms of the text that are searched, and the group size.
+RELATED_TERMS = 24
+RELATED_LIMIT = 12
+#: Notebook graph edges (page_connections) compare at most this much text per shown page.
 RECORD_CHARS = 8000
 TOTAL_CHARS = 4_000_000
 SNIPPET = 140
@@ -44,7 +48,6 @@ whom why will with would you your yours new note notes page untitled todo task t
 ideas topic topics'''.split())
 TOKEN = re.compile(r'[^\W_]+')
 WIKILINK = re.compile(r'\[\[([^\[\]\n|]{1,200})(?:\|[^\[\]\n]{0,200})?\]\]')
-TAG = re.compile(r'<[^>]{0,2000}>')
 SPACE = re.compile(r'\s')
 REDACT = (
     (re.compile(r'\b(?:https?|ftp|file)://\S+', re.I), '[link]'),
@@ -79,10 +82,6 @@ def _tokens(text):
     return [(_singular(match.group().casefold()), match.start(), match.end()) for match in TOKEN.finditer(text)]
 
 
-def _clean(value):
-    return html.unescape(TAG.sub(' ', value or '')) if '<' in (value or '') or '&' in (value or '') else (value or '')
-
-
 def redact(value):
     """Replace links, e-mail addresses, file paths and long token-like strings."""
     for pattern, replacement in REDACT:
@@ -108,143 +107,148 @@ def _exists(conn, table):
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
 
 
-def _json(value, default):
-    try:
-        return json.loads(value) if value else default
-    except (TypeError, ValueError):
-        return default
+def _page_rows(conn, sql, params=()):
+    """Note page rows with the text of their text/sticky elements and their outline."""
+    rows = conn.execute(sql, params).fetchall()
+    texts = notes.page_texts(conn, [row['block_id'] for row in rows])
+    return [(row, [text for is_text, text in texts[row['block_id']][0] if is_text], texts[row['block_id']][1]) for row in rows]
 
 
-def _notes(conn):
-    for row in conn.execute('SELECT id,title,document FROM note_pages ORDER BY updated_at DESC,id DESC LIMIT ?', (RECENT['note_page'],)).fetchall():
-        document = _json(row['document'], {})
-        elements = document.get('elements') if isinstance(document, dict) else None
-        parts = [item['text'] for item in elements if isinstance(item, dict) and item.get('kind') in {'text', 'sticky'}
-                 and isinstance(item.get('text'), str)] if isinstance(elements, list) else []
-        if _exists(conn, 'note_blocks'):
-            parts.extend(block['text'] for block in conn.execute('SELECT text FROM note_blocks WHERE page_id=? ORDER BY ordering,id', (row['id'],)))
-        yield 'note_page', row['id'], row['title'], '\n'.join([row['title'], *parts])
+def _stem(token):
+    """An index prefix every raw spelling with this singular form starts with ("study" -> "stud", for "studies")."""
+    return token[:-1] if len(token) >= 3 and token.endswith('y') else token
 
 
-def _subjects(conn):
-    for row in conn.execute('SELECT id,name FROM study_subjects ORDER BY id DESC LIMIT ?', (RECENT['study_subject'],)).fetchall():
-        yield 'study_subject', row['id'], row['name'], row['name']
+def phrase_query(tokens, column=None):
+    """FTS5 phrase matching every spelling `_singular` folds onto `tokens` (a superset; the matcher confirms)."""
+    expression = ' + '.join(f'"{_stem(token)}"*' for token in tokens)
+    return f'{{{column}}} : ({expression})' if column else expression
 
 
-def _projects(conn):
-    for row in conn.execute('SELECT id,name FROM study_projects ORDER BY id DESC LIMIT ?', (RECENT['study_project'],)).fetchall():
-        yield 'study_project', row['id'], row['name'], row['name']
+_CANDIDATES = '''SELECT d.kind,d.ref,d.page_id,d.title,d.body,d.label{extra} FROM search_fts
+    JOIN search_docs d ON d.id=search_fts.rowid {join} WHERE search_fts MATCH ? AND {where} ORDER BY {order}'''
+#: Per backlink kind, in scan order: (FTS column or None, extra columns, join, where, recency order).
+_KIND_SQL = {
+    'note_page': [(None, ",CAST(json_extract(r.properties,'$.number') AS INTEGER) AS number,r.text AS root_title",
+                   'JOIN blocks r ON r.id=d.page_id', "d.kind='block' AND r.type='page' AND r.parent_id IS NULL",
+                   'r.updated_at DESC,number DESC,d.id')],
+    'study_subject': [(None, '', '', "d.kind='study_subject'", 'CAST(d.ref AS INTEGER) DESC')],
+    'study_project': [(None, '', '', "d.kind='study_project'", 'CAST(d.ref AS INTEGER) DESC')],
+    'study_task': [(None, '', '', "d.kind='study_task'", 'CAST(d.ref AS INTEGER) DESC')],
+    'calendar_event': [(None, '', 'JOIN calendar_events e ON e.id=d.ref', "d.kind='calendar_event'", 'e.updated_at DESC,e.id')],
+    'calendar_task': [(None, '', 'JOIN calendar_tasks t ON t.id=d.ref', "d.kind='calendar_task'", 't.updated_at DESC,t.id')],
+    # Card fronts link back to their deck; deck review stays in Flashcards.
+    'flashcard_deck': [(None, '', '', "d.kind='flashcard_deck'", 'CAST(d.ref AS INTEGER) DESC'),
+                       ('title', ',fd.name AS deck', 'JOIN flash_notes n ON n.id=d.ref JOIN flash_decks fd ON fd.id=n.deck_id',
+                        "d.kind='flashcard_note'", 'n.updated_at DESC,n.id DESC')],
+    'job': [(None, '', '', "d.kind='job'", 'CAST(d.ref AS INTEGER) DESC')],
+}
 
 
-def _study_tasks(conn):
-    for row in conn.execute('SELECT id,title,checklist_json FROM study_tasks ORDER BY id DESC LIMIT ?', (RECENT['study_task'],)).fetchall():
-        items = _json(row['checklist_json'], [])
-        parts = [item['text'] for item in items if isinstance(item, dict) and isinstance(item.get('text'), str)] if isinstance(items, list) else []
-        yield 'study_task', row['id'], row['title'], '\n'.join([row['title'], *parts])
+def _record(kind, row):
+    """``(id, title, text)`` of the record a candidate document belongs to."""
+    if kind == 'note_page':
+        return row['number'], row['root_title'], row['title'] or row['body']
+    if row['kind'] == 'flashcard_note':
+        return int(row['page_id']), row['deck'], row['title']
+    ident = row['ref'] if kind.startswith('calendar_') else int(row['ref'])
+    return ident, row['label'] if kind == 'job' else row['title'], f"{row['title']}\n{row['body']}" if row['body'] else row['title']
 
 
-def _events(conn, applyai=True):
-    for row in conn.execute('SELECT id,title,data,source_key FROM calendar_events WHERE deleted=0 ORDER BY updated_at DESC LIMIT ?', (RECENT['calendar_event'],)).fetchall():
-        if not applyai and calendar.applyai_sourced(row['source_key']):
-            continue
-        data = _json(row['data'], {})
-        description = data.get('description') if isinstance(data, dict) and isinstance(data.get('description'), str) else ''
-        yield 'calendar_event', row['id'], row['title'], f"{row['title']}\n{description}"
+def _candidates(conn, kind, tokens, applyai):
+    """Records of one kind that may contain `tokens`, newest first: ``(id, title, [text, ...])``."""
+    current, texts = None, []
+    for column, extra, join, where, order in _KIND_SQL[kind]:
+        if kind == 'calendar_event' and not applyai:
+            where += f' AND d.flags & {search.APPLYAI} = 0'
+        sql = _CANDIDATES.format(extra=extra, join=join, where=where, order=order)
+        for row in conn.execute(sql, (phrase_query(tokens, column),)):
+            ident, title, text = _record(kind, row)
+            if current is not None and current[0] != ident:
+                yield (*current, texts)
+                texts = []
+            current = (ident, title)
+            texts.append(text)
+    if current is not None:
+        yield (*current, texts)
 
 
-def _calendar_tasks(conn):
-    for row in conn.execute('SELECT id,data FROM calendar_tasks WHERE deleted=0 ORDER BY updated_at DESC LIMIT ?', (RECENT['calendar_task'],)).fetchall():
-        data = _json(row['data'], {})
-        if isinstance(data, dict) and isinstance(data.get('title'), str):
-            description = data.get('description') if isinstance(data.get('description'), str) else ''
-            yield 'calendar_task', row['id'], data['title'], f"{data['title']}\n{description}"
+def _kinds(applyai):
+    return [kind for kind in ORDER if applyai or kind != 'job']
 
 
-def _decks(conn):
-    decks = {row['id']: row['name'] for row in conn.execute('SELECT id,name FROM flash_decks WHERE archived=0 ORDER BY id DESC LIMIT ?', (RECENT['flashcard_deck'],)).fetchall()}
-    for deck_id, name in decks.items():
-        yield 'flashcard_deck', deck_id, name, name
-    if not decks or not _exists(conn, 'flash_notes') or not _exists(conn, 'flash_types'):
-        return
-    for row in conn.execute('''SELECT n.deck_id,n.fields,t.fields AS names FROM flash_notes n JOIN flash_types t ON t.id=n.type_id
-            WHERE n.archived=0 ORDER BY n.updated_at DESC,n.id DESC LIMIT ?''', (RECENT['flashcard_deck'],)).fetchall():
-        fields, names = _json(row['fields'], {}), _json(row['names'], [])
-        if row['deck_id'] in decks and isinstance(fields, dict) and isinstance(names, list) and names and isinstance(fields.get(names[0]), str):
-            # Card fronts link back to their deck; deck review stays in Flashcards.
-            yield 'flashcard_deck', row['deck_id'], decks[row['deck_id']], _clean(fields[names[0]])
+#: Per backlink kind: the documents it counts (a note page counts once, by its title document).
+_COUNT_SQL = {kind: (sql[0][2], sql[0][3]) for kind, sql in _KIND_SQL.items()}
+_COUNT_SQL['note_page'] = ('JOIN blocks r ON r.id=d.page_id', "d.kind='block' AND r.type='page' AND d.ref=d.page_id")
+_COUNT_SQL['flashcard_deck'] = ('', "d.kind IN ('flashcard_deck','flashcard_note')")
 
 
-def _jobs(conn):
-    if not _exists(conn, 'companies'):
-        return
-    for row in conn.execute('''SELECT j.id,j.title,c.display_name AS company,substr(coalesce(j.jd_text,''),1,?) AS jd FROM jobs j
-            JOIN companies c ON c.id=j.company_id ORDER BY j.id DESC LIMIT ?''', (RECORD_CHARS, RECENT['job'])).fetchall():
-        yield 'job', row['id'], f"{row['title']} · {row['company']}", f"{row['title']}\n{row['company']}\n{_clean(row['jd'])}"
+def indexed(conn, applyai=True):
+    """How many records of each kind the index holds: every one of them is searched."""
+    counts = {}
+    for kind in _kinds(applyai):
+        join, where = _COUNT_SQL[kind]
+        if kind == 'calendar_event' and not applyai:
+            where += f' AND d.flags & {search.APPLYAI} = 0'
+        counts[kind] = conn.execute(f'SELECT COUNT(*) FROM search_docs d {join} WHERE {where}').fetchone()[0]
+    return {kind: count for kind, count in counts.items() if count}
 
 
-SOURCES = (('note_pages', _notes), ('study_subjects', _subjects), ('study_projects', _projects),
-           ('study_tasks', _study_tasks), ('calendar_events', _events), ('calendar_tasks', _calendar_tasks),
-           ('flash_decks', _decks), ('jobs', _jobs))
+def _match(text, wanted):
+    """``(start, end)`` of the first token-phrase match of `wanted` in `text`, or None."""
+    tokens = _tokens(text)
+    for position, (token, start, _) in enumerate(tokens):
+        if token == wanted[0] and tuple(item[0] for item in tokens[position:position + len(wanted)]) == wanted:
+            return start, tokens[position + len(wanted) - 1][2]
+    return None
 
 
-def _records(conn, applyai=True):
-    """Yield (kind, id, title, text) for recent local records; absent or older tables are skipped.
+def _find(conn, wanted, per_term, applyai, exclude=None):
+    """At most `per_term` confirmed references per kind, newest first, and whether more exist."""
+    references, more = [], False
+    for kind in _kinds(applyai):
+        count, seen = 0, set()
+        for record_id, title, texts in _candidates(conn, kind, wanted, applyai):
+            if (kind, str(record_id)) == exclude or record_id in seen:
+                continue
+            hit = next(((text, span) for text in texts if (span := _match(text, wanted))), None)
+            if hit is None:
+                continue
+            if count == per_term:
+                more = True
+                break
+            count += 1
+            seen.add(record_id)
+            explicit = any(phrase(link.group(1)) == wanted for text in texts for link in WIKILINK.finditer(text))
+            text, (start, end) = hit
+            references.append({'kind': kind, 'id': record_id, 'title': (title or '')[:200],
+                               'snippet': snippet(text, start, end), 'view': VIEWS[kind],
+                               'match': 'wikilink' if explicit else 'mention'})
+    return references, more
 
-    Without ApplyAI, jobs and calendar copies imported from ApplyAI data are omitted.
-    """
-    for table, source in SOURCES:
-        if table == 'jobs' and not applyai:
-            continue
-        if not _exists(conn, table):
-            continue
-        try:
-            rows = list(source(conn, applyai) if table == 'calendar_events' else source(conn))
-        except sqlite3.OperationalError:
-            continue
-        yield from rows
+
+def _scan(conn, terms, per_term=PER_NODE, *, applyai=True, exclude=None):
+    if not terms:
+        return {}, {}, {}
+    search.sync(conn)
+    found, truncated = {}, {}
+    for key, tokens in terms.items():
+        references, more = _find(conn, tokens, per_term, applyai, exclude)
+        ranked = _rank(references, per_term)
+        found[key], truncated[key] = ranked, more or len(ranked) < len(references)
+    return found, indexed(conn, applyai), truncated
 
 
 def scan(conn, terms, per_term=PER_NODE, *, applyai=True):
-    """Match each ``key -> phrase`` against bounded local records.
+    """Match each ``key -> phrase`` against every indexed local record.
 
-    Returns ``({key: [reference, ...]}, scanned)``. References are deduplicated per
-    record; explicit wikilinks rank first, then kinds are interleaved in a stable
-    order (notes, study, calendar, flashcards, jobs) and recency within a kind.
+    Returns ``({key: [reference, ...]}, indexed)``: at most `per_term` references per
+    key, explicit wikilinks first, then kinds interleaved in a stable order (notes,
+    study, calendar, flashcards, jobs) and recency within a kind; ``indexed`` counts the
+    records of each kind that were searched (all of them).
     """
-    if not terms:
-        return {}, {}
-    index = {}
-    for key, tokens in terms.items():
-        index.setdefault(tokens[0], []).append((key, tokens))
-    found = {key: {} for key in terms}
-    scanned, budget = {}, TOTAL_CHARS
-    for kind, record_id, title, text in _records(conn, applyai):
-        text = (text or '')[:RECORD_CHARS]
-        budget -= len(text)
-        if budget < 0:
-            break
-        scanned[kind] = scanned.get(kind, 0) + 1
-        explicit = set()
-        for match in WIKILINK.finditer(text):
-            target = phrase(match.group(1))
-            if target:
-                explicit.add(target)
-        tokens = _tokens(text)
-        for position, (token, start, _) in enumerate(tokens):
-            for key, wanted in index.get(token, ()):
-                bucket = found[key]
-                identity = (kind, record_id)
-                if identity in bucket or len(bucket) >= per_term * len(ORDER):
-                    continue
-                if tuple(item[0] for item in tokens[position:position + len(wanted)]) != wanted:
-                    continue
-                if sum(1 for ref_kind, _ in bucket if ref_kind == kind) >= per_term:
-                    continue
-                end = tokens[position + len(wanted) - 1][2]
-                bucket[identity] = {'kind': kind, 'id': record_id, 'title': (title or '')[:200],
-                                    'snippet': snippet(text, start, end), 'view': VIEWS[kind],
-                                    'match': 'wikilink' if wanted in explicit else 'mention'}
-    return {key: _rank(list(bucket.values()), per_term) for key, bucket in found.items()}, scanned
+    found, counts, _ = _scan(conn, terms, per_term, applyai=applyai)
+    return found, counts
 
 
 def _rank(references, limit):
@@ -288,7 +292,7 @@ def _connected(document):
 
 
 def _suggest(conn, document, applyai=True):
-    found, scanned = scan(conn, _terms(document), applyai=applyai)
+    found, scanned, truncated = _scan(conn, _terms(document), applyai=applyai)
     sourced, ids, connected = _targets(document), {node['id'] for node in document['nodes']}, _connected(document)
     result = {}
     for node_id, references in found.items():
@@ -299,15 +303,16 @@ def _suggest(conn, document, applyai=True):
                 continue
             kept.append({**item, 'linked': target in ids and (node_id, target) in connected})
         result[node_id] = kept
-    return result, scanned
+    return result, scanned, truncated
 
 
 def suggestions(conn, map_id, *, applyai=True):
     row = schema_maps._row(conn, map_id)
     document = json.loads(row['graph_json'])
-    found, scanned = _suggest(conn, document, applyai)
+    found, scanned, truncated = _suggest(conn, document, applyai)
     return {'map_id': row['id'], 'revision': row['revision'],
-            'suggestions': [{'node_id': node['id'], 'label': node['label'], 'references': found[node['id']]}
+            'suggestions': [{'node_id': node['id'], 'label': node['label'], 'references': found[node['id']],
+                             'truncated': truncated[node['id']]}
                             for node in document['nodes'] if found.get(node['id'])],
             'scanned': scanned}
 
@@ -321,13 +326,80 @@ def mentions(conn, term, exclude=None, *, applyai=True):
         if kind not in VIEWS or not record_id:
             raise ValueError('Exclude must look like <kind>:<id>')
         exclude = (kind, record_id)
-    found, scanned = scan(conn, {'term': tokens} if tokens else {}, PER_TERM + (1 if exclude else 0), applyai=applyai)
-    references = [item for item in found.get('term', []) if (item['kind'], str(item['id'])) != exclude][:PER_TERM]
-    return {'term': term, 'references': references, 'scanned': scanned}
+    found, scanned, truncated = _scan(conn, {'term': tokens} if tokens else {}, PER_TERM, applyai=applyai, exclude=exclude)
+    return {'term': term, 'references': found.get('term', []), 'truncated': truncated.get('term', False), 'scanned': scanned}
+
+
+_RELATED_KINDS = "(d.kind='flashcard_note' OR (d.kind='block' AND r.type='page'))"
+_RELATED_SQL = '''SELECT d.kind,d.ref,d.page_id,d.title,d.body,{rank} AS score FROM search_fts
+    JOIN search_docs d ON d.id=search_fts.rowid LEFT JOIN blocks r ON d.kind='block' AND r.id=d.page_id
+    WHERE search_fts MATCH ? AND ''' + _RELATED_KINDS
+
+
+def _related_key(row):
+    return ('note_page', row['page_id']) if row['kind'] == 'block' else ('flashcard_note', row['ref'])
+
+
+def _related_records(conn, keys):
+    """``{key: (id, title, content)}``: a page is its title and every text block; a card all its fields."""
+    pages = [ref for kind, ref in keys if kind == 'note_page']
+    cards = [ref for kind, ref in keys if kind == 'flashcard_note']
+    found = {}
+    for start in range(0, len(pages), 500):
+        chunk = pages[start:start + 500]
+        marks = ','.join('?' * len(chunk))
+        bodies = {}
+        for row in conn.execute(f"SELECT page_id,body FROM search_docs WHERE kind='block' AND page_id IN ({marks}) "
+                                "AND ref<>page_id ORDER BY id", chunk):
+            bodies.setdefault(row['page_id'], []).append(row['body'])
+        for row in conn.execute(f"SELECT id,text,CAST(json_extract(properties,'$.number') AS INTEGER) AS number FROM blocks "
+                                f"WHERE id IN ({marks})", chunk):
+            found[('note_page', row['id'])] = (row['number'], row['text'], '\n'.join([row['text'], *bodies.get(row['id'], ())]))
+    for start in range(0, len(cards), 500):
+        chunk = cards[start:start + 500]
+        for row in conn.execute(f"SELECT ref,title,body,label FROM search_docs WHERE kind='flashcard_note' "
+                                f"AND ref IN ({','.join('?' * len(chunk))})", chunk):
+            content = '\n'.join(part for part in (row['title'], row['body']) if part)
+            found[('flashcard_note', row['ref'])] = (int(row['ref']), row['label'], content)
+    return found
+
+
+def _related_source(conn, identity):
+    """The excluded record's key and title (only note pages and cards have one here)."""
+    if identity is None:
+        return None, ''
+    kind, ident = identity
+    if kind == 'note_page' and ident.isdigit():
+        row = conn.execute('SELECT block_id,title FROM note_page_index WHERE id=?', (int(ident),)).fetchone()
+        return (('note_page', row['block_id']), row['title']) if row else (None, '')
+    if kind == 'flashcard_note':
+        row = conn.execute("SELECT label FROM search_docs WHERE kind='flashcard_note' AND ref=?", (ident,)).fetchone()
+        return (('flashcard_note', ident), row['label']) if row else (None, '')
+    return None, ''
+
+
+def _contains(haystack, needle):
+    return bool(needle) and any(haystack[i:i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1))
+
+
+def _terms_of(value):
+    result = {}
+    for token, _, _ in _tokens(value):
+        if len(token) > 2 and token not in STOPWORDS:
+            result[token] = result.get(token, 0) + 1
+    return result
 
 
 def related(conn, text, exclude=None):
-    """Rank bounded local notes/cards using deterministic TF-IDF cosine similarity."""
+    """Linked, mentioning and related note pages and cards, ranked with bm25 over the full index.
+
+    *Linked*: a ``[[link]]`` either way between the text and the record; *mentions*: the
+    record's title appears in the text, or the excluded source's title in the record;
+    *related*: records sharing the text's most distinctive terms (tf·idf against the
+    index's document frequencies), ranked by bm25 summed over each record's matching
+    documents and normalised to the best one. Every note page and card is searched; each
+    group shows at most ``RELATED_LIMIT``.
+    """
     if not isinstance(text, str) or len(text) > 20000 or "\x00" in text:
         raise ValueError("Text must be a string of at most 20000 characters")
     identity = None
@@ -335,90 +407,83 @@ def related(conn, text, exclude=None):
         if not isinstance(exclude, str) or not re.fullmatch(r"(note_page|flashcard_note|flashcard_deck|study_subject|schema_node):[^:]{1,80}", exclude):
             raise ValueError("Exclude must look like <kind>:<id>")
         identity = tuple(exclude.split(":", 1))
-    def records():
-        if _exists(conn, 'note_pages'):
-            # Stream documents; do not materialize the whole canvas corpus.
-            for row in conn.execute('SELECT id,title,document FROM note_pages ORDER BY updated_at DESC,id DESC LIMIT 1000'):
-                document = _json(row['document'], {})
-                elements = document.get('elements', []) if isinstance(document, dict) else []
-                parts, remaining = [row['title']], RECORD_CHARS
-                for item in elements if isinstance(elements, list) else []:
-                    if isinstance(item, dict) and item.get('kind') in {'text', 'sticky'} and isinstance(item.get('text'), str):
-                        part = item['text'][:remaining]
-                        parts.append(part)
-                        remaining -= len(part)
-                        if remaining <= 0:
-                            break
-                if remaining > 0 and _exists(conn, 'note_blocks'):
-                    for block in conn.execute('SELECT text FROM note_blocks WHERE page_id=? ORDER BY ordering,id', (row['id'],)):
-                        part = block['text'][:remaining]
-                        parts.append(part)
-                        remaining -= len(part)
-                        if remaining <= 0:
-                            break
-                yield 'note_page', row['id'], row['title'], '\n'.join(parts)
-        if _exists(conn, 'flash_notes') and _exists(conn, 'flash_decks'):
-            for row in conn.execute("""SELECT n.id,n.fields,d.name FROM flash_notes n
-                    JOIN flash_decks d ON d.id=n.deck_id WHERE n.archived=0 AND d.archived=0
-                    ORDER BY n.updated_at DESC,n.id DESC LIMIT 1000"""):
-                fields = _json(row['fields'], {})
-                parts = [_clean(value[:RECORD_CHARS]) for value in fields.values() if isinstance(value, str)] if isinstance(fields, dict) else []
-                title = next((part.strip() for part in parts if part.strip()), row['name'])[:200]
-                yield 'flashcard_note', row['id'], title, '\n'.join(parts)
-    budget = TOTAL_CHARS
-    bounded = []
-    source_title = ''
-    for kind, record_id, title, content in records():
-        content = content[:RECORD_CHARS]
-        budget -= len(content)
-        if budget < 0:
-            break
-        if (kind, str(record_id)) == identity:
-            source_title = title
-            continue
-        bounded.append((kind, record_id, title, content))
-    def terms(value):
-        result = {}
-        for token, _, _ in _tokens(value):
-            if len(token) > 2 and token not in STOPWORDS:
-                result[token] = result.get(token, 0) + 1
-        return result
-    query = terms(text)
-    counts = [terms(content) for _, _, _, content in bounded]
-    frequencies = {}
-    for bag in [query, *counts]:
-        for token in bag:
-            frequencies[token] = frequencies.get(token, 0) + 1
-    def vector(bag):
-        return {token: (1 + math.log(count)) * (1 + math.log((len(counts) + 2) / (frequencies[token] + 1)))
-                for token, count in bag.items()}
-    query_vector = vector(query)
-    query_norm = math.sqrt(sum(value * value for value in query_vector.values()))
-    explicit = {phrase(match.group(1)) for match in WIKILINK.finditer(text)}
+    search.sync(conn)
+    source_key, source_title = _related_source(conn, identity)
     source_phrase = phrase(source_title)
+    query = _terms_of(text)
     query_tokens = tuple(token for token, _, _ in _tokens(text))
-    def contains(haystack, needle):
-        return bool(needle) and any(haystack[i:i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1))
+    explicit = {target for match in WIKILINK.finditer(text) if (target := phrase(match.group(1)))}
+    records = conn.execute(f"SELECT COUNT(*) FROM search_docs d LEFT JOIN blocks r ON d.kind='block' AND r.id=d.page_id "
+                           f"WHERE {_RELATED_KINDS}").fetchone()[0]
+    spellings = {}
+    for raw in TOKEN.findall(text.casefold()):
+        spellings.setdefault(_singular(raw), set()).add(raw)
+    raws = sorted({raw for variants in spellings.values() for raw in variants})
+    frequency = {}
+    for start in range(0, len(raws), 500):
+        chunk = raws[start:start + 500]
+        frequency.update((row[0], row[1]) for row in conn.execute(
+            f"SELECT term,doc FROM search_vocab WHERE term IN ({','.join('?' * len(chunk))})", chunk))
+    weight = {token: (1 + math.log(count)) * (1 + math.log((records + 2) / (max(
+        (frequency.get(raw, 0) for raw in spellings.get(token, ())), default=0) + 1))) for token, count in query.items()}
+    top = sorted(query, key=lambda token: (-weight[token], token))[:RELATED_TERMS]
+    scores: dict = {}
+    if top:
+        expression = ' OR '.join(f'"{_stem(token)}"*' for token in top)
+        for row in conn.execute(_RELATED_SQL.format(rank=f'bm25(search_fts,{search.TITLE_WEIGHT},1.0)'), (expression,)):
+            key = _related_key(row)
+            scores[key] = scores.get(key, 0.0) - row['score']
+    best = max(scores.values(), default=0.0) or 1.0
+    linked, mentioned = set(), set()
+    # Titles the text links to or mentions, and records that link to or mention the source's title.
+    title_queries = [(phrase_query(target, 'title'), target, 'link') for target in explicit]
+    stems = sorted({_stem(token) for token in query_tokens if token not in STOPWORDS})
+    title_queries += [('{title} : (' + ' OR '.join(f'"{stem}"*' for stem in stems[start:start + 200]) + ')', None, 'mention')
+                      for start in range(0, len(stems), 200)]
+    for expression, target, why in title_queries:
+        for row in conn.execute(_RELATED_SQL.format(rank='0'), (expression,)):
+            if row['kind'] == 'block' and row['ref'] != row['page_id']:
+                continue
+            title = phrase(row['title'])
+            if why == 'link' and title == target:
+                linked.add(_related_key(row))
+            elif why == 'mention' and title and _contains(query_tokens, title):
+                mentioned.add(_related_key(row))
+    if source_phrase:
+        for row in conn.execute(_RELATED_SQL.format(rank='0'), (phrase_query(source_phrase),)):
+            content = row['title'] or row['body']
+            if any(phrase(match.group(1)) == source_phrase for match in WIKILINK.finditer(content)):
+                linked.add(_related_key(row))
+            elif _contains(tuple(token for token, _, _ in _tokens(content)), source_phrase):
+                mentioned.add(_related_key(row))
+    mentioned -= linked
     result = {'linked': [], 'unlinked': [], 'related': []}
-    for (kind, record_id, title, content), bag in zip(bounded, counts):
-        target = phrase(title)
-        reverse_links = {phrase(match.group(1)) for match in WIKILINK.finditer(content)}
-        linked = target is not None and target in explicit or source_phrase is not None and source_phrase in reverse_links
-        mention = contains(query_tokens, target) or contains(tuple(token for token, _, _ in _tokens(content)), source_phrase)
-        shared = sorted(query.keys() & bag.keys(), key=lambda token: (-query_vector[token], token))[:8]
-        candidate = vector(bag)
-        norm = math.sqrt(sum(value * value for value in candidate.values()))
-        score = sum(query_vector[token] * candidate[token] for token in query.keys() & bag.keys()) / (query_norm * norm) if query_norm and norm else 0
-        bucket = 'linked' if linked else 'unlinked' if mention else 'related'
-        if bucket == 'related' and not shared:
-            continue
-        result[bucket].append({'kind': kind, 'id': record_id, 'title': title[:200],
-                              'snippet': snippet(content, 0, min(60, len(content))),
-                              'shared_terms': shared, 'score': round(score, 6),
-                              'view': 'notes' if kind == 'note_page' else 'flashcards'})
-    for bucket in result:
-        result[bucket].sort(key=lambda item: (-item['score'], item['title'].casefold(), str(item['id'])))
-        result[bucket] = result[bucket][:12]
+    groups = (('linked', linked), ('unlinked', mentioned),
+              ('related', [key for key in sorted(scores, key=lambda key: -scores[key]) if key not in linked and key not in mentioned]))
+    for bucket, keys in groups:
+        keys = [key for key in keys if key != source_key]
+        if bucket != 'related':
+            keys.sort(key=lambda key: -scores.get(key, 0.0))
+        for start in range(0, len(keys), RELATED_LIMIT * 4):
+            chunk = keys[start:start + RELATED_LIMIT * 4]
+            found = _related_records(conn, chunk)
+            for key in chunk:
+                if key not in found:
+                    continue
+                record_id, title, content = found[key]
+                bag = _terms_of(content)
+                shared = sorted(query.keys() & bag.keys(), key=lambda token: (-weight[token], token))[:8]
+                if bucket == 'related' and not shared:
+                    continue
+                result[bucket].append({'kind': key[0], 'id': record_id, 'title': title[:200],
+                                       'snippet': snippet(content, 0, min(60, len(content))),
+                                       'shared_terms': shared, 'score': round(scores.get(key, 0.0) / best, 6),
+                                       'view': 'notes' if key[0] == 'note_page' else 'flashcards'})
+            ranked = sorted(result[bucket], key=lambda item: (-item['score'], item['title'].casefold(), str(item['id'])))
+            # Scores only fall from here on, so a full group cannot change further.
+            if len(ranked) >= RELATED_LIMIT and (start + len(chunk) >= len(keys) or scores.get(keys[start + len(chunk)], 0.0) / best < ranked[RELATED_LIMIT - 1]['score']):
+                break
+        result[bucket] = sorted(result[bucket], key=lambda item: (-item['score'], item['title'].casefold(), str(item['id'])))[:RELATED_LIMIT]
     return result
 
 
@@ -440,7 +505,7 @@ def apply(conn, body, *, applyai=True):
         nodes = {node['id']: node for node in document['nodes']}
         if any(key not in nodes for key in node_ids):
             raise ValueError('A selected node is no longer in this map')
-        found, _ = _suggest(conn, document, applyai)
+        found, _, _ = _suggest(conn, document, applyai)
         sourced, connected, changed = _targets(document), _connected(document), False
         edge_ids = {edge['id'] for edge in document['edges']}
         for node_id in node_ids:
@@ -479,20 +544,13 @@ def page_connections(conn, page_ids):
     """Derived, read-only wiki/related edges for a bounded notebook graph."""
     if not page_ids:
         return []
-    try:
-        rows = conn.execute(f"SELECT id,title,document FROM note_pages WHERE id IN ({','.join('?' for _ in page_ids)})", page_ids)
-    except sqlite3.OperationalError as exc:
-        if 'no such column' in str(exc) or 'no such table' in str(exc):
-            return []
-        raise
+    if not _exists(conn, 'blocks'):
+        return []
+    rows = _page_rows(conn, f"SELECT id,block_id,title FROM note_page_index WHERE id IN ({','.join('?' for _ in page_ids)})", page_ids)
     records = []
     remaining = TOTAL_CHARS
-    for row in rows:
-        document = _json(row['document'], {})
-        parts = [item.get('text', '')[:RECORD_CHARS] for item in document.get('elements', []) if item.get('kind') in {'text', 'sticky'}]
-        if _exists(conn, 'note_blocks'):
-            parts.extend(block['text'][:RECORD_CHARS] for block in conn.execute('SELECT text FROM note_blocks WHERE page_id=? ORDER BY ordering,id', (row['id'],)))
-        content = (row['title'] + '\n' + '\n'.join(parts))[:RECORD_CHARS]
+    for row, canvas, outline in rows:
+        content = (row['title'] + '\n' + '\n'.join(part[:RECORD_CHARS] for part in (*canvas, *outline)))[:RECORD_CHARS]
         remaining -= len(content)
         if remaining < 0:
             break

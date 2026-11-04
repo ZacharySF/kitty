@@ -128,7 +128,7 @@ def test_blocks_do_not_replace_existing_canvas_and_failed_save_is_atomic(workspa
     assert 'New outline text' in before['search_text']
     invalid = {**content, 'text': 'Must not persist', 'collapsed': 'yes'}
     with pytest.raises(notes.NotesError):
-        note_blocks.save_blocks(conn, page['id'], 3, [invalid], title='Must not persist')
+        note_blocks.save_blocks(conn, page['id'], 3, [invalid])
     assert notes.page(conn, page['id']) == before
     with pytest.raises(notes.NotesError):
         note_blocks.save_blocks(conn, page['id'], 3, [content, content])
@@ -157,3 +157,115 @@ def test_citation_contexts_and_topic_blocks_are_fully_pageable(workspace):
     assert first_topic['count'] == 503
     assert len(first_topic['blocks']) + len(rest_topic['blocks']) == 503
     assert rest_topic['next_offset'] is None
+
+
+def last_ops(conn):
+    import json
+    return json.loads(conn.execute('SELECT ops FROM op_log ORDER BY seq DESC LIMIT 1').fetchone()[0])['ops']
+
+
+def test_whole_outline_saves_become_minimal_block_transactions(workspace):
+    conn = workspace.conn
+    page = new_page(conn)
+    items = [block(f'Item {index}', ordering=index) for index in range(50)]
+    revision = note_blocks.save_blocks(conn, page['id'], page['revision'], items)['revision']
+    items[17] = {**items[17], 'text': 'Edited'}
+    revision = note_blocks.save_blocks(conn, page['id'], revision, items)['revision']
+    assert [(op['op'], op.get('id')) for op in last_ops(conn)][:-1] == [('text', items[17]['id'])]
+    moved = items.pop(3)
+    items.insert(40, moved)
+    items = [{**item, 'ordering': index} for index, item in enumerate(items)]
+    note_blocks.save_blocks(conn, page['id'], revision, items)
+    assert [op['op'] for op in last_ops(conn)] == ['move', 'set']
+    assert [b['id'] for b in note_blocks.get_blocks(conn, page['id'])['blocks']] == [item['id'] for item in items]
+
+
+def test_canvas_saves_touch_only_changed_elements(workspace):
+    conn = workspace.conn
+    page = new_page(conn)
+    document = notes.empty_document()
+    document['elements'] = [{'id': f'n{index}', 'kind': 'sticky', 'layer': 'default', 'x': index * 10, 'y': 0, 'w': 50, 'h': 50,
+                             'color': '#000000', 'fill': 'none', 'width': 1, 'text': f'Note {index}', 'fontSize': 20} for index in range(20)]
+    notes.save_page(conn, page['id'], 1, document, 'Board')
+    document['elements'][5]['x'] = 999
+    notes.save_page(conn, page['id'], 2, document, 'Board')
+    ops = last_ops(conn)
+    assert [op['op'] for op in ops] == ['set', 'set'] and ops[0]['props'] == {'x': 999}
+    assert notes.page(conn, page['id'])['document'] == notes.normalize(document)
+
+
+def test_deleted_pages_go_to_trash_and_leave_the_library(workspace):
+    conn = workspace.conn
+    page = new_page(conn, 'Disposable')
+    note_blocks.save_blocks(conn, page['id'], 1, [block('Keep in trash #gone')])
+    notes.delete_page(conn, page['id'], 2)
+    assert notes.listing(conn)['pages'] == []
+    with pytest.raises(notes.NotesError) as missing:
+        notes.page(conn, page['id'])
+    assert missing.value.status == 404
+    assert note_blocks.topics(conn, 'tag', 'gone')['count'] == 0
+    trashed = conn.execute("SELECT COUNT(*) FROM blocks WHERE page_id=(SELECT page_id FROM blocks WHERE text='Disposable') AND deleted_at IS NOT NULL").fetchone()[0]
+    assert trashed == 3
+
+
+def editor_page(conn, title='Typed page'):
+    """A note page whose outline was written by the block editor: typed blocks, nested."""
+    from kitty.core import blocks
+
+    page = new_page(conn, title)
+    root = conn.execute("SELECT id FROM blocks WHERE type='page' AND json_extract(properties,'$.number')=?", (page['id'],)).fetchone()['id']
+    heading, todo, child = (str(uuid.uuid4()) for _ in range(3))
+    blocks.transact(conn, [
+        {'op': 'insert', 'id': heading, 'type': 'heading_1', 'parent': root, 'text': 'Plan #editor'},
+        {'op': 'insert', 'id': todo, 'type': 'to_do', 'parent': root, 'text': 'Ship [[Typed target]]', 'props': {'checked': True}},
+        {'op': 'insert', 'id': child, 'type': 'bulleted_list', 'parent': todo, 'text': 'Typed target nested detail'},
+    ])
+    return page, heading, todo, child
+
+
+def test_editor_block_types_are_part_of_the_outline_everywhere(workspace):
+    conn = workspace.conn
+    target = new_page(conn, 'Typed target')
+    page, heading, todo, child = editor_page(conn)
+    outline = note_blocks.get_blocks(conn, page['id'])['blocks']
+    assert [(item['id'], item['type']) for item in outline] == [(heading, 'heading_1'), (todo, 'to_do'), (child, 'bulleted_list')]
+    assert outline[1]['props'] == {'checked': True} and outline[2]['parent_id'] == todo
+    assert note_blocks.topics(conn, 'tag', 'editor')['blocks'][0]['id'] == heading
+    assert note_blocks.topics(conn, 'page', 'typed target')['blocks'][0]['id'] == todo
+    assert note_blocks.mentions(conn, page['id'])['mentions'][0]['page_id'] == target['id']
+    assert 'Typed target nested detail' in notes.page(conn, page['id'])['search_text']
+    cited = block('((' + child + '))')
+    citing = new_page(conn, 'Citing')
+    note_blocks.save_blocks(conn, citing['id'], citing['revision'], [cited])
+    assert note_blocks.contexts(conn, child)['count'] == 1
+    assert note_blocks.get_blocks(conn, page['id'])['citation_counts'] == {child: 1}
+
+
+def test_outline_saves_and_portable_copies_keep_block_types_and_properties(workspace, tmp_path):
+    conn = workspace.conn
+    page, heading, todo, child = editor_page(conn)
+    before = note_blocks.get_blocks(conn, page['id'])
+    # A legacy whole-outline save that only edits text keeps every type and property.
+    items = [{**item, 'text': item['text'] + '!'} if item['id'] == heading else item for item in before['blocks']]
+    after = note_blocks.save_blocks(conn, page['id'], before['revision'], items)
+    assert [(item['type'], item['props']) for item in after['blocks']] == [('heading_1', {}), ('to_do', {'checked': True}), ('bulleted_list', {})]
+    portable = notes.export_page(conn, tmp_path, page['id'])
+    restored = note_blocks.get_blocks(conn, notes.restore(conn, tmp_path, page['notebook_id'], portable)['id'])['blocks']
+    assert [(item['type'], item['props'], item['text']) for item in restored] == [(item['type'], item['props'], item['text']) for item in after['blocks']]
+    with pytest.raises(notes.NotesError):
+        note_blocks.save_blocks(conn, page['id'], after['revision'], [{**items[0], 'type': 'canvas'}])
+    with pytest.raises(notes.NotesError):
+        note_blocks.save_blocks(conn, page['id'], after['revision'], [{**items[0], 'props': {'not a key': 1}}])
+
+
+def test_the_outline_view_lists_exactly_the_text_flow_types():
+    import re
+    from pathlib import Path
+
+    from kitty.core.blocks import convert
+
+    sql = (Path(__file__).parents[1] / 'src/kitty/db/migrations/046_text_flow_outline.sql').read_text()
+    lists = re.findall(r"type IN \(([^)]*)\)", sql)
+    assert len(lists) == 2
+    for found in lists:
+        assert set(re.findall(r"'([a-z0-9_]+)'", found)) == convert.OUTLINE_TYPES

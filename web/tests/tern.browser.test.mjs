@@ -122,3 +122,85 @@ test("a failed Open is reported, not hidden", async () => {
   await noTerminal(view);
   await context.close();
 });
+
+test("the rika! plugin for Tern installs and removes from the Tern view", async () => {
+  const { page, view, context } = await harness("stopped");
+  const state = view.locator("[data-plugin-state]");
+  await view.locator('[data-plugin-state="install"]').waitFor();
+  assert.equal((await state.innerText()).trim(), "Not installed in Tern");
+  await view.getByRole("button", { name: "Install rika! plugin into Tern" }).click();
+  await view.locator('[data-plugin-state="installed"]').waitFor();
+  assert.equal((await state.innerText()).trim(), "Installed (0.1.0) · Tern reports: ready");
+  await view.getByRole("button", { name: "Remove from Tern" }).click();
+  await view.locator('[data-plugin-state="install"]').waitFor();
+  assert.deepEqual((await posts(page)).map((call) => call.url),
+    ["/api/terminal/tern/plugin/install", "/api/terminal/tern/plugin/remove"]);
+  await context.close();
+});
+
+test("without Tern there is no plugin panel and nothing asks Tern", async () => {
+  const { page, view, context } = await harness("absent");
+  await view.getByText("Tern is not installed").waitFor();
+  assert.equal(await view.getByText("rika! plugin for Tern").count(), 0);
+  assert.ok(!(await page.evaluate(() => window.ternHarness.calls.some((call) => call.url.includes("/plugin")))));
+  await context.close();
+});
+
+test("rika!'s Tern panes in the Tern view: run a line, focus, capture, open the note, add a pane", async () => {
+  const { page, view, problems, context } = await harness("panes");
+  const posted = (url) => page.evaluate((target) => window.ternHarness.calls
+    .filter((call) => call.url === target && call.method === "POST")
+    .map((call) => ({ body: call.body, guarded: call.headers["X-Kitty-Request"] === "1" })), url);
+  const tern = view.getByRole("region", { name: "Tern panes" });
+  const panes = tern.getByRole("list", { name: "Tern panes" });
+  await panes.waitFor();
+  assert.match(await panes.getByRole("listitem").filter({ hasText: "cargo test" }).innerText(), /working/i);
+  assert.match(await panes.getByRole("listitem").filter({ hasText: "make check" }).innerText(), /exited 3/i);
+  assert.match(await tern.getByRole("list", { name: "Recent Tern activity" }).innerText(), /pane 5 exited 3/i);
+
+  // The focused pane is the default target; an exited pane cannot take a command.
+  const target = tern.getByRole("combobox", { name: "Tern pane" });
+  assert.equal(await target.inputValue(), "4");
+  const command = tern.getByRole("textbox", { name: "Command line for the Tern pane" });
+  await command.fill("echo kitty-$((6*7))");
+  await tern.getByRole("button", { name: "Run" }).click();
+  await panes.getByRole("listitem").filter({ hasText: "echo kitty-$((6*7))" }).waitFor();
+  assert.deepEqual(await posted("/api/terminal/tern/run"), [{ body: { block: 4, text: "echo kitty-$((6*7))" }, guarded: true }]);
+  assert.equal(await command.inputValue(), "");
+  await target.selectOption("5");
+  await command.fill("ls");
+  assert.equal(await tern.getByRole("button", { name: "Run" }).isDisabled(), true);
+
+  await tern.getByRole("button", { name: "Focus make check in Tern" }).click();
+  await tern.getByRole("status").filter({ hasText: "Showing make check in rika!'s Tern window." }).waitFor();
+  assert.deepEqual(await posted("/api/terminal/tern/focus"), [{ body: { block: 5 }, guarded: true }]);
+  // The view follows the status the action answered: a window is open now.
+  assert.ok(await view.getByText("1 Tern window open").isVisible());
+
+  await tern.getByRole("button", { name: "Capture echo kitty-$((6*7)) to a quick note" }).click();
+  await tern.getByRole("status").filter({ hasText: "Saved to quick note #7." }).waitFor();
+  assert.deepEqual(await posted("/api/terminal/tern/capture"), [{ body: { block: 4 }, guarded: true }]);
+  await tern.getByRole("button", { name: "Open note" }).click();
+  assert.deepEqual((await page.evaluate(() => window.ternHarness.opened)).map((item) => item.url), ["/#quick-note/7"]);
+
+  await tern.getByRole("button", { name: "New pane" }).click();
+  await panes.getByRole("listitem").nth(2).waitFor();
+  assert.deepEqual(await posted("/api/terminal/tern/new"), [{ body: {}, guarded: true }]);
+  // The new pane becomes the Run target.
+  assert.equal(await target.inputValue(), "6");
+  await noTerminal(view);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a refused Tern command is reported where it was typed", async () => {
+  const { page, view, problems, context } = await harness("panes");
+  await page.evaluate(() => { window.ternHarness.paneErrors["/api/terminal/tern/run"] = "A command for Tern is one line of at most 4096 characters, without control characters"; });
+  const tern = view.getByRole("region", { name: "Tern panes" });
+  await tern.getByRole("textbox", { name: "Command line for the Tern pane" }).fill("echo hi");
+  await tern.getByRole("button", { name: "Run" }).click();
+  await tern.getByRole("alert").filter({ hasText: "one line of at most 4096 characters" }).waitFor();
+  assert.equal(await tern.getByRole("textbox", { name: "Command line for the Tern pane" }).inputValue(), "echo hi");
+  assert.deepEqual(problems, []);
+  await context.close();
+});

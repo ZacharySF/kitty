@@ -2,10 +2,15 @@
   import { Panel } from "@nunera/bracket";
   import { beginDrag } from "./pointerDrag";
   import { notifier } from "./notifications.svelte";
-  import { QUIET_EVENT, clock, digestLine, inQuietHours, minuteOfDay, quietSpan, readQuiet, writeQuiet, type QuietHours } from "./notify";
+  import { buildStore, onBuildChange, setPreferences } from "./build.svelte";
+  import { QUIET_EVENT, clock, digestLine, inQuietHours, minuteOfDay, quietOf, quietPreference, quietSpan, type QuietHours } from "./notify";
 
-  let quiet = $state<QuietHours>(readQuiet(localStorage));
-  let error = $state("");
+  // Quiet hours are a build preference (ui.notifications.quiet); dragging the dial writes once it settles.
+  let quiet = $state<QuietHours>(quietOf(buildStore.build.ui.notifications.quiet));
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => onBuildChange((next) => {
+    if (saveTimer === undefined) quiet = quietOf(next.ui.notifications.quiet);
+  }));
   let dial = $state<SVGSVGElement>();
   let now = $state(minuteOfDay(new Date()));
   const R = 70;
@@ -32,13 +37,12 @@
 
   function save(next: Partial<QuietHours>) {
     quiet = { ...quiet, ...next };
-    try {
-      writeQuiet(localStorage, quiet);
-      error = "";
-    } catch {
-      error = "This browser could not save local preferences.";
-    }
-    window.dispatchEvent(new CustomEvent(QUIET_EVENT));
+    window.dispatchEvent(new CustomEvent(QUIET_EVENT, { detail: quiet }));
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = undefined;
+      void setPreferences({ ui: { notifications: { quiet: quietPreference(quiet) } } });
+    }, 300);
   }
   function grab(event: PointerEvent, which: "from" | "to") {
     event.preventDefault();
@@ -115,7 +119,6 @@
       <p class="held" role="status" title="rika! checks reminders only while it runs. In the desktop app, Keep running on close (Settings → Desktop) keeps checking from the system tray.">
         {notifier.heldNotices.length ? `Held now: ${digestLine(notifier.heldNotices)}` : "Nothing held right now"}
       </p>
-      {#if error}<p role="alert">{error}</p>{/if}
     </div>
   </div>
 </Panel>

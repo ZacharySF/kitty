@@ -2,7 +2,8 @@
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
-  import type { TernStatus } from "./terminal";
+  import TernPanes from "./TernPanes.svelte";
+  import { ternBlockState, ternPluginState, type TernPluginStatus, type TernStatus } from "./terminal";
 
   /**
    * Stencil Tern beside herdr (docs/terminal-dock-design.md, Tern). A truthful status
@@ -47,6 +48,31 @@
   }
   const size = (cols: number | null, rows: number | null) => (cols && rows ? `${cols}×${rows}` : "");
   const windowsLabel = (count: number) => (count ? `${count} Tern window${count === 1 ? "" : "s"} open` : "No Tern window open");
+
+  /** The rika! plugin for Tern (platform design Q1). Reading it runs `tern plugin`, so it is read
+   *  once per detected Tern and after each action, not on every status poll. */
+  let plugin = $state<TernPluginStatus | null>(null);
+  let pluginError = $state("");
+  let pluginBusy = $state(false);
+  let pluginFor: string | null = null;
+  async function pluginAct(action: "install" | "remove" | null) {
+    pluginBusy = true;
+    pluginError = "";
+    try {
+      plugin = await api<TernPluginStatus>(action ? `/terminal/tern/plugin/${action}` : "/terminal/tern/plugin", action ? {} : undefined);
+    } catch (cause) {
+      pluginError = (cause as Error).message;
+    } finally {
+      pluginBusy = false;
+    }
+  }
+  $effect(() => {
+    const found = status?.installed ? status.path : null;
+    if (found && found !== pluginFor) {
+      pluginFor = found;
+      void pluginAct(null);
+    }
+  });
 
   onMount(() => {
     void load();
@@ -95,12 +121,13 @@
         {#each status.sessions as session (session.id)}
           {#each session.tabs as tab (tab.id)}
             {#each tab.blocks as block (block.id)}
+              {@const live = ternBlockState(block)}
               <li class:focused={block.focused}>
                 <span class="where">{session.name} · tab {tab.number ?? "?"}{tab.name ? ` ${tab.name}` : ""}</span>
                 <span class="title">{block.title || block.program}</span>
                 <span class="cwd"><code>{block.cwd}</code></span>
                 <span class="size">{size(block.cols, block.rows)}</span>
-                <span class="state" data-state={block.exited !== null ? "exited" : block.working ? "working" : "idle"}>{block.exited !== null ? `exited ${block.exited}` : block.working ? "working" : "idle"}</span>
+                <span class="state" data-state={live.state}>{live.label}</span>
               </li>
             {/each}
           {/each}
@@ -109,7 +136,32 @@
       <p class="muted">Scripts and agents can drive this session with Tern's own commands:
         <code>TERN_DAEMON_SOCKET={status.socket} tern ls</code></p>
     {/if}
-    <p class="muted">This is a status panel. Tern's web client draws with WebGPU, which rika!'s window does not provide, so the terminal opens in Tern's own window. Quitting rika! closes the Tern windows it opened and stops its Tern session.</p>
+    <TernPanes tern={status} onstatus={adopt} />
+    <p class="muted">rika! never draws a Tern terminal itself: Tern's web client draws with WebGPU, which rika!'s window does not provide, so panes show in Tern's own window. Quitting rika! closes the Tern windows it opened and stops its Tern session.</p>
+    <Panel title="rika! plugin for Tern">
+      <p>Adds commands to your own Tern that send selections, panes, failed commands and web pages to rika!'s Inbox, and a rika! Inbox block.
+        The first time, Tern asks to pair: approve its code in the bar above or in Settings → Connected apps.</p>
+      {#if pluginError}<p class="error" role="alert">{pluginError}</p>{/if}
+      {#if plugin}
+        {@const shown = ternPluginState(plugin)}
+        <p class="muted" role="status" data-plugin-state={shown.action ?? (plugin.installed ? "installed" : "unavailable")}>
+          {shown.label}{plugin.installed && plugin.tern_status ? ` · Tern reports: ${plugin.tern_status}` : ""}</p>
+        {#if shown.problem}<p class="error" role="alert">{shown.problem}</p>{/if}
+        {#if shown.action || plugin.installed}
+          <div class="actions">
+            {#if shown.action}
+              <Button intent="primary" size="sm" disabled={pluginBusy} onclick={() => pluginAct("install")}>
+                {shown.action === "update" ? "Update the plugin in Tern" : "Install rika! plugin into Tern"}</Button>
+            {/if}
+            {#if plugin.installed}
+              <Button size="sm" variant="ghost" disabled={pluginBusy} onclick={() => pluginAct("remove")}>Remove from Tern</Button>
+            {/if}
+          </div>
+        {/if}
+      {:else if !pluginError}
+        <p class="muted" role="status">Checking Tern's plugins…</p>
+      {/if}
+    </Panel>
   {/if}
 
   {#if status}

@@ -1,13 +1,16 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { Button } from "@nunera/bracket";
   import NotesLibrary, { type Folder, type Notebook, type PageSummary } from "./NotesLibrary.svelte";
   import CanvasColorMenu from "./CanvasColorMenu.svelte";
   import SectionGraph, { type SectionNode } from "./SectionGraph.svelte";
-  import { api, type TaskRecord } from "./api";
+  import { api, apiFetch, apiObjectUrl, followApiLink, type TaskRecord } from "./api";
   import AIReview from "./AIReview.svelte";
   import NoteReferences from "./NoteReferences.svelte";
-  import NoteBlocks, { type NoteBlock, type BlocksResult } from "./NoteBlocks.svelte";
+  import NoteOutline, { type BlocksResult } from "./NoteOutline.svelte";
+  import { BLOCK_DRAG_TYPE, pageQuery } from "./BlockEditor.svelte";
+  import BlockHistory from "./BlockHistory.svelte";
+  import BlockTrash from "./BlockTrash.svelte";
   import DocumentImport from "./DocumentImport.svelte";
   import SchemaMaps from "./SchemaMaps.svelte";
   import CanvasPill from "./CanvasPill.svelte";
@@ -18,11 +21,20 @@
   import EditDrawer from "./ui/EditDrawer.svelte";
   import { useWorkspaceContext, type SaveStatus } from "./workspaceContext.svelte";
   import { fitHeight } from "./fitHeight";
+  import { onBlockChange } from "./live";
+  import { followMirrors, mirrors } from "./mirrorStore.svelte";
+  import { buildStore, setPreferences } from "./build.svelte";
+  import type { OutlineBlock } from "./BlockEditor.svelte";
   const pane = useWorkspaceContext();
   /** Q17/Q19: a page is written (Write), drawn (Canvas) or mapped in the one mind-map editor (Map). */
   type NoteMode = "text" | "canvas" | "map";
   let noteMode = $state<NoteMode>("text");
-  let blocks = $state<NoteBlock[]>([]), blockReferences = $state<Record<string,string>>({}), citationCounts = $state<Record<string,number>>({});
+  let outlineText = $state(""), blockReferences = $state<Record<string,string>>({}), citationCounts = $state<Record<string,number>>({});
+  /** The block editor's text-flow blocks in reading order (the floating outline, find and word count read them). */
+  let outlineBlocks = $state.raw<OutlineBlock[]>([]);
+  let historyOpen = $state(false), trashOpen = $state(false);
+  /** The Mirror pane (Q11) beside the writing view: the browser tab the kitty extension mirrors. */
+  let mirrorOpen = $state(false);
   let openTabs = $state<number[]>([]), focusBlock = $state(""), tabDrag = 0;
   let pageMenu = $state<{id:number;x:number;y:number}|null>(null);
   let originals = $state<{id:number;name:string}[]>([]);
@@ -40,21 +52,48 @@
   async function openBlock(id:number,bid="") {
     focusBlock="";await openPage(id);
     if(!pane.active||pageId!==id||!(await setMode("text")))return;
-    revealBlock(bid);
-  }
-  /** Unfolds the block's collapsed ancestors and focuses it. */
-  function revealBlock(bid:string) {
-    const ancestors=new Set<string>();let parent=blocks.find(block=>block.id===bid)?.parent_id;
-    while(parent&&!ancestors.has(parent)){ancestors.add(parent);const ancestor=parent;parent=blocks.find(block=>block.id===ancestor)?.parent_id;}
-    if(blocks.some(block=>ancestors.has(block.id)&&block.collapsed)){blocks=blocks.map(block=>ancestors.has(block.id)?{...block,collapsed:false}:block);scheduleContent();}
+    // The block editor reveals the block, opening any collapsed parents.
     focusBlock=bid;
   }
   async function refreshReferences() {
     if(!pane.active||!pageId||document.hidden)return;
     const id=pageId;
-    try { const result=await api<BlocksResult>(`/notes/pages/${id}/blocks`);if(id!==pageId)return;blockReferences=result.references;citationCounts=result.citation_counts;
-      if(!dirty&&!saving&&result.revision!==pageRevision){await openPage(id,true);}
+    try { const result=await api<BlocksResult>(`/notes/pages/${id}/blocks`);if(id!==pageId)return;blockReferences=result.references;citationCounts=result.citation_counts;outlineText=result.blocks.map(block=>block.text).join("\n");
+      if(!dirty&&!saving&&result.revision!==pageRevision)await refreshPage(id);
     } catch { /* Save errors are shown by the writing pipeline, not background refresh. */ }
+  }
+  // Another window changed this page: take its title and canvas without disturbing the block editor.
+  async function refreshPage(id:number) {
+    const page=await api<Page>(`/notes/pages/${id}`);
+    if(id!==pageId||dirty||saving||gesture)return;
+    title=page.title;doc=page.document;pageRevision=page.revision;
+    selected=selected.filter(element=>doc.elements.some(e=>e.id===element));
+  }
+  // The block editor's own transactions move the page revision this view saves against.
+  function editorRevision(from:number,to:number,own:boolean) {
+    if(own&&pageRevision===from)pageRevision=to;
+  }
+  async function openLinkedPage(pageBlock:string) {
+    try{const found=await api<{root:{type:string;properties:{number?:number}}}>(`/blocks/page?${pageQuery({page:pageBlock})}`);
+      if(found.root.type==="page"&&found.root.properties.number)await openPage(found.root.properties.number);}
+    catch(cause){error=(cause as Error).message;}
+  }
+  async function createSubpage(): Promise<{page:string;title:string}|null> {
+    if(!notebookId)return null;
+    const page=await api<Page>("/notes/pages",{notebook_id:notebookId,title:"Untitled page"});
+    const state=await api<{page_id:string;root:{text:string}}>(`/blocks/page?${pageQuery({type:"page",number:page.id})}`);
+    void loadIndex();
+    return {page:state.page_id,title:state.root.text};
+  }
+  function blockDrag(event:DragEvent):string[]|null {
+    const raw=event.dataTransfer?.getData(BLOCK_DRAG_TYPE);
+    if(!raw)return null;
+    try{const ids=(JSON.parse(raw) as {ids?:unknown}).ids;return Array.isArray(ids)?ids.filter((id):id is string=>typeof id==="string"):null;}catch{return null;}
+  }
+  async function moveBlocksToPage(target:number,ids:string[]) {
+    if(target===pageId||!noteOutline)return;
+    try{if(await noteOutline.moveToPage(ids,{type:"page",number:target}))operationStatus=`Moved ${ids.length===1?"a block":`${ids.length} blocks`} to “${pages.find(page=>page.id===target)?.title??"page"}”`;}
+    catch(cause){error=(cause as Error).message;}
   }
   async function deletePageById(id:number) {pageMenu=null;if(id!==pageId){if(!(await beforeSwitch()))return;await openPage(id,false,true);if(pageId!==id)return;}await deletePage();}
   let presentation = $state<"map" | "editor">("map");
@@ -70,13 +109,12 @@
     const needle = pageFind.trim().toLocaleLowerCase();
     if (!needle) return;
     if (noteMode !== "text") { outline = true; return; }
-    const ordered = [...blocks].sort((a, b) => a.ordering - b.ordering);
-    const matches = ordered.filter(block => block.text.toLocaleLowerCase().includes(needle));
+    const matches = outlineBlocks.filter(block => block.text.toLocaleLowerCase().includes(needle));
     if (!matches.length) return;
     const next = matches[(matches.findIndex(block => block.id === findFrom) + 1) % matches.length];
     findFrom = next.id;
     focusBlock = "";
-    void tick().then(() => revealBlock(next.id));
+    void revealBlock(next.id);
   }
   async function rootSchema() { if (await beforeSwitch()) { presentation="map"; schemaFocus=null; } }
   async function notebookSchema(id:number) {
@@ -113,6 +151,10 @@
     try{await api(`/notes/pages/${pageId}/organize`,{favorite:!(pages.find(p=>p.id===pageId) as PageSummary & {favorite?:boolean})?.favorite});await loadIndex();}
     catch(cause){error=(cause as Error).message;}
   }
+  // A pane that becomes active again catches up on changes it skipped while inactive.
+  $effect(() => {
+    if (pane.active) untrack(() => void refreshReferences());
+  });
   $effect(() => {
     const book=notebooks.find(n=>n.id===notebookId);
     const crumbs=[];
@@ -281,15 +323,17 @@
     if (open) libraryDrawer?.querySelector<HTMLInputElement>("input[type=search]")?.focus();
     else libraryToggle?.focus();
   }
+  let noteOutline = $state<ReturnType<typeof NoteOutline>>();
+  /** Reveals a block in the editor (opening collapsed parents) even when it is already the focus target. */
+  async function revealBlock(id: string) { focusBlock = ""; await tick(); focusBlock = id; }
   async function openFromLibrary(id: number) { libraryOpen = false; await openPage(id); }
-  const tocEntries = $derived(blocks.filter(block => !block.parent_id && block.text.trim())
-    .sort((a, b) => a.ordering - b.ordering)
+  const tocEntries = $derived(outlineBlocks.filter(block => !block.parent_id && block.text.trim())
     .map(block => ({id: block.id, label: block.text.replace(/[`*#[\]()]/g, "").split(/[:;,.]/)[0].trim() || block.text.trim().slice(0, 40)})));
-  const wordCount = $derived(blocks.reduce((total, block) => total + (block.text.match(/\S+/g)?.length ?? 0), 0));
+  const wordCount = $derived(outlineBlocks.reduce((total, block) => total + (block.text.match(/\S+/g)?.length ?? 0), 0));
   function topBlock(id: string) {
     const seen = new Set<string>();
-    let block = blocks.find(item => item.id === id);
-    while (block?.parent_id && !seen.has(block.id)) { seen.add(block.id); block = blocks.find(item => item.id === block!.parent_id); }
+    let block = outlineBlocks.find(item => item.id === id);
+    while (block?.parent_id && !seen.has(block.id)) { seen.add(block.id); block = outlineBlocks.find(item => item.id === block!.parent_id); }
     return block?.id ?? "";
   }
   async function jumpToBlock(id: string) { focusBlock = ""; await tick(); focusBlock = id; tocCurrent = id; }
@@ -298,7 +342,6 @@
     try { localStorage.setItem("kitty.notes.outline", tocOpen ? "open" : "closed"); } catch { /* The outline still toggles. */ }
   }
   // Q6/Q8: rare page actions sit in ⋯; import, privacy and layers open drawers.
-  let blockPreview = $state(false);
   let importOpen = $state(false), privacyOpen = $state(false), layersOpen = $state(false), cleanupResult = $state("");
   let folderFocus = $state<number | null>(null);
   let notebookId = $state(0),
@@ -350,7 +393,7 @@
   });
   export function hasUnsavedChanges(): boolean {
     return dirty || viewDirty || Boolean(saving) || Boolean(viewSaving) || blocked || Boolean(viewError) ||
-      gesture !== null || Boolean(mapEditor?.hasUnsavedChanges());
+      gesture !== null || Boolean(mapEditor?.hasUnsavedChanges()) || Boolean(noteOutline?.pending());
   }
   export function isCanvasFullscreen(): boolean {
     return Boolean(stage && document.fullscreenElement === stage);
@@ -386,16 +429,10 @@
   let ink = $state(CANVAS_INK), paper = $state(getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim());
   const images = new Map<string, HTMLImageElement>(),
     pointers = new Map<number, Point>();
-  let penOnly = $state(false),
-    penActive: number | null = null,
+  // Pen mode is the build's `ui.notes.pen_only`.
+  const penOnly = $derived(buildStore.build.ui.notes.pen_only);
+  let penActive: number | null = null,
     penGuardUntil = 0;
-  function savePenMode() {
-    try {
-      localStorage.setItem("kitty.notes.pen-only", String(penOnly));
-    } catch {
-      /* The current writing mode still works. */
-    }
-  }
   const activeNotebook = $derived(notebooks.find((n) => n.id === notebookId));
   const selectedElements = $derived(
     doc.elements.filter((e) => selected.includes(e.id)),
@@ -477,7 +514,7 @@
     try {
       sessionStorage.setItem(
         recoveryKey(),
-        JSON.stringify({ revision: pageRevision, title, document: doc, blocks }),
+        JSON.stringify({ revision: pageRevision, title, document: doc }),
       );
     } catch {
       error =
@@ -522,22 +559,18 @@
     const id = pageId,
       generation = contentGeneration,
       document = clone(doc),
-      pageTitle = title,
-      outlineBlocks = $state.snapshot(blocks),
-      rev = pageRevision;
+      pageTitle = title;
     saveStatus = "Saving locally…";
     saving = (async () => {
       try {
-        const result = await api<BlocksResult>(`/notes/pages/${id}/blocks`, {
-          revision: rev,
-          title: pageTitle,
-          document,
-          blocks: outlineBlocks,
-        });
+        // Title and canvas save over HTTP; the block editor's own transactions wait meanwhile.
+        const write = async () => {
+          const saved = await api<Page>(`/notes/pages/${id}`, { revision: pageRevision, title: pageTitle, document });
+          if (pageId === id) pageRevision = saved.revision;
+          return saved.revision;
+        };
+        await (noteOutline ? noteOutline.exclusive(write) : write());
         if (pageId !== id) return;
-        pageRevision = result.revision;
-        blockReferences = result.references;
-        citationCounts = result.citation_counts;
         pages = pages.map(page => page.id === id ? {...page, title: pageTitle} : page);
         noteTitles = noteTitles.map(page => page.id === id ? {...page, title: pageTitle} : page);
         pageUpdated = new Date().toISOString();
@@ -613,6 +646,7 @@
     finishActiveGesture();
     await saveContent();
     await saveView();
+    await noteOutline?.flush();
     if (dirty) { error ||= "Save or export these local edits before switching pages."; return; }
     loading = true;
     error = "";
@@ -620,7 +654,7 @@
       const page = await api<Page>(`/notes/pages/${id}`);
       const blockData = await api<BlocksResult>(`/notes/pages/${id}/blocks`);
       if(page.revision!==blockData.revision)throw new Error("Page changed while opening; open it again to load one consistent revision.");
-      blocks=blockData.blocks;blockReferences=blockData.references;citationCounts=blockData.citation_counts;
+      outlineText=blockData.blocks.map(block=>block.text).join("\n");blockReferences=blockData.references;citationCounts=blockData.citation_counts;
       if(!openTabs.includes(id)){openTabs=[...openTabs,id];persistTabs();}
       originals=[];
       void api<{originals:typeof originals}>(`/documents/originals?page_id=${id}`).then(result=>{if(pageId===id)originals=result.originals;}).catch(()=>{});
@@ -654,7 +688,6 @@
           {
             doc = pending.document;
             title = pending.title;
-            if(Array.isArray(pending.blocks))blocks=pending.blocks;
             dirty = true;
             contentGeneration++;
             if (pending.revision !== pageRevision) {
@@ -686,8 +719,10 @@
     finishActiveGesture();
     await saveContent();
     await saveView();
+    await noteOutline?.flush();
     if (dirty) error ||= "These edits could not save. Retry or export before switching pages.";
-    return pane.active && !dirty;
+    else if (noteOutline?.pending()) error ||= "Block edits are still being saved. Try again in a moment.";
+    return pane.active && !dirty && !noteOutline?.pending();
   }
   function finishFullscreenLayout() {
     resetNavigationContacts();
@@ -767,24 +802,25 @@
     if (
       !pane.active || !pageId ||
       !confirm(
-        "Permanently delete this page? Export it first if you want a copy.",
+        "Move this page to Trash? You can restore it from Trash for 30 days.",
       )
     )
       return;
     try {
       await saveContent();
       if (dirty) return;
-      await api(`/notes/pages/${pageId}/delete`, {
-        revision: pageRevision,
-        confirm: true,
-      });
+      const id = pageId;
+      const remove = async () => {
+        await api(`/notes/pages/${id}/delete`, { revision: pageRevision, confirm: true });
+        return null;
+      };
+      await (noteOutline ? noteOutline.exclusive(remove) : remove());
       try {
         sessionStorage.removeItem(recoveryKey());
       } catch {
         /* best effort */
       }
       openTabs=openTabs.filter(id=>id!==pageId);persistTabs();
-      blocks=[];
       pageId = 0;
       doc = emptyDocument();
       title="";
@@ -1534,7 +1570,7 @@
         const attachments = [];
         let bytes = 0;
         for (const id of refs) {
-          const response = await fetch(`/api/notes/attachments/${id}`);
+          const response = await apiFetch(`/notes/attachments/${id}`);
           if (!response.ok)
             throw new Error("Reference unavailable; export stopped");
           const blob = await response.blob();
@@ -1551,6 +1587,8 @@
           });
           attachments.push({ id, name: "Reference.png", data });
         }
+        await noteOutline?.flush();
+        const blocks = (await api<BlocksResult>(`/notes/pages/${pageId}/blocks`)).blocks;
         downloadBlob(
           new Blob(
             [
@@ -1678,7 +1716,8 @@
     { label: "Library overview", onselect: () => void rootSchema(), disabled: presentation === "map" },
     { label: "Import PDF or Markdown…", onselect: () => { importOpen = true; } },
     { label: favourite ? "Unfavourite" : "Favourite", onselect: () => void favoritePage(), disabled: !pageId },
-    ...(noteMode === "text" ? [{ label: blockPreview ? "Edit outline" : "Preview outline", onselect: () => { blockPreview = !blockPreview; }, disabled: !pageId }] : []),
+    { label: "Page history…", onselect: () => { historyOpen = true; }, disabled: !pageId },
+    { label: "Trash…", onselect: () => { trashOpen = true; } },
     ...(noteMode === "canvas" ? [{ label: "Canvas fullscreen", onselect: () => void toggleFullscreen(), disabled: !pageId || presentation !== "editor" }] : []),
     { label: "Privacy & storage…", onselect: () => { cleanupResult = ""; privacyOpen = true; } },
     { label: "Reload saved", onselect: reloadSaved, disabled: !pageId || loading },
@@ -1703,17 +1742,24 @@
     }
   }
   onMount(() => {
+    // The floating outline's open state is device state (pen mode is the build's `ui.notes.pen_only`).
     try {
-      penOnly = localStorage.getItem("kitty.notes.pen-only") === "true";
       const outlinePreference = localStorage.getItem("kitty.notes.outline");
       tocOpen = outlinePreference ? outlinePreference === "open" : innerWidth >= 1100;
     } catch {
-      /* Use normal pointer input when storage is unavailable. */
+      tocOpen = innerWidth >= 1100;
     }
     void loadIndex().then(() => { indexReady = true; });
+    followMirrors();
     const openLinkedPage=(event:Event)=>{if(!pane.active)return;const id=(event as CustomEvent).detail?.page_id;if(id)void openPage(Number(id));};
     window.addEventListener("kitty-open-note",openLinkedPage);
-    const referenceTimer=setInterval(()=>void refreshReferences(),4000);
+    // Live push replaces polling: a change saved in any window refreshes this one now.
+    let indexTimer: ReturnType<typeof setTimeout> | undefined;
+    const stopLive=onBlockChange(change=>{
+      if(change&&change.root?.type!=="page")return;
+      clearTimeout(indexTimer);indexTimer=setTimeout(()=>void loadIndex(),250);
+      if(!change||change.root?.number===pageId)void refreshReferences();
+    });
     const clockTimer=setInterval(()=>clock=Date.now(),30000);
     window.addEventListener("focus",refreshReferences);
     const syncColors=()=>{
@@ -1759,13 +1805,14 @@
         finishActiveGesture();
         void saveContent();
         void saveView();
-      }
+      } else void refreshReferences();
     };
     window.addEventListener("beforeunload", unload);
     document.addEventListener("visibilitychange", visibility);
     return () => {
       observer.disconnect();
-      clearInterval(referenceTimer);
+      stopLive();
+      clearTimeout(indexTimer);
       clearInterval(clockTimer);
       window.removeEventListener("focus",refreshReferences);
       window.removeEventListener("kitty-open-note",openLinkedPage);
@@ -1814,11 +1861,15 @@
       if (e.kind === "image" && e.attachment && !images.has(e.attachment)) {
         const image = new Image();
         images.set(e.attachment, image);
-        image.onload = () => imageEpoch++;
-        image.onerror = () => {
+        const failed = () => {
           error = "A registered local reference could not load.";
         };
-        image.src = `/api/notes/attachments/${e.attachment}`;
+        // An <img> cannot carry the UI secret's header: load the bytes, then show them.
+        apiObjectUrl(`/notes/attachments/${e.attachment}`).then((url) => {
+          image.onload = () => { URL.revokeObjectURL(url); imageEpoch++; };
+          image.onerror = () => { URL.revokeObjectURL(url); failed(); };
+          image.src = url;
+        }, failed);
       }
     }
   });
@@ -1853,7 +1904,7 @@
       {@const book = notebooks.findIndex(notebook=>notebook.id===(id===pageId?notebookId:summary?.notebook_id))}
       <div class:active={id===pageId && presentation==="editor"} class="note-tab">
         <button aria-current={id===pageId && presentation==="editor"?"page":undefined} draggable={!fullscreen}
-          ondragstart={()=>tabDrag=id} ondragover={event=>event.preventDefault()} ondrop={event=>{event.preventDefault();reorderTab(id);}}
+          ondragstart={()=>tabDrag=id} ondragover={event=>event.preventDefault()} ondrop={event=>{event.preventDefault();const ids=blockDrag(event);if(ids)void moveBlocksToPage(id,ids);else reorderTab(id);}}
           oncontextmenu={event=>{event.preventDefault();if(!fullscreen)pageMenu={id,x:event.clientX,y:event.clientY};}}
           onclick={()=>void openPage(id)}><i class="tab-dot" aria-hidden="true" style:background={book<0?"var(--subtle)":`var(--c${book%6+1})`}></i><span>{id===pageId?title||"Untitled":summary?.title||`Page ${id}`}</span></button>
         <button class="tab-close" aria-label={`Close ${summary?.title||"page"} tab`} onclick={()=>void closeTab(id)}><Icon name="close" size={12}/></button>
@@ -1877,6 +1928,10 @@
         oninput={() => { findFrom = ""; if (pageFind && noteMode === "canvas") outline = true; }}
         onkeydown={(event) => { if (event.key === "Enter") { event.preventDefault(); findNext(); } }} />
     </Popover>
+    <button class="icon-button mirror-toggle" aria-pressed={mirrorOpen} disabled={!pageId || noteMode!=="text" || presentation!=="editor"}
+      aria-label={mirrors.list.length ? `Mirror (${mirrors.list.length} live)` : "Mirror"}
+      title="Mirror: the browser tab the rika! extension is mirroring, beside this page"
+      onclick={()=>mirrorOpen=!mirrorOpen}><Icon name="external" size={15}/>{#if mirrors.list.length}<span class="mirror-live" aria-hidden="true"></span>{/if}</button>
     <OverflowMenu items={pageActions} label="More page actions" />
   </header>
   {#if operationStatus}<p class="op-status" role="status">{operationStatus}</p>{/if}
@@ -1901,6 +1956,7 @@
       <NotesLibrary {folders} {notebooks} {pages} {notebookId} {pageId} {search} {folderFocus}
         busy={loading || busy} onrefresh={loadIndex} onopenpage={openFromLibrary} onselectnotebook={notebookSchema}
         onnewpage={async () => { libraryOpen = false; await createPage(); }} onbeforeswitch={beforeSwitch} onerror={message => error = message} ondeletepage={deletePageById}
+        onblocksdrop={(page, event) => { const ids = blockDrag(event); if (ids) void moveBlocksToPage(page, ids); return !!ids; }}
         onsearch={value => { search = value; clearTimeout(searchTimer); searchTimer = setTimeout(() => void loadIndex(), 250); }} />
       {#if presentation==="editor"}
         <form class="wiki-link" onsubmit={event=>{event.preventDefault();libraryOpen=false;void resolveLink();}}>
@@ -1910,7 +1966,7 @@
           <Button size="sm" type="submit" disabled={!linkTitle.trim()}>Open / create</Button>
         </form>
         <Button size="sm" variant="ghost" aria-pressed={relatedOpen} onclick={()=>relatedOpen=!relatedOpen}>Connections</Button>
-        {#if relatedOpen && noteMode!=="text"}<NoteReferences pageId={pageId} text={`${title}\n${textElements.map(e=>e.text||"").join("\n")}\n${blocks.map(b=>b.text).join("\n")}`} onopen={id=>void openFromLibrary(id)} onlink={linkMention}/>{/if}
+        {#if relatedOpen && noteMode!=="text"}<NoteReferences pageId={pageId} text={`${title}\n${textElements.map(e=>e.text||"").join("\n")}\n${outlineText}`} onopen={id=>void openFromLibrary(id)} onlink={linkMention}/>{/if}
       {/if}
     </aside>
     <div class="canvas-main">
@@ -1923,7 +1979,7 @@
       {/if}
       <div class="editor-shell" hidden={presentation!=="editor"} inert={loading}>
       <div class="writing-view" hidden={noteMode!=="text"}>
-        <div class="writing" class:toc-open={tocOpen && tocEntries.length>0} onfocusin={event=>{const id=(event.target as HTMLElement).closest<HTMLElement>("[data-block]")?.dataset.block;if(id)tocCurrent=topBlock(id);}}>
+        <div class="writing" class:toc-open={tocOpen && tocEntries.length>0} class:mirror-open={mirrorOpen} onfocusin={event=>{const id=(event.target as HTMLElement).closest<HTMLElement>("[data-block-id]")?.dataset.blockId;if(id)tocCurrent=topBlock(id);}}>
           <div class="page-column">
             {#if pageId}<p class="page-meta">{[activeNotebook?.title, edited].filter(Boolean).join(" · ")}</p>{/if}
             <!-- Q17: the title is the page's H1, set in the title face; the field is its content. -->
@@ -1940,7 +1996,10 @@
                 scheduleContent();
               }}
             /></h1>
-            {#if pageId}{#key pageId}<NoteBlocks bind:preview={blockPreview} {pageId} {blocks} references={blockReferences} counts={citationCounts} pages={noteTitles} {focusBlock} onchange={value=>{blocks=value;scheduleContent();}} onpage={value=>void resolveLink(value)} onopen={openBlock}/>{/key}{/if}
+            {#if pageId}{#key pageId}<NoteOutline bind:this={noteOutline} {pageId} references={blockReferences} counts={citationCounts} pages={noteTitles} {focusBlock}
+              onpage={value=>void resolveLink(value)} onopen={openBlock} onopenpage={pageBlock=>void openLinkedPage(pageBlock)} oncreatepage={createSubpage}
+              mirror={mirrorOpen} onclosemirror={()=>mirrorOpen=false} onblocks={list=>outlineBlocks=list}
+              onrevision={editorRevision} onerror={message=>error=message}/>{/key}{/if}
           </div>
           {#if tocEntries.length}
             <nav class="page-toc" class:open={tocOpen} aria-label="On this page">
@@ -1952,6 +2011,8 @@
             </nav>
           {/if}
         </div>
+      {#if historyOpen && pageId}<BlockHistory page={{type:"page",number:pageId}} title={title} onclose={()=>historyOpen=false}/>{/if}
+      {#if trashOpen}<BlockTrash onclose={()=>trashOpen=false} onopen={id=>{trashOpen=false;void loadIndex().then(()=>openPage(id));}}/>{/if}
       </div>
       {#if noteMode==="map" && pageId}
         <!-- Q19: Map is the one mind-map editor, full-bleed in the stage; it loads the page's own map. -->
@@ -2034,7 +2095,7 @@
             <label class="pill-range">Text size<span><input type="number" min="8" max="120" bind:value={fontSize}/></span></label>
             <span class="eyebrow">Canvas</span>
             <div class="pill-menu-row">
-              <label class="check" title="Only a pen draws; touch pans"><input type="checkbox" bind:checked={penOnly} onchange={savePenMode}/>Pen mode</label>
+              <label class="check" title="Only a pen draws; touch pans"><input type="checkbox" checked={penOnly} onchange={(event) => void setPreferences({ ui: { notes: { pen_only: event.currentTarget.checked } } })}/>Pen mode</label>
               <label class="check"><input type="checkbox" checked={doc.snap} onchange={(e) => commit({ ...doc, snap: e.currentTarget.checked })}/>Snap</label>
             </div>
             <div class="pill-menu-row zoom-row">
@@ -2160,7 +2221,7 @@
     {#if originals.length}
       <div class="drawer-group">
         <span class="eyebrow">Originals</span>
-        {#each originals as original}<a href={`/api/documents/originals/${original.id}`} download>{original.name}</a>{/each}
+        {#each originals as original}<a href={`/api/documents/originals/${original.id}`} download onclick={followApiLink}>{original.name}</a>{/each}
       </div>
     {/if}
   </EditDrawer>
@@ -2336,6 +2397,10 @@
   .canvas-main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .editor-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .editor-shell[hidden], .writing-view[hidden], .canvas-panel[hidden] { display: none; }
+  /* The Mirror pane (Q11) sits beside the blocks: the column takes the room it needs. */
+  .writing.mirror-open .page-column { max-width: none; }
+  .mirror-toggle { position: relative; }
+  .mirror-live { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 
   /* Write: the title is the page's H1 with a small meta line, then the blocks. The column
      reserves room for the floating outline instead of running under it. */

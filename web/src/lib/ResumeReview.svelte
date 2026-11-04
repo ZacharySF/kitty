@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { followApiLink } from "./api";
   export type ResumeAudit = {
     id: string;
     track: string;
@@ -84,10 +85,11 @@
       class="button"
       href="/api/resumes/versions/{version.id}/pdf"
       target="_blank"
-      rel="noopener noreferrer">Preview candidate PDF (o)</a
-    ><a class="button" href="/api/resumes/versions/{version.id}/audit" download
+      rel="noopener noreferrer"
+      onclick={followApiLink}>Preview candidate PDF (o)</a
+    ><a class="button" href="/api/resumes/versions/{version.id}/audit" download onclick={followApiLink}
       >Download full audit</a
-    ><a class="button" href="/api/resumes/versions/{version.id}/diff" download
+    ><a class="button" href="/api/resumes/versions/{version.id}/diff" download onclick={followApiLink}
       >Download exact diff</a
     >
   </div>

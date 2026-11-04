@@ -1,4 +1,4 @@
-import { api } from "../api";
+import { api, socketProtocols } from "../api";
 import { Mic, MicError } from "./mic";
 import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
 
@@ -73,7 +73,7 @@ export class RikaSession {
   start(onnavigate: (view: string) => void): () => void {
     this.onnavigate = onnavigate;
     this.stopped = false;
-    this.connect();
+    void this.connect();
     void this.loadHistory();
     void this.loadAgents();
     return () => this.stop();
@@ -88,9 +88,12 @@ export class RikaSession {
     this.connected = false;
   }
 
-  private connect() {
+  private async connect() {
     if (this.stopped) return;
-    const socket = new WebSocket(rikaSocketUrl(window.location));
+    // The upgrade carries this window's UI secret as a subprotocol (kitty.web_auth).
+    const protocols = await socketProtocols();
+    if (this.stopped || this.socket) return;
+    const socket = new WebSocket(rikaSocketUrl(window.location), protocols);
     this.socket = socket;
     socket.onopen = () => {
       if (this.socket !== socket) return;
@@ -109,7 +112,7 @@ export class RikaSession {
       // The backend's transcription belonged to this socket; whatever was being said is lost.
       if (this.listening) this.voiceFailed("Rika's connection dropped while listening; nothing was sent");
       if (this.stopped) return;
-      this.retryTimer = window.setTimeout(() => this.connect(), RETRY_MS[Math.min(this.retry, RETRY_MS.length - 1)]);
+      this.retryTimer = window.setTimeout(() => void this.connect(), RETRY_MS[Math.min(this.retry, RETRY_MS.length - 1)]);
       this.retry += 1;
     };
   }

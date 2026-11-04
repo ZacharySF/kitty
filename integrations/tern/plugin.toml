@@ -1,0 +1,12 @@
+schema = 1
+id = "kitty"
+name = "rika!"
+version = "0.1.0"
+description = "Send panes, selections, failed commands and web pages to rika!, and see its Inbox in a block."
+icon = "inbox"
+host = "host.luau"
+window = "window.luau"
+
+[[blocks]]
+id = "inbox"
+title = "rika! Inbox"

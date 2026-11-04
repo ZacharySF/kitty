@@ -1,7 +1,9 @@
 """One-time move of Notes' concept maps into schema maps, its export/revert, and the page ↔ map link."""
 from __future__ import annotations
 
+import dataclasses
 import json
+import shutil
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,8 +11,10 @@ from types import SimpleNamespace
 import pytest
 
 from kitty import web_notes
-from kitty.core import concept_maps, notes, schema_maps
+from kitty.core import blocks, concept_maps, notes, schema_maps
 from kitty.core.workspace import open_workspace
+from kitty.db import connect, migrate
+from kitty.db.migrations import available_migrations
 from kitty.web_server import APIError
 
 LONG = "Energy " + "x" * 250
@@ -52,13 +56,45 @@ def concept_document():
     return document
 
 
-def make_page(conn, title="Cell energy", document=None, notebook=None):
+#: Main's own migrations before the block backend (034-036 included): the schema a released
+#: rika! had when its pages still lived in note_pages with their canvas documents.
+MAIN_SCHEMA = {"record_events", "calendar_palette_subjects", "note_page_maps"}
+
+
+@pytest.fixture
+def legacy(workspace, tmp_path):
+    """A database at main's pre-block schema; `upgrade()` then runs every migration since."""
+    early = tmp_path / "main-schema"
+    early.mkdir()
+    for migration in available_migrations():
+        if migration.version < 32 or migration.name in MAIN_SCHEMA:
+            shutil.copy(migration.path, early / migration.path.name)
+    settings = dataclasses.replace(workspace.settings, db_path=tmp_path / "data" / "legacy.db")
+    conn = connect(settings.db_path)
+    migrate(conn, early)
+    space = SimpleNamespace(settings=settings, conn=conn, upgrade=lambda: migrate(conn))
+    yield space
+    conn.close()
+
+
+def legacy_page(conn, title="Cell energy", document=None, notebook=None):
+    """A note page as main stored it: a note_pages row with its canvas document."""
+    if notebook is None:
+        notebook = conn.execute("INSERT INTO note_notebooks(title, created_at, updated_at) VALUES ('Biology', 't', 't')").lastrowid
+    page_id = conn.execute("INSERT INTO note_pages(notebook_id, title, document, created_at, updated_at) VALUES (?, ?, ?, 't', 't')",
+                           (notebook, title, json.dumps(document or notes.empty_document()))).lastrowid
+    return {"id": page_id, "notebook_id": notebook}
+
+
+def make_page(conn, title="Cell energy", notebook=None):
+    """A note page as the block backend stores it."""
     notebook = notebook or notes.create_notebook(conn, "Biology")
-    page = notes.create_page(conn, notebook["id"], title)
-    if document is not None:
-        # Written raw: connector labels and an image without a registered attachment are synthetic.
-        conn.execute("UPDATE note_pages SET document=? WHERE id=?", (json.dumps(document), page["id"]))
-    return page
+    return notes.create_page(conn, notebook["id"], title)
+
+
+def root_block(conn, page_id):
+    return conn.execute("SELECT id FROM blocks WHERE type='page' AND parent_id IS NULL AND "
+                        "json_extract(properties, '$.number')=?", (page_id,)).fetchone()[0]
 
 
 def raw_document(conn, page_id):
@@ -72,6 +108,11 @@ def link_row(conn, page_id):
 
 def exports(workspace):
     return workspace.settings.data_dir / "exports"
+
+
+def concept_exports(workspace):
+    """The concept-map exports (the block migration's own notes export sits beside them)."""
+    return sorted(exports(workspace).glob("concept-maps-*.json"))
 
 
 def small_concepts(*labels):
@@ -115,10 +156,12 @@ def test_roots_without_incoming_connectors_lead_the_forest():
     assert [node["label"] for node in concept_maps.concept_graph(blank)["nodes"]] == ["Concept", "Concept"]
 
 
-def test_migration_exports_first_then_creates_maps_without_touching_pages(workspace, monkeypatch):
-    conn = workspace.conn
-    page = make_page(conn, document=concept_document())
-    plain = make_page(conn, "Plain ink", document=small_concepts("Alone"))
+def test_migration_exports_first_then_creates_maps_without_touching_pages(legacy, monkeypatch):
+    conn = legacy.conn
+    workspace = legacy
+    page = legacy_page(conn, document=concept_document())
+    plain = legacy_page(conn, "Plain ink", document=small_concepts("Alone"))
+    legacy.upgrade()
     before = raw_document(conn, page["id"])
     page_row = dict(conn.execute("SELECT * FROM note_pages WHERE id=?", (page["id"],)).fetchone())
 
@@ -158,14 +201,16 @@ def test_migration_exports_first_then_creates_maps_without_touching_pages(worksp
 
     again = concept_maps.migrate(conn, exports(workspace))
     assert again == {"migrated": [], "skipped": [], "export": None}
-    assert len(list(exports(workspace).iterdir())) == 1
+    assert len(concept_exports(workspace)) == 1
     assert conn.execute("SELECT count(*) FROM schema_maps").fetchone()[0] == 1
 
 
-def test_revert_removes_migrated_maps_and_allows_rerunning(workspace):
-    conn = workspace.conn
-    page = make_page(conn, document=concept_document())
-    own = make_page(conn, "Hand made")
+def test_revert_removes_migrated_maps_and_allows_rerunning(legacy):
+    conn = legacy.conn
+    workspace = legacy
+    page = legacy_page(conn, document=concept_document())
+    own = legacy_page(conn, "Hand made")
+    legacy.upgrade()
     own_map = concept_maps.create_page_map(conn, own["id"])["map_id"]
     first = concept_maps.migrate(conn, exports(workspace))
     migrated_map = link_row(conn, page["id"])["map_id"]
@@ -178,7 +223,7 @@ def test_revert_removes_migrated_maps_and_allows_rerunning(workspace):
 
     second = concept_maps.migrate(conn, exports(workspace))
     assert second["migrated"] == [page["id"]] and second["export"] != first["export"]
-    assert len(list(exports(workspace).iterdir())) == 2
+    assert len(concept_exports(workspace)) == 2
     assert link_row(conn, page["id"])["migrated"] == 1
 
     bogus = exports(workspace) / "bogus.json"
@@ -187,25 +232,30 @@ def test_revert_removes_migrated_maps_and_allows_rerunning(workspace):
         concept_maps.revert(conn, bogus)
 
 
-def test_nothing_to_move_sets_the_marker_without_an_export(workspace):
-    conn = workspace.conn
-    make_page(conn, document=small_concepts("Alone"))
-    assert concept_maps.migrate(conn, exports(workspace)) == {"migrated": [], "skipped": [], "export": None}
+def test_nothing_to_move_sets_the_marker_without_an_export(legacy):
+    conn = legacy.conn
+    legacy_page(conn, document=small_concepts("Alone"))
+    later = legacy_page(conn, "Later", document=concept_document())
+    legacy.upgrade()
+    # A page already in Trash is not moved.
+    blocks.transact(conn, [{"op": "delete", "id": root_block(conn, later["id"])}])
+    assert concept_maps.migrate(conn, exports(legacy)) == {"migrated": [], "skipped": [], "export": None}
     assert conn.execute("SELECT export_path FROM concept_map_migration").fetchone()[0] is None
-    assert not exports(workspace).exists()
-    make_page(conn, "Later", document=concept_document())
-    assert concept_maps.migrate(conn, exports(workspace))["migrated"] == []
+    assert concept_exports(legacy) == []
+    blocks.transact(conn, [{"op": "restore", "id": root_block(conn, later["id"])}])
+    assert concept_maps.migrate(conn, exports(legacy))["migrated"] == [], "the move runs once"
 
 
-def test_oversized_graphs_and_map_limit_leave_pages_unmigrated(workspace, monkeypatch):
-    conn = workspace.conn
+def test_oversized_graphs_and_map_limit_leave_pages_unmigrated(legacy, monkeypatch):
+    conn = legacy.conn
+    workspace = legacy
+    big = legacy_page(conn, "Big", small_concepts("a", "b", "c", "d"))
+    fits = legacy_page(conn, "Fits", small_concepts("a", "b"), big["notebook_id"])
+    late = legacy_page(conn, "Late", small_concepts("a", "b"), big["notebook_id"])
+    legacy.upgrade()
     monkeypatch.setattr(schema_maps, "MAX_MAPS", 2)
     monkeypatch.setattr(schema_maps, "MAX_NODES", 3)
     schema_maps.create(conn, {"title": "Existing", "mode": "general"})
-    book = notes.create_notebook(conn, "Limits")
-    big = make_page(conn, "Big", small_concepts("a", "b", "c", "d"), book)
-    fits = make_page(conn, "Fits", small_concepts("a", "b"), book)
-    late = make_page(conn, "Late", small_concepts("a", "b"), book)
     before = raw_document(conn, late["id"])
 
     result = concept_maps.migrate(conn, exports(workspace))
@@ -220,7 +270,7 @@ def test_oversized_graphs_and_map_limit_leave_pages_unmigrated(workspace, monkey
         concept_maps.create_page_map(conn, late["id"])
 
 
-def test_page_map_is_created_once_and_links_cascade(workspace):
+def test_page_map_is_created_once_follows_trash_and_goes_with_a_purge(workspace):
     conn = workspace.conn
     page = make_page(conn, "Krebs cycle")
     assert concept_maps.page_map(conn, page["id"]) == {"map_id": None}
@@ -242,12 +292,22 @@ def test_page_map_is_created_once_and_links_cascade(workspace):
     replacement = concept_maps.create_page_map(conn, page["id"])
     assert link_row(conn, page["id"]) == {"map_id": replacement["map_id"], "migrated": 0}
 
+    # Deleting the page moves it to Trash: the link stays, so a restored page keeps its map.
+    root = root_block(conn, page["id"])
     notes.delete_page(conn, page["id"], notes.page(conn, page["id"])["revision"])
+    assert link_row(conn, page["id"]) == {"map_id": replacement["map_id"], "migrated": 0}
+    with pytest.raises(notes.NotesError):
+        concept_maps.page_map(conn, page["id"])
+    blocks.transact(conn, [{"op": "restore", "id": root}])
+    assert concept_maps.page_map(conn, page["id"]) == replacement
+    # Purging the page (Trash expiry) removes the link; the map itself stays.
+    blocks.transact(conn, [{"op": "delete", "id": root}])
+    blocks.transact(conn, [{"op": "purge", "id": root}])
     assert conn.execute("SELECT count(*) FROM note_page_maps").fetchone()[0] == 0
     assert schema_maps.load(conn, replacement["map_id"])["title"] == "Krebs cycle"
 
     blank = make_page(conn, "Temp")
-    conn.execute("UPDATE note_pages SET title='' WHERE id=?", (blank["id"],))
+    blocks.transact(conn, [{"op": "text", "id": root_block(conn, blank["id"]), "text": ""}])
     untitled = schema_maps.load(conn, concept_maps.create_page_map(conn, blank["id"])["map_id"])
     assert untitled["title"] == "Untitled page" and untitled["graph"]["nodes"][0]["label"] == "Untitled page"
 
@@ -277,11 +337,12 @@ def test_page_map_routes(workspace, monkeypatch):
     assert full.value.status == 400 and "At most 1 maps" in str(full.value)
 
 
-def test_opening_the_workspace_runs_the_migration_once(workspace):
-    conn = workspace.conn
-    page = make_page(conn, document=concept_document())
-    with open_workspace(workspace.settings) as opened:
+def test_opening_a_workspace_at_mains_schema_converts_pages_then_moves_their_maps_once(legacy):
+    page = legacy_page(legacy.conn, document=concept_document())
+    legacy.conn.commit()
+    with open_workspace(legacy.settings) as opened:
         assert link_row(opened.conn, page["id"])["migrated"] == 1
-    with open_workspace(workspace.settings):
+        assert concept_maps.page_map(opened.conn, page["id"]) == {"map_id": link_row(opened.conn, page["id"])["map_id"]}
+    with open_workspace(legacy.settings):
         pass
-    assert len(list(exports(workspace).iterdir())) == 1
+    assert len(concept_exports(legacy)) == 1

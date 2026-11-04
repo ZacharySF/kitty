@@ -12,7 +12,7 @@ globalThis.localStorage = {
   clear: () => store.clear(),
 };
 const { brainGroups, layoutBrain, brainStyle, brainScaffold, brainAnatomy, brainRegionAt, brainShell, BRAIN_HUB, BRAIN_REGIONS, expandPalette, isolateModel, BRAIN_PALETTE } = await import("../src/lib/brain/brainLayout.ts");
-const { BRAIN_COLOURS_KEY, BRAIN_VIEW_KEY, DEFAULT_BRAIN_VIEW, loadBrainColours, loadBrainView, saveBrainColours, saveBrainView } = await import("../src/lib/brain/brainSettings.ts");
+const { BRAIN_PANEL_KEY, DEFAULT_BRAIN_VIEW, brainColours, brainPreference, brainView, loadBrainPanel, saveBrainPanel } = await import("../src/lib/brain/brainSettings.ts");
 
 const data = syntheticBrain({ total: 4000 });
 const index = (id) => data.nodes.findIndex((node) => node.id === id);
@@ -339,27 +339,35 @@ test("isolating one group lays out only its nodes, filling the stage", () => {
   assert.equal(new Set(placed.groups.filter((group) => group >= 0)).size, opened.groups.length);
 });
 
-test("view settings persist, coerce junk and reset to defaults", () => {
-  assert.deepEqual(loadBrainView(), DEFAULT_BRAIN_VIEW);
-  saveBrainView({ ...DEFAULT_BRAIN_VIEW, layout: "wheel", speed: 1.5 });
-  assert.equal(loadBrainView().layout, "wheel");
-  assert.equal(loadBrainView().speed, 1.5);
-  saveBrainView({ ...DEFAULT_BRAIN_VIEW, background: "black" });
-  assert.equal(loadBrainView().background, "black");
+test("view settings round-trip through the build, coerce junk and reset to defaults", () => {
+  assert.deepEqual(brainView(undefined), DEFAULT_BRAIN_VIEW);
+  const wheel = { ...DEFAULT_BRAIN_VIEW, layout: "wheel", speed: 1.5 };
+  assert.deepEqual(brainPreference(wheel), {
+    layout: "wheel", group_by: "section", labels: "hover", turning: true, speed: 1.5,
+    lines: false, scaffold: true, point_size: 1, background: "transparent",
+  }, "the build keeps snake_case keys and never the panel");
+  assert.deepEqual(brainView(brainPreference(wheel)), wheel);
+  assert.equal(brainView(brainPreference({ ...DEFAULT_BRAIN_VIEW, background: "black" })).background, "black");
   assert.equal(DEFAULT_BRAIN_VIEW.background, "transparent");
   assert.equal(DEFAULT_BRAIN_VIEW.panel, false, "the View panel starts closed");
-  localStorage.setItem(BRAIN_VIEW_KEY, JSON.stringify({ layout: "donut", groupBy: "type", speed: 99, pointSize: "big", lines: "yes", background: "plaid" }));
-  assert.deepEqual(loadBrainView(), { ...DEFAULT_BRAIN_VIEW, groupBy: "type", speed: 3 });
-  localStorage.setItem(BRAIN_VIEW_KEY, "{not json");
-  assert.deepEqual(loadBrainView(), DEFAULT_BRAIN_VIEW);
+  assert.deepEqual(brainView({ layout: "donut", group_by: "type", speed: 99, point_size: "big", lines: "yes", background: "plaid" }),
+    { ...DEFAULT_BRAIN_VIEW, groupBy: "type", speed: 3 });
+  assert.equal(brainView(undefined, true).panel, true);
 });
 
-test("picked colours persist per grouping and drop junk", () => {
-  assert.deepEqual(loadBrainColours(), { section: {}, group: {}, type: {} });
-  saveBrainColours({ section: { notes: "#AABBCC" }, group: {}, type: { page: "#112233" } });
-  assert.deepEqual(loadBrainColours(), { section: { notes: "#aabbcc" }, group: {}, type: { page: "#112233" } });
-  localStorage.setItem(BRAIN_COLOURS_KEY, JSON.stringify({ section: { notes: "red", jobs: "#00ff00" }, type: 4 }));
-  assert.deepEqual(loadBrainColours(), { section: { jobs: "#00ff00" }, group: {}, type: {} });
-  localStorage.setItem(BRAIN_COLOURS_KEY, "{oops");
-  assert.deepEqual(loadBrainColours(), { section: {}, group: {}, type: {} });
+test("the View panel's open state stays on this device", () => {
+  assert.equal(loadBrainPanel(), false);
+  saveBrainPanel(true);
+  assert.equal(localStorage.getItem(BRAIN_PANEL_KEY), "open");
+  assert.equal(loadBrainPanel(), true);
+  saveBrainPanel(false);
+  assert.equal(loadBrainPanel(), false);
+});
+
+test("picked colours per grouping drop junk", () => {
+  assert.deepEqual(brainColours(undefined), { section: {}, group: {}, type: {} });
+  assert.deepEqual(brainColours({ section: { notes: "#AABBCC" }, group: {}, type: { page: "#112233" } }),
+    { section: { notes: "#aabbcc" }, group: {}, type: { page: "#112233" } });
+  assert.deepEqual(brainColours({ section: { notes: "red", jobs: "#00ff00" }, type: 4 }), { section: { jobs: "#00ff00" }, group: {}, type: {} });
+  assert.deepEqual(brainColours("{oops"), { section: {}, group: {}, type: {} });
 });

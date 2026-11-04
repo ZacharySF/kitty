@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { api, type Bootstrap } from "./lib/api";
-  import { navigation, navigationGroups, isView, viewEnabled, visibleGroups, type View } from "./lib/workspace";
+  import { navigation, navigationGroups, isView, notePageLink, viewEnabled, visibleGroups, type View } from "./lib/workspace";
   import { setActiveModules } from "./lib/modules.svelte";
   import { Badge, Button } from "@nunera/bracket";
   import Icon from "./lib/Icon.svelte";
@@ -22,6 +22,9 @@
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
+  import PairingPrompt from "./lib/PairingPrompt.svelte";
+  import BuildEditor from "./lib/BuildEditor.svelte";
+  import { buildStore } from "./lib/build.svelte";
   import PetalDrift from "./lib/PetalDrift.svelte";
   import ThemeLayer from "./lib/themes/ThemeLayer.svelte";
   import { APPEARANCE_EVENT, savedAppearance, type Appearance } from "./lib/appearance";
@@ -249,8 +252,17 @@
     finally { loading = false; }
   }
   function readRoute() {
-    const hash = window.location.hash.slice(1).split("/")[0];
-    let next: View = isView(hash) ? hash : "today";
+    // `#<view>/<detail>` (e.g. `#settings/appearance`) opens the view; the view reads its detail.
+    const hash = window.location.hash.slice(1);
+    // A link to one page opens Notes on it, the way rika!'s own links between views do.
+    const linkedPage = notePageLink(hash);
+    if (linkedPage !== null) {
+      try { sessionStorage.setItem("kitty.notes.open-page", String(linkedPage)); } catch { /* The event still opens it. */ }
+      window.history.replaceState(window.history.state, "", "#notes");
+      window.dispatchEvent(new CustomEvent("kitty-open-note", { detail: { page_id: linkedPage } }));
+    }
+    const view = hash.split("/")[0];
+    let next: View = linkedPage !== null ? "notes" : isView(view) ? view : "today";
     let redirected = false;
     if (workspace && !viewEnabled(next, enabled)) {
       moduleNotice = disabledNotice(next);
@@ -323,7 +335,17 @@
     tabBar?.closeMenu(false);
     closeTab(activeId);
   }
+  let planChord = false;
+  function keyboardUp(event: KeyboardEvent) {
+    const chord = planChord;
+    planChord = false;
+    if (chord && ["Alt", "Control"].includes(event.key) && groups.some(item => item.label === "Plan")) {
+      event.preventDefault();
+      void focusGroup("Plan");
+    }
+  }
   async function keyboard(event: KeyboardEvent) {
+    planChord = false;
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
     const target = event.target as HTMLElement | null;
     const context = focusContext(target);
@@ -345,10 +367,14 @@
       await selectTab(tabs[(index + direction + tabs.length) % tabs.length].id);
       return;
     }
+    // Ctrl+Alt alone opens Plan when it is released, so chords that start with it
+    // (Ctrl+Alt+Shift+S, safe mode) never open Plan on the way.
+    planChord = !typing && !event.repeat && !event.metaKey && !event.shiftKey && event.ctrlKey && event.altKey &&
+      ["Alt", "Control"].includes(event.key) && !window.getSelection()?.toString() && !event.getModifierState("AltGraph");
+    if (planChord) return;
     if (!typing && !event.repeat && !event.metaKey && !event.shiftKey &&
         !window.getSelection()?.toString() && !event.getModifierState("AltGraph")) {
-      const group = event.ctrlKey && event.altKey && ["Alt", "Control"].includes(event.key) ? "Plan"
-        : event.ctrlKey && !event.altKey ? ({ x: "Study", c: "Job search", v: "Settings" } as Record<string, string>)[event.key.toLowerCase()] : null;
+      const group = event.ctrlKey && !event.altKey ? ({ x: "Study", c: "Job search", v: "Settings" } as Record<string, string>)[event.key.toLowerCase()] : null;
       if (group && groups.some(item => item.label === group)) { event.preventDefault(); await focusGroup(group); return; }
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -375,7 +401,7 @@
   }
 </script>
 
-<svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} />
+<svelte:window onpopstate={readRoute} onhashchange={readRoute} onkeydown={keyboard} onkeyup={keyboardUp} />
 <ThemeLayer />
 {#if background === "petals"}<PetalDrift />{/if}
 <svelte:head><title>{title} · rika!</title></svelte:head>
@@ -430,6 +456,7 @@
   <WorkspaceTabs bind:this={tabBar} tabs={tabLabels} {activeId} onselect={selectTab} onclose={closeTab} onnew={newTab} />
   </div>
   <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
+    {#if workspace && view !== "settings"}<PairingPrompt onsettings={() => navigate("settings")} />{/if}
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">
         <Badge label="DEMO" intent="warning" size="sm" />Synthetic workspace.
         Local changes work; external actions are disabled.
@@ -474,6 +501,7 @@
 </div>
 {#if notifySources}<NotificationToasts onopen={openNotice} /><NotificationCenter onopen={openNotice} />{/if}
 {#if workspace}<Rika onnavigate={next => { if (isView(next) && next !== view) navigate(next); }} />{/if}
+{#if buildStore.editorOpen}<BuildEditor onclose={() => (buildStore.editorOpen = false)} />{/if}
 {#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
 {#if guide && applyai}<dialog
     bind:this={guideDialog}

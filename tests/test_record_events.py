@@ -40,22 +40,7 @@ def test_migration_creates_an_append_only_table(workspace):
 
 def _notes(app, conn):
     notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
-    path = f"/api/notes/pages/{page['id']}"
-    app.mutate(conn, path, {"revision": page["revision"], "title": "Standing waves", "document": page["document"]})
-    return ("notes", "page", str(page["id"]), "save", path)
-
-
-def _documents(app, conn):
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Reading"})
-    document = app.mutate(conn, "/api/documents", {"title": "Paper", "content": "Body", "format": "text",
-                                                   "notebook_id": notebook["id"]})
-    return ("documents", "document", str(document["id"]), "create", "/api/documents")
-
-
-def _quick_notes(app, conn):
-    note = app.mutate(conn, "/api/quick-notes/create", {"body": "Buy milk"})
-    return ("quick-notes", "note", str(note["id"]), "create", "/api/quick-notes/create")
+    return ("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")
 
 
 def _flashcards(app, conn):
@@ -98,7 +83,7 @@ def _reminders(app, conn):
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes, _documents, _quick_notes, _flashcards, _calendar, _study,
+@pytest.mark.parametrize("case", [_notes, _flashcards, _calendar, _study,
                                   _schema, _opportunities, _jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
@@ -108,19 +93,28 @@ def test_one_real_route_per_section_is_captured(app, workspace, case):
     assert all(section in record_events.SECTIONS for section, *_ in captured)
 
 
+def test_block_backed_writes_are_left_to_op_log(app, workspace):
+    """Notes pages, documents and quick notes are block transactions: op_log is their history,
+    so the Brain counts each of them once; the notebook (a plain table) is still captured."""
+    conn = workspace.conn
+    before = conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0]
+    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
+    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
+    app.mutate(conn, f"/api/notes/pages/{page['id']}", {"revision": page["revision"], "title": "Standing waves",
+                                                        "document": page["document"]})
+    app.mutate(conn, "/api/documents", {"title": "Paper", "content": "Body", "format": "text", "notebook_id": notebook["id"]})
+    note = app.mutate(conn, "/api/quick-notes/create", {"body": "Buy milk"})
+    app.mutate(conn, "/api/quick-notes/delete", {"id": note["id"], "revision": note["revision"]})
+    assert events(conn) == [("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")]
+    assert conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0] - before >= 5
+
+
 def test_edits_and_deletes_resolve_the_entity_from_path_result_or_body(app, workspace):
     conn = workspace.conn
-    note = app.mutate(conn, "/api/quick-notes/create", {"body": "draft"})
-    saved = app.mutate(conn, "/api/quick-notes/save", {"id": note["id"], "revision": note["revision"], "body": "x"})
-    app.mutate(conn, "/api/quick-notes/delete", {"id": note["id"], "revision": saved["revision"]})
     deck = app.mutate(conn, "/api/flashcards/deck", {"name": "Words"})["deck"]
     subject = app.mutate(conn, "/api/study/subjects", {"name": "Art"})["item"]
     app.mutate(conn, "/api/study/subjects", {"id": subject["id"], "revision": subject["revision"], "action": "delete"})
-    ident = str(note["id"])
     assert events(conn) == [
-        ("quick-notes", "note", ident, "create", "/api/quick-notes/create"),
-        ("quick-notes", "note", ident, "save", "/api/quick-notes/save"),
-        ("quick-notes", "note", ident, "delete", "/api/quick-notes/delete"),
         ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck"),
         ("study", "subject", str(subject["id"]), "create", "/api/study/subjects"),
         ("study", "subject", str(subject["id"]), "delete", "/api/study/subjects"),
@@ -164,8 +158,8 @@ def test_a_capture_failure_never_fails_the_request(app, workspace, monkeypatch, 
 
     monkeypatch.setattr(record_events, "append", broken)
     with caplog.at_level(logging.WARNING, logger="kitty.core.record_events"):
-        note = app.mutate(workspace.conn, "/api/quick-notes/create", {"body": "kept"})
-    assert note["body"] == "kept"
+        deck = app.mutate(workspace.conn, "/api/flashcards/deck", {"name": "Kept"})["deck"]
+    assert deck["name"] == "Kept"
     assert events(workspace.conn) == []
     assert any("not recorded" in record.message for record in caplog.records)
 

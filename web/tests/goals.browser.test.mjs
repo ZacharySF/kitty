@@ -10,6 +10,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { routeBuild } from "./buildRoutes.mjs";
+import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -21,24 +23,28 @@ const DECK = "Finish the frontend interview deck";
 
 let backend;
 let origin;
+let secret;
 let server;
 let browser;
 let base;
 
 before(async () => {
   backend = spawn("uv", ["run", "--quiet", "kitty-web", "--demo", "--port", String(PORT)], { cwd: repository, stdio: ["ignore", "pipe", "pipe"] });
-  origin = await new Promise((resolve, reject) => {
+  const found = await new Promise((resolve, reject) => {
     let output = "";
     const timer = setTimeout(() => reject(new Error(`demo backend did not start:\n${output}`)), 120_000);
     const read = (chunk) => {
       output += chunk;
-      const match = output.match(/website: (http:\/\/\S+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      const announced = announcement(output);
+      if (announced) { clearTimeout(timer); resolve(announced); }
     };
     backend.stdout.on("data", read);
     backend.stderr.on("data", read);
     backend.once("exit", (code) => { clearTimeout(timer); reject(new Error(`demo backend exited (${code}):\n${output}`)); });
   });
+  origin = found.origin;
+  // The link's one-time code, spent as a browser tab spends it; pages get the secret as rika!'s windows do.
+  secret = await exchange(origin, found.code);
   // The demo sweeps at launch; running it once more makes today's brief certain.
   assert.ok((await call("/rika/brief/run", {})).brief, "the demo wrote no brief");
   server = await createServer({
@@ -69,10 +75,10 @@ after(async () => {
 
 /** The demo API, called directly to read state the page should show. */
 async function call(path, body) {
-  const response = await fetch(`${origin}/api${path}`, body === undefined ? {} : {
+  const response = await fetch(`${origin}/api${path}`, body === undefined ? { headers: { "X-Kitty-Secret": secret } } : {
     method: "POST",
     body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json", Origin: origin, "X-Kitty-Request": "1" },
+    headers: { "Content-Type": "application/json", Origin: origin, "X-Kitty-Request": "1", "X-Kitty-Secret": secret },
   });
   assert.equal(response.status, 200, `${path}: ${response.status}`);
   return response.json();
@@ -81,14 +87,17 @@ const goalNamed = async (title) => (await call("/goals")).goals.find((goal) => g
 
 async function open(hash, { theme, reducedMotion = "no-preference", quiet } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion });
+  await authorize(context, secret);
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue());
-  await context.addInitScript(([id, hours]) => {
-    if (id) localStorage.setItem("kitty.theme", id);
-    if (hours) localStorage.setItem("kitty.notify.quiet", JSON.stringify(hours));
-  }, [theme ?? null, quiet ?? null]);
+  // The theme and quiet hours are build preferences, layered over the demo's build for this window.
+  await routeBuild(context, {
+    ...(theme ? { theme: { base: theme } } : {}),
+    ...(quiet ? { ui: { notifications: { quiet: { enabled: quiet.enabled, from: quiet.from, to: quiet.to,
+      let_calendar: quiet.letCalendar ?? true, digest: quiet.digest ?? true } } } } : {}),
+  });
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -151,7 +160,7 @@ describe("Goals view", () => {
     await interviews.press("Enter");
     await interviews.blur();
     await page.waitForFunction(async () => {
-      const goals = (await (await fetch("/api/goals")).json()).goals;
+      const goals = (await (await fetch("/api/goals", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).goals;
       return goals.some((goal) => goal.measures.some((measure) => measure.label === "Interviews" && measure.current === 4));
     });
     const moved = await goalNamed(INTERNSHIP);
@@ -271,7 +280,7 @@ describe("Morning brief", () => {
     assert.ok(popBox.y + popBox.height <= chipBox.y, "the popover is not above the bar");
     assert.equal(await popover.getByRole("list").getByRole("link").count(), brief.items.length);
     assert.ok(await popover.getByRole("link", { name: "Open Goals" }).isVisible());
-    await page.waitForFunction(async () => (await (await fetch("/api/rika/brief")).json()).brief.seen === true);
+    await page.waitForFunction(async () => (await (await fetch("/api/rika/brief", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).brief.seen === true);
     await page.waitForFunction(() => !document.querySelector(".brief-chip")?.getAttribute("aria-label")?.endsWith(", new"));
     await page.keyboard.press("Escape");
     await popover.waitFor({ state: "detached" });

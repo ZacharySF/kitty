@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from kitty import web_schema
-from kitty.core import jobs, schema_maps as schema
+from kitty.core import jobs, notes, schema_maps as schema
 from kitty.web_server import APIError
 
 
@@ -308,9 +308,8 @@ def test_cross_connection_kind_persists_and_round_trips_portably(workspace):
 
 def test_note_card_source_is_unique_and_live(workspace):
     conn = workspace.conn
-    notebook = conn.execute("INSERT INTO note_notebooks(title,created_at,updated_at) VALUES('Synthetic notebook','2026-01-01','2026-01-01')").lastrowid
-    page = conn.execute("INSERT INTO note_pages(notebook_id,title,document,created_at,updated_at) VALUES(?,?,'{}','2026-01-01','2026-01-01')",
-                        (notebook, 'Synthetic note card')).lastrowid
+    notebook = notes.create_notebook(conn, 'Synthetic notebook')['id']
+    page = notes.create_page(conn, notebook, 'Synthetic note card')['id']
     item = create(conn)
     body = {'map_id': item['id'], 'revision': item['revision'], 'label': 'Note card',
             'source': {'kind': 'note_page', 'id': page}}

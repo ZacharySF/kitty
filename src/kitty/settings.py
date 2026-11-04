@@ -13,10 +13,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-#: Markers that identify the project root when walking up from the cwd. modules.yaml
-#: is the neutral one (a core-only workspace has no careers files); tracks.yaml is
-#: kept so pre-module workspaces are still found.
-ROOT_MARKERS = (Path("config") / "modules.yaml", Path("config") / "tracks.yaml")
+#: Markers that identify the project root when walking up from the cwd. build.json
+#: is the neutral one (a core-only workspace has no careers files); modules.yaml
+#: finds a pre-build workspace not opened since, tracks.yaml a pre-module one.
+ROOT_MARKERS = (
+    Path("config") / "build.json",
+    Path("config") / "modules.yaml",
+    Path("config") / "tracks.yaml",
+)
 
 #: Remote-control (WebDriver BiDi) port of the Firefox window the form filler drives.
 #: Not Firefox's default 9222, so it never collides with another automated browser.
@@ -35,8 +39,8 @@ def find_firefox() -> str | None:
 
 
 def find_project_root(start: Path | None = None) -> Path:
-    """Return the project root: the nearest ancestor holding config/modules.yaml
-    or, in a pre-module workspace, config/tracks.yaml.
+    """Return the project root: the nearest ancestor holding config/build.json
+    or, in an older workspace, config/modules.yaml or config/tracks.yaml.
 
     Falls back to the current directory so a fresh `kitty init` still works
     before any config exists.
@@ -59,7 +63,6 @@ class Settings:
     root: Path
     db_path: Path
     demo: bool
-    anthropic_key_set: bool
     #: Browser the form filler starts (None when not installed).
     firefox_path: str | None = None
     #: Local remote-control port of that browser; the window stays open between runs.
@@ -128,7 +131,6 @@ class Settings:
             root=project_root,
             db_path=resolved_db,
             demo=demo,
-            anthropic_key_set=bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
             firefox_path=find_firefox(),
             browser_port=int(os.environ.get("KITTY_BROWSER_PORT") or DEFAULT_BROWSER_PORT),
             herdr_path=os.environ.get("KITTY_HERDR", "").strip() or None,

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { buildStore, setPreferences } from "./build.svelte";
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
@@ -172,15 +173,10 @@
   type Reference = { kind: string; id: number | string; title: string; snippet: string; shared_terms: string[]; score: number; view: string };
   let references = $state<Record<string, Reference[]>>({linked: [], unlinked: [], related: []});
   let referenceError = $state("");
-  const LOOK_KEY = "kitty.flashcards.deck-look";
-  /** How the Decks view draws the collection: due-ring tiles or the deck → note graph. */
-  let look = $state<"tiles" | "graph">(storedLook());
-  function storedLook(): "tiles" | "graph" {
-    try { return localStorage.getItem(LOOK_KEY) === "graph" ? "graph" : "tiles"; } catch { return "tiles"; }
-  }
+  /** How the Decks view draws the collection: due-ring tiles or the deck → note graph (build: ui.flashcards.look). */
+  const look = $derived(buildStore.build.ui.flashcards.look);
   function setLook(next: "tiles" | "graph") {
-    look = next;
-    try { localStorage.setItem(LOOK_KEY, next); } catch { /* The look still applies for this session. */ }
+    void setPreferences({ ui: { flashcards: { look: next } } });
   }
   let graphFocus = $derived(deckId ? `deck:${deckId}` : null);
   let graphRevision = $state(0);

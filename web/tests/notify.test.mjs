@@ -3,8 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_QUIET, QUIET_KEY, SOURCE_LABEL, calendarNotice, clock, digestLine, emptyLedger, holds, inQuietHours,
-  jobNotice, quietSpan, readQuiet, rikaNotice, step, writeQuiet,
+  DEFAULT_QUIET, SOURCE_LABEL, calendarNotice, clock, digestLine, emptyLedger, holds, inQuietHours,
+  jobNotice, quietOf, quietPreference, quietSpan, rikaNotice, step,
 } from '../src/lib/notify.ts';
 
 function memory(initial = {}) {
@@ -45,13 +45,11 @@ test('calendar events can ring through quiet hours', () => {
   assert.equal(holds({ ...night, letCalendar: true }, followup, 23 * 60), true);
 });
 
-test('quiet hours are remembered and bad values fall back to the defaults', () => {
-  const storage = memory();
-  assert.deepEqual(readQuiet(storage), DEFAULT_QUIET);
-  writeQuiet(storage, night);
-  assert.deepEqual(readQuiet(storage), night);
-  storage.setItem(QUIET_KEY, JSON.stringify({ enabled: true, from: 5000, to: 'x' }));
-  assert.deepEqual(readQuiet(storage), { ...DEFAULT_QUIET, enabled: true });
+test('quiet hours round-trip through the build and bad values fall back to the defaults', () => {
+  assert.deepEqual(quietOf(undefined), DEFAULT_QUIET);
+  assert.deepEqual(quietPreference(night), { enabled: night.enabled, from: night.from, to: night.to, let_calendar: night.letCalendar, digest: night.digest });
+  assert.deepEqual(quietOf(quietPreference(night)), night);
+  assert.deepEqual(quietOf({ enabled: true, from: 5000, to: 'x' }), { ...DEFAULT_QUIET, enabled: true });
 });
 
 test('a new reminder toasts once; a seen one stays quiet', () => {

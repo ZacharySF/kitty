@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { Button } from '@nunera/bracket';
   import Select from './ui/Select.svelte';
-  import { api, type TaskRecord } from './api';
+  import { api, followApiLink, type TaskRecord } from './api';
   let { notebookId, onimport, documentId = 0, documentRevision = 0, onbeforeimport, ondocumentimport, onimportstate }: {
     notebookId?: number; onimport?: (pageId: number) => void;
     documentId?: number; documentRevision?: number; onbeforeimport?: () => Promise<boolean>;
@@ -150,7 +150,7 @@
   {#if error}<p role="alert" class="error">{error}</p>{/if}
   {#if preview}<section class="preview" aria-label="Extracted text preview"><span class="section-head">Extracted text preview</span><pre>{preview}</pre></section>{/if}
   {#if preview}<h4>Matching local notes</h4>{#if !matches.length}<p class="hint">No shared topic keywords found in the selected destination.</p>{/if}{#each matches as match}<article><button onclick={() => open(match.page_id)}>{match.title}</button><p>{match.snippet}</p><small>{match.terms.join(' · ')}</small></article>{/each}{/if}
-  {#each results as result}<article class="saved"><button onclick={() => open(result.page_id)}>Open imported note: {result.title}</button>{#if result.original_id}<a href={`/api/documents/originals/${result.original_id}`} download>Download retained original</a>{/if}{#each result.matches as match}<p><button onclick={() => open(match.page_id)}>{match.title}</button> — {match.snippet}</p>{/each}</article>{/each}
+  {#each results as result}<article class="saved"><button onclick={() => open(result.page_id)}>Open imported note: {result.title}</button>{#if result.original_id}<a href={`/api/documents/originals/${result.original_id}`} download onclick={followApiLink}>Download retained original</a>{/if}{#each result.matches as match}<p><button onclick={() => open(match.page_id)}>{match.title}</button> — {match.snippet}</p>{/each}</article>{/each}
 </section>
 <style>
 .document-import{display:grid;gap:12px;min-width:0}h3,h4,p{margin:0}h3{font-size:16px}h4{font-size:13px}.hint,small{color:var(--muted);font-size:12px;line-height:1.6}.destinations{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}label,.field{display:grid;gap:5px;font-size:12px;color:var(--muted)}.preview{display:grid;gap:6px;padding-top:10px;border-top:1px solid var(--hairline)}input,textarea{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:8px;min-width:0;font:inherit}textarea{font-family:var(--font-mono);resize:vertical}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.picker{position:relative;display:inline-flex;overflow:hidden;border:1px solid var(--border);border-radius:7px;padding:8px;color:var(--text);cursor:pointer}.picker input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;background:var(--surface);padding:12px;font-size:12px;border-radius:7px}article{display:grid;gap:6px;padding:10px;border:1px solid var(--border);border-radius:7px}article button{border:0;background:none;padding:0;text-align:left;font:inherit;color:var(--accent);cursor:pointer}article p{font-size:12px;line-height:1.6}a{font-size:12px;color:var(--accent)}.error{color:var(--danger,#c44);font-size:13px}.saved{background:var(--surface)}

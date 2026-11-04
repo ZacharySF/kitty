@@ -179,7 +179,8 @@ async function fakeBackend(context, { routes = ROUTES, mailbox = MAILBOX, drafts
 async function open(hash, { reducedMotion, theme, ...options } = {}) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion });
   const backend = await fakeBackend(context, options);
-  if (theme) await context.addInitScript((id) => localStorage.setItem("kitty.theme", id), theme);
+  // The theme is a build preference: the harness's stand-in build starts on it.
+  if (theme) await context.addInitScript((id) => { window.__harnessBuild = { theme: { base: id } }; }, theme);
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -210,7 +211,7 @@ test("Settings has a Rika group: Routing memory, Email and Memory, each deep-lin
   const names = () => index(page).locator("a, button").allTextContents().then((texts) => texts.map((text) => text.trim()));
   await find.fill("gmail");
   assert.deepEqual(await names(), ["Email"]);
-  await find.fill("tokens");
+  await find.fill("cache");
   assert.deepEqual(await names(), ["Routing memory"]);
   await find.fill("preferences");
   assert.deepEqual(await names(), ["Memory"]);

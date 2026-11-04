@@ -9,7 +9,6 @@ import { createServer } from "vite";
 import { chromium } from "playwright-core";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const HIDDEN_KEY = "kitty.atlas.hidden";
 let server;
 let browser;
 let base;
@@ -39,12 +38,8 @@ async function harness() {
   await page.waitForFunction(() => !!window.atlasHarness);
   return { page, problems };
 }
-async function open(page, enabled, hidden) {
-  await page.evaluate(([key, hidden]) => {
-    if (hidden) localStorage.setItem(key, JSON.stringify(hidden));
-    else localStorage.removeItem(key);
-  }, [HIDDEN_KEY, hidden]);
-  await page.evaluate((enabled) => window.atlasHarness.mount({ enabled }), enabled);
+async function open(page, enabled, hidden = []) {
+  await page.evaluate(([enabled, hidden]) => window.atlasHarness.mount({ enabled, hidden }), [enabled, hidden]);
   for (const tab of [0, 1]) {
     await page.waitForFunction((tab) => !!window.atlasHarness.point(tab, "view:settings"), tab);
     await settle(page, tab);
@@ -61,7 +56,8 @@ async function row(page, tab, label) {
   return popover(page, tab).getByRole("listitem").filter({ has: page.getByRole("link", { name: new RegExp(`^${label}(\\s|$)`) }) });
 }
 const dimmed = async (locator) => Number(await locator.evaluate((element) => getComputedStyle(element).opacity)) < 1;
-const stored = (page) => page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "[]"), HIDDEN_KEY);
+/** The hidden sections saved in the build (`ui.atlas.hidden`). */
+const stored = (page) => page.evaluate(() => window.atlasHarness.hidden());
 /** Runs a row's ⋯ menu item by mouse. */
 async function choose(page, tab, label, item) {
   await (await row(page, tab, label)).getByRole("button", { name: `${label} options` }).click();

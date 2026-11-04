@@ -6,21 +6,21 @@ never printed.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 
 from kitty.config import CONFIG_FILES, ConfigError, parse_file
-from kitty.modules import MODULES_FILE, load_modules
+from kitty.modules import BUILD_FILE, LEGACY_MODULES_FILE, load_modules
+from kitty.core import keys
 from kitty.core import resumes as resumes_core
 from kitty.core import sources as sources_core
 from kitty.db import connect, current_version, latest_version, pending_migrations
 from kitty.models import Check
 from kitty.settings import Settings
 
-#: Env keys that later stages need. `required=False` for everything Stage 1 runs without.
-ENV_KEYS: tuple[tuple[str, bool, str], ...] = (
-    ("ANTHROPIC_API_KEY", False, "needed from Stage 3 (LLM triage)"),
-    ("USAJOBS_API_KEY", False, "needed only if the usajobs source is enabled"),
+#: Keys the job tracker uses, with why. None is required to run.
+JOB_KEYS: tuple[tuple[str, str], ...] = (
+    ("ANTHROPIC", "needed for LLM triage"),
+    ("USAJOBS", "needed only if the usajobs source is enabled"),
 )
 
 
@@ -87,17 +87,23 @@ def check_database(settings: Settings) -> list[Check]:
         conn.close()
 
 
-def check_env(settings: Settings) -> list[Check]:
-    """Report which env keys are set. Values are never printed."""
+def check_keys(settings: Settings) -> list[Check]:
+    """Report which keys are set and where (kitty Keys). Values are never printed."""
+    store = keys.for_settings(settings)
     results: list[Check] = []
-    for key, required, note in ENV_KEYS:
-        present = bool(os.environ.get(key, "").strip())
+    for name, note in JOB_KEYS:
+        try:
+            found = store.lookup(name)
+        except keys.KeysError as exc:
+            results.append(Check(name=f"key/{name}", ok=False, detail=str(exc),
+                                 fix="fix the private key file, or unlock the OS keyring"))
+            continue
         results.append(Check(
-            name=f"env/{key}",
-            ok=present or not required,
-            warning=not present and not required,
-            detail="present" if present else f"missing - {note}",
-            fix=None if present else f"add {key}= to .env (copy .env.example)",
+            name=f"key/{name}",
+            ok=True,
+            warning=found is None,
+            detail=f"set ({found[1]})" if found else f"missing - {note}",
+            fix=None if found else f"kitty keys set {name} (or {keys.env_name(name)}= in .env)",
         ))
     return results
 
@@ -180,14 +186,17 @@ def check_tracks(conn: sqlite3.Connection) -> list[Check]:
 
 
 def check_modules(settings: Settings) -> tuple[list[Check], tuple[str, ...] | None]:
-    """Validate config/modules.yaml; return the checks and the selection (None if unreadable)."""
-    path = settings.config_path(MODULES_FILE)
+    """Validate the module selection in config/build.json; return the checks and the
+    selection (None if unreadable)."""
+    path = settings.config_path(BUILD_FILE)
+    if not path.exists() and settings.config_path(LEGACY_MODULES_FILE).exists():
+        path = settings.config_path(LEGACY_MODULES_FILE)
     try:
         selection = load_modules(settings.config_dir)
     except ConfigError as exc:
         return [
             Check(
-                name=f"config/{MODULES_FILE}", ok=False,
+                name=f"config/{path.name}", ok=False,
                 detail=f"line {problem.line or '?'}: {problem.location} {problem.message}".strip(),
                 fix=problem.hint,
             )
@@ -195,11 +204,11 @@ def check_modules(settings: Settings) -> tuple[list[Check], tuple[str, ...] | No
         ], None
     if not path.exists():
         return [Check(
-            name=f"config/{MODULES_FILE}", ok=True,
-            detail="not present - every module is enabled (existing workspace)",
+            name=f"config/{BUILD_FILE}", ok=True,
+            detail="not present yet - every module is enabled (existing workspace)",
         )], selection
     enabled = ", ".join(selection) or "none (core only)"
-    return [Check(name=f"config/{MODULES_FILE}", ok=True, detail=f"enabled: {enabled}")], selection
+    return [Check(name=f"config/{path.name}", ok=True, detail=f"modules: {enabled}")], selection
 
 
 def run_all(settings: Settings, conn: sqlite3.Connection | None = None) -> list[Check]:
@@ -212,7 +221,7 @@ def run_all(settings: Settings, conn: sqlite3.Connection | None = None) -> list[
     module_checks, selection = check_modules(settings)
     careers = selection is not None and "applyai" in selection
     results = module_checks + (check_config(settings) if careers else [])
-    results += check_database(settings) + (check_env(settings) if careers else [])
+    results += check_database(settings) + (check_keys(settings) if careers else [])
 
     owned: sqlite3.Connection | None = None
     if careers and conn is None and settings.db_path.exists():

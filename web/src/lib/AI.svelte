@@ -144,8 +144,8 @@
         /></label
       >
       <small
-        >Stored owner-only in .private/openrouter-key. Never included in exports
-        or GitHub. OPENROUTER_API_KEY also works.</small
+        >Stored as the OPENROUTER key in Settings → Keys (the OS keyring, or an
+        owner-only file). Never included in exports or GitHub.</small
       >
       <button class="button" disabled={busy || demo} onclick={refreshModels}
         >Fetch current models and prices</button

@@ -24,10 +24,11 @@ def command(conn, action, *, now=BASE, request_id=None, prepared=True, **extra):
     return study.timer_state(conn, now=now) if action == 'start' and prepared else result
 
 
-def short_focus(conn):
+def short_focus(workspace):
+    conn = workspace.conn
     revision = study.timer_state(conn, now=BASE)['settings']['revision']
     study.save_settings(conn, {'revision': revision, 'focus_seconds': 60,
-                               'short_break_seconds': 60, 'timezone': 'America/New_York'})
+                               'short_break_seconds': 60, 'timezone': 'America/New_York'}, workspace.settings.root)
 
 
 def manual(conn, start, duration=600, **extra):
@@ -38,7 +39,7 @@ def manual(conn, start, duration=600, **extra):
 
 def test_timer_reload_sleep_logs_once_and_starts_only_next_observed_phase(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     started = command(conn, 'start', timezone='America/New_York')['timer']
     reloaded = study.timer_state(conn, now=BASE + timedelta(seconds=25))['timer']
     assert reloaded['phase_id'] == started['phase_id']
@@ -64,7 +65,7 @@ def test_timer_reload_sleep_logs_once_and_starts_only_next_observed_phase(worksp
 
 def test_pause_resume_excludes_abandoned_pause_and_preserves_actual_day_totals(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     command(conn, 'start')
     command(conn, 'pause', now=BASE + timedelta(seconds=20))
     paused = study.workspace(conn, now=BASE + timedelta(days=1))
@@ -86,7 +87,7 @@ def test_pause_resume_excludes_abandoned_pause_and_preserves_actual_day_totals(w
 
 def test_break_pause_skip_and_stop_never_count_as_study(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     command(conn, 'start')
     study.timer_state(conn, now=BASE + timedelta(minutes=1))
     command(conn, 'pause', now=BASE + timedelta(minutes=1, seconds=15))
@@ -133,7 +134,7 @@ def test_default_cycle_primes_then_repeats_focus_25_break_5_without_counting_pre
 
 def test_timer_command_replay_and_stale_cross_tab_are_safe(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     revision = study.timer_state(conn, now=BASE)['timer']['revision']
     body = {'action': 'start', 'revision': revision, 'request_id': 'stable-start'}
     first = study.timer_command(conn, body, now=BASE - timedelta(minutes=5))
@@ -258,7 +259,7 @@ def test_exam_plan_has_actual_pre_exam_dates_and_requires_explicit_replacement(w
 
 def test_deleted_completed_focus_is_not_recreated_by_timer_polling(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     command(conn, 'start')
     session = study.workspace(conn, now=BASE + timedelta(minutes=1))['sessions'][0]
     study.save_session(conn, {'action': 'delete', 'id': session['id'], 'revision': session['revision'], 'request_id': 'erase-completion'},
@@ -268,7 +269,7 @@ def test_deleted_completed_focus_is_not_recreated_by_timer_polling(workspace):
 
 def test_independent_connections_reconcile_one_completion_and_reject_stale_edit(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     started = command(conn, 'start')['timer']
 
     def observe():
@@ -292,7 +293,7 @@ def test_independent_connections_reconcile_one_completion_and_reject_stale_edit(
 
 def test_focus_notes_are_saved_with_pause_without_paused_time(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     command(conn, 'start')
     command(conn, 'pause', now=BASE + timedelta(seconds=20), notes='Retrieved two definitions', distractions='Phone')
     paused = study.timer_state(conn, now=BASE + timedelta(hours=1))['timer']
@@ -331,10 +332,11 @@ def test_web_extension_allows_local_demo_actions_and_exposes_conflicts(workspace
 
 def test_settings_round_trip_keeps_active_phase_duration_and_uses_new_next_phase(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     command(conn, 'start')
     preferences = study.workspace(conn, now=BASE)['settings']
-    study.save_settings(conn, {**preferences, 'focus_seconds': 120, 'short_break_seconds': 90, 'sound': True})
+    study.save_settings(conn, {**preferences, 'focus_seconds': 120, 'short_break_seconds': 90, 'sound': True},
+                        workspace.settings.root)
     active = study.timer_state(conn, now=BASE + timedelta(seconds=30))
     assert active['timer']['duration_seconds'] == 60
     assert active['timer']['remaining_seconds'] == 30
@@ -346,7 +348,7 @@ def test_settings_round_trip_keeps_active_phase_duration_and_uses_new_next_phase
 
 def test_pause_resume_break_and_skip_running_break_keep_cycle_continuous(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     command(conn, 'start')
     focus_done = study.timer_state(conn, now=BASE + timedelta(minutes=1))['timer']
     command(conn, 'pause', now=BASE + timedelta(minutes=1, seconds=20))
@@ -366,7 +368,7 @@ def test_pause_resume_break_and_skip_running_break_keep_cycle_continuous(workspa
 
 def test_month_history_splits_focus_and_manual_entries_at_local_month_boundaries(workspace):
     conn = workspace.conn
-    short_focus(conn)
+    short_focus(workspace)
     subject = study.save_entity(conn, 'subjects', {'name': 'Synthetic concepts'})['item']
     # 23:59:30 New York on September 30, crossing into October in one focus.
     start = datetime(2026, 10, 1, 3, 59, 30, tzinfo=UTC)

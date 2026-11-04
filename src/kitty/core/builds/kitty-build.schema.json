@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kitty.invalid/schema/kitty-build-1.json",
+  "title": "rika! build",
+  "description": "One shareable rika! setup (docs/platform-design.md, Q8/Q9): modules, settings, theme tokens, custom CSS and interface preferences. Never notes, keys, credentials, paired clients or devices, or applicant data. Every key except `schema` is optional: a missing key takes its default. Unknown keys are warnings, not errors, so a build made by a newer rika! still loads; they are ignored.",
+  "type": "object",
+  "required": ["schema"],
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {"description": "Free extension key; kept in the file, ignored by rika!."}
+  },
+  "$defs": {
+    "colorPicks": {
+      "type": "object",
+      "maxProperties": 200,
+      "propertyNames": {"maxLength": 80},
+      "additionalProperties": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}
+    }
+  },
+  "properties": {
+    "$schema": {"type": "string", "maxLength": 500, "description": "Optional schema URL for editors; ignored."},
+    "schema": {"const": 1, "description": "Build file format version. This rika! reads version 1."},
+    "kitty_version": {"type": "string", "maxLength": 40, "pattern": "^[0-9A-Za-z.+-]*$", "description": "The rika! version the build was made with.", "default": ""},
+    "name": {"type": "string", "maxLength": 80, "default": ""},
+    "author": {"type": "string", "maxLength": 80, "default": ""},
+    "description": {"type": "string", "maxLength": 2000, "default": ""},
+    "modules": {
+      "description": "Enabled feature modules. Applies the next time rika! starts.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["applyai", "workspace", "terminal"]},
+      "default": ["applyai", "workspace", "terminal"]
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ai": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._:/@+-]*$", "description": "OpenRouter model ID; empty for none chosen.", "default": ""},
+            "routing": {"enum": ["price", "latency", "throughput"], "default": "latency"},
+            "max_output_tokens": {"type": "integer", "minimum": 128, "maximum": 8192, "default": 2048},
+            "daily_budget_usd": {"type": "number", "minimum": 0, "maximum": 100, "description": "US dollars; rounded to cents.", "default": 1.0},
+            "rika_fast_model": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._:/@+-]*$", "description": "OpenRouter model for Rika's fast tier; empty for the default of the main model's family.", "default": ""},
+            "rika_standard_model": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._:/@+-]*$", "description": "OpenRouter model for Rika's standard tier; empty for the default.", "default": ""},
+            "rika_deep_model": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._:/@+-]*$", "description": "OpenRouter model for Rika's deep tier; empty for the default.", "default": ""}
+          }
+        },
+        "notes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow_ai": {"type": "boolean", "description": "Whether note text may be offered to AI features.", "default": false},
+            "attachment_retention_days": {"type": "integer", "minimum": 0, "maximum": 3650, "description": "Days unreferenced note images are kept.", "default": 30}
+          }
+        },
+        "history": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "retention_days": {"type": "integer", "minimum": 1, "maximum": 3650, "description": "Every transaction is kept this many days, then folded into daily snapshots (Q15, Q20).", "default": 30}
+          }
+        },
+        "tags": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {"enum": ["suggest", "always"], "description": "Keyword tags: suggest, or always attach (Q13).", "default": "suggest"}
+          }
+        },
+        "study": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "focus_seconds": {"type": "integer", "minimum": 60, "maximum": 14400, "default": 1500},
+            "short_break_seconds": {"type": "integer", "minimum": 60, "maximum": 7200, "default": 300},
+            "sound": {"type": "boolean", "default": true},
+            "notifications": {"type": "boolean", "default": false}
+          }
+        },
+        "opportunities": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "monitoring": {"type": "boolean", "description": "Scheduled opportunity monitoring.", "default": false},
+            "interval_hours": {"type": "integer", "minimum": 6, "maximum": 168, "default": 24}
+          }
+        },
+        "tern": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "plugin": {"type": "boolean", "description": "Whether the kitty Tern plugin may pair and send captures.", "default": true}
+          }
+        }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+          "description": "A built-in theme. An unknown name (say, from a newer rika!) is a warning and falls back to the default.",
+          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "scythe", "liquid-glass", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"],
+          "default": "kitty"
+        },
+        "tokens": {
+          "type": "object",
+          "description": "Overrides on top of the base theme. The 16 roles (void, panel, inset, raised, line, lineHot, ink, mute, dim, structure, signal, go, reference, caution, alternate, danger), graph1-graph6 and shadow take hex colours. Any other name sets the CSS custom property --<name> to a plain CSS value (no url(), braces or semicolons).",
+          "maxProperties": 200,
+          "propertyNames": {"pattern": "^[a-zA-Z][a-zA-Z0-9-]{0,47}$"},
+          "additionalProperties": {"type": "string", "maxLength": 200},
+          "default": {}
+        },
+        "css": {
+          "description": "Custom CSS, as one string or a list of lines. Scoped to rika!'s app root; no @import, url() (except data:image), or other remote loads.",
+          "anyOf": [
+            {"type": "string", "maxLength": 65536},
+            {"type": "array", "maxItems": 4000, "items": {"type": "string", "maxLength": 2000}}
+          ],
+          "default": ""
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "description": "Interface preferences. Unknown groups are kept and ignored, so newer preferences slot in.",
+      "additionalProperties": {"type": "object"},
+      "properties": {
+        "graph": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "look": {"enum": ["2d", "3d"], "default": "2d"},
+            "layout": {"enum": ["tree", "clusters", "sphere", "force"], "default": "tree"},
+            "physics": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "repulsion": {"type": "number", "minimum": 0, "maximum": 300, "default": 60},
+                "spring": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5},
+                "damping": {"type": "number", "minimum": 0.05, "maximum": 0.95, "default": 0.35}
+              }
+            }
+          }
+        },
+        "atlas": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hidden": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}, "description": "Sections removed from the atlas.", "default": []}
+          }
+        },
+        "notes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pen_only": {"type": "boolean", "description": "Canvas ink from a pen only; touch scrolls.", "default": false}
+          }
+        },
+        "terminal": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "coding_agent": {"enum": ["omp", "claude", "codex"], "default": "omp"}
+          }
+        },
+        "appearance": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Settings → Appearance: the look choices besides the theme.",
+          "properties": {
+            "title_font": {"enum": ["fraunces", "plain"], "default": "fraunces"},
+            "density": {"enum": ["compact", "comfortable"], "default": "compact"},
+            "motion": {"enum": ["full", "reduced"], "default": "full"},
+            "motif": {"type": "boolean", "description": "The theme's motif layer (bullets, ticks, dividers, ornaments).", "default": true},
+            "background": {"enum": ["nebula", "petals"], "default": "nebula"}
+          }
+        },
+        "home": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "look": {"enum": ["brain", "2d"], "description": "Home shows the Brain or the 2D atlas.", "default": "brain"}
+          }
+        },
+        "brain": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Brain view's View panel (whether the panel is open stays on each device).",
+          "properties": {
+            "layout": {"enum": ["anatomy", "spheres", "wheel"], "default": "anatomy"},
+            "group_by": {"enum": ["section", "group", "type"], "default": "section"},
+            "labels": {"enum": ["off", "sections", "hover"], "default": "hover"},
+            "turning": {"type": "boolean", "default": true},
+            "speed": {"type": "number", "minimum": 0, "maximum": 3, "default": 1},
+            "lines": {"type": "boolean", "default": false},
+            "scaffold": {"type": "boolean", "default": true},
+            "point_size": {"type": "number", "minimum": 0.25, "maximum": 3, "default": 1},
+            "background": {"enum": ["transparent", "black"], "default": "transparent"},
+            "colors": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Picked colours per grouping and group key; absent keys follow the theme.",
+              "properties": {
+                "section": {"$ref": "#/$defs/colorPicks"},
+                "group": {"$ref": "#/$defs/colorPicks"},
+                "type": {"$ref": "#/$defs/colorPicks"}
+              },
+              "default": {"section": {}, "group": {}, "type": {}}
+            }
+          }
+        },
+        "notifications": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "quiet": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Quiet hours, in minutes of the local day; from equal to to is an empty window.",
+              "properties": {
+                "enabled": {"type": "boolean", "default": false},
+                "from": {"type": "integer", "minimum": 0, "maximum": 1439, "default": 1320},
+                "to": {"type": "integer", "minimum": 0, "maximum": 1439, "default": 450},
+                "let_calendar": {"type": "boolean", "description": "Calendar reminders still toast during quiet hours.", "default": true},
+                "digest": {"type": "boolean", "description": "Held notices arrive together when quiet hours end.", "default": true}
+              }
+            }
+          }
+        },
+        "flashcards": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "look": {"enum": ["tiles", "graph"], "description": "Decks as due-ring tiles or the deck → note graph.", "default": "tiles"}
+          }
+        },
+        "study": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "guide_view": {"enum": ["columns", "rail"], "default": "columns"},
+            "plans_view": {"enum": ["timeline", "days"], "default": "timeline"}
+          }
+        }
+      }
+    }
+  }
+}

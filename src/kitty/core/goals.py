@@ -171,11 +171,12 @@ def _resolve(conn: sqlite3.Connection, kind: str, ref: str) -> tuple[str, str] |
     """(title, detail) of a link target, or None when it does not exist."""
     number = _int_ref(ref)
     if kind == "note":
-        row = conn.execute("SELECT p.title,n.title AS notebook FROM note_pages p JOIN note_notebooks n ON n.id=p.notebook_id"
+        # Pages and outline items come from the block projection (Notes numbers); note_pages is frozen.
+        row = conn.execute("SELECT p.title,n.title AS notebook FROM note_page_index p JOIN note_notebooks n ON n.id=p.notebook_id"
                            " WHERE p.id=?", (number,)).fetchone() if number else None
         return (row["title"] or "Untitled", f"Page in {row['notebook']}") if row else None
     if kind == "block":
-        row = conn.execute("SELECT b.text,p.title FROM note_blocks b JOIN note_pages p ON p.id=b.page_id WHERE b.id=?",
+        row = conn.execute("SELECT text,title FROM note_outline WHERE id=?",
                            (ref,)).fetchone()
         if row is None:
             return None
@@ -463,10 +464,10 @@ def decide_match(conn: sqlite3.Connection, match_id: int, decision: Any) -> dict
 def _search(conn: sqlite3.Connection, kind: str, query: str, limit: int) -> list[dict[str, Any]]:
     pattern = _like(query)
     if kind == "note":
-        rows = conn.execute("SELECT id AS ref FROM note_pages WHERE title LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT ?",
+        rows = conn.execute("SELECT id AS ref FROM note_page_index WHERE title LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT ?",
                             (pattern, limit))
     elif kind == "block":
-        rows = conn.execute("SELECT id AS ref FROM note_blocks WHERE text<>'' AND text LIKE ? ESCAPE '\\' LIMIT ?",
+        rows = conn.execute("SELECT id AS ref FROM note_outline WHERE text<>'' AND text LIKE ? ESCAPE '\\' LIMIT ?",
                             (pattern, limit))
     elif kind == "task":
         rows = conn.execute("SELECT id AS ref FROM calendar_tasks WHERE deleted=0 AND json_extract(data,'$.title') LIKE ?"

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from kitty import web_auth
 from kitty.core import applications, jobs, reminders, resumes
 from kitty.web_server import LocalHTTPServer, WebApplication
 
@@ -28,7 +29,7 @@ def website(workspace, tmp_path):
 
     def request(path, body=None, *, method=None, headers=None, raw=None):
         method = method or ("POST" if body is not None or raw is not None else "GET")
-        defaults = {"Origin": server.origin}
+        defaults = {"Origin": server.origin, web_auth.HEADER: server.ui_auth.secret}
         payload = raw
         if method == "POST":
             defaults.update({"Content-Type": "application/json", "X-Kitty-Request": "1"})

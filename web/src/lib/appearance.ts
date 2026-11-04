@@ -1,11 +1,13 @@
 import type { ThemeId } from "./themes/catalog";
 import type { GraphLook } from "./graph3d";
+import type { AppearancePreference } from "./buildCore";
+import { buildStore, setPreferences } from "./build.svelte";
 
 /**
- * Q59 Settings → Appearance. The look choices without a home of their own,
- * saved together in localStorage (`kitty.appearance`) and mirrored onto
- * <html data-*> so CSS applies them. The theme (`kitty.theme`) and the section
- * graph look (`kitty.graph.look`) keep their own keys; presets set those too.
+ * Q59 Settings → Appearance. The look choices without a home of their own, kept in the
+ * build's `ui.appearance` (docs/platform-design.md Q8) and mirrored onto <html data-*> so
+ * CSS applies them. The theme (`theme.base`) and the section graph look (`ui.graph.look`)
+ * keep their own keys; presets set all three in one change.
  */
 export type Appearance = {
   /** Fraunces page titles, or plain Inter. */
@@ -19,7 +21,6 @@ export type Appearance = {
   background: "nebula" | "petals";
 };
 
-export const APPEARANCE_KEY = "kitty.appearance";
 /** Dispatched on `window` after the appearance changes; `detail` is the Appearance. */
 export const APPEARANCE_EVENT = "kitty:appearance";
 export const DEFAULT_APPEARANCE: Appearance = {
@@ -58,29 +59,39 @@ export const PRESETS: readonly Preset[] = [
   },
 ];
 
-function pick<T extends string>(value: unknown, options: readonly T[], fallback: T): T {
-  return options.includes(value as T) ? (value as T) : fallback;
-}
-
-/** Reads the saved appearance; anything missing or unknown falls back to the default. */
-export function savedAppearance(): Appearance {
-  let saved: Record<string, unknown> = {};
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(APPEARANCE_KEY) ?? "null");
-    if (value && typeof value === "object") saved = value as Record<string, unknown>;
-  } catch {
-    // Unreadable storage keeps the defaults.
-  }
+/** The build's `ui.appearance` as the interface uses it. */
+export function appearanceOf(preference: AppearancePreference): Appearance {
   return {
-    titleFont: pick(saved.titleFont, ["fraunces", "plain"], DEFAULT_APPEARANCE.titleFont),
-    density: pick(saved.density, ["compact", "comfortable"], DEFAULT_APPEARANCE.density),
-    motion: pick(saved.motion, ["full", "reduced"], DEFAULT_APPEARANCE.motion),
-    motif: typeof saved.motif === "boolean" ? saved.motif : DEFAULT_APPEARANCE.motif,
-    background: pick(saved.background, ["nebula", "petals"], DEFAULT_APPEARANCE.background),
+    titleFont: preference.title_font,
+    density: preference.density,
+    motion: preference.motion,
+    motif: preference.motif,
+    background: preference.background,
   };
 }
 
-function applyAppearance(appearance: Appearance): void {
+/** An Appearance as the build stores it. */
+export function appearancePreference(appearance: Appearance): AppearancePreference {
+  return {
+    title_font: appearance.titleFont,
+    density: appearance.density,
+    motion: appearance.motion,
+    motif: appearance.motif,
+    background: appearance.background,
+  };
+}
+
+/** The appearance in effect (the active build's). */
+export function savedAppearance(): Appearance {
+  return appearanceOf(buildStore.build.ui.appearance);
+}
+
+let applied = "";
+/** Mirrors an appearance onto <html data-*>; the build store calls it on every change. */
+export function applyAppearance(appearance: Appearance): void {
+  const key = JSON.stringify(appearance);
+  if (key === applied) return;
+  applied = key;
   const root = document.documentElement.dataset;
   root.titleFont = appearance.titleFont;
   root.density = appearance.density;
@@ -90,19 +101,17 @@ function applyAppearance(appearance: Appearance): void {
   window.dispatchEvent(new CustomEvent(APPEARANCE_EVENT, { detail: appearance }));
 }
 
-/** Applies and saves a whole appearance. */
-export function setAppearance(appearance: Appearance): void {
-  applyAppearance(appearance);
-  try {
-    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(appearance));
-  } catch {
-    // Storage can be unavailable (private mode); the look still applies this session.
-  }
+/** Saves a whole appearance to the build (applied in this window at once). */
+export function setAppearance(appearance: Appearance): Promise<boolean> {
+  return setPreferences({ ui: { appearance: appearancePreference(appearance) } });
 }
 
-/** Applies the saved appearance; call once before mounting the app. */
-export function applySavedAppearance(): void {
-  applyAppearance(savedAppearance());
+/** A preset's theme, section graph look and appearance, as one build change. */
+export function applyPreset(preset: Preset): Promise<boolean> {
+  return setPreferences({
+    theme: { base: preset.theme },
+    ui: { graph: { look: preset.look }, appearance: appearancePreference(preset.appearance) },
+  });
 }
 
 /** Reduced motion is the Appearance setting or the system preference. */

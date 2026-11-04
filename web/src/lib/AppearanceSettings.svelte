@@ -1,22 +1,22 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { Panel } from "@nunera/bracket";
   import AppearancePreview from "./AppearancePreview.svelte";
-  import { PRESETS, savedAppearance, setAppearance, type Appearance, type Preset } from "./appearance";
+  import { PRESETS, appearanceOf, applyPreset, setAppearance, type Appearance, type Preset } from "./appearance";
+  import { buildStore, setTheme } from "./build.svelte";
   import type { GraphLook } from "./graph3d";
-  import { GRAPH_SETTINGS_EVENT, graphLook, homeLook, setGraphLook, setHomeLook, type HomeLook } from "./graphPreferences";
-  import { THEMES, type ThemeId } from "./themes/catalog";
-  import { THEME_EVENT, currentTheme, setTheme } from "./themes";
+  import { setGraphLook, setHomeLook, type HomeLook } from "./graphPreferences";
+  import { THEMES, getTheme } from "./themes/catalog";
 
   /**
    * Q59: every look control in one panel beside a live preview, plus Cozy,
    * Focused and Minimal presets that set them all; each still changes alone after.
+   * Every choice is a build preference (docs/platform-design.md Q8): a refused save
+   * reverts it and shows the build's notice.
    */
-  let appearance = $state(savedAppearance());
-  let theme = $state<ThemeId>(currentTheme());
-  let look = $state<GraphLook>(graphLook());
-  let home = $state<HomeLook>(homeLook());
-  let error = $state("");
+  const appearance = $derived(appearanceOf(buildStore.build.ui.appearance));
+  const theme = $derived(getTheme(buildStore.build.theme.base).id);
+  const look = $derived<GraphLook>(buildStore.build.ui.graph.look);
+  const home = $derived<HomeLook>(buildStore.build.ui.home.look);
 
   type Choice = { [K in keyof Appearance]: Appearance[K] extends boolean ? never : K }[keyof Appearance];
   const CHOICES: { key: Choice; label: string; options: [string, string][] }[] = [
@@ -29,49 +29,17 @@
   const HOME_LOOKS: [HomeLook, string][] = [["brain", "Brain"], ["2d", "2D map"]];
 
   function change(next: Appearance) {
-    appearance = next;
-    setAppearance(next);
+    void setAppearance(next);
   }
   function chooseLook(next: GraphLook) {
-    try {
-      setGraphLook(next);
-      look = next;
-      error = "";
-    } catch {
-      error = "This browser could not save the section graph look.";
-    }
+    void setGraphLook(next);
   }
   function chooseHome(next: HomeLook) {
-    try {
-      setHomeLook(next);
-      home = next;
-      error = "";
-    } catch {
-      error = "This browser could not save the home look.";
-    }
-  }
-  function applyPreset(preset: Preset) {
-    setTheme(preset.theme);
-    chooseLook(preset.look);
-    change({ ...preset.appearance });
+    void setHomeLook(next);
   }
   const matches = (preset: Preset) =>
     preset.theme === theme && preset.look === look &&
     (Object.keys(preset.appearance) as (keyof Appearance)[]).every((key) => preset.appearance[key] === appearance[key]);
-
-  onMount(() => {
-    const syncTheme = () => (theme = currentTheme());
-    const syncLook = () => {
-      look = graphLook();
-      home = homeLook();
-    };
-    window.addEventListener(THEME_EVENT, syncTheme);
-    window.addEventListener(GRAPH_SETTINGS_EVENT, syncLook);
-    return () => {
-      window.removeEventListener(THEME_EVENT, syncTheme);
-      window.removeEventListener(GRAPH_SETTINGS_EVENT, syncLook);
-    };
-  });
 </script>
 
 {#snippet segments(label: string, name: string, options: [string, string][], value: string, pick: (id: string) => void)}
@@ -122,7 +90,6 @@
         <input type="checkbox" checked={appearance.motif} onchange={(event) => change({ ...appearance, motif: event.currentTarget.checked })} />
         Theme motif
       </label>
-      {#if error}<p class="wide" role="alert">{error}</p>{/if}
     </div>
     <AppearancePreview {appearance} {look} />
   </div>

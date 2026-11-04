@@ -1,11 +1,11 @@
 """Opt-in Brave discovery, or free seed URLs; only fetched JobPosting records count."""
 from __future__ import annotations
 
-import os
 import re
 from datetime import datetime
 from urllib.parse import urlencode
 
+from kitty.core import keys
 from kitty.core.discovery.base import AdapterResult, BoardOutcome, NormalizedJob, summarize_boards
 from kitty.core.discovery.context import DiscoverContext
 from kitty.core.discovery.http import HttpError, RateLimited
@@ -86,9 +86,14 @@ class WebSearchAdapter:
         except ValueError as exc:
             return AdapterResult([], "error", str(exc), stats=stats)
         stats["budget"] = {"max_queries": max_queries, "max_pages": max_pages, "max_results": max_results}
-        key = os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()
         if not seeds and not enable_search:
-            return AdapterResult([], "error", "No seed_urls; Brave search requires enable_search: true and BRAVE_SEARCH_API_KEY", stats=stats)
+            return AdapterResult([], "error", "No seed_urls; Brave search requires enable_search: true and the BRAVE key", stats=stats)
+        key, key_error = "", "Brave search key is not set (kitty keys set BRAVE, or BRAVE_SEARCH_API_KEY in .env)"
+        if enable_search:
+            try:
+                key = keys.read(self.ctx.settings, "BRAVE")
+            except keys.KeysError as exc:
+                key_error = f"Brave search key: {exc}"
         outcomes = []
         candidates: dict[str, list[str | None]] = {}
         for url in seeds:
@@ -97,7 +102,7 @@ class WebSearchAdapter:
         jobs: dict[str, NormalizedJob] = {}
         with PublicPages(http) as pages:
             if enable_search and not key:
-                outcomes.append(BoardOutcome("Brave search", "error", error="BRAVE_SEARCH_API_KEY is not set in .env"))
+                outcomes.append(BoardOutcome("Brave search", "error", error=key_error))
             elif enable_search:
                 queries = track_queries(self.ctx)[:max_queries]
                 if not queries:
@@ -122,7 +127,7 @@ class WebSearchAdapter:
                         outcomes.append(BoardOutcome(query, "ok", hits))
                     except (HttpError, ValueError) as exc:
                         status = "rate_limited" if isinstance(exc, RateLimited) else "error"
-                        outcomes.append(BoardOutcome(query, status, error=str(exc)))
+                        outcomes.append(BoardOutcome(query, status, error=keys.redact(str(exc), key)))
                         # An API failure is not a reason to spend more requests; seeds still run.
                         break
             visited = set()

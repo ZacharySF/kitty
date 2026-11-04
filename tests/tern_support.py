@@ -5,13 +5,27 @@ The fake mirrors only the Tern 0.9.8 surface rika! uses:
 * ``tern --version`` prints ``tern 0.9.8 (f21d9a3)``;
 * ``tern daemon --socket PATH`` serves sessions on a Unix socket (created 0600 like
   Tern's) and stops on SIGTERM, removing the socket;
-* ``tern inspect --json`` and ``tern new session NAME --cwd DIR --json`` talk to the
-  daemon named by ``$TERN_DAEMON_SOCKET`` and fail like Tern when none listens;
+* ``tern inspect --json``, ``tern new session|tab NAME --cwd DIR --json``,
+  ``tern run SESSION/ID -- TEXT``, ``tern focus SESSION/ID`` and
+  ``tern capture SESSION/ID [--scrollback]`` talk to the daemon named by
+  ``$TERN_DAEMON_SOCKET`` and fail like Tern when none listens (or with Tern's
+  ``no block is called `SESSION/ID``` for a block outside that session);
+* a pane is a pretend shell: ``run`` appends ``$ TEXT`` to its screen, ``echo WORDS``
+  prints WORDS and ``exit N`` makes the pane exit with status N (it stays listed,
+  like Tern's);
+* ``tern events --filter pane_spawned,pane_exited`` streams those events as JSON lines,
+  starting with the daemon's earlier ones (unlike Tern) so tests need not race the
+  follower's subscription;
 * ``tern --dir DIR`` is a native window: it attaches to that daemon as a window
-  client until it is terminated;
+  client until it is terminated. Like Tern's, when a window is already attached it
+  hands over to that window (Tern raises it) and exits 0 instead;
 * ``tern new tab SESSION --cwd DIR --keep-open --json -- COMMAND...`` adds a tab whose
   block runs ``sh -c COMMAND`` (``command`` is the joined line, as Tern reports it);
-  ``tern focus BLOCK`` focuses a block and fails like Tern for an unknown one.
+  ``tern focus BLOCK`` focuses a block by bare id and fails like Tern for an unknown one;
+* ``tern plugin dir|link DIR [--json]|unlink ID|list --json`` work on
+  ``$TERN_CONFIG_DIR/plugins`` like Tern 0.9.8's: ``link`` writes ``ID.path`` (replacing
+  an earlier link of that ID) and says on stderr that no daemon runs; ``list`` reads the
+  folder, reporting a second package with an ID as a ``duplicate id`` problem.
 
 Beside it, fake ``systemd-run --user --wait`` and ``systemctl --user stop`` stand in
 for the user's systemd manager, which runs a command as a transient service in the
@@ -66,6 +80,12 @@ def request(message):
         data += chunk
     return json.loads(data)
 
+def answer(reply):
+    if "error" in reply:
+        sys.stderr.write("tern %s: %s\n" % (argv[0], reply["error"]))
+        sys.exit(1)
+    return reply
+
 def daemon(path):
     if mode == "hang":
         time.sleep(3600)
@@ -94,6 +114,110 @@ def daemon(path):
         with open(state_path, "w") as handle:
             json.dump(state, handle)
 
+    subscribers = []
+    history = []
+
+    def publish(event):
+        line = (json.dumps(event) + "\n").encode()
+        history.append(line)
+        for subscriber in list(subscribers):
+            try:
+                subscriber.sendall(line)
+            except OSError:
+                subscribers.remove(subscriber)
+
+    def find(ref):
+        name, _, number = ref.partition("/")
+        for session in state["sessions"]:
+            if session["name"] != name:
+                continue
+            for tab in session["tabs"]:
+                for block in tab["blocks"]:
+                    if str(block["id"]) == number:
+                        return session, tab, block
+        return None
+
+    def new_block(cwd):
+        ids = []
+        for _ in range(2):
+            ids.append(state["next"])
+            state["next"] += 1
+        block = {{"id": ids[1], "title": cwd, "cwd": cwd, "program": "/bin/sh", "args": [], "command": None,
+                  "cols": 80, "rows": 24, "exited": None, "keep_open": False, "focused": True, "live": True,
+                  "screen": []}}
+        return {{"id": ids[0], "number": None, "name": None, "shown": True, "zoomed": False,
+                 "blocks": [block], "splits": {{"Leaf": ids[1]}}}}
+
+    def handle(message):
+        op = message["op"]
+        if op == "new":
+            if message["kind"] == "session":
+                session = {{"id": state["next"], "name": message["name"], "shown": not state["sessions"], "tabs": []}}
+                state["next"] += 1
+                state["sessions"].append(session)
+            else:
+                found = [item for item in state["sessions"] if item["name"] == message["name"]]
+                if not found:
+                    return {{"error": "no session is called `%s`" % message["name"]}}
+                session = found[0]
+            tab = new_block(message["cwd"])
+            block = tab["blocks"][0]
+            if message.get("command"):
+                # Rika's `new tab ... --keep-open -- COMMAND...`: Tern adds it behind the shown tab.
+                line = shlex.join(message["command"])
+                block.update(title="", args=["-c", line], command=line, keep_open=True)
+                tab["shown"] = False
+            else:
+                for other in session["tabs"]:
+                    other["shown"] = False
+                    for item in other["blocks"]:
+                        item["focused"] = False
+            tab["number"] = len(session["tabs"]) + 1
+            session["tabs"].append(tab)
+            publish({{"event": "pane_spawned", "pane": block["id"], "by": 1}})
+            return {{"session": session["id"], "tab": tab["id"], "block": block["id"]}}
+        if op == "focus" and "/" not in message["ref"]:
+            # `tern focus BLOCK` by bare id, in any session.
+            blocks = [block for session in state["sessions"] for tab in session["tabs"] for block in tab["blocks"]]
+            found = [block for block in blocks if str(block["id"]) == message["ref"]]
+            if not found:
+                return {{"error": "no block"}}
+            for block in blocks:
+                block["focused"] = block is found[0]
+            return {{"block": found[0]["id"]}}
+        if op in ("run", "focus", "capture"):
+            found = find(message["ref"])
+            if found is None:
+                return {{"error": "no block is called `%s`" % message["ref"]}}
+            session, tab, block = found
+            if op == "run":
+                text = message["text"]
+                block["screen"].append("\x1b[32m$\x1b[0m " + text)
+                block["title"] = text
+                if text.startswith("echo "):
+                    block["screen"].append(text[5:])
+                elif text.startswith("exit ") and text[5:].isdigit():
+                    block["exited"] = int(text[5:])
+                    publish({{"event": "pane_exited", "pane": block["id"], "status": block["exited"]}})
+                return {{}}
+            if op == "focus":
+                for other in session["tabs"]:
+                    other["shown"] = other is tab
+                    for item in other["blocks"]:
+                        item["focused"] = item is block
+                return {{}}
+            return {{"text": "\r\n".join(block["screen"]) + "\r\n\r\n"}}
+        panes = [{{"pane": block["id"], "working": block["id"] == 3, "quiet_ms": 10}}
+                 for session in state["sessions"] for tab in session["tabs"] for block in tab["blocks"]]
+        return {{"sessions": [{{**session, "tabs": [{{**tab, "blocks": [{{key: value for key, value in block.items()
+                                                                       if key != "screen"}}
+                                                                      for block in tab["blocks"]]}}
+                                                    for tab in session["tabs"]]}}
+                              for session in state["sessions"]],
+                 "detached": [], "panes": panes,
+                 "clients": [{{"conn": pid, "window": "", "kind": "window"}} for pid in windows]
+                            + [{{"conn": 0, "window": "", "kind": "cli"}}]}}
+
     def serve(connection):
         reader = connection.makefile("rb")
         line = reader.readline()
@@ -103,54 +227,28 @@ def daemon(path):
         message = json.loads(line)
         if message["op"] == "window":
             with lock:
-                windows.append(message["pid"])
+                handover = bool(windows)
+                if not handover:
+                    windows.append(message["pid"])
+            if handover:
+                connection.sendall(b"raised\n")
+                connection.close()
+                return
+            connection.sendall(b"attached\n")
             reader.read()  # until the window goes away
             with lock:
                 windows.remove(message["pid"])
             connection.close()
             return
+        if message["op"] == "events":
+            with lock:
+                connection.sendall(b"".join(history))
+                subscribers.append(connection)
+            reader.read()
+            return
         with lock:
-            if message["op"] == "new":
-                ids = []
-                for _ in range(3):
-                    ids.append(state["next"])
-                    state["next"] += 1
-                state["sessions"].append({{"id": ids[0], "name": message["name"], "shown": not state["sessions"],
-                    "tabs": [{{"id": ids[1], "number": 1, "name": None, "shown": True, "zoomed": False,
-                    "blocks": [{{"id": ids[2], "title": message["cwd"], "cwd": message["cwd"], "program": "/bin/sh",
-                    "args": [], "command": None, "cols": 80, "rows": 24, "exited": None, "keep_open": False,
-                    "focused": True, "live": True}}], "splits": {{"Leaf": ids[2]}}}}]}})
-                save()
-                reply = {{"session": ids[0], "tab": ids[1], "block": ids[2]}}
-            elif message["op"] == "tab":
-                session = next((item for item in state["sessions"] if item["name"] == message["session"]), None)
-                if session is None:
-                    reply = {{"error": "no session"}}
-                else:
-                    tab, block = state["next"], state["next"] + 1
-                    state["next"] += 2
-                    line = shlex.join(message["command"])
-                    session["tabs"].append({{"id": tab, "number": len(session["tabs"]) + 1, "name": None,
-                        "shown": False, "zoomed": False, "blocks": [{{"id": block, "title": "", "cwd": message["cwd"],
-                        "program": "/bin/sh", "args": ["-c", line], "command": line, "cols": 80, "rows": 24,
-                        "exited": None, "keep_open": True, "focused": True, "live": True}}],
-                        "splits": {{"Leaf": block}}}})
-                    save()
-                    reply = {{"session": session["id"], "tab": tab, "block": block}}
-            elif message["op"] == "focus":
-                found = [block for session in state["sessions"] for tab in session["tabs"] for block in tab["blocks"]
-                         if str(block["id"]) == message["block"]]
-                for session in state["sessions"]:
-                    for tab in session["tabs"]:
-                        for block in tab["blocks"]:
-                            block["focused"] = bool(found) and block is found[0]
-                reply = {{"block": found[0]["id"]}} if found else {{"error": "no block"}}
-            else:
-                panes = [{{"pane": block["id"], "working": block["id"] == 3, "quiet_ms": 10}}
-                         for session in state["sessions"] for tab in session["tabs"] for block in tab["blocks"]]
-                reply = {{"sessions": state["sessions"], "detached": [], "panes": panes,
-                          "clients": [{{"conn": pid, "window": "", "kind": "window"}} for pid in windows]
-                                     + [{{"conn": 0, "window": "", "kind": "cli"}}]}}
+            reply = handle(message)
+            save()
         connection.sendall(json.dumps(reply).encode())
         connection.close()
 
@@ -168,27 +266,96 @@ elif argv == ["inspect", "--json"]:
         print("not json")
     else:
         print(json.dumps(request({{"op": "inspect"}})))
-elif argv[:2] == ["new", "session"] and "--cwd" in argv:
-    print(json.dumps(request({{"op": "new", "name": argv[2], "cwd": argv[argv.index("--cwd") + 1]}})))
-elif argv[:2] == ["new", "tab"] and "--" in argv:
-    reply = request({{"op": "tab", "session": argv[2], "cwd": argv[argv.index("--cwd") + 1],
-                     "command": argv[argv.index("--") + 1:]}})
-    if "error" in reply:
-        sys.stderr.write("tern new: " + reply["error"] + "\n")
-        sys.exit(1)
-    print(json.dumps(reply))
+elif argv[:1] == ["new"] and argv[1:2] in (["session"], ["tab"]) and "--cwd" in argv:
+    print(json.dumps(answer(request({{"op": "new", "kind": argv[1], "name": argv[2],
+                                      "cwd": argv[argv.index("--cwd") + 1],
+                                      "command": argv[argv.index("--") + 1:] if "--" in argv else []}}))))
+elif argv[:1] == ["run"] and len(argv) == 4 and argv[2] == "--":
+    answer(request({{"op": "run", "ref": argv[1], "text": argv[3]}}))
 elif argv[:1] == ["focus"] and len(argv) == 2:
-    reply = request({{"op": "focus", "block": argv[1]}})
-    if "error" in reply:
-        sys.stderr.write("tern focus: " + reply["error"] + "\n")
-        sys.exit(1)
-    print(json.dumps(reply))
+    print(json.dumps(answer(request({{"op": "focus", "ref": argv[1]}}))))
+elif argv[:1] == ["capture"] and argv[2:] in ([], ["--scrollback"]):
+    text = answer(request({{"op": "capture", "ref": argv[1]}}))["text"]
+    if mode == "big":
+        text = "".join("line %06d %s\n" % (index, "\u00e9" * 40) for index in range(4000))
+    sys.stdout.write(text)
+elif argv == ["events", "--filter", "pane_spawned,pane_exited"]:
+    client = connect()
+    client.sendall(b'{{"op": "events"}}\n')
+    signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+    for line in client.makefile("rb"):
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
 elif argv[:1] == ["--dir"] and len(argv) == 2:
     client = connect()
-    client.sendall((json.dumps({{"op": "window", "pid": os.getpid()}}) + "\n").encode())
     signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+    client.sendall((json.dumps({{"op": "window", "pid": os.getpid()}}) + "\n").encode())
+    if client.makefile("rb").readline() == b"raised\n":
+        sys.exit(0)
     while True:
         time.sleep(3600)
+elif argv[:1] == ["plugin"]:
+    import tomllib
+    config = os.environ.get("TERN_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".config", "tern")
+    plugins = os.path.join(config, "plugins")
+
+    def manifest(folder):
+        with open(os.path.join(folder, "plugin.toml"), "rb") as handle:
+            return tomllib.load(handle)
+
+    def packages():
+        found = []
+        for name in sorted(os.listdir(plugins)) if os.path.isdir(plugins) else []:
+            path = os.path.join(plugins, name)
+            if name.startswith("."):
+                continue
+            if name.endswith(".path"):
+                path = open(path).read().strip()
+            elif not os.path.isdir(path):
+                continue
+            found.append(path)
+        return found
+
+    if argv[1:] == ["dir"]:
+        print(plugins)
+    elif argv[1:2] == ["link"] and argv[3:] in ([], ["--json"]):
+        folder = argv[2]
+        if not os.path.isdir(folder):
+            sys.stderr.write("tern plugin: no directory %s: No such file or directory (os error 2)\n" % folder)
+            sys.exit(1)
+        if not os.path.isfile(os.path.join(folder, "plugin.toml")):
+            sys.stderr.write("tern plugin: %s is not a plugin: no plugin.toml\n" % folder)
+            sys.exit(1)
+        data = manifest(folder)
+        os.makedirs(plugins, exist_ok=True)
+        with open(os.path.join(plugins, data["id"] + ".path"), "w") as handle:
+            handle.write(folder + "\n")
+        print(json.dumps({{"id": data["id"], "version": data["version"], "dir": folder}}, indent=2))
+        sys.stderr.write("no daemon running; changes apply at next start\n")
+    elif argv[1:2] == ["unlink"] and len(argv) == 3:
+        link = os.path.join(plugins, argv[2] + ".path")
+        if not os.path.exists(link):
+            sys.stderr.write("tern plugin: no plugin %s in %s\n" % (argv[2], plugins))
+            sys.exit(1)
+        os.unlink(link)
+        print("unlinked %s (%s)" % (argv[2], link))
+    elif argv[1:] == ["list", "--json"]:
+        entries, problems, seen = [], [], set()
+        for folder in packages():
+            if not os.path.isfile(os.path.join(folder, "plugin.toml")):
+                problems.append({{"dir": folder, "error": "no plugin.toml"}})
+                continue
+            data = manifest(folder)
+            if data["id"] in seen:
+                problems.append({{"dir": folder, "error": "duplicate id %s" % data["id"]}})
+                continue
+            seen.add(data["id"])
+            entries.append({{"id": data["id"], "name": data["name"], "version": data["version"],
+                             "status": "failed: host.luau:1: boom" if mode == "plugin-failed" else "ready"}})
+        print(json.dumps({{"plugins": entries, "problems": problems, "jit": True, "canvas": True}}))
+    else:
+        sys.stderr.write("fake tern: unsupported arguments %r\n" % (argv,))
+        sys.exit(2)
 else:
     sys.stderr.write("fake tern: unsupported arguments %r\n" % (argv,))
     sys.exit(2)
@@ -281,7 +448,8 @@ class FakeTern:
         self.folder = folder
         self.log = folder / "tern-invocations.jsonl"
         #: "hang" (daemon never listens), "unsafe" (socket readable by others),
-        #: "impostor" (--version is not Tern's), "garbled" (inspect prints junk).
+        #: "impostor" (--version is not Tern's), "garbled" (inspect prints junk),
+        #: "big" (capture prints 4000 long lines).
         self.mode_file = folder / "tern-mode"
         self.bin = folder / "tern-bin"
         self.bin.mkdir()

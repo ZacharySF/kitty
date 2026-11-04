@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from kitty import web_atlas
-from kitty.core import calendar, favorites, jobs
+from kitty.core import calendar, favorites, jobs, notes
 from kitty.db import connect
 from kitty.web_server import APIError, WebApplication
 
@@ -109,7 +109,8 @@ def test_section_routes_are_read_only_and_reject_unrecognized_query_fields(works
         path = f"/api/atlas/sections/{section}"
         result = app.get_json(workspace.conn, path, {})
         assert_section_graph(result)
-        for query in ({"limit": "5"}, {"search": "synthetic"}, {"section": section}, {"offset": "120"}):
+        rejected = ({"limit": "5"}, {"search": "synthetic", "limit": "5"}, {"section": section}, {"offset": "120"})
+        for query in (*rejected, *([{"search": "synthetic"}] if section == "opportunities" else [])):
             with pytest.raises(APIError) as error:
                 app.get_json(workspace.conn, path, query)
             assert error.value.status == 400
@@ -118,6 +119,32 @@ def test_section_routes_are_read_only_and_reject_unrecognized_query_fields(works
         assert web_atlas.get(app, workspace.conn, path + "x", {}) is None
         assert web_atlas.get(app, workspace.conn, "/api/atlas/sections", {}) is None
         assert web_atlas.get(app, workspace.conn, "/api/atlas/sections/other", {}) is None
+    finally:
+        app.close()
+
+
+def test_section_search_finds_records_by_content_through_the_index(workspace, tmp_path):
+    conn = workspace.conn
+    book = notes.create_notebook(conn, "Biology")
+    page = notes.create_page(conn, book["id"], "Week 3")
+    document = notes.empty_document()
+    document["elements"] = [{"id": "t", "kind": "text", "layer": "default", "x": 0, "y": 0, "w": 9, "h": 9,
+                             "color": "#000000", "width": 1, "text": "Krebs cycle details"}]
+    notes.save_page(conn, page["id"], page["revision"], document, "Week 3")
+    notes.create_page(conn, book["id"], "Unrelated")
+    track = conn.execute("SELECT name FROM tracks WHERE active = 1 ORDER BY sort_order, name").fetchone()[0]
+    job, _ = jobs.upsert_job(conn, company="Synthetic Co", title="Lab assistant", url="https://example.invalid/k",
+                             jd_text="Run the Krebs cycle assays", tracks=[track])
+    app = WebApplication(workspace.settings, workspace.config, tmp_path)
+    try:
+        found = app.get_json(conn, "/api/atlas/sections/notes", {"search": "krebs"})
+        assert [node["id"] for node in found["nodes"]] == [f"notebook:{book['id']}", f"page:{page['id']}"]
+        assert found["links"] == [{"source": f"notebook:{book['id']}", "target": f"page:{page['id']}",
+                                   "label": "contains", "directed": True}]
+        assert found["total"] == 1 and found["truncated"] is False and "Krebs" not in json.dumps(found)
+        matched = app.get_json(conn, "/api/atlas/sections/jobs", {"search": "krebs"})
+        assert f"job:{job.id}" in {node["id"] for node in matched["nodes"]}
+        assert (f"track:{track}", f"job:{job.id}") in {(link["source"], link["target"]) for link in matched["links"]}
     finally:
         app.close()
 
@@ -186,9 +213,12 @@ def add_notebook(conn, title, folder=None):
 
 
 def add_page(conn, title, notebook):
-    return conn.execute("INSERT INTO note_pages(title,notebook_id,document,search_text,created_at,updated_at)"
-                        " VALUES(?,?,?,?,?,?)",
-                        (title, notebook, '{"private":"PRIVATE_NOTE_BODY"}', "PRIVATE_SEARCH_TEXT", STAMP, STAMP)).lastrowid
+    page = notes.create_page(conn, notebook, title)
+    document = notes.empty_document()
+    document["elements"] = [{"id": "private", "kind": "sticky", "layer": "default", "x": 0, "y": 0, "w": 10, "h": 10,
+                             "color": "#000000", "width": 1, "text": f"PRIVATE_{title}"}]
+    notes.save_page(conn, page["id"], page["revision"], document, title)
+    return page["id"]
 
 
 def test_notes_section_retains_nested_folder_notebook_page_relations(workspace):
@@ -304,13 +334,13 @@ def test_section_missing_tables_and_empty_database_are_honest(tmp_path, section)
         conn.close()
 
 
-def test_notes_section_before_folder_migration_keeps_root_notebooks(tmp_path):
+def test_notes_section_without_folders_keeps_root_notebooks(tmp_path):
     conn = connect(tmp_path / "pre-folders.db")
     try:
         conn.execute("CREATE TABLE note_notebooks(id INTEGER PRIMARY KEY, title TEXT, updated_at TEXT)")
-        conn.execute("CREATE TABLE note_pages(id INTEGER PRIMARY KEY, notebook_id INTEGER, title TEXT, updated_at TEXT)")
+        conn.execute("CREATE TABLE note_page_index(id INTEGER PRIMARY KEY, notebook_id INTEGER, title TEXT, updated_at TEXT)")
         conn.execute("INSERT INTO note_notebooks VALUES(1,'Existing notebook',?)", (STAMP,))
-        conn.execute("INSERT INTO note_pages VALUES(2,1,'Existing page',?)", (STAMP,))
+        conn.execute("INSERT INTO note_page_index VALUES(2,1,'Existing page',?)", (STAMP,))
         result = web_atlas.SECTIONS["notes"](conn)
         assert assert_section_graph(result) == {("notebook:1", "page:2")}
         assert result["shown"] == result["total"] == 2

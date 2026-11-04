@@ -21,10 +21,10 @@ def _directory(ctx: Context, value: str | None) -> Path:
 
 def _delete_page_card(ctx: Context, args: dict) -> tuple[str, str]:
     page = notes.page(ctx.conn, args["page_id"])
-    blocks = ctx.conn.execute("SELECT count(*) FROM note_blocks WHERE page_id=?", (page["id"],)).fetchone()[0]
+    blocks = ctx.conn.execute("SELECT count(*) FROM note_outline WHERE page_id=?", (page["id"],)).fetchone()[0]
     return (f"Delete the page {page['title']}",
-            f"{blocks} outline blocks and {len(page['document']['elements'])} canvas elements are deleted. "
-            "Notes have no Trash, so this cannot be undone.")
+            f"{blocks} outline blocks and {len(page['document']['elements'])} canvas elements move to Trash. "
+            "Rika cannot undo this; restore it from Notes → ⋯ → Trash… while history keeps it.")
 
 
 def _delete_page(ctx: Context, args: dict) -> Result:

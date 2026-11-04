@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, safeUrl, type TaskRecord } from "./api";
+  import { api, followApiLink, safeUrl, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
   import Loader from "./Loader.svelte";
   import ReportSummary, { type Summary } from "./ReportSummary.svelte";
@@ -463,22 +463,22 @@
         <a
           class="button primary"
           href="/api/reports/export?format=json&dataset=all"
-          download>Download all JSON</a
+          download onclick={followApiLink}>Download all JSON</a
         ><a
           class="button"
           href="/api/reports/export?format=csv&dataset=all"
-          download>Download all CSV (ZIP)</a
+          download onclick={followApiLink}>Download all CSV (ZIP)</a
         >
       </div>
       <div class="controls">
         {#each ["jobs", "applications", "status_events"] as dataset}<a
             class="button"
             href={`/api/reports/export?format=csv&dataset=${dataset}`}
-            download>{dataset.replaceAll("_", " ")} CSV</a
+            download onclick={followApiLink}>{dataset.replaceAll("_", " ")} CSV</a
           ><a
             class="button"
             href={`/api/reports/export?format=json&dataset=${dataset}`}
-            download>{dataset.replaceAll("_", " ")} JSON</a
+            download onclick={followApiLink}>{dataset.replaceAll("_", " ")} JSON</a
           >{/each}
       </div>
       <div id="report-tables" hidden={!showTables}>

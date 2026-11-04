@@ -3,7 +3,7 @@
 import { mount } from "svelte";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";
-import { applySavedTheme } from "/src/lib/themes/index.ts";
+import { installBuild } from "./buildStub.js";
 import CalendarHarness from "./CalendarHarness.svelte";
 
 /** Today at `hour` local time, as the UTC instant the server would return. */
@@ -85,6 +85,6 @@ window.fetch = async (input, init = {}) => {
   return json({ error: "not in harness" }, 404);
 };
 
-applySavedTheme();
+await installBuild();
 mount(CalendarHarness, { target: document.getElementById("view") });
 window.calendarHarness = harness;

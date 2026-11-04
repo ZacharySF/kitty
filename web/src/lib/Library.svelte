@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { api, type TaskRecord } from "./api";
+  import { api, followApiLink, openApi, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
   import ResumeReview, { type ResumeAudit } from "./ResumeReview.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -273,16 +273,16 @@
       event.preventDefault();
       void ask("reject");
     } else if (event.key === "o" || event.key === "Enter") {
-      const url = selected
-        ? "/api/resumes/versions/" + selected.id + "/pdf"
+      const path = selected
+        ? "/resumes/versions/" + selected.id + "/pdf"
         : resumes.find((item) => item.available)
-          ? "/api/resumes/" +
+          ? "/resumes/" +
             resumes.find((item) => item.available)!.id +
             "/pdf"
           : null;
-      if (url) {
+      if (path) {
         event.preventDefault();
-        window.open(url, "_blank", "noopener,noreferrer");
+        openApi(path).catch(fail);
       }
     }
   }
@@ -408,7 +408,8 @@
               class="button"
               href="/api/resumes/{resume.id}/pdf"
               target="_blank"
-              rel="noopener noreferrer">Open resume PDF</a
+              rel="noopener noreferrer"
+              onclick={followApiLink}>Open resume PDF</a
             >{:else}<span class="badge">PDF missing or identity changed</span
             >{/if}
         </li>{/each}

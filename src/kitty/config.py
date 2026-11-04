@@ -996,7 +996,7 @@ def load_config(config_dir: Path, *, modules: Sequence[str] | None = None) -> Co
     """Load the config files of the active modules from `config_dir`.
 
     `modules` is the process's frozen active snapshot; None reads
-    config/modules.yaml (a missing file means every module). The careers files are
+    the build's modules in config/build.json (no build file means every module). The careers files are
     only read, and only validated, when applyai is active, so a pending selection
     never changes what a running process loads.
 

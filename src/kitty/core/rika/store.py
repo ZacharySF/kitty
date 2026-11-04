@@ -208,7 +208,7 @@ def _plan(row: sqlite3.Row, conn: sqlite3.Connection) -> dict[str, Any]:
 
     note = None
     if row["note_page_id"] is not None:
-        page = conn.execute("SELECT id,title FROM note_pages WHERE id=?", (row["note_page_id"],)).fetchone()
+        page = conn.execute("SELECT id,title FROM note_page_index WHERE id=?", (row["note_page_id"],)).fetchone()
         note = {"page_id": page["id"], "title": page["title"]} if page else None
     return {"kind": "plan", "id": row["id"], "message_id": row["message_id"], "request_id": row["request_id"],
             "items": public_items(json.loads(row["items_json"])), "duration": row["duration_s"], "note": note,

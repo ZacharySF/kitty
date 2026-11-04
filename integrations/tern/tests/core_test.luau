@@ -1,0 +1,113 @@
+--!nonstrict
+local core = require("../lib/core")
+
+return function(t: any)
+	t.test("finds rika!'s private folder from the installed copy's path", function()
+		t.eq(core.private_dir("/home/u/ws/.private/tern/plugin"), "/home/u/ws/.private")
+		t.eq(core.private_dir("/home/u/ws/.private/tern/plugin/"), "/home/u/ws/.private")
+		t.eq(core.endpoint_path("/home/u/ws/.private/tern/plugin"), "/home/u/ws/.private/endpoint.json")
+		t.eq(core.private_dir("/home/u/src/kitty/integrations/tern"), nil, "a developer's own link")
+		t.eq(core.endpoint_path("/x/.private/tern/plugins"), nil)
+	end)
+
+	t.test("accepts only a loopback endpoint of this rika! version", function()
+		local endpoint = core.parse_endpoint({ origin = "http://127.0.0.1:8123", pairing = "/api/ingress/pair" })
+		t.eq(endpoint, { origin = "http://127.0.0.1:8123", pairing = "/api/ingress/pair" })
+		t.ok(core.parse_endpoint({ origin = "http://[::1]:9000", pairing = "/api/ingress/pair" }))
+		for _, origin in { "http://example.com:80", "https://127.0.0.1:8123", "http://127.0.0.1", "http://127.0.0.1:0",
+			"http://127.0.0.1:99999", "http://127.0.0.1:80/x", "http://127.0.0.10:80" } do
+			local found, problem = core.parse_endpoint({ origin = origin, pairing = "/api/ingress/pair" })
+			t.eq(found, nil, origin)
+			t.has(problem, "not this computer", origin)
+		end
+		local _, version = core.parse_endpoint({ origin = "http://127.0.0.1:8123", pairing = "/pair" })
+		t.has(version, "unknown rika! version")
+		local _, unreadable = core.parse_endpoint("nope")
+		t.has(unreadable, "not readable")
+	end)
+
+	t.test("classifies rika!'s answers", function()
+		t.eq(core.classify(0, "connection refused", nil).kind, "offline")
+		t.has(core.classify(0, "connection refused", nil).message, "isn't running")
+		local ok = core.classify(200, nil, { page = 3 })
+		t.eq(ok.kind, "ok")
+		t.eq(ok.data, { page = 3 })
+		t.eq(core.classify(401, nil, { error = "A paired client token is required" }).kind, "unauthorized")
+		local off = core.classify(403, nil, { error = "The kitty Tern plugin is turned off in this rika!'s build (Settings > Build)" })
+		t.eq(off.kind, "disabled")
+		t.has(off.message, "Settings > Build")
+		t.eq(core.classify(403, nil, { error = "This client was not granted the read scope" }).kind, "forbidden")
+		t.eq(core.classify(429, nil, nil).kind, "busy")
+		local failed = core.classify(400, nil, { error = "Send 1–100 blocks" })
+		t.eq(failed.kind, "failed")
+		t.eq(failed.message, "Send 1–100 blocks")
+		t.eq(core.classify(502, nil, nil).message, "rika! answered HTTP 502")
+	end)
+
+	t.test("cuts text on UTF-8 boundaries", function()
+		t.eq(core.head("abc", 10), "abc")
+		t.eq(core.head("aé", 2), "a", "never half of é")
+		t.eq(core.head("aé", 3), "aé")
+		local tail, cut = core.tail("short", 100)
+		t.eq(tail, "short")
+		t.eq(cut, false)
+		local text = string.rep("é", 40)
+		local newest, trimmed = core.tail(text, #core.TRIMMED + 1 + 11)
+		t.eq(trimmed, true)
+		t.eq(newest, core.TRIMMED .. "\n" .. string.rep("é", 5), "starts on a whole character")
+	end)
+
+	t.test("reads pane text without Tern's header", function()
+		t.eq(core.pane_text("[… 7 earlier lines; increase lines]\n$ ls\nfile\n\n  \n"), "$ ls\nfile")
+		t.eq(core.pane_text("$ ls\nfile"), "$ ls\nfile")
+		t.eq(core.pane_text(nil), "")
+	end)
+
+	t.test("builds Inbox blocks for selections, panes and failures", function()
+		t.eq(core.selection_blocks("  \n ", "bash", "/tmp"), nil)
+		t.eq(core.selection_blocks("hello", "bash", "/home/u"), {
+			{ type = "quote", text = "hello" },
+			{ type = "text", text = "From Tern · bash · /home/u" },
+		})
+		t.eq(core.pane_blocks("", "bash", nil), nil)
+		local pane = core.pane_blocks(string.rep("x", core.MAX_BLOCK_TEXT + 50), "  vim  ", "") :: any
+		t.eq(pane[1], { type = "text", text = "Tern pane · vim" })
+		t.eq(pane[2].type, "code")
+		t.ok(#pane[2].text <= core.MAX_BLOCK_TEXT)
+		t.has(pane[2].text, core.TRIMMED)
+		t.eq(core.failed_blocks("make test ", 2, "boom", "/src"), {
+			{ type = "text", text = "Failed in Tern (exit 2): make test · /src" },
+			{ type = "code", text = "boom" },
+		})
+		t.eq(#core.failed_blocks("false", 1, "", nil), 1, "no empty code block")
+	end)
+
+	t.test("builds quick note and page bodies", function()
+		t.eq(core.note_body("  "), nil)
+		t.eq(core.note_body(nil), nil)
+		t.eq(core.note_body("milk"), { text = "milk" })
+		local page = core.mirror_body("https://example.org/a", "  A   page\n", "text", "")
+		t.eq(page, { url = "https://example.org/a", title = "A page", text = "text" })
+		t.eq((core.mirror_body("http://x.test/", "", nil, "chosen")), { url = "http://x.test/", title = "http://x.test/", selection = "chosen" })
+		local refused, why = core.mirror_body("file:///etc/passwd", "x", nil, nil)
+		t.eq(refused, nil)
+		t.has(why, "http and https")
+		t.eq((core.mirror_body("https://a b", "x", nil, nil)), nil)
+	end)
+
+	t.test("links pages, the calendar and the Inbox block", function()
+		t.eq(core.page_url("http://127.0.0.1:5", 12), "http://127.0.0.1:5/#notes/12")
+		t.eq(core.calendar_url("http://127.0.0.1:5"), "http://127.0.0.1:5/#calendar")
+		local action, pane = core.parse_link(core.inbox_link(4294967297))
+		t.eq(action, "inbox")
+		t.eq(pane, 4294967297)
+		t.eq((core.parse_link("https://kitty-tern.example/inbox?pane=1")), nil)
+	end)
+
+	t.test("offers to save only real failures", function()
+		t.eq(core.is_failure(1), true)
+		t.eq(core.is_failure(0), false)
+		t.eq(core.is_failure(130), false, "Ctrl+C")
+		t.eq(core.is_failure(nil), false)
+	end)
+end

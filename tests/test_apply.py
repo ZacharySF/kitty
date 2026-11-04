@@ -2007,6 +2007,24 @@ def test_firefox_start_requires_desktop_but_reuses_existing_browser(space, monke
     assert browser.ensure_firefox(settings) == settings.browser_port
 
 
+def test_firefox_start_grants_system_access_on_every_firefox_release(monkeypatch):
+    # Firefox 159 ignores --remote-allow-system-access; it reads the variable.
+    from kitty.core.apply import browser
+
+    started = {}
+
+    def popen(command, **kwargs):
+        started.update(command=command, env=kwargs["env"])
+        return object()
+
+    monkeypatch.setattr(browser.subprocess, "Popen", popen)
+    monkeypatch.delenv("MOZ_REMOTE_ALLOW_SYSTEM_ACCESS", raising=False)
+    browser._start(browser.firefox_command("/system/firefox", Path("/profile"), 9333))
+    assert "--remote-allow-system-access" in started["command"]
+    assert started["env"]["MOZ_REMOTE_ALLOW_SYSTEM_ACCESS"] == "1"
+
+
+
 @pytest.mark.parametrize("markup", [
     '<input id="choice" type="checkbox" style="display:none">'
     '<label for="choice">Available for relocation?</label>',

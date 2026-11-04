@@ -1,9 +1,10 @@
-# Secrets and private runtime configuration. Share *.yaml.example only.
+# Secrets and private runtime configuration. Share *.example templates only.
 .env
 .env.*
 !.env.example
 config/*.yaml
 config/*.yml
+config/build.json
 config/gmail_client.json
 PRIVATE_CONTEXT.md
 

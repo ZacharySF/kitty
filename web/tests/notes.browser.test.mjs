@@ -86,7 +86,7 @@ for (const [label, viewport] of [["default", DEFAULT], ["minimum", MINIMUM]]) {
   test(`one header row holds the library, page tabs, Page mode, Find and ⋯ last, with the page under it at the ${label} native size`, async () => {
     const { page, problems, context } = await notes(viewport);
     await assert.doesNotReject(block(page, 1).waitFor());
-    assert.equal(await block(page, 1).inputValue(), "A hash ring maps each key to the next node clockwise.");
+    await until(async () => (await block(page, 1).textContent()) === "A hash ring maps each key to the next node clockwise.", "the first block shows");
     // Q17: ☰, the tabs, the Write/Canvas/Map switch, Find and ⋯ share one row.
     const header = page.locator(".notes-heading");
     const controls = {
@@ -142,14 +142,14 @@ test("the library is the single notebook and page navigator", async () => {
   await assert.doesNotReject((await library(page)).getByRole("button", { name: /^\W*Reading log$/ }).waitFor());
   await (await library(page)).getByRole("button", { name: "Raft notes" }).click();
   await titleIs(page, "Raft notes");
-  assert.equal(await block(page, 1).inputValue(), "A leader replicates log entries to followers.");
+  await until(async () => (await block(page, 1).textContent()) === "A leader replicates log entries to followers.", "the Raft page's block shows");
   assert.deepEqual(problems, []);
   await context.close();
 });
 
 test("rare page actions sit in the ⋯ menu, which follows the page mode", async () => {
   const { page, problems, context } = await notes();
-  const writeItems = ["Today's page", "Library overview", "Import PDF or Markdown…", "Favourite", "Preview outline", "Privacy & storage…", "Reload saved", "Delete page…"];
+  const writeItems = ["Today's page", "Library overview", "Import PDF or Markdown…", "Favourite", "Page history…", "Trash…", "Privacy & storage…", "Reload saved", "Delete page…"];
   assert.equal(await page.getByRole("menu", { name: "More page actions" }).count(), 0);
   await more(page).focus();
   await page.keyboard.press("Enter");
@@ -160,17 +160,14 @@ test("rare page actions sit in the ⋯ menu, which follows the page mode", async
   await page.keyboard.press("Escape");
   await menu.waitFor({ state: "hidden" });
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "More page actions", "Escape does not return to ⋯");
-  // Preview outline toggles to Edit outline.
-  await choose(page, "Preview outline");
-  await more(page).click();
-  await menuItem(page, "Edit outline").waitFor();
+  // Page history (the block backend's sessions and Restore) opens from ⋯.
+  await choose(page, "Page history…");
+  await page.getByRole("dialog", { name: /history/i }).waitFor();
   await page.keyboard.press("Escape");
-  // In Canvas, the outline preview gives way to Canvas fullscreen.
+  // In Canvas, Canvas fullscreen joins the menu.
   await mode(page, "Canvas").click();
   await more(page).click();
   await menuItem(page, "Canvas fullscreen").waitFor();
-  assert.equal(await menuItem(page, "Edit outline").count(), 0);
-  assert.equal(await menuItem(page, "Preview outline").count(), 0);
   await page.keyboard.press("Escape");
   assert.deepEqual(problems, []);
   await context.close();
@@ -341,25 +338,80 @@ test("Ctrl+S saves title and writing, and the page reopens with them", async () 
   await titleIs(page, "Raft notes");
   await openTab(page, "Consistent hashing (revised)").click();
   await titleIs(page, "Consistent hashing (revised)");
-  assert.equal(await block(page, 1).inputValue(), "Each key belongs to the next node clockwise on the ring.");
+  await until(async () => (await block(page, 1).textContent()) === "Each key belongs to the next node clockwise on the ring.", "the saved block reopens");
   assert.deepEqual(problems, []);
   await context.close();
 });
 
-test("an unsaved edit blocks switching pages until Retry save succeeds, and the tab dot shows the failure", async () => {
+test("an unsaved title edit blocks switching pages until Retry save succeeds, and the tab dot shows the failure", async () => {
   const { page, problems, context } = await notes();
   await page.evaluate(() => { window.notesHarness.failSaves = true; });
-  await block(page, 1).fill("Draft that must not be lost.");
+  await title(page).fill("Draft title that must not be lost");
   await (await library(page)).getByRole("button", { name: "Raft notes" }).click();
   await assert.doesNotReject(page.getByRole("alert").filter({ hasText: "Synthetic save failure" }).waitFor());
-  assert.equal(await title(page).inputValue(), "Consistent hashing");
-  assert.equal(await block(page, 1).inputValue(), "Draft that must not be lost.");
+  assert.equal(await title(page).inputValue(), "Draft title that must not be lost");
   assert.equal(await page.evaluate(() => window.notesHarness.status?.state), "failed", "the tab dot does not show the failed save");
   await page.evaluate(() => { window.notesHarness.failSaves = false; });
   await page.getByRole("button", { name: "Retry save", exact: true }).click();
-  await page.waitForFunction(() => window.notesHarness.saved(1).blocks[0].text === "Draft that must not be lost.");
+  await page.waitForFunction(() => window.notesHarness.saved(1).title === "Draft title that must not be lost");
   await until(async () => (await page.evaluate(() => window.notesHarness.status?.state)) === "saved", "the tab dot shows saved");
   assert.equal(await page.getByRole("button", { name: "Retry save" }).count(), 0);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("an edit saved in another window appears live without a reload", async () => {
+  const { page, problems, context } = await notes();
+  await page.waitForFunction(() => window.notesHarness.sockets.some((socket) => socket.readyState === 1));
+  assert.match(await page.evaluate(() => window.notesHarness.sockets[0].url), /^ws:\/\/[^/]+\/api\/live\/socket\?token=synthetic-token$/);
+  await page.evaluate(() => window.notesHarness.editElsewhere(1, { title: "Consistent hashing (from window 2)", text: "Edited live in a second window." }));
+  // Well under the old 4 s refresh poll: the push itself renders the edit.
+  await until(async () => (await block(page, 1).textContent()) === "Edited live in a second window.", "the pushed edit shows");
+  await titleIs(page, "Consistent hashing (from window 2)");
+  await until(async () => (await (await library(page)).innerText()).includes("Consistent hashing (from window 2)"), "the library shows the new title");
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a live change never overwrites an unsaved local edit", async () => {
+  const { page, problems, context } = await notes();
+  await page.waitForFunction(() => window.notesHarness.sockets.some((socket) => socket.readyState === 1));
+  await block(page, 1).waitFor();
+  await page.evaluate(() => { window.notesHarness.server.holdAcks = true; });
+  await block(page, 1).fill("My unsaved draft.");
+  await page.waitForFunction(() => window.notesHarness.server.held.length > 0);
+  await page.evaluate(() => window.notesHarness.editElsewhere(1, { text: "Someone else's edit." }));
+  await page.waitForTimeout(600);
+  assert.equal(await block(page, 1).textContent(), "My unsaved draft.");
+  // Once confirmed, the server's order decides: the edit committed after the draft wins, in both places.
+  await page.evaluate(() => window.notesHarness.server.release());
+  await until(async () => (await block(page, 1).textContent()) === await page.evaluate(() => window.notesHarness.saved(1).blocks[0].text), "editor and server agree");
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("a pinned citation says when its source changed since and shows the change", async () => {
+  const { page, problems, context } = await notes();
+  await page.waitForFunction(() => window.notesHarness.sockets.some((socket) => socket.readyState === 1));
+  await block(page, 1).waitFor();
+  // An agent cites block 4 of "Raft notes" as of seq 2 (that page's first transaction); then it changes.
+  await page.evaluate(() => {
+    const { server } = window.notesHarness;
+    const agent = { kind: "agent", name: "claude-code", session: "agent-session-1" };
+    server.commit([{ op: "text", id: "40000000-0000-4000-8000-000000000003",
+      text: "Replication details live in ((40000000-0000-4000-8000-000000000004@2))." }], undefined, agent);
+  });
+  await page.waitForTimeout(600);
+  assert.equal(await page.getByRole("button", { name: /source changed since/ }).count(), 0, "an unchanged source is not flagged");
+  await page.evaluate(() => window.notesHarness.editElsewhere(2, { text: "A leader replicates log entries to a majority." }));
+  const badge = page.getByRole("button", { name: "source changed since" });
+  await assert.doesNotReject(badge.waitFor());
+  await badge.click();
+  const panel = page.getByRole("region", { name: "Source changed since" });
+  await assert.doesNotReject(panel.waitFor());
+  assert.equal(await panel.locator("del").textContent(), "A leader replicates log entries to followers.");
+  assert.equal(await panel.locator("ins").textContent(), "A leader replicates log entries to a majority.");
+  assert.match(await panel.innerText(), /Cited at seq 2; changed at seq \d+/);
   assert.deepEqual(problems, []);
   await context.close();
 });

@@ -82,6 +82,14 @@ def test_a_deterministic_phrase_runs_its_tool_with_no_model(build, workspace, no
     assert no_network == []
 
 
+def test_rikas_block_writes_are_an_agent_session_per_conversation(build, workspace, no_network):
+    app, events = build()
+    sent = app.rika.submit(workspace.conn, "Add a node Photosynthesis.")
+    until(events, finished)
+    rows = {tuple(row) for row in workspace.conn.execute("SELECT actor, actor_name, actor_session FROM op_log")}
+    assert rows == {("agent", "rika!", f"rika:{sent['conversation_id']}")}
+
+
 def test_an_outward_tool_pauses_for_approval_and_runs_once_approved(build, workspace):
     page = notes.create_page(workspace.conn, notes.create_notebook(workspace.conn, "Notes")["id"], "Draft")
     app, events = build()
@@ -89,7 +97,7 @@ def test_an_outward_tool_pauses_for_approval_and_runs_once_approved(build, works
     seen = until(events, lambda event: event["type"] == "approval")
     approval = seen[-1]["approval"]
     assert approval["tool"] == "delete_page" and approval["status"] == "pending"
-    assert "cannot be undone" in approval["detail"]
+    assert "move to Trash" in approval["detail"]
     time.sleep(0.3)
     assert notes.page(workspace.conn, page["id"])  # paused: nothing deleted yet
     pending = [item for item in store.history(workspace.conn)["items"] if item["kind"] == "message"][-1]
@@ -320,7 +328,7 @@ def test_an_unreadable_plan_escalates_once_then_gives_up_keeping_the_note(build,
     assert [event["tier"] for event in of(seen, "tier")] == ["standard", "deep"]
     reply = of(seen, "message")[-1]["message"]
     assert reply["status"] == "failed" and "dump note" in reply["text"] and not of(seen, "plan")
-    assert workspace.conn.execute("SELECT count(*) FROM note_pages WHERE title LIKE 'Brain dump · %'").fetchone()[0] == 1
+    assert workspace.conn.execute("SELECT count(*) FROM note_page_index WHERE title LIKE 'Brain dump · %'").fetchone()[0] == 1
 
 
 def test_approving_a_plan_is_the_approval_for_its_ticked_outward_items(build, workspace, monkeypatch):
