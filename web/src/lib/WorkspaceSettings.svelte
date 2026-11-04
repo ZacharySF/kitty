@@ -1,6 +1,9 @@
 <script lang="ts" module>
   /** The short pages Settings opens beside its index, deep-linked as `#settings/<page>`. */
-  export const SETTINGS_PAGES = ["appearance", "desktop", "quiet-hours", "account", "modules", "graphs", "rika-routing", "rika-email", "rika-memory"] as const;
+  export const SETTINGS_PAGES = [
+    "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "connected-apps", "keys", "devices",
+    "rika-routing", "rika-email", "rika-memory",
+  ] as const;
   export type SettingsPage = (typeof SETTINGS_PAGES)[number];
   const isPage = (value: unknown): value is SettingsPage => SETTINGS_PAGES.includes(value as SettingsPage);
   /** The page a hash names: `undefined` when the hash is another view, `null` for bare `#settings`. */
@@ -19,14 +22,19 @@
   import DesktopSettings from "./DesktopSettings.svelte";
   import QuietHours from "./QuietHours.svelte";
   import AccountSettings from "./AccountSettings.svelte";
+  import ConnectedApps from "./ConnectedApps.svelte";
+  import Keys from "./Keys.svelte";
+  import Devices from "./Devices.svelte";
+  import TagSettings from "./TagSettings.svelte";
+  import BuildSettings from "./BuildSettings.svelte";
+  import { buildStore, setPreferences } from "./build.svelte";
   import RoutingMemory from "./rika/settings/RoutingMemory.svelte";
   import EmailSettings from "./rika/settings/EmailSettings.svelte";
   import MemorySettings from "./rika/settings/MemorySettings.svelte";
   import Icon from "./Icon.svelte";
   import Select from "./ui/Select.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
-  import { GRAPH_LAYOUT_KEY, GRAPH_PHYSICS_KEY, GRAPH_LAYOUTS, GRAPH_SETTINGS_EVENT, graphLayout, graphPhysics } from "./graphPreferences";
-  import { setGraphLook } from "./graphPreferences";
+  import { GRAPH_LAYOUTS, setGraphSettings } from "./graphPreferences";
   import type { View } from "./workspace";
   import { activeModules } from "./modules.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -45,11 +53,18 @@
       { page: "appearance", label: "Appearance", icon: "kitty", keywords: "theme preset cozy focused minimal title font density motion background petals motif home brain look 2d 3d" },
       { page: "desktop", label: "Desktop", icon: "terminal", keywords: "app updates tray keep running close quit quick note window" },
       ...(quietAvailable ? [{ page: "quiet-hours", label: "Quiet hours", icon: "moon", keywords: "notifications reminders do not disturb digest calendar dial held" } as Entry] : []),
+      { page: "build", label: "Build", icon: "download", keywords: "build file export import share install rollback history custom css tokens safe mode editor" },
     ] },
     { label: "Workspace", items: [
       { page: "account", label: "Account", icon: "shield", keywords: "google sign-in connect welcome guided tour onboarding identity" },
       { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal enable disable restart" },
       { page: "graphs", label: "Graphs", icon: "schema", keywords: "schemas default layout tree clusters sphere force physics repulsion spring damping" },
+      ...(activeModules.enabled.includes("workspace") ? [{ page: "tags", label: "Tags", icon: "favorites", keywords: "auto tags keywords suggest always attach" } as Entry] : []),
+    ] },
+    { label: "Connections", items: [
+      { page: "connected-apps", label: "Connected apps", icon: "external", keywords: "pairing tern plugin browser extension mirror token revoke approve" },
+      { page: "keys", label: "Keys", icon: "shield", keywords: "api keys openrouter anthropic usajobs brave keyring secret" },
+      { page: "devices", label: "Devices", icon: "refresh", keywords: "sync peer pair code tailscale lan other computer" },
     ] },
     { label: "Careers & AI", items: [
       ...(activeModules.enabled.includes("applyai") ? [{ view: "profile", label: "Profile & saved answers", icon: "questions", keywords: "resume answers questions personal details" } as Entry] : []),
@@ -101,8 +116,11 @@
     };
   });
 
-  let layout = $state(graphLayout());
-  let physics = $state(graphPhysics());
+  // The build's `ui.graph`; a slider being dragged shows its draft until it is saved.
+  const layout = $derived(buildStore.build.ui.graph.layout);
+  let draft = $state<GraphPhysics | null>(null);
+  const physics = $derived(draft ?? buildStore.build.ui.graph.physics);
+  let physicsTimer: ReturnType<typeof setTimeout> | undefined;
   let error = $state("");
   let modules = $state<ModulesState | null>(null);
   let selection = $state<ModuleId[]>([]);
@@ -129,7 +147,12 @@
     modules = next;
     selection = [...next.configured];
   }
-  onMount(() => {
+  // The build's modules can change from anywhere (an install, a rollback, an outside editor):
+  // show the saved selection again unless the user is editing it here.
+  const buildModules = $derived(buildStore.build.modules.join(","));
+  $effect(() => {
+    void buildModules;
+    if (untrack(() => modulesDirty || savingModules)) return;
     let cancelled = false;
     api<ModulesState>("/modules")
       .then(next => { if (!cancelled) adopt(next); })
@@ -159,19 +182,23 @@
     spring: "How strongly connected nodes pull together. Lower values leave looser branches.",
     damping: "How quickly node movement slows. Higher values settle the graph sooner.",
   };
-  function save() {
-    try {
-      localStorage.setItem(GRAPH_LAYOUT_KEY, layout);
-      localStorage.setItem(GRAPH_PHYSICS_KEY, JSON.stringify(physics));
-      window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT, { detail: { layout, physics: { ...physics } } }));
-      error = "";
-    } catch { error = "This browser could not save local preferences."; }
+  // Graph settings save to the build at once; a refusal is shown here (and by the build's notice).
+  async function saveGraph(save: Promise<boolean>) {
+    error = (await save) ? "" : buildStore.error;
+  }
+  function movePhysics(key: keyof GraphPhysics, value: number) {
+    draft = { ...physics, [key]: value };
+    clearTimeout(physicsTimer);
+    physicsTimer = setTimeout(() => {
+      const next = draft;
+      draft = null;
+      if (next) void saveGraph(setGraphSettings(layout, next));
+    }, 250);
   }
   function reset() {
-    layout = "tree";
-    physics = { ...DEFAULT_PHYSICS };
-    save();
-    try { setGraphLook("2d"); } catch { error = "This browser could not save local preferences."; }
+    clearTimeout(physicsTimer);
+    draft = null;
+    void saveGraph(setPreferences({ ui: { graph: { look: "2d", layout: "tree", physics: { ...DEFAULT_PHYSICS } } } }));
   }
 </script>
 
@@ -262,7 +289,7 @@
               <span class="set-label" title="The layout used when you open Home or a section schema">Default layout</span>
               <span class="set-end">
                 <Select label="Default layout" value={layout} options={GRAPH_LAYOUTS.map((item) => ({ value: item.id, label: item.label }))}
-                  onchange={(next) => { layout = next as GraphLayout; save(); }} />
+                  onchange={(next) => void saveGraph(setGraphSettings(next as GraphLayout, physics))} />
               </span>
             </div>
             {#each Object.keys(PHYSICS_LIMITS) as (keyof GraphPhysics)[] as key (key)}
@@ -271,7 +298,7 @@
                   <label for={`${uid}-${key}`}>{labels[key]}</label><i class="info" title={explanations[key]} aria-hidden="true">i</i>
                 </span>
                 <input type="range" id={`${uid}-${key}`} aria-describedby={`${uid}-${key}-help`} min={PHYSICS_LIMITS[key].min} max={PHYSICS_LIMITS[key].max}
-                  step={PHYSICS_LIMITS[key].step} value={physics[key]} oninput={(event) => { physics[key] = Number(event.currentTarget.value); save(); }} />
+                  step={PHYSICS_LIMITS[key].step} value={physics[key]} oninput={(event) => movePhysics(key, Number(event.currentTarget.value))} />
                 <output for={`${uid}-${key}`}>{physics[key].toFixed(key === "repulsion" ? 0 : 2)}</output>
                 <span class="sr-only" id={`${uid}-${key}-help`}>{explanations[key]}</span>
               </div>
@@ -280,6 +307,16 @@
           </div>
           {#if error}<p class="set-note" role="alert">{error}</p>{/if}
         </Panel>
+      {:else if shown === "build"}
+        <BuildSettings />
+      {:else if shown === "tags"}
+        <TagSettings />
+      {:else if shown === "connected-apps"}
+        <ConnectedApps />
+      {:else if shown === "keys"}
+        <Keys />
+      {:else if shown === "devices"}
+        <Devices />
       {/if}
     </div>
   </div>

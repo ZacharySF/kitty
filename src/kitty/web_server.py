@@ -17,6 +17,7 @@ import importlib
 import json
 import re
 import shutil
+import signal
 import sqlite3
 import threading
 from contextlib import closing
@@ -26,9 +27,12 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from kitty import web_auth, web_clients
 from kitty.config import Config, ConfigError
-from kitty.core import record_events
+from kitty.core import endpoint, record_events
 from kitty.core.bootstrap import configure_modules
+from kitty.core.builds.project import startup_modules
+from kitty.core.builds.store import BuildStoreError
 from kitty.core.workspace import open_workspace
 from kitty.db import connect
 from kitty.db.connection import transaction
@@ -56,9 +60,14 @@ STATIC_TYPES = {
 
 
 class APIError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, *, headers: dict[str, str] | None = None,
+                 problems: list[dict[str, Any]] | None = None):
         super().__init__(message)
         self.status = status
+        #: Extra response headers (WWW-Authenticate, Retry-After) for this error.
+        self.headers = headers or {}
+        #: Located problems (a build file's line and column) answered beside ``error``.
+        self.problems = problems or []
 
 
 def _integer(value: str, name: str, minimum: int, maximum: int) -> int:
@@ -123,11 +132,13 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
         "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
         "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness",
-        "/api/math")),
+        "/api/blocks", "/api/tags", "/api/mirror", "/api/math")),
     ("/api/terminal", "terminal"),
 ), key=lambda item: -len(item[0])))
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
+#: The live channel starts first and the build second: other extensions read both.
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
+    (None, "web_live"), (None, "web_build"),
     ("applyai", "web_jobs"), ("applyai", "web_automation"), ("applyai", "web_resumes"),
     ("applyai", "web_profile"), ("applyai", "web_insights"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
@@ -135,7 +146,9 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_math"),
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
-    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), (None, "web_desktop"),
+    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
+    ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_keys"),
+    (None, "web_devices"), (None, "web_search"),
     (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
     ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
@@ -157,12 +170,17 @@ class WebApplication:
     selection saved through ``/api/modules`` takes effect in the next process.
     """
 
-    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None):
+    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None, safe: bool = False):
         self.settings = settings
         self.config = config
         self.modules: tuple[str, ...] = tuple(config.modules)
+        #: Safe mode (``--safe``): every window starts without the build's custom CSS and
+        #: theme token overrides (Q9).
+        self.safe = safe
         #: The desktop shell's owner pipe (kitty.web_desktop.DesktopOwner); None for kitty-web.
         self.desktop = desktop
+        #: The serving origin (``http://127.0.0.1:<port>``), set by the server that serves this app.
+        self.origin: str | None = None
         self.static_dir = static_dir.resolve()
         self.mutation_lock = threading.Lock()
         self.discovery_lock = threading.Lock()
@@ -195,6 +213,13 @@ class WebApplication:
             self.automation.close()
         self.tasks.close()
 
+    def mutated(self) -> None:
+        """Tell extensions a mutation committed (live push wakes at once instead of polling)."""
+        for extension in self.extensions:
+            hook = getattr(extension, "mutated", None)
+            if hook:
+                hook(self)
+
     def require_module(self, module: str) -> None:
         """403 unless `module` is in this process's active snapshot."""
         if module not in self.modules:
@@ -212,7 +237,7 @@ class WebApplication:
     def reload_config(self) -> None:
         """Refresh validated config after an explicit, serialized settings change.
 
-        The active module snapshot is pinned: a pending modules.yaml edit is neither
+        The active module snapshot is pinned: a pending module edit in the build is neither
         applied nor validated here.
         """
         with open_workspace(self.settings, modules=self.modules) as workspace:
@@ -348,8 +373,9 @@ class WebApplication:
         if path == "/api/modules":
             return self.set_modules(body)
         self.guard(path)
+        op_log_before = record_events.op_log_mark(conn)
         result = self._dispatch_mutation(conn, path, body)
-        record_events.capture(conn, path, body, result)
+        record_events.capture(conn, path, body, result, op_log_before=op_log_before)
         return result
 
     def _dispatch_mutation(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
@@ -455,6 +481,10 @@ class LocalHTTPServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), RequestHandler)
         self.authority = f"127.0.0.1:{self.server_address[1]}"
         self.origin = f"http://{self.authority}"
+        #: This launch's UI secret, bootstrap code and link tickets (kitty.web_auth).
+        self.ui_auth = web_auth.UiAuth()
+        #: The address paired programs use (Settings → Connected apps shows it for the browser extension).
+        app.origin = self.origin
 
     def server_close(self) -> None:
         # Upgraded streams outlive requests; end them before joining request threads.
@@ -475,7 +505,16 @@ class RequestHandler(BaseHTTPRequestHandler):
         # URLs/search strings and private job IDs do not belong in access logs.
         pass
 
+    def parse_request(self) -> bool:
+        #: Extra headers for this request's response (the client ingress's CORS headers).
+        self.response_headers: dict[str, str] = {}
+        #: The WebSocket subprotocol a 101 selects, set only once an upgrade is authorised.
+        self.websocket_protocol: str | None = None
+        return super().parse_request()
+
     def _security(self, *, mutation: bool = False) -> None:
+        if self.headers.get_all("Authorization", []):
+            raise APIError(403, "Paired client tokens reach only /api/ingress")
         hosts = self.headers.get_all("Host", [])
         if hosts != [self.server.authority]:
             raise APIError(403, "Use the server's loopback address")
@@ -491,21 +530,47 @@ class RequestHandler(BaseHTTPRequestHandler):
                 raise APIError(415, "Use application/json")
 
     def _target(self) -> tuple[str, dict[str, str]]:
-        if len(self.path) > 8192 or not self.path.startswith("/") or self.path.startswith("//"):
-            raise APIError(400, "Invalid request target")
-        parsed = urlsplit(self.path)
-        if parsed.scheme or parsed.netloc or parsed.fragment:
-            raise APIError(400, "Invalid request target")
-        try:
-            pairs = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=20)
-            path = unquote(parsed.path, errors="strict")
-        except (ValueError, UnicodeError):
-            raise APIError(400, "Invalid request target") from None
-        if any(len(values) != 1 for values in pairs.values()):
-            raise APIError(400, "Repeated query parameters are not allowed")
-        if "\x00" in path or "\\" in path or any(part in {".", ".."} for part in path.split("/")):
-            raise APIError(400, "Invalid request path")
-        return path, {key: values[0] for key, values in pairs.items()}
+        return parse_target(self.path)
+
+    def _authorize(self, path: str, query: dict[str, str], mutation: bool) -> dict[str, str]:
+        """Require this launch's UI secret (kitty.web_auth); returns the query without a ticket.
+
+        Upgrades carry it as a subprotocol instead (checked in ``_upgrade``); the browser-mode
+        code exchange needs the code instead; a GET may carry a single-use link ticket instead.
+        """
+        auth = self.server.ui_auth
+        if mutation and path == web_auth.SESSION_PATH:
+            return query
+        presented = self.headers.get_all(web_auth.HEADER, [])
+        if not presented and self.command == "GET" and web_auth.TICKET in query:
+            rest = {key: value for key, value in query.items() if key != web_auth.TICKET}
+            if auth.follow(query[web_auth.TICKET], _canonical(path, rest)):
+                return rest
+            raise _unauthorized()
+        if len(presented) != 1 or not auth.valid(presented[0]):
+            raise _unauthorized()
+        return query
+
+    def _session(self, path: str, body: dict) -> dict:
+        """The UI secret's own two routes: the code exchange and link tickets."""
+        auth = self.server.ui_auth
+        if path == web_auth.SESSION_PATH:
+            if set(body) != {"code"}:
+                raise APIError(400, "A session request carries only its code")
+            secret = auth.redeem(body["code"])
+            if secret is None:
+                raise _unauthorized()
+            return {"secret": secret}
+        target = body.get("path")
+        if set(body) != {"path"} or not isinstance(target, str):
+            raise APIError(400, "A link request carries only its path")
+        link_path, link_query = parse_target(target)
+        if (not link_path.startswith("/api/") or web_clients.is_ingress(link_path)
+                or link_path == web_auth.SESSION_PATH or link_path.startswith(web_auth.SESSION_PATH + "/")
+                or web_auth.TICKET in link_query):
+            raise APIError(400, "Links are only for rika!'s own API downloads")
+        ticket = auth.issue_link(_canonical(link_path, link_query))
+        return {"url": f"{target}{'&' if '?' in target else '?'}{web_auth.TICKET}={ticket}"}
 
     def _send(self, status: int, data: bytes, content_type: str, *, download: str | None = None) -> None:
         self.send_response(status)
@@ -517,6 +582,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:3210; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        for key, value in self.response_headers.items():
+            self.send_header(key, value)
         if download:
             self.send_header("Content-Disposition", f'attachment; filename="{download}"')
         self.end_headers()
@@ -536,12 +603,25 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._dispatch(True)
 
     def do_OPTIONS(self) -> None:
-        self._json(405, {"error": "Cross-origin preflight is not supported"})
+        if web_clients.is_ingress(self.path):
+            self._dispatch(False)
+        else:
+            self._json(405, {"error": "Cross-origin preflight is not supported"})
 
     def _dispatch(self, mutation: bool) -> None:
         try:
+            if web_clients.is_ingress(self.path):
+                web_clients.ingress_request(self)
+                return
             self._security(mutation=mutation)
             path, query = self._target()
+            upgrade = self.command == "GET" and self.headers.get("Upgrade") is not None
+            if (path == "/api" or path.startswith("/api/")) and not upgrade:
+                query = self._authorize(path, query, mutation)
+            if mutation and (path == web_auth.SESSION_PATH or path == web_auth.LINK_PATH):
+                self.server.app._no_query(query)
+                self._json(200, self._session(path, self._body()))
+                return
             if mutation:
                 # Native desktop commands additionally require an explicit page
                 # origin; the shared guard above already rejects a wrong one.
@@ -552,17 +632,26 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with self.server.app.mutation_lock:
                     with closing(connect(self.server.app.settings.db_path)) as conn:
                         result = self.server.app.mutate(conn, path, body)
+                self.server.app.mutated()
                 self._json(200, result)
-            elif self.command == "GET" and self.headers.get("Upgrade") is not None:
+            elif upgrade:
                 self._upgrade(path, query)
             elif path == "/api" or path.startswith("/api/"):
                 self._get_api(path, query)
             else:
-                self.server.app._no_query(query)
+                # `?safe` opens one window in safe mode (Q9) and `?code` is the browser-mode
+                # one-time code (kitty.web_auth); the page reads both itself.
+                self.server.app._no_query({key: value for key, value in query.items() if key not in {"safe", "code"}})
                 self._static(path)
         except APIError as exc:
             self.close_connection = True
-            self._json(exc.status, {"error": str(exc)})
+            self.response_headers.update(exc.headers)
+            self._json(exc.status, {"error": str(exc), **({"problems": exc.problems} if exc.problems else {})})
+        except BuildStoreError as exc:
+            # A settings change refused by the build file (it has an error, or is a link).
+            self.close_connection = True
+            self._json(exc.status, {"error": str(exc),
+                                    **({"problems": [problem.as_dict() for problem in exc.problems]} if exc.problems else {})})
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
         except (TimeoutError, sqlite3.OperationalError):
@@ -575,12 +664,17 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _upgrade(self, path: str, query: dict[str, str]) -> None:
         """A long-lived same-origin upgrade (the terminal WebSocket).
 
-        Browsers cannot add X-Kitty-Request to an upgrade, so the exact Origin is
-        required here and the owning extension demands a single-use token that only
-        a header-protected API call hands out.
+        Browsers cannot add X-Kitty-Request or the UI secret's header to an upgrade, so the
+        exact Origin and the secret as a subprotocol (kitty.web_auth) are required here, and
+        the owning extension demands a single-use token that only a header-protected API
+        call hands out.
         """
         if self.headers.get_all("Origin", []) != [self.server.origin]:
             raise APIError(403, "Cross-origin requests are not allowed")
+        if not self.server.ui_auth.protocol_secret(self.headers.get_all("Sec-WebSocket-Protocol", [])):
+            raise _unauthorized()
+        #: The subprotocol the 101 response selects (kitty.web_socket.accept).
+        self.websocket_protocol = web_auth.PROTOCOL
         app = self.server.app
         app.guard(path)
         for extension in app.extensions:
@@ -658,8 +752,56 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._send(200, target.read_bytes(), kind)
 
 
-def _serve(settings: Settings, static_dir: Path, port: int) -> None:
-    with open_workspace(settings) as workspace:
+def parse_target(raw: str) -> tuple[str, dict[str, str]]:
+    """A request target's decoded path and its query (each key once), or a 400."""
+    if len(raw) > 8192 or not raw.startswith("/") or raw.startswith("//"):
+        raise APIError(400, "Invalid request target")
+    parsed = urlsplit(raw)
+    if parsed.scheme or parsed.netloc or parsed.fragment:
+        raise APIError(400, "Invalid request target")
+    try:
+        pairs = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=20)
+        path = unquote(parsed.path, errors="strict")
+    except (ValueError, UnicodeError):
+        raise APIError(400, "Invalid request target") from None
+    if any(len(values) != 1 for values in pairs.values()):
+        raise APIError(400, "Repeated query parameters are not allowed")
+    if "\x00" in path or "\\" in path or any(part in {".", ".."} for part in path.split("/")):
+        raise APIError(400, "Invalid request path")
+    return path, {key: values[0] for key, values in pairs.items()}
+
+
+def _canonical(path: str, query: dict[str, str]) -> str:
+    """One GET target as a link ticket is bound to it: the path and its sorted query."""
+    return json.dumps([path, sorted(query.items())], ensure_ascii=True)
+
+
+def _unauthorized() -> APIError:
+    return APIError(401, web_auth.REFUSAL, headers={"WWW-Authenticate": 'Kitty realm="rika!"'})
+
+
+def _interrupt(*_args: object) -> None:
+    raise KeyboardInterrupt
+
+
+def _link(server: LocalHTTPServer) -> str:
+    """A browser-mode link: the page trades its one-time code for the UI secret."""
+    return f"{server.origin}/?code={server.ui_auth.issue_code()}"
+
+
+def _announce_links(server: LocalHTTPServer, code_link: str, stop: threading.Event) -> None:
+    """Print a fresh link whenever the current one is used or expires (kitty.web_auth)."""
+    while True:
+        server.ui_auth.wait_code(code_link.rsplit("=", 1)[1], stop)
+        if stop.is_set():
+            return
+        code_link = _link(server)
+        print(f"rika! next link (one browser tab each, works once within {int(web_auth.CODE_TTL // 60)} minutes): {code_link}", flush=True)
+
+
+def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = False) -> None:
+    # A build file saved with an error starts the server on the last good build (Q9).
+    with open_workspace(settings, modules=startup_modules(settings)) as workspace:
         if settings.demo and workspace.config.enabled("applyai"):
             from kitty.core import demo
 
@@ -668,14 +810,25 @@ def _serve(settings: Settings, static_dir: Path, port: int) -> None:
             from kitty.core.rika import demo_seed
 
             demo_seed.seed(workspace.conn)
-        app = WebApplication(settings, workspace.config, static_dir)
+        app = WebApplication(settings, workspace.config, static_dir, safe=safe)
+    # A plain `kill` stops kitty-web like Ctrl+C: workers drain and the endpoint file goes.
+    signal.signal(signal.SIGTERM, _interrupt)
     with LocalHTTPServer(app, port) as server:
-        print(f"rika! {'synthetic demo ' if settings.demo else ''}website: {server.origin}", flush=True)
+        stop = threading.Event()
         try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
+            # Paired programs find this server through the owner-only endpoint file.
+            with endpoint.published(settings.root, server.origin):
+                # A stop signal right after the announcement must still end serving cleanly.
+                try:
+                    link = _link(server)
+                    print(f"rika! {'synthetic demo ' if settings.demo else ''}website: {link}", flush=True)
+                    threading.Thread(target=_announce_links, args=(server, link, stop),
+                                     daemon=True, name="kitty-links").start()
+                    server.serve_forever()
+                except KeyboardInterrupt:
+                    pass
         finally:
+            stop.set()
             app.close()
 
 
@@ -685,6 +838,8 @@ def main() -> None:
     parser.add_argument("--root", type=Path, help="rika! workspace root")
     parser.add_argument("--static-dir", type=Path, help="Built SPA directory (default: web/dist)")
     parser.add_argument("--demo", action="store_true", help="Disposable synthetic workspace; no live discovery")
+    parser.add_argument("--safe", action="store_true",
+                        help="Safe mode: open every window without the build's custom CSS and theme overrides")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
@@ -701,11 +856,10 @@ def main() -> None:
                     example_dir = Path(__file__).resolve().parents[2] / "config"
                 for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
                     shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
-                settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db",
-                                    demo=True, anthropic_key_set=False)
-                _serve(settings, static_dir, args.port)
+                settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
+                _serve(settings, static_dir, args.port, safe=args.safe)
         else:
-            _serve(Settings.load(root=root), static_dir, args.port)
+            _serve(Settings.load(root=root), static_dir, args.port, safe=args.safe)
     except (ConfigError, OSError, ValueError):
         parser.exit(1, "Unable to open the local website. Check the port, workspace configuration and public example files with the CLI.\n")
 

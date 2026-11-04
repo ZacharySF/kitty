@@ -2,10 +2,26 @@
 
 Adding a schema change means dropping `002_something.sql` next to `001_initial.sql`.
 Files are never edited once shipped.
+
+A script whose first line is `-- python: package.module:function` also converts data:
+the runner calls ``function(conn)`` and then runs the script's statements, all in the
+same transaction as the schema_version record (the function lives in an importable
+module, so frozen builds that bundle only data files under migrations/ still run it).
+`-- python after: package.module:function` runs the function after the statements
+instead, for a conversion that fills the tables the script creates.
+
+Every number is used once (tests/test_migration_numbers.py; 021 was never used). Branches
+built in parallel fill each other's gaps: main's 034-037, 044 and 045 shipped before the
+platform stack (032/033, 038-043, 046 and 047), so a database at main's schema applies 032
+and 033 after 045, then 038-043, 046 and 047. The stack's own 035-039 were renumbered
+037-041; its 037 and 044 became 045 and 046 when main's 037_rika and 044_math shipped, then
+046 and 047 when main's 045_rika_voice shipped, all before any release of the stack; a
+database migrated with an unreleased stack numbering is not a supported starting point.
 """
 
 from __future__ import annotations
 
+import importlib
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -87,6 +103,29 @@ def _wants_foreign_keys_off(migration: Migration) -> bool:
     return first.strip().lower() == "-- foreign_keys: off"
 
 
+def _python_step(migration: Migration):
+    """``(function, after)`` named by a `-- python[ after]: module:function` first line, or None."""
+    first = migration.sql.lstrip().split("\n", 1)[0].strip()
+    match = re.fullmatch(r"-- python( after)?: ([a-z_][a-z0-9_.]*):([a-z_][a-z0-9_]*)", first)
+    if match is None:
+        return None
+    return getattr(importlib.import_module(match[2]), match[3]), bool(match[1])
+
+
+def _statements(sql: str):
+    """Split a script into complete statements (trigger bodies included)."""
+    buffer = ""
+    for line in sql.splitlines(keepends=True):
+        buffer += line
+        if sqlite3.complete_statement(buffer):
+            if buffer.strip():
+                yield buffer
+            buffer = ""
+    if buffer.strip() and not all(part.strip().startswith("--") for part in buffer.splitlines() if part.strip()):
+        raise ValueError("Migration script ends with an incomplete statement")
+
+
+
 def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[Migration]:
     """Apply every pending migration; return the ones applied.
 
@@ -113,7 +152,19 @@ def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[Mig
         if keys_off:
             conn.execute("PRAGMA foreign_keys = OFF")
         try:
-            conn.executescript(f"BEGIN;\n{migration.sql}\n{record}")
+            step = _python_step(migration)
+            if step is None:
+                conn.executescript(f"BEGIN;\n{migration.sql}\n{record}")
+            else:
+                convert, after = step
+                conn.execute("BEGIN IMMEDIATE")
+                if not after:
+                    convert(conn)
+                for statement in _statements(migration.sql):
+                    conn.execute(statement)
+                if after:
+                    convert(conn)
+                conn.execute(record)
             broken = conn.execute("PRAGMA foreign_key_check").fetchall()
             if broken:
                 raise sqlite3.IntegrityError(

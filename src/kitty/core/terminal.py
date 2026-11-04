@@ -58,7 +58,7 @@ _CHROME = re.compile(r"[\u2500-\u259f\u2800-\u28ff]+")
 #: Agents with a native startup-instruction option; the executable stays user-installed.
 CODING_AGENTS = ("omp", "claude", "codex")
 
-#: herdr config for rika!'s session: the Harness palette (web/src/lib/themes.ts) on
+#: herdr config for rika!'s session: the Harness palette (web/src/lib/themes/catalog.ts) on
 #: herdr's terminal base, with transparent panels so the page's surface shows through.
 #: Updates arrive only with rika!'s signed releases, so herdr's own checks are off.
 HARNESS_CONFIG = """\

@@ -1,22 +1,48 @@
-"""The RFC 6455 subset rika!'s same-origin upgrades use (the terminal and Rika streams).
+"""Minimal RFC 6455 server side shared by rika!'s same-origin WebSocket streams.
 
-The server checks the exact Host and Origin of every upgrade before an extension
-sees it (``RequestHandler._upgrade``); this module validates the handshake, answers
-it and frames messages. Client frames must be masked; messages are bounded.
+The upgrade itself is guarded by ``RequestHandler._upgrade`` (exact Host and Origin, and
+the UI secret as a subprotocol, kitty.web_auth); each stream additionally demands a
+single-use token from a header-protected API call, because browsers cannot add
+X-Kitty-Request to an upgrade (``Tokens``).
 """
 from __future__ import annotations
 
 import base64
 import binascii
 import hashlib
+import secrets
 import struct
+import threading
+import time
 
 WEBSOCKET_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE = 1024 * 1024
+TOKEN_TTL = 30.0
 
 
 def accept_key(key: str) -> str:
     return base64.b64encode(hashlib.sha1(key.encode("ascii") + WEBSOCKET_GUID).digest()).decode("ascii")
+
+
+class Tokens:
+    """Single-use tokens that expire after TOKEN_TTL seconds."""
+
+    def __init__(self):
+        self._tokens: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def issue(self) -> str:
+        token = secrets.token_hex(32)
+        now = time.monotonic()
+        with self._lock:
+            self._tokens = {key: expiry for key, expiry in self._tokens.items() if expiry > now}
+            self._tokens[token] = now + TOKEN_TTL
+        return token
+
+    def consume(self, token: str) -> bool:
+        with self._lock:
+            expiry = self._tokens.pop(token, None)
+        return expiry is not None and expiry > time.monotonic()
 
 
 def _error(status: int, message: str):
@@ -24,8 +50,8 @@ def _error(status: int, message: str):
     return APIError(status, message)
 
 
-def check_upgrade(headers) -> str:
-    """The client's Sec-WebSocket-Key once the request is a valid version 13 upgrade."""
+def handshake_key(headers) -> str:
+    """The client's Sec-WebSocket-Key after checking this is a version 13 upgrade."""
     if (headers.get("Upgrade", "").lower() != "websocket"
             or "upgrade" not in [part.strip().lower() for part in headers.get("Connection", "").split(",")]
             or headers.get_all("Sec-WebSocket-Version", []) != ["13"]):
@@ -40,13 +66,17 @@ def check_upgrade(headers) -> str:
 
 
 def accept(handler, key: str) -> None:
-    """Answer the handshake; the connection then belongs to the stream."""
+    """Send the 101 response; the handler's connection is then a WebSocket."""
     # RFC 6455 needs an HTTP/1.1 response; WebKit ignores this server's HTTP/1.0 default.
     handler.protocol_version = "HTTP/1.1"
     handler.send_response(101)
     handler.send_header("Upgrade", "websocket")
     handler.send_header("Connection", "Upgrade")
     handler.send_header("Sec-WebSocket-Accept", accept_key(key))
+    # The page offered the UI secret as a subprotocol; the 101 must select one it offered.
+    protocol = getattr(handler, "websocket_protocol", None)
+    if protocol:
+        handler.send_header("Sec-WebSocket-Protocol", protocol)
     handler.end_headers()
     handler.wfile.flush()
     handler.close_connection = True
@@ -71,10 +101,11 @@ def frame(opcode: int, payload: bytes) -> bytes:
 class Reader:
     """Incremental RFC 6455 parser for masked client frames."""
 
-    def __init__(self):
+    def __init__(self, limit: int = MAX_MESSAGE):
         self.buffer = bytearray()
         self.fragments: list[bytes] = []
         self.kind = 0
+        self.limit = limit
 
     def feed(self, data: bytes):
         self.buffer += data
@@ -93,7 +124,7 @@ class Reader:
                 if len(self.buffer) < 10:
                     return
                 length, offset = struct.unpack_from("!Q", self.buffer, 2)[0], 10
-            if length > MAX_MESSAGE:
+            if length > self.limit:
                 raise Closed(1009)
             if len(self.buffer) < offset + 4 + length:
                 return
@@ -115,9 +146,20 @@ class Reader:
             elif opcode != 0 or not self.fragments and not self.kind:
                 raise Closed(1002)
             self.fragments.append(payload)
-            if sum(map(len, self.fragments)) > MAX_MESSAGE:
+            if sum(map(len, self.fragments)) > self.limit:
                 raise Closed(1009)
             if final:
                 message, self.fragments, kind = b"".join(self.fragments), [], self.kind
                 self.kind = 0
                 yield kind, message
+
+
+def close_code(payload: bytes) -> int:
+    return struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1000
+
+
+def send_close(connection, code: int) -> None:
+    try:
+        connection.sendall(frame(8, struct.pack("!H", code)))
+    except OSError:
+        pass

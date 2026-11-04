@@ -53,14 +53,15 @@ class Source:
 
 
 SOURCES: dict[str, Source] = {
+    # Pages and outline items come from the block projection (Notes numbers); note_pages and
+    # note_blocks are frozen since the block migration.
     "page": Source("Pages", "workspace", "notes",
-                   "SELECT count(*)||':'||ifnull(max(updated_at),'')||':'||ifnull(max(id),'') FROM note_pages",
-                   "SELECT title, search_text, id, updated_at FROM note_pages"),
+                   "SELECT count(*)||':'||ifnull(max(updated_at),'')||':'||ifnull(max(id),'') FROM note_page_index",
+                   "SELECT p.title, ifnull((SELECT group_concat(o.text, ' ') FROM note_outline o WHERE o.page_id=p.id),''),"
+                   " p.id, p.updated_at FROM note_page_index p"),
     "block": Source("Blocks", "workspace", "notes",
-                    "SELECT count(*)||':'||ifnull(max(b.rowid),'')||':'||total(length(b.text))||':'||ifnull(max(p.updated_at),'')"
-                    " FROM note_blocks b JOIN note_pages p ON p.id=b.page_id",
-                    "SELECT p.title, b.text, b.id, p.updated_at FROM note_blocks b JOIN note_pages p ON p.id=b.page_id"
-                    " WHERE trim(b.text)<>''"),
+                    "SELECT count(*)||':'||total(length(text))||':'||ifnull(max(updated_at),'') FROM note_outline",
+                    "SELECT title, text, id, updated_at FROM note_outline WHERE trim(text)<>''"),
     "oplog": Source("Edit history", None, None,
                     "SELECT (SELECT count(*)||':'||ifnull(max(seq),'') FROM record_events)||'|'||(SELECT count(*)||':'||"
                     "ifnull(max(created_at),'')||':'||ifnull(max(undone_at),'') FROM rika_actions)",

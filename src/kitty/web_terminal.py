@@ -24,40 +24,22 @@ from __future__ import annotations
 
 import json
 import os
-import secrets
 import select
-import struct
 import threading
-import time
 
 from kitty.core.terminal import CODING_AGENTS, HerdrRuntime, TerminalClient, TerminalNotRunning, TerminalUnavailable
-from kitty.websocket import Closed, Reader, accept, check_upgrade, frame
+from kitty.web_socket import Closed, Reader, Tokens, accept, close_code, frame, handshake_key, send_close
 
 SOCKET_PATH = "/api/terminal/socket"
-TOKEN_TTL = 30.0
 DEFAULT_SIZE = (80, 24)
 
 
-class Terminal:
+class Terminal(Tokens):
     """Per-process token store plus rika!'s herdr runtime."""
 
     def __init__(self, runtime: HerdrRuntime):
+        super().__init__()
         self.runtime = runtime
-        self._tokens: dict[str, float] = {}
-        self._lock = threading.Lock()
-
-    def issue(self) -> str:
-        token = secrets.token_hex(32)
-        now = time.monotonic()
-        with self._lock:
-            self._tokens = {key: expiry for key, expiry in self._tokens.items() if expiry > now}
-            self._tokens[token] = now + TOKEN_TTL
-        return token
-
-    def consume(self, token: str) -> bool:
-        with self._lock:
-            expiry = self._tokens.pop(token, None)
-        return expiry is not None and expiry > time.monotonic()
 
 
 def _error(status: int, message: str):
@@ -145,7 +127,7 @@ def upgrade(app, handler, path, query) -> bool:
     headers = handler.headers
     if set(query) - {"token", "cols", "rows"}:
         raise _error(400, "Unexpected terminal parameters")
-    key = check_upgrade(headers)
+    key = handshake_key(headers)
     cols, rows = _size(query)
     if not app.terminal.consume(query.get("token", "")):
         raise _error(403, "Terminal token is missing, expired or already used")
@@ -206,15 +188,11 @@ def _pump(connection, client: TerminalClient, closing: threading.Event) -> None:
                     elif opcode == 9:
                         connection.sendall(frame(10, payload))
                     elif opcode == 8:
-                        code = struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1000
-                        raise Closed(code)
+                        raise Closed(close_code(payload))
         else:
             code = 1001
     except Closed as closed:
         code = closed.code
     except OSError:
         return
-    try:
-        connection.sendall(frame(8, struct.pack("!H", code)))
-    except OSError:
-        pass
+    send_close(connection, code)

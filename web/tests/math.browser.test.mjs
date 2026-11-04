@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
 import { installMathFixture } from "./mathFixture.mjs";
+import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -22,6 +23,7 @@ let server;
 let browser;
 let base;
 let origin;
+let secret;
 
 function freePort() {
   if (pinnedPort) return Promise.resolve(pinnedPort);
@@ -35,18 +37,21 @@ function freePort() {
 
 before(async () => {
   backend = spawn("uv", ["run", "--quiet", "kitty-web", "--demo", "--port", String(await freePort())], { cwd: repository, stdio: ["ignore", "pipe", "pipe"] });
-  origin = await new Promise((resolve, reject) => {
+  const found = await new Promise((resolve, reject) => {
     let output = "";
     const timer = setTimeout(() => reject(new Error(`demo backend did not start:\n${output}`)), 120_000);
     const read = (chunk) => {
       output += chunk;
-      const match = output.match(/website: (http:\/\/\S+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      const announced = announcement(output);
+      if (announced) { clearTimeout(timer); resolve(announced); }
     };
     backend.stdout.on("data", read);
     backend.stderr.on("data", read);
     backend.once("exit", (code) => { clearTimeout(timer); reject(new Error(`demo backend exited (${code}):\n${output}`)); });
   });
+  origin = found.origin;
+  // The link's one-time code, spent as a browser tab spends it; pages get the secret as rika!'s windows do.
+  secret = await exchange(origin, found.code);
   server = await createServer({
     root,
     logLevel: "error",
@@ -54,7 +59,15 @@ before(async () => {
       host: "127.0.0.1",
       port: pinnedPort ? pinnedPort + 1 : 0,
       strictPort: Boolean(pinnedPort),
-      proxy: { "/api": { target: origin, changeOrigin: true, configure: (proxy) => proxy.on("proxyReq", (request) => request.setHeader("Origin", origin)) } },
+      proxy: {
+        "/api": {
+          target: origin,
+          changeOrigin: true,
+          ws: true,
+          // Rika's stream upgrades through the same proxy; the backend compares Origin exactly.
+          configure: (proxy) => { for (const event of ["proxyReq", "proxyReqWs"]) proxy.on(event, (request) => request.setHeader("Origin", origin)); },
+        },
+      },
     },
   });
   await server.listen();
@@ -74,6 +87,7 @@ after(async () => {
  */
 async function open(hash, { storage, history, streak, ai = false, clock = false } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT });
+  await authorize(context, secret);
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
@@ -112,12 +126,12 @@ describe("KaTeX app-wide", () => {
     await page.getByRole("navigation", { name: "Flashcard views" }).waitFor();
     await page.evaluate(async () => {
       const post = async (path, body) => {
-        const response = await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" }, body: JSON.stringify(body) });
+        const response = await fetch(`/api${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         return data;
       };
-      const overview = await (await fetch("/api/flashcards", { cache: "no-store" })).json();
+      const overview = await (await fetch("/api/flashcards", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
       const basic = overview.types.find((type) => type.kind === "basic");
       const { deck } = await post("/flashcards/deck", { name: "Formulas", settings: {} });
       await post("/flashcards/note", { deck_id: deck.id, type_id: basic.id, fields: { Front: "Variance of \\(X\\sim\\mathrm{Bin}(n,p)\\)? It costs $5 and $10.", Back: "\\[np(1-p)\\]" }, tags: [] });
@@ -470,15 +484,15 @@ describe("launchers", () => {
       await tag.waitFor();
       assert.equal(await tag.getAttribute("data-focus-subject"), "Math");
       assert.match(await tag.innerText(), /Priming · Math · \d+:\d\d/);
-      const timer = await page.evaluate(async () => (await (await fetch("/api/study/timer", { cache: "no-store" })).json()).timer);
-      const subjects = await page.evaluate(async () => (await (await fetch("/api/study", { cache: "no-store" })).json()).subjects);
+      const timer = await page.evaluate(async () => (await (await fetch("/api/study/timer", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).timer);
+      const subjects = await page.evaluate(async () => (await (await fetch("/api/study", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).subjects);
       assert.equal(timer.status, "running");
       assert.equal(subjects.find((subject) => subject.id === timer.subject_id)?.name, "Math");
     } finally {
       // The demo backend is shared by this file's tests: leave the timer idle.
       await page.evaluate(async () => {
-        const { timer } = await (await fetch("/api/study/timer", { cache: "no-store" })).json();
-        await fetch("/api/study/timer", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" },
+        const { timer } = await (await fetch("/api/study/timer", { cache: "no-store", headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
+        await fetch("/api/study/timer", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
           body: JSON.stringify({ action: "stop", revision: timer.revision, request_id: crypto.randomUUID() }) });
       });
     }

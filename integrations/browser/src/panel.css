@@ -1,0 +1,20 @@
+:root { color-scheme: light dark; --muted: #6b6b76; --accent: #c2410c; --border: #8884; font: 13px/1.5 system-ui, sans-serif; }
+@media (prefers-color-scheme: dark) { :root { --muted: #a3a3ad; --accent: #fb923c; } }
+body { margin: 0; padding: 12px 14px 24px; }
+header { display: flex; align-items: center; gap: 8px; }
+h1 { font-size: 16px; margin: 0; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 6px; }
+section { border-top: 1px solid var(--border); }
+p { margin: 6px 0; }
+.hint { color: var(--muted); font-size: 12px; }
+.row { display: flex; gap: 6px; align-items: center; }
+input:not([type]), textarea { flex: 1; min-width: 0; font: inherit; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; }
+textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 12px; }
+button { font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+button.quiet { border: 0; padding: 4px 0; color: var(--muted); }
+.code { font: 600 22px/1.2 ui-monospace, monospace; letter-spacing: .12em; color: var(--accent); }
+.switch { display: flex; gap: 8px; align-items: center; font-weight: 600; margin: 8px 0; }
+.tab-title { overflow-wrap: anywhere; font-weight: 500; }
+.notice { color: var(--accent); }
+code { font-size: 11px; overflow-wrap: anywhere; }

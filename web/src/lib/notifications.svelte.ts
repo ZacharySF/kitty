@@ -6,8 +6,9 @@
  * **Keep running on close** keeps the hidden window (and this notifier) running.
  */
 import { api } from "./api";
+import { buildStore, onBuildChange } from "./build.svelte";
 import {
-  DEFAULT_QUIET, QUIET_EVENT, SYSTEM_KEY, calendarNotice, digestLine, emptyLedger, jobNotice, readLedger, readQuiet, rikaNotice, step,
+  DEFAULT_QUIET, QUIET_EVENT, SYSTEM_KEY, calendarNotice, digestLine, emptyLedger, jobNotice, readLedger, quietOf, rikaNotice, step,
   writeLedger, type CalendarReminder, type JobReminder, type Ledger, type Notice, type QuietHours, type RikaAlert,
 } from "./notify";
 
@@ -36,19 +37,28 @@ class Notifier {
   start(sources: { calendar: boolean; job: boolean; rika: boolean }): () => void {
     this.sources = sources;
     this.ledger = readLedger(localStorage);
-    this.quiet = readQuiet(localStorage);
+    this.quiet = quietOf(buildStore.build.ui.notifications.quiet);
     // Before notifications covered every source the switch was calendar-only.
     this.system = (localStorage.getItem(SYSTEM_KEY) ?? localStorage.getItem("kitty-calendar-notifications")) === "true" && "Notification" in window && Notification.permission === "granted";
     void this.refresh();
     const timer = setInterval(() => void this.refresh(), POLL_MS);
     const wake = () => void this.refresh();
-    const quiet = () => { this.quiet = readQuiet(localStorage); void this.refresh(); };
+    // Quiet hours are a build preference: Settings' dial while it moves, then every build change.
+    const quiet = (event: Event) => {
+      this.quiet = (event as CustomEvent<QuietHours | undefined>).detail ?? quietOf(buildStore.build.ui.notifications.quiet);
+      void this.refresh();
+    };
+    const stopBuild = onBuildChange((next, previous) => {
+      if (JSON.stringify(next.ui.notifications.quiet) !== JSON.stringify(previous.ui.notifications.quiet))
+        window.dispatchEvent(new CustomEvent(QUIET_EVENT));
+    });
     window.addEventListener("focus", wake);
     window.addEventListener(QUIET_EVENT, quiet);
     return () => {
       clearInterval(timer);
       window.removeEventListener("focus", wake);
       window.removeEventListener(QUIET_EVENT, quiet);
+      stopBuild();
     };
   }
 

@@ -2,18 +2,29 @@
   import { onMount } from "svelte";
   import QuickNoteCard from "./lib/QuickNoteCard.svelte";
   import { getQuickNote, noteTitle, type QuickNote } from "./lib/quickNotes";
+  import { onBlockChange } from "./lib/live";
 
   const match = /^#quick-note\/([1-9][0-9]{0,15})$/.exec(window.location.hash);
   let note = $state<QuickNote | null>(null);
   let ready = $state(!match);
   let missing = $state(false);
 
+  // The note this window shows: its route, which the card updates once a new note is saved.
+  const shown = () => Number(/^#quick-note\/([1-9][0-9]{0,15})$/.exec(window.location.hash)?.[1] ?? 0);
+
   onMount(() => {
-    if (!match) return;
+    // Edits to this note from any other window arrive live; the card keeps unsaved typing.
+    const stopLive = onBlockChange(change => {
+      const id = shown();
+      if (id && (!change || (change.root?.type === "quick_note" && change.root.number === id)))
+        getQuickNote(id).then(found => { if (found.id === shown()) note = found; }).catch(() => {});
+    });
+    if (!match) return stopLive;
     getQuickNote(Number(match[1]))
       .then(found => { note = found; })
       .catch(() => { missing = true; history.replaceState(null, "", "#quick-note"); })
       .finally(() => { ready = true; });
+    return stopLive;
   });
 </script>
 

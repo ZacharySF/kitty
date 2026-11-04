@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from kitty import web_auth
 from kitty.web_desktop import COMMANDS, DesktopOwner
 from kitty.web_server import LocalHTTPServer, WebApplication
 
@@ -46,7 +47,7 @@ def serve(workspace, tmp_path, desktop):
 
     def request(path, body=None, *, headers=None):
         method = "GET" if body is None else "POST"
-        defaults = {"Host": server.authority, "Origin": server.origin}
+        defaults = {"Host": server.authority, "Origin": server.origin, web_auth.HEADER: server.ui_auth.secret}
         payload = None
         if method == "POST":
             defaults.update({"Content-Type": "application/json", "X-Kitty-Request": "1"})

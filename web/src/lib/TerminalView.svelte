@@ -3,7 +3,7 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
-  import { api } from "./api";
+  import { api, socketProtocols } from "./api";
   import { getTheme } from "./themes/catalog";
   import { terminalSocketUrl, terminalTheme } from "./terminal";
   import TerminalAgents from "./TerminalAgents.svelte";
@@ -32,8 +32,9 @@
     notice = "Connecting to herdr…";
     try {
       const { token, socket: path } = await api<{ token: string; socket: string }>("/terminal/session", {});
+      const protocols = await socketProtocols();
       if (attempt !== generation || !terminal) return;
-      const next = new WebSocket(terminalSocketUrl(window.location, path, token, terminal.cols, terminal.rows));
+      const next = new WebSocket(terminalSocketUrl(window.location, path, token, terminal.cols, terminal.rows), protocols);
       next.binaryType = "arraybuffer";
       next.onopen = () => { if (attempt === generation) notice = ""; };
       next.onmessage = (event) => {

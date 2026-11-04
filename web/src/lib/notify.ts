@@ -18,7 +18,6 @@ export type Notice = { key: string; source: Source; title: string; body: string;
 /** Quiet hours as minutes of the local day; `from === to` is an empty window. */
 export type QuietHours = { enabled: boolean; from: number; to: number; letCalendar: boolean; digest: boolean };
 export const DEFAULT_QUIET: QuietHours = { enabled: false, from: 22 * 60, to: 7 * 60 + 30, letCalendar: true, digest: true };
-export const QUIET_KEY = "kitty.notify.quiet";
 export const LEDGER_KEY = "kitty.notify.ledger";
 /** Whether due reminders also raise a system notification. */
 export const SYSTEM_KEY = "kitty.notify.system";
@@ -178,24 +177,22 @@ export function writeLedger(storage: Storage, ledger: Ledger): void {
   storage.setItem(LEDGER_KEY, JSON.stringify(ledger));
 }
 
-export function readQuiet(storage: Storage): QuietHours {
-  let saved: Record<string, unknown> = {};
-  try {
-    const value: unknown = JSON.parse(storage.getItem(QUIET_KEY) ?? "null");
-    if (value && typeof value === "object") saved = value as Record<string, unknown>;
-  } catch { /* the defaults below */ }
-  const minute = (value: unknown, fallback: number) =>
-    Number.isInteger(value) && (value as number) >= 0 && (value as number) < 1440 ? (value as number) : fallback;
-  const flag = (value: unknown, fallback: boolean) => (typeof value === "boolean" ? value : fallback);
+/** Quiet hours as the build's `ui.notifications.quiet` describes them; junk takes the defaults. */
+export function quietOf(saved: unknown): QuietHours {
+  const value = saved && typeof saved === "object" ? (saved as Record<string, unknown>) : {};
+  const minute = (item: unknown, fallback: number) =>
+    Number.isInteger(item) && (item as number) >= 0 && (item as number) < 1440 ? (item as number) : fallback;
+  const flag = (item: unknown, fallback: boolean) => (typeof item === "boolean" ? item : fallback);
   return {
-    enabled: flag(saved.enabled, DEFAULT_QUIET.enabled),
-    from: minute(saved.from, DEFAULT_QUIET.from),
-    to: minute(saved.to, DEFAULT_QUIET.to),
-    letCalendar: flag(saved.letCalendar, DEFAULT_QUIET.letCalendar),
-    digest: flag(saved.digest, DEFAULT_QUIET.digest),
+    enabled: flag(value.enabled, DEFAULT_QUIET.enabled),
+    from: minute(value.from, DEFAULT_QUIET.from),
+    to: minute(value.to, DEFAULT_QUIET.to),
+    letCalendar: flag(value.let_calendar, DEFAULT_QUIET.letCalendar),
+    digest: flag(value.digest, DEFAULT_QUIET.digest),
   };
 }
 
-export function writeQuiet(storage: Storage, quiet: QuietHours): void {
-  storage.setItem(QUIET_KEY, JSON.stringify(quiet));
+/** Quiet hours as the build stores them (docs/platform-design.md Q8). */
+export function quietPreference(quiet: QuietHours): { enabled: boolean; from: number; to: number; let_calendar: boolean; digest: boolean } {
+  return { enabled: quiet.enabled, from: quiet.from, to: quiet.to, let_calendar: quiet.letCalendar, digest: quiet.digest };
 }

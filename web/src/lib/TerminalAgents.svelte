@@ -1,6 +1,7 @@
 <script lang="ts">
   import AgentSkillsSwitch from "./AgentSkillsSwitch.svelte";
   import { api } from "./api";
+  import { buildStore, setPreferences } from "./build.svelte";
   import { launchPreview, type AgentKind } from "./agentSkills";
   import { agentSkills } from "./agentSkills.svelte";
   import Select from "./ui/Select.svelte";
@@ -10,12 +11,12 @@
   let choosing = $state(false);
   let external = $state(false);
   let busy = $state(false);
-  let kind = $state("omp");
+  /** The build's `ui.terminal.coding_agent`, saved when an agent tab is launched. */
+  let kind = $state<string>(buildStore.build.ui.terminal.coding_agent);
   let error = $state("");
   let notice = $state("");
   /** Agent skills switched off for the next launch, per kind (docs/agent-skills-design.md Q5 C). */
   let off = $state<Record<string, string[]>>({});
-  try { kind = localStorage.getItem("kitty.coding-agent") || "omp"; } catch { /* Storage is optional. */ }
 
   const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
   const command = $derived(info?.binary ? `${quote(info.binary)} --session ${quote(info.session)}` : "");
@@ -32,7 +33,9 @@
   }
   async function toggleChooser() {
     choosing = !choosing;
-    if (choosing) await Promise.all([load(), agentSkills.load(true)]);
+    if (!choosing) return;
+    kind = buildStore.build.ui.terminal.coding_agent;
+    await Promise.all([load(), agentSkills.load(true)]);
   }
   async function toggleExternal() {
     external = !external;
@@ -47,7 +50,7 @@
     busy = true;
     error = notice = "";
     try {
-      try { localStorage.setItem("kitty.coding-agent", kind); } catch { /* Storage is optional. */ }
+      if (kind === "omp" || kind === "claude" || kind === "codex") void setPreferences({ ui: { terminal: { coding_agent: kind } } });
       const skillsOff = entry?.enabled ? names.filter((name) => dropped.has(name)) : [];
       const result = await api<{ tab: string; pane: string; notice?: string }>("/terminal/agents", skillsOff.length ? { kind, skills_off: skillsOff } : { kind });
       notice = `Agent tab opened (${result.tab}, ${result.pane}).`;

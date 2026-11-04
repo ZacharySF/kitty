@@ -5,19 +5,19 @@ import "@nunera/bracket/styles.css";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";
 import { setActiveModules } from "/src/lib/modules.svelte.ts";
-import { setTheme } from "/src/lib/themes/index.ts";
+import { setPreferences, setTheme } from "/src/lib/build.svelte.ts";
+import { installBuild } from "./buildStub.js";
 import BrainHarness from "./BrainHarness.svelte";
 
 const host = document.getElementById("host");
 let instance = null;
 
-window.brainHarness = {
+const brainHarness = {
   /** Replaces the fixture with a fresh `kind` ("stage" | "atlas" | "section" | "schema"). */
   mount(kind, { look, home } = {}) {
     if (instance) unmount(instance);
     host.replaceChildren();
-    if (look) localStorage.setItem("kitty.graph.look", look);
-    if (home) localStorage.setItem("kitty.home.look", home);
+    if (look || home) void setPreferences({ ui: { ...(look ? { graph: { look } } : {}), ...(home ? { home: { look: home } } : {}) } });
     setActiveModules(["workspace"]);
     instance = mount(BrainHarness, { target: host, props: { kind } });
     flushSync();
@@ -31,4 +31,8 @@ window.brainHarness = {
   pointColour: (id) => instance?.pointColour(id) ?? null,
   setTheme: (id) => setTheme(id),
 };
-window.dispatchEvent(new Event("brain-harness-ready"));
+// The build loads before the harness is offered (no top-level await: a reload's load event never waits on it).
+void installBuild().then(() => {
+  window.brainHarness = brainHarness;
+  window.dispatchEvent(new Event("brain-harness-ready"));
+});

@@ -200,10 +200,16 @@ def settings(conn):
     return row
 
 
-def save_settings(conn, body):
+def save_settings(conn, body, root):
+    """Monitoring settings. ``enabled`` and ``interval_hours`` live in the build file (Q8,
+    ``settings.opportunities``); the monitoring profile (major, track, interests,
+    locations) is applicant data and never leaves this workspace's database."""
+    from kitty.core.builds import project, store
+
     if set(body) - {'revision', 'profile', 'enabled', 'interval_hours'}:
         fail('Unknown monitoring setting')
     changes = {}
+    build_values = {}
     if 'profile' in body:
         profile = body['profile']
         if not isinstance(profile, dict) or set(profile) != {'major', 'track', 'interests', 'locations', 'prefer_remote'}:
@@ -221,19 +227,22 @@ def save_settings(conn, body):
     if 'enabled' in body:
         if type(body['enabled']) is not bool:
             fail('enabled must be boolean')
-        changes['enabled'] = body['enabled']
+        build_values['monitoring'] = body['enabled']
     if 'interval_hours' in body:
         if type(body['interval_hours']) is not int or not 6 <= body['interval_hours'] <= 168:
             fail('Monitoring interval must be 6–168 hours')
-        changes['interval_hours'] = body['interval_hours']
-    with transaction(conn):
+        build_values['interval_hours'] = body['interval_hours']
+    with project.editing(conn, root) as build:
         current = settings(conn)
         _revision(current, body.get('revision'))
-        enabled = changes.get('enabled', current['enabled'])
-        if 'enabled' in changes or 'interval_hours' in changes:
-            changes['next_run'] = now_iso() if enabled else None
-        changes['revision'] = current['revision'] + 1
-        conn.execute(f"UPDATE opportunity_settings SET {','.join(k+'=?' for k in changes)} WHERE id=1", tuple(changes.values()))
+        if changes:
+            changes['revision'] = current['revision'] + 1
+            conn.execute(f"UPDATE opportunity_settings SET {','.join(k+'=?' for k in changes)} WHERE id=1", tuple(changes.values()))
+        if build_values:
+            # Saving the schedule (re)starts it now, as before builds.
+            enabled = build_values.get('monitoring', current['enabled'])
+            conn.execute('UPDATE opportunity_settings SET next_run=? WHERE id=1', (now_iso() if enabled else None,))
+            store.section(build, 'settings', 'opportunities').update(build_values)
     return settings(conn)
 
 

@@ -4,7 +4,7 @@ import sqlite3
 import pytest
 
 from kitty import web_backlinks, web_notes
-from kitty.core import backlinks, notes
+from kitty.core import backlinks, notes, search
 from kitty.web_server import APIError
 
 
@@ -44,9 +44,10 @@ def test_related_ranking_is_deterministic_and_bounded(workspace):
     assert result['related'][0]['shared_terms']
 
 
-def test_related_missing_tables_and_validation():
+def test_related_without_the_index_and_validation():
     conn = sqlite3.connect(':memory:')
-    assert backlinks.related(conn, 'cell energy') == {'linked': [], 'unlinked': [], 'related': []}
+    with pytest.raises(search.SearchUnavailable):
+        backlinks.related(conn, 'cell energy')
     for text in [None, 42, 'x' * 20001]:
         with pytest.raises(ValueError):
             backlinks.related(conn, text)

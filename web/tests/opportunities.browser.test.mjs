@@ -12,6 +12,8 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { routeBuild } from "./buildRoutes.mjs";
+import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -24,6 +26,7 @@ const SEED = [
 ];
 
 let backend;
+let secret;
 let server;
 let browser;
 let base;
@@ -42,23 +45,25 @@ before(async () => {
     cwd: repository,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const origin = await new Promise((resolve, reject) => {
+  const { origin, code } = await new Promise((resolve, reject) => {
     let output = "";
     const timer = setTimeout(() => reject(new Error(`demo backend did not start:\n${output}`)), 120_000);
     const read = (chunk) => {
       output += chunk;
-      const match = output.match(/website: (http:\/\/\S+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      const found = announcement(output);
+      if (found) { clearTimeout(timer); resolve(found); }
     };
     backend.stdout.on("data", read);
     backend.stderr.on("data", read);
     backend.once("exit", (code) => { clearTimeout(timer); reject(new Error(`demo backend exited (${code}):\n${output}`)); });
   });
+  // The link's one-time code, spent as a browser tab spends it; pages get the secret as rika!'s windows do.
+  secret = await exchange(origin, code);
   for (const item of SEED) {
     const response = await fetch(`${origin}/api/opportunities`, {
       method: "POST",
       body: JSON.stringify(item),
-      headers: { "Content-Type": "application/json", Origin: origin, "X-Kitty-Request": "1" },
+      headers: { "Content-Type": "application/json", Origin: origin, "X-Kitty-Request": "1", "X-Kitty-Secret": secret },
     });
     assert.equal(response.status, 200, `seeding ${item.title}: ${await response.text()}`);
   }
@@ -91,15 +96,17 @@ after(async () => {
 
 async function open({ theme } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT });
+  await authorize(context, secret);
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue());
+  await routeBuild(context);
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL("#opportunities", base).href);
-  if (theme) await page.evaluate(async (id) => (await import("/src/lib/themes/index.ts")).setTheme(id), theme);
+  if (theme) await page.evaluate(async (id) => (await import("/src/lib/build.svelte.ts")).setTheme(id), theme);
   await page.getByRole("toolbar", { name: "Opportunities controls" }).waitFor({ timeout: 60_000 });
   return { page, problems, context };
 }
@@ -180,6 +187,7 @@ describe("Opportunities & projects: map first", () => {
     await editor.waitFor({ state: "detached" });
     // The choice is remembered.
     await page.reload();
+    await controls(page).waitFor({ timeout: 60_000 });
     await list.waitFor();
     assert.deepEqual(problems, []);
     await context.close();

@@ -6,7 +6,8 @@
   import { THEME_EVENT } from "../themes";
   import type { BrainBackdrop, BrainScene } from "./brainScene";
   import { brainGroups, brainLines, brainScaffold, brainShell, brainStyle, BRAIN_HUB, BRAIN_PALETTE, BRAIN_REACH, expandPalette, isolateModel, layoutBrain, mixColours, type BrainPalette, type Rgb } from "./brainLayout";
-  import { BRAIN_GROUPINGS, DEFAULT_BRAIN_VIEW, loadBrainColours, loadBrainView, saveBrainColours, saveBrainView, type BrainView } from "./brainSettings";
+  import { BRAIN_GROUPINGS, DEFAULT_BRAIN_VIEW, brainColours, brainPreference, brainView, loadBrainPanel, saveBrainPanel, type BrainView } from "./brainSettings";
+  import { buildStore, onBuildChange, setPreferences } from "../build.svelte";
   import BrainControls from "./BrainControls.svelte";
   import Loader from "../Loader.svelte";
 
@@ -25,8 +26,24 @@
 
   const LEGEND_LIMIT = 9;
   const reducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let view = $state<BrainView>(loadBrainView());
-  let picks = $state(loadBrainColours());
+  // The view and picked colours are build preferences (ui.brain); the panel's open state is this device's.
+  let view = $state<BrainView>(brainView(buildStore.build.ui.brain, loadBrainPanel()));
+  let picks = $state(brainColours(buildStore.build.ui.brain.colors));
+  /** Sliders and colour wells change many times a second: the build is written once they settle. */
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  function saveSoon() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = undefined;
+      void setPreferences({ ui: { brain: { ...brainPreference(view), colors: picks } } });
+    }, 400);
+  }
+  // Another window, the build editor or an install changed the build: follow it unless an edit here is pending.
+  $effect(() => onBuildChange((next) => {
+    if (saveTimer !== undefined) return;
+    view = brainView(next.ui.brain, view.panel);
+    picks = brainColours(next.ui.brain.colors);
+  }));
   let data = $state.raw<BrainData | null>(null);
   let status = $state<"loading" | "ready" | "missing" | "error">("loading");
   let problem = $state("");
@@ -95,8 +112,10 @@
   const hoverKey = $derived(model && hoverGroup !== null ? model.groups[hoverGroup]?.key ?? null : null);
 
   function change(next: BrainView) {
+    const settings = JSON.stringify(brainPreference(next)) !== JSON.stringify(brainPreference(view));
+    if (next.panel !== view.panel) saveBrainPanel(next.panel);
     view = next;
-    saveBrainView(next);
+    if (settings) saveSoon();
   }
   function reset() {
     focusKey = null;
@@ -113,11 +132,11 @@
     if (hex) mode[key] = hex.toLowerCase();
     else delete mode[key];
     picks = { ...picks, [groupBy]: mode };
-    saveBrainColours(picks);
+    saveSoon();
   }
   function resetColours() {
     picks = { ...picks, [groupBy]: {} };
-    saveBrainColours(picks);
+    saveSoon();
   }
   const THEME_SEEDS = ["--c1", "--c2", "--c3", "--c4", "--c5", "--c6", "--br-structure", "--br-signal", "--br-go", "--br-reference", "--br-caution", "--br-alternate", "--br-danger"];
   /** The active theme's colours, and warm-leaning tones from its roles for what edits did. */

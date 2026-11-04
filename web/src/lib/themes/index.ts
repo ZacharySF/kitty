@@ -1,13 +1,20 @@
 import { applyTheme as applyBracketTheme } from "@nunera/bracket/theme";
-import { DEFAULT_THEME, getTheme } from "./catalog";
+import { scopedCss, tokenPlan, type BuildTheme } from "../buildCore";
+import { getTheme } from "./catalog";
 import type { ThemeId, ThemeModule, ThemeTokens } from "./contract";
 import { themeMotif } from "./motif.svelte";
 
-/* Applying a theme: tokens synchronously, then its motif module lazily (contract.ts). */
+/*
+ * Applying a look: the build's base theme (catalog.ts) with its tokens and custom CSS
+ * (docs/platform-design.md Q9) synchronously, then the theme's motif module lazily
+ * (contract.ts). The build (build.svelte.ts) is the only caller and the only place the
+ * theme is stored; there is no localStorage copy.
+ */
 
-/** Dispatched on `window` after a theme's tokens are applied; `detail` is the ThemeId. */
+/** Dispatched on `window` after a look's tokens are applied; `detail` is the base ThemeId. */
 export const THEME_EVENT = "kitty:theme";
-const STORAGE_KEY = "kitty.theme";
+/** The `<style>` holding the build's custom CSS (Q9). */
+export const BUILD_CSS_ID = "kitty-build-css";
 
 /**
  * Motif modules, one chunk each (its CSS and SVG come with it). Themes without an entry run
@@ -27,14 +34,6 @@ const MODULES: Partial<Record<ThemeId, () => Promise<{ default: ThemeModule }>>>
 
 export function currentTheme(): ThemeId {
   return getTheme(document.documentElement.dataset.theme).id;
-}
-
-function savedTheme(): ThemeId {
-  try {
-    return getTheme(localStorage.getItem(STORAGE_KEY)).id;
-  } catch {
-    return DEFAULT_THEME;
-  }
 }
 
 /** Defaults for palettes that predate the contract (tests add bare palettes). */
@@ -96,27 +95,43 @@ async function applyMotif(id: ThemeId): Promise<void> {
   themeMotif.set(module ? id : null, module);
 }
 
-function apply(theme: ThemeTokens): Promise<void> {
-  applyTokens(theme);
-  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: theme.id }));
-  return applyMotif(theme.id);
-}
+/** Custom properties the last applied tokens set, removed when they disappear. */
+let tokenProperties: string[] = [];
+let motifTheme: ThemeId | null = null;
+let motifReady: Promise<void> = Promise.resolve();
 
 /**
- * Applies a theme instantly and persists it in localStorage (`kitty.theme`). The returned
- * promise settles once its motif module is in.
+ * Applies a build's look to this window (Q9): the base theme with role tokens overriding
+ * its roles, the other tokens as custom properties, the custom CSS scoped to #app, then
+ * the base theme's motif. Safe mode applies the base theme alone. The returned promise
+ * settles once the motif module is in.
  */
-export function setTheme(id: ThemeId): Promise<void> {
-  const theme = getTheme(id);
-  try {
-    localStorage.setItem(STORAGE_KEY, theme.id);
-  } catch {
-    // Storage can be unavailable (private mode); the theme still applies.
-  }
-  return apply(theme);
-}
+export function applyBuildLook(look: BuildTheme, safe: boolean): Promise<void> {
+  const root = document.documentElement;
+  const plan = tokenPlan(safe ? {} : look.tokens, tokenProperties);
+  // Stale properties go first: the base theme then restores any it also sets.
+  for (const name of plan.remove) root.style.removeProperty(name);
+  const base = getTheme(look.base);
+  applyTokens({ ...base, roles: { ...base.roles, ...plan.roles } });
+  for (const [name, value] of Object.entries(plan.set)) root.style.setProperty(name, value);
+  tokenProperties = Object.keys(plan.set);
 
-/** Applies the persisted theme; await it before mounting so the first paint has its motif. */
-export function applySavedTheme(): Promise<void> {
-  return apply(getTheme(savedTheme()));
+  const css = safe ? "" : scopedCss(look.css);
+  let style = document.getElementById(BUILD_CSS_ID);
+  if (!css) style?.remove();
+  else {
+    if (!style) {
+      style = document.createElement("style");
+      style.id = BUILD_CSS_ID;
+      document.head.append(style);
+    }
+    style.textContent = css;
+  }
+  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: base.id }));
+  // Token-only changes keep the motif already in place.
+  if (motifTheme !== base.id) {
+    motifTheme = base.id;
+    motifReady = applyMotif(base.id);
+  }
+  return motifReady;
 }

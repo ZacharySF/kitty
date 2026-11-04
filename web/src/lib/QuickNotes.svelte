@@ -3,6 +3,7 @@
   import EmptyState from "./EmptyState.svelte";
   import QuickNoteCard from "./QuickNoteCard.svelte";
   import { listQuickNotes, popOutQuickNote, type QuickNote } from "./quickNotes";
+  import { onBlockChange } from "./live";
 
   let notes = $state<QuickNote[]>([]);
   let drafts = $state<{ key: number; id: number | null }[]>([]);
@@ -42,10 +43,11 @@
 
   onMount(() => {
     void refresh();
-    // Pop-out windows save independently; pick their edits up when focus returns.
+    // Pop-out windows save independently; their edits arrive live (and on focus as a fallback).
     const focus = () => void refresh();
     window.addEventListener("focus", focus);
-    return () => window.removeEventListener("focus", focus);
+    const stopLive = onBlockChange(change => { if (!change || change.root?.type === "quick_note") void refresh(); });
+    return () => { window.removeEventListener("focus", focus); stopLive(); };
   });
 </script>
 

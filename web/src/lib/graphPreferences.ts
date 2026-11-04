@@ -1,36 +1,49 @@
-import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphLayout, type GraphLook, type GraphPhysics } from "./graph3d";
+// Graph and atlas preferences live in the build (`ui.graph`, `ui.atlas`; Q8). Open graphs
+// follow GRAPH_SETTINGS_EVENT and ATLAS_NODES_EVENT, raised whenever the build in effect
+// changes those values: here, from Settings, or pushed from another window or editor.
+import { ATLAS_NODES_EVENT } from "./atlasNodes";
+import { buildStore, onBuildChange, setPreferences } from "./build.svelte";
+import type { GraphLayout, GraphLook, GraphPhysics } from "./graph3d";
+import type { View } from "./workspace";
 
-/** The remembered look of section graphs and schemas. Home has its own (below). */
-export const GRAPH_LOOK_KEY = "kitty.graph.look";
+export const GRAPH_SETTINGS_EVENT = "kitty:graph-settings";
+export const GRAPH_LAYOUTS: { id: GraphLayout; label: string }[] = [
+  { id: "tree", label: "Tree" }, { id: "clusters", label: "Clusters" },
+  { id: "sphere", label: "Sphere" }, { id: "force", label: "Force" },
+];
+
+onBuildChange((next, previous) => {
+  if (JSON.stringify(next.ui.graph) !== JSON.stringify(previous.ui.graph) || next.ui.home.look !== previous.ui.home.look)
+    window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
+  if (JSON.stringify(next.ui.atlas.hidden) !== JSON.stringify(previous.ui.atlas.hidden))
+    window.dispatchEvent(new CustomEvent(ATLAS_NODES_EVENT));
+});
+
 export function graphLook(): GraphLook {
-  try {
-    return localStorage.getItem(GRAPH_LOOK_KEY) === "3d" ? "3d" : "2d";
-  } catch { return "2d"; }
+  return buildStore.build.ui.graph.look;
 }
-export function setGraphLook(look: GraphLook): void {
-  localStorage.setItem(GRAPH_LOOK_KEY, look);
-  window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
+export function setGraphLook(look: GraphLook): Promise<boolean> {
+  return setPreferences({ ui: { graph: { look } } });
 }
-
-/** Home's look: the Brain (default) or the 2D atlas. */
+export function graphLayout(): GraphLayout {
+  return buildStore.build.ui.graph.layout;
+}
+export function graphPhysics(): GraphPhysics {
+  return { ...buildStore.build.ui.graph.physics };
+}
+/** Home's look: the Brain (default) or the 2D atlas (`ui.home.look`). */
 export type HomeLook = "brain" | "2d";
-export const HOME_LOOK_KEY = "kitty.home.look";
 export function homeLook(): HomeLook {
-  try {
-    const saved = localStorage.getItem(HOME_LOOK_KEY);
-    if (saved === "brain" || saved === "2d") return saved;
-    // Home's choice used to share the graph look: an old "2d" stays 2D, "3d" and "brain" become the Brain.
-    const look: HomeLook = localStorage.getItem(GRAPH_LOOK_KEY) === "2d" ? "2d" : "brain";
-    localStorage.setItem(HOME_LOOK_KEY, look);
-    return look;
-  } catch { return "brain"; }
+  return buildStore.build.ui.home.look;
 }
-export function setHomeLook(look: HomeLook): void {
-  localStorage.setItem(HOME_LOOK_KEY, look);
-  window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
+export function setHomeLook(look: HomeLook): Promise<boolean> {
+  return setPreferences({ ui: { home: { look } } });
 }
 
-/** Q13: home's side rail of widgets, collapsed to an edge strip so the Brain widens. */
+/**
+ * Q13: home's side rail of widgets, collapsed to an edge strip so the Brain widens. Window
+ * layout state of this device, not a build preference.
+ */
 export const HOME_RAIL_KEY = "kitty.home.rail";
 export function homeRailCollapsed(): boolean {
   try { return localStorage.getItem(HOME_RAIL_KEY) === "collapsed"; } catch { return false; }
@@ -40,36 +53,23 @@ export function setHomeRailCollapsed(collapsed: boolean): void {
   window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
 }
 
-export const GRAPH_LAYOUT_KEY = "kitty.graph.default-layout";
-export const GRAPH_PHYSICS_KEY = "kitty.atlas.physics";
-export const GRAPH_SETTINGS_EVENT = "kitty:graph-settings";
-const TREE_DEFAULT_VERSION_KEY = "kitty.graph.tree-default.v2";
-export const GRAPH_LAYOUTS: { id: GraphLayout; label: string }[] = [
-  { id: "tree", label: "Tree" }, { id: "clusters", label: "Clusters" },
-  { id: "sphere", label: "Sphere" }, { id: "force", label: "Force" },
-];
-export function graphLayout(): GraphLayout {
-  try {
-    // Older installs persisted Sphere automatically. Migrate once, rather than
-    // overriding a deliberate layout choice made in the current Settings UI.
-    if (localStorage.getItem(TREE_DEFAULT_VERSION_KEY) !== "1") {
-      localStorage.setItem(GRAPH_LAYOUT_KEY, "tree");
-      localStorage.setItem(TREE_DEFAULT_VERSION_KEY, "1");
-      return "tree";
-    }
-    const value = localStorage.getItem(GRAPH_LAYOUT_KEY);
-    return GRAPH_LAYOUTS.some(item => item.id === value) ? value as GraphLayout : "tree";
-  } catch { return "tree"; }
+/** Save the default layout and physics together (Settings → Schemas). */
+export function setGraphSettings(layout: GraphLayout, physics: GraphPhysics): Promise<boolean> {
+  return setPreferences({ ui: { graph: { layout, physics: { ...physics } } } });
 }
-export function graphPhysics(): GraphPhysics {
-  const result = { ...DEFAULT_PHYSICS };
-  try {
-    const value = JSON.parse(localStorage.getItem(GRAPH_PHYSICS_KEY) || "{}");
-    for (const key of Object.keys(PHYSICS_LIMITS) as (keyof GraphPhysics)[]) {
-      const limit = PHYSICS_LIMITS[key];
-      if (typeof value?.[key] === "number" && Number.isFinite(value[key]))
-        result[key] = Math.min(limit.max, Math.max(limit.min, value[key]));
-    }
-  } catch { /* Invalid local preferences never prevent opening a graph. */ }
-  return result;
+
+/**
+ * Sections the user removed from the atlas (Q13). Stored as hidden rather than shown so
+ * sections added later appear by default. Ids for views whose module is off are kept:
+ * turning the module back on must not resurrect them.
+ */
+export function hiddenSections(): Set<string> {
+  return new Set(buildStore.build.ui.atlas.hidden);
+}
+export function setSectionHidden(view: View, hidden: boolean): void {
+  const current = hiddenSections();
+  if (current.has(view) === hidden) return;
+  if (hidden) current.add(view);
+  else current.delete(view);
+  void setPreferences({ ui: { atlas: { hidden: [...current] } } });
 }

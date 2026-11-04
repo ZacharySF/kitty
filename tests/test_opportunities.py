@@ -179,7 +179,7 @@ def test_import_is_atomic_and_urls_are_canonical(workspace):
 
 def test_search_filters_and_deterministic_reasons_do_not_assert_eligibility(workspace):
     conn = workspace.conn
-    core.save_settings(conn, {'revision': 1, 'profile': {'major': 'engineering', 'track': 'quant', 'interests': ['hardware'], 'locations': ['College Station'], 'prefer_remote': True}})
+    core.save_settings(conn, {'revision': 1, 'profile': {'major': 'engineering', 'track': 'quant', 'interests': ['hardware'], 'locations': ['College Station'], 'prefer_remote': True}}, workspace.settings.root)
     a = manual(conn, title='Engineering hardware', description='Quant workshop', location='College Station', remote=True, deadline='2099-01-01', tags=['IEEE'])
     manual(conn, title='Other')
     results = core.list_items(conn, {'search': 'IEEE', 'category': 'quant', 'location': 'station', 'remote': 'true', 'deadline': '2099-02-01', 'availability': 'future'})
@@ -212,9 +212,9 @@ def test_project_task_milestone_resource_crud_and_revisions(workspace):
 def test_schedule_opt_in_status_source_configuration_and_demo_boundaries(workspace):
     conn = workspace.conn
     assert core.settings(conn)['enabled'] is False
-    config = core.save_settings(conn, {'revision': 1, 'enabled': True, 'interval_hours': 6})
+    config = core.save_settings(conn, {'revision': 1, 'enabled': True, 'interval_hours': 6}, workspace.settings.root)
     assert config['next_run'] and config['enabled']
-    config = core.save_settings(conn, {'revision': config['revision'], 'enabled': False})
+    config = core.save_settings(conn, {'revision': config['revision'], 'enabled': False}, workspace.settings.root)
     assert config['next_run'] is None
     s = providers.sources(conn)[0]
     with pytest.raises(APIError): providers.save_source(conn, s['id'], {'revision': s['revision'], 'url': 'http://127.0.0.1/private'})

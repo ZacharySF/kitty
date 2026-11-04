@@ -77,11 +77,12 @@ source .venv/bin/activate    # then just `kitty ...`
 | Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
-tracker), or `kitty modules enable/disable <id>`. Selection is stored locally:
+tracker), or `kitty modules enable/disable <id>`. The selection is the `modules`
+list of the workspace's build file, stored locally (the build file is described in
+`docs/platform-design.md`, Q8/Q9):
 
-```yaml
-# config/modules.yaml
-enabled: [applyai, workspace, terminal]
+```json
+{"schema": 1, "modules": ["applyai", "workspace", "terminal"]}
 ```
 
 Save, then **quit and restart rika!** to activate the change. Refresh/reload does
@@ -96,10 +97,33 @@ start. Their data, attachments and configuration are retained for re-enabling.
 ApplyAI reminders work without Workspace; career calendar contributions and
 cross-module results appear only while both modules are enabled.
 
-Existing workspaces without `modules.yaml` retain every module. Fresh CLI and
+Existing workspaces with no module selection retain every module; a pre-build
+`config/modules.yaml` is moved into `config/build.json` on the first open. Fresh CLI and
 desktop workspaces start core-only. The database still uses the existing global
 migrations; disabling does not drop tables or run down-migrations. These are
 built-in modules, not installable third-party extensions.
+
+### Builds
+
+`config/build.json` is the workspace's build (`docs/platform-design.md` Q8, Q9): modules,
+settings (including Rika's tier models), theme tokens, custom CSS and interface preferences
+(theme, graph look and layout, hidden atlas sections, pen mode, coding agent). Every window follows it live:
+a save from Settings, the build editor or any text editor restyles every open window.
+A save with an error changes nothing; every window shows the error's line and keeps the
+last good build. Preferences a browser kept before builds move into the build once.
+
+Settings → Build edits the build's name, author and description, exports it as
+`kitty-build.json`, imports one from a file or an `https` link with a diff of what changes
+(module changes are marked as needing a restart; privacy and cost changes apply only when
+you tick *Also apply privacy and cost changes*), and lists earlier builds with one-click
+rollback. *Open build editor* (or *Edit build* in Ctrl+K) docks the file at the right of
+the window: problems are marked at their lines, theme tokens and CSS show in that window
+as you type, and valid text saves itself (Ctrl+S saves at once).
+
+Safe mode shows rika! without the build's custom CSS and theme tokens: press
+Ctrl+Alt+Shift+S (again to turn them back on), open a window with `?safe`, or start
+`kitty-web --safe`. A small control outside the styled page says when custom style or
+safe mode is on and switches it.
 
 ### Terminal module
 
@@ -117,9 +141,10 @@ closing the window without that setting, or Ctrl-C on `kitty-web`) stops rika!'s
 herdr session. With the module off there is no herdr process, socket or route.
 
 The page reaches it through a WebSocket on rika!'s own loopback origin
-(`/api/terminal/socket`). Browsers cannot add `X-Kitty-Request` to an upgrade, so
-the upgrade requires the exact Host and Origin plus a single-use token that expires
-after 30 seconds and is issued only by the header-protected `POST
+(`/api/terminal/socket`). Browsers cannot add `X-Kitty-Request` or the UI secret's
+header to an upgrade, so the upgrade requires the exact Host and Origin, the UI
+secret as a WebSocket subprotocol, and a single-use token that expires after 30
+seconds and is issued only by the header- and secret-protected `POST
 /api/terminal/session`. A development `kitty-web` uses `KITTY_HERDR=<herdr 0.9.5
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
@@ -183,6 +208,16 @@ WebKitGTK view lacks, so rika! does not embed it. Scripts reach the session with
 `TERN_DAEMON_SOCKET=<socket> tern ls`. Quit closes the Tern windows rika! opened
 and stops its Tern daemon (Tern restores the layout next time); closing the window
 with **Keep running on close** leaves them running.
+
+The Tern view's **Panes** section lists the panes of rika!'s Tern session (only when Tern
+is installed) with their state, including exited panes and their exit status, and
+recent pane starts and exits. **New pane** adds a tab to the session, **Run** types
+one command line into the chosen pane (multi-line or control characters are
+refused), **Focus** shows a pane in rika!'s Tern window and raises it (opening
+one when none is open) and **Capture** saves the pane's text, terminal controls stripped and the
+newest 60 KiB kept, as a quick note (Workspace module) that **Open note** pops out.
+These act only on rika!'s own daemon and its `kitty` session
+(`POST /api/terminal/tern/{new,run,focus,capture}`).
 
 **Agent skills (docs/agent-skills-design.md).** Each agent card in Rika's history
 drawer (**Agents**) shows a **now: skill · tool** chip, what the agent is using right
@@ -338,13 +373,22 @@ From the project root, with Node 22+ and npm available:
 ```bash
 npm --prefix web ci
 npm --prefix web run build
-uv run kitty-web                 # http://127.0.0.1:8765
+uv run kitty-web                 # rika! website: http://127.0.0.1:8765/?code=…
 ```
 
 On NixOS without Node on PATH, prefix either npm command with
 `nix shell nixpkgs#nodejs_22 --command`.
-Use the printed `127.0.0.1` address, not `localhost`: the server validates its
-exact loopback Host/Origin. `--port`, `--root` and `--static-dir` override the port,
+Open the printed link, `127.0.0.1` and not `localhost`: the server validates its
+exact loopback Host/Origin. The link carries a one-time `code` (as Jupyter's token
+link does) that the page trades for this launch's UI secret; it works once, within
+ten minutes, and leaves the address bar at once. kitty-web then prints the next
+link, one per browser tab (a tab keeps its secret across reloads in its
+`sessionStorage`), and a fresh one whenever the current link expires. A tab opened
+without a valid code, or kept from an earlier launch, is refused: "rika! did not
+recognise this window". With the Vite dev server (`npm --prefix web run dev`, which
+proxies `/api` to port 8765), open `http://127.0.0.1:5173/?code=<code>` with the
+code from kitty-web's link. See [Local API protection](#local-api-protection-the-ui-secret).
+`--port`, `--root` and `--static-dir` override the port,
 workspace and built-asset directory. The refresh button and command palette reload
 configuration from disk; saves in My profile reload it automatically.
 
@@ -490,6 +534,145 @@ compositor key binding can summon a note, e.g. in niri:
 `Mod+N { spawn "kitty-workspace" "--quick-note"; }`. Note windows have no title
 bar; move them with the compositor (niri: `Mod`+drag).
 
+### Local API protection (the UI secret)
+
+rika!'s server listens on `127.0.0.1`, where every web page you visit (through your
+browser) and every program on your machine can reach it. The page guard (exact Host
+and Origin, `X-Kitty-Request` and JSON on every write) stops web pages, but a local
+program can send those headers too. So every `/api` route, WebSocket upgrade and
+terminal token also needs this launch's **UI secret**: a fresh 256-bit value made
+at start-up and kept only in memory (never in a log, a URL or `.private/endpoint.json`).
+
+- **Desktop app:** the backend hands the secret to the desktop shell on its private
+  pipe; the shell gives it to the main window and every quick-note window before
+  their scripts run (only on the main frame and only on rika!'s exact address, so the
+  LearnHarness frame never sees it). Nothing to do.
+- **`kitty-web` in a browser:** open the link it prints; its one-time code becomes
+  the tab's secret (see [Local website](#local-website)).
+- A request without the secret gets **401** with one message, "rika! did not
+  recognise this window…", whatever was wrong.
+- Downloads and PDFs opened in a new window (including the system browser the
+  desktop app opens them in) use a single-use link valid for one minute.
+- It is a header, not a cookie: browsers send a `127.0.0.1` cookie to every port on
+  `127.0.0.1`, so a cookie would reach the LearnHarness server and any other local
+  server; `web/tests/uiSecret.browser.test.mjs` shows this in Chromium and WebKit.
+- **What it does not cover:** the CLI, TUI and MCP server still open the database
+  directly, and a program running as you can still read your workspace files or
+  attach a debugger to rika!. Paired programs use their own tokens (below).
+
+### Connected apps (pairing)
+
+Outside programs, such as the planned kitty Tern plugin and the browser extension,
+reach rika! only after you approve them. They never use the page API, which needs
+the UI secret only rika!'s own windows hold (see above).
+
+1. While rika! runs (desktop app or `kitty-web`), it writes its current address to
+   the owner-only `.private/endpoint.json` (0600, in a 0700 `.private`), e.g.
+   `{"origin": "http://127.0.0.1:41234", "pairing": "/api/ingress/pair"}`. It never
+   holds a token, and it is removed when rika! stops.
+2. The app sends `POST /api/ingress/pair` with JSON
+   `{"name", "kind": "tern-plugin" | "browser-extension", "scopes": ["capture", "read"]}`
+   and shows the returned `code` (e.g. `CWQ-7QT`). rika! shows the request in a
+   non-blocking bar and in **Settings → Connected apps**; approve only when both
+   codes match. Requests expire after five minutes; at most three wait at once and
+   ten are accepted per ten minutes (429 with `Retry-After`).
+3. The app polls `POST /api/ingress/pair/status` with `{"request": <secret>}` until it
+   gets `approved` with its token (handed out once), `denied` or `expired`.
+4. Every later call sends `Authorization: Bearer <token>`:
+   - `capture`: `POST /api/ingress/notes` `{text, tint?}` (a quick note),
+     `POST /api/ingress/inbox` `{blocks: [{type?, text}]}` (appended to the **Inbox**
+     page in the Inbox notebook, created on first use), and `POST /api/ingress/mirror`
+     `{url, title, text?, selection?}` (a snapshot of the page you are reading:
+     a linked callout with the selection quoted and the readable text in a collapsed
+     toggle);
+   - `read`: `GET /api/ingress/recent?limit=1-50` (recent page titles, open task titles
+     and the Inbox page number);
+   - any scope: `GET /api/ingress/client` (the client's own name and scopes).
+
+   A token reaches nothing else: other API routes refuse any `Authorization` header.
+   Captures are block transactions, so they enter the version history and appear at
+   once in open windows. **Revoke** in Settings ends a token immediately.
+
+A browser extension pairs and calls from its own extension origin
+(`chrome-extension://<id>` or `moz-extension://<uuid>`); its token then works only
+from that origin, and CORS (including preflight) answers only origins of live paired
+extensions. Make these calls from the extension's side panel, popup or background
+page; content scripts run in the web page and are not supported (Chrome's Local
+Network Access rules). Web page origins are always refused.
+
+### Keys (API keys)
+
+rika! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:
+`OPENROUTER`, `ANTHROPIC`, `USAJOBS`, `BRAVE`, or your own (`A-Z`, `0-9`, `_`). A key
+is read from, in order:
+
+1. the OS keyring through the freedesktop Secret Service (gnome-keyring, KeePassXC),
+   when one answers on the session bus;
+2. an owner-only file under `.private/` (`.private/openrouter-key` for OpenRouter, as
+   before; `.private/keys/<NAME>` for the others). Files must be mode 600 and not
+   symbolic links;
+3. the environment, so `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `USAJOBS_API_KEY`,
+   `BRAVE_SEARCH_API_KEY` (or a custom `NAME`) in `.env` keep working.
+
+New keys go to the keyring when there is one, otherwise to the owner-only file.
+**Settings → Keys** shows each key as set or unset and where it is stored, never its
+value; it can set, replace and remove keys, and **Move to keyring** moves a file copy
+(such as an existing `.private/openrouter-key`) into the keyring. Without a keyring it
+warns that keys are stored in an owner-only file. The demo uses only its own
+throwaway files.
+
+```bash
+kitty keys list                       # names, set/unset and where; never values
+kitty keys set OPENROUTER             # typed without echo, or piped on stdin
+kitty keys remove BRAVE               # keyring and file copy (.env is yours to edit)
+kitty keys move OPENROUTER            # file copy -> OS keyring
+kitty keys run +OPENROUTER -- apply-ai --help
+```
+
+`kitty keys run` gives keys to another program (apply-ai or any AI tool) without
+exporting them in your shell: it starts the command with the named keys in its
+environment only (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `USAJOBS_API_KEY`,
+`BRAVE_SEARCH_API_KEY`, or a custom key under its own name), removes kitty's other
+keys from that environment, and is replaced by the command, so the exit code is the
+command's. Keys are never written into exports, builds, logs or error messages.
+
+`KITTY_KEYRING=none` turns the keyring off for one process (the test suite does this).
+On macOS, automic-vault deliberately never returns a secret to an app, so it is not a
+storage backend: use it as a launch wrapper around kitty, and the variables it injects
+arrive as environment variables (source 3).
+
+### Tags and auto-tagging
+
+A tag is a record with a name, optional **aliases** (other names: `#alias` tags too)
+and **keywords**. When a block on a note page mentions a tag's name, an alias or a
+keyword as a whole word (any case; no stemming), rika! notices it as you write.
+Code (inline, fenced, code blocks), URLs, e-mail addresses and existing `#tag`,
+`[[page]]` and `((reference))` tokens never count, and terms shorter than three
+characters are ignored unless the tag allows them.
+
+**Settings → Tags** chooses what happens:
+
+- **Suggest** (the default): the word gets a faint dotted underline. With the caret
+  on it, `Tab` (or **Tag #name** in the small pop-up) attaches the tag; `Esc` (or
+  **Ignore**) declines it for that block for good.
+- **Always attach**: the tag is attached as soon as the edit is saved and shown as a
+  dashed chip (automatic). Removing it (`×` on the chip) is remembered, so later edits
+  never attach it to that block again. An automatic tag whose word you delete goes too.
+
+Each tag can override the setting either way (tag → **Keywords & mode**, or the tag's
+row in Settings). Tags appear as chips under the block; a chip opens the tag's page in
+the side panel: the blocks it is attached to (by hand, from a suggestion, or
+automatically) and the remaining **unlinked mentions**, with **Link all**. Clicking a
+`#name` in a note opens its tag page; a `#name` without a record offers **Make #name a
+tag with keywords**. Every existing `#name` became a tag record when you updated, so
+nothing written before is lost; `#name` in text keeps working as before.
+
+Tags and attachments are blocks and block properties, so they are in the version
+history, undoable from History and Trash, and appear live in every window. The mode
+lives in the database for now (`tag_settings`); it moves into the build file once
+builds exist. Adding a keyword does not rescan old notes: their mentions are on the
+tag page, ready for **Link all**.
+
 ### Math
 
 **Study → Math** trains the math quant interviews and tech work test. It has two
@@ -558,11 +741,47 @@ subjects, projects, tasks, exams and sessions, quick notes, mind maps, documents
 opportunities, jobs, applications and reminders) and every **edit** as a node with
 a `parent` link. Edits are the website changes captured in `record_events` plus the
 histories the database already keeps (flashcard reviews, application status
-changes, study sessions, calendar changes made before capture began and, with the
-block backend, its `op_log`). Labels are titles only, never note bodies, paths or
+changes, study sessions, calendar changes made before capture began and the block
+backend's `op_log`). Note pages, documents and quick notes are blocks, so each of
+their saves counts once, from `op_log`, whether it came over HTTP or the live
+socket; the one-time conversion of older notes into blocks is not an edit.
+Labels are titles only, never note bodies, paths or
 URLs; a change to something since deleted reads e.g. *Deleted page*. Sections of
 disabled modules are left out. When the limit is reached, records are kept and the
 newest edits fill the rest (`truncated: true`; `total` counts everything).
+
+### Search and the search index
+
+**Ctrl K** searches sections and commands by name and, from the full-text index, every
+note page, document, quick note, tag (name, keywords, aliases), study subject, project
+and task, calendar event and task, flashcard deck and card, and (with ApplyAI) job:
+titles and contents, with the matched words marked. Each word you type matches the
+start of a word ("mito" finds *Mitochondria*), case and accents are ignored ("cafe"
+finds *Café*), titles rank above body text, and from three characters on the text also
+matches inside words and in Chinese, Japanese or Korean text ("ondri", "都庁へ"). Notes
+find (the library's *Search your notes…*), the atlas section graphs' *Find a node*,
+mind-map backlinks, a page's *Unlinked title mentions* and the *Connections* panel read
+the same index, over every record: nothing older is left out. Where a panel shows only
+the first few, it says more exist.
+
+The index (`search_docs` with two SQLite FTS5 indexes, migration 047) is written in the
+same transaction as every block edit; other records reach it through a queue their
+tables' triggers fill, applied before every search. The server compares it with a full
+rebuild (pages replayed from their snapshots and history) five minutes after start and
+every six hours, repairs any difference and logs it.
+
+```bash
+kitty index check                 # rebuild, compare, repair; exit 1 on any difference
+kitty index check --no-repair     # report only
+kitty index check --from projection   # rebuild blocks from the projection, not the log
+kitty index rebuild               # replace every document from the current data
+```
+
+`GET /api/search?q=<text>[&limit=1-200][&kinds=note_page,job,…]` returns
+`{query, hits, total, truncated}`; each hit has `kind`, `id`, `title`, `title_marks` and
+`snippet` (`[[text, is_hit], …]` runs), `view` and `match` (`word` or `substring`).
+`GET /api/atlas/sections/<notes|study|flashcards|jobs>?search=<text>` returns the matching
+records as graph nodes with their hubs (titles only, never bodies).
 
 ### LearnHarness extension
 
@@ -1097,7 +1316,7 @@ Top notices and the study timer bar can be dismissed.
 
 **AI settings** provides optional OpenRouter drafts for selected text: summaries,
 outlines, study plans, opportunity explanations, and source-grounded flashcards.
-Add a key locally (owner-only `.private/openrouter-key`, or `OPENROUTER_API_KEY`),
+Add the `OPENROUTER` key (here, in **Settings → Keys** or with `kitty keys set OPENROUTER`),
 refresh the model catalog, choose a model and price/latency/throughput routing,
 and set an output limit and daily budget. Review the exact text, prompt and maximum
 cost before explicitly approving each request. Reviews are single-use, expire
@@ -1710,7 +1929,7 @@ hiring.cafe (see below), every watchlist board on Greenhouse, Lever, Ashby,
 SmartRecruiters, Workday and Workable (public widget API, one request per board),
 Indeed (via JobSpy),
 the monthly Hacker News "Who is hiring" thread, and USAJOBS student/intern
-announcements (off until `USAJOBS_API_KEY` and `USAJOBS_EMAIL` are in `.env`).
+announcements (off until the `USAJOBS` key and `USAJOBS_EMAIL` in `.env` are set).
 It keeps internship/co-op/student titles, routes each posting by title and additional
 description evidence, runs the rules-only eligibility filter, and stores it. Previously
 seen postings can gain newly matched tracks without resetting hand decisions. It prints
@@ -1759,8 +1978,8 @@ Additional channels:
   clearance becomes an eligibility note. Malformed postings make a source partial
   (or failed if none are usable), not a healthy empty result.
 
-Brave search is **off even if a key is present**. To opt in, put
-`BRAVE_SEARCH_API_KEY` in the gitignored `.env` and set
+Brave search is **off even if a key is present**. To opt in, set the `BRAVE` key
+(`kitty keys set BRAVE`, or `BRAVE_SEARCH_API_KEY` in the gitignored `.env`) and set
 `websearch.options.enable_search: true`. Defaults cap a run at four API queries,
 five results/query and twenty fetched posting pages; changing these may change
 provider charges. No key is needed for seed-only runs. Public fetching respects
@@ -2233,7 +2452,7 @@ uv run kitty triage --batch         # everything, as one Message Batch (half pri
 uv run kitty triage --collect       # apply finished batches
 ```
 
-Needs `ANTHROPIC_API_KEY` in `.env`. Model, effort, prices and the hard per-run
+Needs the `ANTHROPIC` key (`kitty keys set ANTHROPIC`, or `ANTHROPIC_API_KEY` in `.env`). Model, effort, prices and the hard per-run
 cost cap (`max_cost_usd_per_run`, default $5) are in `config/triage.yaml`. Every
 paid run prints the job count, estimated tokens and dollars first and asks to
 confirm (`--yes` skips it, for the schedule). A run stops before it could pass the
@@ -2251,7 +2470,7 @@ max_cost_usd_per_run: 1.0
 openrouter_daily_budget_usd: 1.0  # optional shared UTC-day reservation ceiling
 ```
 
-Provide `OPENROUTER_API_KEY` or the local `.private/openrouter-key` file.
+Needs the `OPENROUTER` key ([Keys](#keys-api-keys)).
 Jev is a model router, not a job-fetching service: the deterministic DereC4
 importer still fetches and parses the repository, then Jev tiers eligible
 uncached jobs. No applications are submitted. OpenRouter supports `--now` only;

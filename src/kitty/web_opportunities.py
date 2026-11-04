@@ -64,7 +64,7 @@ def post(app, conn, path, body):
         return core.favorites(conn, body['selections'], body['favorite'])
     if path == '/api/opportunities/settings':
         if app.settings.demo and body.get('enabled'): core.fail('External monitoring is disabled in demo', 403)
-        result = core.save_settings(conn, body)
+        result = core.save_settings(conn, body, app.settings.root)
         if result['enabled']:
             start(app)
         else:
@@ -134,3 +134,12 @@ def stop(app):
         monitor[0].set()
         monitor[1].join()
         app.opportunity_monitor = None
+
+
+def build_applied(app, build):
+    """A new active build (any window, Settings, an external editor or an install) may turn
+    scheduled monitoring on or off."""
+    if build["settings"]["opportunities"]["monitoring"]:
+        start(app)
+    else:
+        stop(app)

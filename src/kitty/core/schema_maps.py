@@ -120,7 +120,7 @@ def _source(conn, value, kind):
         return {'kind': 'calendar_task', 'id': source_id}
     if value.get('kind') == 'note_page':
         source_id = _integer(value.get('id'))
-        if not conn.execute('SELECT id FROM note_pages WHERE id=?', (source_id,)).fetchone():
+        if not conn.execute('SELECT id FROM note_page_index WHERE id=?', (source_id,)).fetchone():
             raise ValueError('Note page no longer exists')
         return {'kind': 'note_page', 'id': source_id}
     expected = {'class': ('subject', 'study_subjects'), 'job': ('job', 'jobs'), 'company': ('company', 'companies')}.get(kind)
@@ -241,7 +241,7 @@ def _lookup(conn, kind, source_id):
         row = conn.execute('SELECT data FROM calendar_tasks WHERE id=? AND deleted=0', (source_id,)).fetchone()
         return {'label': json.loads(row['data']).get('title', '')} if row else {'missing': True}
     if kind == 'note_page':
-        row = conn.execute('SELECT title AS label FROM note_pages WHERE id=?', (source_id,)).fetchone()
+        row = conn.execute('SELECT title AS label FROM note_page_index WHERE id=?', (source_id,)).fetchone()
     elif kind == 'subject':
         row = conn.execute('SELECT name AS label FROM study_subjects WHERE id=?', (source_id,)).fetchone()
     elif kind == 'company':

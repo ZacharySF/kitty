@@ -305,7 +305,9 @@ Stage 1: done.
   storage infrastructure are always available. `applyai` owns career workflows;
   `workspace` owns notes/documents/study/planning; `terminal` owns kitty!'s bundled,
   pinned herdr session (`docs/terminal-dock-design.md`). They do not depend on each
-  other. `config/modules.yaml` stores a restart-only selection; absent means every
+  other. The `modules` list of `config/build.json` (`docs/platform-design.md` Q8;
+  a legacy `config/modules.yaml` is migrated into it on first open) stores a
+  restart-only selection; absent means every
   module for existing workspaces, while fresh CLI/desktop workspaces start core-only.
   Disabled modules have no UI entries, commands, MCP tools, routes, workers or
   processes, but their data and configuration remain. Existing global migrations
@@ -316,7 +318,7 @@ Stage 1: done.
   dragged height); hidden, only a thin handle. Float turns it into a bottom-right
   glass card that takes no page space (header drag, corner-grip resize, committed
   on release; hidden, a small pill). Its view, height step, float choice, card
-  size and position are remembered per browser profile. The herdr view is an
+  size and position are kept in the build (`ui.dock` of `config/build.json`). The herdr view is an
   atlas node under Plan that opens the full
   session in a workspace tab. Reading agent states never starts herdr.
 - Agents in kitty! (`docs/terminal-dock-design.md` Q2, Q9): either terminal surface

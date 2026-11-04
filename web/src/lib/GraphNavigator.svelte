@@ -21,13 +21,10 @@
     type View,
   } from "./workspace";
   import {
-    ATLAS_HIDDEN_KEY,
     ATLAS_NODES_EVENT,
     SECTION_DRAG_TYPE,
     atlasGraph,
     atlasSections,
-    hiddenSections,
-    setSectionHidden,
   } from "./atlasNodes";
   import { activeModules } from "./modules.svelte";
   import {
@@ -41,10 +38,12 @@
     HOME_RAIL_KEY,
     graphLayout,
     graphPhysics,
+    hiddenSections,
     homeLook,
     homeRailCollapsed,
     setHomeLook,
     setHomeRailCollapsed,
+    setSectionHidden,
     type HomeLook,
   } from "./graphPreferences";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
@@ -270,14 +269,13 @@
       collapsed = homeRailCollapsed();
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
-    // Every atlas, in this window's tabs or another window, follows the same choice.
+    // Every atlas, in this window's tabs or another window, follows the same build.
     const syncHidden = () => { hidden = hiddenSections(); };
+    // The rail's state is this device's (another window of it may toggle it).
     const syncStorage = (event: StorageEvent) => {
-      if (event.key === ATLAS_HIDDEN_KEY || event.key === null) syncHidden();
       if (event.key === HOME_RAIL_KEY || event.key === null) collapsed = homeRailCollapsed();
     };
     window.addEventListener(ATLAS_NODES_EVENT, syncHidden);
-    window.addEventListener("storage", syncStorage);
     // Capture phase: the renderers own the pointer while a node is dragged.
     const trackNodeDrag = (event: PointerEvent) => {
       if (nodeDrag) nodeOverList = overList(event.clientX, event.clientY) ? nodeDrag.label : null;
@@ -320,7 +318,6 @@
       disposed = true;
       window.removeEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
       window.removeEventListener(ATLAS_NODES_EVENT, syncHidden);
-      window.removeEventListener("storage", syncStorage);
       window.removeEventListener("pointermove", trackNodeDrag, true);
       window.removeEventListener("pointerup", endNodeDrag);
       window.removeEventListener("pointercancel", endNodeDrag);

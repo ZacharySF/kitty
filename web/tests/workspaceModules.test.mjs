@@ -1,7 +1,7 @@
 // Run with Node >=22.6: node --experimental-strip-types --test tests/workspaceModules.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {shortcutsFor,viewEnabled,visibleGroups,visibleNavigation,visibleRelations} from '../src/lib/workspace.ts';
+import {notePageLink,shortcutsFor,viewEnabled,visibleGroups,visibleNavigation,visibleRelations} from '../src/lib/workspace.ts';
 
 const ids=(items)=>items.map(item=>item.id);
 const labels=(groups)=>groups.map(group=>group.label);
@@ -63,4 +63,10 @@ test('keyboard help lists only reachable shortcuts',()=>{
   assert.ok(navigate([]).some(([keys])=>keys==='Ctrl + Alt / Ctrl + V'));
   assert.ok(!navigate([]).some(([keys])=>keys.includes('Ctrl + X')||keys.includes('Ctrl + C')));
   assert.ok(navigate(['applyai']).some(([keys])=>keys.includes('Ctrl + C')));
+});
+
+test('a #notes/<number> link names one note page and nothing else',()=>{
+  assert.equal(notePageLink('notes/12'),12);
+  assert.equal(notePageLink('notes'),null);
+  for(const hash of ['notes/0','notes/-1','notes/1x','notes/12/','study/3','notes/12345678901234567']) assert.equal(notePageLink(hash),null,hash);
 });

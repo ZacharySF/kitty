@@ -29,8 +29,9 @@ GET  /api/rika/speech/<message id>  ->  {text, audio}
 GET  /api/rika/stream  (WebSocket upgrade)
     Server-to-page JSON text messages: token, message, action, approval, plan, tier,
     navigate, agents and voice.model events. Like every upgrade it is guarded by the
-    exact Host and Origin; a page that falls behind is dropped and reloads history on
-    reconnect. The page may send voice input on it, and nothing else:
+    exact Host and Origin and the UI secret as a subprotocol (kitty.web_auth); a page
+    that falls behind is dropped and reloads history on reconnect. The page may send
+    voice input on it, and nothing else:
     ``{"type": "voice.start", "session", "mode": "command"|"dump"}``, binary frames of
     16 kHz mono little-endian 16-bit PCM, ``{"type": "voice.mode", "mode"}`` to latch a
     command into a brain dump, then ``voice.stop`` or ``voice.cancel``. Transcription
@@ -46,13 +47,12 @@ import json
 import queue
 import re
 import select
-import struct
 
 from kitty.core.rika import speech, store
 from kitty.core.rika.agents import AgentError
 from kitty.core.rika.loop import Rika, RikaError
 from kitty.core.rika.voice import FRAME_MAX, MODES, Session, VoiceError
-from kitty.websocket import Closed, Reader, accept, check_upgrade, frame
+from kitty.web_socket import Closed, Reader, accept, close_code, frame, handshake_key, send_close
 
 PREFIX = "/api/rika"
 STREAM = PREFIX + "/stream"
@@ -167,7 +167,7 @@ def upgrade(app, handler, path, query) -> bool:
     if path != STREAM:
         return False
     app._no_query(query)
-    key = check_upgrade(handler.headers)
+    key = handshake_key(handler.headers)
     subscriber = app.rika.hub.subscribe()
     try:
         accept(handler, key)
@@ -242,7 +242,7 @@ def _pump(connection, subscriber: queue.Queue, app) -> None:
                     if opcode == 9:
                         connection.sendall(frame(10, payload))
                     elif opcode == 8:
-                        raise Closed(struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1000)
+                        raise Closed(close_code(payload))
                     elif opcode == 1:
                         listening.control(payload)
                     elif opcode == 2:
@@ -264,7 +264,4 @@ def _pump(connection, subscriber: queue.Queue, app) -> None:
         return
     finally:
         listening.close()
-    try:
-        connection.sendall(frame(8, struct.pack("!H", code)))
-    except OSError:
-        pass
+    send_close(connection, code)

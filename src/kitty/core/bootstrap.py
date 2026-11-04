@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kitty.config import CONFIG_FILES
-from kitty.modules import MODULES_FILE, load_modules, normalize_modules, save_modules
+from kitty.modules import BUILD_FILE, LEGACY_MODULES_FILE, load_modules, normalize_modules, save_modules
 from kitty.settings import Settings
 
 #: profile.yaml fields `init` asks about, in the order it asks.
@@ -37,14 +37,13 @@ class CopyResult:
 
 
 def initialize_modules(settings: Settings, enabled: Sequence[str] | None = None) -> tuple[str, ...]:
-    """Settle config/modules.yaml for `kitty init`; return the selection it implies.
+    """Settle the module selection (config/build.json) for `kitty init`; return it.
 
-    An existing file is validated and kept. Otherwise `enabled` is written when
-    given, a brand-new workspace (no careers config yet) gets ``enabled: []`` and
-    a pre-module workspace keeps its absent file, which means every module.
+    An existing build file (or a pre-build modules.yaml) is validated and kept.
+    Otherwise `enabled` is written when given, a brand-new workspace (no careers
+    config yet) gets ``"modules": []`` and a pre-module workspace keeps every module.
     """
-    target = settings.config_path(MODULES_FILE)
-    if target.exists():
+    if any(settings.config_path(name).exists() for name in (BUILD_FILE, LEGACY_MODULES_FILE)):
         return load_modules(settings.config_dir)
     if enabled is not None:
         return save_modules(settings.config_dir, normalize_modules(enabled))
@@ -60,7 +59,7 @@ def copy_examples(settings: Settings, modules: Sequence[str] | None = None) -> l
 
     All runtime YAML files are local-only; only their generic .example templates
     are committed. An existing local file is always reported as 'kept'. Without
-    the applyai module (`modules`, default: modules.yaml) nothing is copied.
+    the applyai module (`modules`, default: the build's selection) nothing is copied.
     """
     active = normalize_modules(modules) if modules is not None else load_modules(settings.config_dir)
     results: list[CopyResult] = []
@@ -94,8 +93,7 @@ def configure_modules(config_dir: Path, enabled: Sequence[str]) -> tuple[str, ..
     """Provision missing public defaults, then persist a restart-only selection."""
     selection = normalize_modules(enabled)
     config_dir.mkdir(parents=True, exist_ok=True)
-    settings = Settings(root=config_dir.parent, db_path=config_dir.parent / "data" / "apply.db",
-                        demo=False, anthropic_key_set=False)
+    settings = Settings(root=config_dir.parent, db_path=config_dir.parent / "data" / "apply.db", demo=False)
     copy_examples(settings, selection)
     return save_modules(config_dir, selection)
 

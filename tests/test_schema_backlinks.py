@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from kitty import web_schema
-from kitty.core import backlinks, jobs, schema_maps as schema
+from kitty.core import backlinks, jobs, notes, schema_maps as schema, search
 from kitty.web_server import APIError
 
 STAMP = '2026-01-01T00:00:00+00:00'
@@ -19,12 +19,14 @@ def node(key, label, **extra):
 
 def page(conn, title, *texts, kind='text'):
     notebook = conn.execute('SELECT id FROM note_notebooks LIMIT 1').fetchone()
-    notebook_id = notebook[0] if notebook else conn.execute(
-        'INSERT INTO note_notebooks(title,created_at,updated_at) VALUES(?,?,?)', ('Synthetic', STAMP, STAMP)).lastrowid
-    document = {'version': 1, 'layers': [{'id': 'default', 'name': 'Drawing', 'visible': True, 'locked': False}],
-                'elements': [{'id': f'e{index}', 'kind': kind, 'text': text} for index, text in enumerate(texts)]}
-    return conn.execute('INSERT INTO note_pages(notebook_id,title,document,created_at,updated_at) VALUES(?,?,?,?,?)',
-                        (notebook_id, title, json.dumps(document), STAMP, STAMP)).lastrowid
+    notebook_id = notebook[0] if notebook else notes.create_notebook(conn, 'Synthetic')['id']
+    created = notes.create_page(conn, notebook_id, title)
+    document = notes.empty_document()
+    document['elements'] = [{'id': f'e{index}', 'kind': kind, 'layer': 'default', 'x': 0, 'y': 0, 'w': 10, 'h': 10,
+                             'color': '#000000', 'width': 1, **({'text': text} if kind in {'text', 'sticky'} else {})}
+                            for index, text in enumerate(texts)]
+    notes.save_page(conn, created['id'], created['revision'], document, title)
+    return created['id']
 
 
 def mapped(conn, *nodes):
@@ -92,33 +94,36 @@ def test_wikilinks_rank_first_and_sticky_text_counts(workspace):
     assert [(ref['id'], ref['match']) for ref in found] == [(explicit, 'wikilink'), (plain, 'mention')]
 
 
-def test_missing_and_older_tables_are_skipped():
+def test_a_database_without_the_search_index_says_so_instead_of_finding_nothing():
     conn = sqlite3.connect(':memory:')
     conn.row_factory = sqlite3.Row
     conn.execute('CREATE TABLE study_subjects(id INTEGER PRIMARY KEY, name TEXT)')
-    conn.execute('CREATE TABLE study_tasks(id INTEGER PRIMARY KEY, title TEXT)')
     conn.execute("INSERT INTO study_subjects(name) VALUES('Organic chemistry')")
-    conn.execute("INSERT INTO study_tasks(title) VALUES('Organic chemistry lab')")
-    result = backlinks.mentions(conn, 'organic chemistry')
-    assert [(ref['kind'], ref['id']) for ref in result['references']] == [('study_subject', 1)]
-    assert result['scanned'] == {'study_subject': 1}
+    with pytest.raises(search.SearchUnavailable):
+        backlinks.mentions(conn, 'organic chemistry')
 
 
-def test_results_are_bounded_and_snippets_redacted(workspace):
+def test_every_record_is_searched_only_the_shown_references_are_bounded_and_snippets_redacted(workspace):
     conn = workspace.conn
     for index in range(30):
         page(conn, f'Lecture {index}', f'Topology notes {index}')
     secret = page(conn, 'Paths', 'Saved at /home/someone/private/file.txt and https://example.invalid/x?token=1 '
                   'mail someone@example.invalid key abcdefabcdef0123456789abcdef — topology')
-    page(conn, 'Long', 'x ' * backlinks.RECORD_CHARS + 'topology')
+    page(conn, 'Long', 'x ' * 8000 + 'topology')
     item = mapped(conn, node('topo', 'Topology'))
-    found = refs(backlinks.suggestions(conn, item['id']), 'topo')
-    assert len(found) == backlinks.PER_NODE
+    result = backlinks.suggestions(conn, item['id'])
+    found = refs(result, 'topo')
+    assert len(found) == backlinks.PER_NODE and result['suggestions'][0]['truncated'] is True
+    assert result['scanned']['note_page'] == 32
     assert all(len(ref['snippet']) <= backlinks.SNIPPET + 60 for ref in found)
-    text = next(ref['snippet'] for ref in backlinks.mentions(conn, 'topology')['references'] if ref['id'] == secret)
+    mentioned = backlinks.mentions(conn, 'topology')
+    assert len(mentioned['references']) == backlinks.PER_TERM and mentioned['truncated'] is True
+    text = next(ref['snippet'] for ref in mentioned['references'] if ref['id'] == secret)
     for leaked in ('/home/someone', 'example.invalid', 'someone@', 'abcdefabcdef0123'):
         assert leaked not in text
-    assert 'Long' not in {ref['title'] for ref in backlinks.mentions(conn, 'topology')['references']}
+    # No per-record character cap: the match 16,000 characters into a block still counts.
+    assert 'Long' in {ref['title'] for ref in mentioned['references']}
+    assert backlinks.mentions(conn, 'lecture 3')['truncated'] is False
 
 
 def test_apply_links_once_reuses_sourced_nodes_and_rejects_stale_revisions(workspace):

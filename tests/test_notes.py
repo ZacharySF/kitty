@@ -190,7 +190,7 @@ def test_restore_missing_reference_is_atomic(workspace, page):
     with pytest.raises(notes.NotesError, match="exactly"):
         notes.restore(workspace.conn, workspace.settings.data_dir, 0, exported)
     assert workspace.conn.execute("SELECT COUNT(*) FROM note_notebooks").fetchone()[0] == before
-    assert workspace.conn.execute("SELECT COUNT(*) FROM note_pages").fetchone()[0] == 1
+    assert len(notes.listing(workspace.conn)["pages"]) == 1
 
 
 def test_retention_only_removes_unused_references_and_rejects_stale_privacy(workspace, page):
@@ -198,9 +198,9 @@ def test_retention_only_removes_unused_references_and_rejects_stale_privacy(work
     keep = notes.register(conn, root, image_data(), "Keep")[0]
     discard = notes.register(conn, root, image_data(), "Discard")[0]
     notes.save_page(conn, page["id"], 1, document(element("image", attachment=keep["id"])), "Referenced")
-    assert notes.preferences(conn, 1, False, 0)["revision"] == 2
+    assert notes.preferences(conn, workspace.settings.root, 1, False, 0)["revision"] == 2
     with pytest.raises(notes.NotesError) as conflict:
-        notes.preferences(conn, 1, True, 30)
+        notes.preferences(conn, workspace.settings.root, 1, True, 30)
     assert conflict.value.status == 409
     assert notes.cleanup(conn, root) == {"removed": 1}
     assert notes.attachment_bytes(conn, root, keep["id"])
@@ -342,18 +342,17 @@ def test_additive_folder_migration_preserves_existing_notebook_and_ink():
         import json
         conn.execute("INSERT INTO note_pages(id,notebook_id,title,document,created_at,updated_at) VALUES (1,1,'Ink',?,'before','before')", (json.dumps(original),))
         conn.commit()
-        before = notes.page(conn, 1)
+        before = dict(conn.execute("SELECT * FROM note_pages WHERE id=1").fetchone())
         conn.executescript(migrations[19].sql)
         conn.executescript(migrations[22].sql)
-        listing = notes.listing(conn)
-        assert listing["folders"] == []
-        assert listing["notebooks"][0]["folder_id"] is None
-        assert listing["notebooks"][0]["title"] == "Existing"
-        assert notes.page(conn, 1)["document"] == before["document"]
-        assert notes.page(conn, 1)["revision"] == before["revision"]
+        assert conn.execute("SELECT COUNT(*) FROM note_folders").fetchone()[0] == 0
+        notebook = conn.execute("SELECT * FROM note_notebooks").fetchone()
+        assert notebook["folder_id"] is None and notebook["title"] == "Existing"
+        page = dict(conn.execute("SELECT * FROM note_pages WHERE id=1").fetchone())
+        assert {key: page[key] for key in before} == before
+        assert (page["favorite"], page["last_opened"], page["position"]) == (0, None, 0)
         folder = notes.create_folder(conn, "Archive")
         moved = notes.save_notebook(conn, 1, 1, "Existing", "", "", folder["id"])
         assert moved["folder_id"] == folder["id"]
-        assert notes.page(conn, 1)["document"] == before["document"]
     finally:
         conn.close()

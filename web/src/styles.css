@@ -1603,15 +1603,25 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
 
 /* The Rika bar (RikaBar.svelte) along the bottom of the window publishes its height as
    --rika-space; the page always ends above it, and scrolling a control into view stops
-   above it too. */
+   above it too. The build editor (BuildEditor.svelte) is docked at the right and
+   publishes --build-editor-space; the workbench narrows beside it. */
 :root {
   scroll-padding-bottom: var(--rika-space, 0px);
 }
 :root body .workbench {
   padding-bottom: calc(10px + var(--rika-space, 0px));
+  margin-right: var(--build-editor-space, 0px);
 }
 /* The herdr view fills its workspace tab above the bar. */
 .herdr-view {
   height: calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 34px);
   min-height: 240px;
+}
+
+/* Auto-tags (Q13): a faint underline under keywords the block editor suggests as tags.
+   Drawn with the CSS Custom Highlight API, so the editable text itself is untouched. */
+::highlight(kitty-tag-suggestion) {
+  text-decoration: underline dotted color-mix(in srgb, var(--accent) 75%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }

@@ -63,9 +63,11 @@ def _private(conn, text: str) -> str | None:
 
 
 # Notes and blocks -------------------------------------------------------------
+# Pages and their outline items are read from the block projection (note_page_index,
+# note_outline; page ids are Notes numbers): note_pages and note_blocks are frozen.
 
 def _newest_page(conn) -> int | None:
-    row = conn.execute("SELECT id FROM note_pages ORDER BY updated_at DESC,id DESC LIMIT 1").fetchone()
+    row = conn.execute("SELECT id FROM note_page_index ORDER BY updated_at DESC,id DESC LIMIT 1").fetchone()
     return row["id"] if row else None
 
 
@@ -80,10 +82,10 @@ def _notebook(conn, title: str | None) -> int:
 
 
 def _page_by_title(conn, title: str) -> dict:
-    row = conn.execute("SELECT id FROM note_pages WHERE title=? COLLATE NOCASE ORDER BY updated_at DESC LIMIT 1",
+    row = conn.execute("SELECT id FROM note_page_index WHERE title=? COLLATE NOCASE ORDER BY updated_at DESC LIMIT 1",
                        (title,)).fetchone()
     if row is None:
-        row = conn.execute("SELECT id FROM note_pages WHERE title LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT 1",
+        row = conn.execute("SELECT id FROM note_page_index WHERE title LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT 1",
                            (_like(title),)).fetchone()
     if row is None:
         raise ToolError(f"No page is called {title!r}")
@@ -170,7 +172,7 @@ def _undo_append_block(ctx: Context, undo: dict) -> None:
 
 
 def _block(ctx: Context, block_id: str) -> dict:
-    row = ctx.conn.execute("SELECT * FROM note_blocks WHERE id=?", (note_blocks.block_id(block_id),)).fetchone()
+    row = ctx.conn.execute("SELECT id,page_id,text FROM note_outline WHERE id=?", (note_blocks.block_id(block_id),)).fetchone()
     if row is None:
         raise ToolError("Block not found")
     return dict(row)
@@ -199,8 +201,8 @@ def _undo_edit_block(ctx: Context, undo: dict) -> None:
 
 def _find_blocks(ctx: Context, args: dict) -> Result:
     rows = ctx.conn.execute(
-        "SELECT b.id,b.page_id,b.text,p.title FROM note_blocks b JOIN note_pages p ON p.id=b.page_id"
-        " WHERE b.text LIKE ? ESCAPE '\\' ORDER BY p.updated_at DESC,b.ordering LIMIT 20", (_like(args["query"]),)).fetchall()
+        "SELECT id,page_id,text,title FROM note_outline"
+        " WHERE text LIKE ? ESCAPE '\\' ORDER BY updated_at DESC,page_id,path LIMIT 20", (_like(args["query"]),)).fetchall()
     found = [{"id": row["id"], "page_id": row["page_id"], "page": row["title"], "text": _private(ctx.conn, row["text"])}
              for row in rows]
     return Result(f"Found {len(found)} block{'s' if len(found) != 1 else ''}", {"blocks": found})
@@ -537,10 +539,11 @@ def _search(ctx: Context, args: dict) -> Result:
     results: dict[str, list] = {}
     if "workspace" in modules:
         results["pages"] = [{"id": row["id"], "title": row["title"]} for row in conn.execute(
-            "SELECT id,title FROM note_pages WHERE title LIKE ? ESCAPE '\\' OR search_text LIKE ? ESCAPE '\\'"
-            " ORDER BY updated_at DESC LIMIT ?", (pattern, pattern, SEARCH_LIMIT))]
+            "SELECT p.id,p.title FROM note_page_index p WHERE p.title LIKE ? ESCAPE '\\' OR EXISTS"
+            " (SELECT 1 FROM note_outline o WHERE o.page_id=p.id AND o.text LIKE ? ESCAPE '\\')"
+            " ORDER BY p.updated_at DESC LIMIT ?", (pattern, pattern, SEARCH_LIMIT))]
         results["blocks"] = [{"id": row["id"], "page_id": row["page_id"], "text": _private(conn, row["text"])}
-                             for row in conn.execute("SELECT id,page_id,text FROM note_blocks WHERE text LIKE ? ESCAPE '\\'"
+                             for row in conn.execute("SELECT id,page_id,text FROM note_outline WHERE text LIKE ? ESCAPE '\\'"
                                                      " LIMIT ?", (pattern, SEARCH_LIMIT))]
         results["events"] = [{"id": row["id"], "title": row["title"], "start": row["start"]} for row in conn.execute(
             "SELECT id,title,start FROM calendar_events WHERE deleted=0 AND title LIKE ? ESCAPE '\\'"

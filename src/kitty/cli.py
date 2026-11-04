@@ -30,7 +30,7 @@ from kitty.core import urlmeta
 from kitty.core.workspace import Workspace, open_workspace
 from kitty.dates import now_iso, parse_user_date
 from kitty.models import PIPELINE_STATUSES
-from kitty.modules import MODULE_IDS, available_modules, load_modules
+from kitty.modules import BUILD_FILE, LEGACY_MODULES_FILE, MODULE_IDS, available_modules, load_modules
 from kitty.settings import Settings
 
 #: The module whose commands, screens and tools need the careers config.
@@ -59,15 +59,15 @@ def _module_error(lines: list[str]) -> typer.Exit:
 class _ModuleGroup(TyperGroup):
     """The top-level group: lists and runs only the commands of enabled modules.
 
-    The selection is read from config/modules.yaml when the command line is resolved,
+    The selection is read from config/build.json when the command line is resolved,
     which happens before any feature code, so a disabled command cannot reach it. A
-    modules.yaml that cannot be read leaves only the core commands (doctor and
+    build file that cannot be read leaves only the core commands (doctor and
     modules show what is wrong).
     """
 
     @staticmethod
     def _enabled() -> tuple[str, ...]:
-        """The enabled modules for this process; empty when modules.yaml is unreadable."""
+        """The enabled modules for this process; empty when the build file is unreadable."""
         try:
             return load_modules(Settings.load().config_dir)
         except ConfigError:
@@ -87,7 +87,7 @@ class _ModuleGroup(TyperGroup):
                 enabled = load_modules(Settings.load().config_dir)
             except ConfigError as exc:
                 raise _module_error(
-                    ["[bold red]Cannot read config/modules.yaml:[/bold red]",
+                    ["[bold red]Cannot read config/build.json:[/bold red]",
                      *[f"  {problem}" for problem in exc.problems],
                      "\nFix it, or run [bold]kitty doctor[/bold]."],
                 ) from exc
@@ -172,7 +172,7 @@ def init(
     module: Annotated[Optional[list[str]], typer.Option(
         "--module", "-m",
         help=f"Select this module ({', '.join(MODULE_IDS)}) when the workspace has no "
-             "config/modules.yaml yet; repeat for several. Default for a new workspace: none, core only.",
+             "config/build.json yet; repeat for several. Default for a new workspace: none, core only.",
     )] = None,
 ) -> None:
     """Set up the workspace: modules, config files, the database, and (applyai) your profile."""
@@ -180,7 +180,7 @@ def init(
     console.print(f"[bold]Workspace:[/bold] {settings.root}")
 
     try:
-        before = settings.config_path("modules.yaml").exists()
+        before = any(settings.config_path(name).exists() for name in (BUILD_FILE, LEGACY_MODULES_FILE))
         enabled = bootstrap.initialize_modules(settings, list(module) if module else None)
         results = bootstrap.copy_examples(settings, enabled)
     except ConfigError as exc:
@@ -189,7 +189,7 @@ def init(
         error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
         raise typer.Exit(code=2) from exc
     if module and before:
-        console.print("  kept     config/modules.yaml (change it with `kitty modules enable|disable`)")
+        console.print("  kept     config/build.json (change it with `kitty modules enable|disable`)")
     console.print(f"  modules  {', '.join(enabled) if enabled else 'none (core only)'}")
     for result in results:
         if result.action == "created":
@@ -1513,7 +1513,7 @@ _RESTART_NOTE = (
 
 
 def _configured_modules() -> tuple[Path, tuple[str, ...]]:
-    """The config directory and the modules.yaml selection, or exit with a readable error."""
+    """The config directory and the build's module selection, or exit with a readable error."""
     config_dir = _settings().config_dir
     try:
         return config_dir, load_modules(config_dir)
@@ -1539,15 +1539,15 @@ def _change_modules(ids: list[str], *, enable: bool) -> None:
     try:
         saved = bootstrap.configure_modules(config_dir, selection)
     except (ValueError, OSError) as exc:
-        error_console.print(f"[bold red]Could not save config/modules.yaml:[/bold red] {escape(str(exc))}")
+        error_console.print(f"[bold red]Could not save the modules in config/build.json:[/bold red] {escape(str(exc))}")
         raise typer.Exit(code=1) from exc
-    console.print(f"Saved config/modules.yaml: {', '.join(saved) or 'none (core only)'}.")
+    console.print(f"Saved the build's modules in config/build.json: {', '.join(saved) or 'none (core only)'}.")
     console.print(f"[dim]{_RESTART_NOTE}[/dim]")
 
 
 @modules_app.command("list")
 def modules_list() -> None:
-    """Show each module and whether config/modules.yaml enables it."""
+    """Show each module and whether the build (config/build.json) enables it."""
     _config_dir, enabled = _configured_modules()
     table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
     table.add_column("module")
@@ -1574,6 +1574,132 @@ def modules_disable(
 ) -> None:
     """Disable modules (takes effect when rika! next starts; data stays)."""
     _change_modules(ids, enable=False)
+
+
+# ---- keys (platform design Q10: one Keys service; values are never printed)
+
+keys_app = typer.Typer(no_args_is_help=True, help="API keys: list, set, remove, and inject into one command.")
+app.add_typer(keys_app, name="keys")
+
+
+def _keystore():
+    from kitty.core import keys as keys_core
+
+    return keys_core.for_settings(_settings())
+
+
+def _keys_exit(exc: Exception) -> typer.Exit:
+    error_console.print(f"[bold red]{escape(str(exc))}[/bold red]", highlight=False)
+    return typer.Exit(code=1)
+
+
+@keys_app.command("list")
+def keys_list() -> None:
+    """Each key: set or unset and where it is stored (never its value)."""
+    status = _keystore().status()
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    for column in ("name", "state", "stored in", "variable"):
+        table.add_column(column)
+    for row in status["keys"]:
+        state = "[red]error[/red]" if row["error"] else "[green]set[/green]" if row["set"] else "[dim]unset[/dim]"
+        table.add_row(row["name"], state, row["backend"] or "-", row["env"])
+    console.print(table)
+    for row in status["keys"]:
+        if row["error"]:
+            console.print(f"[red]{row['name']}: {escape(row['error'])}[/red]")
+    if not status["keyring"]:
+        console.print("[yellow]No OS keyring is available: new keys are stored in an owner-only file "
+                      "under .private/.[/yellow]")
+
+
+@keys_app.command("set")
+def keys_set(
+    name: Annotated[str, typer.Argument(help="OPENROUTER, ANTHROPIC, USAJOBS, BRAVE or your own NAME (A-Z, 0-9, _).")],
+) -> None:
+    """Store a key: typed without echo, or read from standard input (one line)."""
+    import getpass
+    import sys
+
+    from kitty.core import keys as keys_core
+
+    store = _keystore()
+    try:
+        name = keys_core.canonical(name)
+        value = getpass.getpass(f"{name}: ") if sys.stdin.isatty() else sys.stdin.readline()
+        where = store.set(name, value)
+    except (keys_core.KeysError, EOFError) as exc:
+        raise _keys_exit(exc) from None
+    console.print(f"Stored {name} in " + ("the OS keyring." if where == "keyring"
+                  else "an owner-only file under .private/ (no OS keyring available)."))
+
+
+@keys_app.command("remove")
+def keys_remove(name: Annotated[str, typer.Argument(help="The key's NAME.")]) -> None:
+    """Remove a key from the keyring and the owner-only file (.env is yours to edit)."""
+    from kitty.core import keys as keys_core
+
+    store = _keystore()
+    try:
+        name = keys_core.canonical(name)
+        removed = store.remove(name)
+        left = store.lookup(name)
+    except keys_core.KeysError as exc:
+        raise _keys_exit(exc) from None
+    console.print(f"Removed {name}." if removed else f"{name} was not stored by kitty.")
+    if left:
+        console.print(f"[yellow]{keys_core.env_name(name)} is still set in the environment (.env).[/yellow]")
+
+
+@keys_app.command("move")
+def keys_move(name: Annotated[str, typer.Argument(help="The key's NAME.")]) -> None:
+    """Move a key from its owner-only file into the OS keyring."""
+    from kitty.core import keys as keys_core
+
+    try:
+        _keystore().move_to_keyring(name)
+    except keys_core.KeysError as exc:
+        raise _keys_exit(exc) from None
+    console.print(f"Moved {keys_core.canonical(name)} to the OS keyring.")
+
+
+@keys_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def keys_run(
+    args: Annotated[list[str], typer.Argument(metavar="+NAME... -- COMMAND [ARGS]...",
+                                              help="Keys to inject, then the command.")],
+) -> None:
+    """Run COMMAND with the named keys as environment variables, in that process only.
+
+    Example: kitty keys run +OPENROUTER -- apply-ai. OPENROUTER, ANTHROPIC, USAJOBS and
+    BRAVE arrive as OPENROUTER_API_KEY, ANTHROPIC_API_KEY, USAJOBS_API_KEY and
+    BRAVE_SEARCH_API_KEY; your own keys under their NAME. Other keys kitty knows are
+    removed from the command's environment. kitty is replaced by the command, so its
+    exit code is the command's.
+    """
+    import os
+
+    from kitty.core import keys as keys_core
+
+    names = []
+    while args and args[0].startswith("+"):
+        names.append(args.pop(0)[1:])
+    if args and args[0] == "--":
+        args.pop(0)
+    if not names or not args:
+        raise _keys_exit(ValueError("Usage: kitty keys run +NAME [+NAME...] -- COMMAND [ARGS]..."))
+    store = _keystore()
+    try:
+        injected = store.environment(names)
+        known = {keys_core.env_name(name) for name in store.names()}
+    except keys_core.KeysError as exc:
+        raise _keys_exit(exc) from None
+    env = {key: value for key, value in os.environ.items() if key not in known}
+    env.update(injected)
+    try:
+        os.execvpe(args[0], args, env)
+    except OSError as exc:
+        error_console.print(f"[bold red]Cannot run {escape(args[0])}: {escape(exc.strerror or 'error')}[/bold red]",
+                            highlight=False)
+        raise typer.Exit(code=127) from None
 
 
 # ---- gmail (Stage 6: read-only Gmail proposes status changes; I confirm them)
@@ -1862,6 +1988,59 @@ def questions_list(
                 _print_question(summary)
     console.print(f"\n{len(found)} question(s). Answer them in config/answers.yaml; a `match:` phrase "
                   f"covers differently worded ones ({form_questions.COMPANY} stands for the company's name).")
+
+
+# ------------------------------------------------------------------ index
+
+index_app = typer.Typer(no_args_is_help=True, help="The full-text search index: check it against a rebuild, or rebuild it.")
+app.add_typer(index_app, name="index")
+
+
+@index_app.command("check")
+def index_check(
+    repair: Annotated[bool, typer.Option("--repair/--no-repair", help="Rewrite documents the check finds wrong.")] = True,
+    source: Annotated[str, typer.Option("--from", help="Rebuild blocks from the op log and snapshots (log) or the projection.")] = "log",
+) -> None:
+    """Rebuild the index from scratch, compare it with the incremental one; exit 1 on any difference."""
+    from kitty.core import search
+
+    if source not in {"log", "projection"}:
+        raise typer.BadParameter("--from is log or projection")
+    workspace = _open()
+    try:
+        report = search.check(workspace.conn, repair=repair, blocks=source)
+    finally:
+        workspace.close()
+    console.print(f"{report['docs']} documents rebuilt from the {source} in {report['seconds']} s; "
+                  f"{len(report['mismatches'])} mismatched, {report['repaired']} repaired, {len(report['drift'])} log drift; "
+                  f"FTS5 integrity: " + ", ".join(f"{name} {'ok' if ok else 'FAILED'}" for name, ok in report["fts"].items()))
+    for item in report["mismatches"][:20]:
+        console.print(f"  {item['problem']}: {item['kind']} {escape(item['ref'])}")
+    for item in report["unreplayable"][:20]:
+        console.print(f"  [red]page {escape(item['page_id'])} cannot be replayed: {escape(item['error'])}[/red]")
+    if report["missing_triggers"]:
+        console.print(f"  [red]missing triggers: {', '.join(report['missing_triggers'])}[/red]")
+    if not report["ok"]:
+        raise typer.Exit(code=1)
+    console.print("[green]The incremental index equals the rebuild.[/green]")
+
+
+@index_app.command("rebuild")
+def index_rebuild() -> None:
+    """Replace every document with one made from the current data."""
+    import time
+
+    from kitty.core import search
+
+    workspace = _open()
+    try:
+        started = time.perf_counter()
+        count = search.build(workspace.conn)
+        stats = search.stats(workspace.conn)
+    finally:
+        workspace.close()
+    console.print(f"Indexed {count} documents in {time.perf_counter() - started:.2f} s: "
+                  + ", ".join(f"{kind} {number}" for kind, number in stats["documents"].items()))
 
 
 def main() -> None:

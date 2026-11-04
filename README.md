@@ -16,7 +16,7 @@ plug in as modules.
 | Module | What you get |
 | --- | --- |
 | **Workspace** | Block-based notes with stable block IDs, `((block))` references and `[[wiki]]` links, backlinks, canvas, mind maps, documents and PDFs, flashcards, study, calendar, tasks, quick notes in floating windows |
-| **Terminal** | A pinned [herdr](https://github.com/herdrdev/herdr) session in a resizable dock, streamed into the window over a same-origin WebSocket; open omp, Claude or Codex coding agents in labelled tabs with live activity; optionally hand off to a separately installed [Stencil Tern](https://stencil.so/tern) |
+| **Terminal** | A pinned [herdr](https://github.com/herdrdev/herdr) session in a resizable dock, streamed into the window over a same-origin WebSocket; open omp, Claude or Codex coding agents in labelled tabs with live activity; optionally drive a separately installed [Stencil Tern](https://stencil.so/tern) on rika!'s own Tern session: pane list with live and exited state in the dock, run a command line, focus a pane, capture a pane to a quick note |
 | **ApplyAI** (optional) | Job discovery from public boards, triage, application preparation, a tracker and reports. It fills forms but **never submits an application** and never invents facts about the applicant |
 | **Core** (always on) | A Brain home (every record and edit as a glowing point in a neural-network brain) or a 2D atlas, tabs, command palette, themes, settings, module selection |
 
@@ -69,8 +69,9 @@ same functions against the same database.
 - **History is append-only where it matters.** Application status changes are
   events; undo appends a reverting event instead of rewriting history.
 - **The local server is not an open door.** It binds to loopback, checks the
-  exact Host and Origin, requires a custom header on every mutation, and gates
-  the terminal WebSocket behind a single-use token that expires in 30 seconds.
+  exact Host and Origin, requires a custom header on every mutation, and requires
+  a per-launch secret only rika!'s own windows hold on every API call and
+  WebSocket, so a local program that forges the headers still gets nothing.
 - **It ships.** Tauri builds signed Linux installers in CI and the app updates
   itself, including through an `appimage-run` launcher on NixOS.
 - **Browser automation without a framework.** ApplyAI drives Firefox through its

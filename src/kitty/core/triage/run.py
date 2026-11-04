@@ -28,6 +28,7 @@ import anthropic
 
 from kitty.config import Config
 from kitty.core import jobs as jobs_core
+from kitty.core import keys
 from kitty.core import resumes as resumes_core
 from kitty.core import sources as sources_core
 from kitty.core.resume_coach import read_resume_lines
@@ -436,7 +437,11 @@ def collect_batches(conn: sqlite3.Connection, config: Config, settings: Settings
 
 
 def make_client(settings: Settings) -> Client:
-    """The real Anthropic client; the key comes from .env (ANTHROPIC_API_KEY)."""
-    if not settings.anthropic_key_set:
-        raise TriageError("ANTHROPIC_API_KEY is not set in .env (copy .env.example)")
-    return anthropic.Anthropic()
+    """The real Anthropic client; the key comes from kitty Keys (ANTHROPIC)."""
+    try:
+        key = keys.read(settings, "ANTHROPIC")
+    except keys.KeysError as exc:
+        raise TriageError(str(exc)) from None
+    if not key:
+        raise TriageError("Set the Anthropic key: kitty keys set ANTHROPIC")
+    return anthropic.Anthropic(api_key=key)

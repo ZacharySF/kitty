@@ -11,11 +11,13 @@ counts, and include archived items just like the browser. Other sections retain
 bounded samples; ``total`` counts eligible nodes and ``shown`` counts returned
 nodes (including hubs). Missing tables contribute no invented entities.
 
-``?focus=<entity>:<ref>`` is the only accepted query field: jobs
-``track:<name>``, flashcards ``deck:<id>``, notes ``notebook:<id>`` /
-``folder:<id>``, study ``subject:<id>`` and opportunities ``category:<name>``.
-Only ids, titles and short details are returned: no file paths, URLs, note
-bodies or tokens. Flashcard note labels use their type and stable note id.
+``?focus=<entity>:<ref>`` narrows a graph: jobs ``track:<name>``, flashcards
+``deck:<id>``, notes ``notebook:<id>`` / ``folder:<id>``, study ``subject:<id>`` and
+opportunities ``category:<name>``. ``?search=<text>`` (notes, study, flashcards, jobs)
+returns the section's records matching it in the search index (kitty.core.search),
+titles and contents alike, with their hubs. Only ids, titles and short details are
+returned: no file paths, URLs, note bodies, snippets or tokens. Flashcard note labels
+use their type and stable note id.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
-from kitty.core import calendar, backlinks
+from kitty.core import calendar, backlinks, search
 from kitty.modules import MODULE_IDS
 
 EVENT_WINDOW = timedelta(days=30)
@@ -225,7 +227,7 @@ def _note_section(conn, focus=None):
         entity, ref = focus
         return _notebook_pages(conn, ref) if entity == 'notebook' else _folder_children(conn, ref)
     total = sum(_count(conn, f'SELECT COUNT(*) FROM {table}')
-                for table in ('note_folders', 'note_notebooks', 'note_pages'))
+                for table in ('note_folders', 'note_notebooks', 'note_page_index'))
     # Depth-first order ensures every sampled folder retains its sampled ancestors.
     # The depth guard also bounds traversal of unusually deep imported hierarchies.
     folders = _section_rows(conn, '''WITH RECURSIVE tree(id, title, parent_id, path, depth) AS (
@@ -241,12 +243,12 @@ def _note_section(conn, focus=None):
     columns = {row[1] for row in _section_rows(conn, 'PRAGMA table_info(note_notebooks)')}
     folder_column = 'n.folder_id' if 'folder_id' in columns else 'NULL'
     notebooks = _section_rows(conn, f'''SELECT n.id, n.title, {folder_column},
-        (SELECT COUNT(*) FROM note_pages p WHERE p.notebook_id = n.id)
+        (SELECT COUNT(*) FROM note_page_index p WHERE p.notebook_id = n.id)
         FROM note_notebooks n
         WHERE {folder_column} IS NULL OR {folder_column} IN ({_placeholders(folder_ids)})
         ORDER BY n.updated_at DESC, n.id DESC LIMIT ?''', (*folder_ids, SECTION_GROUP_LIMIT))
     notebook_ids = [row[0] for row in notebooks]
-    pages = _section_rows(conn, f'''SELECT id, title, notebook_id FROM note_pages
+    pages = _section_rows(conn, f'''SELECT id, title, notebook_id FROM note_page_index
         WHERE notebook_id IN ({_placeholders(notebook_ids)})
         ORDER BY updated_at DESC, id DESC LIMIT ?''',
         (*notebook_ids, SECTION_LIMIT - len(folders) - len(notebooks))) if notebook_ids else []
@@ -276,13 +278,13 @@ def _note_section(conn, focus=None):
 
 
 def _notebook_pages(conn, notebook):
-    found = _section_rows(conn, '''SELECT n.title, (SELECT COUNT(*) FROM note_pages p WHERE p.notebook_id = n.id)
+    found = _section_rows(conn, '''SELECT n.title, (SELECT COUNT(*) FROM note_page_index p WHERE p.notebook_id = n.id)
         FROM note_notebooks n WHERE n.id = ?''', (notebook,))
     if not found:
         raise _not_found('notebook')
     title, count = found[0]
     group = f'notebook:{notebook}'
-    pages = _section_rows(conn, '''SELECT id, title FROM note_pages WHERE notebook_id = ?
+    pages = _section_rows(conn, '''SELECT id, title FROM note_page_index WHERE notebook_id = ?
         ORDER BY updated_at DESC, id DESC LIMIT ?''', (notebook, SECTION_LIMIT - 1))
     nodes = [_node('notebook', notebook, title, group, f'{count} pages · {len(pages)} shown', hub=True)]
     nodes.extend(_node('page', ident, page, group) for ident, page in pages)
@@ -303,7 +305,7 @@ def _folder_children(conn, folder):
         (SELECT COUNT(*) FROM note_notebooks n WHERE n.folder_id = f.id)
         FROM note_folders f WHERE f.parent_id = ? ORDER BY f.title COLLATE NOCASE, f.id LIMIT ?''',
         (folder, SECTION_GROUP_LIMIT))
-    books = _section_rows(conn, '''SELECT n.id, n.title, (SELECT COUNT(*) FROM note_pages p WHERE p.notebook_id = n.id)
+    books = _section_rows(conn, '''SELECT n.id, n.title, (SELECT COUNT(*) FROM note_page_index p WHERE p.notebook_id = n.id)
         FROM note_notebooks n WHERE n.folder_id = ? ORDER BY n.updated_at DESC, n.id DESC LIMIT ?''',
         (folder, SECTION_GROUP_LIMIT))
     nodes = [_node('folder', folder, found[0][0], group,
@@ -488,6 +490,77 @@ def _focus(section, query):
     return entity, ref
 
 
+#: Result kinds of kitty.core.search each section's ``?search=`` looks through.
+SEARCH_KINDS = {'notes': ['note_page'], 'study': ['study_subject', 'study_project'],
+                'flashcards': ['flashcard_deck', 'flashcard_note'], 'jobs': ['job']}
+
+
+def _search_section(conn, section, text, modules):
+    """The section's records that match `text` in the search index (titles and contents), as graph nodes.
+
+    Nodes carry the same labels as the section graph (never bodies or snippets), with
+    their notebook, subject, deck or track hub; ``truncated`` says more than
+    ``SECTION_LIMIT`` records matched and ``total`` counts them.
+    """
+    if section not in SEARCH_KINDS:
+        raise _api_error(400, f'The {section} graph has no search')
+    try:
+        found = search.search(conn, text, limit=SECTION_LIMIT, kinds=SEARCH_KINDS[section], modules=modules)
+    except ValueError as exc:
+        raise _api_error(400, str(exc)) from None
+    ids = {}
+    for hit in found['hits']:
+        ids.setdefault(hit['kind'], []).append(hit['id'])
+    nodes, links, hubs = [], [], set()
+
+    def hub(entity, ref, label, detail=''):
+        if (entity, ref) not in hubs:
+            hubs.add((entity, ref))
+            nodes.append(_node(entity, ref, label, f'{entity}:{ref}', detail, hub=True))
+
+    if section == 'notes':
+        pages = ids.get('note_page', [])
+        for ident, title, notebook, book in _section_rows(conn, f'''SELECT p.id, p.title, n.id, n.title FROM note_page_index p
+                JOIN note_notebooks n ON n.id = p.notebook_id WHERE p.id IN ({_placeholders(pages)})''', pages):
+            hub('notebook', notebook, book)
+            nodes.append(_node('page', ident, title, f'notebook:{notebook}'))
+            links.append(_link(f'notebook:{notebook}', f'page:{ident}', 'contains'))
+    elif section == 'study':
+        for ident in ids.get('study_subject', []):
+            hub('subject', ident, next(hit['title'] for hit in found['hits'] if hit['kind'] == 'study_subject' and hit['id'] == ident))
+        projects = ids.get('study_project', [])
+        for ident, name, subject, subject_name in _section_rows(conn, f'''SELECT p.id, p.name, s.id, s.name FROM study_projects p
+                LEFT JOIN study_subjects s ON s.id = p.subject_id WHERE p.id IN ({_placeholders(projects)})''', projects):
+            if subject is not None:
+                hub('subject', subject, subject_name)
+                links.append(_link(f'subject:{subject}', f'project:{ident}', 'contains'))
+            nodes.append(_node('project', ident, name, f'subject:{subject}' if subject is not None else 'Independent projects'))
+    elif section == 'flashcards':
+        decks = ids.get('flashcard_deck', [])
+        for ident, name in _section_rows(conn, f'SELECT id, name FROM flash_decks WHERE id IN ({_placeholders(decks)})', decks):
+            hub('deck', ident, name)
+        cards = ids.get('flashcard_note', [])
+        for ident, deck, name, typ in _section_rows(conn, f'''SELECT n.id, d.id, d.name, t.name FROM flash_notes n
+                JOIN flash_decks d ON d.id = n.deck_id JOIN flash_types t ON t.id = n.type_id
+                WHERE n.id IN ({_placeholders(cards)})''', cards):
+            hub('deck', deck, name)
+            nodes.append(_node('flashcard_note', ident, f'{typ} · Note {ident}', f'deck:{deck}'))
+            links.append(_link(f'deck:{deck}', f'flashcard_note:{ident}', 'contains note'))
+    else:
+        jobs = ids.get('job', [])
+        tracks = {}
+        for ident, track in _section_rows(conn, f'SELECT job_id, track FROM job_tracks WHERE job_id IN ({_placeholders(jobs)}) '
+                                                'ORDER BY track', jobs):
+            tracks.setdefault(ident, []).append(track)
+        for ident, title, company, state in _section_rows(conn, f'''SELECT j.id, j.title, c.display_name, j.queue_state FROM jobs j
+                LEFT JOIN companies c ON c.id = j.company_id WHERE j.id IN ({_placeholders(jobs)})''', jobs):
+            for track in tracks.get(ident, []):
+                hub('track', track, track)
+                links.append(_link(f'track:{track}', f'job:{ident}', 'matched track'))
+            nodes.append(_job_node(ident, title, company, state, tracks[ident][0] if ident in tracks else 'Jobs'))
+    return {**_section_result(nodes, links, found['total']), 'search': text, 'truncated': found['truncated']}
+
+
 def get(app, conn, path, query):
     if path == '/api/atlas':
         app._no_query(query)
@@ -495,6 +568,10 @@ def get(app, conn, path, query):
     section = path.removeprefix('/api/atlas/sections/')
     if path != f'/api/atlas/sections/{section}' or section not in SECTIONS:
         return None
+    if 'search' in query:
+        if set(query) != {'search'}:
+            raise _api_error(400, 'A section search takes only search=<text>')
+        return _search_section(conn, section, query['search'], getattr(app, 'modules', MODULE_IDS))
     return SECTIONS[section](conn, _focus(section, query))
 
 

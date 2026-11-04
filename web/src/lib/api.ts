@@ -111,6 +111,26 @@ export interface TaskRecord {
   error: string | null;
 }
 
+/** A located problem in a build file (line and column are 1-based). */
+export interface Problem {
+  message: string;
+  line: number;
+  column: number;
+  path: string;
+  severity: "error" | "warning";
+}
+
+/** A refused request: the HTTP status, and the build file's problems when it has any. */
+export class ApiError extends Error {
+  status: number;
+  problems: Problem[];
+  constructor(message: string, status: number, problems: Problem[] = []) {
+    super(message);
+    this.status = status;
+    this.problems = problems;
+  }
+}
+
 /** One workspace section in `GET /api/brain`; `group` is its navigation group (Plan, Study, Job search). */
 export interface BrainSection {
   id: string;
@@ -137,8 +157,86 @@ export interface BrainData {
   truncated: boolean;
 }
 
+// The per-launch UI secret (src/kitty/web_auth.py; docs/platform-design.md, "UI secret"):
+// every /api request and WebSocket upgrade carries it. The desktop shell injects it into
+// each rika! window before page scripts run; in a browser the page trades the one-time
+// `?code=` of the link kitty-web printed for it and keeps it in this tab's sessionStorage.
+// A header and not a cookie: a 127.0.0.1 cookie would reach every port on 127.0.0.1.
+export const SECRET_HEADER = "X-Kitty-Secret";
+const SECRET_STORAGE = "kitty.ui-secret";
+
+declare global {
+  interface Window {
+    __KITTY_UI_SECRET__?: string;
+  }
+}
+
+let session: Promise<string | null> | undefined;
+
+function storedSecret(): string | null {
+  try {
+    return sessionStorage.getItem(SECRET_STORAGE);
+  } catch {
+    return null;
+  }
+}
+
+async function establishSession(): Promise<string | null> {
+  if (typeof window === "undefined" || typeof location === "undefined") return null;
+  const injected = window.__KITTY_UI_SECRET__;
+  if (typeof injected === "string" && injected) return injected;
+  const url = new URL(location.href);
+  const code = url.searchParams.get("code");
+  if (code === null) return storedSecret();
+  // The code works once; it leaves the address bar (and so history and reloads) at once.
+  url.searchParams.delete("code");
+  history.replaceState(history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  try {
+    const response = await fetch("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Kitty-Request": "1" },
+      body: JSON.stringify({ code }),
+      cache: "no-store",
+    });
+    const data = response.ok ? await response.json() : null;
+    if (typeof data?.secret === "string") {
+      try {
+        sessionStorage.setItem(SECRET_STORAGE, data.secret);
+      } catch {
+        /* Storage may be unavailable; the secret still serves this page. */
+      }
+      return data.secret;
+    }
+  } catch {
+    /* A failed exchange leaves the stored secret, if any. */
+  }
+  return storedSecret();
+}
+
+/** This window's UI secret, or null when it has none (then rika! answers 401). */
+export function uiSecret(): Promise<string | null> {
+  session ??= establishSession();
+  return session;
+}
+
+/** The WebSocket subprotocols that carry the UI secret on an upgrade. */
+export async function socketProtocols(): Promise<string[]> {
+  const secret = await uiSecret();
+  return secret ? ["kitty", `kitty-secret.${secret}`] : [];
+}
+
+/** A raw `fetch` of `/api${path}` with the UI secret, for bodies read as blobs. */
+export async function apiFetch(
+  path: string,
+  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> } = {},
+): Promise<Response> {
+  const secret = await uiSecret();
+  const headers = { ...init.headers, ...(secret ? { [SECRET_HEADER]: secret } : {}) };
+  return fetch(`/api${path}`, { ...init, headers });
+}
+
 export async function api<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  const response = await apiFetch(path, {
     method: body === undefined ? "GET" : "POST",
     headers:
       body === undefined
@@ -151,8 +249,55 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
     .json()
     .catch(() => ({ error: `Request failed (${response.status})` }));
   if (!response.ok)
-    throw Object.assign(new Error(data.error || `Request failed (${response.status})`), { status: response.status });
+    throw new ApiError(data.error || `Request failed (${response.status})`, response.status, Array.isArray(data.problems) ? data.problems : []);
   return data as T;
+}
+
+/**
+ * A single-use link to `GET /api${path}` for navigations that cannot carry a header (a PDF
+ * in a new window, a download): valid for one minute, once, for exactly this path.
+ */
+export async function apiLink(path: string): Promise<string> {
+  return (await api<{ url: string }>("/session/link", { path: `/api${path}` })).url;
+}
+
+/** Open `GET /api${path}` in a new window, as a plain link to it did. */
+export async function openApi(path: string): Promise<void> {
+  window.open(await apiLink(path), "_blank", "noopener,noreferrer");
+}
+
+/** Download `GET /api${path}`, as an `<a href download>` to it did. */
+export async function downloadApi(path: string, filename = ""): Promise<void> {
+  const link = document.createElement("a");
+  link.href = await apiLink(path);
+  link.download = filename;
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+/** An object URL for an image under /api (an `<img>` cannot carry the secret's header). */
+export async function apiObjectUrl(path: string): Promise<string> {
+  const response = await apiFetch(path, { cache: "no-store" });
+  if (!response.ok) throw new ApiError(`Request failed (${response.status})`, response.status);
+  return URL.createObjectURL(await response.blob());
+}
+
+/**
+ * `onclick` for an `<a href="/api/…">` (a download, or a PDF with `target="_blank"`): the
+ * navigation cannot carry the secret's header, so it follows a single-use link instead.
+ */
+export function followApiLink(event: MouseEvent): void {
+  const link = event.currentTarget as HTMLAnchorElement;
+  const url = new URL(link.href, location.href);
+  if (url.origin !== location.origin || !url.pathname.startsWith("/api/")) return;
+  event.preventDefault();
+  const path = `${url.pathname.slice("/api".length)}${url.search}`;
+  const follow = link.target === "_blank" ? openApi(path) : downloadApi(path, link.getAttribute("download") ?? "");
+  follow.catch(() => {
+    /* As a failed plain download: nothing opens. */
+  });
 }
 
 export function safeUrl(value: string): string | undefined {

@@ -25,6 +25,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from kitty import web_auth
 from kitty.core.workspace import open_workspace
 from kitty.settings import Settings
 from kitty.web_server import LocalHTTPServer, WebApplication
@@ -237,11 +238,17 @@ class FakeHerdr:
                 stopper.close()
 
 
-def websocket(port: int, path: str, headers: dict[str, str | None]) -> tuple[int, dict[str, str], socket.socket, bytes]:
-    """Send an upgrade request; return (status, headers, socket, leftover bytes)."""
+def websocket(port: int, path: str, headers: dict[str, str | None], *,
+              secret: str | None = None) -> tuple[int, dict[str, str], socket.socket, bytes]:
+    """Send an upgrade request; return (status, headers, socket, leftover bytes).
+
+    With `secret`, the upgrade offers the UI secret as rika!'s page does (kitty.web_auth).
+    """
     key = base64.b64encode(secrets.token_bytes(16)).decode()
     fields = {"Host": f"127.0.0.1:{port}", "Upgrade": "websocket", "Connection": "Upgrade",
               "Sec-WebSocket-Key": key, "Sec-WebSocket-Version": "13", "Origin": f"http://127.0.0.1:{port}"}
+    if secret is not None:
+        fields["Sec-WebSocket-Protocol"] = f"{web_auth.PROTOCOL}, {web_auth.PROTOCOL_PREFIX}{secret}"
     fields.update(headers)
     lines = [f"GET {path} HTTP/1.1"] + [f"{name}: {value}" for name, value in fields.items() if value is not None]
     connection = socket.create_connection(("127.0.0.1", port), timeout=10)
@@ -356,7 +363,7 @@ class FrameReader:
 def make_root(tmp_path: Path, modules: tuple[str, ...]) -> Settings:
     root = tmp_path / "root"
     (root / "config").mkdir(parents=True)
-    (root / "config" / "modules.yaml").write_text("enabled: [" + ", ".join(modules) + "]\n")
+    (root / "config" / "build.json").write_text(json.dumps({"schema": 1, "modules": list(modules)}))
     return Settings.load(root=root, db_path=root / "data" / "web.db")
 
 
@@ -373,8 +380,13 @@ class Site:
         self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.worker.start()
 
+    @property
+    def secret(self) -> str:
+        """This launch's UI secret, as rika!'s own window holds it (kitty.web_auth)."""
+        return self.server.ui_auth.secret
+
     def request(self, path, body=None, headers=None, method=None):
-        fields = {"Origin": self.server.origin}
+        fields = {"Origin": self.server.origin, web_auth.HEADER: self.secret}
         payload = None
         if body is not None:
             fields.update({"Content-Type": "application/json", "X-Kitty-Request": "1"})
@@ -403,7 +415,7 @@ class Site:
 
     def connect(self, token: str | None, *, query: str = "", headers=None):
         path = "/api/terminal/socket" + (f"?token={token}{query}" if token is not None else "")
-        return websocket(self.port, path, headers or {})
+        return websocket(self.port, path, headers or {}, secret=self.secret)
 
     def close(self):
         self.server.shutdown()

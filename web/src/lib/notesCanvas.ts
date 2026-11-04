@@ -1,3 +1,5 @@
+import { apiFetch } from "./api.ts";
+
 export type Point = [number, number, number];
 export type Viewport = { x: number; y: number; zoom: number };
 export type Layer = {
@@ -615,8 +617,8 @@ export async function exportSVG(doc: CanvasDocument, background: string): Promis
   const refs = new Map<string, string>();
   for (const e of doc.elements.filter((e) => e.kind === "image"))
     if (!refs.has(e.attachment!)) {
-      const response = await fetch(
-        `/api/notes/attachments/${encodeURIComponent(e.attachment!)}`,
+      const response = await apiFetch(
+        `/notes/attachments/${encodeURIComponent(e.attachment!)}`,
       );
       if (!response.ok)
         throw new Error("Reference unavailable; export stopped");

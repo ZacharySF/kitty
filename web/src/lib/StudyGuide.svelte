@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { buildStore, setPreferences } from "./build.svelte";
   import OverflowMenu from "./ui/OverflowMenu.svelte";
   type GuideState = { checked: boolean[]; responses: string[]; reflection: string; next_review: string };
   /**
@@ -45,12 +46,10 @@
     browsed = null;
   });
 
-  const VIEW_KEY = "kitty.study.guide-view";
-  let view = $state<"columns" | "rail">("columns");
-  try { if (localStorage.getItem(VIEW_KEY) === "rail") view = "rail"; } catch { /* Columns by default. */ }
+  // Columns or rail: a build preference (ui.study.guide_view).
+  const view = $derived(buildStore.build.ui.study.guide_view);
   function setView(next: "columns" | "rail") {
-    view = next;
-    try { localStorage.setItem(VIEW_KEY, next); } catch { /* The choice still applies in this session. */ }
+    void setPreferences({ ui: { study: { guide_view: next } } });
   }
   /** Step cards whose note field is open. */
   let notes = $state<Set<number>>(new Set());

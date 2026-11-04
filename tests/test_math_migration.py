@@ -15,7 +15,9 @@ def test_math_migration_applies_to_an_existing_workspace_and_guards_its_rows(tmp
     early = tmp_path / "before-math"
     early.mkdir()
     for migration in available_migrations():
-        if migration.version < 44:
+        # v0.3.30's schema before math: main's migrations only (the block backend's 032/033
+        # and the stack's 038-043 freeze quick_notes, so they come after, with 044).
+        if migration.version < 44 and migration.version not in {32, 33, 38, 39, 40, 41, 42, 43}:
             shutil.copy(migration.path, early / migration.path.name)
     conn = connect(tmp_path / "math.sqlite")
     try:

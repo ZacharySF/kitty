@@ -60,7 +60,8 @@ class Stream:
 
 
 def _connect(running, headers=None):
-    return websocket(running.port, "/api/rika/stream", headers or {})
+    # Like the page, the upgrade offers this launch's UI secret as a subprotocol (kitty.web_auth).
+    return websocket(running.port, "/api/rika/stream", headers or {}, secret=running.secret)
 
 
 @pytest.fixture
@@ -292,9 +293,9 @@ def test_a_brain_dump_in_the_demo_makes_one_plan_grouped_by_area_and_a_dump_note
     assert events[-1]["message"]["text"].startswith("One plan from your brain dump: 9 items in notes, tasks, calendar")
     assert plan["note"]["title"].startswith("Brain dump · ")
     with closing(connect(demo.app.settings.db_path)) as conn:
-        texts = [row["text"] for row in conn.execute("SELECT text FROM note_blocks WHERE page_id=? ORDER BY ordering",
+        texts = [row["text"] for row in conn.execute("SELECT text FROM note_outline WHERE page_id=? ORDER BY path",
                                                      (plan["note"]["page_id"],))]
-        notebook = conn.execute("SELECT n.title FROM note_pages p JOIN note_notebooks n ON n.id=p.notebook_id"
+        notebook = conn.execute("SELECT n.title FROM note_page_index p JOIN note_notebooks n ON n.id=p.notebook_id"
                                 " WHERE p.id=?", (plan["note"]["page_id"],)).fetchone()["title"]
     assert notebook == "Brain dumps"
     assert any(text.startswith("Transcript · ") for text in texts)
@@ -326,7 +327,7 @@ def test_approving_ticked_items_runs_them_and_the_dump_note_links_everything_it_
     assert reply["text"].startswith("Done: 8 items in notes, tasks, calendar, cards and jobs.")
     assert done["note"]["title"] in reply["text"]
     with closing(connect(demo.app.settings.db_path)) as conn:
-        texts = [row["text"] for row in conn.execute("SELECT text FROM note_blocks WHERE page_id=?",
+        texts = [row["text"] for row in conn.execute("SELECT text FROM note_outline WHERE page_id=?",
                                                      (done["note"]["page_id"],))]
         study = conn.execute("SELECT start FROM calendar_events WHERE title='Study group'").fetchone()["start"]
     assert "Created from this dump" in texts
@@ -348,7 +349,7 @@ def test_dismissing_a_plan_keeps_the_transcript_and_makes_nothing(demo, stream):
     assert status == 200 and body["plan"]["status"] == "dismissed"
     assert stream.until(lambda event: event["type"] == "plan")[-1]["plan"]["status"] == "dismissed"
     with closing(connect(demo.app.settings.db_path)) as conn:
-        texts = [row["text"] for row in conn.execute("SELECT text FROM note_blocks WHERE page_id=?", (plan["note"]["page_id"],))]
+        texts = [row["text"] for row in conn.execute("SELECT text FROM note_outline WHERE page_id=?", (plan["note"]["page_id"],))]
         assert conn.execute("SELECT count(*) FROM calendar_events").fetchone()[0] == 0
     assert "Nothing was created from this dump: the plan was dismissed" in texts
     assert any(text.startswith("Transcript · ") for text in texts)
@@ -377,5 +378,5 @@ def test_undo_all_reverts_everything_a_plan_made_newest_first(demo, stream):
     assert [status for status, _body in results] == [200] * len(actions), [body for _status, body in results]
     with closing(connect(demo.app.settings.db_path)) as conn:
         assert conn.execute("SELECT count(*) FROM calendar_events WHERE deleted=0").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM note_pages WHERE title='CS 220 · Final project idea'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM note_page_index WHERE title='CS 220 · Final project idea'").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM flash_notes WHERE archived=0").fetchone()[0] == 0

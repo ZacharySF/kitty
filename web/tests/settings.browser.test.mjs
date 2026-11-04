@@ -10,15 +10,20 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { routeBuild } from "./buildRoutes.mjs";
+import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
 const DEFAULT = { width: 1280, height: 850 };
 const GUIDE = "https://github.com/ZacharySF/kitty/blob/main/docs/GOOGLE_ONBOARDING.md";
-const PAGES = ["Appearance", "Desktop", "Quiet hours", "Account", "Modules", "Graphs"];
+const PAGES = ["Appearance", "Desktop", "Quiet hours", "Build", "Account", "Modules", "Graphs", "Tags", "Connected apps", "Keys", "Devices"];
 const RIKA_PAGES = ["Routing memory", "Email", "Memory"];
+/** The pages' own regions (their components keep their names; Build's is "Build settings"). */
+const REGIONS = [...PAGES, ...RIKA_PAGES, "Build settings"];
 
 let backend;
+let secret;
 let server;
 let browser;
 let base;
@@ -41,18 +46,20 @@ before(async () => {
     cwd: repository,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const origin = await new Promise((resolve, reject) => {
+  const { origin, code } = await new Promise((resolve, reject) => {
     let output = "";
     const timer = setTimeout(() => reject(new Error(`demo backend did not start:\n${output}`)), 120_000);
     const read = (chunk) => {
       output += chunk;
-      const match = output.match(/website: (http:\/\/\S+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      const found = announcement(output);
+      if (found) { clearTimeout(timer); resolve(found); }
     };
     backend.stdout.on("data", read);
     backend.stderr.on("data", read);
     backend.once("exit", (code) => { clearTimeout(timer); reject(new Error(`demo backend exited (${code}):\n${output}`)); });
   });
+  // The link's one-time code, spent as a browser tab spends it; pages get the secret as rika!'s windows do.
+  secret = await exchange(origin, code);
   server = await createServer({
     root,
     logLevel: "error",
@@ -81,19 +88,21 @@ after(async () => {
   backend?.kill();
 });
 
-/** Opens a fresh returning-user profile on `hash` with the dock hidden. */
+/** Opens a fresh returning-user profile on `hash`. */
 async function open(hash, { viewport = DEFAULT } = {}) {
   const context = await browser.newContext({ viewport });
+  await authorize(context, secret);
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
+  const prefs = await routeBuild(context);
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL(`#${hash}`, base).href);
-  return { page, problems, context };
+  return { page, problems, context, prefs };
 }
 
 const index = (page) => page.getByRole("navigation", { name: "Settings pages" });
@@ -103,7 +112,7 @@ const region = (page, name) => page.getByRole("region", { name, exact: true });
 const shownPages = (page) => page.evaluate((names) =>
   [...document.querySelectorAll("section[aria-label]")]
     .filter((node) => names.includes(node.getAttribute("aria-label")) && node.getClientRects().length)
-    .map((node) => node.getAttribute("aria-label")), [...PAGES, ...RIKA_PAGES]);
+    .map((node) => node.getAttribute("aria-label")), REGIONS);
 
 /** Elements inside `scope` drawn as their own box: a visible border all round over a painted fill. */
 const nestedBoxes = (locator) => locator.evaluate((scope) => {
@@ -133,7 +142,7 @@ describe("settings index", () => {
     const title = page.getByRole("heading", { level: 1, name: "Settings" });
     assert.match(await title.evaluate((node) => getComputedStyle(node).fontFamily), /Fraunces/);
     const items = index(page).locator("a, button");
-    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 11);
+    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 16);
     assert.deepEqual(await items.allTextContents().then((texts) => texts.map((text) => text.trim())),
       [...PAGES, "Profile & saved answers", "AI & privacy", ...RIKA_PAGES]);
     for (const item of await items.all()) assert.equal(await item.locator("svg").count(), 1, "index item without its icon");
@@ -141,7 +150,7 @@ describe("settings index", () => {
       const style = getComputedStyle(node);
       return { text: node.textContent.trim(), family: style.fontFamily, weight: style.fontWeight, transform: style.textTransform, italic: style.fontStyle };
     }));
-    assert.deepEqual(groups.map((group) => group.text), ["General", "Workspace", "Careers & AI", "Rika"]);
+    assert.deepEqual(groups.map((group) => group.text), ["General", "Workspace", "Connections", "Careers & AI", "Rika"]);
     for (const group of groups) {
       assert.match(group.family, /^"?Inter/, `${group.text} is not Inter`);
       assert.equal(group.weight, "600");
@@ -206,7 +215,7 @@ describe("settings index", () => {
     await region(page, "Account").waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#settings/account");
     await find.fill("");
-    assert.equal((await names()).length, 11);
+    assert.equal((await names()).length, 16);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -217,7 +226,7 @@ describe("settings pages", () => {
     const { page, problems, context } = await open("settings/modules");
     const modules = region(page, "Modules");
     await modules.getByRole("switch").first().waitFor();
-    const available = await page.evaluate(async () => (await (await fetch("/api/modules")).json()).available);
+    const available = await page.evaluate(async () => (await (await fetch("/api/modules", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).available);
     assert.ok(available.length >= 3);
     const text = await modules.evaluate((node) => node.innerText);
     for (const item of available) {
@@ -245,13 +254,14 @@ describe("settings pages", () => {
   });
 
   test("Graphs: segmented default layout; slider explanations are tooltips and descriptions, not visible text", async () => {
-    const { page, problems, context } = await open("settings/graphs");
+    const { page, problems, context, prefs } = await open("settings/graphs");
     const graphs = region(page, "Graphs");
     await graphs.waitFor();
     const layout = graphs.getByRole("button", { name: "Force", exact: true });
     await layout.click();
     assert.equal(await layout.getAttribute("aria-pressed"), "true");
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.default-layout")), "force");
+    for (let attempt = 0; attempt < 50 && prefs.ui?.graph?.layout !== "force"; attempt += 1) await page.waitForTimeout(50);
+    assert.equal(prefs.ui?.graph?.layout, "force", "the default layout is not saved to the build");
     for (const name of ["Repulsion", "Spring", "Damping"]) {
       const slider = graphs.getByRole("slider", { name, exact: true });
       const help = await slider.evaluate((input) => {
@@ -280,10 +290,12 @@ describe("settings pages", () => {
     });
     assert.deepEqual(track, { border: "0px", fill: "rgba(0, 0, 0, 0)" });
     await spring.fill("0.2");
-    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("kitty.atlas.physics"))).spring, 0.2);
+    for (let attempt = 0; attempt < 50 && prefs.ui?.graph?.physics?.spring !== 0.2; attempt += 1) await page.waitForTimeout(50);
+    assert.equal(prefs.ui.graph.physics.spring, 0.2);
     assert.equal(await graphs.getByText(/Saved · open schemas/).count(), 0);
     await graphs.getByRole("button", { name: "Reset to defaults" }).click();
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.graph.default-layout")), "tree");
+    for (let attempt = 0; attempt < 50 && prefs.ui?.graph?.layout !== "tree"; attempt += 1) await page.waitForTimeout(50);
+    assert.equal(prefs.ui.graph.layout, "tree");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -309,10 +321,11 @@ describe("settings pages", () => {
     await index(page).waitFor();
     for (const name of [...PAGES, ...RIKA_PAGES]) {
       await index(page).getByRole("link", { name, exact: true }).click();
-      const shown = region(page, name);
+      const label = name === "Build" ? "Build settings" : name;
+      const shown = region(page, label);
       await shown.waitFor();
       await page.waitForTimeout(150);
-      assert.deepEqual(await shownPages(page), [name]);
+      assert.deepEqual(await shownPages(page), [label]);
       const surface = await shown.evaluate((node) => {
         const style = getComputedStyle(node);
         return { border: parseFloat(style.borderTopWidth), radius: parseFloat(style.borderTopLeftRadius) };

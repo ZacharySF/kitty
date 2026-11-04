@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from kitty import web_brain
-from kitty.core import flashcards
+from kitty.core import blocks, flashcards
 from kitty.web_server import APIError, WebApplication
 
 NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
@@ -78,15 +78,18 @@ def test_records_and_captured_edits_form_a_valid_tree(app, workspace):
     event_id = f"calendar.event:{made['event']['id']}"
     assert nodes[note_id]["kind"] == "record" and nodes[event_id]["label"] == "Lab session"
     edits = [node for node in result["nodes"] if node["kind"] == "edit"]
+    # Block writes are counted once, from op_log, labelled by what they did to the page's root.
     assert {(edit["type"], edit["label"]) for edit in edits if edit["parent"] == note_id} == {("create", "Created quick note")}
     assert [edit["label"] for edit in edits if edit["parent"] == event_id] == ["Created event · Lab session"]
     assert [edit["type"] for edit in edits if edit["parent"] == page["id"]] == ["save", "create"]
+    assert not conn.execute("SELECT COUNT(*) FROM record_events WHERE entity IN ('page', 'note')").fetchone()[0]
     assert nodes[f"study.subject:{made['subject']['id']}"]["section"] == "study"
     assert nodes[f"jobs.job:{made['job']['id']}"]["label"] == "Acme — Intern"
     assert "Private scratch body" not in json.dumps(result)
     assert "example.invalid" not in json.dumps(result)
     sections = {section["id"]: section for section in result["sections"]}
-    assert sections["notes"] == {"id": "notes", "label": "Notes", "group": "Study", "records": 2, "edits": 3}
+    # The notebook, the page and the empty first block a new page starts with.
+    assert sections["notes"] == {"id": "notes", "label": "Notes", "group": "Study", "records": 3, "edits": 3}
     assert sections["calendar"]["group"] == "Plan" and sections["jobs"]["group"] == "Job search"
     assert result["total"] == {"records": sum(s["records"] for s in result["sections"]),
                                "edits": len(edits)}
@@ -102,7 +105,8 @@ def test_edits_are_newest_first_and_deleted_records_read_as_deleted(app, workspa
     edits = [node for node in result["nodes"] if node["kind"] == "edit"]
     assert [(edit["label"], edit["parent"]) for edit in edits] == [
         ("Deleted quick note", None), ("Created quick note", None)]
-    assert [edit["id"] for edit in edits] == ["edit:2", "edit:1"]
+    first = conn.execute("SELECT MIN(seq) FROM op_log WHERE seq > (SELECT last_seq FROM op_log_migrated)").fetchone()[0]
+    assert [edit["id"] for edit in edits] == [f"edit:op_log:{first + 1}", f"edit:op_log:{first}"]
 
 
 def test_historical_logs_become_edits(app, workspace):
@@ -188,7 +192,8 @@ def test_truncation_keeps_records_before_edits(app, workspace):
         assert len(kinds) == limit
         assert kinds == ["record"] * min(limit, records) + ["edit"] * max(0, limit - records)
     edits = [node["id"] for node in brain(app, conn, limit=records + 2)["nodes"] if node["kind"] == "edit"]
-    assert edits == ["edit:4", "edit:3"]
+    last = conn.execute("SELECT MAX(seq) FROM op_log").fetchone()[0]
+    assert edits == [f"edit:op_log:{last}", f"edit:op_log:{last - 1}"]
 
 
 @pytest.mark.parametrize("query", [{"limit": "0"}, {"limit": "50001"}, {"limit": "x"}, {"focus": "notes"}])
@@ -198,69 +203,112 @@ def test_rejects_invalid_queries(app, workspace, query):
     assert error.value.status == 400
 
 
-BLOCKS_SCHEMA = """
-CREATE TABLE blocks (
-    id TEXT PRIMARY KEY, type TEXT NOT NULL, parent_id TEXT REFERENCES blocks(id) DEFERRABLE INITIALLY DEFERRED,
-    page_id TEXT NOT NULL, order_key TEXT NOT NULL, properties TEXT NOT NULL DEFAULT '{}',
-    text TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT);
-CREATE TABLE op_log (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, txn_id TEXT NOT NULL,
-    page_id TEXT NOT NULL, at TEXT NOT NULL, ops BLOB NOT NULL);
-"""
-
-
-def test_block_backend_pages_blocks_and_op_log(app, workspace):
+def test_block_backend_pages_blocks_op_log_and_compacted_days(app, workspace):
     conn = workspace.conn
-    conn.executescript(BLOCKS_SCHEMA)
     notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    stamp = "2030-01-01T00:00:00Z"
-    page, child, nested, gone, quick = (str(uuid.uuid4()) for _ in range(5))
-    rows = [
-        (page, "page", None, page, json.dumps({"number": 7, "notebook_id": notebook["id"]}), "Optics", None),
-        (child, "text", page, page, "{}", "a private outline line", None),
-        (nested, "text", child, page, "{}", "nested", None),
-        (gone, "text", page, page, "{}", "trashed", stamp),
-        (quick, "quick_note", None, quick, json.dumps({"number": 3}), "quick private body", None),
-    ]
-    conn.executemany("INSERT INTO blocks(id, type, parent_id, page_id, order_key, properties, text, created_at,"
-                     " updated_at, deleted_at) VALUES (?, ?, ?, ?, 'a0', ?, ?, ?, ?, ?)",
-                     [(i, t, p, pg, props, text, stamp, stamp, deleted) for i, t, p, pg, props, text, deleted in rows])
-    conn.executemany("INSERT INTO op_log(device_id, txn_id, page_id, at, ops) VALUES ('d', ?, ?, ?, x'00')",
-                     [("t1", page, "2030-01-01T00:00:01Z"), ("t2", page, "2030-01-01T00:00:02Z"),
-                      ("t3", quick, "2030-01-01T00:00:03Z"), ("t4", str(uuid.uuid4()), "2030-01-01T00:00:04Z")])
+    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Optics"})
+    root = conn.execute("SELECT block_id FROM note_page_index WHERE id=?", (page["id"],)).fetchone()[0]
+    child, nested, gone = (str(uuid.uuid4()) for _ in range(3))
+    # The editor's live transactions never pass through WebApplication.mutate: op_log has them.
+    blocks.transact(conn, [{"op": "insert", "id": child, "type": "text", "parent": root, "text": "a private outline line"},
+                           {"op": "insert", "id": nested, "type": "text", "parent": child, "text": "nested"},
+                           {"op": "insert", "id": gone, "type": "text", "parent": root, "text": "trashed"}])
+    blocks.transact(conn, [{"op": "delete", "id": gone}])
+    quick = app.mutate(conn, "/api/quick-notes/create", {"body": "quick private body"})
+    # History older than the retention window survives as one snapshot per page per day.
+    seq = conn.execute("SELECT MAX(seq) FROM op_log").fetchone()[0]
+    conn.execute("INSERT INTO page_snapshots(page_id, day, seq, state) VALUES (?, '2001-01-01', ?, x'00')", (root, seq))
     result = brain(app, conn)
     assert_contract(result)
     nodes = by_id(result)
-    assert nodes["notes.page:7"]["label"] == "Optics"
-    assert nodes["notes.page:7"]["parent"] == f"notes.notebook:{notebook['id']}"
-    assert nodes[f"notes.block:{child}"]["parent"] == "notes.page:7"
+    number = page["id"]
+    assert nodes[f"notes.page:{number}"]["label"] == "Optics"
+    assert nodes[f"notes.page:{number}"]["parent"] == f"notes.notebook:{notebook['id']}"
+    assert nodes[f"notes.block:{child}"]["parent"] == f"notes.page:{number}"
     assert nodes[f"notes.block:{nested}"]["parent"] == f"notes.block:{child}"
     assert f"notes.block:{gone}" not in nodes
-    assert nodes["quick-notes.note:3"]["label"] == "Quick note"
-    op_edits = [node for node in result["nodes"] if node["id"].startswith("edit:op_log:")]
-    assert [(node["id"], node["section"], node["parent"]) for node in op_edits] == [
-        ("edit:op_log:4", "notes", None),
-        ("edit:op_log:3", "quick-notes", "quick-notes.note:3"),
-        ("edit:op_log:2", "notes", "notes.page:7"),
-        ("edit:op_log:1", "notes", "notes.page:7"),
+    assert nodes[f"quick-notes.note:{quick['id']}"]["label"] == "Quick note"
+    block_edits = [(node["section"], node["type"], node["label"], node["parent"]) for node in result["nodes"]
+                   if node["id"].startswith(("edit:op_log:", "edit:page_snapshots:"))]
+    assert block_edits == [
+        ("quick-notes", "create", "Created quick note", f"quick-notes.note:{quick['id']}"),
+        ("notes", "save", "Edited page · Optics", f"notes.page:{number}"),
+        ("notes", "save", "Edited page · Optics", f"notes.page:{number}"),
+        ("notes", "create", "Created page · Optics", f"notes.page:{number}"),
+        ("notes", "save", "Edited page · Optics", f"notes.page:{number}"),
     ]
-    assert op_edits[-1]["label"] == "Edited page · Optics"
+    assert block_edits[-1] == next((node["section"], node["type"], node["label"], node["parent"])
+                                   for node in result["nodes"] if node["id"].startswith("edit:page_snapshots:"))
+    sections = {section["id"]: section for section in result["sections"]}
+    assert sections["notes"]["edits"] == 1 + 4  # the notebook capture, then op_log and the snapshot day
     text = json.dumps(result)
     assert "private outline" not in text and "quick private body" not in text
+
+
+def test_the_block_migrations_own_rows_are_conversions_not_edits(tmp_path):
+    from kitty.db import connect, migrate
+    from kitty.db.migrations import available_migrations
+    import shutil
+    early = tmp_path / "main-schema"
+    early.mkdir()
+    for migration in available_migrations():
+        if migration.version < 32 or migration.name in {"record_events", "calendar_palette_subjects", "note_page_maps"}:
+            shutil.copy(migration.path, early / migration.path.name)
+    conn = connect(tmp_path / "data" / "apply.db")
+    migrate(conn, early)
+    book = conn.execute("INSERT INTO note_notebooks(title, created_at, updated_at) VALUES ('Old', 't', 't')").lastrowid
+    conn.execute("INSERT INTO note_pages(notebook_id, title, document, created_at, updated_at)"
+                 " VALUES (?, 'Kept', '{\"version\": 1, \"elements\": []}', 't', 't')", (book,))
+    conn.execute("INSERT INTO quick_notes(body, created_at, updated_at) VALUES ('old #idea', 't', 't')")
+    conn.commit()
+    migrate(conn)
+    assert conn.execute("SELECT last_seq FROM op_log_migrated").fetchone()[0] == conn.execute("SELECT MAX(seq) FROM op_log").fetchone()[0] > 0
+    result = web_brain.brain(conn)
+    assert [node for node in result["nodes"] if node["kind"] == "edit"] == []
+    assert {node["id"] for node in result["nodes"]} >= {"notes.page:1", "quick-notes.note:1"}
+    conn.close()
 
 
 def test_fifty_thousand_nodes_answer_quickly(app, workspace):
     conn = workspace.conn
     seeded = brain(app, conn)["total"]["records"]
     stamp = "2030-01-01T00:00:00Z"
-    conn.executemany("INSERT INTO quick_notes(body, created_at, updated_at) VALUES ('x', ?, ?)",
-                     [(stamp, stamp)] * 20000)
+    book = conn.execute("INSERT INTO note_notebooks(title, created_at, updated_at) VALUES ('Big', ?, ?)", (stamp, stamp)).lastrowid
+    conn.executemany("INSERT INTO note_folders(title, created_at, updated_at) VALUES ('x', ?, ?)", [(stamp, stamp)] * 20000)
     conn.executemany("INSERT INTO record_events(at, section, entity, entity_id, action, route)"
-                     " VALUES (?, 'quick-notes', 'note', ?, 'save', '/api/quick-notes/save')",
-                     [(stamp, str(index % 20000 + 1)) for index in range(40000)])
+                     " VALUES (?, 'notes', 'notebook', ?, 'save', '/api/notes/notebooks/1')",
+                     [(stamp, str(book)) for _ in range(40000)])
+    seeded += 1
     started = time.perf_counter()
     result = brain(app, conn, limit=50000)
     elapsed = time.perf_counter() - started
     assert len(result["nodes"]) == 50000 and result["truncated"] is True
     assert result["total"] == {"records": 20000 + seeded, "edits": 40000}
     assert elapsed < 3, elapsed
+
+
+def test_records_created_after_the_block_migration_come_from_blocks(app, workspace):
+    conn = workspace.conn
+    legacy = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+              for table in ("note_pages", "note_blocks", "quick_notes", "documents")}
+    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Chemistry"})
+    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Acids"})
+    root = conn.execute("SELECT block_id FROM note_page_index WHERE id=?", (page["id"],)).fetchone()[0]
+    item = str(uuid.uuid4())
+    blocks.transact(conn, [{"op": "insert", "id": item, "type": "text", "parent": root, "text": "pH"}])
+    blocks.transact(conn, [{"op": "text", "id": item, "text": "pH scale"}])
+    quick = app.mutate(conn, "/api/quick-notes/create", {"body": "later"})
+    document = app.mutate(conn, "/api/documents", {"title": "Lab report", "content": "Body", "format": "text",
+                                                   "notebook_id": notebook["id"]})
+    # The frozen legacy tables never see them: only the block backend does.
+    assert legacy == {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in legacy}
+    result = brain(app, conn)
+    assert_contract(result)
+    nodes = by_id(result)
+    assert nodes[f"notes.page:{page['id']}"]["label"] == "Acids"
+    assert nodes[f"notes.block:{item}"]["parent"] == f"notes.page:{page['id']}"
+    assert nodes[f"quick-notes.note:{quick['id']}"]["type"] == "note"
+    assert nodes[f"documents.document:{document['id']}"]["label"] == "Lab report"
+    item_edits = [node for node in result["nodes"] if node["kind"] == "edit"
+                  and node["parent"] == f"notes.page:{page['id']}" and node["id"].startswith("edit:op_log:")]
+    assert len(item_edits) == 3  # create, insert, update: each op_log row once

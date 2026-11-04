@@ -8,11 +8,11 @@ import "@fontsource-variable/fraunces/full.css";
 import "@fontsource-variable/jetbrains-mono";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";
-import { applySavedTheme } from "/src/lib/themes/index.ts";
+import { installBuild } from "./buildStub.js";
 import ControlsHarness from "./ControlsHarness.svelte";
 
 window.controlsLog = [];
-// The saved theme's motif module is in before mounting, as in main.ts.
-await applySavedTheme();
+// The build's theme and its motif module are in before mounting, as in main.ts.
+await installBuild();
 mount(ControlsHarness, { target: document.getElementById("view") });
 window.controlsReady = true;

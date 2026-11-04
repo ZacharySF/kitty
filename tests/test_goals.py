@@ -144,7 +144,11 @@ def test_links_check_existence_resolve_titles_and_show_deleted_targets(workspace
     goal = goals.create(conn, {"title": "Everything"})
     page = notes.create_page(conn, notes.create_notebook(conn, "Synthetic")["id"], "Interview prep")
     block = str(uuid.uuid4())
-    conn.execute("INSERT INTO note_blocks(id,page_id,text) VALUES(?,?,?)", (block, page["id"], "Practise STAR answers\nmore"))
+    from kitty.core import note_blocks
+
+    # Outline items are blocks (note_blocks is frozen since the block migration).
+    note_blocks.save_blocks(conn, page["id"], page["revision"], [
+        {"id": block, "parent_id": None, "text": "Practise STAR answers\nmore", "ordering": 0, "collapsed": False}])
     task = calendar.save_task(conn, {"title": "Email the recruiter", "timezone": "UTC"})
     event = calendar.create_event(conn, {"title": "Mock interview", "start": "2026-11-05T10:00:00+00:00",
                                          "end": "2026-11-05T11:00:00+00:00", "timezone": "UTC"})

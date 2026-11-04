@@ -38,7 +38,7 @@ def post(app, conn, path, body):
     if route == 'returns':
         return _call(study.review_return, conn, body)
     if route == 'settings':
-        return _call(study.save_settings, conn, body)
+        return _call(study.save_settings, conn, body, app.settings.root)
     if route == 'sessions':
         return _call(study.save_session, conn, body)
     if route == 'generate-plan':

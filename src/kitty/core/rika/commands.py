@@ -139,7 +139,7 @@ def _plan(name: str, match: re.Match, conn: sqlite3.Connection) -> Plan | None:
         return Plan([("start_worker", {"kind": "omp" if kind in {"agent", "worker"} else kind,
                                        "task": group["task"] or "Introduce yourself and wait for instructions"})])
     if name == "delete_page":
-        row = conn.execute("SELECT id FROM note_pages WHERE title=? COLLATE NOCASE ORDER BY updated_at DESC LIMIT 1",
+        row = conn.execute("SELECT id FROM note_page_index WHERE title=? COLLATE NOCASE ORDER BY updated_at DESC LIMIT 1",
                            (group["title"],)).fetchone()
         if row is None:
             return Plan(reply=f"No page is called {group['title']}")
