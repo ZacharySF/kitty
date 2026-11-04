@@ -113,6 +113,9 @@ their features belongs to their authors.
   upstream learning app opened from Study, run as a separate local server in a
   cross-origin frame. Its licence and corresponding source ship with the desktop
   app.
+- [Grinstead and Snell's *Introduction to Probability*](https://math.dartmouth.edu/~doyle/docs/prob/)
+  (GNU FDL): its exercises, used as a textbook source in Math, ship with their
+  licence and source note in `third_party/grinstead-snell/`.
 - [Tauri](https://tauri.app), [Svelte](https://svelte.dev),
   [Textual](https://textual.textualize.io) and
   [3d-force-graph](https://github.com/vasturiano/3d-force-graph).

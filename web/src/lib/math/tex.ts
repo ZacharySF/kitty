@@ -94,14 +94,32 @@ export function mathInline(text: string): string {
     .join("");
 }
 
-/** A math prompt (Markdown subset): blank lines make paragraphs; math is never read as Markdown. */
+/** A checker's canonical answer is bare TeX ("\frac{3}{7} \approx 0.4286"); one already delimited (a choice) is kept. */
+export function asMath(tex: string): string {
+  return splitMath(tex).some((part) => part.kind !== "text") ? tex : `$${tex}$`;
+}
+
+/** A fenced code block: ```lang … ``` on lines of their own. */
+const FENCE = /^```([\w+-]*)[ \t]*\n([\s\S]*?)\n?^```[ \t]*$/gm;
+
+/**
+ * A math prompt (Markdown subset): blank lines make paragraphs; math is never read as
+ * Markdown; a fenced code block (a loop to count) stays verbatim, with no math in it.
+ */
 export function mathMarkdown(source: string): string {
-  return source
-    .split(/\n\s*\n/)
-    .map((block) => block.trim())
-    .filter(Boolean)
-    .map((block) => `<p>${mathInline(block).replace(/\n/g, "<br>")}</p>`)
-    .join("");
+  // split() with the fence's two groups gives [text, lang, code, text, lang, code, …, text].
+  const parts = source.split(FENCE);
+  let html = "";
+  for (let index = 0; index < parts.length; index += 3) {
+    html += parts[index]
+      .split(/\n\s*\n/)
+      .map((block) => block.trim())
+      .filter(Boolean)
+      .map((block) => `<p>${mathInline(block).replace(/\n/g, "<br>")}</p>`)
+      .join("");
+    if (index + 2 < parts.length) html += `<pre class="code"><code${parts[index + 1] ? ` data-lang="${escape(parts[index + 1])}"` : ""}>${escape(parts[index + 2])}</code></pre>`;
+  }
+  return html;
 }
 
 const SKIP: Record<string, true> = { CODE: true, PRE: true, SCRIPT: true, STYLE: true, TEXTAREA: true, KBD: true, SAMP: true };

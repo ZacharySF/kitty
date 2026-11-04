@@ -492,16 +492,22 @@ bar; move them with the compositor (niri: `Mod`+drag).
 
 ### Math
 
-**Study → Math** trains the math quant interviews and tech work test. It has two
-practice modes, timed mental-arithmetic **sprints** and topic **lessons**, over a
-graph of 46 topics in five strands: arithmetic and estimation, counting,
+**Study → Math** trains the math quant interviews and tech work test. It has
+timed mental-arithmetic **sprints**, topic **lessons** and **mixed review**, over a
+graph of 80 topics in eight strands: arithmetic and estimation, counting,
 probability (conditioning, Bayes, first-step analysis), expected value and
-variance, and basic statistics. Every problem is made fresh by a seeded generator
-(`src/kitty/core/math/templates/`) whose exact answer key is cross-checked by
-enumeration or Monte Carlo over hundreds of seeds in the test suite. Topics and
-generators are original and MIT-licensed. The view itself (drawers, Ctrl K, Up
-next) is described under **Math** in *Start here*; this section covers how it
-grades and schedules.
+variance, basic statistics, linear algebra (vectors, dot products, matrix
+products, 2 × 2 and 3 × 3 determinants and inverses, 2 × 2 eigenvalues),
+calculus (limits, derivatives by rule, integrals of polynomials, exp and trig,
+Taylor approximations) and discrete math for tech (modular arithmetic,
+recurrences, big-O, loop counts, graph counting). Every problem is made fresh by a
+seeded generator (`src/kitty/core/math/templates/`) whose exact answer key is
+cross-checked by enumeration, exact algebra (SymPy) or Monte Carlo over 240 seeds
+in the test suite. Topics and generators are original and MIT-licensed. Two book
+sources sit beside them: Grinstead & Snell's *Introduction to Probability* and
+problems from your own books. The view itself (drawers, Ctrl K, Up next) is
+described under **Math** in *Start here*; this section covers how it grades and
+schedules.
 
 - **Mastery.** A topic is *locked* until every prerequisite is mastered, then
   *ready*, *learning* after your first graded answer, and *mastered* after three
@@ -514,6 +520,13 @@ grades and schedules.
   recommendation says why, e.g. *Unlocked because you mastered Bayes' rule*.
 - **Next.** Due reviews come first (most overdue), then the topic you are learning,
   then a new ready topic, preferring a different strand from your last practice.
+- **Mixed review.** Once five topics are mastered, Practice opens on a mixed
+  session: up to 10 due items, most overdue first (due topic reviews, due textbook
+  exercises and due own-book problems), topped up with the soonest early topic
+  reviews when fewer than six are due. Every topic names its solution strategy
+  (complement, Bayes, cofactor expansion, chain rule…), and the session is ordered
+  so no two problems in a row share one; a due item that can't be spaced out waits
+  for the next session. A book problem without a topic never blocks another.
 - **Lessons.** A worked example, the same shape again with its last steps blanked
   for you to fill, then 3–8 solo problems (fewer once a topic is going well, more
   after misses); the view ends a lesson after three misses in a row.
@@ -523,10 +536,25 @@ grades and schedules.
   `0.25`, `25%`); decimals for non-terminating answers need the stated significant
   figures or tolerance. Known slips (dropped carries, $P(+\mid C)$ for $P(C\mid +)$,
   subtracting variances…) get specific feedback. Algebra answers are LaTeX, checked
-  by SymPy in a separate worker process: both of its LaTeX parsers read the answer,
-  `simplify` and random numeric probes compare it, and a check stops after 5 s.
+  by SymPy in a separate worker process: both of its LaTeX parsers read the answer
+  (each function application such as `\sin 2x` or `\ln(x)` is bracketed first),
+  `simplify` and random numeric probes compare it, and a check stops after 5 s. An
+  antiderivative is accepted up to a constant (`+ C`, `+ K`, `+ 7` or none).
   When the answer can't be read, reads two ways (`n^n^2`), lacks significant
   figures or times out, the checker says so and the try doesn't count.
+- **Grinstead & Snell.** The book's 706 exercises (of 709; three need a figure
+  that isn't bundled) ship as data under the GNU FDL in
+  `third_party/grinstead-snell/`, outside the MIT tree, with the licence and a
+  source note; `scripts/extract_grinstead_snell.py` regenerates them from the
+  pinned GFDL source on Dartmouth's site. Each exercise links to one or more topics.
+  42 have an answer rika! computed itself (the free edition has no answer key); they
+  are checked like any problem, and the first decided answer rates the exercise's
+  own FSRS card. The rest are self-graded: after a reveal you rate them
+  Again/Hard/Good/Easy. The book's text is shown to you and never sent to AI.
+- **Your own books.** Log a problem by reference only (book, section, problem
+  number, your answer, confidence 1–4 and optionally a topic); none of the book's
+  text is stored. Confidence is the first FSRS rating, so a shaky answer comes back
+  sooner, and each later review is rated Again/Hard/Good/Easy.
 - **Sprints.** Zetamac defaults: 120 s; addition (2–100) + (2–100), subtraction as
   reversed addition, multiplication (2–12) × (2–100), division as reversed
   multiplication. *Typed* takes each answer the moment it is right; *multiple
@@ -537,17 +565,27 @@ grades and schedules.
   exactly what is sent (the problem, your answer and working, never the correct
   answer) and its maximum cost, then approve it within your daily budget. The
   prompt forbids revealing the answer and treats your working as data. AI never
-  grades. Demo mode has no AI.
+  grades. It is offered for generated problems only, never for textbook exercises
+  (the book's text is never sent to AI) or own-book problems. Demo mode has no AI.
 
 API (`workspace` module): `GET /api/math/topics`, `GET /api/math/next`,
-`POST /api/math/problems {topic_id, seed?}`, `POST /api/math/answers {problem_id,
-answer, elapsed_ms}`, `GET /api/math/lessons/<topic_id>`, `POST /api/math/sprints
-{mode: zetamac|mc, duration_s, ops?}`, `POST /api/math/sprints/<id>/result {score,
-wrong, elapsed_ms}`, `GET /api/math/sprints/history?duration_s=&timezone=` and
-`POST /api/math/explain {problem_id, working}` (then `POST /api/ai/run`). The graph
-is authored in `kitty.core.math.topics`, synced into `math_topics`/`math_prereqs`
-(a trigger rejects any prerequisite cycle), and practice lives in `math_mastery`,
-`math_attempts` and `math_sprints` (migration 044).
+`GET /api/math/mixed`, `POST /api/math/problems {topic_id, seed?}`,
+`POST /api/math/answers {problem_id, answer, elapsed_ms}`,
+`GET /api/math/lessons/<topic_id>`, `POST /api/math/sprints {mode: zetamac|mc,
+duration_s, ops?}`, `POST /api/math/sprints/<id>/result {score, wrong,
+elapsed_ms}`, `GET /api/math/sprints/history?duration_s=&timezone=`,
+`POST /api/math/explain {problem_id, working}` (then `POST /api/ai/run`);
+textbook: `GET /api/math/textbook?topic_id=`, `GET /api/math/textbook/<id>`,
+`POST /api/math/textbook/problems {exercise_id}`, `POST /api/math/textbook/answers
+{problem_id, answer, elapsed_ms}`, `POST /api/math/textbook/ratings {exercise_id,
+rating}`; own books: `GET /api/math/books`, `POST /api/math/books {book, problem,
+confidence, section?, answer?, topic_id?}`, `POST /api/math/books/<id>` (edit),
+`POST /api/math/books/<id>/ratings {rating, answer?}` and
+`POST /api/math/books/<id>/delete`. The graph is authored in
+`kitty.core.math.topics`, synced into `math_topics`/`math_prereqs` (a trigger
+rejects any prerequisite cycle), and practice lives in `math_mastery`,
+`math_attempts` and `math_sprints` (migration 044) and in `math_textbook_cards`,
+`math_textbook_attempts` and `math_book_problems` (migration 050).
 
 ### Brain data (`/api/brain`)
 
@@ -780,21 +818,51 @@ Exams & plans, Mind map and Tools (History and Helpers). Unsaved notes or a fail
 save show as a dot on the workspace tab.
 
 **Math** (Study group) opens focus-first like Study: one centred problem, lesson or
-sprint, chosen by **Practice · Sprint · Lessons**. **Practice** shows the one next
-thing, with why: a due topic review (a fresh generated problem) or the next lesson.
+sprint, chosen by **Practice · Sprint · Lessons**. **Practice** has two orders,
+switched by **Mixed review · Next up** above the problem. **Next up** shows the one
+next thing, with why: a due topic review (a fresh generated problem) or the next
+lesson. **Mixed review** opens once 5 topics are mastered (before that the toggle
+says "Mixed review opens once 5 topics are mastered (2 so far)") and is then
+Practice's default: it walks a round of due topic reviews, due textbook exercises
+and due own-book problems, ordered so no two in a row share a solution method, with
+its progress ("3 of 8") and each item's kind and method ("Review · restrict sample
+space"), then a done card that counts what was held back for the next round. An
+explicit choice of order is remembered.
 The **Topics** edge on the left (press **[**) slides in the topic graph:
 prerequisites sit above what they unlock, and each topic is coloured locked (dashed,
 padlock), ready (outlined), learning (filled to its progress) or mastered (filled,
 ticked); a mastered topic whose spaced review is due wears an amber ring, and the
-edge counts them. Click or press Enter on a topic for why it is open or locked
-("Locked until you master Bayes' rule"), its next review, what it needs and
-unlocks, and **Start the lesson** or **Review**. **History** and **Settings** share
-the right edge (press **]**): History shows the sprint trend at the current length
-and format, the daily sprint streak and recent runs; Settings sets the sprint format
-(typed or multiple choice), its length (30 s to 10 min; Zetamac's 120 s by default),
-the operations (+ (2–100) + (2–100), − reversed +, × (2–12) × (2–100), ÷
-reversed ×) and **Start a Study focus cycle on Math when I practise**. The mode,
-drawers and settings are remembered.
+edge counts them. The **Strand** picker shows one strand (arithmetic, counting,
+probability, expected value, statistics, linear algebra, calculus, discrete math)
+with its prerequisites from other strands drawn faint, or all strands; the full
+graph opens on the strand of the topic up next. Click or press Enter on a topic for
+why it is open or locked ("Locked until you master Bayes' rule"), its next review,
+what it needs and unlocks, and **Start the lesson** or **Review**. **History**,
+**Books** and **Settings** share the right edge (press **]**): History shows the
+sprint trend at the current length and format, the daily sprint streak and recent
+runs; Books is below; Settings sets the sprint format (typed or multiple choice),
+its length (30 s to 10 min; Zetamac's 120 s by default), the operations (+ (2–100)
++ (2–100), − reversed +, × (2–12) × (2–100), ÷ reversed ×) and **Start a Study
+focus cycle on Math when I practise**. The mode, drawers, strand and settings are
+remembered.
+**Books** logs problems you worked from your own books for the same spaced
+reviews: the book (with the ones you have logged before as suggestions), section,
+problem number, your answer, how sure you were (**Couldn't do it · Shaky ·
+Confident · Certain**, its first rating) and optionally the topic it practises. It
+is a reference only: don't paste the problem's text, rika! never stores it. The
+list puts due problems first, marked **Due** (the edge counts them); each can be
+reviewed (rework it from the book, optionally update your answer, then **Again ·
+Hard · Good · Easy**), edited or deleted.
+**Textbook** exercises come from Grinstead & Snell's *Introduction to Probability*
+(GNU FDL, bundled; the card names the edition and licence). A lesson lists its
+topic's exercises under **Textbook**, never-reviewed first, then due (six at first,
+**Show all** for the rest); **Work** one to open it. Each card shows the exercise, its
+section and linked topics. One rika! has
+an answer for is checked like a generated problem (three tries, the first decided
+answer is graded). The rest have no answer key in the free edition: work it,
+**Reveal** (↵) for "Check your working; the free edition has no answer key" and the
+topics it uses, then rate it **Again · Hard · Good · Easy** (keys 1–4). The book's
+text never goes to AI, so textbook cards offer no **Explain my mistake**.
 **Sprint** puts the problem large inside a countdown ring. Typed: the answer is
 taken the instant it is right, with no Enter, and the score is the number right.
 Multiple choice: four options on keys 1–4, +1 right, −1 wrong. When the time is up

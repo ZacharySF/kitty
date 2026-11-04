@@ -4,9 +4,10 @@
   /**
    * The topic graph (design Q3 B): prerequisites above what they unlock, each topic
    * coloured by state; learning fills with progress, mastered carries a tick, and a
-   * mastered topic whose review is due wears a pulsing ring.
+   * mastered topic whose review is due wears a pulsing ring. Topics in `outside` are
+   * another strand's prerequisites, drawn faint for context.
    */
-  let { topics, selected, onselect }: { topics: Topic[]; selected: string; onselect: (id: string) => void } = $props();
+  let { topics, selected, outside = [], onselect }: { topics: Topic[]; selected: string; outside?: string[]; onselect: (id: string) => void } = $props();
   const STATE_LABEL: Record<TopicState, string> = { locked: "Locked", ready: "Ready", learning: "Learning", mastered: "Mastered" };
   const uid = $props.id();
   const graph = $derived(layoutGraph(topics));
@@ -43,7 +44,8 @@
     <path class="edge" class:live={edge.live} d={edge.d} marker-end={`url(#${uid}-arrow${edge.live ? "-live" : ""})`} />
   {/each}
   {#each graph.nodes as node (node.id)}
-    <g class={`node ${node.state}`} class:sel={node.id === selected} class:due={node.due} role="button" tabindex="0" data-topic={node.id} data-state={node.state}
+    <g class={`node ${node.state}`} class:sel={node.id === selected} class:due={node.due} class:outside={outside.includes(node.id)} role="button" tabindex="0"
+      data-topic={node.id} data-state={node.state} data-outside={outside.includes(node.id) || undefined}
       aria-label={`${node.title}: ${STATE_LABEL[node.state]}${node.due ? ", review due" : ""}`} aria-pressed={node.id === selected}
       onclick={() => onselect(node.id)} onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onselect(node.id); } }}>
       <circle class="hit" cx={node.x} cy={node.y} r={R + 12} />
@@ -143,6 +145,9 @@
   }
   .node.locked .label {
     fill: var(--subtle);
+  }
+  .node.outside {
+    opacity: 0.5;
   }
   .ring-sel {
     fill: none;

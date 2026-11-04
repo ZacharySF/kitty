@@ -45,6 +45,7 @@ def main() -> None:
         "--add-data", f"{examples}:examples",
         "--add-data", f"{build / 'backend-package.txt'}:.",
         "--add-data", f"{learning}:learnharness",
+        "--add-data", f"{root / 'third_party/grinstead-snell'}:grinstead-snell",
         "--add-binary", f"{learning / 'node'}:learnharness",
     ]
     # These adapters load data/native libraries dynamically. Optional packages

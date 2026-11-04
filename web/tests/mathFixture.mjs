@@ -1,6 +1,8 @@
 // A synthetic /api/math backend for tests/math.browser.test.mjs, served through Playwright
 // routes so the UI runs against known topics, problems and answers. It follows the
-// contract in docs/GUIDE.md (Math); all content is invented for the tests.
+// contract in docs/GUIDE.md (Math); all content is invented for the tests (the
+// "Grinstead & Snell" exercises too: none of the book's text is used).
+import { FULL_TOPICS } from "./mathTopics.mjs";
 
 const PAST = new Date(Date.now() - 2 * 86_400_000).toISOString();
 const FUTURE = new Date(Date.now() + 6 * 86_400_000).toISOString();
@@ -54,6 +56,44 @@ const SPRINT = [
   ["37 + 45", 82, [72, 82, 83, 92]], ["7 × 19", 133, [133, 126, 143, 131]], ["150 − 64", 86, [96, 86, 76, 84]], ["108 ÷ 9", 12, [12, 13, 11, 21]],
 ].map(([q, a, choices]) => ({ q, a, choices }));
 
+export const SOURCE = { title: "Grinstead and Snell's Introduction to Probability", short: "Grinstead & Snell", version: "Version dated 22 July 2006",
+  licence: "GNU Free Documentation License 1.3", url: "https://math.dartmouth.edu/~doyle/docs/prob/prob.tar.gz" };
+const SECTION = { section: "4.1", section_title: "Discrete Conditional Probability", program: false, figure: false, starred: false, card: null };
+const DUE_CARD = { due_at: PAST, due: true, reviews: 2, lapses: 0, last_rating: 3 };
+/**
+ * Invented exercises in the shape of the bundled ones: two checked numerically, two you check
+ * yourself. Their canonical answers are bare TeX, as the backend sends them.
+ */
+export const EXERCISES = [
+  { ...SECTION, id: "gs.4.1.13", label: "4.1.13", number: 13, topics: ["bayes", "cond"], graded: "number", part: "b",
+    text_md: "A box holds three fair coins and one coin with two heads. A coin is drawn at random and tossed: it shows heads.\n\n(a) Which coin would you bet on?\n\n(b) What is the probability it is the two-headed coin?",
+    answer: [2, 5], canonical: "\\frac{2}{5} = 0.4" },
+  { ...SECTION, id: "gs.4.1.15", label: "4.1.15", number: 15, topics: ["bayes"], graded: "self", part: null, starred: true,
+    text_md: "Show that if $P(A \\mid B) = P(A)$ then $P(B \\mid A) = P(B)$, and give an example where $P(A \\mid B) > P(A)$." },
+  { ...SECTION, id: "gs.4.1.20", label: "4.1.20", number: 20, topics: ["bayes", "cond"], graded: "self", part: null, program: true, card: DUE_CARD,
+    text_md: "Write a program that simulates the two-urn draw $10\\,000$ times and estimates $P(A \\mid \\text{red})$." },
+  { ...SECTION, id: "gs.1.2.4", label: "1.2.4", number: 4, section: "1.2", section_title: "Discrete Probability Distributions", topics: ["basic"], graded: "number", part: null,
+    text_md: "Two fair dice are rolled. What is the probability that the sum is $7$?", answer: [1, 6], canonical: "\\frac{1}{6} \\approx 0.1667" },
+];
+const summary = ({ text_md: _text, part: _part, answer: _answer, canonical: _canonical, number: _number, ...rest }) => rest;
+
+/** Own-book entries already logged: one due, one not. */
+const BOOKS = [
+  { id: 1, book: "Blitzstein & Hwang", section: "2.3", problem: "14", answer: "3/8", confidence: 2, topic_id: "cond", topic_title: "Conditional probability",
+    created_at: PAST, updated_at: PAST, card: DUE_CARD },
+  { id: 2, book: "Green Book", section: "", problem: "7", answer: "", confidence: 3, topic_id: null, topic_title: null,
+    created_at: PAST, updated_at: PAST, card: { due_at: FUTURE, due: false, reviews: 1, lapses: 0, last_rating: 3 } },
+];
+
+/** Mixed review once enough is mastered: due topics, a textbook card and an own-book entry, no two strategies in a row. */
+const MIXED_ITEMS = [
+  { kind: "topic", topic_id: "cond", title: "Conditional probability", strategy: "restrict-sample-space", due_at: PAST, early: false, why: "Review due 2 days ago" },
+  { kind: "textbook", exercise_id: "gs.4.1.20", label: "4.1.20", topic_id: "bayes", title: "Bayes' rule", strategy: "bayes", due_at: PAST, graded: "self" },
+  { kind: "topic", topic_id: "mental", title: "Mental arithmetic", strategy: "mental-add", due_at: PAST, early: false, why: "Review due 2 days ago" },
+  { kind: "book", entry_id: 1, label: "Blitzstein & Hwang · 2.3 · #14", topic_id: "cond", strategy: "restrict-sample-space", due_at: PAST },
+  { kind: "topic", topic_id: "fractions", title: "Fractions", strategy: "common-denominator", due_at: FUTURE, early: true, why: "An early review to round out the set" },
+];
+
 /** Reads "a/b" or a decimal; null when it can't. */
 function value(text) {
   const s = String(text).replace(/\s+/g, "").replace(/−/g, "-");
@@ -62,9 +102,16 @@ function value(text) {
   return /^-?\d*\.?\d+$/.test(s) ? Number(s) : null;
 }
 const latex = (text) => String(text).replace(/\\left|\\right|\s|\\cdot/g, "").replace(/\\mleft|\\mright/g, "");
+/** A number or fraction answer against the exact [numerator, denominator]. */
+function numeric(answer, [n, d]) {
+  const got = value(answer);
+  return got === null ? { correct: null, kind: "undecided", feedback: "Couldn't read that." }
+    : Math.abs(got - n / d) < 1e-4 ? { correct: true, kind: "equal" }
+    : { correct: false, kind: "different", feedback: `Not quite: ${answer} ≈ ${got.toPrecision(4)}.` };
+}
 
 /** Installs the routes on `context`; returns the recorded requests for assertions. */
-export async function installMathFixture(context, { history = [], streak = 3 } = {}) {
+export async function installMathFixture(context, { history = [], streak = 3, mixed = false, full = false } = {}) {
   const state = {
     problems: new Map(),
     answers: [],
@@ -73,6 +120,11 @@ export async function installMathFixture(context, { history = [], streak = 3 } =
     sprints: history.map((run, index) => ({ id: `past-${index}`, mode: "zetamac", duration_s: 30, score: 10, wrong: 0, elapsed_ms: 30_000, finished_at: YESTERDAY, ...run })),
     streak,
     dealt: 0,
+    textbook: new Map(),
+    textbookAnswers: [],
+    ratings: [],
+    books: BOOKS.map((entry) => ({ ...entry, card: { ...entry.card } })),
+    bookCalls: [],
   };
   const json = (route, body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   await context.route(/\/api\/math\//, async (route) => {
@@ -80,7 +132,85 @@ export async function installMathFixture(context, { history = [], streak = 3 } =
     const url = new URL(request.url());
     const path = url.pathname.replace(/^\/api\/math/, "");
     const body = request.method() === "POST" ? request.postDataJSON() : null;
-    if (path === "/topics") return json(route, { topics: TOPICS });
+    if (path === "/topics") return json(route, { topics: full ? FULL_TOPICS : TOPICS });
+    if (path === "/mixed") {
+      return json(route, mixed
+        ? { default: true, mastered: 6, needed: 5, why: "Due reviews from 6 mastered topics, the textbook and your books, interleaved", held_back: 1, items: MIXED_ITEMS }
+        : { default: false, mastered: 2, needed: 5, why: "Mixed review needs more mastered topics", held_back: 0, items: [] });
+    }
+    if (path === "/textbook") {
+      const topic = url.searchParams.get("topic_id");
+      return json(route, { source: SOURCE, exercises: EXERCISES.filter((item) => !topic || item.topics.includes(topic)).map(summary) });
+    }
+    if (path === "/textbook/problems") {
+      const exercise = EXERCISES.find((item) => item.id === body.exercise_id);
+      if (!exercise) return json(route, { error: "Unknown exercise" }, 404);
+      if (exercise.graded === "self") return json(route, { error: "This exercise is self-graded: rate it instead" }, 409);
+      const id = `tb-${state.textbook.size + 1}`;
+      state.textbook.set(id, { exercise, tries: 0, graded: false });
+      return json(route, { problem_id: id, exercise_id: exercise.id, prompt_md: exercise.part ? `${exercise.text_md}\n\nAnswer part (${exercise.part}).` : exercise.text_md, answer_kind: "fraction" });
+    }
+    if (path === "/textbook/answers") {
+      state.textbookAnswers.push(body);
+      const issued = state.textbook.get(body.problem_id);
+      if (!issued) return json(route, { error: "Unknown problem" }, 404);
+      const verdict = numeric(body.answer, issued.exercise.answer);
+      if (verdict.correct === false) issued.tries += 1;
+      const revealed = issued.tries >= 3;
+      const card = { due_at: verdict.correct ? FUTURE : new Date(Date.now() + 86_400_000).toISOString(), due: false, reviews: 1, lapses: verdict.correct ? 0 : 1, last_rating: verdict.correct ? 3 : 1 };
+      return json(route, { ...verdict, revealed, tries_left: Math.max(0, 3 - issued.tries), card, ...(verdict.correct || revealed ? { canonical: issued.exercise.canonical } : {}) });
+    }
+    if (path === "/textbook/ratings") {
+      const exercise = EXERCISES.find((item) => item.id === body.exercise_id);
+      if (!exercise) return json(route, { error: "Unknown exercise" }, 404);
+      if (exercise.graded !== "self") return json(route, { error: "Numeric exercises are graded by their answer" }, 409);
+      state.ratings.push(body);
+      return json(route, { card: { due_at: new Date(Date.now() + [1, 2, 4, 9][body.rating - 1] * 86_400_000).toISOString(), due: false, reviews: 1, lapses: body.rating === 1 ? 1 : 0, last_rating: body.rating } });
+    }
+    const exercise = /^\/textbook\/([^/]+)$/.exec(path);
+    if (exercise) {
+      const found = EXERCISES.find((item) => item.id === decodeURIComponent(exercise[1]));
+      if (!found) return json(route, { error: "Unknown exercise" }, 404);
+      return json(route, { ...summary(found), text_md: found.text_md, part: found.part, source: SOURCE });
+    }
+    if (path.startsWith("/books")) {
+      state.bookCalls.push({ path, body });
+      const now = Date.now();
+      const card = (rating) => ({ due_at: new Date(now + [10 / 1440, 1, 3, 7][rating - 1] * 86_400_000).toISOString(), due: false, reviews: 1, lapses: rating === 1 ? 1 : 0, last_rating: rating });
+      const title = (id) => TOPICS.find((topic) => topic.id === id)?.title ?? null;
+      if (path === "/books" && !body) {
+        const problems = [...state.books].sort((a, b) => Number(b.card.due) - Number(a.card.due) || a.card.due_at.localeCompare(b.card.due_at));
+        const counts = {};
+        for (const entry of state.books) counts[entry.book] = (counts[entry.book] ?? 0) + 1;
+        return json(route, { problems, books: Object.keys(counts).sort((a, b) => counts[b] - counts[a]), due: problems.filter((entry) => entry.card.due).length });
+      }
+      if (path === "/books") {
+        if (!body.book?.trim() || !body.problem?.trim() || ![1, 2, 3, 4].includes(body.confidence)) return json(route, { error: "A book, a problem number and a confidence are needed" }, 400);
+        const same = state.books.find((entry) => entry.book === body.book && entry.section === (body.section ?? "") && entry.problem === body.problem);
+        if (same) return json(route, { error: "That problem is already logged" }, 409);
+        const stamp = new Date(now).toISOString();
+        const entry = { id: (state.bookId = (state.bookId ?? 2) + 1), book: body.book, section: body.section ?? "", problem: body.problem, answer: body.answer ?? "", confidence: body.confidence,
+          topic_id: body.topic_id ?? null, topic_title: title(body.topic_id), created_at: stamp, updated_at: stamp, card: card(body.confidence) };
+        state.books.push(entry);
+        return json(route, entry);
+      }
+      const [, id, action] = /^\/books\/(\d+)(?:\/(ratings|delete))?$/.exec(path) ?? [];
+      const entry = state.books.find((item) => String(item.id) === id);
+      if (!entry) return json(route, { error: "Unknown entry" }, 404);
+      if (action === "delete") {
+        state.books = state.books.filter((item) => item !== entry);
+        return json(route, { ok: true });
+      }
+      if (action === "ratings") {
+        if (body.answer !== undefined) entry.answer = body.answer;
+        entry.card = { ...card(body.rating), reviews: entry.card.reviews + 1 };
+      } else {
+        for (const key of ["book", "section", "problem", "answer", "topic_id"]) if (body[key] !== undefined) entry[key] = body[key];
+        entry.topic_title = title(entry.topic_id);
+      }
+      entry.updated_at = new Date(now).toISOString();
+      return json(route, entry);
+    }
     if (path === "/next") return json(route, { kind: "lesson", topic_id: "bayes", title: "Bayes' rule", why: "Unlocked because you mastered Conditional probability" });
     if (path === "/problems") {
       const topic = TOPICS.find((item) => item.id === body.topic_id);
@@ -112,11 +242,7 @@ export async function installMathFixture(context, { history = [], streak = 3 } =
       } else if (problem.answer_kind === "choice") {
         verdict = body.answer === problem.answer ? { correct: true, kind: "equal" } : { correct: false, kind: "different" };
       } else {
-        const got = value(body.answer);
-        const [n, d] = problem.answer;
-        verdict = got === null ? { correct: null, kind: "undecided", feedback: "Couldn't read that." }
-          : Math.abs(got - n / d) < 1e-4 ? { correct: true, kind: "equal" }
-          : { correct: false, kind: "different", feedback: `Not quite: ${body.answer} ≈ ${got.toPrecision(4)}.` };
+        verdict = numeric(body.answer, problem.answer);
       }
       if (verdict.correct === false) problem.tries += 1;
       const revealed = problem.tries >= 3;

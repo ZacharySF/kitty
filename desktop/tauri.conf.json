@@ -23,6 +23,8 @@
     "externalBin": ["binaries/kitty-web", "binaries/kitty-herdr"],
     "resources": {
       "third_party/herdr/LICENSE": "licenses/herdr/LICENSE",
+      "../third_party/grinstead-snell/LICENSE": "licenses/grinstead-snell/LICENSE",
+      "../third_party/grinstead-snell/SOURCE.txt": "licenses/grinstead-snell/SOURCE.txt",
       ".build/learnharness-legal/": "licenses/learnharness/"
     },
     "linux": {

@@ -166,10 +166,16 @@ SYMBOLIC = {
 }
 
 
+#: Strands whose generators are cross-checked in their own modules (test_math_<strand>.py).
+OWN_TESTS = {"linalg", "calculus", "discrete"}
+
+
 def test_every_template_has_a_cross_check_and_every_topic_a_generator():
-    assert set(ORACLES) | set(SYMBOLIC) | {"stats.normal-rule/share", "ev.waiting-time/coin-pattern"} == set(problems.TEMPLATES)
+    covered = {item.id for item in problems.TEMPLATES.values() if graph.BY_ID[item.topic_id].strand not in OWN_TESTS}
+    assert set(ORACLES) | set(SYMBOLIC) | {"stats.normal-rule/share", "ev.waiting-time/coin-pattern"} == covered
     assert all(problems.for_topic(topic.id) for topic in graph.TOPICS)
-    assert 40 <= len(graph.TOPICS) <= 50
+    assert 75 <= len(graph.TOPICS) <= 90
+    assert all(topic.strategy for topic in graph.TOPICS)
 
 
 @pytest.mark.parametrize("template_id", sorted(ORACLES))

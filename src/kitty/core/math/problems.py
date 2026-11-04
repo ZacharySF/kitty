@@ -51,6 +51,8 @@ class Spec:
     tolerance: Fraction | None = None
     sigfigs: int | None = None
     variables: tuple[str, ...] | list[str] = ()
+    #: An antiderivative: any added constant (``+ C`` or a number) is accepted.
+    up_to_constant: bool = False
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,8 @@ class Problem:
     variables: tuple[str, ...] = ()
     #: Seconds a fluent learner needs; reviews grade time against it.
     target_s: int = 30
+    #: An antiderivative: any added constant (``+ C`` or a number) is accepted.
+    up_to_constant: bool = False
 
     @property
     def canonical(self) -> str:
@@ -79,7 +83,8 @@ class Problem:
         if self.answer_kind == "expression":
             import sympy
 
-            return sympy.latex(sympy.sympify(self.answer, locals=symbols(self.variables)))
+            latex = sympy.latex(sympy.sympify(self.answer, locals=symbols(self.variables)))
+            return f"{latex} + C" if self.up_to_constant else latex
         value = self.answer
         exact = decimal_text(value)
         if value.denominator == 1 or (exact is not None and self.answer_kind == "number"):
@@ -147,7 +152,7 @@ def generate(template_id: str, seed: int) -> Problem:
             mistakes.append((wrong, message))
     return Problem(template_id, item.topic_id, seed, dict(spec.params), spec.prompt, answer, kind,
                    tuple(spec.steps), tuple(mistakes), tuple(spec.choices) if spec.choices else None,
-                   spec.tolerance, spec.sigfigs, tuple(spec.variables), item.target_s)
+                   spec.tolerance, spec.sigfigs, tuple(spec.variables), item.target_s, spec.up_to_constant)
 
 
 def pick(topic_id: str, seed: int) -> Template:

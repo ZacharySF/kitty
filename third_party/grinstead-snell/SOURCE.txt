@@ -1,0 +1,96 @@
+Exercises from Grinstead and Snell's Introduction to Probability
+================================================================
+
+This directory is a Modified Version, under the GNU Free Documentation License, of
+"Grinstead and Snell's Introduction to Probability" (The CHANCE Project, version dated
+22 July 2006). It contains that book's exercises only, converted for display in rika!.
+
+Authors of the Document: Charles M. Grinstead and J. Laurie Snell; the 2006 version by
+Peter G. Doyle. Modifications: Zachary Stubbs for rika! (https://github.com/ZacharySF/kitty).
+
+
+Copyright and licence notices
+-----------------------------
+
+The original notice, verbatim from the source's prob.tex:
+
+    Copyright (C) 2006 Peter G. Doyle.
+    This work is a version of
+    Grinstead and Snell's `Introduction to Probability, 2nd edition',
+    published by the American Mathematical Society,
+    Copyright (C) 2003 Charles M. Grinstead and J. Laurie Snell.
+    Permission is granted to copy, distribute and/or modify this document
+    under the terms of the GNU Free Documentation License,
+    as published by the Free Software Foundation;
+    with no Invariant Sections, no Front-Cover Texts, and no Back-Cover Texts.
+
+Modifications Copyright (C) 2026 Zachary Stubbs.
+
+Permission is granted to copy, distribute and/or modify this Modified Version under the
+terms of the GNU Free Documentation License, Version 1.3, published by the Free Software
+Foundation; with no Invariant Sections, no Front-Cover Texts, and no Back-Cover Texts.
+The original notice states no version number, so under section 10 of the licence we
+chose version 1.3. The full text of the licence is in the file LICENSE next to this one.
+
+
+Transparent copy
+----------------
+
+The source is Peter G. Doyle's official GFDL edition:
+
+    https://math.dartmouth.edu/~doyle/docs/prob/prob.tar.gz
+    SHA-256 333226cc2c2a38bb41490568e865b5769436c5f70005710280a1301039ee8577
+
+exercises.json is generated from it, byte for byte, by scripts/extract_grinstead_snell.py
+in this repository:
+
+    uv run --locked python scripts/extract_grinstead_snell.py [--tarball prob.tar.gz] [--aux DIR]
+
+With --aux pointing at the official build's ch1.aux ... ch12.aux (from the CHANCE copy,
+https://math.dartmouth.edu/~prob/prob/), the script checks that every label it numbers
+prints as in the book.
+
+
+What was changed
+----------------
+
+- Only the exercises are kept: every item of every section's Exercises list, numbered as
+  printed (chapter.section.number). The book's chapters, examples, figures, programs,
+  appendices and index are not included, and no answers come from the book.
+- The LaTeX is converted to Markdown with $...$ and $$...$$ TeX for KaTeX: references
+  print their numbers; index entries and labels are dropped; enumerated parts become
+  (a), (b), ...; emphasis and bold become *...* and **...**; quotes, dashes, accents and
+  ties become Unicode; eqnarray becomes aligned; plain-TeX \pmatrix, \matrix and
+  \bordermatrix become KaTeX matrices and ruled arrays; tables become KaTeX arrays headed
+  "Table n.", with a \multicolumn cell written as its text followed by empty cells and a
+  partial rule (\cline) drawn full width; footnotes are numbered with superscripts and
+  placed at the end of their exercise.
+- A note printed between exercises (after \medbreak) is repeated at the start of each
+  exercise it introduces.
+- Figures are not bundled. Exercises that refer to a figure but read without it are
+  marked "figure": true.
+- Exercise 11.2.27 drew a block matrix as a tabular inside display math inside \pmatrix;
+  it is rewritten as the same ruled block matrix in a math array.
+- Exercises left out because they can't be done without a figure that isn't bundled:
+  - 4.1.32: the three road networks between Woodstock and Tunbridge are only drawn in Figure 4.6
+  - 11.5.7: the maze whose transition matrix it asks for is only drawn in Figure 11.7
+  - 11.5.21: the Monopoly board's squares and payoffs are only given in Figure 11.8
+
+
+History
+-------
+
+- 2003: Introduction to Probability, 2nd edition, by Charles M. Grinstead and J. Laurie
+  Snell, published by the American Mathematical Society.
+- 2006: Grinstead and Snell's Introduction to Probability, The CHANCE Project, version
+  dated 22 July 2006, by Peter G. Doyle, released under the GNU FDL.
+- 2026: Exercises from Grinstead and Snell's Introduction to Probability, by Zachary
+  Stubbs for rika!: the exercises extracted and converted as described above.
+
+
+Not part of this Modified Version
+---------------------------------
+
+rika!'s links from these exercises to its topics, and its numeric answers to some of
+them, are rika!'s own work (its own computations, not the book's), released under the
+repository's MIT licence in src/kitty/core/math/textbook.py. So is the extraction script.
