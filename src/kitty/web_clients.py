@@ -26,6 +26,8 @@ Ingress routes::
                                     (memory only, pushed to every window; see kitty.web_mirror)
     POST /api/ingress/mirror/stop   capture: {tab} -> that tab's mirror is dropped at once
     GET  /api/ingress/recent        read: ?limit=1-50 -> {inbox, pages, tasks} titles
+    /api/ingress/agent/*            agent tabs (kitty.web_agents): the launch exchange and the
+                                    mediated block API; agent tokens reach nothing else here
 
 Page routes (behind the normal page guard)::
 
@@ -198,6 +200,11 @@ def ingress_request(handler) -> None:
     if handler.command not in {"GET", "POST"}:
         raise APIError(405, "Use GET or POST")
     try:
+        if path.startswith(INGRESS + "/agent/"):
+            from kitty import web_agents
+
+            web_agents.ingress(handler, path, query)
+            return
         if path in {PAIR, PAIR_STATUS}:
             if origin is not None:
                 _allow(handler, origin)
@@ -224,6 +231,8 @@ def ingress_request(handler) -> None:
             client = clients.authenticate(conn, token)
         if client is None:
             raise unauthorized
+        if client["kind"] == clients.AGENT_KIND:
+            raise APIError(403, "Agent tokens reach only /api/ingress/agent")
         if client["origin"] != origin:
             raise APIError(403, "This token works only from the origin that paired it")
         if client["kind"] == "tern-plugin":

@@ -78,6 +78,11 @@ def _read(conn: sqlite3.Connection):
     return nullcontext() if conn.in_transaction else transaction(conn)
 
 
+def _write(conn: sqlite3.Connection):
+    """An immediate transaction, or the caller's (the agent mediator journals inside it)."""
+    return nullcontext() if conn.in_transaction else transaction(conn, immediate=True)
+
+
 def _seq(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COALESCE(MAX(seq),0) FROM op_log").fetchone()[0]
 
@@ -447,7 +452,7 @@ def insert_blocks(conn: sqlite3.Connection, blocks: Any, *, page: Any = None, pa
                   before: Any = None, revision: Any = None) -> dict:
     """Insert blocks after or before a sibling, or at the end of a parent block or page (one transaction)."""
     specs = _specs(blocks)
-    with transaction(conn, immediate=True):
+    with _write(conn):
         page_id, parent_id, where = _position(conn, page, parent, after, before)
         ops, written = _insert_ops(parent_id, specs, where)
         result = transact(conn, ops, base=_base(page_id, revision))
@@ -464,7 +469,7 @@ def update_block(conn: sqlite3.Connection, block: Any, *, text: Any = None, kind
     """Replace a block's text, change its type or set/remove properties; on a page's root, rename the page."""
     if text is None and kind is None and props is None:
         raise BlockError("Change the text, the type or properties")
-    with transaction(conn, immediate=True):
+    with _write(conn):
         row = _editable(conn, block)
         ops: list[dict] = []
         if row["parent_id"] is None:
@@ -490,7 +495,7 @@ def update_block(conn: sqlite3.Connection, block: Any, *, text: Any = None, kind
 def move_block(conn: sqlite3.Connection, block: Any, *, page: Any = None, parent: Any = None, after: Any = None,
                before: Any = None, revision: Any = None) -> dict:
     """Move a block (and its children) after/before a sibling or to the end of a parent or page, on any note page."""
-    with transaction(conn, immediate=True):
+    with _write(conn):
         row = _editable(conn, block)
         if row["parent_id"] is None:
             raise BlockError("A page's own block cannot be moved")
@@ -504,7 +509,7 @@ def move_block(conn: sqlite3.Connection, block: Any, *, page: Any = None, parent
 
 def delete_block(conn: sqlite3.Connection, block: Any, *, revision: Any = None) -> dict:
     """Move a block and its children to Trash (restorable from Trash or History for the retention window)."""
-    with transaction(conn, immediate=True):
+    with _write(conn):
         row = _editable(conn, block)
         if row["parent_id"] is None:
             raise BlockError("Delete pages in rika!, not through the block API")
@@ -537,7 +542,7 @@ def create_page(conn: sqlite3.Connection, title: Any, *, notebook: Any = None, b
     if not title.strip():
         raise BlockError("A page title is required")
     specs = _specs(blocks) if blocks else []
-    with transaction(conn, immediate=True):
+    with _write(conn):
         if notes.page_count(conn) >= notes.MAX_PAGES:
             raise BlockError("Page limit reached", 409)
         number, ops = notes.new_page_ops(conn, _notebook(conn, notebook), title)
@@ -550,7 +555,7 @@ def create_page(conn: sqlite3.Connection, title: Any, *, notebook: Any = None, b
 def add_to_inbox(conn: sqlite3.Connection, blocks: Any) -> dict:
     """Append blocks to the end of the Inbox page (created on first use, as captures do)."""
     specs = _specs(blocks)
-    with transaction(conn, immediate=True):
+    with _write(conn):
         try:
             page_id, number, ops = ingress.inbox_page(conn)
         except ClientError as exc:
@@ -562,7 +567,7 @@ def add_to_inbox(conn: sqlite3.Connection, blocks: Any) -> dict:
 
 def quick_note(conn: sqlite3.Connection, text: Any, *, tint: Any = "rose") -> dict:
     """A new quick note holding `text`."""
-    with transaction(conn, immediate=True):
+    with _write(conn):
         try:
             note = quick_notes.create(conn, _text(text, "Quick note text", quick_notes.MAX_BODY), tint)
         except quick_notes.QuickNoteError as exc:
@@ -582,7 +587,7 @@ def tag_block(conn: sqlite3.Connection, block: Any, tag: Any, *, create: bool = 
     """
     if type(create) is not bool:
         raise BlockError("create is true or false")
-    with transaction(conn, immediate=True):
+    with _write(conn):
         row = _editable(conn, block)
         if row["parent_id"] is None:
             raise BlockError("Tag blocks within a page, not the page itself")

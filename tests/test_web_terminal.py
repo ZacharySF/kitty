@@ -355,9 +355,10 @@ def test_activity_reports_herdr_agent_states_per_workspace(tmp_path, herdr):
     assert body == {"running": True, "workspaces": [
         {"id": "w1", "label": "api", "status": "working", "focused": True, "agents": [
             {"pane": "w1:p1", "name": "Agent", "status": "working", "kind": "omp",
-             "task": "π > Synthetic task: tidy the fixture", "line": "run pytest -k fixture · 4 passed", "revision": 3},
+             "task": "π > Synthetic task: tidy the fixture", "line": "run pytest -k fixture · 4 passed", "revision": 3,
+             "guarantee": "none"},
             {"pane": "w1:p2", "name": "Codex", "status": "blocked", "kind": "codex", "task": "",
-             "line": "needs permission: read the synthetic notes", "revision": 1},
+             "line": "needs permission: read the synthetic notes", "revision": 1, "guarantee": "none"},
         ]},
         # herdr states rika! does not know are shown as unknown, never passed through.
         {"id": "w2", "label": "docs", "status": "unknown", "focused": False, "agents": []},

@@ -65,6 +65,10 @@ from collections import deque
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kitty.core.agent_sessions import AgentLaunch
 
 INSTALL_URL = "https://stencil.so/tern"
 SESSION = "kitty"
@@ -607,6 +611,19 @@ class TernRuntime:
         """`command` in a new tab of rika!'s session, kept open after it ends, in front."""
         with self._lock:
             return self._tab_locked(self._start_locked()[0], command, cwd)
+
+    def start_agent(self, kind: str, cwd: Path, launch: AgentLaunch) -> int:
+        """A coding agent in a new tab of rika!'s session, started through kitty-agent-launch
+        (kitty.core.agent_sessions): the tab runs the launcher, never the agent directly."""
+        command = ["env", *(f"{key}={value}" for key, value in launch.env.items()), *launch.command, "--kind", kind, "--"]
+        with self._lock:
+            block = self._tab_locked(self._start_locked()[0], command, cwd)
+        launch.bind(str(block))
+        return block
+
+    def daemon_pid(self, pane: str | None = None) -> int | None:
+        """rika!'s Tern daemon: every process of its panes descends from it."""
+        return _socket_owner(self.socket_path)
 
     def show_program(self, command: list[str], cwd: Path) -> int:
         """Bring the live pane running `command` to the front, else start it in a new tab."""

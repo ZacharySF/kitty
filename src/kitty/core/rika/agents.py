@@ -21,6 +21,7 @@ import os
 import re
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -176,15 +177,25 @@ class Agents:
             return {**agent, "now": self._now(agent, {})}
         if self._herdr is None:
             raise AgentError("Worker agents need the Terminal module")
+        from kitty.core.agent_sessions import GUARANTEE_LABELS, LaunchError
+        from kitty.db import connect
+
         try:
             self._herdr.serve(cwd)
-            started = self._herdr.start_agent(kind, cwd, extra)
+            with closing(connect(self.app.settings.db_path)) as conn:
+                launch = self.app.agent_launches.prepare(conn, host="herdr", kind=kind, cwd=cwd,
+                                                         ancestor=self._herdr.pane_shell, origin=self.app.origin)
+            started = self._herdr.start_agent(kind, cwd, extra, launch)
+            with closing(connect(self.app.settings.db_path)) as conn:
+                mediation = self.app.agent_launches.outcome(conn, launch.session)
+            self._herdr.label(started["tab"], f"Agent · {GUARANTEE_LABELS[mediation['guarantee']]}")
             self._herdr.prompt(started["pane"], brief(task, cwd))
-        except TerminalUnavailable as exc:
+        except (TerminalUnavailable, LaunchError) as exc:
             raise AgentError(str(exc)) from None
         self._briefs[started["pane"]] = task
         agent = {"id": f"herdr:{started['pane']}", "kind": kind, "name": started["name"], "status": "working",
-                 "task": task[:200], "line": "", "since": _now_ms(), "where": {"herdr_pane": started["pane"]}}
+                 "task": task[:200], "line": "", "since": _now_ms(), "where": {"herdr_pane": started["pane"]},
+                 "guarantee": mediation["guarantee"]}
         return {**agent, "now": self._now(agent, {"pane": started["pane"]})}
 
     # Opening ------------------------------------------------------------------

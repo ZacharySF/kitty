@@ -1075,6 +1075,63 @@ The paper's §13 step 4 ("Agent writes also stamp an actor column on their op_lo
   `test_rika_loop.py`; browser: `blockEditor.browser.test.mjs` (History actors, filter, undo)
   and `notes.browser.test.mjs` (source changed since).
 
+## Agent mediation: what was built
+
+The paper's §13 step 1 and 4, §14.1 and the §17 "fail-closed launch". Code:
+`src/kitty/core/confine.py` (Landlock + seccomp via ctypes), `src/kitty/core/agent_sessions.py`
+(launches, nonce exchange, verification, deny set), `src/kitty/core/agent_access.py` (the
+mediator and journal), `src/kitty/core/agent_policy.py` (purpose labels, policies, simulate),
+`src/kitty/core/blocks/retention.py` (retention by reason), `src/kitty/agent_launch.py`
+(`kitty-agent-launch`), `src/kitty/agent_client.py`, `src/kitty/web_agents.py`, migration
+`052_agent_mediation.sql`.
+
+- **Launch.** Agent tabs (herdr `POST /api/terminal/agents`, Rika's workers, Tern
+  `POST /api/terminal/tern/agent`) register a launch (one-time 256-bit nonce in the tab's env).
+  The tab's PATH resolves `omp`/`claude`/`codex` to shims running `python -I -m
+  kitty.agent_launch` (desktop: `kitty-sidecar agent-launch`). The launcher fetches its spec,
+  applies Landlock at the highest ABI (10 here) plus a seccomp filter (TIOCSTI/TIOCLINUX →
+  EPERM), then exchanges the nonce. kitty checks from outside: the TCP connection belongs to the
+  pid (`/proc/net/tcp` inode in `/proc/pid/fd`), the pid descends from the pane's shell (herdr
+  `pane process-info`) or rika!'s Tern daemon, the image is rika!'s own interpreter with the
+  launcher's exact isolated-mode arguments, and `/proc/pid/status` shows NoNewPrivs and a
+  seccomp filter. Only then an `agent-session` token (clients table, hashed) is issued; it ends
+  when the agent's process does. Landlock itself is not observable from outside.
+- **Deny set.** Resolved DB + `-wal/-shm/-journal`, `data/`, `.cache/`, `.private/` (except
+  rika!'s hook assets and the tab's SKILL.md, read-only), `.env`, `config/profile.yaml`,
+  `config/answers.yaml`, `resumes/`, herdr's session sockets, `$XDG_RUNTIME_DIR/kitty`, and home
+  browser profiles/keys. Grants are leaves: a directory holding a denied path is expanded into
+  its children (keeping only READ_DIR on itself, so names, not contents, are listable). RO:
+  system paths, home, rika!'s interpreter; RW: the project, `/tmp`, the agent's own state
+  (`~/.claude` etc.), `~/.cache`; `config/` and planted-file paths in the workspace root
+  (`.git/hooks`, `.git/config`, `.envrc`, ...) are read-only. TCP connect: rika!'s port + policy
+  ports (443); UDP: 53; pathname UNIX sockets: only `/run/nscd` (ABI 9); abstract sockets and
+  signals scoped (ABI 6).
+- **Guarantee.** Full needs files, ptrace, TCP, abstract sockets, signals, pathname sockets
+  (ABI ≥ 9) and seccomp; otherwise Attribution only (token still issued when Landlock applied;
+  the UI lists the open routes). No Landlock: no token, the agent runs with
+  `KITTY_AGENT_SESSION` (direct CLI writes still attributed) or is refused
+  (`launch.unconfined: refuse`). The herdr tab is renamed `Agent · Full|Attribution only|Not
+  mediated`; activity cards carry `guarantee`.
+- **Mediator + journal.** `POST /api/ingress/agent/call {tool, arguments}`: the 17 notes tools
+  (the same table backs MCP and `kitty notes`). Each call runs in one `BEGIN IMMEDIATE` with its
+  `agent_access` rows (session, tool, op, purpose, block_id, seq, decision, mode, policy_version,
+  at); a journal failure rolls back the write and withholds the read. `kitty mcp`/`kitty notes`
+  with `KITTY_AGENT_TOKEN` are HTTP clients and never open the workspace.
+- **Policy.** YAML over purpose labels (`notes`, `notes.documents`, `notes.quick`, `applyai.*`,
+  `resume`, `calendar.attendees`, ...), first match wins, `enforce|observe`; versions in
+  `agent_policies`. `kitty policy simulate|show|apply`, `POST /api/agents/policy/simulate`.
+- **Retention by reason.** Compaction clamps its horizon below the lowest seq still needed by
+  journal rows in the window, pinned `((id@seq))` citations in live text, or user holds, with a
+  200k-row size cap that releases the oldest reasons (holds marked `size_cap`); journal rows no
+  reason covers are deleted.
+- **Tests.** `tests/test_agent_bypass.py` (the battery, each check skipped below the ABI it
+  needs), `tests/test_agent_mediation.py`, updated terminal tests.
+- **Not built / limits.** herdr pane proxy (a Full tab cannot open panes; herdr's skill is
+  withheld and activity hooks stay silent); planted files outside the workspace root are not
+  prevented (no Landlock rule can exclude one name inside a writable tree); bubblewrap and
+  AppArmor fallbacks of the kernel matrix; copies an agent keeps after a legitimate read;
+  egress after a read; same-user programs outside a tab. Settings → Agents UI is not built yet.
+
 ## Verified facts
 
 - **Tern bridge merged** (#21 status view, Open in Tern, kitty!'s own daemon; #33 dock panes):
