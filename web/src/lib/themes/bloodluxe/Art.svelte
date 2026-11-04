@@ -4,7 +4,12 @@
    * turbulence) drifting slowly over a cream veil where page titles sit, a rose-dust ridge,
    * a vivid grass field and orange flame tongues that flicker on the theme's motion. The
    * flames are motif marks (`.ornament`, hidden when the motif is off).
+   *
+   * The marble is marble.source.svg (a turbulence displacement over the window) rendered to
+   * WebP by scripts/render-theme-art.mjs: as a live filter it re-ran on every frame.
    */
+  import marble1440 from "./marble-1440.webp";
+  import marble2880 from "./marble-2880.webp";
   const uid = $props.id();
   // Flame tongues on the grass, tucked into the bottom corners: x, base y, height, lean.
   const FLAMES = [
@@ -25,27 +30,7 @@
   }).join(" ");
 </script>
 
-<svg class="marble" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-  <defs>
-    <linearGradient id="{uid}-stripes" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="130" y2="76" spreadMethod="repeat">
-      <stop offset="0" stop-color="#d3203b" />
-      <stop offset="0.16" stop-color="#d3203b" />
-      <stop offset="0.24" stop-color="#fff8ee" />
-      <stop offset="0.38" stop-color="#fff8ee" />
-      <stop offset="0.44" stop-color="#2546c4" />
-      <stop offset="0.58" stop-color="#2546c4" />
-      <stop offset="0.64" stop-color="#fdf2ea" />
-      <stop offset="0.76" stop-color="#f5a3c3" />
-      <stop offset="0.84" stop-color="#fff8ee" />
-      <stop offset="1" stop-color="#d3203b" />
-    </linearGradient>
-    <filter id="{uid}-marble" filterUnits="userSpaceOnUse" x="-60" y="-60" width="1560" height="1020">
-      <feTurbulence type="fractalNoise" baseFrequency="0.0030 0.0054" numOctaves="3" seed="11" result="noise" />
-      <feDisplacementMap in="SourceGraphic" in2="noise" scale="340" xChannelSelector="R" yChannelSelector="G" />
-    </filter>
-  </defs>
-  <g filter="url(#{uid}-marble)"><rect x="-260" y="-260" width="1960" height="1420" fill="url(#{uid}-stripes)" /></g>
-</svg>
+<img class="marble" src={marble1440} srcset={`${marble1440} 1440w, ${marble2880} 2880w`} sizes="calc(max(100vw, 160vh) + 6vmax)" alt="" decoding="async" draggable="false" />
 
 <svg class="scene" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
   <defs>
@@ -67,11 +52,6 @@
       <stop offset="0" stop-color="#55c234" />
       <stop offset="1" stop-color="#1f7d17" />
     </linearGradient>
-    <linearGradient id="{uid}-flame" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0" stop-color="#ffd23a" />
-      <stop offset="0.45" stop-color="#ff7a12" />
-      <stop offset="1" stop-color="#e2261b" />
-    </linearGradient>
   </defs>
   <rect width="1440" height="900" fill="url(#{uid}-veil)" mask="url(#{uid}-sides)" />
   <!-- rose-dust ridges (the far one paler) and the grass field, low along the foot -->
@@ -87,13 +67,25 @@
     <path d="M0 724 Q360 702 720 718 T1440 712 L1440 900 L0 900 Z" fill="url(#{uid}-grass)" />
   </g>
   <path d={BLADES} stroke="#9be86e" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.8" />
-  <g class="ornament flicker">
+</svg>
+
+<!-- The flames: the scene's foot (y 800–900) in a box laid out like its slice, so their
+     flicker is a transform on their own layer and never repaints the veil's mask. -->
+<div class="slice">
+  <svg class="flames ornament" viewBox="0 800 1440 100" aria-hidden="true">
+    <defs>
+      <linearGradient id="{uid}-flame" x1="0" y1="1" x2="0" y2="0">
+        <stop offset="0" stop-color="#ffd23a" />
+        <stop offset="0.45" stop-color="#ff7a12" />
+        <stop offset="1" stop-color="#e2261b" />
+      </linearGradient>
+    </defs>
     {#each FLAMES as f, index (index)}
       <path d={flame(f)} fill="url(#{uid}-flame)" />
       <path d={flame([f[0], f[1], f[2] * 0.5, f[3] * 0.5])} fill="#ffe27a" />
     {/each}
-  </g>
-</svg>
+  </svg>
+</div>
 
 <style>
   svg {
@@ -102,15 +94,33 @@
     width: 100%;
     height: 100%;
   }
+  /* object-fit: cover is the source's xMidYMid slice. */
   .marble {
+    position: absolute;
     inset: -3vmax;
     width: calc(100% + 6vmax);
     height: calc(100% + 6vmax);
-    animation: bloodluxe-drift calc(var(--motion-ms) * 280) ease-in-out infinite alternate;
+    object-fit: cover;
+    user-select: none;
+    /* Under a pixel a step: the window-wide layer redraws about once a second, not every frame. */
+    animation: bloodluxe-drift calc(var(--motion-ms) * 280) steps(48) infinite alternate;
   }
-  .flicker {
+  /* The scene's viewBox as `slice` lays it out: covering the window, centred. */
+  .slice {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 160vh);
+    aspect-ratio: 1440 / 900;
+    translate: -50% -50%;
+  }
+  /* Scaled from the flames' common base (y 900, the box's foot), as the group was. */
+  .flames {
+    inset: auto 0 0;
+    height: auto;
+    aspect-ratio: 1440 / 100;
+    overflow: visible;
     transform-origin: 50% 100%;
-    transform-box: fill-box;
     animation: bloodluxe-flicker calc(var(--motion-ms) * 9) ease-in-out infinite alternate;
   }
   :global(:root[data-motif="off"]) .ornament {
