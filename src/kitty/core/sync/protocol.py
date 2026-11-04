@@ -12,14 +12,18 @@ pulls first, then pushes; the responder does the opposite.
     pusher      offer {head, full, pages}          pages changed in its log after since
     puller      want  {pages: {id: vv | null}}     its version vector per page (base64),
                                                    null when it has no copy
-    pusher      pages {items: [{id, len}]} + body  Loro updates from that vector (a full
-                ...                                document for null), in batches
+    pusher      pages {items: [{id, len, actors}]} Loro updates from that vector (a full
+                + body ...                         document for null), in batches
     pusher      done  {head}
     puller      ack   {seq: head}                  after every batch is merged
 
 Only what the puller lacks travels: the pusher exports each page's Loro changes
 from the puller's version vector. New pages arrive whole; a page purged on one side
-arrives as its document with the root gone, and is purged on the other.
+arrives as its document with the root gone, and is purged on the other. Each page
+item lists ``actors`` ({kind, name, session}) who wrote the pusher's log rows for it
+after ``since`` (all its kept rows for a full transfer; rows it merged from the puller
+left out): the puller records them as the merged row's ``via`` (kitty.core.blocks.actor).
+A device that sends no ``actors`` (an older build) merges as the peer alone.
 
 ``full`` is the snapshot transfer: when ``since`` is older than the pusher's
 compaction horizon (or newer than its log, e.g. after a restore), the log cannot say
@@ -40,6 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from kitty.core.blocks import merge
+from kitty.core.blocks.actor import MAX_VIA, Actor, from_row, merged_via, parse
 from kitty.core.sync.channel import Channel
 from kitty.core.sync.peers import DEVICE_ID, Identity, PeersError, clean_name
 
@@ -194,7 +199,8 @@ class Session:
             if items and size + len(data) > BATCH_BYTES:
                 self._send_pages(items, body)
                 items, body, size = [], [], 0
-            items.append({"id": page_id, "len": len(data)})
+            items.append({"id": page_id, "len": len(data),
+                          "actors": [item.as_dict() for item in self._actors(conn, page_id, 0 if full else since)]})
             body.append(data)
             size += len(data)
         if items:
@@ -205,6 +211,13 @@ class Session:
         if acked > head:
             raise ProtocolError("acknowledged more than was offered")
         self.result.acked = acked
+
+    def _actors(self, conn: sqlite3.Connection, page_id: str, since: int) -> tuple[Actor, ...]:
+        """Who wrote this page's log rows after `since` (merges from the other device left out)."""
+        rows = conn.execute("SELECT DISTINCT actor, actor_name, actor_session, actor_via FROM op_log "
+                            "WHERE page_id=? AND seq>? AND device_id<>? ORDER BY 1, 2, 3",
+                            (page_id, since, self.peer["device_id"])).fetchall()
+        return merged_via(from_row(row) for row in rows)
 
     def _send_pages(self, items: list[dict], body: list[bytes]) -> None:
         self.send({"type": "pages", "items": items}, b"".join(body))
@@ -236,6 +249,7 @@ class Session:
             if header["type"] != "pages" or not isinstance(header.get("items"), list):
                 raise ProtocolError("expected pages")
             updates: dict[str, list[bytes]] = {}
+            actors: dict[str, list[Actor]] = {}
             offset = 0
             for item in header["items"]:
                 if not isinstance(item, dict):
@@ -244,10 +258,14 @@ class Session:
                 if page_id not in want or offset + length > len(body):
                     raise ProtocolError("bad page item")
                 updates.setdefault(page_id, []).append(body[offset:offset + length])
+                raw = item.get("actors", [])
+                if not isinstance(raw, list) or len(raw) > MAX_VIA:
+                    raise ProtocolError("bad page actors")
+                actors.setdefault(page_id, []).extend(found for found in map(parse, raw) if found is not None)
                 offset += length
             if offset != len(body):
                 raise ProtocolError("bad pages body")
-            merged = merge.merge(conn, updates, origin=self.peer["device_id"])
+            merged = merge.merge(conn, updates, origin=self.peer["device_id"], actors=actors)
             self.result.received_pages += len(updates)
             self.result.merged.extend(merged["pages"])
         self.send({"type": "ack", "seq": head})

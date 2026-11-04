@@ -2636,7 +2636,23 @@ kitty notes new "<title>" [TEXT...] [--notebook <title>] [--json]
 kitty notes append <PAGE> TEXT... [--type to_do] [--parent <block>] [--revision N] [--json]
 kitty notes inbox TEXT... [--json]
 kitty notes quick "<text>" [--json]        # '-' as a TEXT reads it from stdin
+kitty notes sessions [--kind agent|client|user|system|peer|all] [--json]
+kitty notes undo-session <SESSION> [--dry-run] [--json]
+kitty notes citations "((id@seq))"... [--json]   # changed since? with a word diff
 ```
+
+**Who made each edit.** History records, besides the device, who made each
+transaction: you (windows and the editor), an agent (`kitty mcp`: one session per server
+process, named by the MCP client; `kitty notes`: one per command, or
+`KITTY_AGENT_SESSION`, named by `KITTY_AGENT_NAME`; rika!'s assistant: one per
+conversation), a connected app (by its pairing name), rika! itself (migrations,
+compaction) or a paired device (with the actors whose changes it carried). A page's
+**History** names the actor of every session and filters by it. **Undo this agent
+session…** (in History, `undo_agent_session` over MCP, or `kitty notes undo-session`)
+first shows what it will do, then reverts everything that session wrote on every page
+as one new step: anything someone else changed since is kept and listed, never
+overwritten. A block written with a pinned citation `((id@seq))` shows **source changed
+since** when the cited block changed after that moment; clicking it shows the change.
 
 `kitty notes` belongs to the workspace module. Over HTTP (UI secret required, like
 every route): `GET /api/blocks/pages`, `/api/blocks/search?q=`, `/api/blocks/backlinks?id=`

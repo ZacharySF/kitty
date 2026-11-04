@@ -1,11 +1,14 @@
 // An in-memory stand-in for rika!'s block backend (src/kitty/web_blocks.py, web_live.py) for
 // browser harnesses: GET /api/blocks/page, the live WebSocket (txn → ack/reject, change to
-// every window), history sessions/preview/restore and Trash. Records are synthetic.
+// every window), history sessions (per actor)/preview/restore, undoing an agent session and
+// Trash. Records are synthetic.
 // It applies operations with the editor's own PageDoc; the real server's semantics are
 // covered by the Python tests.
 import { PageDoc } from "/src/lib/blockDoc.ts";
 
 const AT = () => new Date().toISOString();
+/** Who made a transaction (src/kitty/core/blocks/actor.py); windows are the person. */
+export const USER = { kind: "user", name: null, session: null };
 
 export function createBlockServer({ pages, device = "harness-device-0001" }) {
   const byId = new Map();
@@ -19,6 +22,8 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
     holdAcks: false,
     held: [],
     failNext: null,
+    /** Bodies of POST /api/blocks/sessions/undo, in order. */
+    undos: [],
   };
 
   for (const spec of pages) {
@@ -26,7 +31,7 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
     const state = { page_id: spec.page_id, seq: 0, revision: root.properties.revision, root, blocks: spec.blocks };
     // Creating the page is its first transaction, as on kitty's server.
     seq += 1;
-    byId.set(spec.page_id, { initial: structuredClone(state), doc: PageDoc.from(state), log: [{ seq, at: AT(), snapshot: structuredClone(state), ops: [] }], trash: [] });
+    byId.set(spec.page_id, { initial: structuredClone(state), doc: PageDoc.from(state), log: [{ seq, at: AT(), snapshot: structuredClone(state), ops: [], actor: USER }], trash: [] });
   }
 
   const pageOf = (blockId) => [...byId.values()].find((entry) => entry.doc.has(blockId));
@@ -45,7 +50,7 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
   }
 
   /** Apply one transaction like kitty's transact: base revisions, all-or-nothing, one log row per page. */
-  function apply(ops, base, txnId, from = device) {
+  function apply(ops, base, txnId, from = device, actor = USER) {
     if (server.failNext) {
       const status = server.failNext;
       server.failNext = null;
@@ -91,18 +96,18 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
       const entry = byId.get(pageId);
       entry.doc = doc;
       seq += 1;
-      entry.log.push({ seq, at, ops: all, device: from });
+      entry.log.push({ seq, at, ops: all, device: from, actor });
       result.seq[pageId] = seq;
       result.revisions[pageId] = revision;
-      changes.push({ type: "change", seq, txn_id: txnId, page_id: pageId, at, device_id: from, root: { type: doc.root.type, number: doc.root.properties.number ?? null }, ops: all });
+      changes.push({ type: "change", seq, txn_id: txnId, page_id: pageId, at, device_id: from, actor, root: { type: doc.root.type, number: doc.root.properties.number ?? null }, ops: all });
     }
     for (const item of trashed) byId.get(item.pageId).trash.push(item);
     return { result, changes };
   }
 
-  /** Another window (or an HTTP adapter) commits `ops` on its own: the change is pushed to every window. */
-  server.commit = (ops, from = device) => {
-    const outcome = apply(ops, undefined, crypto.randomUUID(), from);
+  /** Another window, an HTTP adapter or an agent (`actor`) commits `ops` on its own: the change is pushed to every window. */
+  server.commit = (ops, from = device, actor = USER) => {
+    const outcome = apply(ops, undefined, crypto.randomUUID(), from, actor);
     if (outcome.type === "reject") throw new Error(outcome.error);
     broadcast(outcome.changes);
     return outcome.result;
@@ -167,12 +172,23 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
     if (path === "/api/blocks/history") {
       const entry = find(url.searchParams);
       if (!entry) return json({ error: "Page not found" }, 404);
-      const sessions = entry.log.length ? [{
-        device_id: device, start: entry.log[0].at, end: entry.log[entry.log.length - 1].at, first_seq: entry.log[0].seq,
-        last_seq: entry.log[entry.log.length - 1].seq, transactions: entry.log.length, ops: { text: entry.log.length },
-        moments: entry.log.map((row) => ({ seq: row.seq, at: row.at })),
-      }] : [];
-      return json({ page_id: entry.doc.pageId, horizon_seq: 0, sessions, snapshots: [] });
+      // One session per run of transactions by the same device and actor, newest first.
+      const sessions = [];
+      for (const row of entry.log) {
+        const actor = row.actor ?? USER;
+        const last = sessions[sessions.length - 1];
+        if (!last || last.device_id !== (row.device ?? device) || JSON.stringify(last.actor) !== JSON.stringify(actor)) {
+          sessions.push({ device_id: row.device ?? device, actor, start: row.at, end: row.at, first_seq: row.seq, last_seq: row.seq,
+            transactions: 0, ops: {}, moments: [] });
+        }
+        const current = sessions[sessions.length - 1];
+        current.end = row.at;
+        current.last_seq = row.seq;
+        current.transactions += 1;
+        current.ops.text = (current.ops.text ?? 0) + 1;
+        current.moments.push({ seq: row.seq, at: row.at });
+      }
+      return json({ page_id: entry.doc.pageId, horizon_seq: 0, sessions: sessions.reverse(), snapshots: [] });
     }
     if (path === "/api/blocks/history/preview") {
       const entry = find(url.searchParams);
@@ -192,6 +208,46 @@ export function createBlockServer({ pages, device = "harness-device-0001" }) {
       broadcast([{ type: "change", seq, txn_id: crypto.randomUUID(), page_id: target.pageId, at, device_id: device, root: { type: "page", number: target.root.properties.number },
         ops: [{ op: "restore", id: target.pageId }, { op: "set", id: target.pageId, props: { revision } }] }]);
       return json({ txn_id: "restore", seq: { [target.pageId]: seq }, revisions: { [target.pageId]: revision } });
+    }
+    if (path === "/api/blocks/sessions/undo" && method === "POST") {
+      // Text-only stand-in for kitty.core.blocks.sessions.undo_session: a block whose text is still
+      // what the session left goes back to what it found; one changed since is kept and reported.
+      server.undos.push(body);
+      const reverted = [], conflicts = [], ops = [];
+      let transactions = 0, actor = null;
+      for (const entry of byId.values()) {
+        const rows = entry.log.filter((row) => row.actor?.session === body.session);
+        if (!rows.length) continue;
+        transactions += rows.length;
+        actor = rows[0].actor;
+        const before = replay(entry, rows[0].seq - 1), after = replay(entry, rows[rows.length - 1].seq);
+        for (const id of new Set(rows.flatMap((row) => row.ops.filter((op) => op.op === "text").map((op) => op.id)))) {
+          const now = entry.doc.get(id).text, item = { id, page_id: entry.doc.pageId, text: now };
+          if (now === after.get(id).text) { reverted.push({ ...item, fields: ["text"] }); ops.push({ op: "text", id, text: before.get(id).text }); }
+          else if (now !== before.get(id).text) conflicts.push({ ...item, fields: ["text"], reasons: ["changed by someone else since"] });
+        }
+      }
+      if (!transactions) return json({ error: "No kept history belongs to that session" }, 404);
+      const report = { session: body.session, actor, transactions, dry_run: !!body.dry_run, applied: false,
+        reverted_count: reverted.length, conflict_count: conflicts.length, reverted, conflicts };
+      if (body.dry_run || !ops.length) return json(report);
+      const result = server.commit(ops);
+      return json({ ...report, applied: true, txn_id: crypto.randomUUID(), seq: result.seq, revisions: result.revisions });
+    }
+    if (path === "/api/blocks/citations") {
+      // Every pinned citation reads as changed since: its block's text now against the cited moment.
+      const citations = url.searchParams.get("cites").split(",").map((cite) => {
+        const [id, cited] = cite.split("@");
+        const entry = pageOf(id);
+        const then = entry ? replay(entry, Number(cited)) : null;
+        const was = then?.has(id) ? then.get(id).text : null, now = entry ? entry.doc.get(id).text : null;
+        const changed = was !== null && now !== was;
+        return { cite: `((${cite}))`, id, cited_seq: Number(cited), seq: changed ? seq : Number(cited), changed,
+          status: was === null ? "unknown" : changed ? "changed" : "unchanged", then: was === null ? null : { type: "text", text: was },
+          now: now === null ? null : { type: "text", text: now },
+          diff: changed ? [{ op: "delete", text: was }, { op: "insert", text: now }] : [] };
+      });
+      return json({ citations });
     }
     if (path === "/api/blocks/trash") {
       const items = [...byId.values()].flatMap((entry) => entry.trash.map((item) => ({

@@ -7,8 +7,9 @@ paired devices (kitty.core.blocks.merge) write through the same
 `_Transaction`. Inside one SQLite transaction it loads each touched page document
 (its projection plus its Loro document, kitty.core.blocks.crdt), applies every
 operation (so cycles, limits and stale revisions are refused before anything is
-written), appends one `op_log` row per touched page carrying the readable operations
-and the Loro update bytes, and rewrites only the projection rows that changed.
+written), appends one `op_log` row per touched page carrying the readable operations,
+the Loro update bytes and the actor that made it (kitty.core.blocks.actor), and rewrites
+only the projection rows that changed.
 Readers use the projection; history and the tests rebuild a page from the log's
 operations with `replay`, which needs no Loro.
 """
@@ -22,10 +23,18 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from kitty.core.blocks import actor as actors
 from kitty.core.blocks import crdt, searchdocs, tagging
+from kitty.core.blocks.actor import Actor
 from kitty.core.blocks.crdt import LoroPageDoc
 from kitty.core.blocks.order import key_between
-from kitty.core.blocks.pagedoc import Block, BlockError, OrderedPageDoc, block_id, is_edit_key
+from kitty.core.blocks.pagedoc import (
+    Block,
+    BlockError,
+    OrderedPageDoc,
+    block_id,
+    is_edit_key,
+)
 from kitty.core.blocks.tokens import REF, TAG, WIKI
 from kitty.db.connection import transaction
 
@@ -125,6 +134,11 @@ def _has_crdt(conn: sqlite3.Connection) -> bool:
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='page_crdt'").fetchone() is not None
 
 
+def _has_actor(conn: sqlite3.Connection) -> bool:
+    """Whether op_log records actors (migrations before 051 transact without them)."""
+    return conn.execute("SELECT 1 FROM pragma_table_info('op_log') WHERE name='actor'").fetchone() is not None
+
+
 class _Transaction:
     def __init__(self, conn: sqlite3.Connection, at: str):
         self.conn = conn
@@ -133,6 +147,7 @@ class _Transaction:
         self.logged: dict[str, list[dict]] = {}
         self.created: set[str] = set()
         self.crdt = _has_crdt(conn)
+        self.actors = _has_actor(conn)
         self.peer = crdt.peer_of(device_id(conn))
         self._titles: dict[Any, str | None] = {}
 
@@ -285,25 +300,30 @@ class _Transaction:
             revisions[page_id] = current
         return revisions
 
-    def write(self, device: str, txn_id: str) -> dict[str, int]:
+    def write(self, device: str, txn_id: str, actor: Actor, via: dict[str, tuple[Actor, ...]] | None = None) -> dict[str, int]:
+        """Append the log rows and rewrite the projection; `via` gives a peer merge's carried actors per page."""
         conn, seqs = self.conn, {}
         projected: list[Block] = []
         removed: list[str] = []
         for page_id in self.logged:
             self.docs[page_id].check()
+        columns = "device_id,txn_id,page_id,at,ops" + (",crdt" if self.crdt else "") + \
+            (",actor,actor_name,actor_session,actor_via" if self.actors else "")
+        insert = f"INSERT INTO op_log({columns}) VALUES ({','.join('?' * len(columns.split(',')))})"
         for page_id, ops in self.logged.items():
             doc = self.docs[page_id]
             payload = json.dumps({"v": LOG_FORMAT, "ops": ops}, ensure_ascii=False, separators=(",", ":")).encode()
+            values: tuple = (device, txn_id, page_id, self.at, payload)
+            update = doc.finish() if self.crdt else None
             if self.crdt:
-                update = doc.finish()
-                seqs[page_id] = conn.execute("INSERT INTO op_log(device_id,txn_id,page_id,at,ops,crdt) VALUES (?,?,?,?,?,?)",
-                                             (device, txn_id, page_id, self.at, payload, update)).lastrowid
+                values += (update,)
+            if self.actors:
+                values += (Actor(actor.kind, actor.name, actor.session, via[page_id]) if via and via.get(page_id) else actor).columns()
+            seqs[page_id] = conn.execute(insert, values).lastrowid
+            if self.crdt:
                 crdt.store(conn, doc, seqs[page_id], update, self.at)
                 if doc.loro is not None:
                     crdt.keep(self.peer, page_id, doc.loro)
-            else:
-                seqs[page_id] = conn.execute("INSERT INTO op_log(device_id,txn_id,page_id,at,ops) VALUES (?,?,?,?,?)",
-                                             (device, txn_id, page_id, self.at, payload)).lastrowid
             if doc.removed:
                 # Scoped to this page: the same ID may be landing on another page in this transaction.
                 conn.executemany("DELETE FROM blocks WHERE id=? AND page_id=?", [(bid, page_id) for bid in doc.removed])
@@ -342,7 +362,7 @@ class _Transaction:
 
 
 def transact(conn: sqlite3.Connection, ops: Iterable[Any], *, base: Any = None, txn_id: str | None = None,
-             at: str | None = None, suggest: bool = False) -> dict:
+             at: str | None = None, suggest: bool = False, actor: Actor | None = None) -> dict:
     """Apply one transaction atomically and return ``{txn_id, seq, revisions}`` keyed by page.
 
     ``base`` maps page IDs to the revision the caller last saw; a mismatch is a 409
@@ -353,6 +373,9 @@ def transact(conn: sqlite3.Connection, ops: Iterable[Any], *, base: Any = None, 
     operations, listed under ``tagged`` ({page_id: [ops]}) with their names under
     ``tags``; ``suggest`` also returns ``suggestions`` for every changed text block
     (kitty.core.blocks.tagging).
+
+    Its log rows record ``actor`` (default: the one set with ``actor.acting``, else the
+    person at this device).
     """
     ops = list(ops) if not isinstance(ops, (str, bytes, dict)) else None
     if not ops or len(ops) > MAX_OPS:
@@ -369,5 +392,5 @@ def transact(conn: sqlite3.Connection, ops: Iterable[Any], *, base: Any = None, 
             work.separate_keys()
         tags = tagging.annotate(conn, work.docs, work.record, suggest=suggest)
         revisions = work.bump()
-        seqs = work.write(device_id(conn), txn_id)
+        seqs = work.write(device_id(conn), txn_id, actor or actors.current())
     return {"txn_id": txn_id, "seq": seqs, "revisions": revisions, **tags}

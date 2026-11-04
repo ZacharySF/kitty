@@ -10,7 +10,8 @@
 <script lang="ts">
   import { api } from "./api";
   import BlockEditor, { type OutlineBlock, type PageRef } from "./BlockEditor.svelte";
-  import NoteBlockText from "./NoteBlockText.svelte";
+  import NoteBlockText, { pinnedCites, type Citation } from "./NoteBlockText.svelte";
+  import { onBlockChange } from "./live";
   import TagPage from "./TagPage.svelte";
   import MirrorPane from "./MirrorPane.svelte";
   import { createTag, findTag } from "./tags";
@@ -52,6 +53,12 @@
   let error = $state("");
   /** The tag whose page is open in the side panel (a chip or a #tag with a tag record was clicked). */
   let tagId = $state<string | null>(null);
+  /** Pinned citations ((id@seq)) on this page, checked against now (GET /api/blocks/citations). */
+  let pinned = $state<Record<string, Citation>>({});
+  /** The changed source whose diff is open in the side panel. */
+  let source = $state<Citation | null>(null);
+  let cites: string[] = [];
+  let citeTimer: ReturnType<typeof setTimeout> | undefined;
 
   export function flush(): Promise<void> { return editor?.flush() ?? Promise.resolve(); }
   export function pending(): boolean { return editor?.pending() ?? false; }
@@ -71,15 +78,38 @@
     return () => clearTimeout(mentionTimer);
   });
 
-  async function citations(id: string) { try { context = await api(`/notes/blocks/${id}/contexts`); topic = null; tagId = null; error = ""; } catch (cause) { error = (cause as Error).message; } }
+  // A cited block may change on any page, so pinned citations are checked again after every change.
+  function checkCitations() {
+    clearTimeout(citeTimer);
+    citeTimer = setTimeout(async () => {
+      const wanted = cites.slice(0, 50);
+      if (!wanted.length) { pinned = {}; return; }
+      try {
+        const result = await api<{ citations: Citation[] }>(`/blocks/citations?cites=${wanted.map(encodeURIComponent).join(",")}`);
+        pinned = Object.fromEntries(result.citations.map((item) => [`${item.id}@${item.cited_seq}`, item]));
+      } catch { /* Citations stay unmarked; the block text is unaffected. */ }
+    }, 400);
+  }
+  function blocksChanged(list: OutlineBlock[]) {
+    onblocks?.(list);
+    const found = [...new Set(list.flatMap((block) => pinnedCites(block.text)))];
+    if (found.join() !== cites.join()) { cites = found; checkCitations(); }
+  }
+  $effect(() => {
+    const stop = onBlockChange(() => { if (cites.length) checkCitations(); });
+    return () => { clearTimeout(citeTimer); stop(); };
+  });
+  function showSource(citation: Citation) { source = citation; context = null; topic = null; tagId = null; }
+
+  async function citations(id: string) { try { context = await api(`/notes/blocks/${id}/contexts`); topic = null; tagId = null; source = null; error = ""; } catch (cause) { error = (cause as Error).message; } }
   async function showTopic(kind: "page" | "tag", name: string) {
     try {
       const found = kind === "tag" ? (await findTag(name)).id : null;
       if (found) return openTag(found);
-      topic = await api(`/notes/topics?kind=${kind}&topic=${encodeURIComponent(name)}`); context = null; tagId = null; error = "";
+      topic = await api(`/notes/topics?kind=${kind}&topic=${encodeURIComponent(name)}`); context = null; tagId = null; source = null; error = "";
     } catch (cause) { error = (cause as Error).message; }
   }
-  function openTag(id: string) { tagId = id; context = null; topic = null; error = ""; }
+  function openTag(id: string) { tagId = id; context = null; topic = null; source = null; error = ""; }
   async function makeTag(name: string) {
     try { openTag((await createTag({ name })).id); }
     catch (cause) { error = (cause as Error).message; }
@@ -126,7 +156,7 @@
 
 {#snippet extras(block: BlockData)}
   {#if /\[\[|#\S|\(\(|\{\{embed:/.test(block.text)}
-    <div class="inline-preview"><NoteBlockText text={block.text} {references} {onpage} ontopic={showTopic} onreference={citations} /></div>
+    <div class="inline-preview"><NoteBlockText text={block.text} {references} citations={pinned} {onpage} ontopic={showTopic} onreference={citations} oncitation={showSource} /></div>
   {/if}
   <div class="block-tools">
     <button title="Copy block reference" aria-label="Copy block reference" onclick={() => void copyReference(`((${block.id}))`)}>⧉</button>
@@ -141,7 +171,7 @@
     <article class="outline" aria-label="Text note outline">
       <BlockEditor bind:this={editor} target={{ type: "page", number: pageId }} label="Text note blocks"
         pages={pages.filter((page) => page.id !== pageId).map((page) => ({ number: page.id, title: page.title }))}
-        {focusBlock} {extras} {onrevision} {onerror} {onopenpage} {oncreatepage} {onblocks} ontag={openTag} />
+        {focusBlock} {extras} {onrevision} {onerror} {onopenpage} {oncreatepage} onblocks={blocksChanged} ontag={openTag} />
       {#if mentions.length}
         <section class="mentions"><h3>Unlinked title mentions</h3>
           {#each mentions as mention (`${mention.block_id}:${mention.page_id}`)}
@@ -151,9 +181,9 @@
         </section>
       {/if}
     </article>
-    {#if context || topic || tagId}
+    {#if context || topic || tagId || source}
       <aside class="contexts" aria-label="Reference contexts">
-        <button class="close" onclick={() => { context = null; topic = null; tagId = null; }}>Close ×</button>
+        <button class="close" onclick={() => { context = null; topic = null; tagId = null; source = null; }}>Close ×</button>
         {#if tagId}
           <TagPage {tagId} onopen={(page, block) => onopen(page, block)} />
         {:else if context}
@@ -170,6 +200,13 @@
           {#if topic.kind === "tag"}<button class="make-tag" onclick={() => topic && void makeTag(topic.topic)}>Make #{topic.topic} a tag with keywords</button>{/if}
           {#each topic.blocks as item}<button class="context" onclick={() => onopen(item.page_id, item.id)}><strong>{item.title}</strong><span>{item.text}</span></button>{:else}<p>No matching blocks.</p>{/each}
           {#if topic.next_offset !== null}<button onclick={() => void moreTopics()}>Show more topic blocks ({topic.blocks.length} of {topic.count})</button>{/if}
+        {:else if source}
+          <section class="source" aria-label="Source changed since">
+            <h3>Source changed since it was cited</h3>
+            <p class="muted">Cited at seq {source.cited_seq}; {source.status === "changed" ? `changed at seq ${source.seq}` : source.status === "deleted" ? `moved to Trash at seq ${source.seq}` : `removed for good at seq ${source.seq}`}.</p>
+            <p class="diff" aria-label="What changed">{#each source.diff as part, at (at)}{#if part.op === "equal"}<span>{part.text}</span>{:else if part.op === "delete"}<del>{part.text}</del>{:else}<ins>{part.text}</ins>{/if}{/each}</p>
+            <button class="make-tag" onclick={() => source && void citations(source.id)}>Open the source's citation contexts</button>
+          </section>
         {/if}
       </aside>
     {/if}
@@ -187,6 +224,10 @@
   button { font: inherit; color: inherit; cursor: pointer; background: none; border: 0; border-radius: 4px; padding: 4px 6px; }
   button:hover { background: var(--surface-raised); }
   .citations { white-space: nowrap; color: var(--accent); }
+  .source .diff { font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .source del { color: var(--error); text-decoration: line-through; background: color-mix(in srgb, var(--error) 10%, transparent); }
+  .source ins { color: var(--success); text-decoration: none; background: color-mix(in srgb, var(--success) 12%, transparent); }
+  .source .muted { font-size: 12px; color: var(--muted); }
   .contexts { width: 280px; flex-shrink: 0; border-left: 1px solid var(--border); padding: 16px; max-height: 75vh; overflow: auto; background: var(--chrome); }
   .contexts h3 { font-size: 14px; }
   .context { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 12px 4px; text-align: left; border-bottom: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; }

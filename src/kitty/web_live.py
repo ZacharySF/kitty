@@ -12,9 +12,11 @@ Every window receives ``{"type": "hello", "seq", "device_id", "build"}`` on conn
 (``build`` is the active build's revision, so a window that loaded an older one fetches
 ``GET /api/build`` again), then, whoever wrote them:
 
-- one ``{"type": "change", "seq", "txn_id", "page_id", "at", "device_id", "root", "ops"}``
+- one ``{"type": "change", "seq", "txn_id", "page_id", "at", "device_id", "actor", "root", "ops"}``
   per committed op_log row: this socket, the Notes HTTP API, a background import or
-  another process. ``root`` is ``{"type", "number"}`` of the page the change belongs to;
+  another process (an agent's MCP or CLI writes too). ``actor`` is who made it
+  ({kind, name, session}; kitty.core.blocks.actor). ``root`` is ``{"type", "number"}``
+  of the page the change belongs to;
 - ``{"type": "build", ...}`` whenever the build file changes (kitty.web_build).
 
 A window sends (block messages need the workspace module; see kitty.web_blocks):
@@ -45,8 +47,18 @@ import uuid
 from contextlib import closing
 
 from kitty.core import blocks
+from kitty.core.blocks import actor
 from kitty.db import connect
-from kitty.web_socket import Closed, Reader, Tokens, accept, close_code, frame, handshake_key, send_close
+from kitty.web_socket import (
+    Closed,
+    Reader,
+    Tokens,
+    accept,
+    close_code,
+    frame,
+    handshake_key,
+    send_close,
+)
 
 SESSION_PATH = "/api/live/session"
 SOCKET_PATH = "/api/live/socket"
@@ -62,11 +74,13 @@ def _error(status: int, message: str):
 def changes(conn: sqlite3.Connection, after: int, upto: int | None = None, limit: int = BATCH) -> list[dict]:
     """Committed op_log rows after `after` as push messages."""
     rows = conn.execute(
-        "SELECT o.seq,o.txn_id,o.page_id,o.at,o.device_id,o.ops,b.type,json_extract(b.properties,'$.number') AS number "
+        "SELECT o.seq,o.txn_id,o.page_id,o.at,o.device_id,o.ops,o.actor,o.actor_name,o.actor_session,o.actor_via,"
+        "b.type,json_extract(b.properties,'$.number') AS number "
         "FROM op_log o LEFT JOIN blocks b ON b.id=o.page_id AND b.parent_id IS NULL WHERE o.seq>? AND o.seq<=? ORDER BY o.seq LIMIT ?",
         (after, upto if upto is not None else 2**63 - 1, limit))
     return [{"type": "change", "seq": row["seq"], "txn_id": row["txn_id"], "page_id": row["page_id"], "at": row["at"],
-             "device_id": row["device_id"], "root": {"type": row["type"], "number": row["number"]} if row["type"] else None,
+             "device_id": row["device_id"], "actor": actor.from_row(row).as_dict(),
+             "root": {"type": row["type"], "number": row["number"]} if row["type"] else None,
              "ops": json.loads(row["ops"])["ops"]} for row in rows]
 
 
@@ -165,7 +179,9 @@ class Live:
             if set(message) - {"type", "txn_id", "ops", "base"}:
                 raise blocks.BlockError("Unexpected transaction fields")
             with self.app.mutation_lock, closing(connect(self.app.settings.db_path)) as conn:
-                result = blocks.transact(conn, message.get("ops"), base=message.get("base"), txn_id=txn_id, suggest=True)
+                # A window's editor is the person at this device.
+                result = blocks.transact(conn, message.get("ops"), base=message.get("base"), txn_id=txn_id, suggest=True,
+                                         actor=actor.USER)
         except blocks.BlockError as exc:
             return {"type": "reject", "txn_id": txn_id, "status": exc.status, "error": str(exc)}
         except sqlite3.OperationalError:

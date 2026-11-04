@@ -324,6 +324,40 @@ test("History previews any moment and Restore appends a transaction that brings 
   await context.close();
 });
 
+test("History names who made each session, filters by actor and undoes one agent session", async () => {
+  const { page, problems, context } = await open();
+  await page.evaluate(() => {
+    const { server, id } = window.blockHarness;
+    const agent = { kind: "agent", name: "claude-code", session: "agent-session-1" };
+    server.commit([{ op: "text", id: id(1), text: "Alpha, rewritten by the agent." }], undefined, agent);
+    server.commit([{ op: "text", id: id(2), text: "Bravo, rewritten by the agent." }], undefined, agent);
+  });
+  await until(async () => (await texts(page))[1] === "Bravo, rewritten by the agent.", "the agent's edits arrive live");
+  await caretAtEnd(page, 2);
+  await page.keyboard.type(" Mine.");
+  await until(async () => (await saved(page))[1][1] === "Bravo, rewritten by the agent. Mine.", "the person's edit is saved");
+  await page.getByRole("button", { name: "Open history" }).click();
+  const dialog = page.getByRole("dialog", { name: /History/ });
+  const sessions = dialog.getByRole("navigation", { name: "Editing sessions" });
+  const who = () => sessions.locator(".who").allTextContents();
+  await until(async () => (await who()).includes("Agent · claude-code"), "the agent's session is named");
+  assert.deepEqual(await who(), ["You", "Agent · claude-code", "You"]);
+  await dialog.getByRole("combobox", { name: "Filter by actor" }).selectOption({ label: "Agent · claude-code" });
+  await until(async () => JSON.stringify(await who()) === '["Agent · claude-code"]', "the filter hides the person's sessions");
+  await dialog.getByRole("button", { name: "Undo agent session Agent · claude-code" }).click();
+  const plan = dialog.getByRole("region", { name: "Undo agent session" });
+  await assert.doesNotReject(plan.getByText("Reverts 1 block the agent changed in 2 transactions").waitFor());
+  assert.match(await plan.innerText(), /1 block changed by someone else since stay as they are/);
+  assert.deepEqual(await page.evaluate(() => window.blockHarness.server.undos), [{ session: "agent-session-1", dry_run: true }]);
+  await plan.getByRole("button", { name: "Undo agent session" }).click();
+  await assert.doesNotReject(dialog.getByRole("status").filter({ hasText: "Undid the agent session: 1 block reverted" }).waitFor());
+  await until(async () => (await texts(page))[0] === "Alpha block about hash rings.", "the agent's untouched edit is reverted");
+  assert.equal((await texts(page))[1], "Bravo, rewritten by the agent. Mine.");
+  await dialog.getByRole("button", { name: "Close history" }).click();
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
 test("a deleted block goes to Trash and comes back with Restore", async () => {
   const { page, problems, context } = await open();
   const charlie = await page.evaluate(() => window.blockHarness.id(3));

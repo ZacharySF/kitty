@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import re
 import threading
 import time
 from contextlib import closing
@@ -40,6 +41,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from kitty.core.blocks.actor import Actor, acting
 from kitty.core.rika import commands, dumps, llm, memory, router, routes, speech, store, tools as toolset
 from kitty.core.rika.agents import Agents
 from kitty.core.rika.tools import Context, ToolError
@@ -48,6 +50,13 @@ from kitty.core.rika.workspace_tools import _allow_ai
 from kitty.db import connect
 
 log = logging.getLogger(__name__)
+
+
+def conversation_actor(conversation_id: str) -> Actor:
+    """Who rika!'s tools write blocks as: an agent whose session is the conversation."""
+    session = re.sub(r"[^A-Za-z0-9._:-]", "", f"rika:{conversation_id}")[:100]
+    return Actor("agent", "rika!", session)
+
 
 TEXT_MAX = 20_000
 MAX_STEPS = 8
@@ -553,7 +562,8 @@ class Rika:
                 return {"status": "rejected", "summary": summary,
                         "reason": "you declined" if approval["status"] == "rejected" else "the approval expired"}
         try:
-            with self.app.mutation_lock:
+            # Block writes are rika!'s, one agent session per conversation (kitty.core.blocks.actor).
+            with self.app.mutation_lock, acting(conversation_actor(turn.job.conversation_id)):
                 result = tool.run(ctx, args)
         except Exception as exc:  # noqa: BLE001 - core validation and conflicts are safe to show
             error = _safe(exc)

@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 
 from kitty.core import keys as keys_core
-from kitty.core.blocks import history
+from kitty.core.blocks import history, sessions
+from kitty.core.blocks.actor import Actor, acting
 from kitty.core.sync import channel, peers, protocol, service
 
 from sync_support import Device, assert_converged, make_template, view
@@ -250,6 +251,36 @@ def test_three_devices_relay_through_each_other(kittys):
     b.sync.sync_with(b.peer(a))
     assert_converged([a.device, b.device, c.device])
     assert view(a.conn)[block]["text"] == "from A via C"
+
+
+def test_merges_carry_who_made_the_changes_and_an_agent_session_stays_undoable(kittys):
+    a, b, c = kittys("a", "b", "c")
+    pair(a, b)
+    pair(b, c)
+    page, (first, second) = new_page(a, "first", "second")
+    a.sync.sync_with(a.peer(b))
+    agent = Actor("agent", "claude-code", "agent-on-a")
+    with acting(agent):
+        a.device.transact([{"op": "text", "id": first, "text": "first (agent)"}])
+        a.device.transact([{"op": "text", "id": second, "text": "second (agent)"}])
+    a.sync.sync_with(a.peer(b))
+    merged = b.conn.execute("SELECT device_id, actor, actor_name, actor_via FROM op_log WHERE page_id=? ORDER BY seq DESC LIMIT 1",
+                            (page,)).fetchone()
+    assert merged["device_id"] == a.sync.identity.device_id and merged["actor"] == "peer" and merged["actor_name"] == "Kitty A"
+    assert history.page_history(b.conn, page, session="agent-on-a")["sessions"][0]["actor"]["via"] == [agent.as_dict()]
+    # A relay keeps the original actor rather than naming the device in between.
+    b.sync.sync_with(b.peer(c))
+    relayed = c.conn.execute("SELECT actor_name, actor_via FROM op_log WHERE page_id=? ORDER BY seq DESC LIMIT 1", (page,)).fetchone()
+    assert relayed["actor_name"] == "Kitty B" and '"session":"agent-on-a"' in relayed["actor_via"]
+    listed = sessions.list_sessions(b.conn)["sessions"]
+    assert [(item["session"], item["device"]) for item in listed] == [("agent-on-a", "Kitty A")]
+    # The person on B fixes one of the agent's blocks; undoing the session on B keeps that.
+    b.device.transact([{"op": "text", "id": second, "text": "second, by hand on B"}])
+    result = sessions.undo_session(b.conn, "agent-on-a")
+    assert result["applied"] and [item["id"] for item in result["conflicts"]] == [second]
+    assert view(b.conn)[first]["text"] == "first" and view(b.conn)[second]["text"] == "second, by hand on B"
+    b.sync.sync_with(b.peer(a))
+    assert_converged([a.device, b.device])
 
 
 def test_messages_are_framed_and_validated():

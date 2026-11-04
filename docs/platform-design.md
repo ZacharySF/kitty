@@ -1013,7 +1013,7 @@ the §11 limit "MCP and CLI expose the job-search module only". Code:
   live push, a write from another connection reaching an open window, secret and module
   gating).
 - **Smoke (2026-11-03, temporary workspace with only `workspace` on):** a stdio MCP client
-  started `uv run kitty mcp`, saw only the 14 notes tools, created a page with nested
+  started `uv run kitty mcp`, saw only the 14 notes tools (17 with the actor step), created a page with nested
   blocks, read it back with `((id@seq))` citations, found a block with `search_blocks`,
   appended a block quoting that citation (seq and revision moved to 2), had a stale
   `revision` refused with 409, saw the citing block in `get_backlinks`, tagged it and
@@ -1024,8 +1024,56 @@ the §11 limit "MCP and CLI expose the job-search module only". Code:
   after the command returned, without a reload; the pinned citation previewed as the cited
   block's text.
 - **Not yet:** the MCP server and CLI still open the database directly (the mediation step
-  makes them token-holding API clients); writes carry no agent actor yet, so History shows
-  them under this device like any local edit.
+  makes them token-holding API clients). Agent writes now carry an actor (next section).
+
+## Agent actor and per-session undo: what was built
+
+The paper's §13 step 4 ("Agent writes also stamp an actor column on their op_log rows") and
+§14.3 (pinned citations, "undo everything this agent session did"). Code:
+`src/kitty/core/blocks/actor.py`, migration `051_op_log_actor.sql`,
+`src/kitty/core/blocks/sessions.py`, `history.page_history`/`history.citations`.
+
+- **Actor columns.** `op_log` gains `actor` (user, agent, client, system, peer; CHECK),
+  `actor_name`, `actor_session` and `actor_via` (JSON, a merge's carried actors). The entry
+  point sets the actor with `actor.acting(...)` (a context variable); `transact(actor=)`
+  overrides it; unset is the person. Windows (live `txn`, HTTP) are the user; `kitty mcp` is
+  an agent with one session per server process, named from the client's `initialize`
+  (`clientInfo.name`, via server middleware); `kitty notes` is an agent with one session per
+  command or `KITTY_AGENT_SESSION` (`KITTY_AGENT_NAME`); rika!'s assistant is agent `rika!`
+  with session `rika:<conversation>`; paired-client captures are the client (pairing name,
+  session = client ID); migrations' Python steps and compaction purges are system.
+- **Migration 051** adds the columns and classifies existing rows: the block migrations'
+  rows (`op_log_migrated`) system/migration, other devices' rows peer (named from `peers`),
+  compaction purges (purges plus the revision bump) system/compaction, the rest user. The
+  backfill lifts `op_log_append_only` and recreates it unchanged in the same transaction.
+  050 is claimed by rika! math phase 2 (`050_math_books`), not on main yet (explained gap).
+- **Peer sync** carries actors: each `pages` item lists `actors` (who wrote the pusher's rows
+  for that page after `since`, merges from the puller left out; peer rows contribute what they
+  carried), and the puller records the merged row as `peer` (the paired name) with `via`.
+  Relays keep the original actor. Older builds send none and merge as the peer alone. A merge
+  row mixes everything the batch carried for that page: an agent session is undoable on the
+  other device only for rows whose `via` is that session alone (mixed ones are reported).
+- **History** groups sessions by device and actor (`actor` on each session; `actor=` kind and
+  `session=` filters on `GET /api/blocks/history`); the History dialog names each session,
+  filters by actor, and offers **Undo this agent session…** on agent sessions (a dry run is
+  shown first). `GET /api/blocks/sessions` lists sessions; live `change` messages carry `actor`.
+- **Undo one session** (`sessions.undo_session`, `POST /api/blocks/sessions/undo`, MCP
+  `undo_agent_session`, `kitty notes undo-session`): rebuilds each touched block's state before
+  and after every session transaction from the log, walks them newest first over the current
+  state field by field (place, type, text, each property but `revision`, live): a field still
+  holding what the agent left goes back; one already back is left; anything else is someone
+  else's later change, kept and reported. Blocks the agent created go to Trash only if
+  unchanged and not holding others' blocks. The inverse is planned against the current pages
+  and applied as ONE `transact`; an agent undoing its own session records it as `<session>:undo`.
+- **Pinned citations** (`history.citations`, `GET /api/blocks/citations`, MCP
+  `check_citations`, `kitty notes citations`): the block as of `seq` (like `preview`) against
+  now, by content (type, text, content properties, Trash; not tags or view state), with the
+  newest changing `seq` and a word diff. Notes marks a changed source **source changed since**
+  and opens the diff in the side panel; it rechecks after every live change.
+- **Tests:** `tests/test_block_actor.py`, plus actor cases in `test_sync_service.py`,
+  `test_web_block_api.py`, `test_mcp_blocks.py`, `test_notes_cli.py`, `test_web_clients.py`,
+  `test_rika_loop.py`; browser: `blockEditor.browser.test.mjs` (History actors, filter, undo)
+  and `notes.browser.test.mjs` (source changed since).
 
 ## Verified facts
 

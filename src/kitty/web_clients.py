@@ -40,6 +40,7 @@ from contextlib import closing
 
 from kitty import web_mirror
 from kitty.core import clients, endpoint, ingress, mirror
+from kitty.core.blocks.actor import Actor, acting
 from kitty.db import connect
 
 INGRESS = "/api/ingress"
@@ -253,7 +254,9 @@ def ingress_request(handler) -> None:
             handler._json(200, MIRROR_FRAMES[path](app, client, body))
             return
         body = _body(handler)
-        with app.mutation_lock, closing(connect(app.settings.db_path)) as conn:
+        # The capture's block transactions are the paired client's (its pairing names it).
+        with app.mutation_lock, closing(connect(app.settings.db_path)) as conn, \
+                acting(Actor("client", client["name"] or client["kind"], client["id"])):
             result = CAPTURES[path](conn, body)
         app.mutated()
         handler._json(200, result)
