@@ -2176,7 +2176,8 @@ The window is its own program (a separate systemd scope), so closing the termina
 leaves it open; in the window list its app id is `kitty`. Before filling, rika!
 switches Firefox's remote control to its non-automation mode, so pages see
 `navigator.webdriver = false` (bot checks such as reCAPTCHA read it). That needs
-`--remote-allow-system-access`: while the window is open, any program on this
+system access (`--remote-allow-system-access`, or `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1`
+from Firefox 159; rika! sets both): while the window is open, any program on this
 computer that reaches 127.0.0.1:9333 can run code inside that Firefox, so keep only
 job-site logins in it.
 

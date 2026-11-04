@@ -75,7 +75,8 @@ def firefox_command(firefox: str, profile_dir: Path, port: int, *, headless: boo
         "--no-remote",
         "--name", APP_ID,
         f"--remote-debugging-port={port}",
-        # chrome-scope scripts, needed by hide_automation (see its docstring for the cost)
+        # chrome-scope scripts, needed by hide_automation (see its docstring for the cost);
+        # Firefox 159+ reads MOZ_REMOTE_ALLOW_SYSTEM_ACCESS instead, which _start sets
         "--remote-allow-system-access",
     ]
     if headless:
@@ -187,10 +188,15 @@ def _start(command: list[str]) -> subprocess.Popen:
     Even LD_LIBRARY_PATH_ORIG can contain an incompatible Nix GTK/glibc runtime.
     Firefox's own launcher supplies its dependencies; only its child environment
     is cleaned, since the application still needs its bundled libraries.
+
+    Firefox 159 dropped the --remote-allow-system-access switch for the
+    MOZ_REMOTE_ALLOW_SYSTEM_ACCESS variable; without it chrome-scope scripts and
+    scripts in privileged pages such as about:home fail.
     """
     environment = os.environ.copy()
     environment.pop("LD_LIBRARY_PATH", None)
     environment.pop("LD_LIBRARY_PATH_ORIG", None)
+    environment["MOZ_REMOTE_ALLOW_SYSTEM_ACCESS"] = "1"
     try:
         return subprocess.Popen(
             command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -281,7 +287,8 @@ def hide_automation(port: int, *, wait_seconds: float = 15.0) -> bool:
     navigator.webdriver = true, which bot checks such as reCAPTCHA read. Firefox
     also has a mode for an assistant driving an already running browser that
     leaves the flag false; restarting remote control in that mode (same port)
-    hides it. The cost: chrome-scope scripts need --remote-allow-system-access,
+    hides it. The cost: chrome-scope scripts need system access (--remote-allow-system-access,
+    or MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1 from Firefox 159),
     so any program on this computer that reaches the port can run code inside
     this Firefox, not only drive its tabs. The port listens on 127.0.0.1 only.
     """
