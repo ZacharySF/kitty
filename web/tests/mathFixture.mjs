@@ -270,9 +270,10 @@ export async function installMathFixture(context, { history = [], streak = 3, mi
     if (path === "/explain") {
       state.explained.push(body);
       return json(route, {
-        review_id: "a".repeat(32), purpose: "math-explain", model: "test/math-model", text: `Problem and working:\n${body.working}`,
+        purpose: "math-explain", model: "test/math-model", text: `Problem and working:\n${body.working}`,
         system_prompt: "Point to the first faulty step in the working and say why. Never give the final answer.", max_output_tokens: 400,
-        maximum_cost_usd: 0.0012, expires_at: new Date(Date.now() + 600_000).toISOString(), privacy_notice: "Only the problem, your answer and your working are sent.",
+        maximum_cost_usd: 0.0012, privacy_notice: "Only the problem, your answer and your working are sent.",
+        effect: { id: "a".repeat(32), digest: "b".repeat(64), expires_at: new Date(Date.now() + 600_000).toISOString() },
       });
     }
     return json(route, { error: `No fixture for ${request.method()} ${path}` }, 404);

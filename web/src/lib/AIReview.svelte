@@ -29,16 +29,16 @@
     active?: boolean;
     previewLabel?: string;
   } = $props();
+  /** The reviewed plan; `effect` is its proposed `ai_request` effect, run by digest. */
   type Review = {
-    review_id: string;
     purpose: string;
     model: string;
     text: string;
     system_prompt: string;
     max_output_tokens: number;
     maximum_cost_usd: number;
-    expires_at: string;
     privacy_notice: string;
+    effect: { id: string; digest: string; expires_at: string };
   };
   let review = $state<Review | null>(null);
   let busy = $state(false);
@@ -87,7 +87,8 @@
     output = "";
     try {
       const started = await api<{ task: TaskRecord }>("/ai/run", {
-        review_id: review.review_id,
+        effect_id: review.effect.id,
+        digest: review.effect.digest,
         confirmed: true,
         budget_usd: budget,
       });

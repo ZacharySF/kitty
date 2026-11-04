@@ -16,6 +16,7 @@ import hashlib
 import importlib
 import json
 import re
+import secrets
 import shutil
 import signal
 import sqlite3
@@ -148,7 +149,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
     ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_keys"),
-    (None, "web_devices"), (None, "web_search"),
+    (None, "web_devices"), (None, "web_search"), (None, "web_effects"),
     (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
     ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
@@ -183,6 +184,9 @@ class WebApplication:
         self.origin: str | None = None
         self.static_dir = static_dir.resolve()
         self.mutation_lock = threading.Lock()
+        #: This launch's window session: approvals of effects (kitty.core.effects) are bound
+        #: to it, so an approval never outlives the rika! process whose window granted it.
+        self.ui_session = "ui-" + secrets.token_hex(12)
         self.discovery_lock = threading.Lock()
         self.discovery: dict[str, Any] = {"running": False, "error": None, "result": None}
         #: Set when the server closes: long-lived upgraded streams end themselves.

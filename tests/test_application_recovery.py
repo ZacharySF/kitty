@@ -248,6 +248,42 @@ def test_receipts_are_typed_single_use_and_cannot_replay_stale_decisions():
         agent.record_result(second, "secret exception text")
 
 
+def test_out_of_set_custom_planner_decision_is_refused_by_the_kernel_policy(monkeypatch):
+    refusals = []
+    approve = recovery.effects.policy_approve
+
+    def spy(kind, proposal):
+        try:
+            return approve(kind, proposal)
+        except recovery.effects.Refused:
+            refusals.append((kind.name, proposal.payload, proposal.preconditions["allowed"]))
+            raise
+
+    monkeypatch.setattr(recovery.effects, "policy_approve", spy)
+    agent = RecoveryAgent(policy=policy(), planner=Choose(Action.RELOAD))
+    decision = agent.decide(Observation("a", can_reload=False))
+    assert decision == Decision(Action.HANDOFF, Reason.ACTION_DENIED)
+    assert refusals == [("recovery_step", {"action": "reload", "wait_seconds": 0},
+                         ["inspect", "handoff"])]
+
+
+def test_wait_above_bound_is_refused_and_kernel_grant_takes_one_receipt():
+    class LongWait:
+        def plan(self, observation, allowed_actions, wait_seconds):
+            return Decision(Action.WAIT, Reason.DIAGNOSTIC, wait_seconds + 1)
+
+    agent = RecoveryAgent(policy=policy(wait_seconds=1), planner=LongWait())
+    assert agent.decide(Observation("busy", busy=True)) == Decision(Action.HANDOFF, Reason.ACTION_DENIED)
+    agent = RecoveryAgent(policy=policy())
+    decision = agent.decide(Observation("a", can_retry=True))
+    agent.record_result(decision, Result.COMPLETED)
+    assert agent._grant.used
+    with pytest.raises(ValueError, match="Invalid or stale recovery receipt"):
+        agent.record_result(decision, Result.COMPLETED)
+    with pytest.raises(ValueError, match="Invalid or stale recovery receipt"):
+        agent.record_result(decision, Result.FAILED)
+
+
 def test_events_and_remote_observations_never_include_local_signature_or_text():
     signature = "synthetic-secret@example.invalid /private/path?password=sentinel"
     agent = RecoveryAgent()

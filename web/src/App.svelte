@@ -23,6 +23,7 @@
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
   import PairingPrompt from "./lib/PairingPrompt.svelte";
+  import EffectsPrompt from "./lib/EffectsPrompt.svelte";
   import BuildEditor from "./lib/BuildEditor.svelte";
   import { buildStore } from "./lib/build.svelte";
   import PetalDrift from "./lib/PetalDrift.svelte";
@@ -457,6 +458,7 @@
   </div>
   <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
     {#if workspace && view !== "settings"}<PairingPrompt onsettings={() => navigate("settings")} />{/if}
+    {#if workspace}<EffectsPrompt />{/if}
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">
         <Badge label="DEMO" intent="warning" size="sm" />Synthetic workspace.
         Local changes work; external actions are disabled.

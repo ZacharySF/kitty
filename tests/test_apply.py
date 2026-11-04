@@ -7,6 +7,7 @@ tests/fixtures/forms, and are skipped when Firefox is not installed.
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -1920,52 +1921,87 @@ def test_workday_prefixed_review_stops_without_waiting_for_missing_fields(page):
     assert _js(page, "() => [window.__steps, window.__submitted]") == [0, 0]
 
 
-def _approval(space, job):
-    from kitty.core.apply.filler import FillApproval
-    resume = choose_resume(space.conn, space.config, job)
-    return FillApproval(job.id, job.url, job.apply_url, job.company_name, tuple(job.tracks),
-                        resume.id, resume.file_hash, resume.file_path)
+def _approval(space, job, *, bind=True, execute=True):
+    """A stored prepare_applications effect binding `job` and its chosen resume now,
+    through the real kernel (a private registry holds the synthetic kind)."""
+    from kitty.core import effects
+    from kitty.core.apply import filler
+    from kitty.core.blocks.actor import Actor
+
+    binding = filler.job_binding(job, choose_resume(space.conn, space.config, job))
+    expected = {"job_ids": [job.id], **({filler.job_precondition(job.id): binding} if bind else {})}
+    registry = effects.Registry()
+    registry.register(effects.Executable(
+        name=filler.PREPARATION_KIND, title="Synthetic preparation", proposers=frozenset({"user"}),
+        preconditions=lambda ctx, payload: expected, run=lambda ctx, effect: None,
+    ))
+    user = Actor("user", None, "ui-test")
+    proposed = effects.propose(space.conn, filler.PREPARATION_KIND, {"job_ids": [job.id]},
+                               actor=user, registry=registry)
+    if not execute:
+        return proposed
+    executed, _ = effects.approve_and_execute(space.conn, proposed.id, proposed.digest, actor=user,
+                                              registry=registry)
+    return executed
 
 
-@pytest.mark.parametrize("change", ["missing", "bytes", "record", "url"])
+def _reviewed_resume(approval, job):
+    from kitty.core.apply import filler
+    return approval.preconditions[filler.job_precondition(job.id)]["resume"]
+
+
+@pytest.mark.parametrize("change", ["missing", "bytes", "record", "url", "unexecuted"])
 def test_approved_fill_fails_before_browser_if_inputs_changed(space, monkeypatch, change):
     from kitty.core.apply import filler
     job = _job(space, "greenhouse")
-    approval = _approval(space, job)
-    approvals = {job.id: approval}
-    if change == "missing":
-        approvals.clear()
-    elif change == "bytes":
-        Path(approval.file_path).write_bytes(b"%PDF-1.4\n% changed resume\n")
+    approval = _approval(space, job, bind=change != "missing", execute=change != "unexecuted")
+    if change == "bytes":
+        Path(_reviewed_resume(approval, job)["file_path"]).write_bytes(b"%PDF-1.4\n% changed resume\n")
     elif change == "record":
         replacement = space.settings.root / "replacement.pdf"
         replacement.write_bytes(b"%PDF-1.4\n% different registered resume\n")
         resumes_core.add_resume(space.conn, space.track.default_resume, replacement)
-    else:
+    elif change == "url":
         space.conn.execute("UPDATE jobs SET apply_url=? WHERE id=?",
                            ("https://example.invalid/changed", job.id))
     monkeypatch.setattr(filler, "ensure_firefox", lambda *a: pytest.fail("Must reject before browser"))
     with pytest.raises(filler.ApprovalError, match="review the plan again"):
-        filler.fill_jobs(space.settings, space.config, [job.id], approvals=approvals)
+        filler.fill_jobs(space.settings, space.config, [job.id], approval=approval)
+
+
+def test_filler_trusts_only_the_stored_executed_approval(space):
+    from kitty.core.apply import filler
+    job = _job(space, "greenhouse")
+    approval = _approval(space, job)
+    reviewed = dict(_reviewed_resume(approval, job))
+    # An in-memory edit cannot redirect the run: the append-only stored effect is the authority.
+    _reviewed_resume(approval, job)["file_hash"] = "0" * 64
+    assert filler.approved_resume(approval, space.conn, space.settings, job).file_hash == reviewed["file_hash"]
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        space.conn.execute("UPDATE effects SET preconditions='{}' WHERE id=?", (approval.id,))
+    for forged in (replace(approval, digest="0" * 64), replace(approval, id="f" * 32)):
+        with pytest.raises(filler.ApprovalError, match="review the plan again"):
+            filler.approved_resume(forged, space.conn, space.settings, job)
 
 
 def test_approved_fill_uploads_only_reviewed_bytes_after_default_changes(space, page):
     job = _job(space, "greenhouse")
     approval = _approval(space, job)
-    expected = Path(approval.file_path).read_bytes()
+    reviewed = _reviewed_resume(approval, job)
+    expected = Path(reviewed["file_path"]).read_bytes()
     second = space.settings.root / "new-default.pdf"
     second.write_bytes(b"%PDF-1.4\n% different default resume\n")
     replacement = resumes_core.add_resume(space.conn, "New default", second)
     space.conn.execute("INSERT INTO resume_default_overrides (track, resume_id) VALUES (?, ?)",
                        (space.track.name, replacement.id))
     report = fill_job(page, space.conn, space.settings, space.config, job, approval=approval)
-    assert report.resume_id == approval.resume_id
-    assert jobs_core.get_job(space.conn, job.id).resume_id == approval.resume_id
+    assert report.resume_id == reviewed["id"]
+    assert jobs_core.get_job(space.conn, job.id).resume_id == reviewed["id"]
     content = page.main.call("""async () => Array.from(new Uint8Array(
         await document.querySelector('input[type=file]').files[0].arrayBuffer()
     ))""", page_realm=True)
     assert bytes(content) == expected
-    assert _watched_tab(job, page, report).resume_id == approval.resume_id
+    assert _watched_tab(job, page, report).resume_id == reviewed["id"]
     _assert_nothing_submitted(page)
 
 
@@ -1974,7 +2010,8 @@ def test_approved_upload_checks_source_and_snapshot_at_upload(space, monkeypatch
     from kitty.core.apply import filler
     job = _job(space, "greenhouse")
     approval = _approval(space, job)
-    path = Path(approval.file_path)
+    reviewed = _reviewed_resume(approval, job)
+    path = Path(reviewed["file_path"])
     if change == "changed":
         path.write_bytes(b"%PDF-1.4\n% changed after browser began\n")
     elif change == "missing":
@@ -1982,14 +2019,14 @@ def test_approved_upload_checks_source_and_snapshot_at_upload(space, monkeypatch
     else:
         folder = space.settings.data_dir / "approved_resumes"
         folder.mkdir(parents=True)
-        frozen = folder / f"{approval.file_hash}.pdf"
+        frozen = folder / f"{reviewed['file_hash']}.pdf"
         if change == "symlink":
             frozen.symlink_to(path)
         else:
             frozen.write_bytes(b"not the reviewed bytes")
     monkeypatch.setattr(filler, "upload", lambda *a: pytest.fail("Unapproved bytes must not upload"))
     with pytest.raises(filler.ApprovalError, match="review the plan again"):
-        filler._upload_approved(None, "resume-input", path, approval, space.conn, space.settings)
+        filler._upload_approved(None, "resume-input", path, approval, job.id, space.conn, space.settings)
 
 
 def test_firefox_start_requires_desktop_but_reuses_existing_browser(space, monkeypatch):
@@ -2745,7 +2782,7 @@ def test_reviewed_plan_cannot_authorize_ineligible_research(space):
     job = _job(space, "lever")
     with pytest.raises(filler.ApprovalError):
         fill_jobs(
-            space.settings, space.config, [job.id], approvals={},
+            space.settings, space.config, [job.id], approval=_approval(space, job),
             eligibility_override=filler.EligibilityOverride.COMPATIBILITY_RESEARCH,
         )
 

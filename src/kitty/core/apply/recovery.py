@@ -21,6 +21,8 @@ from typing import Protocol
 
 import httpx
 
+from kitty.core import effects
+
 
 class Action(StrEnum):
     INSPECT = "inspect"
@@ -184,6 +186,29 @@ class Decision:
         _seconds(self.wait_seconds, "wait")
         if self.wait_seconds > 30 or (self.action != Action.WAIT and self.wait_seconds != 0):
             raise ValueError("Invalid action arguments")
+
+
+def _step_allowed(payload: dict, preconditions: dict) -> bool:
+    """The recovery_step policy: exactly an allowed action, waiting only within the bound."""
+    action, wait = payload.get("action"), payload.get("wait_seconds")
+    if action not in preconditions.get("allowed", ()) or type(wait) not in (int, float):
+        return False
+    if action == Action.WAIT.value:
+        return 0 <= wait <= preconditions.get("wait_limit", 0)
+    return wait == 0
+
+
+#: One planned recovery action, approved in memory by the observation's computed allowed set.
+RECOVERY_STEP = effects.REGISTRY.register(effects.Kind(
+    name="recovery_step", title="Recovery step", proposers=frozenset({"system", "agent"}),
+    preconditions=lambda ctx, payload: {}, review="inline", approver="policy", policy=_step_allowed))
+
+
+def _proposal(decision: Decision, allowed: tuple[Action, ...], wait_limit: float) -> effects.Proposal:
+    return effects.Proposal(
+        RECOVERY_STEP.name,
+        {"action": decision.action.value, "wait_seconds": decision.wait_seconds},
+        {"allowed": [action.value for action in allowed], "wait_limit": wait_limit})
 
 
 class Planner(Protocol):
@@ -469,7 +494,8 @@ class RecoveryAgent:
         self._best_required: int | None = None
         self._best_invalid: int | None = None
         self._last: Decision | None = None
-        self._last_recorded = False
+        self._proposal: effects.Proposal | None = None
+        self._grant: effects.Grant | None = None
         self._terminal: Decision | None = None
         self._blocker = Blocker.NONE
         self._history: list[Attempt] = []
@@ -478,9 +504,14 @@ class RecoveryAgent:
 
     def _stop(self, reason: Reason) -> Decision:
         self._terminal = Decision(Action.HANDOFF, reason)
-        self._last = self._terminal
-        self._last_recorded = False
+        self._approve(self._terminal, (Action.HANDOFF,), 0)
         return self._terminal
+
+    def _approve(self, decision: Decision, allowed: tuple[Action, ...], wait_limit: float) -> None:
+        """Policy-approve the decision (Refused when outside the set); its grant takes one receipt."""
+        proposal = _proposal(decision, allowed, wait_limit)
+        grant = effects.policy_approve(RECOVERY_STEP, proposal)
+        self._last, self._proposal, self._grant = decision, proposal, grant
 
     def _remaining(self) -> float:
         if self._started is None:
@@ -557,17 +588,20 @@ class RecoveryAgent:
             return self._stop(Reason.REMOTE_ERROR)
         if self._remaining() <= 0:
             return self._stop(Reason.DEADLINE)
-        if (not isinstance(decision, Decision) or decision.action not in allowed
-                or (decision.action == Action.WAIT and decision.wait_seconds > wait_seconds)):
+        if not isinstance(decision, Decision):
+            return self._stop(Reason.ACTION_DENIED)
+        allowed_set = tuple(allowed)
+        try:
+            effects.policy_approve(RECOVERY_STEP, _proposal(decision, allowed_set, wait_seconds))
+        except effects.Refused:
             return self._stop(Reason.ACTION_DENIED)
         if decision.action == Action.HANDOFF:
             return self._stop(decision.reason)
         if decision.action == Action.WAIT:
             decision = Decision(Action.WAIT, decision.reason,
                                 min(decision.wait_seconds, self._remaining()))
+        self._approve(decision, allowed_set, wait_seconds)
         self._actions[decision.action] += 1
-        self._last = decision
-        self._last_recorded = False
         self._action_signature = observation.signature
         return decision
 
@@ -588,10 +622,13 @@ class RecoveryAgent:
         }
 
     def record_result(self, decision: Decision, result: Result) -> dict:
-        if decision is not self._last or self._last_recorded or result == Result.PLANNED:
+        if decision is not self._last or self._grant is None or result == Result.PLANNED:
             raise ValueError("Invalid or stale recovery receipt")
         event = self.event(decision, result)
-        self._last_recorded = True
+        try:
+            self._grant.consume(self._proposal)
+        except effects.Refused:
+            raise ValueError("Invalid or stale recovery receipt") from None
         self._history.append(Attempt(decision.action, result))
         if (result in (Result.FAILED, Result.NO_EFFECT) and self._action_signature is not None
                 and decision.action in (Action.FOCUS, Action.RECOMMIT, Action.RETRY, Action.RELOAD)):

@@ -2276,6 +2276,103 @@ def notes_citations(
     _emit(result, as_json, "\n".join(lines))
 
 
+# ------------------------------------------------------------------ effects (proposals)
+
+effects_app = typer.Typer(no_args_is_help=True, help=(
+    "Propose effects for the owner to approve in rika!'s pending approvals (kitty.core.effects). "
+    "Proposals are made as an agent session (one per command, or KITTY_AGENT_SESSION); "
+    "nothing here approves or executes one, and submit_application never executes."))
+app.add_typer(effects_app, name="effects")
+
+
+@contextmanager
+def _effects() -> Iterator:
+    """The workspace and this command's agent actor; refusals print and exit 1."""
+    from kitty.core import effects
+    from kitty.core.blocks.actor import cli_agent
+
+    try:
+        agent = cli_agent()
+    except ValueError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=1) from None
+    workspace = _open()
+    try:
+        yield workspace, agent
+    except effects.EffectError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=1) from None
+    finally:
+        workspace.close()
+
+
+def _effect_line(effect: dict) -> str:
+    actor = effect["actor"]
+    who = actor["name"] or actor["kind"]
+    return f"{effect['state']:<9} {escape(effect['title'])}  by {escape(who)}  [dim]{effect['id']}[/dim]"
+
+
+def _propose(kind: str, payload: dict, as_json: bool) -> None:
+    from kitty.core import effect_kinds, effects
+
+    with _effects() as (workspace, agent):
+        effect = effects.propose(workspace.conn, kind, payload, actor=agent,
+                                 ctx=effect_kinds.Context(workspace.conn, workspace.config))
+        result = {**effect.as_dict(), "events": effects.events(workspace.conn, effect.id)}
+    _emit(result, as_json, _effect_line(result) + "\nWaiting for approval in rika!'s pending approvals.")
+
+
+@effects_app.command("propose-delete")
+def effects_propose_delete(
+    block: Annotated[str, typer.Argument(help="The block's ID (a text block of a note page).")],
+    reason: Annotated[Optional[str], typer.Option("--reason", help="Why, shown to the owner.")] = None,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Propose moving a block and its children to Trash; it runs only once the owner approves it."""
+    _propose("delete_block", {"block": block, "reason": reason}, as_json)
+
+
+@effects_app.command("propose-submit")
+def effects_propose_submit(
+    job_id: Annotated[int, typer.Argument(help="The job's number.")],
+    reason: Annotated[Optional[str], typer.Option("--reason", help="Why, shown to the owner.")] = None,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Ask the owner to submit an application himself: it shows what would be submitted and never executes."""
+    _propose("submit_application", {"job_id": job_id, "reason": reason}, as_json)
+
+
+@effects_app.command("list")
+def effects_list(as_json: Annotated[bool, _JSON_OPTION] = False) -> None:
+    """Effects waiting in the pending approvals, oldest first, and the latest decided ones."""
+    from kitty.core import effect_kinds, effects  # noqa: F401 (registers the kinds listed here)
+
+    with _effects() as (workspace, _agent):
+        pending = [effect.as_dict() for effect in effects.pending(workspace.conn)]
+        recent = [effect.as_dict() for effect in effects.recent(workspace.conn)]
+    lines = [_effect_line(effect) for effect in pending + recent]
+    _emit({"pending": pending, "recent": recent}, as_json, "\n".join(lines) if lines else "No effects.")
+
+
+@effects_app.command("show")
+def effects_show(
+    effect_id: Annotated[str, typer.Argument(help="The effect's ID.")],
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """One effect: what it does, its preconditions and every state it went through."""
+    import json
+
+    from kitty.core import effect_kinds, effects  # noqa: F401 (registers the kinds shown here)
+
+    with _effects() as (workspace, _agent):
+        effect = effects.get(workspace.conn, effect_id)
+        result = {**effect.as_dict(), "events": effects.events(workspace.conn, effect.id)}
+    lines = [_effect_line(result), escape(json.dumps(result["preview"], indent=2, ensure_ascii=False))]
+    lines += [f"  {event['at']}  {event['state']}  {escape(event['actor']['name'] or event['actor']['kind'])}"
+              for event in result["events"]]
+    _emit(result, as_json, "\n".join(lines))
+
+
 def main() -> None:
     """Console-script entry point."""
     app()
