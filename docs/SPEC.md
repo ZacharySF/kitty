@@ -435,3 +435,12 @@ Stage 1: done.
   Brain or 2D atlas refits to the wider stage. Checks:
   `node --test web/tests/workbench.browser.test.mjs web/tests/brain.browser.test.mjs
   web/tests/atlasNodes.browser.test.mjs` (same browser variables as above).
+- 2026-11-03: Agents reach notes as blocks (platform design, "Block API"). With the
+  workspace module, `kitty mcp` adds notes tools (list/get/search/backlinks/tags; create,
+  append, insert, update, move, delete to Trash, Inbox, quick note, tag) and the CLI adds
+  `kitty notes ls|show|search|new|append|inbox|quick [--json]`, both over
+  `kitty.core.block_api`; with applyai off the job tools are absent and with workspace off
+  the notes tools are. Reads cite blocks as `((id@seq))`; writes are block transactions
+  returning `seq` and the page `revision`, and write only text blocks of note pages.
+  Checks: `uv run pytest tests/test_block_api.py tests/test_mcp_blocks.py
+  tests/test_notes_cli.py tests/test_web_block_api.py tests/test_modules_mcp.py`.

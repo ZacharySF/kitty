@@ -512,6 +512,80 @@ def page_matches(conn: sqlite3.Connection, text: str) -> set[str]:
     return found
 
 
+#: Block search covers the blocks of these roots (tags are names, not content).
+_BLOCK_WHERE = "d.kind='block' AND r.deleted_at IS NULL AND r.type IN ('page','document','quick_note')"
+_BLOCK_HITS = """SELECT d.id,d.ref,d.page_id,d.type,r.type AS root_type,r.text AS root_title,
+    CAST(json_extract(r.properties,'$.number') AS INTEGER) AS number,{rank} AS score
+    FROM {table} JOIN search_docs d ON d.id={table}.rowid JOIN blocks r ON r.id=d.page_id
+    WHERE {table} MATCH ? AND """ + _BLOCK_WHERE + " ORDER BY score, d.id"
+_BLOCK_KEYS = "SELECT d.ref FROM {table} JOIN search_docs d ON d.id={table}.rowid JOIN blocks r ON r.id=d.page_id WHERE {table} MATCH ? AND " + _BLOCK_WHERE
+
+
+def block_hits(conn: sqlite3.Connection, text: str, *, limit: int = 20) -> dict:
+    """Ranked blocks of note pages, documents and quick notes: one hit per block (a root's hit is its title).
+
+    The same two plans as `search` (word prefixes in bm25 order, then substrings from three
+    characters on), but blocks are not grouped into their page. Each hit is ``{block_id,
+    page_id, root_type, number, page_title, type, snippet, match}``; ``snippet`` is
+    ``[[text, is_hit], ...]`` segments of the block's body (a root's title).
+    """
+    if not isinstance(text, str) or len(text) > MAX_QUERY or "\x00" in text:
+        raise ValueError(f"Search text must be a string of at most {MAX_QUERY} characters")
+    if type(limit) is not int or not 1 <= limit <= MAX_LIMIT:
+        raise ValueError(f"Limit must be 1-{MAX_LIMIT}")
+    require(conn)  # block documents are written by every block transaction; the queue holds none
+    plans = [(table, query, rank, match, tokens) for table, query, rank, match, tokens in (
+        ("search_fts", prefix_query(text), f"bm25(search_fts,{TITLE_WEIGHT},1.0)", "word", 16),
+        ("search_grams", substring_query(text), f"bm25(search_grams,{TITLE_WEIGHT},1.0)", "substring", 64),
+    ) if query]
+    hits, seen, more = [], set(), False
+    with (nullcontext() if conn.in_transaction else transaction(conn)):
+        for table, query, rank, match, tokens in plans:
+            if more:
+                break
+            for row in conn.execute(_BLOCK_HITS.format(table=table, rank=rank), (query,)):
+                if row["ref"] in seen:
+                    continue
+                if len(hits) >= limit:
+                    more = True
+                    break
+                seen.add(row["ref"])
+                hits.append((row["id"], table, query, tokens, {
+                    "block_id": row["ref"], "page_id": row["page_id"], "root_type": row["root_type"],
+                    "number": row["number"], "page_title": _root_title(row["root_type"], row["root_title"]),
+                    "type": row["type"], "match": match}))
+        total = len(hits)
+        if more:
+            total = conn.execute("SELECT COUNT(*) FROM (" + " UNION ".join(_BLOCK_KEYS.format(table=table) for table, *_ in plans)
+                                 + ")", [query for _, query, *_ in plans]).fetchone()[0]
+        result = []
+        for rowid, table, query, tokens, hit in hits:
+            title, snippet = _marks(conn, table, query, rowid, tokens)
+            hit["snippet"] = snippet if any(part[0] for part in snippet) else title
+            result.append(hit)
+    return {"query": text, "hits": result, "total": total, "truncated": more}
+
+
+def _root_title(root_type: str, text: str) -> str:
+    """A root's display title: a quick note is titled by its first line."""
+    return (text.strip().split("\n", 1)[0] if root_type == "quick_note" else text)[:200]
+
+
+def phrase_blocks(conn: sqlite3.Connection, text: str) -> list[tuple[str, str]]:
+    """``(block id, page id)`` of every searchable non-root block whose body holds `text`'s words as one phrase.
+
+    Candidates only: the caller confirms each match (e.g. whole words outside links).
+    """
+    tokens = words(text)[:MAX_TOKENS]
+    if not tokens:
+        return []
+    require(conn)
+    expression = '{body} : "' + " ".join(tokens) + '"'
+    return [(row[0], row[1]) for row in conn.execute(
+        "SELECT d.ref,d.page_id FROM search_fts JOIN search_docs d ON d.id=search_fts.rowid JOIN blocks r ON r.id=d.page_id "
+        "WHERE search_fts MATCH ? AND d.ref<>d.page_id AND " + _BLOCK_WHERE + " ORDER BY d.id", (expression,))]
+
+
 def page_titles_within(conn: sqlite3.Connection, tokens: set[str], *, exclude: str | None = None) -> list[dict]:
     """``{id, block_id, title}`` of every live note page whose title's words all occur in `tokens`.
 

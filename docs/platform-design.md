@@ -965,6 +965,68 @@ scheduled oracle"). Code: `src/kitty/core/search.py`, `src/kitty/core/blocks/sea
   title-only index would make them cheaper); a full rebuild runs the FTS triggers per row;
   titles without word characters are never found as mentions.
 
+## Block API: what was built
+
+The paper's §13 step 2 ("block read, write and search tools are added to the API"), closing
+the §11 limit "MCP and CLI expose the job-search module only". Code:
+`src/kitty/core/block_api.py` (no web imports), `WorkspaceTools` in `src/kitty/mcp_server.py`,
+`kitty notes` in `src/kitty/cli.py`, routes in `src/kitty/web_blocks.py`; block-level search
+(`search.block_hits`, `search.phrase_blocks`) in `src/kitty/core/search.py`.
+
+- **One core, three thin consumers.** `block_api` holds every rule; the MCP notes tools,
+  `kitty notes` (ls, show, search, new, append, inbox, quick; `--json`) and the HTTP routes
+  only validate their transport's arguments and call it. The routes reuse
+  `GET /api/blocks/page` for the editor's page and add only what was missing: page listing,
+  block search, backlinks and structured writes (`/api/blocks/pages/create`, `/insert`,
+  `/update`, `/move`, `/delete`, `/inbox`), all behind the UI secret. Quick notes and tags
+  keep their routes.
+- **Reads** run in one SQLite read snapshot and return the op-log `seq` it reflects; every
+  block carries `((id@seq))`. That pins the paper's §14.3 citation: the block as of `seq`,
+  which `history.preview(page, seq)` rebuilds. A pinned citation is a block reference
+  (`tokens.REF` now accepts the `@seq` suffix, as does `NoteBlockText.svelte`), so citing
+  writes are visible in backlinks and Notes previews. `get_page` returns the tree (ids,
+  types, content properties without view state or raw tag keys, attached tag names, order
+  keys, children); canvases are counted, not listed. `search_blocks` uses the FTS index
+  per block (not per record as Ctrl K) over note pages, documents and quick notes.
+  `backlinks` lists `((references))` (for a page, to any of its blocks, from other pages),
+  `[[links]]` (`block_topics`), unlinked title mentions (FTS phrase candidates confirmed as
+  whole words outside links) and tagged blocks (`block_tags`).
+- **Writes** are each one `blocks.transact` inside one immediate transaction with their
+  lookups, so `op_log`, History, Trash, live push (the web server's log follower picks up
+  rows written by the separate MCP/CLI process within 0.1 s), *always* tags and the search
+  index see them like editor edits. Receipts carry `txn_id`, `seq`, the page `revision`,
+  per-page `{seq, revision}` (a move between pages touches two) and the written blocks'
+  citations. An optional `revision` becomes the transaction's `base`, so a stale agent is
+  refused with 409 instead of overwriting a person's typing.
+- **Scope of writes:** note pages only (documents are exact-byte Markdown chunks; quick
+  notes have their own editor; `quick_note` only creates), text-flow types only
+  (`WRITE_TYPES`, the editor's minus `page_link`), properties `checked`, `collapsed`,
+  `language` only; tags only through `tag_block`; a page's root takes only a new title;
+  pages are not deleted. Blocks only: no applicant data is read or written.
+- **Modules:** the notes tools and `kitty notes` belong to `workspace`, the job tools to
+  `applyai`; the server advertises the tools of the modules it started with and refuses
+  the others before opening the workspace (`tests/test_modules_mcp.py`).
+- **Tests:** `tests/test_block_api.py` (tree, citations replayable by History, every write,
+  stale revisions, refusals, search, backlinks, tags, Inbox, quick notes, log replay and
+  index oracle after writes), `tests/test_mcp_blocks.py` (schemas and annotations, a
+  protocol round trip), `tests/test_notes_cli.py`, `tests/test_web_block_api.py` (routes,
+  live push, a write from another connection reaching an open window, secret and module
+  gating).
+- **Smoke (2026-11-03, temporary workspace with only `workspace` on):** a stdio MCP client
+  started `uv run kitty mcp`, saw only the 14 notes tools, created a page with nested
+  blocks, read it back with `((id@seq))` citations, found a block with `search_blocks`,
+  appended a block quoting that citation (seq and revision moved to 2), had a stale
+  `revision` refused with 409, saw the citing block in `get_backlinks`, tagged it and
+  added to the Inbox. `kitty notes ls/show/search/new/append/inbox/quick` ran on the same
+  root. With that page open in a kitty-web window (Chromium, UI secret via
+  `web/tests/kittyServer.js`), a block appended through `kitty mcp` showed in the editor
+  13–21 ms after the tool returned and one appended through `kitty notes append` 9–33 ms
+  after the command returned, without a reload; the pinned citation previewed as the cited
+  block's text.
+- **Not yet:** the MCP server and CLI still open the database directly (the mediation step
+  makes them token-holding API clients); writes carry no agent actor yet, so History shows
+  them under this device like any local edit.
+
 ## Verified facts
 
 - **Tern bridge merged** (#21 status view, Open in Tern, kitty!'s own daemon; #33 dock panes):

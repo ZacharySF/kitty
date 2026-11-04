@@ -68,8 +68,8 @@ def note(conn: sqlite3.Connection, body: Any) -> dict:
         raise ClientError(str(exc), exc.status) from None
 
 
-def _inbox(conn: sqlite3.Connection) -> tuple[str, int, list[dict]]:
-    """The Inbox page's block ID and number, plus the operations that create it when missing."""
+def inbox_page(conn: sqlite3.Connection) -> tuple[str, int, list[dict]]:
+    """The Inbox page's block ID and number, plus the operations that create it when missing (kitty.core.block_api too)."""
     row = conn.execute("SELECT id, json_extract(properties,'$.number') AS number FROM blocks WHERE type='page' "
                        "AND parent_id IS NULL AND deleted_at IS NULL AND json_extract(properties,'$.inbox')=1 "
                        "ORDER BY number LIMIT 1").fetchone()
@@ -103,7 +103,7 @@ def append(conn: sqlite3.Connection, body: Any) -> dict:
             raise ClientError(f"Block type must be one of: {', '.join(sorted(CAPTURE_TYPES))}")
         specs.append((kind, _text(item["text"], "Block text")))
     with transaction(conn, immediate=True):
-        page_id, number, ops = _inbox(conn)
+        page_id, number, ops = inbox_page(conn)
         added = [_insert(page_id, kind, text) for kind, text in specs]
         _apply(conn, ops + added)
     return {"page": number, "blocks": [op["id"] for op in added]}
@@ -138,7 +138,7 @@ def mirror(conn: sqlite3.Connection, body: Any) -> dict:
     if any(len(part) > MAX_TEXT for part in paragraphs):
         raise ClientError(f"Each page text paragraph is limited to {MAX_TEXT} characters")
     with transaction(conn, immediate=True):
-        page_id, number, ops = _inbox(conn)
+        page_id, number, ops = inbox_page(conn)
         length = len(title.encode("utf-16-le")) // 2
         head = _insert(page_id, "callout", title, {"source_url": url, "captured_at": now(),
                                                    "marks": [{"s": 0, "e": length, "t": "a", "href": url}]})

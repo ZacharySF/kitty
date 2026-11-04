@@ -2461,13 +2461,15 @@ Register it in an MCP client:
 }
 ```
 
-Tools: `today`, `list_jobs`, `get_job`, `preparation_plan`, `weekly_progress`,
-`list_questions`, `finder_candidates`, `list_proposals`, `list_resume_versions`,
-`get_resume_version`, `mark_applied`, `set_status`, `skip_job`, `mark_not_eligible`,
-`confirm_proposal`, `reject_proposal`, `run_discover`. None submits anything,
-writes or suggests screening answers, or writes resume text; `mark_applied` only
-records an application I already submitted. Finder approvals stay in the TUI.
-Each call opens and closes its own database connection.
+Job-search tools (the applyai module): `today`, `list_jobs`, `get_job`,
+`preparation_plan`, `weekly_progress`, `list_questions`, `finder_candidates`,
+`list_proposals`, `list_resume_versions`, `get_resume_version`, `mark_applied`,
+`set_status`, `skip_job`, `mark_not_eligible`, `confirm_proposal`, `reject_proposal`,
+`run_discover`. None submits anything, writes or suggests screening answers, or writes
+resume text; `mark_applied` only records an application I already submitted. Finder
+approvals stay in the TUI. Each call opens and closes its own database connection. A
+module that is off has no tools here: with neither applyai nor workspace on, the server
+lists none.
 
 `preparation_plan(track?, limit?)` lets an agent inspect the same favorites-first,
 track-scoped batch as local autofill, with the configured hard cap and reasons for
@@ -2477,6 +2479,59 @@ identifiers. This is a local snapshot, not a live browser check or a reservation
 ready means verified at the last attempt, not submitted. Planning does not open
 Firefox, contact employers, fill forms or change applications/statuses; normal
 workspace initialization may still migrate SQLite and sync local configuration.
+
+### Notes tools (the workspace module)
+
+The same server reads and writes my notes as blocks (`kitty.core.block_api`):
+
+| Tool | What it does |
+|---|---|
+| `list_pages(query?, kind?, limit?)` | note pages, documents and quick notes, newest edit first |
+| `get_page(page)` | one page as a block tree: `id`, `type`, `text`, `props`, `tags`, `order`, `children`, `cite` |
+| `search_blocks(query, limit?)` | full-text index (as Ctrl K), one hit per block, matches in `**bold**` |
+| `get_backlinks(target)` | `((references))`, `[[links]]`, unlinked title mentions, tagged blocks |
+| `list_tags()` | every tag with its keywords, aliases and count |
+| `create_page(title, notebook?, blocks?)` | a note page, optionally with blocks |
+| `append_blocks(page, blocks, parent?, revision?)` | blocks at the end of a page or block |
+| `insert_blocks(blocks, after? / before? / parent?, revision?)` | blocks next to a sibling |
+| `update_block(block, text?, type?, props?, revision?)` | new text, type or `checked`/`collapsed`/`language`; on a page's own block, a new title |
+| `move_block(block, after? / before? / parent? / page?, revision?)` | within a page or to another note page |
+| `delete_block(block, revision?)` | to Trash |
+| `add_to_inbox(blocks)` | blocks at the end of the Inbox page |
+| `quick_note(text)` | a new quick note |
+| `tag_block(block, tag, create?)` | attach a tag by ID or name |
+
+A page is its block ID or a note page number; `blocks` is a list of strings (text
+blocks) or `{type?, text?, props?, children?}`. Every read reports the op-log sequence
+`seq` it reflects and cites each block as `((id@seq))`, the block as it was at that
+moment (History shows it again). A `((id@seq))` pasted into a note is a block reference
+like `((id))`: Notes previews it and it counts in backlinks. Every write is one block
+transaction, exactly like typing in the editor: it is in History and Trash, appears
+live in every open rika! window, and attaches *always* tags and updates the search
+index. Writes return `seq` and the page's `revision`; pass the `revision` from your last
+read and a page edited since is refused (409) instead of overwritten. Only note pages
+are written, only with text blocks: documents keep their Markdown editor, quick notes
+their own (`quick_note` only creates one) and canvas elements the canvas. The tools read
+and write blocks only, never jobs, applications, the profile, answers or resumes.
+
+The same functions are on the command line and over HTTP:
+
+```bash
+kitty notes ls [TITLE] [--kind page|document|quick_note] [--json]
+kitty notes show <PAGE> [--json]           # outline; --json is get_page
+kitty notes search "<text>" [--json]
+kitty notes new "<title>" [TEXT...] [--notebook <title>] [--json]
+kitty notes append <PAGE> TEXT... [--type to_do] [--parent <block>] [--revision N] [--json]
+kitty notes inbox TEXT... [--json]
+kitty notes quick "<text>" [--json]        # '-' as a TEXT reads it from stdin
+```
+
+`kitty notes` belongs to the workspace module. Over HTTP (UI secret required, like
+every route): `GET /api/blocks/pages`, `/api/blocks/search?q=`, `/api/blocks/backlinks?id=`
+and the existing `/api/blocks/page`; `POST /api/blocks/pages/create`, `/insert`,
+`/update`, `/move`, `/delete`, `/inbox` (see `src/kitty/web_blocks.py`). The MCP server and
+the CLI still open the database directly; a window sees their writes through the live
+channel, which follows the log.
 
 ## Resumes and the resume coach
 

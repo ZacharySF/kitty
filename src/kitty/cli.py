@@ -46,7 +46,7 @@ COMMAND_MODULES: dict[str, str] = dict.fromkeys(
         "resumes", "import", "demo", "gmail", "proposals", "questions",
     ),
     "applyai",
-)
+) | {"notes": "workspace"}
 
 
 def _module_error(lines: list[str]) -> typer.Exit:
@@ -2030,6 +2030,173 @@ def index_rebuild() -> None:
         workspace.close()
     console.print(f"Indexed {count} documents in {time.perf_counter() - started:.2f} s: "
                   + ", ".join(f"{kind} {number}" for kind, number in stats["documents"].items()))
+
+
+# ------------------------------------------------------------------ notes (blocks)
+
+notes_app = typer.Typer(no_args_is_help=True, help="Read, search and write notes as blocks (kitty.core.block_api).")
+app.add_typer(notes_app, name="notes")
+
+_JSON_OPTION = typer.Option("--json", help="Machine-readable output (with ((id@seq)) citations).")
+#: How `notes show` marks each block type.
+_MARKERS = {"heading_1": "# ", "heading_2": "## ", "heading_3": "### ", "bulleted_list": "• ", "numbered_list": "1. ",
+            "quote": "> ", "callout": "! ", "toggle": "▸ ", "code": "``` ", "divider": "---"}
+
+
+@contextmanager
+def _blocks() -> Iterator:
+    """A connection for one notes command; refusals print and exit 1."""
+    from kitty.core.blocks import BlockError
+
+    workspace = _open()
+    try:
+        yield workspace.conn
+    except BlockError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=1) from None
+    finally:
+        workspace.close()
+
+
+def _emit(result: dict, as_json: bool, summary: str) -> None:
+    import json
+
+    if as_json:
+        typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        console.print(summary)
+
+
+def _texts(values: list[str]) -> list[str]:
+    """Block texts from arguments; ``-`` reads one block from stdin."""
+    import sys
+
+    return [sys.stdin.read().rstrip("\n") if value == "-" else value for value in values]
+
+
+def _written(result: dict) -> str:
+    return (f"seq {result['seq']} · revision {result['revision']} · "
+            + ", ".join(escape(item["cite"]) for item in result["blocks"]))
+
+
+@notes_app.command("ls")
+def notes_ls(
+    query: Annotated[str, typer.Argument(help="Only titles containing this.")] = "",
+    kind: Annotated[Optional[str], typer.Option("--kind", help="page, document or quick_note.")] = None,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=200)] = 50,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """List note pages, documents and quick notes, most recently edited first."""
+    from kitty.core import block_api
+
+    with _blocks() as conn:
+        result = block_api.list_pages(conn, query, kind=kind, limit=limit)
+    lines = [f"{page['type']:<10} {page['number'] or '':>4}  {escape(page['title'])}  [dim]{page['id']}[/dim]"
+             for page in result["pages"]]
+    more = f"\n[dim]{result['total'] - len(result['pages'])} more; use --limit or a title filter.[/dim]" if result["truncated"] else ""
+    _emit(result, as_json, "\n".join(lines) + more if lines else "No pages.")
+
+
+def _outline(blocks: list[dict], depth: int = 0) -> Iterator[str]:
+    for block in blocks:
+        marker = ("[x] " if block["props"].get("checked") else "[ ] ") if block["type"] == "to_do" else _MARKERS.get(block["type"], "")
+        tags = "".join(f" #{name}" for name in block["tags"])
+        yield f"{'  ' * depth}{escape(marker + block['text'])}[cyan]{escape(tags)}[/cyan]  [dim]{block['id']}[/dim]"
+        yield from _outline(block["children"], depth + 1)
+
+
+@notes_app.command("show")
+def notes_show(
+    page: Annotated[str, typer.Argument(help="A page's block ID or a note page number.")],
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Print one page's blocks as an outline (block IDs dimmed)."""
+    from kitty.core import block_api
+
+    with _blocks() as conn:
+        result = block_api.get_page(conn, page)
+    head = result["page"]
+    lines = [f"[bold]{escape(head['title'])}[/bold]  [dim]{head['type']} {head['number'] or ''} · revision "
+             f"{result['revision']} · seq {result['seq']} · {head['id']}[/dim]", *_outline(result["blocks"])]
+    if head["canvas_elements"]:
+        lines.append(f"[dim](and {head['canvas_elements']} canvas element(s), not listed)[/dim]")
+    _emit(result, as_json, "\n".join(lines))
+
+
+@notes_app.command("search")
+def notes_search(
+    query: Annotated[str, typer.Argument(help="Words (prefixes) or, from 3 characters, any substring.")],
+    limit: Annotated[int, typer.Option("--limit", min=1, max=200)] = 20,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Search the blocks of note pages, documents and quick notes (the full-text index)."""
+    from kitty.core import block_api
+
+    with _blocks() as conn:
+        result = block_api.search_blocks(conn, query, limit=limit)
+    lines = [f"{escape(hit['page_title'])}: {escape(hit['snippet']).replace('**', '')}  [dim]{escape(hit['cite'])}[/dim]"
+             for hit in result["hits"]]
+    more = f"\n[dim]{result['total'] - len(result['hits'])} more; use --limit.[/dim]" if result["truncated"] else ""
+    _emit(result, as_json, "\n".join(lines) + more if lines else "No matching blocks.")
+
+
+@notes_app.command("new")
+def notes_new(
+    title: Annotated[str, typer.Argument(help="The page title.")],
+    texts: Annotated[Optional[list[str]], typer.Argument(metavar="[TEXT]...", help="Text blocks to start with ('-' reads stdin).")] = None,
+    notebook: Annotated[Optional[str], typer.Option("--notebook", help="Notebook title (created when missing).")] = None,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Create a note page, optionally with text blocks."""
+    from kitty.core import block_api
+
+    with _blocks() as conn:
+        result = block_api.create_page(conn, title, notebook=notebook, blocks=_texts(texts or []) or None)
+    _emit(result, as_json, f"Created page {result['number']} {escape(result['cite'])} (seq {result['seq']}).")
+
+
+@notes_app.command("append")
+def notes_append(
+    page: Annotated[str, typer.Argument(help="A page's block ID or a note page number.")],
+    texts: Annotated[list[str], typer.Argument(metavar="TEXT...", help="One block each ('-' reads stdin).")],
+    kind: Annotated[str, typer.Option("--type", help="Block type for every block (text, to_do, bulleted_list, ...).")] = "text",
+    parent: Annotated[Optional[str], typer.Option("--parent", help="Append under this block instead.")] = None,
+    revision: Annotated[Optional[int], typer.Option("--revision", help="Refuse if the page changed since this revision.")] = None,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Append blocks at the end of a note page."""
+    from kitty.core import block_api
+
+    with _blocks() as conn:
+        result = block_api.append_blocks(conn, page, [{"type": kind, "text": text} for text in _texts(texts)],
+                                         parent=parent, revision=revision)
+    _emit(result, as_json, f"Appended: {_written(result)}")
+
+
+@notes_app.command("inbox")
+def notes_inbox(
+    texts: Annotated[list[str], typer.Argument(metavar="TEXT...", help="One block each ('-' reads stdin).")],
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Add text blocks to the end of the Inbox page."""
+    from kitty.core import block_api
+
+    with _blocks() as conn:
+        result = block_api.add_to_inbox(conn, _texts(texts))
+    _emit(result, as_json, f"Added to the Inbox (page {result['number']}): {_written(result)}")
+
+
+@notes_app.command("quick")
+def notes_quick(
+    text: Annotated[str, typer.Argument(help="The quick note ('-' reads stdin).")],
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Create a quick note."""
+    from kitty.core import block_api
+
+    with _blocks() as conn:
+        result = block_api.quick_note(conn, _texts([text])[0])
+    _emit(result, as_json, f"Quick note {result['number']}: {_written(result)}")
 
 
 def main() -> None:
