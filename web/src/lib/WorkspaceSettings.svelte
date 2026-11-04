@@ -2,6 +2,7 @@
   /** The short pages Settings opens beside its index, deep-linked as `#settings/<page>`. */
   export const SETTINGS_PAGES = [
     "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "connected-apps", "keys", "devices",
+    "rika-routing", "rika-email", "rika-memory",
   ] as const;
   export type SettingsPage = (typeof SETTINGS_PAGES)[number];
   const isPage = (value: unknown): value is SettingsPage => SETTINGS_PAGES.includes(value as SettingsPage);
@@ -27,6 +28,9 @@
   import TagSettings from "./TagSettings.svelte";
   import BuildSettings from "./BuildSettings.svelte";
   import { buildStore, setPreferences } from "./build.svelte";
+  import RoutingMemory from "./rika/settings/RoutingMemory.svelte";
+  import EmailSettings from "./rika/settings/EmailSettings.svelte";
+  import MemorySettings from "./rika/settings/MemorySettings.svelte";
   import Icon from "./Icon.svelte";
   import Select from "./ui/Select.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
@@ -65,6 +69,11 @@
     { label: "Careers & AI", items: [
       ...(activeModules.enabled.includes("applyai") ? [{ view: "profile", label: "Profile & saved answers", icon: "questions", keywords: "resume answers questions personal details" } as Entry] : []),
       { view: "ai", label: "AI & privacy", icon: "ai", keywords: "openrouter key provider budget privacy model" },
+    ] },
+    { label: "Rika", items: [
+      { page: "rika-routing", label: "Routing memory", icon: "reports", keywords: "rika tokens cost cache tier route tool path shortcut forget learned cheaper requests" },
+      { page: "rika-email", label: "Email", icon: "mail", keywords: "rika gmail mail auto-send send reply replies drafts undo hold inbox scheduling confirmation thanks" },
+      { page: "rika-memory", label: "Memory", icon: "notes", keywords: "rika index search preferences remember learned knows notes sharing privacy" },
     ] },
   ]);
   let query = $state("");
@@ -234,6 +243,12 @@
         <QuietHours />
       {:else if shown === "account"}
         <AccountSettings />
+      {:else if shown === "rika-routing"}
+        <RoutingMemory />
+      {:else if shown === "rika-email"}
+        <EmailSettings />
+      {:else if shown === "rika-memory"}
+        <MemorySettings />
       {:else if shown === "modules"}
         <Panel title={title} aria-label={title}>
           {#if modules}

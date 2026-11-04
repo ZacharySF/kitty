@@ -13,7 +13,8 @@
   --bl-cream: #fbf3e8;
   --bl-paper: #fffdf8;
   --bl-black: #120708;
-  --backdrop: var(--grain), linear-gradient(180deg, #f3d9d2, var(--bl-cream) 40%);
+  /* The opaque marble covers the root, so it carries no grain to repaint under the page. */
+  --backdrop: linear-gradient(180deg, #f3d9d2, var(--bl-cream) 40%);
   --surface-fill:
     var(--grain),
     linear-gradient(180deg, var(--bl-paper), color-mix(in srgb, var(--solid-panel) 90%, var(--bl-pink)));
@@ -141,8 +142,9 @@
   text-shadow: 0 2px 0 var(--bl-black);
 }
 
-/* Home widgets and Study's columns are paper too, and the atlas stage a frosted cream window
-   onto the marble, so the art never runs under text. */
+/* Home widgets and Study's columns are paper too, and the atlas stage a cream window onto
+   the marble, so the art never runs under text. No backdrop blur: over the drifting marble
+   it re-blurred the whole stage every frame; a denser cream does its softening. */
 :root[data-theme="bloodluxe"] body :is(.home-widget, .study .column:not(.column .column), .study-guide) {
   border: 0;
   border-radius: var(--r-panel);
@@ -153,9 +155,8 @@
   padding: 2px 12px 8px;
 }
 :root[data-theme="bloodluxe"] body .atlas .stage {
-  background: color-mix(in srgb, var(--bl-paper) 84%, transparent);
+  background: color-mix(in srgb, var(--bl-paper) 90%, transparent);
   box-shadow: 0 0 0 1.5px var(--bl-black), 0 3.5px 0 1.5px var(--bl-black);
-  backdrop-filter: blur(3px);
 }
 
 /* ── Motif marks ── */

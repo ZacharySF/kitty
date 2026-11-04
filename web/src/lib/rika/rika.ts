@@ -22,6 +22,8 @@ export type RikaMessage = {
   status?: "pending" | "done" | "failed";
   /** How a request reached Rika: typed, spoken (Q6 C) or a brain dump's transcript (Q7 A). */
   source?: "typed" | "voice" | "dump";
+  /** Q13: what the reply cost and the tool path it took; null on user messages. */
+  usage?: RikaUsage | null;
   created_at: string;
 };
 export type RikaAction = {
@@ -101,7 +103,8 @@ export type Entry =
   | ({ kind: "message" } & RikaMessage)
   | ({ kind: "action" } & RikaAction)
   | ({ kind: "approval" } & RikaApproval)
-  | ({ kind: "plan" } & RikaPlan);
+  | ({ kind: "plan" } & RikaPlan)
+  | RikaDraft;
 
 type VoiceEvent = { session: string; mode: VoiceMode };
 export type StreamEvent =
@@ -121,7 +124,9 @@ export type StreamEvent =
   | ({ type: "voice.final"; text: string; segments: Segment[]; duration: number } & VoiceEvent)
   | ({ type: "voice.error"; message: string } & VoiceEvent)
   /** The Whisper model downloading on first use. */
-  | { type: "voice.model"; model: string; state: "downloading" | "ready" | "failed"; received: number; total: number; message?: string };
+  | { type: "voice.model"; model: string; state: "downloading" | "ready" | "failed"; received: number; total: number; message?: string }
+  /** Q16: a reply draft changed (drafted, edited, scheduled, sent, cancelled, failed). */
+  | { type: "mail"; mail: RikaDraft };
 
 /** Plan items by area, in the areas' order; empty areas are left out. */
 export function planGroups(items: PlanItem[]): { area: PlanArea; items: PlanItem[] }[] {
@@ -195,4 +200,87 @@ export function costLabel(usd: number | null | undefined): string {
   if (usd === 0) return "free";
   if (usd < 0.01) return "under $0.01";
   return `$${usd.toFixed(2)}`;
+}
+
+/** Q13 A: a reply's tokens and tool path, recorded by the routing memory. */
+export type RikaUsage = {
+  tokens_in: number | null;
+  tokens_cached: number | null;
+  tokens_out: number | null;
+  path: string[];
+  signature: string;
+  remembered: boolean;
+  shortcut: boolean;
+};
+
+export type MailStatus = "draft" | "scheduled" | "sent" | "cancelled" | "discarded" | "failed";
+/** Q16 B: a reply Rika drafted; history and the stream carry it as an entry of kind `mail`. */
+export type RikaDraft = {
+  kind: "mail";
+  id: string;
+  mail_id?: string | null;
+  message_id?: Id | null;
+  thread_id?: string | null;
+  to: string;
+  subject: string;
+  body: string;
+  reply_kind: "scheduling" | "confirmation" | "thanks" | "question" | "personal" | "automated";
+  status: MailStatus;
+  auto: boolean;
+  send_after: string | null;
+  sent_at: string | null;
+  error: string | null;
+  original?: { sender: string; sender_email: string; subject: string; received_at: string; snippet: string } | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+/** Readout dollars: sub-cent requests keep four places ("$0.0002"); nothing spent is "$0". */
+export function usd(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "";
+  if (value === 0) return "$0";
+  if (value < 0.0001) return "under $0.0001";
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  return `$${value.toFixed(4).replace(/(\.\d\d\d*?)0+$/, "$1")}`;
+}
+
+export type Readout = { tier: Tier | "direct"; label: string; detail: string };
+const count = (value: number) => value.toLocaleString("en");
+
+/**
+ * Q13 A: the line under a reply. A deterministic or shortcut reply ran its tools with no
+ * model: "Direct · <path> · 0 tokens · $0"; the demo's scripted replies say they are
+ * scripted. The morning brief has no readout (its cost, if any, shows as before). A model
+ * reply: its tier, the remembered tool path when the routing memory chose it, tokens in
+ * (cached), out and the reported cost.
+ */
+export function usageReadout(message: Pick<RikaMessage, "tier" | "model" | "cost_usd" | "usage">): Readout | null {
+  const usage = message.usage;
+  if (!usage || message.model === "brief") return null;
+  if (message.model === "demo") return { tier: "direct", label: "Demo", detail: "Scripted demo reply · 0 tokens · $0" };
+  const path = usage.path.join(" → ");
+  if (message.model === "deterministic" || message.model === "shortcut" || usage.shortcut)
+    return { tier: "direct", label: "Direct", detail: [path, "0 tokens", "$0"].filter(Boolean).join(" · ") };
+  const tier = message.tier ?? "fast";
+  const parts = [
+    usage.remembered && path ? `remembered path ${path}` : "",
+    usage.tokens_in == null ? "" : `${count(usage.tokens_in)} in${usage.tokens_cached ? ` (${count(usage.tokens_cached)} cached)` : ""}`,
+    usage.tokens_out == null ? "" : `${count(usage.tokens_out)} out`,
+    usd(message.cost_usd),
+  ];
+  return { tier, label: tier[0].toUpperCase() + tier.slice(1), detail: parts.filter(Boolean).join(" · ") };
+}
+
+/** Whole seconds left before a held send goes out; 0 once it is not held. */
+export function holdLeft(draft: Pick<RikaDraft, "status" | "send_after">, now: number): number {
+  const at = Date.parse(draft.send_after ?? "");
+  if (draft.status !== "scheduled" || Number.isNaN(at)) return 0;
+  return Math.max(0, Math.ceil((at - now) / 1000));
+}
+export const holdClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
+/** The kind line of a mail item: auto-send kinds say so. */
+export function mailLine(draft: Pick<RikaDraft, "auto" | "status" | "reply_kind">): string {
+  if (!draft.auto) return `Reply · ${draft.reply_kind}`;
+  return `${draft.status === "sent" ? "Auto-sent" : "Auto-send"} · ${draft.reply_kind}`;
 }

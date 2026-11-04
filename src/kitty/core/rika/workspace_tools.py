@@ -22,7 +22,7 @@ from kitty.core.rika.tools import Context, Result, Tool, ToolError, boolean, int
 
 #: Views Rika may open (web/src/lib/workspace.ts) and the module that owns each.
 VIEWS: dict[str, str | None] = {
-    "today": None, "ai": None, "settings": None,
+    "today": None, "ai": None, "settings": None, "goals": None,
     "calendar": "workspace", "opportunities": "workspace", "study": "workspace", "learnharness": "workspace",
     "flashcards": "workspace", "notes": "workspace", "quick-notes": "workspace", "documents": "workspace",
     "schema": "workspace",
@@ -37,7 +37,7 @@ VIEW_ALIASES = {
     "atlas": "today", "home": "today", "ai settings": "ai", "mind maps": "schema", "mind map": "schema",
     "maps": "schema", "canvas": "notes", "notes": "notes", "cards": "flashcards", "terminal": "tern",
     "agent skills": "agent-skills", "all agent skills": "agent-skills",
-    "jobs": "jobs", "applications": "pipeline", "documents": "documents", "pdf": "documents",
+    "jobs": "jobs", "applications": "pipeline", "documents": "documents", "pdf": "documents", "goal": "goals",
 }
 #: Canvas defaults of a new sticky note, matching the Notes view's (web/src/lib/Notes.svelte).
 STICKY = {"color": "#e7dfef", "fill": "#fff2a8", "width": 3, "w": 240, "h": 180, "fontSize": 20}

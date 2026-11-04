@@ -298,7 +298,8 @@ These were established by the read-only audit of v0.3.21 (`origin/main` @ `dcf6a
 - **Home without the Sections list (Q13):** navigation is one click deeper. Mitigation: a Sections popover on the Brain, plus Ctrl K.
 - **Themes with background art (Q11-D, Q12):**
   - Contrast on busy art. Mitigation: surfaces keep a minimum opacity, and an automated contrast check runs per theme in the browser tests.
-  - Asset weight. Mitigation: SVG/CSS motifs, lazy-loaded per theme.
+  - Asset weight. Mitigation: SVG/CSS motifs and a few WebP paintings, lazy-loaded per theme.
+  - Paint cost (SPEED, c and pretti ran at 2–15 fps in v0.3.30: their turbulence, displacement and blur filters re-ran on every frame something moved over the art). Mitigation: filtered art is painted once, from its `*.source.svg`, to WebP by `web/scripts/render-theme-art.mjs`; the art layer is its own compositing layer with no SVG filters, only small pieces move (by transform or opacity) and window-wide drifts step a pixel at a time; no large backdrop blur sits over moving art. The browser tests hold every theme to 1.5× Kitty's frame time, idle and scrolling.
   - Copyright. Mitigation: original motifs only, never the reference artwork.
 - **Migrating 100 dropdowns (Q7):** regression surface. Mitigation: each screen slice migrates its own selects with its tests.
 - **Strict copy (Q9):** an important caveat could be deleted. Mitigation: consequential-action text is explicitly allowed. Each removal is reviewed in its screen slice.

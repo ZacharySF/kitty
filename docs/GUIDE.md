@@ -313,7 +313,7 @@ and its backdrop. Typefaces never change with the theme.
 - **SPEED**, the one light theme: hand-inked on off-white watercolour paper.
   Square paper sheets with an inked edge and a crimson misprint over grey-teal
   washes, teal-green and black ink splatter and drips, a white gothic cathedral,
-  faint gear rings that tick round and a crimson sketched wheel; crimson-magenta
+  faint gear rings that turn slowly and a crimson sketched wheel; crimson-magenta
   for accents and a sketched double focus ring, teal washes for selection, ink-splat
   bullets, crimson checks that stamp on, brush-stroke dividers, a marker swipe
   under page titles, a ticking gear loader and a stalled-gear empty state.
@@ -434,7 +434,14 @@ that says what will happen and, when it has one, the estimated cost. The drawer
 opens by itself when Rika asks for an approval and
 closes once you decide; one you opened yourself stays open. **Agents** holds a live
 card per worker agent (omp, Claude Code, Codex) in herdr or Tern: state, task, last
-output line, a timer and **Open window**.
+output line, a timer and **Open window**. Each Rika reply in the drawer ends with
+its readout (tier, tool path, tokens and cost; **Direct** when no model ran), and
+each email Rika drafted or holds for sending is a card with **Send**, **Undo send**
+and its countdown, or **Discard**.
+
+When today's morning brief exists, a **Morning brief · N** chip sits left of the
+agent chips; its popover lists the day's finds and **Open Goals**, and opening it
+marks the brief seen.
 
 Running worker agents also show as chips on the right of the bar, a state dot and
 name each (working, blocked, idle, done); a chip opens that agent's Tern window.
@@ -1169,7 +1176,8 @@ conflicts list the differing name, timezone and colour.
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
 weeks, 30 days or a custom date picker; no date-syntax memorization is required.
 
-**Notifications.** Due calendar reminders and job-search reminders arrive as one
+**Notifications.** Due calendar reminders, job-search reminders and Rika's urgent
+goal matches (**Rika · strong match**, see **Rika** below) arrive as one
 stack of glass toasts in the bottom-right corner. Hovering (or tabbing into) the
 stack fans it out and pauses every countdown. **Snooze** brings a calendar
 reminder back in ten minutes and moves a job-search reminder a day; **Open**
@@ -1344,8 +1352,11 @@ the Rika bar, and it does the work through the app's own functions.
   - `start omp|claude|codex [to task]`
   - `delete page X`
   - ``run `command` ``
+  - `remember (that) X` (saves a preference)
+  - `new goal X`, `morning brief`, `what's new for my goals`
 
-  Anything else goes to the model with Rika's tools.
+  Anything else goes to the model with Rika's tools, unless a learned shortcut
+  (below) matches it.
 - **What it can change.** It can:
   - create, append to, edit and find note pages and outline blocks;
   - add, move and connect canvas nodes;
@@ -1353,8 +1364,11 @@ the Rika bar, and it does the work through the app's own functions.
   - add flashcards;
   - create calendar events and tasks;
   - add study subjects and tasks;
+  - create goals, link items to them and update their measures;
+  - save preferences it should remember;
+  - draft email replies;
   - open views;
-  - search the whole workspace.
+  - search the whole workspace and its local memory index.
 
   These changes apply at once, and each one is in the history drawer with
   **Undo**. Calendar undo uses the calendar's own history and mind-map undo uses
@@ -1366,6 +1380,7 @@ the Rika bar, and it does the work through the app's own functions.
   - changes which modules load;
   - starts a worker agent;
   - runs a shell command;
+  - sends an email it drafted;
   - makes a model request over today's AI budget.
 
   An approval expires after ten minutes, or when rika! quits.
@@ -1408,12 +1423,89 @@ the Rika bar, and it does the work through the app's own functions.
   in Tern panes. **Open** focuses the agent and shows it in a Tern window: a herdr
   agent appears through a Tern tab attached to rika!'s herdr session. Without
   Tern, the page opens the herdr view. Quit stops the session Rika started.
-- **Demo.** The demo never calls OpenRouter, downloads no voice model and starts no
-  speech engine. The simple phrases above work. Anything else gets a scripted reply.
-  Holding Space "hears" the canned `Add a task Read chapter 3 tomorrow`, and a brain
-  dump hears a canned student's week with a scripted plan in every area (a typed
-  dump is planned phrase by phrase). The Agents list shows five scripted agents,
-  and an approved start adds one more. No process starts.
+- **Routing memory and cost** (design Q13). Rika remembers, per kind of request,
+  the cheapest tier that succeeded, the shortest tool path and how often it had to
+  escalate, and starts the next request of that kind on that tier instead of
+  guessing. A kind is keyed by its tool path (`search>add_card`); a request finds it
+  by its shape (its first word and the object it names, e.g. "add card"). When the
+  same phrasing succeeds twice with one in-app change whose arguments are words of
+  the request (for example "flashcard Mitosis means Cell division" → `add_card`),
+  it becomes a **learned shortcut**: the next request phrased that way runs the tool
+  directly, with no model. Undoing an action a shortcut made forgets the shortcut.
+  Shortcuts never cover outward tools. For Anthropic and Gemini models the stable
+  part of the system prompt (instructions and preferences) carries OpenRouter's
+  `cache_control` breakpoint; other providers cache repeated prefixes on their own.
+  Every reply in the history drawer shows a readout: its tier, the tool path (and
+  whether the path or shortcut was remembered), tokens in (cached) and out, and the
+  cost, e.g. `remembered path search → add card · 1,180 in (960 cached) · 64 out ·
+  $0.0002`; phrases and shortcuts show **Direct** · 0 tokens · $0. **Settings → Rika
+  → Routing memory** lists what Rika learned (kind, tier, tool path, uses, average
+  tokens and cost, shortcut and escalation badges) with **Forget** per row, today's
+  requests, tokens, cost and cache-hit share, and a 14-day average-cost trend.
+- **Memory** (design Q18). A local SQLite FTS5 index covers note pages and
+  outline blocks, the edit history (the op log and Rika's actions), jobs,
+  calendar events and tasks, email Rika has read, goals and preferences; it stays on
+  this machine and is refreshed per source when that source changes. Each model
+  request gets at most six relevant items from it, sent as data in their own
+  message; page and block text stays local (titles only) while note AI sharing is
+  off. **Preferences**: say "remember that I study best after 9pm", or state one in
+  conversation and Rika saves it (Undo removes it). All preferences (at most 40,
+  4,000 characters) go with every model request. **Settings → Rika → Memory**
+  searches the index, shows each source's item count, rebuilds the index, and lists
+  the preferences: edit one in place, × forgets it, and **Tell Rika something to
+  remember** adds one.
+- **Goals** (design Q14). **Plan → Goals** lists your goals with a progress ring,
+  days left and how many new finds wait. A goal has a title, why, target date,
+  status (active, paused, done, dropped) and measures (label, target, unit,
+  current). A measure is set by hand or counted from linked data: **Applications
+  sent** (linked jobs with an application, else applications since the goal was
+  set), **Study minutes** (linked study sessions, else sessions since then),
+  **Tasks done** (linked calendar tasks) or **Math topics mastered** (linked math
+  topics). Progress is the average of the measures' completion. Link notes, blocks,
+  calendar tasks and events, jobs, opportunities, study sessions, math topics and
+  email with **Link item**. Rika's tools `create_goal`, `link_to_goal` and
+  `update_measure` apply at once with Undo.
+- **Morning brief and alerts** (design Q15). Once a local day, from 05:00 while
+  rika! is open (or at the next launch), Rika sweeps what is new since the last
+  brief: jobs, opportunities, email and the next 48 hours of calendar events, and
+  matches them to your active goals by their words. In live mode the unclear ones
+  go to one fast-tier request, only when it fits today's AI budget; it never asks
+  for approval and is skipped with a note otherwise. The brief is a **Morning
+  brief** panel at the top of home, a **Morning brief · N** chip in the Rika bar
+  (its popover lists the items) and a "Good morning…" message in the history. Each
+  item waits on its goal under **Rika found** with **Link** and **Not relevant** (a
+  dismissed find never returns). Only a strong match whose deadline, start or
+  requested reply falls within 48 hours raises an alert, through the notification
+  toasts and bell (source **Rika · strong match**); quiet hours hold it like any
+  job-search reminder. With no active goal and no Gmail connection there is no
+  sweep.
+- **Email** (design Q16). Rika reads your recent inbox (not chats, promotions or
+  social), sorts each message as scheduling, confirmation, thanks, question,
+  personal or automated, and drafts replies for mail that expects one, in your
+  voice: one standard-tier request with your preferences, the email framed as
+  untrusted data. Without a model (no key, or over budget) only scheduling,
+  confirmation and thanks replies are drafted, from short templates. Drafts are
+  saved as Gmail drafts and listed in **Settings → Rika → Email** and the history
+  drawer; nothing is sent until you tap **Send** (or approve Rika's `send_reply`).
+  **Auto-send** has one switch per kind (scheduling, confirmations, thanks), all off
+  by default; turning one on asks you to confirm. Personal mail and questions are
+  always drafts, and a reply auto-sends only when the keyword sort and the model
+  agree on its kind. Gmail's API can't delay or undo a send, so rika! holds every
+  send on this machine for the hold time you choose (10, 30, 60, 120 or 300 s;
+  default 30) with **Undo send** and a countdown, then sends it; after that it
+  can't be unsent. A send still held when rika! quits is not sent and stays a
+  cancelled draft. Connect Gmail with **Connect** there or `uv run kitty gmail auth
+  --compose`: a separate token (`data/gmail_compose_token.json`, read + compose)
+  from the read-only job-status token.
+- **Demo.** The demo never calls OpenRouter or Gmail, downloads no voice model and
+  starts no speech engine. The simple phrases above work. Anything else gets a
+  scripted reply. Holding Space "hears" the canned `Add a task Read chapter 3
+  tomorrow`, and a brain dump hears a canned student's week with a scripted plan in
+  every area (a typed dump is planned phrase by phrase). The Agents list shows five
+  scripted agents, and an approved start adds one more. No process starts. It is
+  seeded with two synthetic goals, six synthetic emails in a fake mailbox (sends are
+  recorded, never delivered), a few learned routes with one shortcut and two
+  preferences; its morning brief runs whenever it starts.
 - **API.** These routes are header-protected like the rest of the site, and none
   is an ingress route:
   - `POST /api/rika/messages {text, tier?, spoken?}`
@@ -1426,16 +1518,31 @@ the Rika bar, and it does the work through the app's own functions.
   - `POST /api/rika/agents/<id>/open`
   - `GET|POST /api/rika/voice` (the voice model), `POST /api/rika/voice/model` (download it now)
   - `GET /api/rika/speech/<reply id>` (the spoken summary of a reply to a spoken request)
+  - `GET /api/rika/routes`, `POST /api/rika/routes/forget {signature}`
+  - `GET /api/rika/memory?q=`, `POST /api/rika/memory/rebuild`,
+    `POST /api/rika/preferences {text}`, `POST /api/rika/preferences/<id> {text}`,
+    `POST /api/rika/preferences/<id>/delete`
+  - `GET|POST /api/goals`, `GET|POST /api/goals/<id>`, `POST /api/goals/<id>/delete`,
+    `POST /api/goals/<id>/links|unlink {kind, ref}`,
+    `POST /api/goals/<id>/measures/<measure> {current}`,
+    `POST /api/goals/matches/<id> {decision: link|dismiss}`, `GET /api/goals/linkable?q=&kind=`
+  - `GET /api/rika/brief`, `POST /api/rika/brief/seen`, `POST /api/rika/brief/run`,
+    `GET /api/rika/alerts`
+  - `GET /api/rika/mail`, `POST /api/rika/mail/settings {kind, auto, confirm} | {hold_seconds}`,
+    `POST /api/rika/mail/check`, `POST /api/rika/mail/connect`,
+    `POST /api/rika/mail/drafts/<id> {body, subject?}` and `…/send`, `…/undo`, `…/discard`
 
   Replies stream over the same-origin WebSocket `/api/rika/stream` as token,
-  message, action, approval, plan, tier, navigate, agents and voice.model events.
-  The page may send it only voice input: `voice.start`, binary PCM frames,
-  `voice.mode`, `voice.stop` and `voice.cancel`; transcripts (`voice.partial`,
-  `voice.segment`, `voice.final`) answer that page only and nothing is stored until
-  the page sends the words as a request. Migration 037 keeps the conversation,
-  actions with their undo payloads, and approvals; migration 045 adds how each
-  request arrived (typed, voice or dump), the brain-dump plans and the voice model
-  setting.
+  message, action, approval, plan, tier, navigate, agents, voice.model, brief and
+  mail events. The page may send it only voice input: `voice.start`, binary PCM
+  frames, `voice.mode`, `voice.stop` and `voice.cancel`; transcripts
+  (`voice.partial`, `voice.segment`, `voice.final`) answer that page only and
+  nothing is stored until the page sends the words as a request. Migration 037 keeps
+  the conversation, actions with their undo payloads, and approvals; migration 045
+  adds how each request arrived (typed, voice or dump), the brain-dump plans and the
+  voice model setting; migration 049 adds reply tokens and routes, the routing memory
+  and shortcuts, goals with their links and matches, the briefs, mail with drafts and
+  auto-send switches, preferences and the FTS5 index.
 
 The website supports:
 
@@ -2402,7 +2509,11 @@ text before it is sent.
 
 ## Replies from Gmail (Stage 6)
 
-Read-only: the only scope asked for is `gmail.readonly`. One-time setup:
+Read-only: the only scope the job-status check asks for is `gmail.readonly`.
+Rika's email (drafts and sends, see **Rika** above) uses its own opt-in token,
+`data/gmail_compose_token.json`, made by `uv run kitty gmail auth --compose`
+(scopes `gmail.readonly` and `gmail.compose`); `gmail check` never uses it. One-time
+setup:
 
 1. Open https://console.cloud.google.com/ and create a project (e.g. "kitty").
 2. APIs & Services > Library: search "Gmail API" and click Enable.

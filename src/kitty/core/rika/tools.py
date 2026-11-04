@@ -142,9 +142,9 @@ def validate(schema: dict, value: Any, where: str = "arguments") -> None:
 
 def registry() -> dict[str, Tool]:
     """Every Rika tool by name."""
-    from kitty.core.rika import outward, workspace_tools
+    from kitty.core.rika import goal_tools, mail_tools, memory_tools, outward, workspace_tools
 
-    tools = [*workspace_tools.TOOLS, *outward.TOOLS]
+    tools = [*workspace_tools.TOOLS, *outward.TOOLS, *goal_tools.TOOLS, *mail_tools.TOOLS, *memory_tools.TOOLS]
     found = {tool.name: tool for tool in tools}
     if len(found) != len(tools):
         raise RuntimeError("Duplicate Rika tool name")

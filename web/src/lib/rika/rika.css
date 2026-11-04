@@ -36,6 +36,10 @@
 :is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="deep"] {
   --tone: var(--c1, var(--accent));
 }
+/* Q13: a deterministic or shortcut reply ran with no model. */
+:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="direct"] {
+  --tone: var(--success);
+}
 :is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="working"] {
   --tone: var(--accent);
 }

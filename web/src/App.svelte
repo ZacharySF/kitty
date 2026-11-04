@@ -31,6 +31,7 @@
   import QuickCard from "./lib/flashcards/QuickCard.svelte";
   import Rika from "./lib/rika/Rika.svelte";
   import { rika } from "./lib/rika/session.svelte";
+  import { goalHash } from "./lib/goals/goals";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -194,16 +195,18 @@
     try { await api("/terminal/tern/open", {}); } catch { navigate("tern"); }
   }
   function openNotice(notice: Notice) {
-    if (notice.target.kind === "calendar") navigate("calendar");
+    if (notice.target.kind === "rika") window.location.hash = goalHash(notice.target.goal_id);
+    else if (notice.target.kind === "calendar") navigate("calendar");
     else if (notice.target.job_id !== null && applyai) openJob(notice.target.job_id);
     else navigate("reminders");
   }
-  // Reminder sources the active modules provide; polling restarts only when they change.
-  const notifySources = $derived(workspace && (studyTools || applyai) ? `${studyTools}:${applyai}` : "");
+  // Reminder sources the active modules provide, plus Rika's urgent goal matches (always on);
+  // polling restarts only when they change.
+  const notifySources = $derived(workspace ? `${studyTools}:${applyai}` : "");
   $effect(() => {
     if (!notifySources) return;
     const [calendar, job] = notifySources.split(":").map(value => value === "true");
-    return untrack(() => notifier.start({ calendar, job }));
+    return untrack(() => notifier.start({ calendar, job, rika: true }));
   });
   function studyText(event: Event) {
     if (!studyTools) return;

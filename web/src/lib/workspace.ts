@@ -3,6 +3,7 @@ import type { ModuleId } from "./api";
 /** `module` is the owner; core views (null) are always available. */
 export const navigation = [
   { id: "today", label: "Atlas", icon: "atlas", module: null },
+  { id: "goals", label: "Goals", icon: "goals", module: null },
   { id: "calendar", label: "Calendar", icon: "calendar", module: "workspace" },
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
   { id: "herdr", label: "herdr", icon: "terminal", module: "terminal" },
@@ -63,7 +64,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
     label: "Plan",
     shortcut: "Ctrl + Alt",
     tone: "var(--c1)",
-    views: ["today", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
+    views: ["today", "goals", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
   },
   { label: "Study", shortcut: "Ctrl + X", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
@@ -90,7 +91,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
 ];
 /**
  * Groups with their enabled views. A group that would only offer the atlas home
- * is dropped: with every module off the header shows just Settings.
+ * is dropped: with every module off the header shows Plan (Goals) and Settings.
  */
 export function visibleGroups(enabled: Enabled) {
   return navigationGroups
@@ -102,6 +103,10 @@ export function visibleGroups(enabled: Enabled) {
  * Single source of truth for "what connects to what"; pairs are undirected.
  */
 export const navigationRelations: [View, View][] = [
+  ["goals", "calendar"],
+  ["goals", "study"],
+  ["goals", "opportunities"],
+  ["goals", "jobs"],
   ["herdr", "tern"],
   ["tern", "agent-skills"],
   ["calendar", "reminders"],

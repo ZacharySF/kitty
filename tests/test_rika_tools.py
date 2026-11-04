@@ -49,10 +49,10 @@ def test_every_tool_declares_a_closed_documented_schema_and_an_honest_effect():
         if schema["required"]:
             with pytest.raises(ToolError):
                 validate(schema, {})
-    # The spec's approval list (Q9): deleting without Trash, settings and modules,
-    # starting a worker agent and shell commands all wait for a tap.
+    # The spec's approval list (Q9): sending email, deleting without Trash, settings and
+    # modules, starting a worker agent and shell commands all wait for a tap.
     assert {name for name, tool in REGISTRY.items() if tool.effect == "outward"} == {
-        "delete_page", "set_modules", "start_worker", "run_command"}
+        "delete_page", "set_modules", "start_worker", "run_command", "send_reply"}
 
 
 @pytest.mark.parametrize("args", [
