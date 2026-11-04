@@ -625,7 +625,9 @@ def _print_discover_report(report) -> None:
 
 @app.command()
 def apply(
-    job_ids: Annotated[Optional[list[int]], typer.Argument(help="Job ids to open and fill.")] = None,
+    job_ids: Annotated[Optional[list[str]], typer.Argument(
+        help="Job ids to open and fill, or `report` for the apply health report.", metavar="[JOB_IDS]... | report",
+    )] = None,
     queued: Annotated[bool, typer.Option("--queued", help="Every queued job you have not applied to.")] = False,
     top: Annotated[Optional[int], typer.Option("--top", help="The N best new/queued jobs you have not applied to.")] = None,
     track: Annotated[Optional[str], typer.Option("--track", help="Only jobs in this track (with --queued / --top).")] = None,
@@ -635,14 +637,34 @@ def apply(
         "--include-ineligible",
         help="Explicit compatibility research on ineligible jobs only; never ready, authenticated or watched.",
     )] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="With `report`: machine-readable output.")] = False,
 ) -> None:
     """Open each job's application form in Firefox and fill it. You review and submit.
 
     Afterwards it watches the tabs (config/apply.yaml watch_hours) and records each
     application when its tab shows the board's confirmation page. Ctrl-C stops watching.
+
+    `kitty apply report` shows apply health instead: the unattended ready rate per ATS
+    family (unit = job, closed postings removed, Wilson 95% intervals), top causes and
+    per-field correctness by provenance class. It only reads the attempt records.
     """
     from kitty.core.apply.filler import EligibilityOverride, fill_jobs
     from kitty.core.apply.watch import Watch
+
+    if job_ids and job_ids[0] == "report":
+        if len(job_ids) > 1 or queued or top or track or headless or no_watch or include_ineligible:
+            error_console.print("`kitty apply report` takes no job ids or fill options (only --json).")
+            raise typer.Exit(code=1)
+        _apply_report(as_json)
+        return
+    if as_json:
+        error_console.print("--json applies to `kitty apply report` only.")
+        raise typer.Exit(code=1)
+    try:
+        ids = [int(value) for value in job_ids or []]
+    except ValueError:
+        error_console.print("Job ids must be whole numbers (or use `kitty apply report`).")
+        raise typer.Exit(code=1) from None
 
     workspace = _open()
     try:
@@ -650,7 +672,7 @@ def apply(
         if track and config.track(track) is None:
             error_console.print(f"[red]Unknown track '{track}'. Known: {', '.join(config.track_names)}[/red]")
             raise typer.Exit(code=1)
-        chosen = list(job_ids or [])
+        chosen = ids
         if queued or top:
             picked = jobs_core.list_jobs(workspace.conn, jobs_core.JobFilter(
                 order="best", prefer_cities=config.prefer_cities,
@@ -705,6 +727,54 @@ def apply(
             console.print("After you submit an eligible application, mark it: [bold]kitty status <id> applied[/bold]")
     finally:
         workspace.close()
+
+
+def _percent(value: float | None) -> str:
+    return f"{value * 100:.1f}%" if value is not None else ""
+
+
+def _rate_text(rate: float | None, low: float | None, high: float | None, n: int) -> str:
+    if rate is None:
+        return f"insufficient data (n = {n})"
+    return f"{_percent(rate)} ({_percent(low)}–{_percent(high)}), n = {n}"
+
+
+def _apply_report(as_json: bool) -> None:
+    """Print the apply health report (kitty.core.apply.health)."""
+    import json
+
+    from kitty.core.apply import health
+
+    workspace = _open()
+    try:
+        found = health.report(workspace.conn)
+    finally:
+        workspace.close()
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+        return
+    if not found["attempts"]:
+        console.print("No apply attempts recorded yet. Run [bold]kitty apply[/bold] first.")
+        return
+    overall = found["overall"]
+    console.print(f"[bold]Apply health[/bold]  {found['attempts']} attempts, last {found['last_attempt_at']}")
+    console.print("Unit = job; closed postings removed; Wilson 95% intervals; "
+                  f"fewer than {found['min_n']} = insufficient data.\n")
+    console.print("[bold]Unattended ready rate (URR)[/bold]")
+    for family in [overall, *found["families"]]:
+        console.print(f"  {family['family']:<16} {family['ready']:>4}/{family['jobs']:<4} "
+                      f"{_rate_text(family['urr'], family['low'], family['high'], family['jobs'])}"
+                      f"  [dim]no owner input: {family['ready_no_input']}; closed removed: {family['closed']}[/dim]")
+    if found["causes"]:
+        console.print("\n[bold]Top causes[/bold] (live jobs never ready, by their latest attempt)")
+        for cause in found["causes"]:
+            console.print(f"  {cause['jobs']:>4} jobs  {cause['attempts']:>4} attempts  "
+                          f"{escape(cause['label'])} [dim]({cause['cause']}, {cause['outcome']})[/dim]")
+    if found["correctness"]:
+        console.print("\n[bold]Per-field correctness[/bold] (fields the owner kept unchanged before Submit)")
+        for item in found["correctness"]:
+            console.print(f"  {item['class']:<16} filled {item['filled']:>4}  edited {item['edited']:>3}/{item['compared']:<4} "
+                          f"{_rate_text(item['rate'], item['low'], item['high'], item['compared'])}")
 
 
 @contextmanager

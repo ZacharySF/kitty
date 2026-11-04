@@ -192,6 +192,7 @@ class DashboardScreen(Screen):
             eligibility=jobs_core.NOT_FILTERED_OUT, not_applied=True))
         a_tier = jobs_core.count_jobs(conn, jobs_core.JobFilter(tiers=["A"], not_applied=True))
         proposals = len(applications_core.proposed_events(conn))
+        questions_core.refresh_if_changed(conn, self.app.config)                # type: ignore[attr-defined]
         unanswered = len(questions_core.list_questions(conn))
         days = self.app.config.apply.archive_after_days                      # type: ignore[attr-defined]
 

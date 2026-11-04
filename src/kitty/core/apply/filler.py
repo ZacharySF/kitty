@@ -57,6 +57,7 @@ from kitty.core.apply.page import (
 )
 from kitty.core.apply.urls import detect_ats, form_url
 from kitty.core.apply.preflight import advance, inspect_page, wait_for_page
+from kitty.core.apply import attempts as attempts_core
 from kitty.core.apply.state import record_attempt
 from kitty.core.apply.watch import (
     CONTEXT_MARKER, RULES, Watch, WatchedTab, look, owned_context, reattach, watch_tabs,
@@ -135,9 +136,13 @@ class FillReport:
     resume_id: int | None = None  # actual uploaded or previously pinned retained attachment
     cause: OutcomeCause = "unsupported_controls"
     recovery: list[dict] = field(default_factory=list)
+    attempt_id: int | None = None  # the apply_attempts row this report was recorded as
 
     def __post_init__(self) -> None:
         self.cause = _outcome_cause(self)
+        # In-memory only (never a dataclass field, so never serialized): the salt and
+        # sandbox keys the watcher needs to re-read a ready tab (attempts.Capture).
+        self.capture: attempts_core.Capture | None = None
 
 
 @dataclass
@@ -153,6 +158,9 @@ class FormResult:
     resume_verified: bool = False
     blocker: str | None = None
     interrupted: bool = False
+    written: list[attempts_core.Written] = field(default_factory=list)  # fields set, with provenance
+    failed_labels: list[str] = field(default_factory=list)  # fields whose control interaction failed
+    prefilled: list[str] = field(default_factory=list)      # labels already non-blank at the first read
 
 
 def choose_resume(conn: sqlite3.Connection, config: Config, job: Job) -> Resume | None:
@@ -328,6 +336,7 @@ def fill_form(
         result.interrupted = True
         return result
     frames, fields = wait_for_form(page)
+    result.prefilled = [f.label for f in fields if f.kind not in ("file", "unsupported") and not f.blank and f.label]
     if uploads_pending(page):
         if not wait_for_uploads(page):
             result.fields_found = len(fields)
@@ -370,11 +379,16 @@ def fill_form(
             result.interrupted = True
             break
         try:
-            if _apply_plan(frames, form_field, plan) and plan.field_name not in result.filled:
-                result.filled.append(plan.field_name)
+            if _apply_plan(frames, form_field, plan):
+                if plan.field_name not in result.filled:
+                    result.filled.append(plan.field_name)
+                result.written.append(attempts_core.Written(
+                    form_field.label or form_field.name or plan.field_name, plan.source,
+                    frame=form_field.frame, keys=form_field.option_keys or (form_field.key,)))
         except ChoiceSelectionError as exc:
             label = form_field.label or form_field.name or plan.field_name
             result.interaction_errors.append(f"{label}: {exc}")
+            result.failed_labels.append(label)
             failed_choices.add((form_field.frame, form_field.key))
         except (BidiError, UnsafeAction):
             continue                      # left blank; reported below if it is required
@@ -521,15 +535,20 @@ def fill_job(
     page: Tab, conn: sqlite3.Connection, settings: Settings, config: Config, job: Job,
     *, resume_tab: bool = False, approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
-    recovery_planner=None, progress=None, stop=None,
+    recovery_planner=None, progress=None, stop=None, run: attempts_core.Run | None = None,
 ) -> FillReport:
-    """Prepare through review, never submit; excluded jobs leave the browser untouched."""
+    """Prepare through review, never submit; excluded jobs leave the browser untouched.
+
+    Every browser attempt (not compatibility research) appends an apply_attempts row
+    with its stage, typed cause and written fields' provenance; a ready one also gets
+    its value hashes and the watcher's Submit capture (kitty.core.apply.attempts).
+    """
     if eligibility_override is not None and (
         eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approval is not None
     ):
         raise ApprovalError(APPROVAL_CHANGED)
     if blocker := preparation_blocker(job, eligibility_override=eligibility_override):
-        return _blocked_report(job, blocker)
+        return _excluded_report(conn, job, blocker, run)
     research = job.queue_state == "not_eligible" or job.eligibility == "ineligible"
     jurisdiction = authorization_jurisdiction(job.location, job.country)
     ats = detect_ats(job.apply_url or job.url)
@@ -548,6 +567,11 @@ def fill_job(
             return _error_report(job.id, job, APPROVAL_CHANGED)
         resume_path = None
     record_attempt(conn, job.id, "attempted", context_id=page.context, url=page.bidi.redact(url))
+    attempt = attempts_core.Progress()
+    written: list[attempts_core.Written] = []
+    failing: list[str] = []
+    earlier = attempts_core.written_labels(conn, job.id) if resume_tab else set()
+    owner_inputs: int | None = None
     resume_verified = False
     visited: set[str] = set()
     previous: str | None = None
@@ -560,13 +584,23 @@ def fill_job(
     recovery = None
 
     def absorb(result):
-        nonlocal resume_verified
+        nonlocal resume_verified, owner_inputs
         # Account values can be echoed in field labels/errors; never persist them.
         result.filled = [page.bidi.redact(value) for value in result.filled]
         result.unanswered = [page.bidi.redact(value) for value in result.unanswered]
         result.to_log = [value for value in result.to_log if page.bidi.redact(value) == value]
         result.interaction_errors = [page.bidi.redact(value) for value in result.interaction_errors]
         _record(conn, job, resume, result)
+        if owner_inputs is None:
+            # Values already on a resumed tab that no earlier attempt wrote were the owner's.
+            owner_inputs = len({page.bidi.redact(label) for label in result.prefilled} - earlier
+                               - {item.label for item in written}) if resume_tab else 0
+        for item in result.written:
+            item = attempts_core.Written(page.bidi.redact(item.label), item.provenance, item.frame, item.keys)
+            if not any(old.frame == item.frame and old.keys == item.keys and
+                       (item.keys or old.label == item.label) for old in written):
+                written.append(item)
+        failing.extend(page.bidi.redact(label) for label in result.failed_labels)
         report.filled.extend(name for name in result.filled if name not in report.filled)
         report.unanswered = result.unanswered
         resume_verified = resume_verified or result.resume_verified
@@ -589,6 +623,7 @@ def fill_job(
             report.status, report.note = "blocked", "verification: repeated email challenges need your review."
             return False
         verification_attempts += 1
+        attempt.reach("verify")
         verify()
         try:
             credentials = load_credentials(settings)
@@ -614,6 +649,7 @@ def fill_job(
         if result.verified:
             if "employer email verification" not in report.filled:
                 report.filled.append("employer email verification")
+                written.append(attempts_core.Written("employer email verification", "account"))
             authentication_attempted = False
             recovery.accepted_navigation()
             return True
@@ -665,6 +701,10 @@ def fill_job(
             if authentication_attempted and not policy.approves(page.main.url):
                 report.status, report.note = "blocked", "login: redirected to an unapproved origin; continue manually."
                 break
+            if not (before.blocker or "").startswith("closed:"):
+                attempt.reach("entry")
+            if (before.blocker or "").startswith("verification:"):
+                attempt.reach("verify")
             if (not research and policy.enabled and policy.email_verification.enabled
                     and before.blocker and before.blocker.startswith("verification:")):
                 if verify_email():
@@ -677,6 +717,7 @@ def fill_job(
                 # it before the generic consent/unsupported classification.
                 if complete_residence_gate(page, config, allow_terms=policy.allow_account_creation):
                     report.filled.append("country of residence")
+                    written.append(attempts_core.Written("country of residence", "profile"))
                     recovery.mutated = True
                     visited.discard(before.signature)
                     settle(page)
@@ -686,6 +727,8 @@ def fill_job(
                 report.cause = "human_boundary"
                 break
             account_stage = bool(before.blocker and before.blocker.startswith("login:")) or authentication_pending(page)
+            if account_stage:
+                attempt.reach("account")
             if account_stage and (not policy.enabled or research):
                 report.status, report.note = "blocked", "login: account access is not authorized for this run."
                 break
@@ -716,6 +759,8 @@ def fill_job(
                     authentication = authenticate(page, policy, credentials,
                                                   application_url=job.apply_url or job.url)
                 report.filled.extend(_ACCOUNT_FIELD_LABELS[role] for role in authentication.filled)
+                written.extend(attempts_core.Written(_ACCOUNT_FIELD_LABELS[role], "account")
+                               for role in authentication.filled)
                 recovery.mutated = recovery.mutated or bool(authentication.filled) or authentication.acted
                 if (policy.email_verification.enabled and authentication.blocker
                         and authentication.blocker.startswith("verification:")):
@@ -730,6 +775,7 @@ def fill_job(
                     # account stage may run once more after this single fact.
                     if complete_residence_gate(page, config, allow_terms=policy.allow_account_creation):
                         report.filled.append("country of residence")
+                        written.append(attempts_core.Written("country of residence", "profile"))
                         recovery.mutated = True
                         if "password" not in authentication.filled:
                             authentication_attempted = False
@@ -769,6 +815,7 @@ def fill_job(
                 record = fill_required_records(page, config, company=job.company_name,
                                                tracks=job.tracks, checkpoint=verify)
                 report.filled.extend(name for name in record.filled if name not in report.filled)
+                written.extend(attempts_core.Written(name, "profile") for name in record.filled)
                 if record.changed:
                     recovery.mutated = True
                     recovery.refresh_progress()
@@ -793,6 +840,7 @@ def fill_job(
                 checkpoint=recovery.checkpoint,
             )
             absorb(result)
+            attempt.page(page.bidi.redact(before.step) if before.step else None)
             report.pages += 1
             if result.interrupted and rescue(inspect_page(page), result):
                 visited.discard(before.signature)
@@ -829,6 +877,7 @@ def fill_job(
                 if prepare_profile_bootstrap(page, config, allow_terms=policy.allow_account_creation):
                     if "country of residence" not in report.filled:
                         report.filled.append("country of residence")
+                        written.append(attempts_core.Written("country of residence", "profile"))
                 if submit_profile_bootstrap(page, config, allow_terms=policy.allow_account_creation):
                     report.pages += 1
                     recovery.mutated = True
@@ -867,6 +916,7 @@ def fill_job(
                 report.cause = "missing_applicant_fact" if result.to_log else "unsupported_controls"
                 break
             if after.review or after.boundary:
+                attempt.reach("review")
                 if any(f.invalid or (f.required and f.blank) for f in read_fields(form_frames(page))):
                     if rescue(after, result):
                         visited.discard(before.signature)
@@ -957,6 +1007,22 @@ def fill_job(
         report.recovery = recovery.journal.events
     record_attempt(conn, job.id, report.status, blocker=report.note if report.status != "ready" else None,
                    context_id=page.context, url=page.bidi.redact(current_url))
+    if not research:
+        capture, hashes = None, []
+        if report.status == "ready":
+            try:
+                capture, hashes = attempts_core.release(page, written)
+            except BidiError:
+                capture, hashes = None, []
+        report.attempt_id = attempts_core.record(
+            conn, job_id=job.id, ats=ats, url=url, progress=attempt, status=report.status,
+            note=report.note, error=report.error, outcome_cause=report.cause, run=run,
+            failing=[*report.unanswered, *failing], owner_inputs=owner_inputs or 0,
+            written=written, hashes=hashes,
+        )
+        report.capture = capture
+    with transaction(conn):
+        questions_core.refresh_answered_flags(conn, config)
     if job.fill_context_id and not resume_tab:
         restart = "Previous tab unavailable; restarted known fields. Manual values are not restored."
         report.note = f"{report.note} {restart}" if report.note else restart
@@ -983,13 +1049,24 @@ def _blocked_report(job: Job, message: str) -> FillReport:
     )
 
 
+def _excluded_report(conn: sqlite3.Connection, job: Job, message: str, run: attempts_core.Run | None) -> FillReport:
+    """A local exclusion before any browser access; a closed posting is also its live-check attempt."""
+    report = _blocked_report(job, message)
+    if report.cause == "unavailable":
+        report.attempt_id = attempts_core.record(
+            conn, job_id=job.id, ats=report.ats, url=report.url, progress=attempts_core.Progress(),
+            status=report.status, note=report.note, error=None, outcome_cause=report.cause, run=run,
+        )
+    return report
+
+
 def _watched_tab(job: Job, tab: Tab, report: FillReport) -> WatchedTab:
     """Keep the attachment identity; a later default change cannot rewrite history."""
     return WatchedTab(
         job_id=job.id, context=tab.context, ats=report.ats, form_url=report.url,
         label=f"{job.company_name} - {job.title}", resume_id=report.resume_id,
         track=job.tracks[0] if job.tracks else None,
-        marker=tab.context,
+        marker=tab.context, attempt_id=report.attempt_id, capture=report.capture,
     )
 
 
@@ -1073,7 +1150,7 @@ def _fill_all(
     watch: Watch | None = None, background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
     approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
-    recovery_planner=None, on_report=None, stop=None,
+    recovery_planner=None, on_report=None, stop=None, run: attempts_core.Run | None = None,
 ) -> list[FillReport]:
     """Fill each job in its own new tab, pausing `pause` seconds between jobs.
 
@@ -1102,7 +1179,7 @@ def _fill_all(
             publish()
             continue
         if blocker := preparation_blocker(job, eligibility_override=eligibility_override):
-            reports.append(_blocked_report(job, blocker))
+            reports.append(_excluded_report(conn, job, blocker, run))
             publish()
             continue
         if approval is not None:
@@ -1113,6 +1190,7 @@ def _fill_all(
                 publish()
                 continue
         say(f"[{position + 1}/{len(job_ids)}] {job.company_name} - {job.title}")
+        opened = attempts_core.Progress()
         try:
             retained = _retained_tab(bidi, job)
             tab = retained or open_tab(bidi, background=background)
@@ -1120,7 +1198,8 @@ def _fill_all(
             report = fill_job(tab, conn, settings, config, job, resume_tab=retained is not None,
                               approval=approval, eligibility_override=eligibility_override,
                               recovery_planner=recovery_planner, progress=say,
-                              stop=stop if stop is not None else watch.stop if watch is not None else None)
+                              stop=stop if stop is not None else watch.stop if watch is not None else None,
+                              run=run)
             reports.append(report)
             if watch is not None:
                 watch.tabs[:] = [old for old in watch.tabs if old.context != tab.context and old.job_id != job.id]
@@ -1134,13 +1213,18 @@ def _fill_all(
             # An unavailable later tab must not erase reports already prepared.
             # If cleanup failed after reporting this job, keep its actual result.
             if not reports or reports[-1].job_id != job_id:
-                reports.append(_error_report(job_id, job, message))
+                report = _error_report(job_id, job, message)
+                report.attempt_id = attempts_core.record(
+                    conn, job_id=job.id, ats=report.ats, url=report.url, progress=opened,
+                    status=report.status, note=None, error=message, outcome_cause=report.cause, run=run,
+                )
+                reports.append(report)
             say(f"Browser stopped this job: {message}")
             if isinstance(exc, ConnectionLost):
                 for remaining_id in job_ids[position + 1:]:
                     remaining = jobs_core.get_job(conn, remaining_id)
                     blocker = preparation_blocker(remaining, eligibility_override=eligibility_override) if remaining else None
-                    reports.append(_blocked_report(remaining, blocker) if blocker else _error_report(
+                    reports.append(_excluded_report(conn, remaining, blocker, run) if blocker else _error_report(
                         remaining_id, remaining,
                         "Browser disconnected before this job could be prepared; reconnect Firefox and review a new plan.",
                     ))
@@ -1162,7 +1246,7 @@ def _fill_and_watch(
     background: bool = False, pause: float = PAUSE_BETWEEN_JOBS,
     approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
-    recovery_planner=None, on_report=None, stop=None,
+    recovery_planner=None, on_report=None, stop=None, run: attempts_core.Run | None = None,
 ) -> list[FillReport]:
     """Fill, hand the reports over, then (with a Watch) watch the tabs in the same session.
 
@@ -1175,13 +1259,14 @@ def _fill_and_watch(
     reports = _fill_all(bidi, conn, settings, config, job_ids, say, keep_open=keep_open,
                         watch=watch, background=background, pause=pause, approval=approval,
                         eligibility_override=eligibility_override, recovery_planner=recovery_planner,
-                        on_report=on_report, stop=stop)
+                        on_report=on_report, stop=stop, run=run)
     on_filled(reports)
     if watch is None or not watch.tabs or watch.stop.is_set():
         return reports
     watch.on_start(len(watch.tabs))
     try:
-        watch_tabs(lambda tab: look(bidi, tab), conn, config, watch, say)
+        watch_tabs(lambda tab: look(bidi, tab), conn, config, watch, say,
+                   observe=lambda tab, confirmed: attempts_core.observe(conn, bidi, tab, confirmed=confirmed))
     except BidiError as exc:              # Firefox quit or the connection broke
         say(f"stopped watching: {str(exc).strip().splitlines()[0][:200]}")
     return reports
@@ -1232,11 +1317,20 @@ def fill_jobs(
     notify_filled = on_filled or (lambda reports: None)
     completed: list[FillReport] | None = None
     recovery_ai = recovery_budget = None
+    run: attempts_core.Run | None = None
+    run_open = False
+
+    def close_run(error: str | None = None) -> None:
+        nonlocal run_open
+        if run_open:
+            run_open = False
+            attempts_core.finish_run(conn, run, error=error)
 
     def report_filled(reports: list[FillReport]) -> None:
         nonlocal completed
         completed = reports
         finish_model_reservation(conn, config, recovery_budget)
+        close_run()
         notify_filled(reports)
 
     conn = connect(settings.db_path)
@@ -1245,6 +1339,8 @@ def fill_jobs(
             eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approval is not None
         ):
             raise ApprovalError(APPROVAL_CHANGED)
+        run = attempts_core.start_run(conn)
+        run_open = True
         # Entirely excluded runs require no browser session. Mixed runs retain
         # their original ordering and recheck each exclusion immediately before use.
         local_reports = []
@@ -1254,6 +1350,9 @@ def fill_jobs(
                 local_reports.append(_error_report(job_id, None, f"no job with id {job_id}"))
             elif blocker := preparation_blocker(job, eligibility_override=eligibility_override):
                 local_reports.append(_blocked_report(job, blocker))
+        if len(local_reports) == len(job_ids):
+            local_reports = [_excluded_report(conn, jobs_core.get_job(conn, report.job_id), report.note, run)
+                             if report.status == "blocked" else report for report in local_reports]
         if len(local_reports) == len(job_ids):
             report_filled(local_reports)
             return local_reports
@@ -1272,11 +1371,12 @@ def fill_jobs(
                                        keep_open=watch is not None, on_filled=report_filled,
                                        watch=watch, background=background, pause=pause, approval=approval,
                                        eligibility_override=eligibility_override, recovery_planner=recovery_ai,
-                                       on_report=on_report, stop=stop)
+                                       on_report=on_report, stop=stop, run=run)
         say("opening the rika! Firefox window")
         port = ensure_firefox(settings)
         try:
-            if not hide_automation(port):
+            run.hide_automation = hide_automation(port)
+            if not run.hide_automation:
                 say("warning: pages can see this Firefox is remote-controlled (navigator.webdriver)")
             bidi = open_session(port)
         except SessionBusy as exc:
@@ -1285,7 +1385,7 @@ def fill_jobs(
             return _fill_and_watch(bidi, conn, settings, config, job_ids, say, keep_open=True,
                                    on_filled=report_filled, watch=watch, background=background,
                                    pause=pause, approval=approval, eligibility_override=eligibility_override,
-                                   recovery_planner=recovery_ai, on_report=on_report, stop=stop)
+                                   recovery_planner=recovery_ai, on_report=on_report, stop=stop, run=run)
         finally:
             bidi.close()                  # ends remote control only: the window and tabs stay
     except (BrowserError, BidiError) as exc:
@@ -1308,5 +1408,6 @@ def fill_jobs(
     finally:
         try:
             finish_model_reservation(conn, config, recovery_budget)
+            close_run()
         finally:
             conn.close()

@@ -85,6 +85,8 @@ class Plan:
     from_answers: bool = False
     exact_choices: bool = False       # majors must not match a different program by prefix
     graduation: str | None = None     # saved exact YYYY-MM; enables offered date-range buckets only
+    #: Provenance class for attempt records (kitty.core.apply.attempts.PROVENANCE).
+    source: str = "profile"
 
 
 # ------------------------------------------------------------------ labels
@@ -602,7 +604,8 @@ def _answer_plan(field: FormField, entry: AnswerEntry) -> Plan:
         search_text = None                 # search each spelling in turn
     name = clean_label(field.label) or clean_label(field.options[0] if field.options else "")
     return Plan(name[:60], tuple(dict.fromkeys(candidates)), search_text=search_text,
-                from_answers=True, graduation=graduation)
+                from_answers=True, graduation=graduation,
+                source="saved_answer:" + norm_question(entry.question)[:120])
 
 
 # ----------------------------------------------------------- source choices

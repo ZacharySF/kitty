@@ -159,6 +159,8 @@ class WatchedTab:
     resume_id: int | None             # recorded with the application
     track: str | None
     marker: str                       # stable browser-storage token across sessions
+    attempt_id: int | None = None     # the ready apply_attempts row (per-field correctness)
+    capture: object | None = None     # attempts.Capture: salt and sandbox keys, memory only
 
 
 def _ignore(_: object) -> None:
@@ -286,11 +288,14 @@ def watch_tabs(
     say: Callable[[str], None],
     *,
     poll_seconds: float = POLL_SECONDS,
+    observe: Callable[[WatchedTab, bool], None] | None = None,
 ) -> None:
     """Look at every tab in `watch.tabs` each round until none is left, stop is set or time is up.
 
     `looker` is `look` bound to the session (tests pass a fake). A confirmed tab
-    is recorded once and dropped; a closed tab is dropped.
+    is recorded once and dropped; a closed tab is dropped. `observe(tab, confirmed)`
+    runs after each look at an open tab, before a confirmation is recorded
+    (attempts.observe: value hashes for per-field correctness, read-only).
     """
     deadline = time.monotonic() + watch.hours * 3600
     while watch.tabs and not watch.stop.is_set() and time.monotonic() < deadline:
@@ -303,6 +308,8 @@ def watch_tabs(
                 say(f"{tab.label}: tab closed, no longer watching it")
                 continue
             url = confirmed(RULES[tab.ats], view, posting_key(tab.form_url))
+            if observe is not None:
+                observe(tab, url is not None)
             if url is not None:
                 watch.tabs.remove(tab)
                 if record_submission(conn, config, tab, url, say):

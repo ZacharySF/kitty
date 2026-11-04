@@ -444,3 +444,15 @@ Stage 1: done.
   returning `seq` and the page `revision`, and write only text blocks of note pages.
   Checks: `uv run pytest tests/test_block_api.py tests/test_mcp_blocks.py
   tests/test_notes_cli.py tests/test_web_block_api.py tests/test_modules_mcp.py`.
+- 2026-11-04: Apply attempts are measured (migration 054, `kitty.core.apply.attempts`).
+  Each browser attempt appends an `apply_attempts` row (run of kind `apply`, ATS family,
+  tenant origin, stage reached, outcome `ready|needs_owner|unsupported|failed|closed`,
+  typed cause from a closed vocabulary, failing field labels, duration, owner inputs,
+  hide_automation); `jobs.fill_*` remains the latest snapshot. Written fields carry a
+  provenance class; at ready only salted value hashes are kept (salt in memory), the
+  read-only watcher stores the latest hashes per poll plus a passive Submit-click
+  snapshot, and the confirmation compares them to count owner edits per class. No field
+  value is stored. `kitty apply report [--json]` and `GET /api/apply/health` report URR
+  per family (unit = job, closed removed, Wilson 95%, n < 20 insufficient), top causes and
+  per-class correctness. `screening_questions.answered` refreshes after each attempt and
+  when answers.yaml/profile.yaml change. Checks: `uv run pytest tests/test_apply_attempts.py`.

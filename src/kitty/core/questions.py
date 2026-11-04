@@ -9,6 +9,7 @@ jobs ask this" is a count of distinct jobs and re-reading a form never inflates 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -122,13 +123,20 @@ def mark_answered(conn: sqlite3.Connection, question_id: int, answered: bool = T
     )
 
 
+def _config_digest(config: Config) -> str:
+    """What the answered classification depends on: answers.yaml and profile.yaml."""
+    data = [config.answers.model_dump(mode="json"), config.profile.model_dump(mode="json")]
+    return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
+
+
 def refresh_answered_flags(conn: sqlite3.Connection, config: Config) -> int:
     """Re-check the queue against answers.yaml; return how many are now answered.
 
-    Run after I edit answers.yaml: only answers covering every associated job
-    drop out of the queue. Reuse form classification so per-job jurisdictions,
-    company/track scope, and country evidence in stored choices stay identical
-    to what the filler can actually answer.
+    Runs after every apply attempt (new job links can change coverage) and, via
+    refresh_if_changed, whenever answers.yaml or profile.yaml changed: only answers
+    covering every associated job drop out of the queue. Reuse form classification
+    so per-job jurisdictions, company/track scope, and country evidence in stored
+    choices stay identical to what the filler can actually answer.
     """
     from kitty.core.form_questions import summarize
 
@@ -137,4 +145,26 @@ def refresh_answered_flags(conn: sqlite3.Connection, config: Config) -> int:
         found = question.id in covered
         if found != question.answered:
             mark_answered(conn, question.id, found)
+    conn.execute(
+        """INSERT INTO question_flag_refresh (id, config_digest, refreshed_at) VALUES (1, ?, ?)
+           ON CONFLICT (id) DO UPDATE SET config_digest = excluded.config_digest,
+                                          refreshed_at = excluded.refreshed_at""",
+        (_config_digest(config), now_iso()),
+    )
     return len(covered)
+
+
+def refresh_if_changed(conn: sqlite3.Connection, config: Config) -> bool:
+    """Refresh the answered flags when answers.yaml or profile.yaml changed since the last refresh.
+
+    Readers of the queue call this first, so hand edits to either file are picked
+    up without a manual refresh. Returns whether a refresh ran.
+    """
+    row = conn.execute("SELECT config_digest FROM question_flag_refresh WHERE id = 1").fetchone()
+    if row is not None and row[0] == _config_digest(config):
+        return False
+    from kitty.db.connection import transaction
+
+    with transaction(conn):
+        refresh_answered_flags(conn, config)
+    return True

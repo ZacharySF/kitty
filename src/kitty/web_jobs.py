@@ -41,6 +41,7 @@ def get(app, conn, path, query):
         app._no_query(query)
         digest = today.build_digest(conn, app.config)
         funnel = pipeline.funnel(conn)
+        questions.refresh_if_changed(conn, app.config)
         return {
             'day': digest.day,
             'weekly': [{**dataclasses.asdict(item), 'remaining': item.remaining} for item in digest.weekly],
