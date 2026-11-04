@@ -1,5 +1,6 @@
 """Answer checking: exact numbers and fractions, stated tolerance or significant figures
-for decimals, multiple choice, and SymPy equivalence for expressions (:mod:`.cas`).
+for decimals, multiple choice, and SymPy equivalence for expressions (:mod:`.cas`),
+up to an added constant for antiderivatives.
 
 A verdict is ``equal``, ``mistake`` (a template's known wrong answer, with its feedback),
 ``different`` or ``undecided``. Undecided never marks an answer wrong: it covers input
@@ -154,7 +155,7 @@ def _check_expression(problem: Problem, answer, timeout: float | None) -> Verdic
         return Verdict(None, "undecided", f"Keep the expression under {MAX_ANSWER} characters.")
     kind, feedback = cas.equivalent(answer, str(problem.answer), problem.variables,
                                     [(wrong, message) for wrong, message in problem.mistakes if isinstance(wrong, str)],
-                                    timeout=timeout)
+                                    timeout=timeout, up_to_constant=problem.up_to_constant)
     return Verdict({"equal": True, "mistake": False, "different": False}.get(kind), kind, feedback)
 
 

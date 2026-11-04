@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { THEMES } from "../src/lib/themes/catalog.ts";
+import { textContrast } from "./textContrast.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 // rika!'s native window: default 1280×850, minimum 760×500 (desktop/src/main.rs).
@@ -229,6 +231,11 @@ test("the mind-map module opens Notes in Map mode with the editor filling the st
 test("the canvas stage ends above the window bottom and its pill ⋯ holds paper, layers and file actions", async () => {
   const { page, problems, context } = await notes();
   await mode(page, "Canvas").click();
+  // The stage is sized to the window after the mode switch lays out; measure once it settles.
+  await page.waitForFunction((min) => {
+    const el = [...document.querySelectorAll("[aria-label]")].find((node) => /^Infinite drawing canvas/.test(node.getAttribute("aria-label")));
+    return el && el.getBoundingClientRect().height >= min;
+  }, 320, { timeout: 5000 }).catch(() => {});
   const stage = await box(canvas(page));
   assert.ok(stage.y + stage.height <= DEFAULT.height, `the canvas runs to ${Math.round(stage.y + stage.height)}px, under the window edge`);
   assert.ok(stage.height >= 320, "the canvas is squashed");
@@ -406,12 +413,51 @@ test("a pinned citation says when its source changed since and shows the change"
   await page.evaluate(() => window.notesHarness.editElsewhere(2, { text: "A leader replicates log entries to a majority." }));
   const badge = page.getByRole("button", { name: "source changed since" });
   await assert.doesNotReject(badge.waitFor());
+  // The pill: a compact warning chip with a status dot, apart from the reference's own text.
+  const pill = await badge.evaluate((button) => {
+    const style = getComputedStyle(button), dot = button.querySelector(".dot");
+    return { height: button.getBoundingClientRect().height, radius: parseFloat(style.borderTopLeftRadius), color: style.color,
+      background: style.backgroundColor, dot: dot && getComputedStyle(dot).backgroundColor, text: getComputedStyle(button.parentElement).color };
+  });
+  assert.ok(pill.height >= 16 && pill.height <= 22, `pill is ${pill.height}px tall`);
+  assert.ok(pill.radius >= 8, "the pill is rounded");
+  assert.ok(pill.dot, "the pill carries a status dot");
+  assert.notEqual(pill.color, pill.text, "the pill reads apart from the text around it");
+  assert.notEqual(pill.background, "rgba(0, 0, 0, 0)", "the pill has its own fill");
   await badge.click();
   const panel = page.getByRole("region", { name: "Source changed since" });
   await assert.doesNotReject(panel.waitFor());
-  assert.equal(await panel.locator("del").textContent(), "A leader replicates log entries to followers.");
-  assert.equal(await panel.locator("ins").textContent(), "A leader replicates log entries to a majority.");
-  assert.match(await panel.innerText(), /Cited at seq 2; changed at seq \d+/);
+  // A word diff: the cited words struck through, the new words marked as added, the rest plain.
+  assert.equal(await panel.locator("del").textContent(), "followers");
+  assert.equal(await panel.locator("ins").textContent(), "a majority");
+  assert.equal(await panel.locator(".diff").textContent(), "A leader replicates log entries to followersa majority.");
+  assert.match(await panel.innerText(), /Cited at seq 2 · changed at seq \d+/);
+  const marks = () => panel.evaluate((section) => {
+    const [del, ins, diff] = ["del", "ins", ".diff"].map((selector) => getComputedStyle(section.querySelector(selector)));
+    return { del: { line: del.textDecorationLine, color: del.color, background: del.backgroundColor },
+      ins: { line: ins.textDecorationLine, color: ins.color, background: ins.backgroundColor }, text: diff.color };
+  });
+  const found = await marks();
+  assert.equal(found.del.line, "line-through");
+  assert.equal(found.ins.line, "none");
+  assert.notEqual(found.del.color, found.ins.color, "removed and added words read apart");
+  assert.notEqual(found.del.background, "rgba(0, 0, 0, 0)", "removed words carry a delete wash");
+  assert.notEqual(found.ins.background, "rgba(0, 0, 0, 0)", "added words carry an insert wash");
+  // Every theme keeps the marks and the pill AA over the side panel.
+  for (const theme of THEMES) {
+    await page.evaluate((id) => window.notesHarness.setTheme(id), theme.id);
+    await page.waitForFunction((id) => document.documentElement.dataset.theme === id, theme.id);
+    // Colours transition on a theme switch; measure once they have settled (ambient art loops forever: not those).
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition)
+      .map((animation) => animation.finished.catch(() => {}))));
+    const ratios = await page.evaluate(([measure, grounds]) => {
+      const contrast = new Function(`return (${measure})`)();
+      const panel = document.querySelector('[aria-label="Source changed since"]');
+      return Object.fromEntries([["del", panel.querySelector("del")], ["ins", panel.querySelector("ins")], ["meta", panel.querySelector(".meta")],
+        ["pill", document.querySelector(".source-changed")]].map(([name, node]) => [name, contrast(node, grounds)]));
+    }, [textContrast.toString(), [theme.roles.void, theme.roles.panel, theme.roles.inset]]);
+    assert.deepEqual(Object.entries(ratios).filter(([, ratio]) => ratio < 4.5), [], `${theme.label}: diff marks below AA`);
+  }
   assert.deepEqual(problems, []);
   await context.close();
 });

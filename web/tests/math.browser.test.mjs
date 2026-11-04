@@ -11,7 +11,7 @@ import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
-import { installMathFixture } from "./mathFixture.mjs";
+import { installMathFixture, LESSON } from "./mathFixture.mjs";
 import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -83,9 +83,11 @@ after(async () => {
 /**
  * A fresh returning-user profile on `hash` with the math fixture. `ai: true` reports a
  * non-demo workspace so the reviewed AI flow is enabled (its paid run is a route too);
- * `clock` installs Playwright's clock so a sprint's time can be skipped.
+ * `clock` installs Playwright's clock so a sprint's time can be skipped; `mixed` has
+ * enough topics mastered for mixed review; `full` serves the 80-topic graph; `fixture:
+ * false` leaves /api/math to the real demo backend except the next lesson (prob.basic).
  */
-async function open(hash, { storage, history, streak, ai = false, clock = false } = {}) {
+async function open(hash, { storage, history, streak, ai = false, clock = false, mixed = false, full = false, fixture = true } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT });
   await authorize(context, secret);
   await context.route("**/api/account", (route) =>
@@ -103,7 +105,13 @@ async function open(hash, { storage, history, streak, ai = false, clock = false 
       const response = await route.fetch();
       await route.fulfill({ response, json: { ...(await response.json()), demo: false } });
     });
-  const math = await installMathFixture(context, { history, streak });
+  // The demo's Rika alert toasts over the right drawer's foot, where Books saves.
+  await context.route("**/api/rika/alerts", (route) => route.fulfill({ json: { alerts: [] } }));
+  // A fresh demo has no open topic with textbook exercises: open Equally likely outcomes' lesson.
+  const math = fixture ? await installMathFixture(context, { history, streak, mixed, full })
+    : await context.route(/\/api\/math\/(next|lessons\/prob\.basic)$/, (route) => route.fulfill({ json: route.request().url().endsWith("/next")
+      ? { kind: "lesson", topic_id: "prob.basic", title: "Equally likely outcomes", why: "Opened for the test" }
+      : { ...LESSON, topic_id: "prob.basic", title: "Equally likely outcomes" } }));
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
   const problems = [];
@@ -169,7 +177,7 @@ describe("math view", () => {
     // Practice opens on the one next thing: here the next lesson, with why.
     await page.getByText("Next lesson · Bayes' rule").waitFor();
     await page.getByText("Unlocked because you mastered Conditional probability").waitFor();
-    for (const name of ["Topics", "History", "Settings"]) assert.equal(await view.getByRole("button", { name, exact: true }).getAttribute("aria-expanded"), "false");
+    for (const name of ["Topics", "History", "Books", "Settings"]) assert.equal(await view.getByRole("button", { name, exact: true }).getAttribute("aria-expanded"), "false");
     await page.locator("body").press("[");
     await page.getByRole("complementary", { name: "Topics" }).waitFor();
     await page.locator("body").press("]");
@@ -437,6 +445,292 @@ describe("answers", () => {
     await bubble.waitFor();
     assert.match(await bubble.innerText(), /divides each term by/);
     assert.ok(await bubble.locator(".katex").count() >= 2, "the explanation's math is not rendered");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("textbook", () => {
+  test("a lesson's Textbook section lists the topic's exercises; a checked one has no ratings or Explain, a self-graded one reveals then rates 1–4", async () => {
+    const { page, problems, context, math } = await open("math");
+    await page.getByRole("button", { name: "Start the lesson" }).click();
+    const lesson = page.getByRole("region", { name: "Lesson" });
+    const book = lesson.getByRole("region", { name: "Textbook" });
+    await book.waitFor();
+    assert.deepEqual(await book.locator("[data-exercise]").evaluateAll((rows) => rows.map((row) => row.dataset.exercise)), ["gs.4.1.13", "gs.4.1.15", "gs.4.1.20"]);
+    assert.match(await book.locator('[data-exercise="gs.4.1.20"]').innerText(), /a program[\s\S]*self-check[\s\S]*due/);
+    assert.match(await book.innerText(), /Textbook · Grinstead & Snell · 3 exercises[\s\S]*GNU Free Documentation License 1\.3/);
+    assert.equal(await book.getByRole("button", { name: /^Show all/ }).count(), 0, "three exercises are cut short");
+
+    // Numeric: checked like a generated problem, graded into its card; no ratings, no Explain.
+    await book.getByRole("button", { name: "Work 4.1.13" }).click();
+    const card = lesson.locator('.textbook[data-graded="number"]');
+    await card.getByText("Grinstead & Snell 4.1.13").waitFor();
+    assert.equal(await card.locator(".eyebrow").textContent(), "Textbook");
+    await card.getByText("Answer part (b).").waitFor();
+    assert.deepEqual(await card.getByRole("list", { name: "Linked topics" }).getByRole("listitem").allTextContents(), ["Bayes' rule", "Conditional probability"]);
+    assert.match(await card.locator("[data-credit]").innerText(), /Grinstead and Snell's Introduction to Probability · Version dated 22 July 2006 · GNU Free Documentation License 1\.3/);
+    const box = card.getByRole("textbox", { name: "Your answer" });
+    await box.fill("1/2");
+    await box.press("Enter");
+    await card.locator('[data-tone="different"]').waitFor();
+    await box.fill("2/5");
+    await box.press("Enter");
+    await card.locator('[data-tone="equal"]').waitFor();
+    await card.locator('[data-tone="equal"] .answer .katex').waitFor();
+    await card.locator("[data-next-review]").waitFor();
+    assert.equal(await card.getByRole("button", { name: "Explain my mistake" }).count(), 0, "Explain offered for the book's text");
+    assert.equal(await card.getByRole("group", { name: "How did it go?" }).count(), 0, "ratings on a checked exercise");
+    assert.deepEqual(math.textbookAnswers.map((item) => item.answer), ["1/2", "2/5"]);
+
+    // Self-graded: work it, Reveal (no answer key), then Again … Easy; 3 is Good.
+    await lesson.getByRole("button", { name: "Back to the lesson" }).click();
+    await book.getByRole("button", { name: "Work 4.1.15" }).click();
+    const self = lesson.locator('.textbook[data-graded="self"]');
+    await self.getByText("Grinstead & Snell 4.1.15").waitFor();
+    assert.equal(await self.getByRole("textbox").count(), 0);
+    assert.equal(await self.getByRole("group", { name: "How did it go?" }).count(), 0, "rated before the reveal");
+    await self.getByRole("button", { name: /Reveal/ }).click();
+    await self.getByText("Check your working; the free edition has no answer key.").waitFor();
+    await self.getByText("It uses Bayes' rule.").waitFor();
+    const ratings = self.getByRole("group", { name: "How did it go?" });
+    assert.deepEqual((await ratings.getByRole("button").allTextContents()).map((text) => text.trim()), ["1Again", "2Hard", "3Good", "4Easy"]);
+    await page.keyboard.press("3");
+    await self.locator("[data-next-review]").waitFor();
+    assert.deepEqual(math.ratings, [{ exercise_id: "gs.4.1.15", rating: 3 }]);
+    assert.equal(await ratings.count(), 0, "rated twice");
+    assert.equal(await self.getByRole("button", { name: "Explain my mistake" }).count(), 0);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("own books", () => {
+  test("the Books edge: log a reference with confidence and topic, due first; review, edit and delete", async () => {
+    const { page, problems, context, math } = await open("math");
+    const view = page.getByRole("region", { name: "Math workspace" });
+    const edge = view.getByRole("button", { name: "Books", exact: true });
+    assert.equal(await edge.locator(".count").textContent(), "1");
+    // The three right-edge tabs don't overlap.
+    const boxes = await Promise.all(["History", "Books", "Settings"].map((name) => view.getByRole("button", { name, exact: true }).boundingBox()));
+    for (let index = 1; index < boxes.length; index += 1) assert.ok(boxes[index].y >= boxes[index - 1].y + boxes[index - 1].height, "right-edge tabs overlap");
+    await edge.click();
+    const drawer = page.getByRole("complementary", { name: "Books" });
+    const form = drawer.getByRole("form", { name: "Log a book problem" });
+    await form.getByText("Reference only — don't paste the problem's text.").waitFor();
+    const rows = () => drawer.locator("[data-entry]").evaluateAll((items) => items.map((item) => [item.dataset.entry, item.dataset.due === "true"]));
+    assert.deepEqual(await rows(), [["1", true], ["2", false]], "due entries come first");
+
+    // Log one: book from the suggestions, a duplicate is refused, then the new reference.
+    await form.getByRole("textbox", { name: "Book" }).fill("bl");
+    await form.getByRole("group", { name: "Books you've logged" }).getByRole("button", { name: "Blitzstein & Hwang" }).click();
+    assert.equal(await form.getByRole("textbox", { name: "Book" }).inputValue(), "Blitzstein & Hwang");
+    await form.getByRole("textbox", { name: "Section" }).fill("2.3");
+    await form.getByRole("textbox", { name: "Problem" }).fill("14");
+    const save = form.getByRole("button", { name: "Log it" });
+    assert.equal(await save.isDisabled(), true, "saves without a confidence");
+    await form.getByRole("radio", { name: /Shaky/ }).click();
+    await save.click();
+    await form.getByRole("alert").getByText("That problem is already logged").waitFor();
+    await form.getByRole("textbox", { name: "Section" }).fill("3.1");
+    await form.getByRole("textbox", { name: "Problem" }).fill("22");
+    await form.getByRole("textbox", { name: "My answer" }).fill("1/6");
+    await form.getByRole("combobox", { name: "Topic" }).click();
+    await page.getByRole("searchbox", { name: "Search Topic" }).fill("bayes");
+    await page.getByRole("option", { name: /Bayes' rule/ }).click();
+    await save.click();
+    await drawer.locator('[data-entry="3"]').waitFor();
+    assert.deepEqual(math.bookCalls.filter((call) => call.path === "/books" && call.body).at(-1).body,
+      { book: "Blitzstein & Hwang", problem: "22", confidence: 2, section: "3.1", answer: "1/6", topic_id: "bayes" });
+    assert.match(await drawer.locator('[data-entry="3"]').innerText(), /Blitzstein & Hwang · 3\.1 · #22[\s\S]*Bayes' rule · 1\/6/);
+    assert.equal(await form.getByRole("textbox", { name: "Problem" }).inputValue(), "", "the form kept the logged entry");
+
+    // Review the due one, updating my answer.
+    const due = drawer.locator('[data-entry="1"]');
+    await due.getByRole("button", { name: "Review" }).click();
+    await due.getByText("Your answer last time: 3/8").waitFor();
+    await due.getByRole("textbox", { name: "Update my answer" }).fill("5/16");
+    await due.getByRole("button", { name: "Good" }).click();
+    await page.waitForFunction(() => !document.querySelector('[data-entry="1"][data-due]'));
+    assert.deepEqual(math.bookCalls.find((call) => call.path === "/books/1/ratings").body, { rating: 3, answer: "5/16" });
+    assert.equal(await edge.locator(".count").count(), 0, "still counted due");
+
+    // Edit the Green Book entry's section.
+    const green = drawer.locator('[data-entry="2"]');
+    await green.getByRole("button", { name: "Edit" }).click();
+    const edit = green.getByRole("form", { name: "Edit Green Book · #7" });
+    await edit.getByRole("textbox", { name: "Section" }).fill("1");
+    await edit.getByRole("button", { name: "Save" }).click();
+    await green.getByText("Green Book · 1 · #7").waitFor();
+    assert.equal(math.bookCalls.find((call) => call.path === "/books/2").body.section, "1");
+
+    // Delete the new one, after a confirmation.
+    const added = drawer.locator('[data-entry="3"]');
+    await added.getByRole("button", { name: "Delete", exact: true }).click();
+    await added.getByRole("button", { name: "Delete it" }).click();
+    await added.waitFor({ state: "detached" });
+    assert.deepEqual((await rows()).map(([id]) => id).sort(), ["1", "2"]);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("mixed review", () => {
+  test("before 5 topics are mastered, Practice is Next up and the toggle says why", async () => {
+    const { page, problems, context } = await open("math");
+    const toggle = page.getByRole("group", { name: "Practice order" });
+    await toggle.waitFor();
+    assert.equal(await toggle.getByRole("button", { name: "Mixed review" }).isDisabled(), true);
+    assert.equal(await toggle.getByRole("button", { name: "Next up" }).getAttribute("aria-pressed"), "true");
+    assert.equal(await page.locator("[data-mixed-locked]").textContent(), "Mixed review opens once 5 topics are mastered (2 so far)");
+    await page.getByText("Next lesson · Bayes' rule").waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("once open it is Practice's default: topics, a textbook card and an own-book entry in order, never one strategy twice in a row; Next up is remembered", async () => {
+    const { page, problems, context } = await open("math", { mixed: true });
+    const toggle = page.getByRole("group", { name: "Practice order" });
+    await toggle.waitFor();
+    assert.equal(await toggle.getByRole("button", { name: "Mixed review" }).getAttribute("aria-pressed"), "true");
+    const seen = [];
+    for (let index = 0; index < 5; index += 1) {
+      const item = page.locator(`[data-mixed-item="${index}"]`);
+      await item.waitFor();
+      const { kind, strategy } = await item.evaluate((node) => ({ kind: node.dataset.kind, strategy: node.dataset.strategy }));
+      seen.push([kind, strategy]);
+      assert.equal(await item.locator("[data-mixed-progress]").textContent(), `${index + 1} of 5`);
+      const next = item.getByRole("button", { name: index === 4 ? /^Finish/ : /^Next/ });
+      if (kind === "topic") {
+        const box = item.getByRole("textbox", { name: "Your answer" });
+        await box.fill("3/7");
+        await box.press("Enter");
+        await item.locator('[data-tone="equal"]').waitFor();
+      } else if (kind === "textbook") {
+        assert.equal(await item.locator("[data-mixed-kind]").textContent(), "Textbook · bayes");
+        await item.getByText("Grinstead & Snell 4.1.20").waitFor();
+        await item.getByRole("button", { name: /Reveal/ }).click();
+        await page.keyboard.press("2");
+      } else {
+        assert.equal(await item.locator("[data-mixed-kind]").textContent(), "Own book · restrict sample space");
+        await item.getByText("Blitzstein & Hwang · 2.3 · #14").waitFor();
+        await item.getByText("Your answer last time: 3/8").waitFor();
+        await item.getByRole("button", { name: "Good" }).click();
+      }
+      await next.click();
+    }
+    assert.deepEqual(seen.map(([kind]) => kind), ["topic", "textbook", "topic", "book", "topic"]);
+    for (let index = 1; index < seen.length; index += 1) assert.notEqual(seen[index][1], seen[index - 1][1], `two ${seen[index][1]} in a row`);
+    const done = page.locator("[data-mixed-done]");
+    await done.getByText("Round done: 5 of 5.").waitFor();
+    await done.getByText(/1 more due waits for the next round/).waitFor();
+    // Next up, chosen explicitly, outlives a reload; Mixed review comes back on request.
+    await toggle.getByRole("button", { name: "Next up" }).click();
+    await page.getByText("Next lesson · Bayes' rule").waitFor();
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.math.practice")), "next");
+    await page.reload();
+    await page.getByText("Next lesson · Bayes' rule").waitFor();
+    await toggle.getByRole("button", { name: "Mixed review" }).click();
+    await page.locator('[data-mixed-item="0"]').waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("the full topic graph", () => {
+  test("80 topics open on the selected topic's strand with other strands' prerequisites faint; All strands shows every topic", async () => {
+    const { page, problems, context } = await open("math", { full: true, storage: { "kitty.math.drawers": JSON.stringify({ left: true, right: "" }) } });
+    const graph = page.getByRole("group", { name: "Topic graph" });
+    await graph.waitFor();
+    const drawer = page.getByRole("complementary", { name: "Topics" });
+    const strand = drawer.getByRole("combobox", { name: "Strand" });
+    // Up next is the furthest learning topic, Modular inverses: Discrete math.
+    assert.match(await strand.innerText(), /Discrete math/);
+    const nodes = () => graph.locator("[data-topic]").evaluateAll((items) => items.map((item) => [item.dataset.topic, item.dataset.outside === "true"]));
+    const discrete = await nodes();
+    assert.equal(discrete.filter(([, outside]) => !outside).length, 11);
+    assert.deepEqual(discrete.filter(([, outside]) => outside).map(([id]) => id).sort(),
+      ["arith.add-sub", "arith.division", "arith.powers-of-two", "arith.times-tables", "count.combinations"]);
+    await strand.click();
+    await page.getByRole("option", { name: /Linear algebra/ }).click();
+    await graph.locator('[data-topic="linalg.eigen2"]').waitFor();
+    assert.equal((await nodes()).filter(([, outside]) => !outside).length, 11);
+    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.math.strand")), "linalg");
+    await graph.getByRole("button", { name: /^2 × 2 eigenvalues/ }).click();
+    assert.equal(await drawer.getByRole("region", { name: /details$/ }).locator(".eyebrow").textContent(), "Linear algebra");
+    await strand.click();
+    await page.getByRole("option", { name: /All strands/ }).click();
+    await page.waitForFunction(() => document.querySelectorAll("[data-topic]").length === 80);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("against the real demo backend", () => {
+  test("Grinstead & Snell exercises are checked and rated, and a book problem logged, reviewed and deleted, through the real /api/math routes", async () => {
+    const { page, problems, context } = await open("math", { fixture: false });
+    await page.getByRole("button", { name: "Start the lesson" }).click();
+    const lesson = page.getByRole("region", { name: "Lesson" });
+    const book = lesson.getByRole("region", { name: "Textbook" });
+    await book.locator("[data-exercise]").first().waitFor();
+    assert.match(await book.locator(".credit").innerText(), /Introduction to Probability · .+ · GNU Free Documentation License/);
+    // Six at first; the rest on request.
+    assert.equal(await book.locator("[data-exercise]").count(), 6);
+    await book.getByRole("button", { name: /^Show all \d+$/ }).click();
+    assert.ok(await book.locator("[data-exercise]").count() > 6);
+
+    // A checked exercise: 1.2.7's answer is 11/12, its canonical TeX typeset.
+    await book.getByRole("button", { name: "Work 1.2.7" }).click();
+    const numeric = lesson.locator('.textbook[data-graded="number"]');
+    const box = numeric.getByRole("textbox", { name: "Your answer" });
+    await box.fill("11/12");
+    await box.press("Enter");
+    await numeric.locator('[data-tone="equal"] .answer .katex').waitFor();
+    await numeric.locator("[data-next-review]").waitFor();
+    assert.equal(await numeric.getByRole("group", { name: "How did it go?" }).count(), 0);
+
+    // The first never-reviewed self-graded exercise: reveal, rate Good, and it is scheduled.
+    await lesson.getByRole("button", { name: "Back to the lesson" }).click();
+    const row = book.locator("[data-exercise]", { hasText: "self-check" }).first();
+    const id = await row.getAttribute("data-exercise");
+    await row.getByRole("button", { name: /^Work / }).click();
+    const self = lesson.locator(`.textbook[data-exercise="${id}"][data-graded="self"]`);
+    await self.getByRole("button", { name: /Reveal/ }).click();
+    await self.getByText("Check your working; the free edition has no answer key.").waitFor();
+    await page.keyboard.press("3");
+    await self.locator("[data-next-review]").waitFor();
+    await lesson.getByRole("button", { name: "Back to the lesson" }).click();
+    assert.match(await book.locator(`[data-exercise="${id}"]`).innerText(), /next in \d+ days?/);
+
+    // Books: log, refuse a duplicate, review, delete.
+    await page.getByRole("region", { name: "Math workspace" }).getByRole("button", { name: "Books", exact: true }).click();
+    const drawer = page.getByRole("complementary", { name: "Books" });
+    const form = drawer.getByRole("form", { name: "Log a book problem" });
+    const fill = async (confidence) => {
+      await form.getByRole("textbox", { name: "Book" }).fill("End-to-end Book");
+      await form.getByRole("textbox", { name: "Section" }).fill("1.1");
+      await form.getByRole("textbox", { name: "Problem" }).fill("3");
+      await form.getByRole("radio", { name: confidence }).click();
+    };
+    await fill(/Confident/);
+    await form.getByRole("textbox", { name: "My answer" }).fill("1/4");
+    await form.getByRole("combobox", { name: "Topic" }).click();
+    await page.getByRole("searchbox", { name: "Search Topic" }).fill("equally");
+    await page.getByRole("option", { name: /Equally likely outcomes/ }).click();
+    await form.getByRole("button", { name: "Log it" }).click();
+    const entry = drawer.locator("[data-entry]", { hasText: "End-to-end Book · 1.1 · #3" });
+    await entry.waitFor();
+    assert.match(await entry.innerText(), /Next in \d+ days? · Equally likely outcomes · 1\/4/);
+    await fill(/Shaky/);
+    await form.getByRole("button", { name: "Log it" }).click();
+    await form.getByRole("alert").getByText(/already logged/).waitFor();
+    await entry.getByRole("button", { name: "Review" }).click();
+    await entry.getByText("Your answer last time: 1/4").waitFor();
+    await entry.getByRole("button", { name: "Easy" }).click();
+    await entry.getByRole("group", { name: "Rate it" }).waitFor({ state: "detached" });
+    await entry.getByRole("button", { name: "Delete", exact: true }).click();
+    await entry.getByRole("button", { name: "Delete it" }).click();
+    await entry.waitFor({ state: "detached" });
     assert.deepEqual(problems, []);
     await context.close();
   });

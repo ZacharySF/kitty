@@ -50,3 +50,41 @@ def test_math_migration_applies_to_an_existing_workspace_and_guards_its_rows(tmp
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_math_books_migration_lands_after_math_and_guards_its_rows(tmp_path):
+    early = tmp_path / "before-books"
+    early.mkdir()
+    for migration in available_migrations():
+        if migration.version < 50:
+            shutil.copy(migration.path, early / migration.path.name)
+    conn = connect(tmp_path / "books.sqlite")
+    try:
+        migrate(conn, early)
+        graph.sync(conn)
+        conn.execute("INSERT INTO math_mastery(topic_id, updated_at) VALUES ('prob.bayes', 't')")
+        assert 50 in [m.version for m in migrate(conn)]
+        assert conn.execute("SELECT count(*) FROM math_mastery").fetchone()[0] == 1
+        conn.execute("INSERT INTO math_textbook_cards(exercise_id, fsrs, due_at, last_rating, created_at, updated_at)"
+                     " VALUES ('gs.4.1.1', '{}', 't', 3, 't', 't')")
+        conn.execute("INSERT INTO math_textbook_attempts(id, exercise_id, created_at) VALUES (?, 'gs.4.1.1', 't')", ("a" * 32,))
+        row = ("b" * 32, "Zhou", "2.3", "14", "1/3", 3, "prob.bayes", "{}", "t", 3, "t", "t")
+        insert = ("INSERT INTO math_book_problems(id, book, section, problem, answer, confidence, topic_id, fsrs, due_at,"
+                  " last_rating, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+        conn.execute(insert, row)
+        for statement, params in (
+            (insert, ("c" * 32, *row[1:])),  # the same book, section and problem twice
+            (insert, ("d" * 32, "", *row[2:])),  # a book needs a name
+            (insert, ("e" * 32, "Zhou", "2.3", "15", "x" * 201, *row[5:])),  # answers are short references
+            (insert, ("f" * 32, "Zhou", "2.3", "16", "", 5, *row[6:])),  # confidence is 1–4
+            (insert, ("g" * 32, "Zhou", "2.3", "17", "", 3, "missing", *row[7:])),  # topics must exist
+            ("INSERT INTO math_textbook_cards(exercise_id, fsrs, due_at, last_rating, created_at, updated_at)"
+             " VALUES ('gs.4.1.2', '{}', 't', 0, 't', 't')", ()),
+            ("INSERT INTO math_textbook_attempts(id, exercise_id, created_at) VALUES ('short', 'gs.4.1.1', 't')", ()),
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(statement, params)
+        conn.execute("DELETE FROM math_topics WHERE id='prob.bayes'")
+        assert conn.execute("SELECT topic_id FROM math_book_problems").fetchone()[0] is None
+    finally:
+        conn.close()

@@ -1,5 +1,6 @@
 """Answer checking: exact forms, significant figures, tolerance, choices, and SymPy
-equivalence including ambiguous readings and a timeout that kills the worker."""
+equivalence including ambiguous readings, antiderivatives up to a constant and a timeout
+that kills the worker."""
 from __future__ import annotations
 
 from fractions import Fraction as F
@@ -17,6 +18,11 @@ def numeric(answer, kind="fraction", *, sigfigs=None, tolerance=None, mistakes=(
 
 def expression(answer, variables, mistakes=()):
     return Problem("t/x", "t", 0, {}, "prompt", answer, "expression", (Step("s"),), tuple(mistakes), variables=tuple(variables))
+
+
+def antiderivative(answer, mistakes=()):
+    return Problem("t/x", "t", 0, {}, "prompt", answer, "expression", (Step("s"),), tuple(mistakes), variables=("x",),
+                   up_to_constant=True)
 
 
 @pytest.mark.parametrize("typed", ["3/7", "6/14", "\\frac{3}{7}", "\\dfrac{6}{14}", " 3 / 7 ", "(3/7)"])
@@ -100,6 +106,46 @@ def test_ambiguous_readings_say_so_instead_of_marking_wrong():
     # lark reads n^n^2 as n^(n^2), ANTLR as (n^n)^2: the readings disagree.
     verdict = checking.check(expression("n**(n**2)", "n"), "n^n^2")
     assert verdict.correct is None and verdict.kind == "undecided" and "more than one way" in verdict.feedback
+
+
+@pytest.mark.parametrize("typed, answer", [
+    ("\\sin(x) + x", "sin(x) + x"), ("\\sin{\\left(x \\right)} + x", "sin(x) + x"), ("x + \\sin x", "sin(x) + x"),
+    ("3\\cos(x)-2\\sin(x)", "3*cos(x) - 2*sin(x)"), ("-6\\sin x - \\frac{9}{x}", "-6*sin(x) - 9/x"),
+    ("\\sin 2x \\cos x", "sin(2*x)*cos(x)"), ("\\sin^2(x) + 1", "sin(x)**2 + 1"), ("\\ln(x) - x", "log(x) - x"),
+    ("\\cos(\\sin(x) + 1) + 1", "cos(sin(x) + 1) + 1"), ("\\sin(x + 1)", "sin(x + 1)"),
+])
+def test_a_function_applies_to_its_bracketed_or_single_argument_only(typed, answer):
+    # lark alone would also read \sin(x) + x as \sin(x + x) and call the answer ambiguous.
+    assert checking.check(expression(answer, "x"), typed) == checking.EQUAL
+
+
+@pytest.mark.parametrize("typed", ["x^3/3", "\\frac{x^3}{3}+C", "x^3/3 + 7", "\\frac{1}{3}x^{3} + c", "K + \\frac{x^3}{3}",
+                                   "\\frac{x^3}{3} - 2.5", "$\\frac{x^{3}}{3} + C$"])
+def test_antiderivatives_are_equal_up_to_a_constant(typed):
+    assert checking.check(antiderivative("x**3/3"), typed) == checking.EQUAL
+
+
+def test_a_trailing_constant_is_not_read_into_a_function_argument():
+    # lark alone would also read \cos(3x)+C as \cos(3x+C) and call the answer ambiguous.
+    problem = antiderivative("-cos(3*x)/3")
+    for typed in ("-\\frac{1}{3}\\cos(3x)+C", "- \\frac{\\cos{\\left(3 x \\right)}}{3} + C", "-\\frac{1}{3}\\cos(3x) + 5"):
+        assert checking.check(problem, typed) == checking.EQUAL, typed
+
+
+def test_up_to_a_constant_still_rejects_wrong_antiderivatives_and_explains_mistakes():
+    message = "Divide by the new power."
+    problem = antiderivative("x**3/3", [("x**3", message)])
+    assert checking.check(problem, "x^3") == checking.Verdict(False, "mistake", message)
+    assert checking.check(problem, "x^3 + C") == checking.Verdict(False, "mistake", message)
+    assert checking.check(problem, "x^2") == checking.DIFFERENT
+    assert checking.check(problem, "\\frac{x^3}{3} + Cx").correct is False
+    assert checking.check(problem, "\\frac{x^3}{3} + y").correct is False
+
+
+def test_a_constant_of_integration_is_only_allowed_for_antiderivatives():
+    verdict = checking.check(expression("x**3/3", "x"), "\\frac{x^3}{3}+C")
+    assert verdict.correct is False and "C" in verdict.feedback
+    assert checking.check(expression("x**3/3", "x"), "x^3/3 + 7") == checking.DIFFERENT
 
 
 @pytest.mark.parametrize("typed", ["\\frac{(", "x=2", "", "1+"])

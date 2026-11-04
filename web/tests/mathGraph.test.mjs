@@ -1,7 +1,7 @@
 // Run with Node >=22.6: node --experimental-strip-types --test tests/mathGraph.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isDue, layoutGraph, reason, upNext } from "../src/lib/math/graph.ts";
+import { defaultStrand, isDue, layoutGraph, reason, strandLabel, strandView, upNext } from "../src/lib/math/graph.ts";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const T = (id, strand, prereqs, state, extra = {}) => ({ id, strand, title: id.toUpperCase(), prereqs, state, ...extra });
@@ -54,4 +54,25 @@ test("up next: started lessons, then due reviews, then new topics", () => {
   assert.deepEqual(upNext(TOPICS, NOW).map((item) => [item.topic.id, item.why]), [
     ["perm", "learning · 50%"], ["add", "review due"], ["mean", "new · prerequisites done"],
   ]);
+});
+
+test("strands have names, the new ones included", () => {
+  assert.deepEqual(["linalg", "calculus", "discrete", "probability", "ev"].map(strandLabel),
+    ["Linear algebra", "Calculus", "Discrete math", "Probability", "Expected value and variance"]);
+  assert.equal(strandLabel("geometry"), "Geometry");
+});
+
+test("one strand shows its topics plus their prerequisites from other strands, marked outside", () => {
+  const view = strandView(TOPICS, "probability");
+  assert.deepEqual(view.topics.map((topic) => topic.id), ["frac", "perm", "prob"]);
+  assert.deepEqual(view.outside, ["frac", "perm"]);
+  assert.deepEqual(strandView(TOPICS, "").topics, TOPICS);
+  assert.deepEqual(strandView(TOPICS, "").outside, []);
+});
+
+test("a small graph opens whole; a large one on the selected topic's strand", () => {
+  assert.equal(defaultStrand(TOPICS, "perm"), "");
+  const many = Array.from({ length: 40 }, (_, index) => T(`t${index}`, index < 20 ? "arithmetic" : "calculus", [], "ready"));
+  assert.equal(defaultStrand(many, "t25"), "calculus");
+  assert.equal(defaultStrand(many, "missing"), "arithmetic");
 });
