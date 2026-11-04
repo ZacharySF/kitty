@@ -3,7 +3,8 @@
 tauri-action reported large uploads as successful while none reached the release (v0.3.31), so
 the workflow builds with tauri-action and publishes here: it stages the installers under the
 pinned asset names, uploads them with gh, re-reads the release and refuses a missing or
-truncated asset before writing latest.json against the uploaded files.
+truncated asset before writing latest.json against the uploaded files. The feed uses each asset's
+API URL: a draft's browser_download_url is an untagged-… path that 404s once published (v0.3.32).
 """
 from __future__ import annotations
 
@@ -54,7 +55,7 @@ def updater_manifest(version: str, notes: str, pub_date: str, release: dict, out
             raise ValueError(f"{name} did not upload completely")
         signature = (out / (name + ".sig")).read_text()
         for target in targets:
-            platforms[target] = {"signature": signature, "url": asset["browser_download_url"]}
+            platforms[target] = {"signature": signature, "url": asset["url"]}
     return {"version": version, "notes": notes, "pub_date": pub_date, "platforms": platforms}
 
 
