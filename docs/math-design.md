@@ -91,6 +91,8 @@ D lost on cost per problem and non-deterministic quality.
   - The LaTeX goes to the Python backend: `parse_latex` (lark), then `simplify` equivalence plus numeric probing, with a timeout.
   - STACK-style mistake detectors in each template produce specific feedback.
 - **Not chosen.** Self-grading and step checking. Problems that can't be machine-checked, such as proofs, brainteasers and market making, are therefore out of the first release's practice modes, which matches Q2.
+  - Phase 2 brings self-grading back for one source only: Grinstead & Snell exercises with no numeric answer (its free edition has no answer key). They get a reveal and an Again/Hard/Good/Easy rating. Exercises with an answer rika! computed itself are checked like any problem.
+  - Antiderivatives are checked up to a constant, and function applications (`\sin 2x`) are bracketed before parsing so the lark parser doesn't also read `\sin(x) + x` as `\sin(x + x)`.
 - **Risk.** Rated mixed because SymPy adds about 7 MB, a round trip per check, and LaTeX ambiguity.
 
 ### Q6 + Q7: AI involvement
@@ -126,9 +128,9 @@ Not chosen:
 - **Q2, practice modes:** A + B ship first.
   - **Sprint.** Zetamac defaults: 120 s; addition 2–100 + 2–100; subtraction is reversed addition; multiplication 2–12 × 2–100; division is reversed multiplication. There is also a multiple-choice variant with wrong-answer penalties. It shows a score trend and a daily streak.
   - **Topic lesson.** A worked example, then faded guided steps, then 3–8 solo problems. It ends early after repeated misses.
-  - **Next releases.** Mixed review of due topics comes next, once mastery data exists. Mock interviews come after that.
+  - **Mixed review (phase 2).** Due topics, due textbook exercises and due own-book problems, at most 10 per session and most overdue first, topped up with early reviews. Every topic names its solution strategy, and no two consecutive problems share one. It becomes Practice's default once five topics are mastered. Mock interviews come after that.
 - **Q5, where it lives:** A.
-  - **The view.** A new **Math** view in the Study group, focus-first: one centred problem or sprint. The left drawer holds the topic graph; the right drawer holds history and settings.
+  - **The view.** A new **Math** view in the Study group, focus-first: one centred problem or sprint. The left drawer holds the topic graph; the right drawer holds history, settings and (phase 2) the problems logged from your own books, with their QuickAdd.
   - **Launchers on top.** Ctrl K ("Mental math sprint", "Next math lesson") and an Up next row on home.
   - **Links into the rest of the app.** Practice can run inside a study focus phase and tag the session with a Math subject. Exam dates and plans can target math topics. A Formulas flashcard deck renders with KaTeX.
 - **Rendering:** KaTeX (MIT) is added app-wide. This also fixes imported Anki math decks, which show raw `\( … \)` today.
@@ -166,7 +168,7 @@ Not chosen:
 ## Deferred
 
 - **Step checking** (Q4 D). This would reopen when line-by-line working is wanted for algebra and calculus lessons. AI explanations would then move to the flagged line (Q7 A).
-- **Mixed review and mock interviews** (Q2 C, D) come after the first release. A Rika voice mock interviewer (Q6 D) is a candidate once Rika's voice ships.
+- **Mock interviews** (Q2 D). A Rika voice mock interviewer (Q6 D) is a candidate once Rika's voice ships.
 
 ## Open threads
 
@@ -177,6 +179,6 @@ Not chosen:
   4. Lessons.
   5. Graph mastery with FSRS.
   6. SymPy checking.
-  7. Grinstead & Snell import and own-book logging.
+  7. Grinstead & Snell import and own-book logging. *Done in phase 2:* 706 of the book's 709 exercises (three need an unbundled figure) in `third_party/grinstead-snell/` with the GFDL and a source note, linked to topics; 42 carry an answer rika! computed and cross-checked itself. Own-book problems are logged by reference (migration 050).
   8. "Explain my mistake".
-  9. The remaining strands (linear algebra, calculus, discrete math).
+  9. The remaining strands (linear algebra, calculus, discrete math). *Done in phase 2:* 34 more topics (80 in all), each generator cross-checked over 240 seeds by enumeration or exact SymPy algebra; mixed review shipped with them.

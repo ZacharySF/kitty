@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from "@nunera/bracket";
-  import { isDue, reason, type Topic } from "./graph";
+  import { isDue, reason, strandLabel, type Topic } from "./graph";
 
   /** The selected topic: why it is open or locked, its review, and what it needs and unlocks. */
   let { topic, topics, onlesson, onreview }: { topic: Topic; topics: Topic[]; onlesson: (id: string) => void; onreview: (id: string) => void } = $props();
@@ -8,8 +8,7 @@
   const unlocks = $derived(topics.filter((item) => item.prereqs.includes(topic.id)));
   const due = $derived(isDue(topic, Date.now()));
   const STATE = { locked: "Locked", ready: "Ready", learning: "Learning", mastered: "Mastered" };
-  const STRANDS: Record<string, string> = { ev: "Expected value", stats: "Statistics" };
-  const strand = $derived(STRANDS[topic.strand] ?? topic.strand.charAt(0).toUpperCase() + topic.strand.slice(1));
+  const strand = $derived(strandLabel(topic.strand));
 
   function when(at: string) {
     const days = Math.round((Date.parse(at) - Date.now()) / 86_400_000);

@@ -1,7 +1,7 @@
 // Run with Node >=22.6: node --experimental-strip-types --test tests/mathTex.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mathMarkdown, renderTex, splitMath } from "../src/lib/math/tex.ts";
+import { asMath, mathMarkdown, renderTex, splitMath } from "../src/lib/math/tex.ts";
 
 const kinds = (text) => splitMath(text).map((part) => [part.kind, part.value]);
 
@@ -36,4 +36,19 @@ test("mathMarkdown renders paragraphs, emphasis and math, escaping raw HTML", ()
   assert.match(html, /&lt;b&gt;no&lt;\/b&gt;<\/p>$/);
   // Underscores inside math are TeX subscripts, not emphasis.
   assert.doesNotMatch(mathMarkdown("$x_1 + x_2$"), /<em>/);
+});
+
+test("mathMarkdown keeps a fenced code block verbatim: blank lines, $ and < stay code", () => {
+  const html = mathMarkdown("How many times does the body run?\n\n```python\nfor i in range(n):\n\n    for j in range(i):  # $x < 2$\n        work()\n```\n\nGive it in terms of $n$.");
+  assert.equal(html.match(/<pre/g)?.length, 1);
+  assert.match(html, /^<p>How many times does the body run\?<\/p><pre class="code"><code data-lang="python">for i in range\(n\):\n\n    for j in range\(i\):  # \$x &lt; 2\$\n        work\(\)<\/code><\/pre><p>Give it in terms of <span class="katex">/);
+  assert.match(mathMarkdown("```\nx = 1\n```"), /^<pre class="code"><code>x = 1<\/code><\/pre>$/);
+});
+
+test("a canonical answer in bare TeX is read as math; one already delimited (a choice) is kept", () => {
+  assert.equal(asMath("\\frac{11}{12} \\approx 0.9167"), "$\\frac{11}{12} \\approx 0.9167$");
+  assert.equal(asMath("$3.5$"), "$3.5$");
+  assert.equal(asMath("$\\Theta(n\\log n)$"), "$\\Theta(n\\log n)$");
+  assert.equal(asMath("0.25"), "$0.25$");
+  assert.equal(asMath("2 x + 2"), "$2 x + 2$");
 });

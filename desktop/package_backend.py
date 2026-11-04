@@ -45,6 +45,7 @@ def main() -> None:
         "--add-data", f"{examples}:examples",
         "--add-data", f"{build / 'backend-package.txt'}:.",
         "--add-data", f"{learning}:learnharness",
+        "--add-data", f"{root / 'third_party/grinstead-snell'}:grinstead-snell",
         # The kitty Tern plugin's source (kitty.core.tern_plugin copies it into a workspace).
         "--add-data", f"{root / 'integrations/tern'}:tern-plugin",
         "--add-binary", f"{learning / 'node'}:learnharness",

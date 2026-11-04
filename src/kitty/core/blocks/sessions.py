@@ -366,7 +366,8 @@ class _Plan:
             self.emit(bid, {"op": "delete", "id": bid})
 
     def outcome(self) -> list[dict]:
-        """Every block the planned operations change, with what goes back (``created``: to Trash)."""
+        """Every block the planned operations change: its text now (``current``), what goes back
+        (``text``, ``fields``; ``created``: to Trash) and whether it is live afterwards (``live``)."""
         found = []
         for bid in sorted(self.touched):
             item = self.block(bid)
@@ -378,7 +379,8 @@ class _Plan:
             else:
                 fields = sorted({field.partition(".")[0] for field in _differs(before or {}, after or {})})
             shown = item or self.current.get(bid)
-            found.append({"id": bid, "page_id": shown.page_id if shown else None, "text": _snippet(shown), "fields": fields})
+            found.append({"id": bid, "page_id": shown.page_id if shown else None, "current": _snippet(self.current.get(bid)),
+                          "text": _snippet(shown), "live": bool(after and after["live"]), "fields": fields})
         return found
 
 
@@ -390,7 +392,7 @@ def undo_session(conn: sqlite3.Connection, session: Any, *, dry_run: bool = Fals
     """Revert everything one agent session did, as one new transaction (see the module docs).
 
     Returns ``{session, actor, transactions, applied, dry_run, reverted: [{id, page_id,
-    text, fields}], conflicts: [{id, page_id, text, reasons, fields} | {seq, page_id,
+    current, text, live, fields}], conflicts: [{id, page_id, text, reasons, fields} | {seq, page_id,
     device, reasons}], reverted_count, conflict_count}`` plus ``txn_id``, ``seq`` and
     ``revisions`` when it applied. Nothing left to revert is not an error: ``applied``
     is false and the conflicts say why.

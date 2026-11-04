@@ -5,6 +5,14 @@ ambiguity, and ANTLR, which is more forgiving), rewrites ``p(1-p)`` as multiplic
 when ``p`` is one of the problem's variables, and judges every distinct reading:
 ``simplify`` proves equivalence, random numeric probes are the second opinion. If the
 readings disagree, or nothing could be shown either way, the verdict is ``undecided``.
+Each function application (``\\sin(x)``, ``\\ln x``, ``\\cos^2 2x``) is bracketed first:
+its argument is its bracket group or a single term, so lark doesn't also read
+``\\sin(x) + x`` as ``\\sin(x + x)``.
+
+An antiderivative is checked up to a constant: a trailing ``+ C`` (``c``, ``K``) or
+``+ 7`` is dropped before parsing (lark would also read ``\\sin x + C`` as ``\\sin(x + C)``),
+a free ``C``/``c``/``K`` is allowed anywhere, and the answer, the key and the mistakes are
+compared by their derivatives in the problem's single variable.
 
 The worker is spawned (never forked from the threaded server) and serves one check at a
 time; a check that outlives its timeout kills the worker, and the next check starts a
@@ -23,14 +31,25 @@ PROBES = 24
 #: Valid numeric probes needed to call two expressions equal without a proof.
 AGREEING = 6
 _SPACING = re.compile(r"\\(?:left|right|mleft|mright|big|Big|bigg|Bigg)(?![A-Za-z])|\\[,;:! ]|\\displaystyle")
+#: Symbols an antiderivative may use for its constant of integration.
+CONSTANTS = ("C", "c", "K")
+_TRAILING = re.compile(r"\s*[+-]\s*(?:\d+(?:\.\d*)?|\.\d+|[CcK])\s*$")
+#: Text a trailing ``+ C`` can't follow at top level, e.g. ``x^-3`` or ``x \cdot -2``.
+_OPERATORS = ("^", "_", "{", "(", "[", "*", "/", "+", "-", "=", ",", "\\cdot", "\\times")
+_FUNCTION = re.compile(r"\\(?:arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|sec|csc|cot|ln|log|exp)(?![A-Za-z])")
+_SCRIPT = re.compile(r"\s*[_^]\s*(?:\{[^{}]*\}|\w)")
+#: An unbracketed argument: a number and/or one letter with an optional power (``2x``, ``x^2``).
+_BARE = re.compile(r"\s*(?:\d+(?:\.\d*)?\s*)?(?:[A-Za-z](?![A-Za-z])(?:\s*\^\s*(?:\{[^{}]*\}|\w))?)?")
+_CLOSE = {"(": ")", "{": "}", "[": "]"}
 
 _lock = threading.Lock()
 _worker: tuple | None = None
 
 
-def equivalent(latex: str, expected: str, variables, mistakes, *, timeout: float | None = None) -> tuple[str, str | None]:
+def equivalent(latex: str, expected: str, variables, mistakes, *, timeout: float | None = None,
+               up_to_constant: bool = False) -> tuple[str, str | None]:
     """(kind, feedback) for ``latex`` against the SymPy string ``expected``."""
-    request = (latex, expected, tuple(variables), tuple(mistakes))
+    request = (latex, expected, tuple(variables), tuple(mistakes), up_to_constant)
     with _lock:
         try:
             process, conn = _ensure()
@@ -109,6 +128,7 @@ def readings(latex: str, variables) -> tuple[list, bool]:
     from sympy.parsing.latex import parse_latex
 
     text = _SPACING.sub(" ", latex.strip().strip("$")).replace("\\dfrac", "\\frac").replace("\\tfrac", "\\frac")
+    text = bracket_functions(text)
     raw = []
     try:
         raw.extend(_flatten(parse_latex(text, backend="lark"), Tree))
@@ -134,6 +154,50 @@ def readings(latex: str, variables) -> tuple[list, bool]:
             seen.add(key)
             found.append(expr)
     return found, bool(raw)
+
+
+def bracket_functions(text: str) -> str:
+    """``text`` with every function application wrapped in brackets: ``(\\sin(x)) + x``."""
+    out, start = [], 0
+    while match := _FUNCTION.search(text, start):
+        end = match.end()
+        while script := _SCRIPT.match(text, end):
+            end = script.end()
+        group = end + len(text[end:]) - len(text[end:].lstrip())
+        if group < len(text) and text[group] in _CLOSE:
+            close = _group_end(text, group)
+            argument = None if close is None else text[end:group] + bracket_functions(text[group:close])
+        else:
+            bare = _BARE.match(text, end)
+            close, argument = (bare.end(), bare.group()) if bare.group().strip() else (None, None)
+        if argument is None:
+            out.append(text[start:end])
+            start = end
+            continue
+        out.append(f"{text[start:match.start()]}({text[match.start():end]}{argument})")
+        start = close
+    return "".join(out) + text[start:]
+
+
+def _group_end(text: str, opening: int) -> int | None:
+    """Index just past the bracket group opening at ``opening``; None if it never closes."""
+    opener, closer, depth = text[opening], _CLOSE[text[opening]], 0
+    for index in range(opening, len(text)):
+        depth += (text[index] == opener) - (text[index] == closer)
+        if depth == 0:
+            return index + 1
+    return None
+
+
+def drop_constant(latex: str, variables) -> str:
+    """``latex`` without trailing added constants (``+ C``, ``- K``, ``+ 7``)."""
+    text = _SPACING.sub(" ", latex.strip().strip("$"))
+    while match := _TRAILING.search(text):
+        term, head = match.group().strip(" +-"), text[:match.start()].rstrip()
+        if term in variables or not head or head.endswith(_OPERATORS):
+            break
+        text = head
+    return text
 
 
 def _flatten(node, tree_type):
@@ -170,23 +234,32 @@ def same(a, b, variables) -> bool | None:
         return None
 
 
-def decide(latex: str, expected: str, variables, mistakes) -> tuple[str, str | None]:
+def decide(latex: str, expected: str, variables, mistakes, up_to_constant: bool = False) -> tuple[str, str | None]:
     import sympy
 
     locals_ = {name: sympy.Symbol(name) for name in variables}
-    target = sympy.sympify(expected, locals=locals_)
+    allowed = set(locals_)
+    if up_to_constant:
+        (name,) = variables
+        latex = drop_constant(latex, variables)
+        allowed.update(CONSTANTS)
+        level = lambda expr: sympy.diff(expr, locals_[name])  # equal derivatives: equal up to a constant
+    else:
+        level = lambda expr: expr
+    target = level(sympy.sympify(expected, locals=locals_))
     options, parsed = readings(latex, variables)
     if not options:
         if parsed:
             return "undecided", "Enter one expression, not an equation, using only the problem's variables."
         return "undecided", "Couldn't read that expression; check brackets and use \\cdot for multiplication."
-    wrongs = [(sympy.sympify(wrong, locals=locals_), message) for wrong, message in mistakes]
+    wrongs = [(level(sympy.sympify(wrong, locals=locals_)), message) for wrong, message in mistakes]
     verdicts = set()
     for expr in options:
-        extra = sorted(s.name for s in expr.free_symbols if s.name not in locals_)
+        extra = sorted(s.name for s in expr.free_symbols if s.name not in allowed)
         if extra:
             verdicts.add(("different", f"Uses {', '.join(extra)}, which the problem doesn't define."))
             continue
+        expr = level(expr)
         result = same(expr, target, variables)
         if result is True:
             verdicts.add(("equal", None))

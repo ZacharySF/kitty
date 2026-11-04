@@ -2,24 +2,31 @@
   import { onMount, tick } from "svelte";
   import { Button } from "@nunera/bracket";
   import { api } from "../api";
-  import { BLANK, type Lesson, type Verdict } from "./api";
+  import { BLANK, type Lesson, type TextbookList, type Verdict } from "./api";
   import { echo, readAnswer } from "./answer";
   import MathText from "./MathText.svelte";
   import ProblemCard from "./ProblemCard.svelte";
+  import { dueIn } from "./review";
+  import { asMath } from "./tex";
+  import TextbookCard from "./TextbookCard.svelte";
 
   /**
    * A topic lesson (design Q2 B): a worked example, the same kind of problem with its later
    * steps faded to blanks you fill, then solo problems. It ends early after a run of misses.
-   * Mastery comes from the graded solo answers; guided blanks never count.
+   * Mastery comes from the graded solo answers; guided blanks never count. Its Textbook
+   * section lists the topic's Grinstead & Snell exercises to work from the book.
    */
   let {
     topicId,
     demo = false,
+    titles = {},
     onchange,
     ondone,
   }: {
     topicId: string;
     demo?: boolean;
+    /** Topic titles by id, for a textbook exercise's linked topics. */
+    titles?: Record<string, string>;
     /** A graded answer may have moved the topic's mastery. */
     onchange: () => void;
     ondone: () => void;
@@ -49,12 +56,21 @@
   let endedEarly = $state(false);
   let mastery = $state<Verdict["mastery"] | null>(null);
 
+  // Textbook: the topic's exercises, the first few until asked; one is worked in place of the sheet.
+  const FEW = 6;
+  let textbook = $state<TextbookList | null>(null);
+  let textbookError = $state("");
+  let working = $state("");
+  let allExercises = $state(false);
+  const exercises = $derived(allExercises ? (textbook?.exercises ?? []) : (textbook?.exercises ?? []).slice(0, FEW));
+
   const stageIndex = $derived(stage === "Done" ? 3 : STAGES.indexOf(stage));
   const guided = $derived(lesson?.guided[step]);
   const stopping = $derived(!!lesson && streak >= lesson.stop_after_misses);
   const right = $derived(results.filter((result) => result === true).length);
 
   onMount(async () => {
+    void loadTextbook();
     try {
       lesson = await api<Lesson>(`/math/lessons/${encodeURIComponent(topicId)}`);
       results = Array(lesson.solo_count).fill(null);
@@ -62,6 +78,15 @@
       error = (cause as Error).message;
     }
   });
+
+  async function loadTextbook() {
+    try {
+      textbook = await api<TextbookList>(`/math/textbook?${new URLSearchParams({ topic_id: topicId })}`);
+      textbookError = "";
+    } catch (cause) {
+      textbookError = (cause as Error).message;
+    }
+  }
 
   async function go(next: Stage) {
     stage = next;
@@ -88,7 +113,7 @@
       } else {
         miss = true;
         note = verdict.feedback || "Not quite: work the step again.";
-        if (verdict.revealed && verdict.canonical) revealed = verdict.canonical;
+        if (verdict.revealed && verdict.canonical) revealed = asMath(verdict.canonical);
       }
     } catch (cause) {
       note = (cause as Error).message;
@@ -154,6 +179,12 @@
       {/each}
     </ol>
 
+    {#if working}
+      <div class="sheet working">
+        {#key working}<TextbookCard exerciseId={working} {titles} ongraded={() => void loadTextbook()} />{/key}
+        <Button size="sm" onclick={() => (working = "")}>Back to the lesson</Button>
+      </div>
+    {:else}
     <div class="sheet">
       {#if stage === "Example"}
         <span class="eyebrow">Worked example · {lesson.title}</span>
@@ -228,6 +259,30 @@
         </div>
       {/if}
     </div>
+    {#if (stage === "Example" || stage === "Done") && (textbook?.exercises.length || textbookError)}
+      <section class="book" aria-label="Textbook">
+        <span class="eyebrow">Textbook · {textbook?.source.short ?? "Grinstead & Snell"}{#if textbook}{` · ${textbook.exercises.length} exercise${textbook.exercises.length === 1 ? "" : "s"}`}{/if}</span>
+        {#if textbookError}<p class="note">{textbookError}</p>{/if}
+        {#if textbook}
+          <ul>
+            {#each exercises as exercise (exercise.id)}
+              <li data-exercise={exercise.id}>
+                <b class="label">{exercise.label}</b>
+                <span class="what">{exercise.section_title}{#if exercise.program}{" · a program"}{/if}</span>
+                <span class="kind">{exercise.graded === "number" ? "answer checked" : "self-check"}</span>
+                {#if exercise.card?.due}<span class="due">due</span>{:else if exercise.card}<span class="kind">next {dueIn(exercise.card.due_at, Date.now())}</span>{/if}
+                <Button size="sm" onclick={() => (working = exercise.id)}>Work {exercise.label}</Button>
+              </li>
+            {/each}
+          </ul>
+          {#if textbook.exercises.length > FEW}
+            <Button size="sm" onclick={() => (allExercises = !allExercises)}>{allExercises ? "Show fewer" : `Show all ${textbook.exercises.length}`}</Button>
+          {/if}
+          <p class="credit">{textbook.source.title} · {textbook.source.version} · {textbook.source.licence}</p>
+        {/if}
+      </section>
+    {/if}
+    {/if}
   {/if}
 </section>
 
@@ -438,5 +493,58 @@
   }
   .error {
     color: var(--warning);
+  }
+  .working {
+    justify-items: center;
+  }
+  .book {
+    display: grid;
+    gap: 8px;
+    padding: 14px 18px;
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+  }
+  .book ul {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .book li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    font-size: 13px;
+  }
+  .book li + li {
+    border-top: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+  }
+  .book .label {
+    min-width: 52px;
+    color: var(--ink);
+    font: 600 13px var(--font-mono);
+  }
+  .book .what {
+    flex: 1;
+    min-width: 0;
+    color: var(--ink);
+  }
+  .book .kind {
+    color: var(--subtle);
+    font: 500 11px var(--font-mono);
+  }
+  .book .due {
+    color: var(--warning);
+    font: 600 11px var(--font-mono);
+  }
+  .book > :global(.br-btn) {
+    justify-self: start;
+  }
+  .book .credit,
+  .book .note {
+    margin: 0;
+    color: var(--subtle);
+    font-size: 11px;
   }
 </style>

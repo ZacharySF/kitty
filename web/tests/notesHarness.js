@@ -5,7 +5,7 @@
 import { mount } from "svelte";
 import "/src/styles.css";
 import "/src/lib/themes/engine.css";
-import { loadBuild } from "/src/lib/build.svelte.ts";
+import { loadBuild, setTheme } from "/src/lib/build.svelte.ts";
 import { createBuildStub } from "./buildStub.js";
 import { keysBetween } from "/src/lib/blockKeys.ts";
 import { createBlockServer } from "./fakeBlockServer.js";
@@ -150,7 +150,7 @@ sessionStorage.setItem("kitty.notes.open-page", params.get("page") ?? "1");
 await loadBuild();
 // App.svelte measures its pinned top bar into --workbench-top; the harness's stand-in band is 96px.
 document.documentElement.style.setProperty("--workbench-top", "96px");
-window.notesHarness = harness;
+window.notesHarness = Object.assign(harness, { setTheme });
 mount(NotesHarness, {
   target: document.getElementById("view"),
   props: { initialMode: params.get("mode") === "map" ? "map" : undefined },

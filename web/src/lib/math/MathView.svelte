@@ -5,25 +5,31 @@
   import { api } from "../api";
   import { fitHeight } from "../fitHeight";
   import Icon from "../Icon.svelte";
+  import Select from "../ui/Select.svelte";
   import { useWorkspaceContext } from "../workspaceContext.svelte";
-  import type { Next, SprintHistory } from "./api";
+  import type { BookList, Mixed, Next, SprintHistory } from "./api";
+  import BookReview from "./BookReview.svelte";
+  import BooksPanel from "./BooksPanel.svelte";
   import { MATH_SUBJECT, readFocus, startMathFocus, type FocusTimer, type Subject } from "./focus";
-  import { isDue, upNext, type Topic } from "./graph";
+  import { defaultStrand, isDue, strandLabel, strandView, upNext, type Topic } from "./graph";
   import HistoryPanel from "./HistoryPanel.svelte";
   import { takeLaunch, type MathLaunch } from "./launch";
   import LessonPanel from "./LessonPanel.svelte";
   import MathText from "./MathText.svelte";
   import ProblemCard from "./ProblemCard.svelte";
+  import { itemEyebrow, mixedLocked, PRACTICE_KEY, practiceOrder, type PracticeOrder } from "./review";
   import { loadSettings, saveSettings, type MathSettings } from "./settings";
   import SettingsPanel from "./SettingsPanel.svelte";
   import SprintPanel from "./SprintPanel.svelte";
   import { clock } from "./sprint";
+  import TextbookCard from "./TextbookCard.svelte";
   import TopicDetail from "./TopicDetail.svelte";
   import TopicGraph from "./TopicGraph.svelte";
 
   /**
    * rika! math (design Q5 A): focus-first like Study. One centred problem, lesson or
-   * sprint; the topic graph slides in from the left, history and settings from the right.
+   * sprint; the topic graph slides in from the left, history, your books and settings
+   * from the right. Practice walks a mixed review once enough topics are mastered.
    */
   let { demo = false }: { demo?: boolean } = $props();
   const pane = useWorkspaceContext();
@@ -34,19 +40,24 @@
     { id: "lessons", label: "Lessons" },
   ] as const;
   type Mode = (typeof MODES)[number]["id"];
-  type Right = "" | "history" | "settings";
+  type Right = "" | "history" | "books" | "settings";
   const MODE_KEY = "kitty.math.mode";
   const DRAWERS_KEY = "kitty.math.drawers";
+  const STRAND_KEY = "kitty.math.strand";
 
   let mode = $state<Mode>("practice");
   let left = $state(false);
   let right = $state<Right>("");
+  let strand = $state<string | null>(null);
+  let storedOrder = $state<string | null>(null);
   try {
     const saved = localStorage.getItem(MODE_KEY);
     if (saved === "sprint" || saved === "lessons") mode = saved;
     const drawers = JSON.parse(localStorage.getItem(DRAWERS_KEY) || "{}");
     left = drawers.left === true;
-    right = drawers.right === "history" || drawers.right === "settings" ? drawers.right : "";
+    right = ["history", "books", "settings"].includes(drawers.right) ? drawers.right : "";
+    strand = localStorage.getItem(STRAND_KEY);
+    storedOrder = localStorage.getItem(PRACTICE_KEY);
   } catch { /* Practice with both drawers closed. */ }
 
   let settings = $state<MathSettings>(loadSettings());
@@ -57,6 +68,13 @@
   let history = $state<SprintHistory | null>(null);
   let error = $state("");
   let historyError = $state("");
+  let books = $state<BookList | null>(null);
+  let booksError = $state("");
+  let mixed = $state<Mixed | null>(null);
+  let mixedLoaded = $state(false);
+  let mixedAt = $state(0);
+  let mixedRun = $state(0);
+  let mixedError = $state("");
   let lessonTopic = $state("");
   let lessonRun = $state(0);
   let reviewTopic = $state("");
@@ -65,6 +83,17 @@
   let now = $state(Date.now());
 
   const byId = $derived(Object.fromEntries((topics ?? []).map((topic) => [topic.id, topic])));
+  const titles = $derived(Object.fromEntries((topics ?? []).map((topic) => [topic.id, topic.title])));
+  // "all" shows every topic; no (or a stale) choice opens a large graph on the selected topic's strand.
+  const shownStrand = $derived(strand === "all" ? "" : strand && topics?.some((topic) => topic.strand === strand) ? strand : defaultStrand(topics ?? [], selected));
+  const view = $derived(strandView(topics ?? [], shownStrand));
+  const strandOptions = $derived([
+    { value: "all", label: "All strands", count: topics?.length ?? 0 },
+    ...[...new Set((topics ?? []).map((topic) => topic.strand))].map((id) => ({ value: id, label: strandLabel(id), count: (topics ?? []).filter((topic) => topic.strand === id).length })),
+  ]);
+  const order = $derived<PracticeOrder>(practiceOrder(storedOrder, mixed));
+  const mixedOpen = $derived(!!mixed && mixed.mastered >= mixed.needed);
+  const item = $derived(mixed?.items[mixedAt]);
   const due = $derived((topics ?? []).filter((topic) => isDue(topic, now)).length);
   const selectedTopic = $derived(byId[selected]);
   const lessonChoices = $derived((topics ?? []).filter((topic) => topic.state === "learning" || topic.state === "ready"));
@@ -83,6 +112,15 @@
     left = nextLeft;
     right = nextRight;
     try { localStorage.setItem(DRAWERS_KEY, JSON.stringify({ left, right })); } catch { /* Applies in this session. */ }
+  }
+  function setStrand(value: string) {
+    strand = value;
+    try { localStorage.setItem(STRAND_KEY, value); } catch { /* Applies in this session. */ }
+  }
+  /** An explicit Mixed review / Next up choice is remembered over the backend's default. */
+  function setOrder(value: string) {
+    storedOrder = value;
+    try { localStorage.setItem(PRACTICE_KEY, value); } catch { /* Applies in this session. */ }
   }
   function changeSettings(value: MathSettings) {
     const reload = value.duration_s !== settings.duration_s;
@@ -121,6 +159,34 @@
   }
   async function loadFocus() {
     try { focus = await readFocus(); } catch { focus = null; /* The chip just stays hidden. */ }
+  }
+  async function loadBooks() {
+    try {
+      books = await api<BookList>("/math/books");
+      booksError = "";
+    } catch (cause) {
+      booksError = (cause as Error).message;
+    }
+  }
+  async function loadMixed() {
+    try {
+      mixed = await api<Mixed>("/math/mixed");
+      mixedError = "";
+    } catch (cause) {
+      mixedError = `Mixed review is unavailable: ${(cause as Error).message}`;
+    } finally {
+      mixedLoaded = true;
+    }
+  }
+  /** The next item of the mixed review; a round's end shows its done card. */
+  function advance() {
+    mixedAt += 1;
+    void loadBooks();
+  }
+  async function newRound() {
+    await loadMixed();
+    mixedAt = 0;
+    mixedRun += 1;
   }
 
   /** Practice can start a Study cycle on Math (Settings), never interrupting one already running. */
@@ -192,7 +258,7 @@
     // Launchers (Ctrl K, home Up next) leave a request; Math always mounts afresh to take it.
     const pending = takeLaunch();
     if (pending !== "lesson") launch(pending);
-    void Promise.all([loadTopics(), loadNext(), loadHistory(), loadFocus()]).then(() => { if (pending === "lesson") launch(pending); });
+    void Promise.all([loadTopics(), loadNext(), loadHistory(), loadFocus(), loadBooks(), loadMixed()]).then(() => { if (pending === "lesson") launch(pending); });
     window.addEventListener("kitty-study-changed", onStudy);
     ticker = setInterval(() => (now = Date.now()), 1000);
     poll = setInterval(() => void loadFocus(), 30_000);
@@ -230,7 +296,7 @@
       {:else if mode === "lessons"}
         {#if lessonTopic && byId[lessonTopic]}
           {#key lessonRun}
-            <LessonPanel topicId={lessonTopic} {demo} onchange={refresh} ondone={() => { lessonTopic = ""; setMode("practice"); void nextProblem(); }} />
+            <LessonPanel topicId={lessonTopic} {demo} {titles} onchange={refresh} ondone={() => { lessonTopic = ""; setMode("practice"); void nextProblem(); }} />
           {/key}
         {:else if topics}
           <div class="card">
@@ -245,31 +311,82 @@
             {/if}
           </div>
         {/if}
-      {:else if reviewTopic && byId[reviewTopic]}
-        {#key problemRun}
-          <ProblemCard topicId={reviewTopic} {demo} eyebrow={`Review · ${byId[reviewTopic].title}`} ongraded={refresh} onnext={nextProblem} />
-        {/key}
-      {:else if next?.kind === "review"}
-        <div class="stack">
-          {#key problemRun}
-            <ProblemCard topicId={next.topic_id} {demo} eyebrow={`Review · ${next.title}`} ongraded={refresh} onnext={nextProblem} />
-          {/key}
-          <p class="why">{next.why}</p>
-        </div>
-      {:else if next?.kind === "lesson"}
-        <div class="card" data-next-lesson={next.topic_id}>
-          <span class="eyebrow">Next lesson · {next.title}</span>
-          <p class="lead"><MathText text={next.why} inline /></p>
-          <Button variant="solid" intent="primary" onclick={() => next && openLesson(next.topic_id)}>Start the lesson</Button>
-        </div>
-      {:else if nextLoaded}
-        <div class="card">
-          <span class="eyebrow">Practice</span>
-          <p class="lead">Nothing is due. Try a sprint.</p>
-          <Button variant="solid" intent="primary" onclick={() => setMode("sprint")}>Mental math sprint</Button>
-        </div>
       {:else}
-        <p class="why" role="status">Finding what's next…</p>
+        <div class="practice">
+          {#if mixed}
+            <div class="order">
+              <Select label="Practice order" options={[{ value: "mixed", label: "Mixed review", disabled: !mixedOpen }, { value: "next", label: "Next up" }]} value={order} onchange={setOrder} />
+              {#if !mixedOpen}<span class="why" data-mixed-locked>{mixedLocked(mixed)}</span>{/if}
+            </div>
+          {:else if mixedError}
+            <p class="why">{mixedError}</p>
+          {/if}
+          {#if reviewTopic && byId[reviewTopic]}
+            {#key problemRun}
+              <ProblemCard topicId={reviewTopic} {demo} eyebrow={`Review · ${byId[reviewTopic].title}`} ongraded={refresh} onnext={nextProblem} />
+            {/key}
+          {:else if !nextLoaded || !mixedLoaded}
+            <p class="why" role="status">Finding what's next…</p>
+          {:else if order === "mixed" && mixed}
+            {#if item}
+              {@const nextLabel = mixedAt === mixed.items.length - 1 ? "Finish" : "Next"}
+              <div class="stack" data-mixed-item={mixedAt} data-kind={item.kind} data-strategy={item.strategy}>
+                <p class="progress"><span data-mixed-progress>{mixedAt + 1} of {mixed.items.length}</span><span data-mixed-kind>{itemEyebrow(item)}</span></p>
+                {#key `${mixedRun}-${mixedAt}`}
+                  {#if item.kind === "topic"}
+                    <ProblemCard topicId={item.topic_id} {demo} eyebrow={`${item.early ? "Early review" : "Review"} · ${item.title}`} {nextLabel} ongraded={refresh} onnext={advance} />
+                  {:else if item.kind === "textbook"}
+                    <TextbookCard exerciseId={item.exercise_id} {titles} eyebrow={`Textbook · ${item.title}`} {nextLabel} onnext={advance} />
+                  {:else}
+                    {@const entry = books?.problems.find((row) => String(row.id) === String(item.entry_id))}
+                    {#if entry}
+                      <BookReview {entry} {nextLabel} onreviewed={() => void loadBooks()} onnext={advance} />
+                    {:else}
+                      <div class="card">
+                        <span class="eyebrow">Own book</span>
+                        <p class="lead">{item.label}</p>
+                        <p class="why">{books ? "This entry was deleted." : booksError || "Reading your books…"}</p>
+                        <Button size="sm" onclick={advance}>Skip</Button>
+                      </div>
+                    {/if}
+                  {/if}
+                {/key}
+                {#if item.kind === "topic"}<p class="why">{item.why}</p>{/if}
+              </div>
+            {:else}
+              <div class="card" data-mixed-done>
+                <span class="eyebrow">Mixed review</span>
+                <p class="lead">{mixed.items.length ? `Round done: ${mixed.items.length} of ${mixed.items.length}.` : "Nothing is due for mixed review."}</p>
+                {#if mixed.held_back}
+                  <p class="why">{mixed.held_back} more due {mixed.held_back === 1 ? "waits" : "wait"} for the next round, so no two problems in a row share a method.</p>
+                {/if}
+                <div class="choices">
+                  <Button variant="solid" intent="primary" onclick={newRound}>Another round</Button>
+                  <Button onclick={() => setOrder("next")}>Next up</Button>
+                </div>
+              </div>
+            {/if}
+          {:else if next?.kind === "review"}
+            <div class="stack">
+              {#key problemRun}
+                <ProblemCard topicId={next.topic_id} {demo} eyebrow={`Review · ${next.title}`} ongraded={refresh} onnext={nextProblem} />
+              {/key}
+              <p class="why">{next.why}</p>
+            </div>
+          {:else if next?.kind === "lesson"}
+            <div class="card" data-next-lesson={next.topic_id}>
+              <span class="eyebrow">Next lesson · {next.title}</span>
+              <p class="lead"><MathText text={next.why} inline /></p>
+              <Button variant="solid" intent="primary" onclick={() => next && openLesson(next.topic_id)}>Start the lesson</Button>
+            </div>
+          {:else}
+            <div class="card">
+              <span class="eyebrow">Practice</span>
+              <p class="lead">Nothing is due. Try a sprint.</p>
+              <Button variant="solid" intent="primary" onclick={() => setMode("sprint")}>Mental math sprint</Button>
+            </div>
+          {/if}
+        </div>
       {/if}
     </section>
 
@@ -280,6 +397,10 @@
       onclick={() => setDrawers(left, right === "history" ? "" : "history")}>
       <Icon name="calendar" size={14} /><span>History</span>
     </button>
+    <button type="button" class="edge right middle" aria-label="Books" aria-controls="math-drawer-right" aria-expanded={right === "books"} title="Your books"
+      onclick={() => setDrawers(left, right === "books" ? "" : "books")}>
+      <Icon name="study" size={14} /><span>Books</span>{#if books?.due}<span class="count" title={`${books.due} book problems due`}>{books.due}</span>{/if}
+    </button>
     <button type="button" class="edge right lower" aria-label="Settings" aria-controls="math-drawer-right" aria-expanded={right === "settings"} title="Settings"
       onclick={() => setDrawers(left, right === "settings" ? "" : "settings")}>
       <Icon name="settings" size={14} /><span>Settings</span>
@@ -287,9 +408,14 @@
 
     {#if left}
       <aside id="math-drawer-left" class="drawer left" aria-label="Topics" transition:fly={{ x: -40, duration: 180 }}>
-        <h4>Topics</h4>
+        <div class="graph-head">
+          <h4>Topics</h4>
+          {#if strandOptions.length > 2}
+            <Select label="Strand" options={strandOptions} value={shownStrand || "all"} onchange={setStrand} />
+          {/if}
+        </div>
         {#if topics?.length}
-          <TopicGraph {topics} {selected} onselect={(id) => (selected = id)} />
+          <TopicGraph topics={view.topics} outside={view.outside} {selected} onselect={(id) => (selected = id)} />
           <!-- Starting a lesson or review moves to the centre, so the drawer gets out of its way. -->
           {#if selectedTopic}<TopicDetail topic={selectedTopic} {topics} onlesson={(id) => { setDrawers(false, right); openLesson(id); }}
             onreview={(id) => { setDrawers(false, right); openReview(id); }} />{/if}
@@ -303,6 +429,10 @@
     {#if right === "history"}
       <aside id="math-drawer-right" class="drawer right" aria-label="History" transition:fly={{ x: 40, duration: 180 }}>
         <HistoryPanel {history} {settings} error={historyError} />
+      </aside>
+    {:else if right === "books"}
+      <aside id="math-drawer-right" class="drawer right" aria-label="Books" transition:fly={{ x: 40, duration: 180 }}>
+        <BooksPanel {books} topics={topics ?? []} error={booksError} onchange={loadBooks} />
       </aside>
     {:else if right === "settings"}
       <aside id="math-drawer-right" class="drawer right" aria-label="Settings" transition:fly={{ x: 40, duration: 180 }}>
@@ -420,6 +550,33 @@
     justify-content: center;
     gap: 6px;
   }
+  .practice {
+    display: grid;
+    justify-items: center;
+    gap: 14px;
+    width: 100%;
+  }
+  .order {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+  }
+  .progress {
+    display: flex;
+    gap: 10px;
+    margin: 0;
+    color: var(--muted);
+    font: 500 11px var(--font-mono);
+  }
+  .progress [data-mixed-progress] {
+    color: var(--ink);
+  }
+  .graph-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
   .why {
     margin: 0;
     color: var(--muted);
@@ -458,15 +615,16 @@
   }
   .edge.right {
     right: 0;
-    height: 150px;
+    height: 124px;
     border-right: 0;
     border-radius: 12px 0 0 12px;
   }
+  /* History, Books and Settings share the right edge, spaced so all three fit the 420px minimum. */
   .edge.upper {
-    top: calc(50% - 80px);
+    top: calc(50% - 132px);
   }
   .edge.lower {
-    top: calc(50% + 80px);
+    top: calc(50% + 132px);
   }
   .edge :global(svg) {
     transform: rotate(90deg);
