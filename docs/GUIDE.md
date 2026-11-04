@@ -2535,12 +2535,15 @@ process, named by the MCP client; `kitty notes`: one per command, or
 `KITTY_AGENT_SESSION`, named by `KITTY_AGENT_NAME`; rika!'s assistant: one per
 conversation), a connected app (by its pairing name), rika! itself (migrations,
 compaction) or a paired device (with the actors whose changes it carried). A page's
-**History** names the actor of every session and filters by it. **Undo this agent
-session…** (in History, `undo_agent_session` over MCP, or `kitty notes undo-session`)
-first shows what it will do, then reverts everything that session wrote on every page
-as one new step: anything someone else changed since is kept and listed, never
-overwritten. A block written with a pinned citation `((id@seq))` shows **source changed
-since** when the cited block changed after that moment; clicking it shows the change.
+**History** names the actor of every session, each kind (you, an agent, with Claude,
+Codex, omp and rika! told apart, a connected app, rika! itself, a paired device) with its
+own icon and theme colour, and filters by it. **Undo this agent session…** (in History,
+`undo_agent_session` over MCP, or `kitty notes undo-session`) first shows what it will do:
+each block's text now, struck through, and the text it goes back to. Then it reverts
+everything that session wrote on every page as one new step: anything someone else
+changed since is kept and listed, never overwritten. A block written with a pinned
+citation `((id@seq))` shows **source changed since** when the cited block changed after
+that moment; clicking it shows the change word by word.
 
 `kitty notes` belongs to the workspace module. Over HTTP (UI secret required, like
 every route): `GET /api/blocks/pages`, `/api/blocks/search?q=`, `/api/blocks/backlinks?id=`

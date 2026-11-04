@@ -201,9 +201,9 @@
           {#each topic.blocks as item}<button class="context" onclick={() => onopen(item.page_id, item.id)}><strong>{item.title}</strong><span>{item.text}</span></button>{:else}<p>No matching blocks.</p>{/each}
           {#if topic.next_offset !== null}<button onclick={() => void moreTopics()}>Show more topic blocks ({topic.blocks.length} of {topic.count})</button>{/if}
         {:else if source}
-          <section class="source" aria-label="Source changed since">
-            <h3>Source changed since it was cited</h3>
-            <p class="muted">Cited at seq {source.cited_seq}; {source.status === "changed" ? `changed at seq ${source.seq}` : source.status === "deleted" ? `moved to Trash at seq ${source.seq}` : `removed for good at seq ${source.seq}`}.</p>
+          <section class="source" aria-label="Source changed since" data-status={source.status}>
+            <h3><span class="dot" aria-hidden="true"></span>{source.status === "changed" ? "Source changed since cited" : source.status === "deleted" ? "Source in Trash since cited" : "Source removed since cited"}</h3>
+            <p class="meta">Cited at seq {source.cited_seq} · {source.status === "changed" ? `changed at seq ${source.seq}` : source.status === "deleted" ? `moved to Trash at seq ${source.seq}` : `removed for good at seq ${source.seq}`}</p>
             <p class="diff" aria-label="What changed">{#each source.diff as part, at (at)}{#if part.op === "equal"}<span>{part.text}</span>{:else if part.op === "delete"}<del>{part.text}</del>{:else}<ins>{part.text}</ins>{/if}{/each}</p>
             <button class="make-tag" onclick={() => source && void citations(source.id)}>Open the source's citation contexts</button>
           </section>
@@ -224,10 +224,17 @@
   button { font: inherit; color: inherit; cursor: pointer; background: none; border: 0; border-radius: 4px; padding: 4px 6px; }
   button:hover { background: var(--surface-raised); }
   .citations { white-space: nowrap; color: var(--accent); }
-  .source .diff { font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .source del { color: var(--error); text-decoration: line-through; background: color-mix(in srgb, var(--error) 10%, transparent); }
-  .source ins { color: var(--success); text-decoration: none; background: color-mix(in srgb, var(--success) 12%, transparent); }
-  .source .muted { font-size: 12px; color: var(--muted); }
+  /* The word diff reads as running text: removed words struck through on a danger wash, added ones on a success wash. */
+  .source h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 4px; font: 600 13px/1.3 var(--font-ui); }
+  .source .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--warning); flex-shrink: 0; }
+  .source:not([data-status="changed"]) .dot { background: var(--error); }
+  .source .meta { margin: 0 0 10px; font: 500 11.5px/1.4 var(--font-ui); color: var(--muted); }
+  .source .diff { margin: 0 0 8px; padding: 10px 0; border-block: 1px solid var(--hairline, var(--border)); font-size: 13px; line-height: 1.7; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .source del, .source ins { padding: 1px 2px; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .source del { color: color-mix(in srgb, var(--error) 62%, var(--ink)); background: color-mix(in srgb, var(--error) 12%, transparent);
+    text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--error) 70%, transparent); }
+  .source ins { color: color-mix(in srgb, var(--success) 62%, var(--ink)); background: color-mix(in srgb, var(--success) 14%, transparent); text-decoration: none;
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--success) 55%, transparent); }
   .contexts { width: 280px; flex-shrink: 0; border-left: 1px solid var(--border); padding: 16px; max-height: 75vh; overflow: auto; background: var(--chrome); }
   .contexts h3 { font-size: 14px; }
   .context { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 12px 4px; text-align: left; border-bottom: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; }

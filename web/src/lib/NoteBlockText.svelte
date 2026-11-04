@@ -24,10 +24,16 @@
   {text.slice(index ? parts[index-1].index! + parts[index-1][0].length : 0,part.index)}
   {#if part[1]}<button class="text-link" onclick={()=>onpage(part[1])}>{part[2]||part[1]}</button><button class="topic-link" aria-label={`Topic ${part[1]}`} onclick={()=>ontopic("page",part[1])}>↗</button>
   {:else if part[3]}<button class="text-link" onclick={()=>ontopic("tag",part[3])}>#{part[3]}</button>
-  {:else}<button class:embed={!!part[6]} class="block-reference" title="Open citation contexts" onclick={()=>onreference((part[4]||part[6]).toLowerCase())}>{references[(part[4]||part[6]).toLowerCase()]??"[loading or unavailable block]"}</button>{#if part[4] && changed(part[4], part[5])?.changed}{@const citation = changed(part[4], part[5])!}<button class="source-changed" title={`The cited block changed after seq ${citation.cited_seq} (now at ${citation.seq}): show what changed`} onclick={()=>oncitation(citation)}>{citation.status === "changed" ? "source changed since" : citation.status === "deleted" ? "source in Trash since" : "source removed since"}</button>{/if}{/if}
+  {:else}<button class:embed={!!part[6]} class="block-reference" title="Open citation contexts" onclick={()=>onreference((part[4]||part[6]).toLowerCase())}>{references[(part[4]||part[6]).toLowerCase()]??"[loading or unavailable block]"}</button>{#if part[4] && changed(part[4], part[5])?.changed}{@const citation = changed(part[4], part[5])!}<button class="source-changed" data-status={citation.status} title={`The cited block changed after seq ${citation.cited_seq} (now at ${citation.seq}): show what changed`} onclick={()=>oncitation(citation)}><span class="dot" aria-hidden="true"></span>{citation.status === "changed" ? "source changed since" : citation.status === "deleted" ? "source in Trash since" : "source removed since"}</button>{/if}{/if}
 {/each}
 {text.slice(parts.length ? parts[parts.length-1].index! + parts[parts.length-1][0].length : 0)}
 <style>
   button{font:inherit;cursor:pointer;border:0;padding:0;background:none;color:var(--accent);text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}.topic-link{font-size:.7em;margin:0 .3em}.block-reference{color:inherit;border-bottom:1px dashed var(--accent)}.embed{display:block;border-left:3px solid var(--accent);padding:.6em 1em;margin:.4em 0;background:var(--chrome);width:100%}
-  .source-changed{font-size:.72em;margin-left:.4em;padding:0 .45em;border-radius:999px;color:var(--warning,var(--accent));border:1px solid currentColor;white-space:nowrap;vertical-align:.1em}
+  /* A pinned citation's source moved on: a compact warning chip (danger once it is gone) with a status dot. */
+  .source-changed{--tone:var(--warning);display:inline-flex;align-items:center;gap:5px;height:18px;margin-left:.4em;padding:0 7px 0 6px;border-radius:999px;
+    font:600 10.5px/1 var(--font-ui);letter-spacing:0;color:color-mix(in srgb,var(--tone) 62%,var(--ink));background:color-mix(in srgb,var(--tone) 12%,transparent);
+    border:1px solid color-mix(in srgb,var(--tone) 38%,transparent);white-space:nowrap;vertical-align:.15em}
+  .source-changed:hover{background:color-mix(in srgb,var(--tone) 20%,transparent);border-color:var(--tone)}
+  .source-changed:not([data-status="changed"]){--tone:var(--error)}
+  .source-changed .dot{width:6px;height:6px;border-radius:999px;background:var(--tone);flex-shrink:0}
 </style>

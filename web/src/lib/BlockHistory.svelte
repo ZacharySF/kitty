@@ -11,12 +11,17 @@
   import { PageDoc, visibleRows, type BlockData, type Row } from "./blockDoc";
   import { marksHTML, marksOf } from "./blockText";
   import { pageQuery, type PageRef } from "./BlockEditor.svelte";
+  import ActorName from "./ActorName.svelte";
+  import Icon from "./Icon.svelte";
+  import Select, { type SelectOption } from "./ui/Select.svelte";
+  import { actorLook, actorName as named, actorStyle } from "./actors";
 
   type Moment = { seq: number; at: string; session: number | null };
   type Session = { device_id: string; actor?: Actor; start: string; end: string; first_seq: number; last_seq: number; transactions: number; ops: Record<string, number>; moments: { seq: number; at: string }[] };
   type History = { page_id: string; horizon_seq: number; sessions: Session[]; snapshots: { day: string; seq: number }[]; devices?: Record<string, string> };
   type Preview = { page_id: string; seq: number; blocks: (BlockData & { deleted_at: string | null })[] };
-  type Item = { id?: string; seq?: number; page_id: string | null; text?: string; fields?: string[]; reasons?: string[] };
+  /** A block the undo changes (`current`: its text now; `text`: what goes back; `live`: false when it goes to Trash) or one it keeps. */
+  type Item = { id?: string; seq?: number; page_id: string | null; current?: string; text?: string; live?: boolean; fields?: string[]; reasons?: string[] };
   type Undo = { session: string; actor: Actor | null; transactions: number; applied: boolean; dry_run: boolean; reverted_count: number; conflict_count: number; reverted: Item[]; conflicts: Item[] };
 
   let { page, title = "", onclose }: { page: PageRef; title?: string; onclose: () => void } = $props();
@@ -48,13 +53,6 @@
   };
   // Merged changes are logged under the device that made them; paired devices go by their names.
   const device = (id: string) => (id === liveDevice() ? "This device" : history?.devices?.[id] ?? `Device ${id.slice(0, 8)}`);
-  const named = (actor: Actor): string => {
-    if (actor.kind === "user") return "You";
-    if (actor.kind === "agent") return `Agent · ${actor.name ?? "unnamed"}`;
-    if (actor.kind === "client") return `${actor.name ?? "Connected app"} (connected app)`;
-    if (actor.kind === "system") return `rika! · ${actor.name ?? "system"}`;
-    return actor.name ?? "Paired device";
-  };
   /** Who made a session, with the device when it is not this one. */
   const who = (session: Session): string => {
     const actor = actorOf(session);
@@ -65,11 +63,14 @@
     return session.device_id === liveDevice() || !liveDevice() ? named(actor) : `${named(actor)} · ${device(session.device_id)}`;
   };
   const shown = (session: Session) => !filter || actorKey(session) === filter;
-  /** The actors in this page's history, for the filter (first appearance order, newest first). */
-  const actors = $derived.by(() => {
-    const found = new Map<string, string>();
-    for (const session of history?.sessions ?? []) if (!found.has(actorKey(session))) found.set(actorKey(session), who(session));
-    return [...found];
+  /** The actors in this page's history, for the filter (first appearance order, newest first), each with its colour dot. */
+  const filterOptions = $derived.by((): SelectOption[] => {
+    const found = new Map<string, SelectOption>();
+    for (const session of history?.sessions ?? []) {
+      const key = actorKey(session);
+      if (!found.has(key)) found.set(key, { value: key, label: who(session), color: `var(${actorLook(actorOf(session)).role})` });
+    }
+    return [{ value: "", label: "Everyone" }, ...found.values()];
   });
 
   /** Every moment that can be previewed, oldest first: daily snapshots, then each kept transaction (of the filtered actor). */
@@ -92,7 +93,16 @@
   const summary = (ops: Record<string, number>) => Object.entries(ops).filter(([kind]) => kind !== "set" || Object.keys(ops).length === 1)
     .map(([kind, count]) => `${count} ${kind}`).join(" · ");
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-  const label = (item: Item) => item.text?.trim() ? `“${item.text.slice(0, 80)}”` : item.seq ? `Merged change ${item.seq}` : "A block without text";
+  const label = (item: Item) => item.text?.trim() ? item.text : item.seq ? `Merged change ${item.seq}` : "A block without text";
+  /** How a non-text field goes back, for blocks whose text stays. */
+  const FIELD_WORDS: Record<string, string> = { place: "moves back", type: "type goes back", props: "properties go back" };
+  const otherFields = (item: Item) => (item.fields ?? []).filter((field) => field in FIELD_WORDS).map((field) => FIELD_WORDS[field]).join(", ");
+  /** The undo plan's count line: what goes back, what is kept, from how many edits. */
+  const counts = (plan: Undo) => [
+    plan.reverted_count ? `${plural(plan.reverted_count, "block")} ${plan.reverted_count === 1 ? "goes" : "go"} back` : "Nothing left to undo",
+    plan.conflict_count ? `${plan.conflict_count} kept as is` : "",
+    `from ${plural(plan.transactions, "edit")}`,
+  ].filter(Boolean);
 
   async function load(selectLatest = true) {
     try {
@@ -208,27 +218,24 @@
   {#if history}
     <div class="layout">
       <nav class="sessions" aria-label="Editing sessions">
-        {#if actors.length > 1}
-          <label class="filter"><span>Show</span>
-            <select aria-label="Filter by actor" value={filter} onchange={(event) => filterBy(event.currentTarget.value)}>
-              <option value="">Everyone</option>
-              {#each actors as [key, name] (key)}<option value={key}>{name}</option>{/each}
-            </select>
-          </label>
+        {#if filterOptions.length > 2}
+          <div class="filter"><span class="filter-label" aria-hidden="true">Show</span>
+            <Select kind="list" label="Filter by actor" options={filterOptions} value={filter} onchange={filterBy} />
+          </div>
         {/if}
         {#each history.sessions as session, number}
           {#if shown(session)}
             {@const actor = actorOf(session)}
-            <div class="session actor-{actor.kind}">
+            {@const agent = actor.kind === "peer" ? actor.via?.[0] ?? actor : actor}
+            <div class="session" style={actorStyle(agent)}>
               <button class:active={current?.session === number} onclick={() => { index = moments.reduce((found, moment, at) => (moment.session === number ? at : found), index); void show(); }}>
                 <strong>{time(session.start)}{session.end !== session.start ? ` – ${new Date(session.end).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : ""}</strong>
-                <span class="who">{who(session)}</span>
-                <span>{session.transactions} edit{session.transactions === 1 ? "" : "s"}</span>
-                <small>{summary(session.ops)}</small>
+                <ActorName class="who" {actor} label={who(session)} />
+                <small>{[plural(session.transactions, "edit"), summary(session.ops)].filter(Boolean).join(" · ")}</small>
               </button>
               {#if agentSession(session)}
                 <button class="undo-session" disabled={undoing} onclick={() => void planUndo(session)}
-                  aria-label={`Undo agent session ${named(actor.kind === "peer" ? actor.via?.[0] ?? actor : actor)}`}>Undo this agent session…</button>
+                  aria-label={`Undo agent session ${named(agent)}`}><Icon name="undo" size={12} />Undo this agent session…</button>
               {/if}
             </div>
           {/if}
@@ -244,21 +251,45 @@
       </nav>
       <section class="moment" aria-label="Preview">
         {#if undo}
-          <section class="undo-plan" aria-label="Undo agent session">
-            <h3>Undo {undo.actor ? named(undo.actor) : "the agent session"}</h3>
-            <p>{undo.reverted_count
-              ? `Reverts ${plural(undo.reverted_count, "block")} the agent changed in ${plural(undo.transactions, "transaction")}, on every page it touched, as one new step in history.`
-              : "Nothing the agent wrote is left to revert."}</p>
+          <section class="undo-plan" aria-label="Undo agent session" style={actorStyle(undo.actor)}>
+            <h3>Undo {#if undo.actor}<ActorName actor={undo.actor} label={named(undo.actor)} />{:else}the agent session{/if}</h3>
+            <p class="counts">{#each counts(undo) as part, at (part)}{#if at}{" · "}{/if}<span>{part}</span>{/each}</p>
             {#if undo.reverted.length}
-              <ul class="reverted">{#each undo.reverted as item (item.id)}<li>{label(item)} <small>{(item.fields ?? []).join(", ")}</small></li>{/each}</ul>
+              <ul class="changes" aria-label="Goes back">
+                {#each undo.reverted as item (item.id)}
+                  <li>
+                    {#if item.live === false}
+                      <span class="tag">now</span><del>{item.current || item.text || "empty block"}</del>
+                      <span class="tag">goes</span><span class="to-trash">to Trash</span>
+                    {:else if item.fields?.includes("live")}
+                      <span class="tag">now</span><span class="in-trash">in Trash</span>
+                      <span class="tag">back to</span><ins>{item.text || "empty block"}</ins>
+                    {:else if item.fields?.includes("text")}
+                      <span class="tag">now</span><del>{item.current || "empty block"}</del>
+                      <span class="tag">back to</span><ins>{item.text || "empty block"}</ins>
+                    {:else}
+                      <span class="tag">block</span><span class="same">{item.text || "empty block"}</span>
+                    {/if}
+                    {#if otherFields(item)}<span class="tag"></span><small class="fields">{otherFields(item)}</small>{/if}
+                  </li>
+                {/each}
+                {#if undo.reverted_count > undo.reverted.length}<li class="more">and {undo.reverted_count - undo.reverted.length} more</li>{/if}
+              </ul>
             {/if}
             {#if undo.conflict_count}
-              <p class="kept">{plural(undo.conflict_count, "block")} changed by someone else since stay as they are:</p>
-              <ul class="conflicts">{#each undo.conflicts as item, at (item.id ?? `seq-${item.seq}-${at}`)}<li>{label(item)} <small>{(item.reasons ?? []).join("; ")}</small></li>{/each}</ul>
+              <h4>Kept as is</h4>
+              <ul class="kept" aria-label="Kept as is">
+                {#each undo.conflicts as item, at (item.id ?? `seq-${item.seq}-${at}`)}
+                  <li><span class="same">{label(item)}</span><small>{(item.reasons ?? []).join("; ")}</small></li>
+                {/each}
+                {#if undo.conflict_count > undo.conflicts.length}<li class="more">and {undo.conflict_count - undo.conflicts.length} more</li>{/if}
+              </ul>
             {/if}
             <div class="actions">
-              <button class="button primary" disabled={undoing || !undo.reverted_count} onclick={() => void confirmUndo()}>{undoing ? "Undoing…" : "Undo agent session"}</button>
+              <button class="button primary" disabled={undoing || !undo.reverted_count} onclick={() => void confirmUndo()}
+                >{undoing ? "Undoing…" : `Undo ${plural(undo.reverted_count, "block")}`}</button>
               <button class="button" disabled={undoing} onclick={() => (undo = null)}>Cancel</button>
+              {#if undo.reverted_count}<span class="note">One new step in history; Restore can bring it back.</span>{/if}
             </div>
           </section>
         {/if}
@@ -307,25 +338,47 @@
   .layout { display: grid; grid-template-columns: 260px 1fr; gap: 18px; min-height: 420px; }
   .sessions { display: flex; flex-direction: column; gap: 4px; max-height: 62vh; overflow: auto; padding-right: 6px; border-right: 1px solid var(--border); }
   .sessions h3 { font-size: 12px; color: var(--muted); margin: 14px 6px 4px; }
-  .sessions button { display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+  .sessions button { display: flex; flex-direction: column; gap: 3px; text-align: left; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: var(--r-item, 6px); padding: 8px 10px; cursor: pointer; }
   .sessions button:hover { background: var(--surface-raised); }
-  .sessions button.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-  .sessions strong { font-size: 13px; }
+  .sessions button.active { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .sessions strong { font: 600 12.5px/1.3 var(--font-ui); }
   .sessions span, .sessions small { font-size: 11px; color: var(--muted); }
-  .sessions .session { display: flex; flex-direction: column; }
+  .sessions .session { display: flex; flex-direction: column; border-bottom: 1px solid var(--hairline, var(--border)); padding-bottom: 4px; }
   .sessions .session > button:first-child { width: 100%; }
-  .sessions .who { color: var(--text, inherit); font-weight: 550; }
-  .sessions .actor-agent .who, .sessions .actor-client .who { color: var(--accent); }
-  .sessions .undo-session { align-self: flex-start; margin: -2px 0 4px 10px; padding: 2px 8px; font-size: 11px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 999px; }
-  .filter { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin: 0 6px 6px; }
-  .filter select { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
-  .undo-plan { border: 1px solid var(--accent); border-radius: 8px; padding: 12px 14px; background: color-mix(in srgb, var(--accent) 6%, var(--surface)); font-size: 13px; }
-  .undo-plan h3 { margin: 0 0 6px; font-size: 14px; }
-  .undo-plan p { margin: 4px 0; }
-  .undo-plan ul { margin: 4px 0 8px; padding-left: 18px; max-height: 120px; overflow: auto; }
-  .undo-plan small { color: var(--muted); }
-  .undo-plan .kept { color: var(--warning, var(--muted)); }
-  .undo-plan .actions { display: flex; gap: 8px; }
+  /* The undo pill takes the session's actor colour (--actor, set on .session). */
+  .sessions .undo-session { flex-direction: row; align-items: center; gap: 5px; align-self: flex-start; height: 22px; margin: 0 0 4px 10px; padding: 0 9px 0 7px;
+    font: 500 11.5px/1 var(--font-ui); color: color-mix(in srgb, var(--actor, var(--accent)) 66%, var(--ink));
+    background: color-mix(in srgb, var(--actor, var(--accent)) 10%, transparent); border: 1px solid color-mix(in srgb, var(--actor, var(--accent)) 38%, transparent); border-radius: 999px; }
+  .sessions .undo-session:hover:not(:disabled) { background: color-mix(in srgb, var(--actor, var(--accent)) 18%, transparent); border-color: var(--actor, var(--accent)); }
+  .sessions .undo-session:disabled { opacity: .55; cursor: default; }
+  .filter { display: flex; align-items: center; gap: 8px; margin: 0 4px 6px; }
+  .filter-label { font: 600 var(--fs-label, 12px)/1 var(--font-ui); color: var(--muted); }
+  .filter :global(.select-trigger) { flex: 1; min-width: 0; }
+  /* One region of the dialog's surface: a wash in the agent's colour, hairlines between its parts. */
+  .undo-plan { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--r-panel, 10px);
+    background: color-mix(in srgb, var(--actor, var(--accent)) 7%, transparent); box-shadow: inset 2px 0 0 var(--actor, var(--accent)); font-size: 13px; }
+  .undo-plan h3 { display: flex; align-items: center; gap: 6px; margin: 0; font: 600 14px/1.3 var(--font-ui); }
+  .undo-plan h3 :global(.actor) { font-size: 14px; }
+  .undo-plan h4 { margin: 2px 0 0; font: 600 var(--fs-label, 12px)/1.3 var(--font-ui); color: var(--muted); }
+  .counts { margin: 0; font: 500 12px/1.4 var(--font-ui); color: var(--muted); }
+  .counts span:first-child { color: var(--ink); font-weight: 600; }
+  .undo-plan ul { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; border-top: 1px solid var(--hairline, var(--border)); }
+  .undo-plan li { padding: 7px 0; border-bottom: 1px solid var(--hairline, var(--border)); line-height: 1.45; overflow-wrap: anywhere; }
+  /* A block's before/after: a narrow label column, the text struck through now, the text it goes back to. */
+  .changes li { display: grid; grid-template-columns: 52px 1fr; column-gap: 8px; row-gap: 2px; align-items: baseline; }
+  .tag { font: 600 10.5px/1.4 var(--font-ui); color: var(--muted); text-align: right; }
+  .changes del, .changes ins, .in-trash, .to-trash { justify-self: start; padding: 0 3px; border-radius: 3px;
+    display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .changes del { color: color-mix(in srgb, var(--error) 66%, var(--ink)); background: color-mix(in srgb, var(--error) 10%, transparent);
+    text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--error) 70%, transparent); }
+  .changes ins { color: color-mix(in srgb, var(--success) 66%, var(--ink)); background: color-mix(in srgb, var(--success) 12%, transparent); text-decoration: none; }
+  .in-trash, .to-trash { font-weight: 600; color: var(--muted); padding: 0; }
+  .same { color: var(--ink); }
+  .fields, .kept small { font-size: 11.5px; color: var(--muted); }
+  .kept li { display: flex; flex-direction: column; gap: 2px; }
+  .more { color: var(--muted); font-size: 12px; }
+  .undo-plan .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+  .undo-plan .note { font-size: 12px; color: var(--muted); }
   .moment { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .slider { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); }
   .slider input { width: 100%; accent-color: var(--accent); }
