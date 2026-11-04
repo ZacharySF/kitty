@@ -17,6 +17,10 @@ propose (a kind lists who may) but never approve. Policy-approved kinds
 (`Kind.approver == "policy"`) are the exception: a computed policy approves them in
 memory (`policy_approve`), never a model or another agent.
 
+Every decision names the `kinds` its caller owns: `approve`, `execute`,
+`approve_and_execute` and `deny` refuse (403, untouched) an effect of any other kind,
+so a route can only ever decide its own kind of effect, never one it was handed by ID.
+
 Kinds come in two types. `Executable` kinds have an executor (`run`), called inside the
 same immediate transaction that re-checks the preconditions and records ``executed``;
 external work (a network push, a browser run) happens after that commit, using what
@@ -38,7 +42,8 @@ import hashlib
 import json
 import secrets
 import sqlite3
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -220,6 +225,10 @@ class Registry:
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._kinds))
 
+    def reviewed_in(self, review: Reviewer) -> frozenset[str]:
+        """The kinds a person reviews in one place ("prompt": the pending-approvals list)."""
+        return frozenset(name for name, kind in self._kinds.items() if kind.review == review)
+
 
 #: Every kind kitty registers (kitty.core.effect_kinds and the modules owning the others).
 REGISTRY = Registry()
@@ -361,6 +370,14 @@ def _event(conn: sqlite3.Connection, effect: Effect | str, state: str, actor: Ac
          canonical(dict(detail)) if detail else None, _stamp(at), _stamp(expires_at) if expires_at else None))
 
 
+def _owned(effect: Effect, kinds: Collection[str]) -> None:
+    """A route decides only the kinds it owns; another view's effect is refused untouched."""
+    if isinstance(kinds, (str, bytes)) or not isinstance(kinds, Collection) or not kinds:
+        raise TypeError("kinds is the non-empty set of effect kind names the caller owns")
+    if effect.kind not in kinds:
+        raise Forbidden("Review this effect in its own view")
+
+
 def _user(actor: Actor, action: str) -> None:
     if not isinstance(actor, Actor) or actor.kind != "user":
         raise Forbidden(f"Only you, in rika!'s own window, can {action} an effect; agents can propose but never {action}")
@@ -370,7 +387,10 @@ def _user(actor: Actor, action: str) -> None:
 
 def propose(conn: sqlite3.Connection, kind_name: Any, payload: Any, *, actor: Actor, ctx: Any = None,
             registry: Registry = REGISTRY, at: datetime | None = None) -> Effect:
-    """Record a proposal: its canonical payload, the precondition values read now and their digest."""
+    """Record a proposal: its canonical payload, the precondition values read now and their digest.
+
+    Inside an open transaction (the agent mediator's, kitty.core.agent_access) it joins
+    it, so the proposal commits or rolls back with that call's journal rows."""
     kind = registry.get(kind_name)
     if not isinstance(actor, Actor) or actor.kind not in kind.proposers:
         raise Forbidden(f"A {actor.kind if isinstance(actor, Actor) else 'unknown'} actor cannot propose {kind.name}")
@@ -385,7 +405,7 @@ def propose(conn: sqlite3.Connection, kind_name: Any, payload: Any, *, actor: Ac
         raise EffectError("This effect is too large to review")
     moment = at or now()
     effect_id = _new_id()
-    with transaction(conn, immediate=True):
+    with nullcontext() if conn.in_transaction else transaction(conn, immediate=True):
         conn.execute(
             "INSERT INTO effects(id,kind,payload,preconditions,preview,digest,actor,actor_name,actor_session,created_at,expires_at)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -453,8 +473,9 @@ class _Claim:
         self.conn.execute("ROLLBACK" if kind is not None else "COMMIT")
 
 
-def _open(conn: sqlite3.Connection, effect_id: Any, registry: Registry) -> tuple[Effect, Kind]:
+def _open(conn: sqlite3.Connection, effect_id: Any, kinds: Collection[str], registry: Registry) -> tuple[Effect, Kind]:
     effect = _load(conn, effect_id)
+    _owned(effect, kinds)
     return effect, registry.get(effect.kind)
 
 
@@ -463,8 +484,8 @@ def _approval(claim: _Claim, kind: Kind, effect: Effect, options: Mapping[str, A
            detail={"options": dict(options)} if options else None, expires_at=claim.moment + kind.approval_lifetime)
 
 
-def approve(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, actor: Actor, ctx: Any = None,
-            options: Mapping[str, Any] | None = None, registry: Registry = REGISTRY,
+def approve(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, kinds: Collection[str], actor: Actor,
+            ctx: Any = None, options: Mapping[str, Any] | None = None, registry: Registry = REGISTRY,
             at: datetime | None = None) -> Effect:
     """The person approves this exact digest, after its preconditions are re-checked.
 
@@ -473,7 +494,7 @@ def approve(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, actor: 
     """
     _user(actor, "approve")
     moment = at or now()
-    effect, kind = _open(conn, effect_id, registry)
+    effect, kind = _open(conn, effect_id, kinds, registry)
     if kind.approver != "user":
         raise Forbidden("This effect is approved by its policy, not by a person")
     read = _current(kind, ctx, effect) if kind.remote else None
@@ -487,19 +508,21 @@ def approve(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, actor: 
     return _load(conn, effect.id)
 
 
-def deny(conn: sqlite3.Connection, effect_id: Any, *, actor: Actor, at: datetime | None = None) -> Effect:
+def deny(conn: sqlite3.Connection, effect_id: Any, *, kinds: Collection[str], actor: Actor,
+         at: datetime | None = None) -> Effect:
     """The person says no; the proposer may propose again."""
     _user(actor, "deny")
     with transaction(conn, immediate=True):
         effect = _load(conn, effect_id)
+        _owned(effect, kinds)
         if effect.state not in ("proposed", "approved"):
             raise Refused(f"This effect is already {effect.state}")
         _event(conn, effect, "denied", actor, at or now(), digest_value=effect.digest)
     return _load(conn, effect.id)
 
 
-def execute(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, actor: Actor, ctx: Any = None,
-            registry: Registry = REGISTRY, at: datetime | None = None) -> tuple[Effect, Any]:
+def execute(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, kinds: Collection[str], actor: Actor,
+            ctx: Any = None, registry: Registry = REGISTRY, at: datetime | None = None) -> tuple[Effect, Any]:
     """Consume the approval: re-check every precondition and the digest, record
     ``executed`` and run the executor, all in one immediate transaction.
 
@@ -507,7 +530,7 @@ def execute(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, actor: 
     everything back, so the approval stays unused until it expires. A proposal-only kind
     raises `NotExecutable` before anything else is checked.
     """
-    effect, kind = _open(conn, effect_id, registry)
+    effect, kind = _open(conn, effect_id, kinds, registry)
     executable = registry.executable(kind.name)
     _user(actor, "execute")
     moment = at or now()
@@ -525,9 +548,9 @@ def execute(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, actor: 
     return _load(conn, effect.id), result
 
 
-def approve_and_execute(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, actor: Actor, ctx: Any = None,
-                        options: Mapping[str, Any] | None = None, registry: Registry = REGISTRY,
-                        at: datetime | None = None) -> tuple[Effect, Any]:
+def approve_and_execute(conn: sqlite3.Connection, effect_id: Any, presented: Any, *, kinds: Collection[str],
+                        actor: Actor, ctx: Any = None, options: Mapping[str, Any] | None = None,
+                        registry: Registry = REGISTRY, at: datetime | None = None) -> tuple[Effect, Any]:
     """An inline view's Approve: approval and execution in one immediate transaction.
 
     Nothing commits unless the executor succeeds: an executor refusal (an underfunded
@@ -535,7 +558,7 @@ def approve_and_execute(conn: sqlite3.Connection, effect_id: Any, presented: Any
     """
     _user(actor, "approve")
     moment = at or now()
-    effect, kind = _open(conn, effect_id, registry)
+    effect, kind = _open(conn, effect_id, kinds, registry)
     executable = registry.executable(kind.name)
     if executable.approver != "user":
         raise Forbidden("This effect is approved by its policy, not by a person")

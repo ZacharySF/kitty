@@ -5,6 +5,7 @@
   import type { AgentKind } from "../agentSkills";
   import { agentSkills } from "../agentSkills.svelte";
   import NowChip from "../NowChip.svelte";
+  import GuaranteeBadge from "../agents/GuaranteeBadge.svelte";
   import { rika } from "./session.svelte";
 
   /**
@@ -72,7 +73,8 @@
       <article class="rika-agent" data-state={agent.status} aria-label={`${agent.name} · ${agent.status}`}>
         <header>
           <strong>{agent.name}</strong>
-          <span class="where">{agent.where.tern_pane ? `tern · ${agent.where.tern_pane}` : agent.where.herdr_pane ? `herdr · ${agent.where.herdr_pane}` : agent.kind}</span>
+          <span class="sub"><span class="where">{agent.where.tern_pane ? `tern · ${agent.where.tern_pane}` : agent.where.herdr_pane ? `herdr · ${agent.where.herdr_pane}` : agent.kind}</span
+            >{#if agent.guarantee}<GuaranteeBadge guarantee={agent.guarantee} />{/if}</span>
           <span class="rika-chip" data-state={agent.status}><i class="rika-dot"></i>{agent.status}</span>
         </header>
         {#if agent.now}<div class="now-row"><NowChip now={agent.now} /></div>{/if}
@@ -127,6 +129,13 @@
   header .rika-chip {
     grid-row: 1 / 3;
     grid-column: 2;
+  }
+  .sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    min-width: 0;
   }
   .where {
     color: var(--subtle);

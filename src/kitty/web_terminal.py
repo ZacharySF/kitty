@@ -6,6 +6,10 @@ GET  /api/terminal/activity  ->  {"running", "workspaces": [{id, label, status, 
     omp), task (terminal title), last output line, output revision and ``since`` (epoch
     ms its state began). Never
     starts the session: ``running`` is false while rika!'s session is not running.
+POST /api/terminal/agents  {"kind", "skills_off"?}  ->  {tab, pane, name, kind, mediation, notice?}
+    A new Agent tab whose agent starts through kitty-agent-launch (kitty.core.agent_sessions);
+    ``mediation`` is ``{session, state, guarantee, message}``, and the tab's label shows the
+    guarantee (Full, Attribution only, Not mediated).
 POST /api/terminal/focus  {"pane"}  ->  {"ok"}
     Focuses one agent pane herdr currently lists (the dock's Open pane).
 POST /api/terminal/session  {}  ->  {"token", "socket"}
@@ -27,6 +31,8 @@ import os
 import select
 import threading
 
+from kitty.core import agent_sessions
+from kitty.core.agent_sessions import GUARANTEE_LABELS, LaunchError
 from kitty.core.terminal import CODING_AGENTS, HerdrRuntime, TerminalClient, TerminalNotRunning, TerminalUnavailable
 from kitty.web_socket import Closed, Reader, Tokens, accept, close_code, frame, handshake_key, send_close
 
@@ -66,9 +72,15 @@ def get(app, conn, path, query):
                 "cwd": str(app.settings.root), "default": "omp", "kinds": list(CODING_AGENTS)}
     if path == "/api/terminal/activity":
         try:
-            return app.terminal.runtime.activity()
+            activity = app.terminal.runtime.activity()
         except TerminalUnavailable as exc:
             raise _error(503, str(exc)) from None
+        # Each card names the guarantee of the newest launch in its pane (Settings → Agents).
+        guarantees = agent_sessions.pane_guarantees(conn, "herdr")
+        for space in activity["workspaces"]:
+            for agent in space["agents"]:
+                agent["guarantee"] = guarantees.get(agent["pane"], "none")
+        return activity
 
 
 def post(app, conn, path, body):
@@ -83,12 +95,22 @@ def post(app, conn, path, body):
             extra, notice = app.agent_skills.launch(kind, off)
         except ValueError as exc:
             raise _error(400, str(exc)) from None
+        runtime = app.terminal.runtime
         try:
-            started = app.terminal.runtime.start_agent(kind, app.settings.root, extra)
+            launch = app.agent_launches.prepare(conn, host="herdr", kind=kind, cwd=app.settings.root,
+                                                ancestor=runtime.pane_shell, origin=app.origin)
+        except LaunchError as exc:
+            raise _error(exc.status, str(exc)) from None
+        try:
+            started = runtime.start_agent(kind, app.settings.root, extra, launch)
         except TerminalNotRunning as exc:
+            agent_sessions.end(conn, launch.session, "The Agent tab was not created")
             raise _error(409, str(exc)) from None
         except TerminalUnavailable as exc:
             raise _error(503, str(exc)) from None
+        mediation = app.agent_launches.outcome(conn, launch.session)
+        runtime.label(started["tab"], f"Agent · {GUARANTEE_LABELS[mediation['guarantee']]}")
+        started = {**started, "mediation": mediation}
         return {**started, "notice": notice} if notice else started
     if path == "/api/terminal/focus":
         pane = body.get("pane")

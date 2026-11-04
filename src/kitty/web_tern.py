@@ -16,6 +16,10 @@ POST /api/terminal/tern/focus     {"block": ID}  ->  status   (raises rika!'s Te
 POST /api/terminal/tern/capture   {"block": ID}  ->  {note_id, block, truncated}
     Saves the pane's plain text (newest 60 KiB) as a quick note; needs the
     Workspace module (409 otherwise).
+POST /api/terminal/tern/agent     {"kind": "omp"|"claude"|"codex"}  ->  {block, mediation}
+    A coding agent in a new tab of rika!'s session, started through kitty-agent-launch
+    (kitty.core.agent_sessions); ``mediation`` is ``{session, state, guarantee, message}``
+    as the launch stands when the tab opened (Settings → Agents follows it).
 POST /api/terminal/tern/settings  {"path": "/abs/tern" | "" | null}  ->  status
     Header-protected like every mutation. Without a usable ``tern`` the actions
     answer 409 with the install pointer; run/focus/capture answer 409 while rika!'s
@@ -101,6 +105,21 @@ def _capture(app, conn, block) -> dict:
     return {"note_id": note["id"], "block": block, "truncated": truncated}
 
 
+def _agent(app, conn, body) -> dict:
+    from kitty.core.agent_sessions import LaunchError
+    from kitty.core.terminal import CODING_AGENTS
+
+    if not isinstance(body, dict) or set(body) != {"kind"} or body["kind"] not in CODING_AGENTS:
+        raise _error(400, "Choose a supported coding agent: {\"kind\": \"omp\"|\"claude\"|\"codex\"}")
+    try:
+        launch = app.agent_launches.prepare(conn, host="tern", kind=body["kind"], cwd=app.settings.root,
+                                            ancestor=app.tern.daemon_pid, origin=app.origin)
+    except LaunchError as exc:
+        raise _error(exc.status, str(exc)) from None
+    block = _act(lambda: app.tern.start_agent(body["kind"], app.settings.root, launch))
+    return {"block": block, "mediation": app.agent_launches.outcome(conn, launch.session)}
+
+
 def _plugin(app, conn, action=tern_plugin.status) -> dict:
     try:
         found = _act(lambda: action(app.tern, app.settings.root))
@@ -133,6 +152,8 @@ def post(app, conn, path, body):
         except ValueError as exc:
             raise _error(400, str(exc)) from None
         return _status(app)
+    if path == PREFIX + "/agent":
+        return _agent(app, conn, body)
     if path in PANE_FIELDS:
         if not isinstance(body, dict) or set(body) != PANE_FIELDS[path]:
             raise _error(400, f"This Tern request expects {{{', '.join(sorted(PANE_FIELDS[path]))}}}")

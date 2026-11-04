@@ -7,7 +7,7 @@
   import ActorName from "./ActorName.svelte";
   import { actorName } from "./actors";
   import {
-    EFFECTS_EVENT, approveEffect, conditionText, denyEffect, loadEffects, previewLines,
+    EFFECTS_EVENT, approveEffect, conditionText, denyEffect, loadEffects, previewLines, refusalText,
     type Effect, type EffectsState,
   } from "./effects";
 
@@ -42,7 +42,7 @@
       notice = !approve ? `Denied: ${effect.title}.`
         : decision.notice ?? (decision.effect.state === "executed" ? `Done: ${effect.title}.` : "");
     } catch (cause) {
-      error = (cause as Error).message;
+      error = refusalText(cause);
       await refresh();
     } finally { busy = ""; }
   }
@@ -79,6 +79,8 @@
 
 <style>
   .effect { flex-direction: column; align-items: stretch; gap: 6px; }
+  /* A multi-line card, not the one-line notice pill it shares its look with. */
+  :global(:root) .demo-notice.effect { border-radius: var(--r-panel); padding: 10px 14px; }
   .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .manual { color: var(--warning); }
   .preview, .conditions { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }

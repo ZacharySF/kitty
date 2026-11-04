@@ -2759,10 +2759,19 @@ decision and tells you to submit it in your browser. Mark the job applied afterw
 Over HTTP (UI secret): `GET /api/effects`; `POST /api/effects/approve`, `/execute`
 (`submit_application` answers 400: it has no executor) and `/deny`.
 
+In a rika! Agent tab (`KITTY_AGENT_TOKEN`) `propose_delete_block` and `get_effect`
+go through rika!'s mediator like the notes tools: `kitty mcp`, `kitty effects
+propose-delete` / `show` and `POST /api/ingress/agent/call` propose as the tab's
+session, the proposal is journaled (a write of that block, so the agent policy can
+refuse it), and `get_effect` shows only that session's proposals. `propose-submit` and
+`list` do not run in a tab. The token never approves: the approval routes take only
+the UI secret of rika!'s own window.
+
 The views that already asked before acting use the same kernel for their own Approve:
 an AI request's preview and run, application preparation's plan and start, and Google
 Calendar's push preview and sync / exact resource operations. Their flows are
-unchanged; a change between preview and approval refuses the run.
+unchanged; a change between preview and approval refuses the run. Each route approves
+only its own kind of effect: an effect ID from another view is refused (403).
 
 ## Resumes and the resume coach
 

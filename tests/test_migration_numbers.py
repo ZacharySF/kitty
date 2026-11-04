@@ -22,7 +22,6 @@ from kitty.db.migrations import MIGRATIONS_DIR, available_migrations
 #: Numbers deliberately left out, with the reason. Add one only with its reason.
 EXPLAINED_GAPS = {
     21: "never used: no 021 file exists in any branch's history (parallel features skipped it)",
-    52: "claimed by agent mediation (PR #77, 052_agent_mediation), not on main yet; the effects kernel took 053",
 }
 #: Main's own migrations after the last one the block backend builds on (released in v0.3.2x-0.3.31).
 MAIN_ONLY = {"record_events", "calendar_palette_subjects", "note_page_maps", "rika", "math", "rika_voice"}

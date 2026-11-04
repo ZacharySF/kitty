@@ -85,3 +85,17 @@ export function conditionText(value: unknown): string {
   if (typeof value === "string") return value;
   return JSON.stringify(value);
 }
+
+/** A refused decision's message, naming the preconditions that changed (`problems: [{precondition}]`). */
+export function refusalText(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const problems = cause && typeof cause === "object" && "problems" in cause && Array.isArray(cause.problems)
+    ? cause.problems : [];
+  const changed: string[] = [];
+  for (const item of problems) {
+    if (item && typeof item === "object" && "precondition" in item && typeof item.precondition === "string") {
+      changed.push(item.precondition);
+    }
+  }
+  return changed.length ? `${message} (changed: ${changed.join(", ")})` : message;
+}

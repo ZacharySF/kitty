@@ -39,6 +39,10 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kitty.core.agent_sessions import AgentLaunch
 
 #: Linux ``sockaddr_un.sun_path`` holds 107 bytes plus the terminating NUL.
 SOCKET_PATH_MAX = 107
@@ -57,6 +61,17 @@ LINE_MAX = 200
 _CHROME = re.compile(r"[\u2500-\u259f\u2800-\u28ff]+")
 #: Agents with a native startup-instruction option; the executable stays user-installed.
 CODING_AGENTS = ("omp", "claude", "codex")
+
+
+def prompt_arguments(kind: str, path: Path) -> list[str]:
+    """The coding agent's own flags that append the tab's instructions file to its prompt."""
+    if kind == "omp":
+        return ["--append-system-prompt", str(path)]
+    if kind == "claude":
+        return ["--append-system-prompt-file", str(path)]
+    instructions = f"Read and follow the instructions for this rika! Agent tab at {path}."
+    return ["-c", "developer_instructions=" + json.dumps(instructions)]
+
 
 #: herdr config for rika!'s session: the Harness palette (web/src/lib/themes/catalog.ts) on
 #: herdr's terminal base, with transparent panels so the page's surface shows through.
@@ -392,7 +407,7 @@ class HerdrRuntime:
         except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
             raise TerminalUnavailable("herdr_command_failed") from None
 
-    def start_agent(self, kind: str, cwd: Path, extra: Sequence[str] = ()) -> dict:
+    def start_agent(self, kind: str, cwd: Path, extra: Sequence[str], launch: AgentLaunch) -> dict:
         """Create an Agent tab, then let herdr validate/start its chosen coding agent.
 
         No arbitrary commands or focused-pane writes: only the pane returned by tab
@@ -400,9 +415,17 @@ class HerdrRuntime:
         The bundled skill is private; no global agent configuration is installed.
         ``extra`` are the agent's own flags for this launch (kitty.web_agent_skills:
         the activity hook and the skill checklist).
+
+        The tab's PATH resolves the agent's name to a shim that runs kitty-agent-launch
+        (`launch`, kitty.core.agent_sessions): the agent starts confined, with its token,
+        or the launcher says why not. herdr's skill teaches pane control through
+        herdr's socket, which a Full tab cannot reach, so such a tab gets rika!'s
+        mediation note instead.
         """
         if kind not in CODING_AGENTS:
             raise ValueError("Unsupported coding agent")
+        from kitty.core.agent_sessions import MEDIATION_NOTE, shim
+
         with self._lock:
             folder = self._session_folder()
             if not _listening(folder / "herdr.sock"):
@@ -414,40 +437,58 @@ class HerdrRuntime:
             if not space:
                 raise TerminalNotRunning("Select a herdr workspace before starting an Agent tab")
             skill_path = self.private_dir / "SKILL.md"
-            _write_private(skill_path, self._agent_command("--skill", skill=True))
+            skill = MEDIATION_NOTE if launch.full else self._agent_command("--skill", skill=True) + "\n\n" + MEDIATION_NOTE
+            _write_private(skill_path, skill)
             # The signed desktop binary is called kitty-herdr, while the skill uses
-            # `herdr`. Only this tab's PATH gets the private alias to the pinned binary.
+            # `herdr`. Only this tab's PATH gets the private alias to the pinned binary,
+            # and the shims that start each coding agent through rika!'s launcher.
             bin_dir = self.private_dir / "bin"
             _owner_only_directory(bin_dir)
             alias = bin_dir / "herdr"
             if alias.is_symlink():
                 alias.unlink()
             alias.symlink_to(Path(self.binary).resolve())
+            for agent in CODING_AGENTS:
+                _write_private(bin_dir / agent, shim(launch.command, agent))
+                os.chmod(bin_dir / agent, 0o700)
             path = str(bin_dir) + os.pathsep + self.environ.get("PATH", os.defpath)
+            environment = {**launch.env, "KITTY_LAUNCH_SHIMS": str(bin_dir), "PATH": path}
             created = self._agent_command(
-                "tab", "create", "--workspace", str(space["workspace_id"]),
-                "--label", "Agent", "--cwd", str(cwd), "--env", f"PATH={path}", "--focus")
+                "tab", "create", "--workspace", str(space["workspace_id"]), "--label", "Agent", "--cwd", str(cwd),
+                *(item for key, value in environment.items() for item in ("--env", f"{key}={value}")), "--focus")
             try:
                 tab, pane = created["tab"]["tab_id"], created["root_pane"]["pane_id"]
             except (KeyError, TypeError):
                 raise TerminalUnavailable("herdr did not identify the new Agent tab; not retried") from None
+            launch.bind(pane)
             name = f"{kind}-{secrets.token_hex(4)}"
-            if kind == "omp":
-                arguments = ["--append-system-prompt", str(skill_path)]
-            elif kind == "claude":
-                arguments = ["--append-system-prompt-file", str(skill_path)]
-            else:
-                instructions = f"Use herdr to control your panes. Read and follow its skill at {skill_path}."
-                arguments = ["-c", "developer_instructions=" + json.dumps(instructions)]
             try:
                 self._agent_command("agent", "start", name, "--kind", kind, "--pane", pane,
-                                    "--", *arguments, *extra)
+                                    "--", *prompt_arguments(kind, skill_path), *extra)
             except TerminalUnavailable as exc:
                 raise TerminalUnavailable(
                     f"Agent startup reported {exc}. Inspect Agent tab {tab}, pane {pane}; "
                     "the tab was kept and startup was not retried.") from None
             self._used = True
             return {"tab": tab, "pane": pane, "name": name, "kind": kind}
+
+    def pane_shell(self, pane: str | None) -> int | None:
+        """The pid of the shell herdr runs in `pane` (an agent tab's processes descend from it)."""
+        if not pane:
+            return None
+        try:
+            info = self._read("pane", "process-info", "--pane", pane)["process_info"]
+            pid = info["shell_pid"]
+        except (TerminalUnavailable, KeyError, TypeError):
+            return None
+        return pid if type(pid) is int and pid > 1 else None
+
+    def label(self, tab: str, text: str) -> None:
+        """Rename a tab (the Agent tab shows its guarantee); a failure leaves the old label."""
+        try:
+            self._agent_command("tab", "rename", tab, text)
+        except TerminalUnavailable:
+            pass
 
     def serve(self, cwd: Path) -> None:
         """Run the session headless when no page attached it (Rika's worker agents), with

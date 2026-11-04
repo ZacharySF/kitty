@@ -1,7 +1,7 @@
 <script lang="ts" module>
   /** The short pages Settings opens beside its index, deep-linked as `#settings/<page>`. */
   export const SETTINGS_PAGES = [
-    "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "connected-apps", "keys", "devices",
+    "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "connected-apps", "agents", "keys", "devices",
     "rika-routing", "rika-email", "rika-memory",
   ] as const;
   export type SettingsPage = (typeof SETTINGS_PAGES)[number];
@@ -31,6 +31,7 @@
   import RoutingMemory from "./rika/settings/RoutingMemory.svelte";
   import EmailSettings from "./rika/settings/EmailSettings.svelte";
   import MemorySettings from "./rika/settings/MemorySettings.svelte";
+  import AgentSettings from "./agents/AgentSettings.svelte";
   import Icon from "./Icon.svelte";
   import Select from "./ui/Select.svelte";
   import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type GraphPhysics, type GraphLayout } from "./graph3d";
@@ -63,6 +64,7 @@
     ] },
     { label: "Connections", items: [
       { page: "connected-apps", label: "Connected apps", icon: "external", keywords: "pairing tern plugin browser extension mirror token revoke approve" },
+      { page: "agents", label: "Agents", icon: "terminal", keywords: "agent mediation landlock confine sandbox guarantee session journal access policy simulate apply retention hold omp claude codex herdr" },
       { page: "keys", label: "Keys", icon: "shield", keywords: "api keys openrouter anthropic usajobs brave keyring secret" },
       { page: "devices", label: "Devices", icon: "refresh", keywords: "sync peer pair code tailscale lan other computer" },
     ] },
@@ -313,6 +315,8 @@
         <TagSettings />
       {:else if shown === "connected-apps"}
         <ConnectedApps />
+      {:else if shown === "agents"}
+        <AgentSettings />
       {:else if shown === "keys"}
         <Keys />
       {:else if shown === "devices"}

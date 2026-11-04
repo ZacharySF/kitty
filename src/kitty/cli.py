@@ -6,6 +6,7 @@ core package, so the TUI and a future MCP server behave identically.
 
 from __future__ import annotations
 
+import os
 import signal
 from collections import Counter
 from collections.abc import Iterator
@@ -47,6 +48,14 @@ COMMAND_MODULES: dict[str, str] = dict.fromkeys(
     ),
     "applyai",
 ) | {"notes": "workspace"}
+#: What `kitty` runs inside a rika! Agent tab (KITTY_AGENT_TOKEN set): the commands that
+#: are clients of rika!'s mediated API. Everything else needs the database, which the
+#: tab cannot open.
+AGENT_TAB_COMMANDS = ("notes", "mcp", "effects")
+
+
+def _agent_tab() -> bool:
+    return bool(os.environ.get("KITTY_AGENT_TOKEN", "").strip())
 
 
 def _module_error(lines: list[str]) -> typer.Exit:
@@ -74,6 +83,8 @@ class _ModuleGroup(TyperGroup):
             return ()
 
     def list_commands(self, ctx):
+        if _agent_tab():
+            return [name for name in super().list_commands(ctx) if name in AGENT_TAB_COMMANDS]
         enabled = self._enabled()
         return [
             name for name in super().list_commands(ctx)
@@ -81,6 +92,14 @@ class _ModuleGroup(TyperGroup):
         ]
 
     def resolve_command(self, ctx, args):
+        if _agent_tab():
+            # rika! checks the modules itself; the tab cannot read the workspace.
+            if args and args[0] not in AGENT_TAB_COMMANDS:
+                raise _module_error([
+                    f"[bold red]In a rika! Agent tab, kitty runs only {', '.join(AGENT_TAB_COMMANDS)}[/bold red]",
+                    "They reach rika!'s notes and effects through its API with this tab's KITTY_AGENT_TOKEN.",
+                ])
+            return super().resolve_command(ctx, args)
         module = COMMAND_MODULES.get(args[0]) if args else None
         if module is not None:
             try:
@@ -1495,7 +1514,16 @@ def tui() -> None:
 
 @app.command()
 def mcp() -> None:
-    """Run the MCP server over stdio for an agent. Never submits; stdout is the protocol."""
+    """Run the MCP server over stdio for an agent. Never submits; stdout is the protocol.
+
+    In a rika! Agent tab (KITTY_AGENT_TOKEN) it serves the tab's mediated notes tools
+    through rika!'s API and never opens the workspace."""
+    remote = _agent_client()
+    if remote is not None:
+        from kitty.mcp_server import run_agent_stdio
+
+        run_agent_stdio(remote)
+        return
     workspace = _open()        # config problems go to stderr and exit before serving
     modules = workspace.config.modules     # frozen for this process; later edits wait for a restart
     workspace.close()          # each tool call opens its own connection
@@ -2047,7 +2075,8 @@ def index_rebuild() -> None:
 
 notes_app = typer.Typer(no_args_is_help=True, help=(
     "Read, search and write notes as blocks (kitty.core.block_api). Writes are recorded as an agent "
-    "session in History: one per command, or KITTY_AGENT_SESSION (named by KITTY_AGENT_NAME)."))
+    "session in History: one per command, or KITTY_AGENT_SESSION (named by KITTY_AGENT_NAME). "
+    "In a rika! Agent tab (KITTY_AGENT_TOKEN) every command goes through rika!'s mediated API."))
 app.add_typer(notes_app, name="notes")
 
 _JSON_OPTION = typer.Option("--json", help="Machine-readable output (with ((id@seq)) citations).")
@@ -2076,6 +2105,32 @@ def _blocks() -> Iterator:
         raise typer.Exit(code=1) from None
     finally:
         workspace.close()
+
+
+def _agent_client():
+    """The Agent tab's client (kitty.agent_client) when KITTY_AGENT_TOKEN is set, else None."""
+    from kitty.agent_client import AgentClient
+
+    try:
+        return AgentClient.from_env()
+    except ValueError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=1) from None
+
+
+def _note_call(tool: str, local, **arguments) -> dict:
+    """One notes command: tool `tool` through rika!'s API in an Agent tab, else `local` on the workspace."""
+    from kitty.agent_client import AgentCallError
+
+    remote = _agent_client()
+    if remote is None:
+        with _blocks() as conn:
+            return local(conn)
+    try:
+        return remote.call(tool, arguments)
+    except AgentCallError as exc:
+        error_console.print(f"[bold red]{escape(str(exc))}[/bold red] (status {exc.status})")
+        raise typer.Exit(code=1) from None
 
 
 def _emit(result: dict, as_json: bool, summary: str) -> None:
@@ -2109,8 +2164,8 @@ def notes_ls(
     """List note pages, documents and quick notes, most recently edited first."""
     from kitty.core import block_api
 
-    with _blocks() as conn:
-        result = block_api.list_pages(conn, query, kind=kind, limit=limit)
+    result = _note_call("list_pages", lambda conn: block_api.list_pages(conn, query, kind=kind, limit=limit),
+                        query=query, kind=kind, limit=limit)
     lines = [f"{page['type']:<10} {page['number'] or '':>4}  {escape(page['title'])}  [dim]{page['id']}[/dim]"
              for page in result["pages"]]
     more = f"\n[dim]{result['total'] - len(result['pages'])} more; use --limit or a title filter.[/dim]" if result["truncated"] else ""
@@ -2133,8 +2188,7 @@ def notes_show(
     """Print one page's blocks as an outline (block IDs dimmed)."""
     from kitty.core import block_api
 
-    with _blocks() as conn:
-        result = block_api.get_page(conn, page)
+    result = _note_call("get_page", lambda conn: block_api.get_page(conn, page), page=page)
     head = result["page"]
     lines = [f"[bold]{escape(head['title'])}[/bold]  [dim]{head['type']} {head['number'] or ''} · revision "
              f"{result['revision']} · seq {result['seq']} · {head['id']}[/dim]", *_outline(result["blocks"])]
@@ -2152,8 +2206,8 @@ def notes_search(
     """Search the blocks of note pages, documents and quick notes (the full-text index)."""
     from kitty.core import block_api
 
-    with _blocks() as conn:
-        result = block_api.search_blocks(conn, query, limit=limit)
+    result = _note_call("search_blocks", lambda conn: block_api.search_blocks(conn, query, limit=limit),
+                        query=query, limit=limit)
     lines = [f"{escape(hit['page_title'])}: {escape(hit['snippet']).replace('**', '')}  [dim]{escape(hit['cite'])}[/dim]"
              for hit in result["hits"]]
     more = f"\n[dim]{result['total'] - len(result['hits'])} more; use --limit.[/dim]" if result["truncated"] else ""
@@ -2170,8 +2224,9 @@ def notes_new(
     """Create a note page, optionally with text blocks."""
     from kitty.core import block_api
 
-    with _blocks() as conn:
-        result = block_api.create_page(conn, title, notebook=notebook, blocks=_texts(texts or []) or None)
+    blocks = _texts(texts or []) or None
+    result = _note_call("create_page", lambda conn: block_api.create_page(conn, title, notebook=notebook, blocks=blocks),
+                        title=title, notebook=notebook, blocks=blocks)
     _emit(result, as_json, f"Created page {result['number']} {escape(result['cite'])} (seq {result['seq']}).")
 
 
@@ -2187,9 +2242,10 @@ def notes_append(
     """Append blocks at the end of a note page."""
     from kitty.core import block_api
 
-    with _blocks() as conn:
-        result = block_api.append_blocks(conn, page, [{"type": kind, "text": text} for text in _texts(texts)],
-                                         parent=parent, revision=revision)
+    blocks = [{"type": kind, "text": text} for text in _texts(texts)]
+    result = _note_call("append_blocks", lambda conn: block_api.append_blocks(conn, page, blocks, parent=parent,
+                                                                              revision=revision),
+                        page=page, blocks=blocks, parent=parent, revision=revision)
     _emit(result, as_json, f"Appended: {_written(result)}")
 
 
@@ -2201,8 +2257,8 @@ def notes_inbox(
     """Add text blocks to the end of the Inbox page."""
     from kitty.core import block_api
 
-    with _blocks() as conn:
-        result = block_api.add_to_inbox(conn, _texts(texts))
+    blocks = _texts(texts)
+    result = _note_call("add_to_inbox", lambda conn: block_api.add_to_inbox(conn, blocks), blocks=blocks)
     _emit(result, as_json, f"Added to the Inbox (page {result['number']}): {_written(result)}")
 
 
@@ -2214,8 +2270,8 @@ def notes_quick(
     """Create a quick note."""
     from kitty.core import block_api
 
-    with _blocks() as conn:
-        result = block_api.quick_note(conn, _texts([text])[0])
+    body = _texts([text])[0]
+    result = _note_call("quick_note", lambda conn: block_api.quick_note(conn, body), text=body)
     _emit(result, as_json, f"Quick note {result['number']}: {_written(result)}")
 
 
@@ -2228,8 +2284,12 @@ def notes_sessions(
     """Agent sessions in the kept history, most recent first (undo one with undo-session)."""
     from kitty.core.blocks import sessions
 
-    with _blocks() as conn:
-        result = sessions.list_sessions(conn, kind=None if kind == "all" else kind, limit=limit)
+    if kind != "agent" and _agent_client() is not None:
+        error_console.print("[bold red]In a rika! Agent tab only agent sessions are listed (--kind agent)[/bold red]")
+        raise typer.Exit(code=1)
+    result = _note_call("list_agent_sessions",
+                        lambda conn: sessions.list_sessions(conn, kind=None if kind == "all" else kind, limit=limit),
+                        limit=limit)
     lines = [f"{escape(item['session'])}  {escape(item['actor']['name'] or item['actor']['kind'])}"
              f"{' via ' + escape(item['device']) if item['device'] else ''}  {item['start'][:16]} – {item['end'][:16]}  "
              f"{item['transactions']} transaction(s) on {item['page_count']} page(s)" for item in result["sessions"]]
@@ -2245,8 +2305,8 @@ def notes_undo_session(
     """Revert everything one agent session wrote, as one new transaction; later edits by others are kept and listed."""
     from kitty.core.blocks import sessions
 
-    with _blocks() as conn:
-        result = sessions.undo_session(conn, session, dry_run=dry_run)
+    result = _note_call("undo_agent_session", lambda conn: sessions.undo_session(conn, session, dry_run=dry_run),
+                        session=session, dry_run=dry_run)
     verb = "Would revert" if dry_run else "Reverted" if result["applied"] else "Nothing to revert:"
     lines = [f"{verb} {result['reverted_count']} block(s) from {result['transactions']} transaction(s)"
              + (f" (seq {', '.join(str(value) for value in result['seq'].values())})" if result.get("seq") else "")]
@@ -2264,8 +2324,7 @@ def notes_citations(
     """Whether each cited block changed since the cited seq, and how (word diff: {-old-}{+new+})."""
     from kitty.core.blocks import history
 
-    with _blocks() as conn:
-        result = history.citations(conn, cites)
+    result = _note_call("check_citations", lambda conn: history.citations(conn, cites), cites=cites)
     lines = []
     for item in result["citations"]:
         lines.append(f"{escape(item['cite'])}  {item['status']}" + (f" (changed at seq {item['seq']})" if item["changed"] else ""))
@@ -2281,7 +2340,8 @@ def notes_citations(
 effects_app = typer.Typer(no_args_is_help=True, help=(
     "Propose effects for the owner to approve in rika!'s pending approvals (kitty.core.effects). "
     "Proposals are made as an agent session (one per command, or KITTY_AGENT_SESSION); "
-    "nothing here approves or executes one, and submit_application never executes."))
+    "nothing here approves or executes one, and submit_application never executes. "
+    "In a rika! Agent tab (KITTY_AGENT_TOKEN) propose-delete and show go through rika!'s mediated API."))
 app.add_typer(effects_app, name="effects")
 
 
@@ -2306,19 +2366,21 @@ def _effects() -> Iterator:
         workspace.close()
 
 
+def _no_tab_route(command: str) -> None:
+    """Refuse a command that has no mediated route inside a rika! Agent tab."""
+    if _agent_tab():
+        error_console.print(f"[bold red]kitty effects {command} does not run in a rika! Agent tab[/bold red] "
+                            "(only propose-delete and show reach rika! through the tab's token)")
+        raise typer.Exit(code=1)
+
+
 def _effect_line(effect: dict) -> str:
     actor = effect["actor"]
     who = actor["name"] or actor["kind"]
     return f"{effect['state']:<9} {escape(effect['title'])}  by {escape(who)}  [dim]{effect['id']}[/dim]"
 
 
-def _propose(kind: str, payload: dict, as_json: bool) -> None:
-    from kitty.core import effect_kinds, effects
-
-    with _effects() as (workspace, agent):
-        effect = effects.propose(workspace.conn, kind, payload, actor=agent,
-                                 ctx=effect_kinds.Context(workspace.conn, workspace.config))
-        result = {**effect.as_dict(), "events": effects.events(workspace.conn, effect.id)}
+def _proposed(result: dict, as_json: bool) -> None:
     _emit(result, as_json, _effect_line(result) + "\nWaiting for approval in rika!'s pending approvals.")
 
 
@@ -2329,7 +2391,10 @@ def effects_propose_delete(
     as_json: Annotated[bool, _JSON_OPTION] = False,
 ) -> None:
     """Propose moving a block and its children to Trash; it runs only once the owner approves it."""
-    _propose("delete_block", {"block": block, "reason": reason}, as_json)
+    from kitty.core import agent_access
+
+    _proposed(_note_call("propose_delete_block", lambda conn: agent_access.propose_delete_block(conn, block, reason),
+                         block=block, reason=reason), as_json)
 
 
 @effects_app.command("propose-submit")
@@ -2339,7 +2404,14 @@ def effects_propose_submit(
     as_json: Annotated[bool, _JSON_OPTION] = False,
 ) -> None:
     """Ask the owner to submit an application himself: it shows what would be submitted and never executes."""
-    _propose("submit_application", {"job_id": job_id, "reason": reason}, as_json)
+    from kitty.core import agent_access, effect_kinds, effects
+
+    _no_tab_route("propose-submit")
+    with _effects() as (workspace, agent):
+        effect = effects.propose(workspace.conn, "submit_application", {"job_id": job_id, "reason": reason},
+                                 actor=agent, ctx=effect_kinds.Context(workspace.conn, workspace.config))
+        result = agent_access.effect_state(workspace.conn, effect)
+    _proposed(result, as_json)
 
 
 @effects_app.command("list")
@@ -2347,6 +2419,7 @@ def effects_list(as_json: Annotated[bool, _JSON_OPTION] = False) -> None:
     """Effects waiting in the pending approvals, oldest first, and the latest decided ones."""
     from kitty.core import effect_kinds, effects  # noqa: F401 (registers the kinds listed here)
 
+    _no_tab_route("list")
     with _effects() as (workspace, _agent):
         pending = [effect.as_dict() for effect in effects.pending(workspace.conn)]
         recent = [effect.as_dict() for effect in effects.recent(workspace.conn)]
@@ -2359,23 +2432,124 @@ def effects_show(
     effect_id: Annotated[str, typer.Argument(help="The effect's ID.")],
     as_json: Annotated[bool, _JSON_OPTION] = False,
 ) -> None:
-    """One effect: what it does, its preconditions and every state it went through."""
+    """One effect: what it does, its preconditions and every state it went through (in an
+    Agent tab, only one this tab proposed)."""
     import json
 
-    from kitty.core import effect_kinds, effects  # noqa: F401 (registers the kinds shown here)
+    from kitty.core import agent_access, effect_kinds, effects  # noqa: F401 (registers the kinds shown here)
 
-    with _effects() as (workspace, _agent):
-        effect = effects.get(workspace.conn, effect_id)
-        result = {**effect.as_dict(), "events": effects.events(workspace.conn, effect.id)}
+    if _agent_tab():
+        result = _note_call("get_effect", None, effect_id=effect_id)
+    else:
+        with _effects() as (workspace, _agent):
+            result = agent_access.effect_state(workspace.conn, effects.get(workspace.conn, effect_id))
     lines = [_effect_line(result), escape(json.dumps(result["preview"], indent=2, ensure_ascii=False))]
     lines += [f"  {event['at']}  {event['state']}  {escape(event['actor']['name'] or event['actor']['kind'])}"
               for event in result["events"]]
     _emit(result, as_json, "\n".join(lines))
 
 
+# ------------------------------------------------------------------ policy (agent mediation)
+
+policy_app = typer.Typer(no_args_is_help=True, help=(
+    "Agent policies over purpose labels (kitty.core.agent_policy): what agent tabs' tokens may read "
+    "and write, enforced or observed by rika!'s mediator, and replayed over the access journal."))
+app.add_typer(policy_app, name="policy")
+
+
+def _policy_source(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        error_console.print(f"[bold red]Cannot read {escape(str(path))}: {escape(str(exc))}[/bold red]")
+        raise typer.Exit(code=1) from None
+
+
+def _policy_problems(exc) -> typer.Exit:
+    error_console.print("[bold red]The policy has problems:[/bold red]")
+    for problem in exc.problems:
+        error_console.print(f"  {escape(problem)}")
+    return typer.Exit(code=1)
+
+
+@policy_app.command("simulate")
+def policy_simulate(
+    draft: Annotated[Path, typer.Argument(help="The draft policy (YAML).", exists=True, dir_okay=False)],
+    session: Annotated[Optional[str], typer.Option("--session", help="Only this agent session's journal.")] = None,
+    as_json: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Replay the agent access journal under a draft policy and list every decision that would flip."""
+    from kitty.core import agent_policy
+
+    source = _policy_source(draft)
+    workspace = _open()
+    try:
+        result = agent_policy.simulate(workspace.conn, source, session=session)
+    except agent_policy.PolicyError as exc:
+        raise _policy_problems(exc) from None
+    finally:
+        workspace.close()
+    lines = [f"Replayed {result['replayed']} journal row(s): {result['total']} decision(s) would flip "
+             f"({result['counts']['allow_to_deny']} allow→deny, {result['counts']['deny_to_allow']} deny→allow)"
+             + ("" if result["enforced"] else "; the draft only observes, so none would be enforced") + "."]
+    lines += [f"  #{flip['id']} {flip['at'][:19]} {escape(flip['name'])} {flip['tool']} {flip['op']} {flip['purpose']} "
+              f"{flip['block_id'] or '-'}@{flip['seq']}: {flip['recorded']} → [bold]{flip['draft']}[/bold]"
+              for flip in result["flips"]]
+    if result["truncated"]:
+        lines.append(f"[dim]{result['total'] - len(result['flips'])} more not listed; use --json or --session.[/dim]")
+    _emit(result, as_json, "\n".join(lines))
+
+
+@policy_app.command("show")
+def policy_show(
+    version: Annotated[Optional[int], typer.Option("--version", help="An earlier version (0 is the built-in one).")] = None,
+) -> None:
+    """Print the policy in force (or an earlier version) as YAML."""
+    from kitty.core import agent_policy
+
+    workspace = _open()
+    try:
+        if version is None:
+            active, _ = agent_policy.active(workspace.conn)
+            error_console.print(f"[dim]version {active}[/dim]")
+        try:
+            typer.echo(agent_policy.source(workspace.conn, version), nl=False)
+        except agent_policy.PolicyError as exc:
+            raise _policy_problems(exc) from None
+    finally:
+        workspace.close()
+
+
+@policy_app.command("apply")
+def policy_apply(
+    policy: Annotated[Path, typer.Argument(help="The policy to put in force (YAML).", exists=True, dir_okay=False)],
+) -> None:
+    """Validate a policy and put it in force at the mediator as the next version."""
+    from kitty.core import agent_policy
+    from kitty.db.connection import transaction
+
+    source = _policy_source(policy)
+    workspace = _open()
+    try:
+        with transaction(workspace.conn, immediate=True):
+            result = agent_policy.apply(workspace.conn, source)
+    except agent_policy.PolicyError as exc:
+        raise _policy_problems(exc) from None
+    finally:
+        workspace.close()
+    console.print(f"Policy version {result['version']} is in force ({result['policy']['mode']}).")
+
+
 def main() -> None:
     """Console-script entry point."""
-    app()
+    try:
+        app()
+    except PermissionError as exc:
+        # Inside a confined rika! Agent tab the workspace's files are closed (kitty.core.confine).
+        error_console.print(f"[bold red]Permission denied: {escape(str(exc.filename or exc))}[/bold red]\n"
+                            "In a rika! Agent tab, rika!'s files are closed; `kitty notes` and `kitty mcp` "
+                            "reach its notes with the tab's KITTY_AGENT_TOKEN.")
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

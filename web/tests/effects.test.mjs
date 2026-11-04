@@ -2,7 +2,7 @@
 // node --test tests/effects.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { conditionText, previewLines } from '../src/lib/effects.ts';
+import { conditionText, previewLines, refusalText } from '../src/lib/effects.ts';
 
 const effect = (preview) => ({ preview, preconditions: {} });
 
@@ -28,4 +28,12 @@ test('precondition values read as text', () => {
   assert.equal(conditionText(null), 'none');
   assert.equal(conditionText('sha256:ab'), 'sha256:ab');
   assert.equal(conditionText({ blocks: 1 }), '{"blocks":1}');
+});
+
+test('a refusal names the preconditions that changed', () => {
+  const refused = Object.assign(new Error('Something this effect depends on changed since it was proposed; review it again'),
+    { status: 409, problems: [{ precondition: 'target' }, { precondition: 'subtree' }] });
+  assert.equal(refusalText(refused),
+    'Something this effect depends on changed since it was proposed; review it again (changed: target, subtree)');
+  assert.equal(refusalText(new Error('Effect not found')), 'Effect not found');
 });

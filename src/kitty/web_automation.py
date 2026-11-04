@@ -517,8 +517,8 @@ def approve(app, conn, body: dict) -> Approved:
                "authorize_recovery_ai": body.get("authorize_recovery_ai", False)}
     ctx = Review(SimpleNamespace(config=copy.deepcopy(app.config), settings=app.settings), conn)
     try:
-        effect, result = effects.approve_and_execute(conn, stored.id, presented, actor=web_effects.user(app),
-                                                     ctx=ctx, options=options)
+        effect, result = effects.approve_and_execute(conn, stored.id, presented, kinds={PREPARE_APPLICATIONS.name},
+                                                     actor=web_effects.user(app), ctx=ctx, options=options)
     except effects.Refused as exc:
         from kitty.web_server import APIError
         raise APIError(409, filler.APPROVAL_CHANGED,

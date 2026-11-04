@@ -490,11 +490,10 @@ def post(app, conn, path, body):
             raise _error(403, 'Paid AI calls require explicit approval outside demo mode')
         budget = _number(body.get('budget_usd'), 'Request budget', 0, 100)
         try:
-            if effects.get(conn, body.get('effect_id')).kind != REQUEST.name:
-                raise effects.Forbidden('Review this effect in its own view')
             # Approval, both budget checks and the ledger reservation commit together, or not at all.
-            effect, key = effects.approve_and_execute(conn, body['effect_id'], body.get('digest'), actor=web_effects.user(app),
-                                                      ctx=_Context(app, conn), options={'budget_usd': str(budget)})
+            effect, key = effects.approve_and_execute(conn, body.get('effect_id'), body.get('digest'), kinds={REQUEST.name},
+                                                      actor=web_effects.user(app), ctx=_Context(app, conn),
+                                                      options={'budget_usd': str(budget)})
         except effects.EffectError as exc:
             raise _effect_error(exc) from None
         plan = effect.payload

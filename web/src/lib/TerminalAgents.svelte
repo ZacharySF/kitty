@@ -5,6 +5,8 @@
   import { launchPreview, type AgentKind } from "./agentSkills";
   import { agentSkills } from "./agentSkills.svelte";
   import Select from "./ui/Select.svelte";
+  import GuaranteeBadge from "./agents/GuaranteeBadge.svelte";
+  import type { Mediation } from "./agents/agents";
 
   type AgentInfo = { binary: string | null; session: string; cwd: string; default: string; kinds: string[] };
   let info = $state<AgentInfo | null>(null);
@@ -15,6 +17,8 @@
   let kind = $state<string>(buildStore.build.ui.terminal.coding_agent);
   let error = $state("");
   let notice = $state("");
+  /** How the last launch went (kitty-agent-launch): its guarantee badge and, short of Full, why. */
+  let mediation = $state<Mediation | null>(null);
   /** Agent skills switched off for the next launch, per kind (docs/agent-skills-design.md Q5 C). */
   let off = $state<Record<string, string[]>>({});
 
@@ -49,11 +53,13 @@
     if (busy) return;
     busy = true;
     error = notice = "";
+    mediation = null;
     try {
       if (kind === "omp" || kind === "claude" || kind === "codex") void setPreferences({ ui: { terminal: { coding_agent: kind } } });
       const skillsOff = entry?.enabled ? names.filter((name) => dropped.has(name)) : [];
-      const result = await api<{ tab: string; pane: string; notice?: string }>("/terminal/agents", skillsOff.length ? { kind, skills_off: skillsOff } : { kind });
+      const result = await api<{ tab: string; pane: string; notice?: string; mediation?: Mediation }>("/terminal/agents", skillsOff.length ? { kind, skills_off: skillsOff } : { kind });
       notice = `Agent tab opened (${result.tab}, ${result.pane}).`;
+      mediation = result.mediation ?? null;
       // Codex's hook trust: said once, then the session log covers it quietly.
       if (result.notice) {
         let told = false;
@@ -70,7 +76,7 @@
   <div class="agent-actions">
     <button class="text-button" aria-expanded={choosing} onclick={toggleChooser} disabled={busy}>New Agent tab</button>
     <button class="text-button" aria-expanded={external} onclick={toggleExternal}>Attach external agent</button>
-    {#if notice}<span role="status">{notice}</span>{/if}
+    {#if notice}<span class="notice" role="status">{notice}{#if mediation}<GuaranteeBadge guarantee={mediation.guarantee} detail={mediation.message} />{#if mediation.guarantee !== "full" && mediation.message}<span>{mediation.message}</span>{/if}{/if}</span>{/if}
   </div>
   {#if choosing && info}
     <form onsubmit={(event) => { event.preventDefault(); void launch(); }}>
@@ -112,7 +118,7 @@
 
 <style>
   .agent-tools { flex: none; padding: 3px 8px; border-bottom: 1px solid var(--hairline); font: 10.5px var(--font-mono); color: var(--muted); }
-  .agent-actions, .row, .field { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .agent-actions, .row, .field, .notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   form { display: grid; gap: 4px; padding: 4px 0; }
   p { margin: 4px 0; }
   [role="alert"] { color: var(--br-caution, #e8c872); }

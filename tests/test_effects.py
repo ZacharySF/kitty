@@ -14,6 +14,8 @@ from kitty.web_server import APIError, WebApplication
 
 USER = Actor("user", None, "ui-window")
 AGENT = Actor("agent", "omp", "agent-session-1")
+#: The kinds the synthetic route below owns (effects.approve/execute/deny refuse any other).
+OWN = frozenset({"set_value"})
 
 
 def _kind(registry: effects.Registry, *, run=None, **extra) -> effects.Kind:
@@ -38,13 +40,13 @@ def _propose(kernel, payload=None, actor=AGENT, **extra):
                            registry=kernel.registry, **extra)
 
 
-def _approve(kernel, effect, digest=None, actor=USER, **extra):
-    return effects.approve(kernel.conn, effect.id, digest or effect.digest, actor=actor, ctx=kernel.state,
+def _approve(kernel, effect, digest=None, actor=USER, kinds=OWN, **extra):
+    return effects.approve(kernel.conn, effect.id, digest or effect.digest, kinds=kinds, actor=actor, ctx=kernel.state,
                            registry=kernel.registry, **extra)
 
 
-def _execute(kernel, effect, digest=None, actor=USER, **extra):
-    return effects.execute(kernel.conn, effect.id, digest or effect.digest, actor=actor, ctx=kernel.state,
+def _execute(kernel, effect, digest=None, actor=USER, kinds=OWN, **extra):
+    return effects.execute(kernel.conn, effect.id, digest or effect.digest, kinds=kinds, actor=actor, ctx=kernel.state,
                            registry=kernel.registry, **extra)
 
 
@@ -131,7 +133,7 @@ def test_only_a_user_window_session_approves_or_denies(kernel, actor):
     with pytest.raises(effects.Forbidden):
         _approve(kernel, effect, actor=actor)
     with pytest.raises(effects.Forbidden):
-        effects.deny(kernel.conn, effect.id, actor=actor)
+        effects.deny(kernel.conn, effect.id, kinds=OWN, actor=actor)
     assert _states(kernel.conn, effect) == ["proposed"]
 
 
@@ -150,6 +152,34 @@ def test_a_kind_lists_who_may_propose_it(kernel):
         _propose(kernel, actor=Actor("peer", "laptop"))
 
 
+def test_a_route_approves_executes_or_denies_only_the_kinds_it_owns(kernel):
+    registry = kernel.registry
+    registry.register(effects.Executable(name="other_value", title="Other", proposers=frozenset({"agent"}),
+                                         preconditions=lambda state, payload: {}, run=lambda state, effect: "ran other"))
+    effect = _propose(kernel)
+    elsewhere = frozenset({"other_value"})
+    attempts = (
+        lambda: _approve(kernel, effect, kinds=elsewhere),
+        lambda: effects.approve_and_execute(kernel.conn, effect.id, effect.digest, kinds=elsewhere, actor=USER,
+                                            ctx=kernel.state, registry=registry),
+        lambda: effects.deny(kernel.conn, effect.id, kinds=elsewhere, actor=USER),
+    )
+    for attempt in attempts:
+        with pytest.raises(effects.Forbidden, match="own view"):
+            attempt()
+    assert _states(kernel.conn, effect) == ["proposed"]
+    _approve(kernel, effect)
+    with pytest.raises(effects.Forbidden, match="own view"):
+        _execute(kernel, effect, kinds=elsewhere)
+    assert _states(kernel.conn, effect) == ["proposed", "approved"] and "runs" not in kernel.state
+    # A bare kind name is not a set of kinds ("set_value" would contain "value"); nor is an empty set.
+    for wrong in ("set_value", frozenset(), None):
+        with pytest.raises(TypeError):
+            _execute(kernel, effect, kinds=wrong)
+    _execute(kernel, effect)
+    assert kernel.state["runs"] == [{"value": 1}]
+
+
 def test_an_executor_error_rolls_back_and_an_inline_approval_leaves_the_proposal_pending(kernel):
     registry = effects.Registry()
 
@@ -158,18 +188,19 @@ def test_an_executor_error_rolls_back_and_an_inline_approval_leaves_the_proposal
     _kind(registry, run=refuse)
     effect = effects.propose(kernel.conn, "set_value", {"value": 1}, actor=USER, ctx=kernel.state, registry=registry)
     with pytest.raises(effects.Refused, match="Over budget"):
-        effects.approve_and_execute(kernel.conn, effect.id, effect.digest, actor=USER, ctx=kernel.state, registry=registry)
+        effects.approve_and_execute(kernel.conn, effect.id, effect.digest, kinds=OWN, actor=USER, ctx=kernel.state,
+                                    registry=registry)
     assert _states(kernel.conn, effect) == ["proposed"]
 
 
 def test_inline_approve_and_execute_is_single_use(kernel):
     effect = _propose(kernel, actor=USER)
-    done, _ = effects.approve_and_execute(kernel.conn, effect.id, effect.digest, actor=USER, ctx=kernel.state,
+    done, _ = effects.approve_and_execute(kernel.conn, effect.id, effect.digest, kinds=OWN, actor=USER, ctx=kernel.state,
                                           registry=kernel.registry, options={"budget_usd": "0.02"})
     assert done.state == "executed" and _states(kernel.conn, effect) == ["proposed", "approved", "executed"]
     assert effects.events(kernel.conn, effect.id)[1]["detail"] == {"options": {"budget_usd": "0.02"}}
     with pytest.raises(effects.Refused):
-        effects.approve_and_execute(kernel.conn, effect.id, effect.digest, actor=USER, ctx=kernel.state,
+        effects.approve_and_execute(kernel.conn, effect.id, effect.digest, kinds=OWN, actor=USER, ctx=kernel.state,
                                     registry=kernel.registry)
     assert kernel.state["runs"] == [{"value": 1}]
 
@@ -285,12 +316,26 @@ def test_agents_cannot_approve_and_inline_kinds_stay_in_their_view(workspace, ap
     page, (keep, drop, child) = _page(conn)
     effect = _agent_proposes(conn, "delete_block", {"block": drop})
     with pytest.raises(effects.Forbidden):
-        effects.approve(conn, effect.id, effect.digest, actor=AGENT, ctx=effect_kinds.Context(conn))
+        effects.approve(conn, effect.id, effect.digest, kinds={"delete_block"}, actor=AGENT, ctx=effect_kinds.Context(conn))
     denied = web_effects.post(app, conn, "/api/effects/deny", {"id": effect.id})
     assert denied["effect"]["state"] == "denied" and denied["recent"][0]["id"] == effect.id
     with pytest.raises(APIError) as unknown:
         web_effects.post(app, conn, "/api/effects/approve", {"id": "0" * 32, "digest": "x"})
     assert unknown.value.status == 404
+    # An effect reviewed in its own view (here, a paid AI request) is refused by the list's routes.
+    from kitty import web_ai
+
+    assert effects.REGISTRY.get(web_ai.REQUEST.name).review == "inline"
+    inline = effects.Registry()
+    inline.register(effects.Executable(name="ai_request", title="Paid AI request", proposers=frozenset({"user"}),
+                                       preconditions=lambda ctx, payload: {}, run=lambda ctx, effect: None))
+    request = effects.propose(conn, "ai_request", {"prompt": "synthetic"}, actor=USER, registry=inline)
+    for path in ("/api/effects/approve", "/api/effects/execute", "/api/effects/deny"):
+        with pytest.raises(APIError) as elsewhere:
+            web_effects.post(app, conn, path, {"id": request.id, **({} if path.endswith("deny") else
+                                                                    {"digest": request.digest})})
+        assert elsewhere.value.status == 403 and "own view" in str(elsewhere.value)
+    assert effects.get(conn, request.id).state == "proposed"
 
 
 def _job(workspace):
@@ -370,3 +415,125 @@ def test_kitty_effects_propose_records_an_agent_session_proposal(workspace, monk
         ("delete_block", "agent", "omp"), ("submit_application", "agent", "omp")]
     refused = CliRunner().invoke(cli.app, ["effects", "propose-delete", page])
     assert refused.exit_code == 1
+
+
+# --------------------------------------------------------------------- the mediated agent surface
+
+
+def test_an_agent_token_proposes_through_the_mediator_journaled_and_reads_only_its_own(workspace):
+    from test_agent_mediation import _journal, _session
+
+    from kitty.core import agent_access
+
+    conn = workspace.conn
+    page, (keep, drop, _child) = _page(conn)
+    mine, other = _session(conn, kind="omp", name="omp"), _session(conn, kind="codex", name="codex")
+    proposed = agent_access.call(conn, mine, "propose_delete_block", {"block": drop, "reason": "duplicate"})
+    assert proposed["state"] == "proposed" and proposed["kind"] == "delete_block"
+    assert proposed["actor"] == {"kind": "agent", "name": "omp", "session": mine["id"]}
+    assert "cannot approve" in proposed["notice"]
+    assert [block["text"] for block in block_api.get_page(conn, page)["blocks"]] == ["keep this", "drop this"]
+    assert [(row["tool"], row["op"], row["block_id"], row["decision"]) for row in _journal(conn, mine["id"])] == [
+        ("propose_delete_block", "write", drop, "allow")]
+    assert agent_access.call(conn, mine, "get_effect", {"effect_id": proposed["id"]})["events"][0]["state"] == "proposed"
+    with pytest.raises(agent_access.AccessError) as hidden:
+        agent_access.call(conn, other, "get_effect", {"effect_id": proposed["id"]})
+    assert hidden.value.status == 404
+    # No mediated tool approves, executes or denies, and the kernel refuses the agent's session.
+    assert not {name for name in agent_access.TOOLS if {"approve", "execute", "deny"} & set(name.split("_"))}
+    with pytest.raises(effects.Forbidden):
+        effects.approve(conn, proposed["id"], proposed["digest"], kinds={"delete_block"},
+                        actor=Actor("agent", "omp", mine["id"]), ctx=effect_kinds.Context(conn))
+    reader = _session(conn, scopes=("notes.read",))
+    with pytest.raises(agent_access.AccessError) as scoped:
+        agent_access.call(conn, reader, "propose_delete_block", {"block": keep})
+    assert scoped.value.status == 403
+    assert [effect.id for effect in effects.pending(conn)] == [proposed["id"]]
+
+
+def test_a_policy_that_denies_the_write_refuses_the_proposal_and_stores_nothing(workspace):
+    from test_agent_mediation import _journal, _session
+
+    from kitty.core import agent_access, agent_policy
+
+    conn = workspace.conn
+    _, (_keep, drop, _child) = _page(conn)
+    agent_policy.apply(conn, "default: allow\nrules:\n  - {decision: deny, purposes: [notes], ops: [write]}\n")
+    session = _session(conn)
+    with pytest.raises(agent_access.AccessError) as refused:
+        agent_access.call(conn, session, "propose_delete_block", {"block": drop})
+    assert refused.value.status == 403
+    assert conn.execute("SELECT COUNT(*) FROM effects").fetchone()[0] == 0
+    assert [(row["tool"], row["decision"]) for row in _journal(conn, session["id"])] == [("propose_delete_block", "deny")]
+
+
+def test_an_agent_tab_proposes_over_http_mcp_and_cli_and_only_the_window_approves(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    from contextlib import closing
+
+    from mcp import Client
+    from terminal_support import make_root, site
+    from test_agent_mediation import _agent_token
+    from test_web_clients import call as ingress_call
+    from typer.testing import CliRunner
+
+    from kitty import cli
+    from kitty.agent_client import AgentClient
+    from kitty.db import connect
+    from kitty.mcp_server import build_server
+
+    settings = make_root(tmp_path, ("workspace",))
+    with site(settings) as running:
+        with closing(connect(settings.db_path)) as conn:
+            with acting(Actor("user")):
+                page, (keep, drop, _child) = _page(conn)
+            session, token = _agent_token(running, conn)
+        status, info, _ = ingress_call(running, "GET", "/api/ingress/agent/session", token=token)
+        assert status == 200 and {"propose_delete_block", "get_effect"} <= set(info["tools"])
+        status, proposed, _ = ingress_call(running, "POST", "/api/ingress/agent/call",
+                                           {"tool": "propose_delete_block", "arguments": {"block": drop}}, token=token)
+        assert status == 200 and proposed["state"] == "proposed" and proposed["actor"]["session"] == session["id"]
+
+        # The agent tab's MCP server and `kitty effects` propose through the same mediated tools.
+        async def run():
+            remote = AgentClient(f"http://127.0.0.1:{running.port}", token)
+            async with Client(build_server(None, remote=remote)) as client:
+                names = {tool.name for tool in (await client.list_tools()).tools}
+                result = await client.call_tool("get_effect", {"effect_id": proposed["id"]})
+                return names, json.loads(result.content[0].text)
+
+        names, seen = asyncio.run(run())
+        assert {"propose_delete_block", "get_effect"} <= names and seen["state"] == "proposed"
+        assert not {name for name in names if "approve" in name or "execute" in name or "submit" in name}
+        monkeypatch.setenv("KITTY_AGENT_TOKEN", token)
+        monkeypatch.setenv("KITTY_AGENT_ORIGIN", f"http://127.0.0.1:{running.port}")
+        tab = CliRunner().invoke(cli.app, ["effects", "propose-delete", keep, "--json"])
+        assert tab.exit_code == 0, tab.output
+        assert json.loads(tab.output)["actor"]["session"] == session["id"]
+        shown = CliRunner().invoke(cli.app, ["effects", "show", proposed["id"], "--json"])
+        assert shown.exit_code == 0 and json.loads(shown.output)["state"] == "proposed"
+        submit = CliRunner().invoke(cli.app, ["effects", "propose-submit", "1"])
+        assert submit.exit_code == 1 and "Agent tab" in submit.output
+
+        # The token is not the UI secret: no approval route takes it, with or without a page's headers.
+        body = {"id": proposed["id"], "digest": proposed["digest"]}
+        for path in ("/api/effects/approve", "/api/effects/execute", "/api/effects/deny"):
+            assert ingress_call(running, "POST", path, body, token=token)[0] in {401, 403}
+            assert running.request(path, body, headers={"X-Kitty-Secret": None,
+                                                        "Authorization": f"Bearer {token}"})[0] in {401, 403}
+            assert running.request(path, body, headers={"Authorization": f"Bearer {token}"})[0] == 403
+        assert ingress_call(running, "POST", "/api/ingress/agent/call",
+                            {"tool": "approve_effect", "arguments": body}, token=token)[0] == 404
+
+        # rika!'s own window approves; the deletion runs as the agent's session.
+        assert running.request("/api/effects/approve", body)[0] == 200
+        status, done = running.request("/api/effects/execute", body)
+        assert status == 200 and done["effect"]["state"] == "executed"
+        with closing(connect(settings.db_path)) as conn:
+            assert [block["text"] for block in block_api.get_page(conn, page)["blocks"]] == ["keep this"]
+            actor = conn.execute("SELECT actor, actor_session FROM op_log ORDER BY seq DESC LIMIT 1").fetchone()
+            assert tuple(actor) == ("agent", session["id"])
+        status, final, _ = ingress_call(running, "POST", "/api/ingress/agent/call",
+                                        {"tool": "get_effect", "arguments": {"effect_id": proposed["id"]}}, token=token)
+        assert status == 200 and final["state"] == "executed"

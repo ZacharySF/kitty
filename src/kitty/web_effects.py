@@ -15,7 +15,8 @@ the digest, so anything that changed in between refuses the effect (409, with th
 changed names under ``changed``). Approving ``submit_application`` only records your
 decision: it has no executor, and executing it is refused as a type error.
 Kinds reviewed in their own view (AI requests, Google pushes, application preparation)
-are not listed here and are refused here.
+are not listed here, and the kernel refuses them here: these routes own only the
+``prompt`` kinds (`effects.Registry.reviewed_in`).
 """
 from __future__ import annotations
 
@@ -51,16 +52,9 @@ def view(conn, effect: effects.Effect) -> dict:
 
 
 def listing(conn) -> dict:
+    prompt = effects.REGISTRY.reviewed_in("prompt")
     return {"pending": [view(conn, effect) for effect in effects.pending(conn)],
-            "recent": [view(conn, effect) for effect in effects.recent(conn) if
-                       effect.kind in effects.REGISTRY and effects.REGISTRY.get(effect.kind).review == "prompt"]}
-
-
-def _prompt(conn, effect_id) -> effects.Effect:
-    effect = effects.get(conn, effect_id)
-    if effect.kind not in effects.REGISTRY or effects.REGISTRY.get(effect.kind).review != "prompt":
-        raise effects.Forbidden("Review this effect in its own view")
-    return effect
+            "recent": [view(conn, effect) for effect in effects.recent(conn) if effect.kind in prompt]}
 
 
 def get(app, conn, path: str, query: dict) -> dict | None:
@@ -74,18 +68,18 @@ def post(app, conn, path: str, body: dict) -> dict | None:
     if path not in {PREFIX + "/approve", PREFIX + "/execute", PREFIX + "/deny"}:
         return None
     ctx = effect_kinds.Context(conn, app.config)
+    kinds = effects.REGISTRY.reviewed_in("prompt")
     try:
         if path.endswith("/deny"):
             _keys(body, {"id"})
-            effect = effects.deny(conn, _prompt(conn, body.get("id")).id, actor=user(app))
+            effect = effects.deny(conn, body.get("id"), kinds=kinds, actor=user(app))
             return {"effect": view(conn, effect), **listing(conn)}
         _keys(body, {"id", "digest"})
-        effect = _prompt(conn, body.get("id"))
         if path.endswith("/approve"):
-            effect = effects.approve(conn, effect.id, body.get("digest"), actor=user(app), ctx=ctx)
+            effect = effects.approve(conn, body.get("id"), body.get("digest"), kinds=kinds, actor=user(app), ctx=ctx)
             kind = effects.REGISTRY.get(effect.kind)
             return {"effect": view(conn, effect), "notice": getattr(kind, "handoff", None), **listing(conn)}
-        effect, result = effects.execute(conn, effect.id, body.get("digest"), actor=user(app), ctx=ctx)
+        effect, result = effects.execute(conn, body.get("id"), body.get("digest"), kinds=kinds, actor=user(app), ctx=ctx)
         return {"effect": view(conn, effect), "result": result, **listing(conn)}
     except effects.EffectError as exc:
         raise _error(exc) from None

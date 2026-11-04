@@ -1080,6 +1080,143 @@ The paper's §13 step 4 ("Agent writes also stamp an actor column on their op_lo
   and AA contrast on every theme, filter, undo plan before/after) and `notes.browser.test.mjs`
   (source changed since: the pill, the word diff's marks and their contrast on every theme).
 
+## Agent mediation: what was built
+
+The paper's §13 step 1 and 4, §14.1 and the §17 "fail-closed launch". Code:
+`src/kitty/core/confine.py` (Landlock + seccomp via ctypes), `src/kitty/core/agent_sessions.py`
+(launches, nonce exchange, verification, deny set), `src/kitty/core/agent_access.py` (the
+mediator and journal), `src/kitty/core/agent_policy.py` (purpose labels, policies, simulate),
+`src/kitty/core/blocks/retention.py` (retention by reason), `src/kitty/agent_launch.py`
+(`kitty-agent-launch`), `src/kitty/agent_client.py`, `src/kitty/web_agents.py`, migration
+`052_agent_mediation.sql`.
+
+- **Launch.** Agent tabs (herdr `POST /api/terminal/agents`, Rika's workers, Tern
+  `POST /api/terminal/tern/agent`) register a launch (one-time 256-bit nonce in the tab's env).
+  The tab's PATH resolves `omp`/`claude`/`codex` to shims running `python -I -m
+  kitty.agent_launch` (desktop: `kitty-sidecar agent-launch`). The launcher fetches its spec,
+  applies Landlock at the highest ABI (10 here) plus a seccomp filter (TIOCSTI/TIOCLINUX →
+  EPERM), then exchanges the nonce. kitty checks from outside: the TCP connection belongs to the
+  pid (`/proc/net/tcp` inode in `/proc/pid/fd`), the pid descends from the pane's shell (herdr
+  `pane process-info`) or rika!'s Tern daemon, the image is rika!'s own interpreter with the
+  launcher's exact isolated-mode arguments, and `/proc/pid/status` shows NoNewPrivs and a
+  seccomp filter. Only then an `agent-session` token (clients table, hashed) is issued; it ends
+  when the agent's process does. Landlock itself is not observable from outside.
+- **Deny set.** Resolved DB + `-wal/-shm/-journal`, `data/`, `.cache/`, `.private/` (except
+  rika!'s hook assets and the tab's SKILL.md, read-only), `.env`, `config/profile.yaml`,
+  `config/answers.yaml`, `resumes/`, herdr's session sockets, `$XDG_RUNTIME_DIR/kitty`, and home
+  browser profiles/keys. Grants are leaves: a directory holding a denied path is expanded into
+  its children (keeping only READ_DIR on itself, so names, not contents, are listable). RO:
+  system paths, home, rika!'s interpreter; RW: the project, `/tmp`, the agent's own state
+  (`~/.claude` etc.), `~/.cache`; `config/` and planted-file paths in the workspace root
+  (`.git/hooks`, `.git/config`, `.envrc`, ...) are read-only. TCP connect: rika!'s port + policy
+  ports (443); UDP: 53; pathname UNIX sockets: only `/run/nscd` (ABI 9); abstract sockets and
+  signals scoped (ABI 6).
+- **Guarantee.** Full needs files, ptrace, TCP, abstract sockets, signals, pathname sockets
+  (ABI ≥ 9) and seccomp; otherwise Attribution only (token still issued when Landlock applied;
+  the UI lists the open routes). No Landlock: no token, the agent runs with
+  `KITTY_AGENT_SESSION` (direct CLI writes still attributed) or is refused
+  (`launch.unconfined: refuse`). The herdr tab is renamed `Agent · Full|Attribution only|Not
+  mediated`; activity cards carry `guarantee`.
+- **Mediator + journal.** `POST /api/ingress/agent/call {tool, arguments}`: the 17 notes tools,
+  plus the effects kernel's `propose_delete_block` and `get_effect` (the same table backs MCP,
+  `kitty notes` and `kitty effects`). Each call runs in one `BEGIN IMMEDIATE` with its
+  `agent_access` rows (session, tool, op, purpose, block_id, seq, decision, mode, policy_version,
+  at); a journal failure rolls back the write and withholds the read. `kitty mcp`/`kitty notes`
+  with `KITTY_AGENT_TOKEN` are HTTP clients and never open the workspace.
+- **Policy.** YAML over purpose labels (`notes`, `notes.documents`, `notes.quick`, `applyai.*`,
+  `resume`, `calendar.attendees`, ...), first match wins, `enforce|observe`; versions in
+  `agent_policies`. `kitty policy simulate|show|apply`, `POST /api/agents/policy/simulate`.
+- **Retention by reason.** Compaction clamps its horizon below the lowest seq still needed by
+  journal rows in the window, pinned `((id@seq))` citations in live text, or user holds, with a
+  200k-row size cap that releases the oldest reasons (holds marked `size_cap`); journal rows no
+  reason covers are deleted.
+- **UI.** Settings → Agents (`web/src/lib/agents/`, Connections group, `#settings/agents`):
+  the host's kernel, Landlock ABI, guarantee and what stays open; the sessions table, one
+  opening in the side drawer with its journal (newest first, Older pages by `next`), held state,
+  planted files, Hold/Release and End (confirmed); the policy's version, mode and source in a
+  mono editor, Simulate (flips, counts, replayed) and Apply, enabled only for the exact source
+  last simulated and confirmed; retention, purposes and tools read-only. A guarantee badge
+  (Full / Attribution only / Not mediated: success, warning, error roles plus a mark of its
+  own, `GuaranteeBadge.svelte`) is on Rika's drawer cards, the Rika bar chips (Rika's roster
+  carries `guarantee` from the same `pane_guarantees` as `/api/terminal/activity`) and the
+  new-Agent-tab notice (`mediation`). `kitty-web --demo` seeds five synthetic sessions, a
+  policy version 1 and one hold (`src/kitty/core/agent_demo.py`); it never runs the launcher.
+- **Tests.** `tests/test_agent_bypass.py` (the battery, each check skipped below the ABI it
+  needs), `tests/test_agent_mediation.py`, updated terminal tests;
+  `web/tests/agentMediation.browser.test.mjs` (harness) and the demo's Agents page in
+  `web/tests/settings.browser.test.mjs`.
+- **Not built / limits.** herdr pane proxy (a Full tab cannot open panes; herdr's skill is
+  withheld and activity hooks stay silent); planted files outside the workspace root are not
+  prevented (no Landlock rule can exclude one name inside a writable tree); bubblewrap and
+  AppArmor fallbacks of the kernel matrix; copies an agent keeps after a legitimate read;
+  egress after a read; same-user programs outside a tab.
+
+## Effects kernel: what was built
+
+The paper's §16: one approval protocol for every risky action, replacing four separate
+ones. Code: `src/kitty/core/effects.py` (the kernel), `src/kitty/core/effect_kinds.py`
+(`delete_block`, `submit_application`), `src/kitty/web_effects.py` (the pending-approvals
+routes), `web/src/lib/EffectsPrompt.svelte` + `web/src/lib/effects.ts`, migration
+`053_effects.sql`; kinds owned by their modules in `web_ai.py`, `web_automation.py`,
+`core/calendar_google.py` and `core/apply/recovery.py`.
+
+- **Protocol.** propose → digest-bound approval → re-check → execute. An effect is a kind, a
+  canonical JSON payload, named preconditions (the values the proposer saw) and the actor
+  that proposed it; its digest is SHA-256 of the canonical (kind, payload, preconditions).
+  Approval names that exact digest after re-reading every precondition; execution re-reads
+  them and recomputes the digest inside one `BEGIN IMMEDIATE` with the `executed` event, and
+  any difference refuses the effect for good (409, the changed names listed). Approvals are
+  single-use, short-lived (2 minutes by default) and bound to the approving rika! window
+  session (`ui-<random>` per launch); proposals expire (`Kind.lifetime`).
+- **Who decides.** Only a `user` actor with a session approves, executes or denies:
+  `web_effects.user(app)` behind the UI secret. Agents, clients, peers and the system can
+  propose (a kind lists who may) and never approve. Policy-approved kinds are approved in
+  memory by a computed policy, never by a model.
+- **A route decides only its own kind.** `approve`, `execute`, `approve_and_execute` and
+  `deny` take the `kinds` the caller owns (a non-empty set; a bare name is a `TypeError`) and
+  refuse any other effect with 403 before reading or recording anything. The pending-approvals
+  routes own `REGISTRY.reviewed_in("prompt")`; `/api/ai/run` owns `ai_request`,
+  `/api/automation/start` `prepare_applications`, the Google sync `google_calendar_push` and
+  the exact operation `google_resource_change`. An effect ID handed to the wrong route cannot
+  be approved there.
+- **No executor, as a type.** `ProposalOnly` kinds (`submit_application`) have no `run`; the
+  registry refuses an `Executable` under a proposal-only name, and `execute` raises
+  `NotExecutable` (a `TypeError`, 400). Approving one records the decision and tells the
+  person to submit in the browser: kitty's "never submit an application" is a type.
+- **Storage.** `effects` and `effect_events`, both append-only (triggers refuse UPDATE and
+  DELETE); unique indexes allow one approval and one terminal event per effect, so two racing
+  executions cannot both commit. Transitions: proposed → approved | denied | refused |
+  expired; approved → executed | refused | expired.
+- **Agents propose through the mediator.** `propose_delete_block` (scope `notes.write`, a
+  write of that block for the policy) and `get_effect` (only the token's own session's
+  proposals) are tools of `kitty.core.agent_access.TOOLS`, so an Agent tab reaches them over
+  `POST /api/ingress/agent/call`, its `kitty mcp` and `kitty effects propose-delete|show`;
+  the proposal joins the call's transaction and its journal row, and an enforced deny rolls
+  both back. No tool approves, executes or denies; the approval routes are page routes, which
+  refuse an agent token (it is not the UI secret). `propose_submit_application` stays on the
+  local applyai MCP server: an Agent tab gets no job-search tools.
+
+### What each old protocol guaranteed, and what it became
+
+| Old protocol | What it guaranteed | What it became |
+|---|---|---|
+| AI preview/run (`ai_reviews` review row) | A stored plan with a 10-minute expiry and a fingerprint of the AI settings and the key's hash; the run flipped the row `pending → running` (single use) after the request and daily budget checks. | An `ai_request` effect (inline): the payload is the exact plan, the one precondition the settings/key fingerprint. `/api/ai/run` approves and executes the digest at once; the executor re-checks the key binding and both budgets and reserves the maximum cost in `ai_reviews` (now only the spend ledger) in the same transaction, so an underfunded run commits nothing and stays runnable. Added: digest binding (the client now sends the digest), window-session binding, kind ownership. |
+| Google sync push preview | The client sent back the preview it was shown; the server rebuilt it and refused any difference. Nothing was stored: the same preview could be replayed until local data changed. | A `google_calendar_push` effect: the local events, calendars and their revisions are the preconditions; Sync approves and executes it once, and each event is pushed only at its approved revision. Added: single use, expiry, server-held review. |
+| Google exact resource operation | The client-held review (exact request, live target, recipients, clear listing) was rebuilt against the live API and compared before sending. | A `google_resource_change` effect (a `remote` kind: preconditions read over the network just before the claim transaction); the reviewed body is what is sent. Added: single use, digest binding, the clear-listing confirmation recorded as an approval option. |
+| Recovery planner allowed set | Each planned action had to be in the observation's computed allowed set (waits within the bound); one receipt per decision via a `_last_recorded` flag. | A policy-approved `recovery_step` kind: `policy_approve` grants exactly that action/wait in memory, and the grant is consumed by the one receipt (`Grant.consume`); a stale or second receipt is refused. No storage (it is not a person's decision). |
+| Application preparation (`FillApproval` + plan fingerprint) | Start recomputed the plan and compared a client-sent SHA-256 fingerprint (jobs, resume identities, availability, account plan, credential binding, recovery offer, config); `FillApproval` objects carried each job's reviewed identity and resume to the filler, which re-checked them before uploading. No expiry, no single use. | A `prepare_applications` effect (inline): preconditions per job (`job:<id>`: identity and chosen resume row) plus the hashed account plan, credential binding, recovery offer/model and configuration. Start approves and executes the digest once; the filler re-checks every job, its approved resume row and the resume bytes against the stored executed effect (`filler.approved_resume`). `FillApproval` is gone. Final Submit stays manual. |
+| (new) Agent block deletion | Agents could only delete directly (`delete_block`, restorable from Trash/History). | `delete_block` effect (prompt): preconditions are the block and a hash of its whole subtree, so an edit to it or anything under it refuses the deletion; the executor writes as the proposing agent's session, so History and "Undo this agent session" show it. |
+| (new) Submitting an application | Never automated (CLAUDE.md). | `submit_application` (prompt, proposal-only): shows posting, application URL, the resume that would be attached and the preparation state; approval only records the decision. |
+
+- **Tests.** `tests/test_effects.py` (kernel, kind ownership, the pending-approvals routes,
+  MCP/CLI proposals, the mediated surface over HTTP, the Agent tab's MCP server and CLI);
+  kind migrations in `tests/test_web_ai.py`, `tests/test_calendar_google.py`,
+  `tests/test_web_automation.py`, `tests/test_apply.py`, `tests/test_application_recovery.py`;
+  `web/tests/effects.test.mjs`.
+- **Not built / limits.** One review place per kind (the prompt or the kind's own view);
+  `delete_block` is the only agent-proposable executable kind; effects are not synced
+  between devices (an approval is bound to one window session anyway).
+
 ## Verified facts
 
 - **Tern bridge merged** (#21 status view, Open in Tern, kitty!'s own daemon; #33 dock panes):

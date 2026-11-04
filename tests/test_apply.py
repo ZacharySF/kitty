@@ -1940,8 +1940,8 @@ def _approval(space, job, *, bind=True, execute=True):
                                actor=user, registry=registry)
     if not execute:
         return proposed
-    executed, _ = effects.approve_and_execute(space.conn, proposed.id, proposed.digest, actor=user,
-                                              registry=registry)
+    executed, _ = effects.approve_and_execute(space.conn, proposed.id, proposed.digest, kinds={filler.PREPARATION_KIND},
+                                              actor=user, registry=registry)
     return executed
 
 

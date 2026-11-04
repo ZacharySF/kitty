@@ -629,8 +629,8 @@ def sync(settings, conn, body, *, actor, applyai=True):
         reviewed, reviewed_calendars = {}, {}
         if proposal is not None:
             try:
-                approved, _ = effects.approve_and_execute(conn, proposal.id, body.get('digest'), actor=actor,
-                                                          ctx=_Local(conn, applyai))
+                approved, _ = effects.approve_and_execute(conn, proposal.id, body.get('digest'), kinds={PUSH.name},
+                                                          actor=actor, ctx=_Local(conn, applyai))
             except effects.EffectError as exc:
                 _refused(exc, SYNC_DRIFT, SYNC_FRESH)
             # Each calendar and event is pushed only at the revision approved here.
@@ -1236,7 +1236,7 @@ def operation(settings, conn, body, *, actor):
     with session(settings) as client:
         try:
             _, reviewed_body = effects.approve_and_execute(
-                conn, proposal.id, body.get('digest'), actor=actor, ctx=_Remote(settings, client),
+                conn, proposal.id, body.get('digest'), kinds={CHANGE.name}, actor=actor, ctx=_Remote(settings, client),
                 options={'clear_confirmed': True} if listed else None)
         except effects.EffectError as exc:
             _refused(exc, OPERATION_DRIFT, OPERATION_FRESH)
