@@ -75,16 +75,21 @@ def test_an_ambiguous_code_preserves_the_challenge(workspace,site,page,monkeypat
     assert _posts(site)==[]
 
 
-def test_only_supported_same_origin_verification_link_is_followed(workspace,site,page,monkeypatch):
+@pytest.mark.parametrize('authenticated', [True, False])
+def test_only_supported_same_origin_verification_link_is_followed(workspace,site,page,monkeypatch,authenticated):
     site.pages['/email-link']='<!doctype html><p>Check your email to verify your email.</p>'
     site.pages['/verify-email']='''<!doctype html><form id="application"><label>Preferred name<input name="preferred_name"></label><button type="submit">Submit application</button></form>'''
     page.goto(site.origin+'/email-link')
     job=_job(workspace,site,'/email-link')
-    monkeypatch.setattr(module,'read_verification_mail',lambda *args,**kwargs:[_message(text='Confirm your email.',links=(site.origin+'/verify-email?token=SyntheticToken',))])
+    monkeypatch.setattr(module,'read_verification_mail',lambda *args,**kwargs:[_message(text='Confirm your email.',links=(site.origin+'/verify-email?token=SyntheticToken',),authenticated=authenticated)])
     result=module.complete_email_verification(page,workspace.conn,job.id,_policy(site),ApplicationCredentials(EMAIL,PASSWORD),
         requested_at=datetime.now(timezone.utc)-timedelta(seconds=3),request_sent=True)
-    assert result.verified
-    assert page.main.call("()=>!!document.querySelector('#application')",page_realm=True)
+    # A link is opened only when Gmail shows DKIM and DMARC pass for its sender.
+    assert result.verified is authenticated
+    assert page.main.call("()=>!!document.querySelector('#application')",page_realm=True) is authenticated
+    if not authenticated:
+        assert 'DKIM' in result.blocker and not result.acted
+        assert not any(path == '/verify-email' for _, path, _ in site.requests)
     assert _posts(site)==[]
 
 

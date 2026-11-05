@@ -169,11 +169,8 @@ def page(firefox):
 
 @pytest.fixture
 def site(https_site, firefox):
-    from kitty.core.apply.auth import _EXISTING_ACCOUNTS, _REJECTED_ACCOUNTS
-
-    # Each case owns a synthetic account, while Firefox is shared for speed.
-    _REJECTED_ACCOUNTS.pop(firefox, None)
-    _EXISTING_ACCOUNTS.pop(firefox, None)
+    # Each case owns a synthetic account (account facts live in its own workspace
+    # database), while Firefox is shared for speed.
     https_site.login_page = LOGIN.format(extra="", method="post")
     https_site.accept = True
     https_site.requests.clear()
@@ -2240,8 +2237,11 @@ def test_observed_rejection_cannot_be_retried_by_replacing_its_error_page(
     space = _space(workspace, site, allow_account_creation=True)
     credentials = load_credentials(space.settings)
     policy = space.config.apply.authentication
+    # Account facts persist in the registry (apply_accounts), not per browser session.
+    from kitty.core.apply.accounts import Memory
+    memory = Memory(space.conn, space.settings)
     page.goto(site.origin + "/login")
-    rejected = authenticate(page, policy, credentials)
+    rejected = authenticate(page, policy, credentials, memory=memory)
     assert rejected.acted and "rejected sign-in" in rejected.blocker
 
     active = page
@@ -2253,7 +2253,7 @@ def test_observed_rejection_cannot_be_retried_by_replacing_its_error_page(
         active = open_tab(page.bidi)
         active.goto(site.origin + "/login")
     try:
-        result = authenticate(active, policy, credentials)
+        result = authenticate(active, policy, credentials, memory=memory)
         assert not result.acted and "rejected sign-in" in result.blocker
         assert result.filled == ()
         assert _value(active, "[name=email]") == _value(active, "[name=password]") == ""
@@ -2275,9 +2275,11 @@ def test_existing_account_evidence_survives_reload_and_password_changes(
     site.pages["/signin"] = LOGIN.format(extra="", method="post")
     space = _space(workspace, site, allow_account_creation=True, account_mode="create")
     policy = space.config.apply.authentication
+    from kitty.core.apply.accounts import Memory
+    memory = Memory(space.conn, space.settings)
     credentials = load_credentials(space.settings)
     page.goto(site.origin + "/login")
-    blocked = authenticate(page, policy, credentials)
+    blocked = authenticate(page, policy, credentials, memory=memory)
     assert not blocked.acted and "already has an account" in blocked.blocker
     assert not _posts(site)
 
@@ -2285,7 +2287,7 @@ def test_existing_account_evidence_survives_reload_and_password_changes(
     page.goto(site.origin + "/login")
     if change_password:
         credentials = ApplicationCredentials(EMAIL, "Updated-Synthetic-Pass#43")
-    result = authenticate(page, policy, credentials)
+    result = authenticate(page, policy, credentials, memory=memory)
 
     assert result.acted and result.blocker is None
     assert _posts(site) == [("/session", {"email": [EMAIL], "password": [credentials.password]})]

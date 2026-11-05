@@ -42,10 +42,16 @@ class CredentialError(RuntimeError):
 
 @dataclass(frozen=True)
 class ApplicationCredentials:
-    """The one email/password pair used for employer application accounts."""
+    """An email/password pair for employer application accounts.
+
+    The shared pair from the credentials file has no `origin`. A granted tenant's
+    pair (kitty.core.apply.accounts: its login email and generated password) names
+    the one tenant origin it may be typed into; authenticate refuses any other.
+    """
 
     email: str = field(repr=False)
     password: str = field(repr=False)
+    origin: str | None = field(default=None, repr=False)
 
     def redact(self, text: str) -> str:
         return redact(text, (self.email, self.password))
