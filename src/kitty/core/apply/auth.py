@@ -997,7 +997,7 @@ def _auth_context(
                 return frame, state, "login: application ownership changed; review a new preparation plan"
         blocker = state["blocker"]
         if state["rejected"]:
-            return frame, state, _ACCOUNT_LOCKED if state["locked"] else _SIGN_IN_REJECTED
+            return frame, state, _ACCOUNT_LOCKED if state.get("locked") else _SIGN_IN_REJECTED
         if blocker and (blocker in (_SIGN_IN_REJECTED, _ACCOUNT_LOCKED) or
                         blocker.startswith(("captcha:", "verification:", "consent:"))):
             return frame, state, blocker
@@ -1058,8 +1058,8 @@ def _wait_auth_receipt(
             pending = False
             if blocker:
                 return frame, state, blocker
-            if state and state["passwordRefused"] and (
-                not before or not before["passwordRefused"] or state["signature"] != before["signature"]
+            if state and state.get("passwordRefused") and (
+                not before or not before.get("passwordRefused") or state["signature"] != before["signature"]
             ):
                 return frame, state, _PASSWORD_REFUSED
             if state:
@@ -1192,7 +1192,7 @@ def authenticate(
                 desired = "login"
             if blocker:
                 return result(blocker)
-            if state and state["passwordRefused"] and not refused_ok:
+            if state and state.get("passwordRefused") and not refused_ok:
                 return result(_PASSWORD_REFUSED)
             if state and state["accountStatus"] == "exists":
                 existing_account = True
@@ -1266,7 +1266,7 @@ def authenticate(
             attempt = (state["mode"], state["stage"])
             if attempt in submitted:
                 return result(_NO_PROGRESS)
-            if refused_ok and state["passwordRefused"] and frame.call(_CLEAR_PASSWORDS_JS, approved) is not True:
+            if refused_ok and state.get("passwordRefused") and frame.call(_CLEAR_PASSWORDS_JS, approved) is not True:
                 return result(_CHANGED)
             for role in state["roles"]:
                 done = frame.call(_WRITE_JS, approved, *secrets, state["signature"], role)
