@@ -456,3 +456,15 @@ Stage 1: done.
   per family (unit = job, closed removed, Wilson 95%, n < 20 insufficient), top causes and
   per-class correctness. `screening_questions.answered` refreshes after each attempt and
   when answers.yaml/profile.yaml change. Checks: `uv run pytest tests/test_apply_attempts.py`.
+- 2026-11-04: Submit-proof layer, step 2a (transport only; fills are unchanged). The
+  BiDi client no longer drops events: a reader thread routes replies by id, hands
+  events to `Bidi.on()` handlers and answers every request Firefox holds for a
+  network intercept at once (no decider, an error or an unknown answer fails it).
+  `close()` sends `session.end` only after every held request is answered, because
+  Firefox sends whatever is still held when a session ends (observed in the tests).
+  `kitty.core.apply.guard.policy()` is the pure continue/fail rule set of N3 §4.4
+  with the §4.5 family profiles (Workday, Greenhouse, Lever, SmartRecruiters, Ashby,
+  Oracle, custom); it reads only method, origin, path, query parameter names (and
+  Ashby's `op`), navigation and context, and its record is method, path, endpoint
+  and decision. Nothing arms an intercept during real fills yet (step 2d). Checks:
+  `uv run pytest tests/test_apply_guard.py tests/test_bidi_events.py tests/test_apply.py`.
