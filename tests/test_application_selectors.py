@@ -369,7 +369,7 @@ def test_oracle_replaced_input_receipt_verifies_resume_without_parser(page, spac
                        '<input type="file" id="resume" name="attachment-upload" class="file-form-element__input">')
     fields = read_fields([page.main])
     attachment = next(f for f in fields if f.element_id == "resume")
-    assert attachment.blank and attachment.attachment_only and is_resume_input(attachment)
+    assert attachment.blank and not attachment.in_autofill and is_resume_input(attachment)
     _js(page, """receipt => {
       document.querySelector('#resume').onchange=() => {
         document.querySelector('resume-upload-button').innerHTML=receipt;
@@ -381,7 +381,7 @@ def test_oracle_replaced_input_receipt_verifies_resume_without_parser(page, spac
     final = read_fields([page.main])
     accepted = [f for f in final if is_resume_input(f)]
     assert len(accepted) == 1
-    assert not accepted[0].blank and not accepted[0].invalid and accepted[0].attachment_only
+    assert not accepted[0].blank and not accepted[0].invalid and not accepted[0].in_autofill
     assert next(f for f in final if f.in_autofill).blank
     assert next(f for f in final if f.element_id == "cover").blank
     assert _js(page, "() => document.querySelector('#resume')") is None
@@ -1268,7 +1268,10 @@ def test_workday_native_opener_rejects_foreign_ambiguous_actions_and_overlays(pa
       const owner=document.querySelector('#source-owner'),
         icon=owner.querySelector('[data-automation-id=promptSearchButton]');
       """ + mutation + ";}")
-    with pytest.raises(ChoiceSelectionError, match="hierarchy is unavailable or incomplete"):
+    # A duplicated owner also leaves the 1 px prompt input without its unique
+    # painted host: I-NoHidden′ refuses the write before any navigation.
+    with pytest.raises((ChoiceSelectionError, UnsafeAction),
+                       match="hierarchy is unavailable or incomplete|hidden_target_refused: H"):
         pick_from_list(page.main, field.key, ("Company careers page",), location=False)
     assert _js(page, "() => window.navigation") == []
     assert _js(page, "() => window.queryChanges") == 0

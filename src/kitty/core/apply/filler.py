@@ -51,6 +51,7 @@ from kitty.core.apply.residence_gate import complete_residence_gate, prepare_pro
 from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, SessionEndError, Tab, TabClosed, open_session, open_tab
 from kitty.core.apply.browser import (
     BrowserError, busy_message, ensure_firefox, headless_firefox, hide_automation, kill_own_firefox,
+    restore_discarded_tab,
 )
 from kitty.core.apply.credentials import CredentialError, credential_binding, load_credentials
 from kitty.core.apply.email_verification import complete_email_verification
@@ -66,8 +67,9 @@ from kitty.core.apply.fields import (
 from kitty.core.apply.guard import OWNER_HINT, OwnerTookOver, SubmitGuardStop, UnsafeAction, network_note, stop_for
 from kitty.core.apply import endpoints as endpoints_core
 from kitty.core.apply.page import (
-    ChoiceSelectionError, choose_select, fill_text, form_frames, pick_from_list, pick_from_search,
-    read_fields, settle, tick, upload, uploads_pending, wait_for_form, wait_for_uploads,
+    ChoiceSelectionError, HiddenTargetRefused, choose_select, field_values, fill_date, fill_phone, fill_text,
+    form_frames, pick_from_list, pick_from_search, read_fields, settle, tick, upload, uploads_pending,
+    wait_for_form, wait_for_uploads,
 )
 from kitty.core.apply.urls import (
     UNSUPPORTED_FLOW, clean_url, detect_ats, form_url, names_posting, redirect_source, route_apply_link,
@@ -205,6 +207,10 @@ class FillReport:
         # In-memory only: the connection broke and no tab waits for the owner, so the
         # batch restarts kitty's Firefox and fills this job again (_fill_all).
         self.restart = False
+        # In-memory only: the tab vanished mid-fill ("no such frame") and came back
+        # (restored after Firefox discarded it) or was replaced by a tab its page
+        # opened; the batch fills the job again there, once (_fill_all).
+        self.successor: Tab | None = None
 
 
 @dataclass
@@ -223,6 +229,8 @@ class FormResult:
     written: list[attempts_core.Written] = field(default_factory=list)  # fields set, with provenance
     failed_labels: list[str] = field(default_factory=list)  # fields whose control interaction failed
     prefilled: list[str] = field(default_factory=list)      # labels already non-blank at the first read
+    restored: list[str] = field(default_factory=list)       # values a resume parser changed, put back
+    refused: list[str] = field(default_factory=list)        # I-NoHidden′ refusals at write time ("label (clause)")
 
 
 def choose_resume(conn: sqlite3.Connection, config: Config, job: Job) -> Resume | None:
@@ -350,24 +358,36 @@ def _upload_approved(
 # ------------------------------------------------------------- the form
 
 
-def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan) -> bool:
-    """Put a planned value into one field; return True when it was set."""
+def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan, *,
+                region: str | None = None) -> bool:
+    """Put a planned value into one field; return True when it was set.
+
+    `region` is the saved country: it picks among countries sharing a phone
+    number's calling code (intl-tel-input), never a calling code itself.
+    """
     frame = page_frames[form_field.frame]
-    if (MANUAL_CONSENT.search(form_field.label) or
-            any(MANUAL_CONSENT.search(option) for option in form_field.options)):
+    if form_field.refused or (MANUAL_CONSENT.search(form_field.label) or
+                              any(MANUAL_CONSENT.search(option) for option in form_field.options)):
         return False
     if form_field.kind in TEXT_KINDS:
+        if plan.graduation:
+            dated = fill_date(frame, form_field.key, plan.graduation)
+            if dated is not None:
+                return dated
+        if plan.field_name == "phone":
+            return fill_phone(frame, form_field.key, plan.candidates[0], region)
         return fill_text(frame, form_field.key, plan.candidates[0])
     if form_field.kind == "combobox":
         # Prefer the actual choices before filtering them by a spelling. Async or
         # virtualized lists may need a query before they expose the desired option.
         if pick_from_list(frame, form_field.key, plan.candidates, location=plan.location,
-                          graduation=plan.graduation):
+                          graduation=plan.graduation, pick_source=plan.pick_source):
             return True
         searches = [plan.search_text] if plan.search_text else list(dict.fromkeys(plan.candidates))[:4]
         return any(pick_from_search(frame, form_field.key, text, plan.candidates,
                                     location=plan.location, prefix=not plan.exact_choices,
-                                    graduation=plan.graduation) for text in searches)
+                                    graduation=plan.graduation, pick_source=plan.pick_source)
+                   for text in searches)
     if (form_field.kind == "checkbox" and len(form_field.options) == 1 and plan.from_answers
             and is_affirmative(plan.candidates[0])):
         return tick(frame, form_field.option_keys[0])          # "I agree to ..." with answer Yes
@@ -382,16 +402,58 @@ def _apply_plan(page_frames: list[Frame], form_field: FormField, plan: Plan) -> 
     return False
 
 
+#: An answer to one of these can reveal follow-up questions (Workday
+#: branchingQuestion, Lever's disability signature, Greenhouse's EEOC race) or
+#: make the page re-render over earlier answers: the form is read again after it.
+_REVEALING_KINDS = ("radio", "checkbox", "select", "combobox")
+#: Writes on one page at most: each answer once, plus one re-entry of an answer a
+#: re-render dropped, so a page that keeps re-rendering cannot loop.
+_MAX_PAGE_WRITES = 80
+
+
+def _identity(form_field: FormField) -> tuple:
+    """One question across reads: sandbox keys change when a page re-renders a field."""
+    return (form_field.frame, form_field.kind, form_field.label, form_field.name, form_field.element_id)
+
+
+def _shown(value: tuple | None) -> bool:
+    """Whether a field_values entry shows anything (text, a committed choice, a tick)."""
+    return bool(value) and any(part and (part[0] or part[1] or part[2]) for part in value)
+
+
+def _restore_value(frame: Frame, form_field: FormField, old: tuple) -> bool:
+    """Put back a value a resume parser overwrote (text, a native option or a radio)."""
+    if form_field.kind in TEXT_KINDS:
+        return fill_text(frame, form_field.key, old[0][0])
+    if form_field.kind == "select" and old[0][0] and "\n" not in old[0][0]:
+        return choose_select(frame, form_field.key, old[0][0])
+    if form_field.kind == "radio":
+        checked = [key for key, part in zip(form_field.option_keys, old) if part and part[2]]
+        return len(checked) == 1 and tick(frame, checked[0])
+    return False
+
+
 def fill_form(
     page: Tab, config: Config, resume_path: Path | None, *, company: str | None = None,
-    tracks: Sequence[str] = (), jurisdiction: str | None = None, preserve_existing: bool = False,
+    tracks: Sequence[str] = (), jurisdiction: str | None = None,
     upload_resume: Callable[[Frame, str, Path], None] | None = None,
     checkpoint: Callable[[FormResult], bool] | None = None,
 ) -> FormResult:
     """Fill every field on the open page that profile.yaml / answers.yaml covers.
 
     Nonblank fields and existing attachments are retained, including manual
-    selections from an earlier attempt. Only blank fields are written.
+    selections from an earlier attempt. Only blank fields are written, with one
+    exception: the resume goes into an empty resume control first, before any
+    answer (fresh and retained forms alike), and whatever its parser then
+    changed is put back: an earlier (manual or retained) value as it was, a
+    field the parser filled from blank with kitty's own planned value. A value
+    that cannot be put back stops the page for review.
+
+    After each answer to a choice the form is read again, so follow-up fields
+    it reveals are filled too, and an answer a re-render dropped is given once
+    more. Fields refused by I-NoHidden′ (traps, hidden elements without a
+    painted host) are never written; a required one is reported as
+    `hidden_target_refused`, so the page is never ready.
     """
     result = FormResult()
     if checkpoint is not None and not checkpoint(result):
@@ -407,53 +469,104 @@ def fill_form(
         frames = form_frames(page)
         fields = read_fields(frames)
 
-    target = next((f for f in fields if is_resume_input(f)), None)
-    if resume_path is not None and target is not None and target.blank:
-        populated = any(f.kind != "file" and not f.blank for f in fields)
-        if preserve_existing and populated and not target.attachment_only:
-            result.blocker = ("Resume upload deferred to protect retained answers from resume parsing; "
-                              "attach it manually and review your values before retrying.")
-        else:
-            (upload_resume or upload)(frames[target.frame], target.key, resume_path)
-            result.filled.append("resume")
-            if not wait_for_uploads(page):
-                result.fields_found = len(fields)
-                result.blocker = "Resume upload or parsing is still pending; wait for completion before retrying."
-                return result
-            result.resume_uploaded = True
-            frames = form_frames(page)
-            fields = read_fields(frames)
+    def plan(form_field: FormField) -> Plan | None:
+        return plan_for(form_field, config, company=company, tracks=tracks, jurisdiction=jurisdiction)
 
-    planned = []
-    for form_field in fields:
-        if form_field.blank:
-            plan = plan_for(form_field, config, company=company, tracks=tracks,
-                            jurisdiction=jurisdiction)
-            if plan is not None:
-                planned.append((form_field, plan))
+    failed: set[tuple] = set()            # identities whose control interaction failed
+
+    def write(form_field: FormField, planned: Plan) -> bool:
+        label = form_field.label or form_field.name or planned.field_name
+        try:
+            if not _apply_plan(frames, form_field, planned, region=config.profile.country):
+                return False
+        except ChoiceSelectionError as exc:
+            result.interaction_errors.append(f"{label}: {exc}")
+            result.failed_labels.append(label)
+            failed.add(_identity(form_field))
+            return False
+        except HiddenTargetRefused as exc:
+            result.refused.append(f"{label} ({exc.clause})")   # left blank; reported below if required
+            return False
+        except (BidiError, UnsafeAction):
+            return False                  # left blank; reported below if it is required
+        if planned.field_name not in result.filled:
+            result.filled.append(planned.field_name)
+        result.written.append(attempts_core.Written(
+            label, planned.source, frame=form_field.frame, keys=form_field.option_keys or (form_field.key,)))
+        return True
+
+    target = next((f for f in fields if is_resume_input(f)), None)
+    if resume_path is not None and target is not None and target.blank and not target.refused:
+        before = field_values(frames, fields)
+        (upload_resume or upload)(frames[target.frame], target.key, resume_path)
+        result.filled.append("resume")
+        if not wait_for_uploads(page):
+            result.fields_found = len(fields)
+            result.blocker = "Resume upload or parsing is still pending; wait for completion before retrying."
+            return result
+        result.resume_uploaded = True
+        frames = form_frames(page)
+        fields = read_fields(frames)
+        after = field_values(frames, fields)
+        unrestored = []
+        for form_field in fields:
+            old, new = before.get((form_field.frame, form_field.key)), after.get((form_field.frame, form_field.key))
+            if (old is None or new is None or old == new or form_field.refused or
+                    form_field.kind in ("file", "unsupported")):
+                continue
+            label = form_field.label or form_field.name or "unlabelled field"
+            if _shown(old):
+                try:
+                    restored = _restore_value(frames[form_field.frame], form_field, old)
+                except (BidiError, UnsafeAction):
+                    restored = False
+            else:
+                planned = plan(form_field)
+                if planned is None:
+                    continue              # the parser filled a field kitty has no value for
+                restored = write(form_field, planned)
+            (result.restored if restored else unrestored).append(label)
+        if unrestored:
+            result.blocker = ("Resume parsing changed values kitty could not put back: " +
+                              "; ".join(unrestored) + ". Review them before retrying.")
+        frames = form_frames(page)
+        fields = read_fields(frames)
+
     # Address lookups can appear before the country/state controls they depend on.
     # Fill those parents first; keep the remaining plans in their original order.
     contact_order = {"country": 0, "state": 1}
-    planned.sort(key=lambda item: contact_order.get(item[1].field_name.casefold(), 2))
-    failed_choices: set[tuple[int, str]] = set()
-    for form_field, plan in planned:
-        if checkpoint is not None and not checkpoint(result):
-            result.interrupted = True
+    tries: dict[tuple, int] = {}
+    answered: set[tuple] = set()
+    for _ in range(_MAX_PAGE_WRITES):
+        planned = []
+        for form_field in fields:
+            identity = _identity(form_field)
+            if (not form_field.blank or form_field.refused or identity in failed or
+                    tries.get(identity, 0) >= (2 if identity in answered else 1)):
+                continue
+            if (field_plan := plan(form_field)) is not None:
+                planned.append((form_field, field_plan))
+        if not planned:
             break
-        try:
-            if _apply_plan(frames, form_field, plan):
-                if plan.field_name not in result.filled:
-                    result.filled.append(plan.field_name)
-                result.written.append(attempts_core.Written(
-                    form_field.label or form_field.name or plan.field_name, plan.source,
-                    frame=form_field.frame, keys=form_field.option_keys or (form_field.key,)))
-        except ChoiceSelectionError as exc:
-            label = form_field.label or form_field.name or plan.field_name
-            result.interaction_errors.append(f"{label}: {exc}")
-            result.failed_labels.append(label)
-            failed_choices.add((form_field.frame, form_field.key))
-        except (BidiError, UnsafeAction):
-            continue                      # left blank; reported below if it is required
+        planned.sort(key=lambda item: contact_order.get(item[1].field_name.casefold(), 2))
+        revealing = False
+        for form_field, field_plan in planned:
+            if checkpoint is not None and not checkpoint(result):
+                result.interrupted = True
+                break
+            identity = _identity(form_field)
+            tries[identity] = tries.get(identity, 0) + 1
+            if write(form_field, field_plan):
+                answered.add(identity)
+            if form_field.kind in _REVEALING_KINDS:
+                revealing = True          # read again before the next answer
+                break
+        if result.interrupted:
+            break
+        if revealing:
+            settle(page, timeout_ms=3000)
+        frames = form_frames(page)
+        fields = read_fields(frames)
 
     # Invalid saved values are diagnosed by the recovery agent, not silently retyped here.
     if checkpoint is not None and not checkpoint(result):
@@ -464,9 +577,14 @@ def fill_form(
     for form_field in final:
         if not form_field.required or (not form_field.blank and not form_field.invalid):
             continue
-        if (form_field.frame, form_field.key) in failed_choices:
+        if _identity(form_field) in failed:
             continue                      # saved answer exists; interacting with its control failed
         label = form_field.label or form_field.name or "unlabelled field"
+        if form_field.refused:
+            refused = f"{label} (hidden_target_refused: {form_field.refused})"
+            if refused not in result.unanswered:
+                result.unanswered.append(refused)
+            continue
         if form_field.kind == "file":
             result.unanswered.append(f"{label} (file upload)")
             continue
@@ -475,14 +593,12 @@ def fill_form(
         if form_field.label and lookup_answer(
             config, form_field.label, company=company, tracks=tracks, jurisdiction=jurisdiction,
             options=form_field.options,
-        ) is None and plan_for(
-            form_field, config, company=company, tracks=tracks, jurisdiction=jurisdiction,
-        ) is None:
+        ) is None and plan(form_field) is None:
             result.to_log.append(form_field.label)
     if uploads_pending(page):
         result.blocker = "Resume upload or parsing is still pending; wait for completion before retrying."
     result.resume_verified = not result.blocker and any(
-        is_resume_input(f) and not f.blank and not f.invalid for f in final
+        is_resume_input(f) and not f.blank and not f.invalid and not f.refused for f in final
     )
     return result
 
@@ -649,6 +765,7 @@ def fill_job(
     verification_attempts = 0
     credentials = None
     closed_url: str | None = None
+    last_url = (job.fill_url or url) if resume_tab else url   # where the tab was last seen
     policy = config.apply.authentication
     # A granted ATS-family tenant (accounts.tenant_for): its own credentials and policy.
     tenant: accounts_core.Tenant | None = None
@@ -773,7 +890,7 @@ def fill_job(
                 recovery, snapshot, result, absorb=absorb, verify=verify,
                 retry=lambda: fill_form(
                     page, config, None, company=job.company_name, tracks=job.tracks,
-                    jurisdiction=jurisdiction, preserve_existing=True, checkpoint=recovery.checkpoint,
+                    jurisdiction=jurisdiction, checkpoint=recovery.checkpoint,
                 ),
             )
         finally:
@@ -822,6 +939,7 @@ def fill_job(
         for _ in range(12):
             verify()
             before = wait_for_page(page, previous=previous)
+            last_url = before.url
             if authentication_attempted and before.blocker and before.blocker.startswith("login:"):
                 # Account redirects can render their verification notice after
                 # the sign-in controls. Observe it without repeating credentials.
@@ -998,7 +1116,7 @@ def fill_job(
                 break
             result = fill_form(
                 page, config, resume_path, company=job.company_name,
-                tracks=job.tracks, jurisdiction=jurisdiction, preserve_existing=resume_tab,
+                tracks=job.tracks, jurisdiction=jurisdiction,
                 upload_resume=(lambda frame, key, path: _upload_approved(
                     frame, key, path, approval, job.id, conn, settings
                 )) if approval is not None else None,
@@ -1127,6 +1245,9 @@ def fill_job(
             "The application tab closed or was replaced. Continue filling to reopen this job; "
             "unsaved answers may need re-entry."
         )
+        # Firefox discarded the tab, or the page replaced it with one it opened:
+        # the batch fills the job again in that tab, as a retained one (_fill_all).
+        report.successor = _reacquire(page, last_url)
     except (BidiError, UnsafeAction) as exc:
         report.status = "blocked"
         report.error = page.bidi.redact(str(exc)).strip().splitlines()[0][:300]
@@ -1286,8 +1407,58 @@ def _pause(seconds: float, watch: Watch | None) -> None:
         time.sleep(seconds)
 
 
+def _reappeared(bidi: Bidi, found: Callable[[list[dict]], dict | None], seconds: float = 5.0) -> dict | None:
+    """Poll the tab tree until `found` picks a context (a restored tab rejoins it)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        time.sleep(0.25)
+        try:
+            context = found(bidi.command("browsingContext.getTree", {"maxDepth": 0}).get("contexts", []))
+        except BidiError:
+            return None
+        if context is not None:
+            return context
+    return None
+
+
+def _reacquire(page: Tab, url: str | None) -> Tab | None:
+    """The application tab again after "no such frame", or None (re-acquisition).
+
+    Firefox discards a background tab on low memory: it leaves the BiDi tree and
+    comes back under the same id once restored, so kitty restores it (its own
+    Firefox, chrome scope) and loads its last page again by GET. A page can also
+    replace its tab with one it opened itself (`originalOpener`, same origin):
+    exactly one such tab is taken. Never another tab, never a reload (a reload
+    of a POST result would send it again).
+    """
+    bidi = page.bidi
+    try:
+        contexts = bidi.command("browsingContext.getTree", {"maxDepth": 0}).get("contexts", [])
+    except BidiError:
+        return None
+    if any(context["context"] == page.context for context in contexts):
+        return page
+    origin = attempts_core.tenant_origin(url or "")
+    successors = [context for context in contexts if origin and context.get("originalOpener") == page.context
+                  and attempts_core.tenant_origin(context.get("url", "")) == origin]
+    if len(successors) == 1:
+        return Tab(bidi, successors[0]["context"])
+    if not url or not restore_discarded_tab(bidi, url):
+        return None
+    if _reappeared(bidi, lambda tree: next((c for c in tree if c["context"] == page.context), None)) is None:
+        return None
+    try:
+        page.goto(url)
+    except BidiError:
+        return None
+    return page
+
+
 def _retained_tab(bidi: Bidi, job: Job) -> Tab | None:
-    """Match the owned tab across BiDi sessions, then verify its application URL."""
+    """Match the owned tab across BiDi sessions, then verify its application URL.
+
+    A tab Firefox discarded while it waited is restored first (same context id).
+    """
     from urllib.parse import parse_qs, unquote, urljoin, urlsplit
     from kitty.config import _authentication_origin
     from kitty.core.apply.watch import posting_key
@@ -1298,6 +1469,8 @@ def _retained_tab(bidi: Bidi, job: Job) -> Tab | None:
     origins = {_authentication_origin(job.fill_url), _authentication_origin(job.apply_url or job.url)}
     origins.discard(None)
     context = owned_context(bidi, contexts, job.fill_context_id, origins)
+    if context is None and restore_discarded_tab(bidi, job.fill_url):
+        context = _reappeared(bidi, lambda tree: owned_context(bidi, tree, job.fill_context_id, origins))
     if context is None:
         return None
     old, current = urlsplit(job.fill_url), urlsplit(context.get("url", ""))
@@ -1466,10 +1639,11 @@ def _fill_all(
         opened = attempts_core.Progress()
         try:
             report: FillReport | None = None
+            successor: Tab | None = None        # the job's tab again after "no such frame"
             while report is None:
                 restartable = firefox is not None and not restarted
                 try:
-                    retained = _retained_tab(bidi, job)
+                    retained = successor or _retained_tab(bidi, job)
                     tab = retained or open_tab(bidi, background=background)
                 except ConnectionLost:
                     # Lost between two jobs: every filled tab was released, but the
@@ -1485,10 +1659,16 @@ def _fill_all(
                                   stop=stop if stop is not None else watch.stop if watch is not None else None,
                                   run=run, restartable=restartable,
                                   waiting=lambda job_id=job_id: _waiting_tabs(conn, bidi, job_id, kept, watch))
+                if report.successor is not None and successor is None:
+                    # Re-acquired once: fill the job again there, as a retained tab.
+                    say("The application tab came back after it was replaced or discarded; filling it again")
+                    successor, report = report.successor, None
+                    job = jobs_core.get_job(conn, job_id) or job
+                    continue
                 if report.restart:
                     if restart("Lost the connection to the rika! Firefox while filling this job"):
                         job = jobs_core.get_job(conn, job_id) or job
-                        report = None   # fill it again in the new Firefox
+                        report, successor = None, None   # fill it again in the new Firefox
                         continue
                     # The restart failed: this job becomes the one typed handoff.
                     report.restart, report.error, report.note = False, None, restart_note(0)

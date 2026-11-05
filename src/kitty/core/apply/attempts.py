@@ -71,7 +71,11 @@ CAUSES: dict[str, tuple[str, str]] = {
     "keyring_locked": ("needs_owner", "OS keyring locked"),
     "consent": ("needs_owner", "Consent dialog"),
     "missing_answer": ("needs_owner", "Missing answer"),
+    # History only: retained tabs now upload and put back what the parser changed.
     "upload_deferred": ("needs_owner", "Resume upload deferred on a retained tab"),
+    "parse_changed": ("needs_owner", "Resume parsing changed values kitty could not put back"),
+    # I-NoHidden′ (no-hidden.md): a required trap or hidden field without a visible host.
+    "hidden_target_refused": ("needs_owner", "Hidden or trap field refused"),
     "approval_changed": ("needs_owner", "Reviewed plan changed"),
     "handoff": ("needs_owner", "Other handoff"),
     "owner_took_over": ("needs_owner", "You acted in the tab while kitty filled it"),
@@ -139,6 +143,7 @@ _RULES: tuple[tuple[str, re.Pattern[str]], ...] = tuple((cause, re.compile(patte
     ("custom_controls", r"required custom controls"),
     ("choice_failed", r"^selection interaction failed"),
     ("upload_deferred", r"resume upload deferred"),
+    ("parse_changed", r"resume parsing changed values"),
     ("upload_pending", r"upload or parsing is still pending"),
     ("resume_unverified", r"resume upload is not verified"),
     ("review_unverified", r"earlier required steps cannot be verified|required application fields still need review"),
@@ -167,6 +172,8 @@ def classify(status: str, note: str | None, error: str | None, outcome_cause: st
     if status == "ready":
         return "ready"
     text = "\n".join(part for part in (note, error) if part).casefold().strip()
+    if "hidden_target_refused" in text:
+        return "hidden_target_refused"
     if _MISSING.match(text):
         if outcome_cause == "missing_applicant_fact":
             return "missing_answer"

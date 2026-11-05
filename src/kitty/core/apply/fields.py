@@ -6,7 +6,9 @@ The filler reads each field's label (and name / id / autocomplete), then asks
 * config/answers.yaml, matched on the normalized question text,
 * config/profile.yaml, for the handful of contact and education fields every
   form asks for (name, email, phone, links, school, major, graduation, city), and
-* a plain offered source choice for "how did you hear about us".
+* a plain offered source choice for "how did you hear about us" (on a list
+  that shows its choices only when opened, such as Workday's source tree, the
+  page picks it from what the open list offers).
 
 When none gives a confident match the answer is None and the field is left
 blank. Demographic (EEO) questions are only ever filled from answers.yaml.
@@ -71,7 +73,10 @@ class FormField:
     blank: bool = True                # nothing entered or chosen yet
     in_autofill: bool = False         # inside a "fill from resume" widget
     invalid: bool = False             # browser / ATS validation did not accept the value
-    attachment_only: bool = False    # observed separate attachment, not the profile-import widget
+    #: I-NoHidden′ (page.py): the clause a write to this element would violate
+    #: (T1/T2/T3 trap, H no painted host); such a field is never planned.
+    refused: str = ""
+    host: str = ""                   # how a write reaches it: self, label, box, group, family, generic, prompt
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,9 @@ class Plan:
     graduation: str | None = None     # saved exact YYYY-MM; enables offered date-range buckets only
     #: Provenance class for attempt records (kitty.core.apply.attempts.PROVENANCE).
     source: str = "profile"
+    #: A recruitment-source question on a list that reveals its choices only when
+    #: opened: if no candidate is offered, the page picks a plain offered source.
+    pick_source: bool = False
 
 
 # ------------------------------------------------------------------ labels
@@ -651,7 +659,16 @@ def pick_source_option(options: Sequence[str], rng: random.Random | None = None)
 
 
 def _source_plan(field: FormField, saved: Plan | None) -> Plan | None:
-    """Keep a saved source that is offered; otherwise pick an offered option."""
+    """Keep a saved source that is offered; otherwise pick an offered option.
+
+    A list whose choices are seen only once opened (a combobox without read
+    options, notably Workday's source tree) carries the choice to the page:
+    the saved source if offered there, else a plain offered source.
+    """
+    if not field.options and field.kind == "combobox":
+        if saved is not None:
+            return replace(saved, pick_source=True)
+        return Plan(clean_label(field.label)[:60] or "source", (), exact_choices=True, pick_source=True)
     if saved is not None and (not field.options or match_option(saved.candidates, field.options) is not None):
         return saved
     picked = pick_source_option(field.options) if field.options else None

@@ -22,6 +22,7 @@ the window. It should hold job-site logins and nothing else.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -60,6 +61,10 @@ PREFS: dict[str, bool | int | str] = {
     # Firefox's default, written so that a start after kitty's own restart (which
     # turns it off for that one start, see restart_own_firefox) does not keep it off
     "browser.sessionstore.resume_from_crash": True,
+    # Firefox unloads (discards) background tabs when memory runs low; a discarded
+    # tab leaves WebDriver BiDi's tree ("no such frame") and loses its form. Kitty's
+    # tabs wait in the background for their fills and for my Submit.
+    "browser.tabs.unloadOnLowMemory": False,
 }
 
 
@@ -354,6 +359,33 @@ def _chrome_eval(bidi: Bidi, expression: str) -> object:
     if reply.get("type") == "exception":
         raise BidiError(f"chrome script failed: {reply['exceptionDetails'].get('text')}")
     return reply.get("result", {}).get("value")
+
+
+#: Chrome-scope script: restore (without selecting) the one discarded tab whose
+#: page is `url`; its BiDi context comes back under the same id. Returns the
+#: number of discarded tabs showing that page (restored only when exactly one),
+#: or -1 when this Firefox has no way to insert a tab's browser. Firefox 159
+#: renamed tabbrowser's `_insertBrowser` to `insertBrowser`; both are tried.
+_RESTORE_DISCARDED = """((url) => {
+  const pending = [];
+  for (const window of Services.wm.getEnumerator('navigator:browser'))
+    for (const tab of window.gBrowser.tabs)
+      if (!tab.linkedPanel && tab.linkedBrowser?.currentURI?.spec === url) pending.push([window, tab]);
+  if (pending.length !== 1) return pending.length;
+  const [window, tab] = pending[0], tabs = window.gBrowser;
+  const insert = tabs.insertBrowser || tabs._insertBrowser;
+  if (typeof insert !== 'function') return -1;
+  insert.call(tabs, tab);
+  return 1;
+})(%s)"""
+
+
+def restore_discarded_tab(bidi: Bidi, url: str) -> bool:
+    """Bring back a tab Firefox discarded, identified by its page; False if none or several."""
+    try:
+        return _chrome_eval(bidi, _RESTORE_DISCARDED % json.dumps(url)) == 1
+    except BidiError:
+        return False                    # no system access in this Firefox: nothing to restore
 
 
 def automation_flag_shown(port: int) -> bool:
