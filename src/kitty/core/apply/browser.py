@@ -363,14 +363,20 @@ def _chrome_eval(bidi: Bidi, expression: str) -> object:
 
 #: Chrome-scope script: restore (without selecting) the one discarded tab whose
 #: page is `url`; its BiDi context comes back under the same id. Returns the
-#: number of discarded tabs showing that page (restored only when exactly one).
+#: number of discarded tabs showing that page (restored only when exactly one),
+#: or -1 when this Firefox has no way to insert a tab's browser. Firefox 159
+#: renamed tabbrowser's `_insertBrowser` to `insertBrowser`; both are tried.
 _RESTORE_DISCARDED = """((url) => {
   const pending = [];
   for (const window of Services.wm.getEnumerator('navigator:browser'))
     for (const tab of window.gBrowser.tabs)
       if (!tab.linkedPanel && tab.linkedBrowser?.currentURI?.spec === url) pending.push([window, tab]);
-  if (pending.length === 1) pending[0][0].gBrowser._insertBrowser(pending[0][1]);
-  return pending.length;
+  if (pending.length !== 1) return pending.length;
+  const [window, tab] = pending[0], tabs = window.gBrowser;
+  const insert = tabs.insertBrowser || tabs._insertBrowser;
+  if (typeof insert !== 'function') return -1;
+  insert.call(tabs, tab);
+  return 1;
 })(%s)"""
 
 
