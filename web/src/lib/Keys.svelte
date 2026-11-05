@@ -48,6 +48,13 @@
       {#if keysState && !keysState.keyring}
         <p class="warning" role="note">No OS keyring is available, so keys are stored in an owner-only file under <code>.private/</code> in your workspace.</p>
       {/if}
+      {#each keysState?.warnings ?? [] as warning (warning)}
+        <p class="warning" role="alert" data-warning="account-passwords">{warning}</p>
+      {/each}
+      {#if keysState?.account_passwords?.count}
+        {@const count = keysState.account_passwords.count}
+        <p class="muted">{count} employer account password{count === 1 ? "" : "s"} (generated per employer, never read from the environment) {count === 1 ? "is" : "are"} listed in <a href="#settings/apply-accounts">Settings → Accounts</a>.</p>
+      {/if}
       {#if keysState}
         <ul class="rows">
           {#each keysState.keys as key (key.name)}

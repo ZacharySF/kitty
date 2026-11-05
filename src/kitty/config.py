@@ -682,13 +682,17 @@ class EmailVerificationScope(_Base):
     @field_validator("sender_email")
     @classmethod
     def _sender(cls, value: str) -> str:
-        if not re.fullmatch(r"[A-Za-z0-9_+-]+(?:\.[A-Za-z0-9_+-]+)*@[A-Za-z0-9.-]+", value):
-            raise ValueError("verification sender must be one exact bare email address")
-        local, domain = value.rsplit("@", 1)
-        origin = _authentication_origin("https://" + domain, origin_only=True)
-        if origin is None or "." not in domain or len(value) > 254 or len(local) > 64:
-            raise ValueError("verification sender must have a valid exact email domain")
-        return local + "@" + domain.lower()
+        return _exact_sender(value)
+
+
+def _exact_sender(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_+-]+(?:\.[A-Za-z0-9_+-]+)*@[A-Za-z0-9.-]+", value):
+        raise ValueError("verification sender must be one exact bare email address")
+    local, domain = value.rsplit("@", 1)
+    origin = _authentication_origin("https://" + domain, origin_only=True)
+    if origin is None or "." not in domain or len(value) > 254 or len(local) > 64:
+        raise ValueError("verification sender must have a valid exact email domain")
+    return local + "@" + domain.lower()
 
 
 class EmailVerificationSettings(_Base):
@@ -740,9 +744,36 @@ class AuthenticationSettings(_Base):
     #: Auto selects the site's recognized form; explicit policies may restrict the flow.
     account_mode: Literal["auto", "recognized", "login", "create", "google"] = "auto"
     email_verification: EmailVerificationSettings = Field(default_factory=EmailVerificationSettings)
+    #: ATS families (kitty.core.apply.grants) whose tenants accept a per-tenant
+    #: ``base+tenant@`` alias as the login email. Default: none, the base email everywhere.
+    plus_alias_families: list[str] = Field(default_factory=list)
+    #: One exact verification/reset sender per family beyond Workday's derived
+    #: ``<tenant>@otp.workday.com`` (for example ``{"oracle": "no-reply@example.com"}``).
+    family_senders: dict[str, str] = Field(default_factory=dict)
     _credential_binding: str | None = PrivateAttr(default=None)
     # Google session reuse is authorized only by a reviewed website run.
     _google_email: str | None = PrivateAttr(default=None)
+    # Set only on a granted tenant's run policy (kitty.core.apply.accounts): redirects
+    # and emailed links may stay anywhere inside this family's grant patterns.
+    _family: str | None = PrivateAttr(default=None)
+
+    @field_validator("plus_alias_families")
+    @classmethod
+    def _known_alias_families(cls, value: list[str]) -> list[str]:
+        from kitty.core.apply.grants import FAMILIES
+
+        if unknown := sorted(set(value) - set(FAMILIES)):
+            raise ValueError(f"unknown ATS families: {', '.join(unknown)}")
+        return sorted(set(value))
+
+    @field_validator("family_senders")
+    @classmethod
+    def _exact_family_senders(cls, value: dict[str, str]) -> dict[str, str]:
+        from kitty.core.apply.grants import FAMILIES
+
+        if unknown := sorted(set(value) - set(FAMILIES)):
+            raise ValueError(f"unknown ATS families: {', '.join(unknown)}")
+        return {family: _exact_sender(sender) for family, sender in value.items()}
 
     @field_validator("approved_origins", "existing_account_origins", "manual_account_origins")
     @classmethod
@@ -767,9 +798,21 @@ class AuthenticationSettings(_Base):
         return self
 
     def approves(self, url: str) -> bool:
-        """Approve only an enabled, exact HTTPS origin, including nondefault port."""
+        """Approve only an enabled, exact HTTPS origin, including nondefault port.
+
+        A granted tenant's run policy also approves the rest of its family's grant
+        patterns, so a redirect inside the family continues and any other is a handoff.
+        """
         origin = _authentication_origin(url)
-        return self.enabled and origin is not None and origin in self.approved_origins
+        if not self.enabled or origin is None:
+            return False
+        if origin in self.approved_origins:
+            return True
+        if self._family is None:
+            return False
+        from kitty.core.apply.grants import in_family
+
+        return in_family(self._family, url)
 
 
 class RecoverySettings(_Base):

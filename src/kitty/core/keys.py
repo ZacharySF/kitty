@@ -7,7 +7,9 @@ user-defined ``[A-Z][A-Z0-9_]*``). Reading tries, in order:
    KeePassXC), when one answers on the session bus;
 2. an owner-only file under the workspace's ``.private/`` directory (OpenRouter keeps
    its existing ``.private/openrouter-key``; others live in ``.private/keys/NAME``);
-3. the key's environment variable (``.env`` is loaded into the environment at start).
+3. the key's environment variable (``.env`` is loaded into the environment at start),
+   except for employer account passwords (``APPLY_PW_*``), which are never read from
+   or injected into an environment.
 
 Writing goes to the keyring when one exists, otherwise to the owner-only file.
 
@@ -42,6 +44,12 @@ NAME_RE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 VALUE_RE = re.compile(r"[\x21-\x7e]{1,4096}")
 DEFAULT_SERVICE = "kitty"
 REDACTED = "[redacted]"
+#: Generated per-tenant employer account passwords (kitty.core.apply.accounts).
+ACCOUNT_PREFIX = "APPLY_PW_"
+ACCOUNT_FILE_WARNING = (
+    "No OS keyring is available, so employer account passwords are stored in "
+    "owner-only files under .private/keys/. Unlock or install a keyring and move them there."
+)
 
 
 @dataclass(frozen=True)
@@ -78,6 +86,7 @@ class Keyring(Protocol):
     def set(self, name: str, value: str) -> None: ...
     def delete(self, name: str) -> bool: ...
     def names(self) -> set[str]: ...
+    def locked(self) -> bool: ...
 
 
 class SecretServiceKeyring:
@@ -117,6 +126,18 @@ class SecretServiceKeyring:
         collection = self._backend.get_preferred_collection()
         with closing(collection.connection):
             return {item.get_attributes().get("username", "") for item in collection.search_items({"service": self.service})}
+
+    def locked(self) -> bool:
+        """Whether the collection is locked, asked without the unlock prompt reads raise."""
+        from contextlib import closing
+
+        import secretstorage
+
+        with closing(secretstorage.dbus_init()) as connection:
+            path = getattr(self._backend, "preferred_collection", None)
+            collection = (secretstorage.Collection(connection, path) if path
+                          else secretstorage.get_default_collection(connection))
+            return collection.is_locked()
 
 
 def keyring() -> Keyring | None:
@@ -267,7 +288,7 @@ class Keys:
         value = self._read_file(name)
         if value:
             return value, "file"
-        if self.use_env:
+        if self.use_env and not name.startswith(ACCOUNT_PREFIX):
             value = os.environ.get(env_name(name), "").strip()
             if value:
                 return value, "env"
@@ -280,6 +301,16 @@ class Keys:
 
     def backend(self) -> str:
         return "keyring" if self.store is not None else "file"
+
+    def locked(self) -> bool:
+        """True when a keyring exists but is locked (or cannot say): background runs
+        hand off instead of waiting on an unlock prompt nobody sees."""
+        if self.store is None:
+            return False
+        try:
+            return bool(self.store.locked())
+        except Exception:  # noqa: BLE001 - an unreadable lock state is not "unlocked"
+            return True
 
     def set(self, name: str, value: object) -> str:
         """Store NAME in the keyring when one exists, else the owner-only file; returns where."""
@@ -336,7 +367,17 @@ class Keys:
     def status(self) -> dict:
         """What the Keys screen and ``kitty keys list`` show: never a value."""
         rows = []
+        accounts = {"count": 0, "in_file": 0}
         for name in self.names():
+            if name.startswith(ACCOUNT_PREFIX):
+                # Employer account passwords are listed per tenant in Settings → Apply
+                # → Accounts; here only how many there are and where they live.
+                accounts["count"] += 1
+                try:
+                    accounts["in_file"] += bool(self._read_file(name))
+                except KeysError:
+                    pass
+                continue
             spec = KNOWN.get(name)
             try:
                 found = self.lookup(name)
@@ -357,6 +398,8 @@ class Keys:
             "keys": rows, "keyring": self.store is not None,
             "keyring_label": self.store.label if self.store is not None else None,
             "store": self.backend(),
+            "account_passwords": accounts,
+            "warnings": [ACCOUNT_FILE_WARNING] if accounts["in_file"] else [],
         }
 
     def environment(self, names: Iterable[str]) -> dict[str, str]:
@@ -364,6 +407,8 @@ class Keys:
         result: dict[str, str] = {}
         for raw in names:
             name = canonical(raw)
+            if name.startswith(ACCOUNT_PREFIX):
+                raise KeysError("Employer account passwords are never injected into other programs", 403)
             value = self.read(name)
             if not value:
                 raise KeysError(f"Key {name} is not set (kitty keys set {name})", 404)

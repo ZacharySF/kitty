@@ -2402,6 +2402,28 @@ authentication:
   manual_account_origins: []     # no automatic credential writes on these origins
 ```
 
+**ATS-family grants (unattended accounts).** Settings → Apply → Accounts, or
+`kitty apply accounts grant workday` (`revoke` undoes it), is a one-time approval
+for one family's tenants (`https://*.myworkdayjobs.com/*`,
+`https://*.wd*.myworkdaysite.com/*`, `https://*.fa.*.oraclecloud.com/hcmUI/CandidateExperience/*`,
+`https://*.eightfold.ai/careers*`, `https://careers-*.icims.com/*`). Web runs, `kitty apply`
+and autofill all use it: on a granted tenant kitty creates an account with its own
+generated password (Keys `APPLY_PW_<sha1-16 of origin>`; the OS keyring, or the owner-only
+file with a warning when no keyring exists; never the environment), opens the emailed
+activation link, signs in and records the tenant in the `apply_accounts` registry
+(`kitty apply accounts` lists it; no secret is stored there). A refused password is
+replaced by a stricter one, never retried; "email already in use" or a refused sign-in
+runs the tenant's Forgot-password flow, and the reset link is opened only when it is on
+the tenant inside its family pattern, comes from the tenant's listed sender
+(Workday's `<tenant>@otp.workday.com`, or `authentication.family_senders`), shows
+DKIM and DMARC pass in Gmail, matches the recipient and was never used. Caps: 3 new
+tenant accounts a day, 3 sign-in tries per tenant a day, 2 resets per tenant a day.
+Security questions, SMS, CAPTCHAs and locked accounts are `account_problem` handoffs;
+a locked keyring is a `keyring_locked` handoff before any browser opens. The shared
+credential file supplies the base email; its password is used only for origins in
+`existing_account_origins`. `plus_alias_families: [workday]` gives that family a
+per-tenant `base+tenant@` login email (default: none).
+
 `recognized` only handles an already displayed account form. Explicit `login` or
 `create` can first follow one unambiguous approved account-entry link or
 non-submitting button. `create` also requires `allow_account_creation: true`.

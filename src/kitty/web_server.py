@@ -141,7 +141,7 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_live"), (None, "web_build"),
     ("applyai", "web_jobs"), ("applyai", "web_automation"), ("applyai", "web_resumes"),
-    ("applyai", "web_profile"), ("applyai", "web_insights"),
+    ("applyai", "web_profile"), ("applyai", "web_insights"), ("applyai", "web_apply_accounts"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
     ("workspace", "web_math"),
