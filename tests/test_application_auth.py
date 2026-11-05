@@ -1508,17 +1508,20 @@ def test_application_resume_survives_new_sessions_without_guessing_other_tabs(
     """)
 
     def manual_controls(tab, value, checked):
+        # The owner's own hand: raw input, not kitty's admitted actions.
+        from submit_trap import owner_click, owner_keys
+
         frame = tab.main
         for selector in ("#native-label", "#aria-choice span"):
             target = frame.node("(s) => document.querySelector(s)", selector)
             assert target is not None
-            frame.click(target)
+            owner_click(frame, target)
         frame.call("() => document.querySelector('#native-select').focus()")
-        frame.type(value[0] + "\ue004")
+        owner_keys(frame, value[0] + "\ue004")
         for selector in ("#custom", f"#custom-{value}"):
             target = frame.node("(s) => document.querySelector(s)", selector)
             assert target is not None
-            frame.click(target)
+            owner_click(frame, target)
         assert frame.call("""() => [
           document.querySelector('#native-choice').checked,
           document.querySelector('#aria-choice').getAttribute('aria-checked') === 'true',
@@ -1622,7 +1625,8 @@ def test_account_certification_handoff_leaves_choices_manually_operable(workspac
     assert not _posts(site)
     target = page.main.node("() => document.querySelector('#manual-choice')")
     assert target is not None
-    page.main.click(target)
+    from submit_trap import owner_click
+    owner_click(page.main, target)              # the owner's own manual choice
     assert page.main.call("""() => {
       const box=document.querySelector('#certification');
       return !!box.checked || box.getAttribute('aria-checked') === 'true';

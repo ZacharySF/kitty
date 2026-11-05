@@ -23,8 +23,23 @@ from kitty.core.apply.filler import _apply_plan, _watched_tab, choose_resume, fi
 from kitty.core.apply.page import choose_select, pick_from_list, pick_from_search, read_fields
 from kitty.core.apply.urls import detect_ats, form_url
 from kitty.settings import Settings, find_firefox
+from submit_trap import SubmitTrap
 
 FORMS = Path(__file__).parent / "fixtures" / "forms"
+_TRAP: SubmitTrap | None = None
+
+
+def _forms_trap() -> SubmitTrap:
+    """The fixture forms, served over HTTP by a submit trap that records every request.
+
+    file: pages cannot send a real POST; served pages can, so a submit that got
+    through would reach this trap (the forms post to /trap/submit).
+    """
+    global _TRAP
+    if _TRAP is None:
+        _TRAP = SubmitTrap(FORMS)
+    return _TRAP
+
 
 PROFILE = """\
 name: Pat Quinn Tester
@@ -68,14 +83,15 @@ def space(workspace):
     pdf.write_bytes(b"%PDF-1.4\n% test resume\n")
     resumes_core.add_resume(workspace.conn, track.default_resume, pdf)
     workspace.track = track
+    _forms_trap().reset()
     return workspace
 
 
 def _job(space, form: str):
-    """A job whose posting is one of the fixture forms."""
+    """A job whose posting is one of the fixture forms, served by the submit trap."""
     job, _ = jobs_core.upsert_job(
         space.conn, company="Fixture Co", title=f"{form} intern",
-        url=(FORMS / f"{form}.html").as_uri(), tracks=[space.track.name],
+        url=_forms_trap().url(f"{form}.html"), tracks=[space.track.name],
         location="Arlington, TX, United States", country="US",
     )
     return job
@@ -117,6 +133,10 @@ def _files(page: Tab, selector: str) -> list[str]:
 
 
 def _assert_nothing_submitted(page: Tab) -> None:
+    """Nothing left the browser (the trap), kitty tried nothing the veto had to block
+    (its log for this tab), and the page's own counters saw no submit, button click or Enter."""
+    assert _forms_trap().writes() == [], "a submit reached the server"
+    assert page.vetoes == [], "the submit guard had to block an action"
     counters = _js(page, "() => [window.__submitted, window.__buttonClicks, window.__enterPresses]")
     assert counters == [0, 0, 0], "a submit, button click or Enter key happened"
 
@@ -1448,7 +1468,7 @@ def test_retained_workday_tab_requires_exact_posting_identity(space):
     current = {"context": "saved", "url": url.replace("R-1", "R-10") + "/apply/applyManually"}
     bidi = SimpleNamespace(command=lambda method, *args, **kwargs:
         {"contexts": [current]} if method == "browsingContext.getTree" else
-        {"result": {"type": "string", "value": "null"}})
+        {"result": {"type": "string", "value": "null"}}, _lease=lambda tab: 0)
     assert _retained_tab(bidi, job) is None
     current["url"] = url + "/apply/applyManually"
     assert _retained_tab(bidi, job).context == "saved"
@@ -1492,7 +1512,7 @@ def test_retained_oracle_verified_application_stays_bound_to_its_job(
                   fill_blocker="verification: confirm email ownership")
     current = {"context": "new-session-context", "url": current_url,
                "_kitty_marker": "before-verification" if owned else "another-application"}
-    bidi = SimpleNamespace(command=lambda *args, **kwargs: {"contexts": [current]})
+    bidi = SimpleNamespace(command=lambda *args, **kwargs: {"contexts": [current]}, _lease=lambda tab: 0)
 
     retained = _retained_tab(bidi, job)
 
@@ -2171,10 +2191,11 @@ def test_state_backed_aria_combobox_supports_automatic_and_manual_selection(page
     assert pick_from_list(page.main, field.key, ("Yes",), location=False)
     assert not next(f for f in read_fields([page.main]) if f.element_id == "combo").blank
     # The guarded automation leaves the same controls usable by trusted manual input.
+    from submit_trap import owner_click
     for selector in ("#combo", "#choices [role=option]:last-child span"):
         target = page.main.node("(s) => document.querySelector(s)", selector)
         assert target is not None
-        page.main.click(target)
+        owner_click(page.main, target)
     assert _js(page, "() => document.querySelector('#combo').textContent") == "No"
     assert _js(page, "() => window.trusted") == [True, True]
     assert _js(page, "() => window.submitted") == 0
@@ -2448,10 +2469,10 @@ def test_real_pointer_scrolls_to_control_but_does_not_click_an_overlay(page, cov
     target = page.main.node("() => document.querySelector('#target')")
     if covered:
         with pytest.raises(BidiError, match="covers"):
-            page.main.click(target)
+            page.main.click(target, intent="field")
         assert _js(page, "() => window.actualClicks") == []
     else:
-        page.main.click(target)
+        page.main.click(target, intent="field")
         assert _js(page, "() => window.actualClicks") == [True]
         assert _js(page, "() => window.scrollY") > 0
 

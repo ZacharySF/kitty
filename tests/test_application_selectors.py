@@ -156,7 +156,8 @@ def test_oracle_date_part_receipt_is_revoked_by_clear_edit_or_replacement(page, 
     assert pick_from_list(page.main, field.key, ("May",), location=False)
     if change == "clear":
         reset = page.main.node("() => document.getElementById('month-endDate-46-reset-button')")
-        page.main.click(reset)
+        from submit_trap import owner_click
+        owner_click(page.main, reset)            # the owner clears the part by hand
     elif change == "edit":
         fill_text(page.main, field.key, "Ma")
         fill_text(page.main, field.key, "May")

@@ -14,7 +14,7 @@ import time
 
 from kitty.config import Config
 from kitty.core.apply.bidi import BidiError, Tab
-from kitty.core.apply.page import UnsafeAction
+from kitty.core.apply.guard import FIELD, PROFILE_GATE, UnsafeAction
 
 _GATE_JS = r"""function (want, country) {
   const shown = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
@@ -92,7 +92,7 @@ def _choose_country_and_ack(page: Tab, country: str, allow_terms: bool) -> bool:
         if chooser is None:
             return False
         if page.main.node(_COUNTRY_JS, "option", country) is None:
-            page.main.click(chooser)             # open its list only when not already open
+            page.main.click(chooser, intent=FIELD)   # open its list only when not already open
         option = None
         for _ in range(20):
             option = page.main.node(_COUNTRY_JS, "option", country)
@@ -101,7 +101,7 @@ def _choose_country_and_ack(page: Tab, country: str, allow_terms: bool) -> bool:
             time.sleep(0.15)
         if option is None:
             return False
-        page.main.click(option)
+        page.main.click(option, intent=FIELD)
         if not _wait_state(page, "chosen", country):
             return False
     # A still-open country list overlays the acknowledgment below it.
@@ -114,7 +114,7 @@ def _choose_country_and_ack(page: Tab, country: str, allow_terms: bool) -> bool:
     if page.main.node(_COUNTRY_JS, "ack") is not None:
         if not allow_terms:
             return False
-        page.main.click(page.main.node(_COUNTRY_JS, "ack"))
+        page.main.click(page.main.node(_COUNTRY_JS, "ack"), intent=FIELD)
         if not _wait_state(page, "ack", True):
             return False
     return True
@@ -139,7 +139,7 @@ def complete_residence_gate(page: Tab, config: Config, *, allow_terms: bool) -> 
         submit = page.main.node(_GATE_JS, "submit")
         if submit is None:
             return False
-        page.main.click(submit)
+        page.main.click(submit, intent=PROFILE_GATE)
     except (BidiError, UnsafeAction):
         return False
     deadline = time.monotonic() + 10
@@ -180,7 +180,7 @@ def submit_profile_bootstrap(page: Tab, config: Config, *, allow_terms: bool) ->
         target = page.main.node(_PROFILE_JS, "submit")
         if target is None:
             return False
-        page.main.click(target)
+        page.main.click(target, intent=PROFILE_GATE)
     except (BidiError, UnsafeAction):
         return False
     deadline = time.monotonic() + 15

@@ -17,8 +17,9 @@ from typing import Callable, Literal, Sequence
 from kitty.config import Config, EducationRecord, EmploymentRecord
 from kitty.core.apply.bidi import BidiError, Frame, Tab
 from kitty.core.apply.fields import FormField, Plan, clean_label, match_option
+from kitty.core.apply.guard import RECORD_SAVE, UnsafeAction
 from kitty.core.apply.page import (
-    UnsafeAction, _DOM_HELPERS_JS, _SUGGESTIONS_JS, fill_text, form_frames, read_fields, tick,
+    _DOM_HELPERS_JS, _SUGGESTIONS_JS, fill_text, form_frames, read_fields, tick,
 )
 from kitty.normalize import norm_question
 
@@ -574,13 +575,13 @@ def fill_required_records(page: Tab, config: Config, *, company: str = '', track
                             result.blocker = f'records: cannot safely select the existing {kind} card'
                             return result
                         check()
-                        frame.click(node)
+                        frame.click(node, intent=RECORD_SAVE)
                         node = frame.node(_ACTION, kind, before['key'], 'edit', target['key'])
                     if node is None:
                         result.blocker = f'records: no unique native {kind} editor action'
                         return result
                     check()
-                    frame.click(node)
+                    frame.click(node, intent=RECORD_SAVE)
                     deadline = time.monotonic() + 2
                     while time.monotonic() < deadline:
                         check()
@@ -598,7 +599,7 @@ def fill_required_records(page: Tab, config: Config, *, company: str = '', track
                 if node is None:
                     result.blocker = f'records: cannot prove one valid scoped local {kind} save'
                     return result
-                frame.click(node)             # exactly once; never retry Save
+                frame.click(node, intent=RECORD_SAVE)   # exactly once; never retry Save
                 deadline = time.monotonic() + 2
                 while time.monotonic() < deadline:
                     check()

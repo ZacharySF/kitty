@@ -1,8 +1,11 @@
 // Records anything that would submit an application, so tests can assert it never happened.
+// Secondary evidence only: a submit is not cancelled here, so it reaches the test's
+// submit trap (the forms post to /trap/submit). kitty's own in-page veto cancels at
+// window capture, before these document listeners, so they never see what it blocked.
 window.__submitted = 0;
 window.__buttonClicks = 0;
 window.__enterPresses = 0;
-document.addEventListener('submit', e => { window.__submitted++; e.preventDefault(); }, true);
+document.addEventListener('submit', () => { window.__submitted++; }, true);
 document.addEventListener('click', e => { if (e.target.closest('button')) window.__buttonClicks++; }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Enter') window.__enterPresses++; }, true);
 

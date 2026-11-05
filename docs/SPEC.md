@@ -468,6 +468,31 @@ Stage 1: done.
   Ashby's `op`), navigation and context, and its record is method, path, endpoint
   and decision. Nothing arms an intercept during real fills yet (step 2d). Checks:
   `uv run pytest tests/test_apply_guard.py tests/test_bidi_events.py tests/test_apply.py`.
+- 2026-11-05: Submit-proof layer, steps 2b (L0) and 2c (L1). Every click, typed text
+  and key press declares an intent (`field`, `entry`, `next`, `credential`,
+  `profile_gate`, `record_save`, `mailbox`, `list_commit`; no default), and bidi.py is
+  the only module that sends `input.performActions`. A click is inspected in one
+  round trip first: the control its centre would activate (a label resolves to its
+  control, open shadow roots included) must pass the intent, so a `field` click never
+  reaches a submit button, link or final-labelled action. `type()` refuses newlines,
+  tabs, control characters and WebDriver keys before sending and types only into the
+  focused field; `press()` sends only ArrowDown, ArrowUp, Escape and Enter, Enter only
+  for `list_commit` on an open list with a focused option (react-select's condition).
+  Page-script activations go through `kittyActivate`. While `fill_job` runs, the tab
+  is armed (L1): an in-page veto in kitty's sandbox realm (a preload script for new
+  documents and iframes plus the current frames, never page-realm patches) cancels
+  clicks on submit-capable or final-labelled controls without kitty's one-shot token,
+  clicks that miss the token's element, every Enter except a `list_commit` one, Space
+  on buttons, keys that leave the field kitty types into and uncovered form submits.
+  Its 15 s lease is renewed by every kitty script in the tab and a 5 s heartbeat, so
+  it lapses by itself if kitty dies. The per-step check reads its log (no labels or
+  values): the owner's own click or key during a fill stops it (`owner_took_over`,
+  "press Submit again"); any other veto stops it as `submit_vetoed`. The tab is
+  released before the report can say ready, and kitty never acts in a released tab.
+  Workday advances only while the progress bar's current step is before the last
+  one (its position, or the step's own "N of M" digits; never its localized label)
+  and no review container shows; the last step counts as Review. Checks:
+  `uv run pytest tests/test_submit_guard.py tests/test_apply.py tests/test_application_preflight.py`.
 - 2026-11-05: Reaching the form (proposal-05 Step 3, `kitty.core.apply.resolve`). A live
   check runs before every `kitty apply` batch and as `kitty apply resolve [--dry-run]`
   over the queue: closed markers per family (HTTP 404/410; a primary closed notice;

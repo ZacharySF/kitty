@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from kitty.config import AuthenticationSettings, _authentication_origin
 from kitty.core.apply.bidi import BidiError, Frame, Tab
 from kitty.core.apply.credentials import ApplicationCredentials
+from kitty.core.apply.guard import CREDENTIAL, FIELD
 from kitty.core.apply.page import _CHOICE_TARGET_JS, _FIELD_SAFE_JS
 
 _ORACLE_HOST = re.compile(r"[a-z0-9-]+\.fa\.[a-z0-9-]+\.oraclecloud\.com")
@@ -206,7 +207,8 @@ def _click(frame: Frame, args: tuple[object, ...], role: str) -> bool:
     target = frame.node(_TARGET_JS, *args, role)
     if target is None:
         return False
-    frame.click(target)
+    # The terms box is a field; Next is the proven native account action (a POST).
+    frame.click(target, intent=FIELD if role == "terms" else CREDENTIAL)
     return True
 
 

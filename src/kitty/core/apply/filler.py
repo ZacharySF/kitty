@@ -51,8 +51,9 @@ from kitty.core.apply.fields import (
     MANUAL_CONSENT, TEXT_KINDS, FormField, Plan, is_affirmative, is_resume_input, lookup_answer, match_option,
     plan_for,
 )
+from kitty.core.apply.guard import OWNER_HINT, OwnerTookOver, SubmitGuardStop, UnsafeAction, stop_for
 from kitty.core.apply.page import (
-    ChoiceSelectionError, UnsafeAction, choose_select, fill_text, form_frames, pick_from_list, pick_from_search,
+    ChoiceSelectionError, choose_select, fill_text, form_frames, pick_from_list, pick_from_search,
     read_fields, settle, tick, upload, uploads_pending, wait_for_form, wait_for_uploads,
 )
 from kitty.core.apply.urls import (
@@ -132,6 +133,8 @@ def _outcome_cause(report: FillReport) -> OutcomeCause:
         return "browser_error"
     if note.startswith(("login:", "captcha:", "verification:", "consent:", UNSUPPORTED_FLOW)):
         return "human_boundary"
+    if note.startswith("owner:"):
+        return "human_boundary"         # the owner acted in the tab while kitty filled it
     return report.cause
 
 
@@ -156,6 +159,7 @@ class FillReport:
     cause: OutcomeCause = "unsupported_controls"
     recovery: list[dict] = field(default_factory=list)
     attempt_id: int | None = None  # the apply_attempts row this report was recorded as
+    guard_released: bool = False   # the submit guard was released before the tab was handed over
 
     def __post_init__(self) -> None:
         self.cause = _outcome_cause(self)
@@ -638,6 +642,9 @@ def fill_job(
             report.resume_label = "existing attachment (retained)"
 
     def verify():
+        # The per-step checkpoint reads the submit guard's veto log first: the
+        # owner acting in this tab, or a blocked submit, stops the fill.
+        stop_for(page.new_vetoes())
         if approval is not None:
             current = jobs_core.get_job(conn, job.id)
             if current is None:
@@ -714,6 +721,10 @@ def fill_job(
             except BidiError:
                 continue
         page.activate()
+        # From here until the finally below, the submit guard's in-page veto is
+        # armed in this tab (new documents too): nothing kitty or the page does
+        # can activate a submit without kitty's one-shot token (guard.py).
+        page.arm()
         if not resume_tab:
             page.goto(url)
         settle(page)
@@ -1001,6 +1012,8 @@ def fill_job(
             break
         else:
             report.status, report.note = "blocked", "Application step limit reached; continue manually."
+    except SubmitGuardStop as exc:
+        report.status, report.note = "blocked", str(exc)
     except PreparationStopped as exc:
         report.status, report.note = "blocked", str(exc)
     except OSError:
@@ -1017,6 +1030,21 @@ def fill_job(
         report.error = page.bidi.redact(str(exc)).strip().splitlines()[0][:300]
         report.note = report.error
     finally:
+        # Disarm the submit guard before anything can call this tab ready or
+        # hand it over (N3 §7); a veto it logged after the last checkpoint
+        # (the owner pressing Submit at the end) still decides the outcome.
+        page.release()
+        report.guard_released = True
+        try:
+            stop_for(page.new_vetoes())
+        except SubmitGuardStop as exc:
+            # A stop already recorded keeps its own cause; a late veto only
+            # overrides an outcome that would otherwise hand the tab over as fine.
+            # The owner whose own Submit was blocked is still told to press it again.
+            if report.status != "blocked":
+                report.status, report.note = "blocked", str(exc)
+            elif isinstance(exc, OwnerTookOver) and OWNER_HINT not in (report.note or ""):
+                report.note = f"{report.note} {OWNER_HINT}" if report.note else str(exc)
         if foreground is not None:
             try:
                 contexts = page.bidi.command("browsingContext.getTree", {"maxDepth": 0})["contexts"]

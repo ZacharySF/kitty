@@ -19,7 +19,7 @@ from kitty.config import AuthenticationSettings, _authentication_origin
 from kitty.core.apply.auth import authentication_pending
 from kitty.core.apply.bidi import BidiError, Tab
 from kitty.core.apply.credentials import ApplicationCredentials, credential_binding
-from kitty.core.apply.page import UnsafeAction
+from kitty.core.apply.guard import CREDENTIAL, UnsafeAction
 from kitty.core.apply.preflight import inspect_page
 from kitty.core.apply.verification_mail import MailRequest, VerificationMailError, read_verification_mail
 from kitty.db.connection import transaction
@@ -216,7 +216,7 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
             if target is None:
                 return VerificationResult(blocker='verification: the resend control changed; review this challenge')
             row = _record_request(conn,page,job_id,origin,sender,recipient,started,settings.max_age_seconds)
-            page.main.click(target)
+            page.main.click(target, intent=CREDENTIAL)
             acted = True
         request = MailRequest(recipient=recipient,sender=sender,requested_at=datetime.fromisoformat(row['requested_at']),expires_at=datetime.fromisoformat(row['expires_at']))
         deadline = min(time.monotonic()+settings.max_wait_seconds,time.monotonic()+max(0,(request.expires_at-datetime.now(timezone.utc)).total_seconds()))
@@ -276,7 +276,7 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
                 focused = page.main.call('''(origin,index,count)=>{if(location.origin!==origin)return false;let fields=count===1?[...document.querySelectorAll('input[autocomplete="one-time-code"]')].filter(e=>e.getClientRects().length):('''+_SEGMENTS+''')(count);if(fields.length!==count||!fields[index]||fields[index].value)return false;fields[index].focus();return document.activeElement===fields[index]}''',origin,index,count,page_realm=True)
                 if focused is not True:
                     raise UnsafeAction('verification field focus changed')
-                page.main.type(code if count==1 else code[index])
+                page.main.type(code if count==1 else code[index], into=target)
             committed = page.main.call('''(origin,code,count)=>{if(location.origin!==origin)return false;let fields=count===1?[...document.querySelectorAll('input[autocomplete="one-time-code"]')].filter(e=>e.getClientRects().length):('''+_SEGMENTS+''')(count);return fields.length===count&&fields.map(e=>e.value).join('')===code}''',origin,code,count,page_realm=True)
             if committed is not True:
                 raise UnsafeAction('verification code did not commit')
@@ -286,7 +286,7 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
             if target is None:
                 raise UnsafeAction('verification action changed')
             acted = True
-            page.main.click(target)
+            page.main.click(target, intent=CREDENTIAL)
         else:
             page.bidi.protect_secrets(link)
             acted = True
