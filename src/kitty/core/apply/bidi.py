@@ -14,6 +14,11 @@ Ending a session (close()) leaves Firefox, its window and every tab open. That
 is the point: I review each filled tab and click submit myself, later. A failed
 close raises and retains this controller's connection for a possible retry:
 disconnecting alone would leave Firefox's direct BiDi session orphaned.
+
+Events are not dropped: a reader thread routes replies by command id and hands
+events to registered handlers, and it answers every request Firefox holds for
+a network intercept at once (the submit-proof layer's network tripwire needs
+that; see kitty.core.apply.guard). Nothing in the filler arms an intercept yet.
 """
 
 from __future__ import annotations
@@ -21,7 +26,9 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -82,14 +89,58 @@ class SessionEndError(BidiError):
 
 
 
+#: A handler gets an event's `params`. It runs on the event reader thread, so it
+#: must return quickly and must not call `Bidi.command` (that would wait for a
+#: reply only the same thread can read).
+EventHandler = Callable[[dict], None]
+
+#: Decides a request Firefox holds at `network.beforeRequestSent`: returns
+#: "continue" or "fail" (anything else, or an exception, fails the request).
+RequestDecider = Callable[[dict], str]
+
+_BLOCKED_BEFORE_SENT = "network.beforeRequestSent"
+# Other intercept phases kitty never registers; if one is ever blocked it is
+# still answered at once, in the direction that sends nothing.
+_BLOCKED_OTHER = {
+    "network.responseStarted": ("network.failRequest", {}),
+    "network.authRequired": ("network.continueWithAuth", {"action": "cancel"}),
+}
+
+
+class _Waiter:
+    """One command's slot for its reply (or for the reason the connection broke)."""
+
+    __slots__ = ("done", "lost", "message")
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.message: dict | None = None
+        self.lost: str | None = None
+
+
 class Bidi:
-    """One WebDriver BiDi session with a running Firefox."""
+    """One WebDriver BiDi session with a running Firefox.
+
+    A reader thread owns the WebSocket's receiving side: it routes each reply
+    to the command waiting for its id and hands each event to the handlers
+    registered with `on()`. A request Firefox holds for an intercept is answered
+    by that thread at once, never deferred: when a session ends Firefox sends
+    every request still held, so a decision that waited could become a send.
+    """
 
     def __init__(self, url: str) -> None:
         self.url = url
         self._session_ended = False
         self._session_end_acknowledged = False
         self._secrets: tuple[str, ...] = ()
+        self._lock = threading.Lock()
+        self._answered = threading.Condition(self._lock)
+        self._waiters: dict[int, _Waiter] = {}
+        self._answers: set[int] = set()     # continue/fail commands awaiting Firefox's reply
+        self._deciding = 0                  # blocked requests the reader is deciding now
+        self._handlers: dict[str, tuple[EventHandler, ...]] = {}
+        self._decider: RequestDecider | None = None
+        self._lost: str | None = None
         try:
             # legacy=True: a plain connection object, closed in close() (the session
             # spans many calls, so a `with` block does not fit)
@@ -99,6 +150,8 @@ class Bidi:
         except (OSError, WebSocketException) as exc:
             raise BidiError(f"cannot reach Firefox at {url}: {exc}") from exc
         self._ids = itertools.count(1)
+        self._reader = threading.Thread(target=self._read, name="kitty-bidi-reader", daemon=True)
+        self._reader.start()
         try:
             # "ignore": a dialog a page opens stays up for me instead of being dismissed.
             session = self.command("session.new", {"capabilities": {"alwaysMatch": {
@@ -130,12 +183,171 @@ class Bidi:
         """Whether Firefox confirmed release, not merely receipt of session.end."""
         return self._session_ended
 
-    def command(self, method: str, params: dict[str, Any], *, timeout: float = 30.0) -> dict:
-        """Send one command and wait for its reply. Events and late replies are skipped."""
-        return self._command(self._ws, method, params, timeout=timeout)
+    # ------------------------------------------------------------ events
 
-    def _command(self, ws: ClientConnection, method: str, params: dict[str, Any],
-                 *, timeout: float) -> dict:
+    def on(self, method: str, handler: EventHandler) -> Callable[[], None]:
+        """Call `handler(params)` for every `method` event; returns its remover.
+
+        Firefox sends only events the session subscribed to (`session.subscribe`).
+        A handler that raises is skipped for that event; the reader carries on.
+        """
+        with self._lock:
+            self._handlers[method] = (*self._handlers.get(method, ()), handler)
+
+        def remove() -> None:
+            with self._lock:
+                rest = tuple(h for h in self._handlers.get(method, ()) if h is not handler)
+                if rest:
+                    self._handlers[method] = rest
+                else:
+                    self._handlers.pop(method, None)
+        return remove
+
+    def set_request_decider(self, decider: RequestDecider | None) -> None:
+        """Who answers requests held at `network.beforeRequestSent` (None: fail them all)."""
+        with self._lock:
+            self._decider = decider
+
+    @property
+    def unanswered_requests(self) -> int:
+        """Held requests being decided now or whose answer Firefox has not confirmed."""
+        with self._lock:
+            return self._deciding + len(self._answers)
+
+    def wait_answered(self, timeout: float) -> bool:
+        """Wait until every held request is answered and confirmed (True), or time out."""
+        with self._answered:
+            return self._answered.wait_for(
+                lambda: self._deciding == 0 and not self._answers, timeout)
+
+    def _read(self) -> None:
+        """The reader thread: route replies by id, dispatch events, answer held requests."""
+        reason = "the event reader stopped"
+        try:
+            while True:
+                try:
+                    message = json.loads(self._ws.recv())
+                except ValueError:
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                if message.get("type") == "event":
+                    self._dispatch(message)
+                    continue
+                message_id = message.get("id")
+                with self._lock:
+                    if message_id in self._answers:
+                        self._answers.discard(message_id)
+                        self._answered.notify_all()
+                        continue
+                    waiter = self._waiters.pop(message_id, None)
+                if waiter is not None:       # late replies to timed-out commands are dropped
+                    waiter.message = message
+                    waiter.done.set()
+        except (OSError, WebSocketException) as exc:
+            reason = str(exc) or type(exc).__name__
+        except Exception as exc:  # noqa: BLE001 - never leave a command waiting forever
+            reason = f"the event reader stopped: {type(exc).__name__}"
+        finally:
+            with self._lock:
+                self._lost = reason
+                waiters = list(self._waiters.values())
+                self._waiters.clear()
+                self._answers.clear()
+                self._answered.notify_all()
+            for waiter in waiters:
+                waiter.lost = reason
+                waiter.done.set()
+
+    def _dispatch(self, message: dict) -> None:
+        method = message.get("method")
+        params = message.get("params") or {}
+        if params.get("isBlocked") and (method == _BLOCKED_BEFORE_SENT or method in _BLOCKED_OTHER):
+            self._answer(method, params)
+        with self._lock:
+            handlers = self._handlers.get(method, ())
+        for handler in handlers:
+            try:
+                handler(params)
+            except Exception:  # noqa: BLE001, S112 - one handler must not stop the reader
+                continue
+
+    def _answer(self, method: str, params: dict) -> None:
+        """Answer one held request now. Headers, cookies and bodies are not kept."""
+        request_id = (params.get("request") or {}).get("request")
+        with self._lock:
+            self._deciding += 1
+            decider = self._decider
+        try:
+            if method == _BLOCKED_BEFORE_SENT:
+                verdict = "fail"
+                if decider is not None:
+                    try:
+                        verdict = decider(params)
+                    except Exception:  # noqa: BLE001 - a broken decision fails closed
+                        verdict = "fail"
+                command, extra = (("network.continueRequest", {}) if verdict == "continue"
+                                  else ("network.failRequest", {}))
+            else:
+                command, extra = _BLOCKED_OTHER[method]
+        finally:
+            with self._lock:
+                self._deciding -= 1
+                answer_id = next(self._ids)
+                self._answers.add(answer_id)
+        try:
+            self._ws.send(json.dumps({"id": answer_id, "method": command,
+                                      "params": {"request": request_id, **extra}}))
+        except (OSError, WebSocketException):
+            with self._lock:
+                self._answers.discard(answer_id)
+                self._answered.notify_all()
+
+    # ------------------------------------------------------------ commands
+
+    def command(self, method: str, params: dict[str, Any], *, timeout: float = 30.0) -> dict:
+        """Send one command and wait for its reply (events go to their handlers)."""
+        if threading.current_thread() is self._reader:
+            raise BidiError(f"{method}: an event handler cannot wait for a Firefox reply "
+                            "(it runs on the event reader)")
+        waiter = _Waiter()
+        with self._lock:
+            lost = self._lost
+            if lost is None:
+                command_id = next(self._ids)
+                self._waiters[command_id] = waiter
+        if lost is not None:
+            raise ConnectionLost(self.redact(f"lost the connection to Firefox during {method}: {lost}"))
+        try:
+            self._ws.send(json.dumps({"id": command_id, "method": method, "params": params}))
+        except (OSError, WebSocketException) as exc:
+            with self._lock:
+                self._waiters.pop(command_id, None)
+            raise ConnectionLost(self.redact(
+                f"lost the connection to Firefox during {method}: {exc}"
+            )) from None
+        if not waiter.done.wait(max(0.0, timeout)):
+            with self._lock:
+                self._waiters.pop(command_id, None)
+            if not waiter.done.is_set():
+                raise BidiError(f"{method} timed out after {timeout:.0f}s")
+        if waiter.lost is not None:
+            raise ConnectionLost(self.redact(
+                f"lost the connection to Firefox during {method}: {waiter.lost}"
+            ))
+        return self._result(method, waiter.message or {})
+
+    def _result(self, method: str, message: dict) -> dict:
+        if message.get("type") == "error":
+            error_class = TabClosed if message.get("error") == "no such frame" else BidiError
+            raise error_class(self.redact(
+                f"{method}: {message.get('error')}: {message.get('message')}"
+            ))
+        return message.get("result", {})
+
+    def _exchange(self, ws: ClientConnection, method: str, params: dict[str, Any],
+                  *, timeout: float) -> dict:
+        """One command on a connection without a reader (the sessionless status probe)."""
         command_id = next(self._ids)
         try:
             ws.send(json.dumps({"id": command_id, "method": method, "params": params}))
@@ -148,14 +360,8 @@ class Bidi:
                     message = json.loads(ws.recv(timeout=remaining))
                 except TimeoutError:
                     raise BidiError(f"{method} timed out after {timeout:.0f}s") from None
-                if message.get("id") != command_id:
-                    continue
-                if message.get("type") == "error":
-                    error_class = TabClosed if message.get("error") == "no such frame" else BidiError
-                    raise error_class(self.redact(
-                        f"{method}: {message.get('error')}: {message.get('message')}"
-                    )) from None
-                return message.get("result", {})
+                if message.get("id") == command_id:
+                    return self._result(method, message)
         except (OSError, WebSocketException) as exc:
             raise ConnectionLost(self.redact(
                 f"lost the connection to Firefox during {method}: {exc}"
@@ -168,10 +374,16 @@ class Bidi:
         is insufficient. The sessionless status probe never creates or ends a
         session. If another controller acquires one meanwhile, cleanup remains
         conservatively unconfirmed; that controller is never disturbed.
+
+        session.end is sent only after every held request is answered: Firefox
+        sends whatever is still held when a session ends.
         """
         if self._session_ended:
             return
         try:
+            if not self.wait_answered(5):
+                raise BidiError("a held request is still waiting for kitty's answer; "
+                                "ending the session now would send it")
             if self._session_end_acknowledged:
                 try:
                     self.command("session.end", {}, timeout=5)
@@ -186,7 +398,7 @@ class Bidi:
                 self.url, max_size=None, open_timeout=5, legacy=True,
                 logger=_TRANSPORT_LOGGER,
             ) as probe:
-                status = self._command(probe, "session.status", {}, timeout=5)
+                status = self._exchange(probe, "session.status", {}, timeout=5)
             if not status.get("ready"):
                 raise BidiError(
                     "Firefox still reports an active session (this session or "
@@ -199,6 +411,9 @@ class Bidi:
                 acknowledged=self._session_end_acknowledged,
             ) from exc
         self._session_ended = True
+        with self._lock:
+            self._handlers.clear()
+            self._decider = None
         self._ws.close()
 
 
