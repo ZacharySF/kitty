@@ -104,6 +104,8 @@
   let showQuestions = $state(false);
   let showOptions = $state(false);
   let showHealth = $state(false);
+  /** The restart_firefox handoff whose confirmation is open (its job id). */
+  let confirmingRestart = $state<number | null>(null);
   const labels: Record<string, string> = {
     idle: "Not running",
     starting: "Opening Firefox",
@@ -114,6 +116,8 @@
     watching: "Waiting for your submission confirmation",
     stopping: "Stopping safely",
     stopped: "Stopped",
+    restarting: "Restarting the rika! Firefox",
+    restarted: "Firefox restarted",
     completed: "Preparation finished",
     failed: "Needs attention",
     unattempted: "Not prepared yet",
@@ -247,6 +251,27 @@
     } finally {
       busy = false;
     }
+  }
+  /** A restart_firefox handoff's button: kitty kills its Firefox (what its lost
+   * session still held is dropped, never sent) and starts it without old tabs. */
+  async function restartFirefox() {
+    busy = true;
+    error = "";
+    try {
+      status = await api<Status>("/automation/restart-firefox", { confirmed: true });
+      confirmingRestart = null;
+      await refresh();
+    } catch (cause) {
+      error =
+        cause instanceof Error
+          ? cause.message
+          : "Unable to restart Firefox";
+    } finally {
+      busy = false;
+    }
+  }
+  function restartItem(report: Report) {
+    return (report.note || "").startsWith("restart_firefox:");
   }
   export async function reviewSelected() {
     await inspect("selected");
@@ -447,7 +472,28 @@
                   {/each}</ul>
                 </details>
               {/if}
-              {#if ["partial", "blocked", "error"].includes(report.status) &&
+              {#if restartItem(report)}
+                {#if confirmingRestart === report.job_id}
+                  <div class="restart-confirm" role="group" aria-label="Confirm Firefox restart">
+                    <p>
+                      Restart the rika! Firefox now? Finish or discard the tabs waiting
+                      for you first: kitty closes every tab in that window and
+                      reopens none. Nothing is submitted.
+                    </p>
+                    <button class="button" onclick={restartFirefox} disabled={busy || status.running}>
+                      Restart now
+                    </button>
+                    <button class="button" onclick={() => (confirmingRestart = null)} disabled={busy}>
+                      Cancel
+                    </button>
+                  </div>
+                {:else}
+                  <button class="button" onclick={() => (confirmingRestart = report.job_id)}
+                    disabled={busy || status.running}>
+                    Restart Firefox…
+                  </button>
+                {/if}
+              {:else if ["partial", "blocked", "error"].includes(report.status) &&
                 !/^(closed|listing):/.test(report.note || "")}
                 {#if /^(login|consent|captcha|verification):/.test(report.note || "")}
                   <p>Complete that step in Firefox, then continue here. Existing answers are kept.</p>

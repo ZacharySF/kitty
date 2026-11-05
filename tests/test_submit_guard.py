@@ -1,4 +1,5 @@
-"""The submit-proof action layer, L0 and L1 (research note N3 §4.2-4.3, §5-§7).
+"""The submit-proof action layer, L0 and L1 (research note N3 §4.2-4.3, §5-§7),
+and the network tripwire (L2) where an L0/L1 fixture also needs it (E1, E2, W1, W2).
 
 Every adversarial fixture is served by a SubmitTrap, the ground truth of what
 left the browser, and runs with the layer on and off. Off, the provocation is
@@ -13,6 +14,8 @@ All fixture pages and values are synthetic.
 from __future__ import annotations
 
 import ast
+import contextlib
+import dataclasses
 import re
 import time
 from pathlib import Path
@@ -54,11 +57,11 @@ def tab(firefox, trap):  # noqa: F811
     tab.close()
 
 
-def _serve(trap, tab, body: str, *, layer: str = "on", path: str = "/fixture"):
+def _serve(trap, tab, body: str, *, layer: str = "on", path: str = "/fixture", family="custom"):
     """Serve a synthetic page and open it, armed before navigation when the layer is on."""
     trap.pages[path] = "<!doctype html><html><body>" + body + "</body></html>"
     if layer == "on":
-        tab.arm()
+        tab.arm(family=family)
     tab.goto(trap.url(path))
     return tab.main
 
@@ -420,14 +423,26 @@ def test_e1_a_credential_click_cannot_carry_an_application_submit(tab, trap, lay
     assert [entry["reason"] for entry in tab.vetoes] == ["nested"]
 
 
-@pytest.mark.xfail(strict=True, reason="a page script's own fetch to a submit endpoint is the network "
-                                       "tripwire's to stop (L2, Step 2d); L1 only blocks activations")
-def test_e1_login_handler_fetch_to_the_application_endpoint_is_blocked(tab, trap):
+@LAYERS
+def test_e1_login_handler_fetch_to_the_application_endpoint_is_blocked(tab, trap, layer):
+    """L1 sees no activation in the handler's own fetch; the network tripwire (L2) fails it."""
     frame = _serve(trap, tab, E1.replace("document.querySelector('#apply').click();",
-                                         "fetch('/trap/submit', {method: 'POST'});"))
-    frame.click(_node(frame, "#signin"), intent=CREDENTIAL)
+                                         "fetch('/trap/submit', {method: 'POST'});"), layer=layer)
+    if layer == "off":
+        owner_click(frame, _node(frame, "#signin"))
+        deadline = time.monotonic() + 3
+        while SUBMIT not in trap.writes() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert sorted(trap.writes()) == [("POST", "/trap/login"), SUBMIT]
+        return
+    with contextlib.suppress(guard.SubmitBlockedNetwork):
+        frame.click(_node(frame, "#signin"), intent=CREDENTIAL)
     time.sleep(1.0)
     assert trap.writes() == [("POST", "/trap/login")]
+    assert [(d.method, d.path, d.rule) for d in tab.network_blocks] == [("POST", "/trap/submit", "generic.submit")]
+    with pytest.raises(guard.SubmitBlockedNetwork):
+        tab.check_network()                        # the fill stops at its next step
+    assert tab.vetoes == []
 
 
 LOGIN = """<h1>Candidate sign in</h1><form method="post" action="/trap/login">
@@ -445,9 +460,9 @@ def test_a_credential_token_lets_exactly_the_proven_native_submit_through(tab, t
     assert tab.vetoes == []
 
 
-def _profile_page(extra: str) -> str:
+def _profile_page(extra: str, action: str = "/trap/submit") -> str:
     return f"""<h1>Create your profile</h1><p>Profile Bootstrapping</p>{extra}
-      <form method="post" action="/trap/submit">
+      <form method="post" action="{action}">
         <label>First name <input name="first" value="Pat" required></label>
         <button id="submit" type="submit">Submit</button>
       </form>"""
@@ -468,11 +483,21 @@ def test_e2_profile_gate_is_refused_on_a_page_that_also_submits_an_application(t
 
 
 def test_e2_control_the_same_profile_gate_alone_is_submitted_once_by_its_token(tab, trap):
-    _serve(trap, tab, _profile_page(""), path="/careers/apply")
+    _serve(trap, tab, _profile_page("", action="/careers/profile"), path="/careers/apply")
     config = SimpleNamespace(profile=SimpleNamespace(country="United States"))
     submit_profile_bootstrap(tab, config, allow_terms=True)
-    assert trap.wait_for_write() == [SUBMIT]
-    assert tab.vetoes == []
+    assert trap.wait_for_write() == [("POST", "/careers/profile")]
+    assert tab.vetoes == [] and tab.network_blocks == []
+
+
+def test_a_profile_gate_token_never_lets_a_submit_looking_post_through(tab, trap):
+    """The token's same-origin allowance never outranks the deny list (N3 §4.2)."""
+    _serve(trap, tab, _profile_page(""), path="/careers/apply")
+    config = SimpleNamespace(profile=SimpleNamespace(country="United States"))
+    with contextlib.suppress(guard.SubmitBlockedNetwork):
+        submit_profile_bootstrap(tab, config, allow_terms=True)
+    assert _quiet(trap) == []
+    assert [(d.path, d.rule) for d in tab.network_blocks] == [("/trap/submit", "generic.submit")]
 
 
 # ------------------------------------------------------------ W: Workday Review by position
@@ -507,17 +532,27 @@ def _workday_snapshot(monkeypatch, *, steps_rule: bool) -> None:
     monkeypatch.setattr(preflight, "_SNAPSHOT", script)
 
 
-@pytest.mark.parametrize("steps_rule", ["on", "off"])
-def test_w1_localized_workday_review_is_refused_by_step_position(tab, trap, monkeypatch, steps_rule):
+@pytest.mark.parametrize(("steps_rule", "layer"), [("on", "on"), ("off", "on"), ("off", "off")])
+def test_w1_localized_workday_review_is_refused_by_step_position(tab, trap, monkeypatch, steps_rule, layer):
     _workday_snapshot(monkeypatch, steps_rule=steps_rule == "on")
-    frame = _serve(trap, tab, _workday(len(_STEPS) - 1, _STEPS, "Next"))
+    if layer == "off":
+        monkeypatch.setattr(bidi_module.Tab, "_arm_network", lambda self, guard: None)   # L1 only
+    frame = _serve(trap, tab, _workday(len(_STEPS) - 1, _STEPS, "Next"), family="workday")
     snapshot = preflight.inspect_page(tab)
     if steps_rule == "off":
         # Without the step-position rule a localized Review looks like a normal step,
-        # and Workday's Submit is its "Next". Only L2 (Step 2d) would stop the POST.
+        # and Workday's Submit is its "Next": L1 admits the proven NEXT click.
         assert snapshot.safe_next and not snapshot.review
-        preflight.advance(snapshot, "workday")
-        assert trap.wait_for_write() == [("POST", "/wday/cxs/t/job/x/submit")]
+        with contextlib.suppress(guard.SubmitBlockedNetwork):
+            preflight.advance(snapshot, "workday")
+        if layer == "off":                          # control: nothing else stops the POST
+            assert trap.wait_for_write() == [("POST", "/wday/cxs/t/job/x/submit")]
+            return
+        assert _quiet(trap) == []                   # L2: Workday's deny list fails it
+        assert [(d.method, d.path, d.rule) for d in tab.network_blocks] == [
+            ("POST", "/wday/cxs/t/job/x/submit", "workday.submit")]
+        with pytest.raises(guard.SubmitBlockedNetwork):
+            tab.check_network()
         return
     assert snapshot.review and not snapshot.safe_next
     with pytest.raises(UnsafeAction):
@@ -526,16 +561,30 @@ def test_w1_localized_workday_review_is_refused_by_step_position(tab, trap, monk
     assert _page(frame, "() => window.__clicks") == 0
 
 
+def _local(family: str) -> guard.Profile:
+    """A family profile whose host-bound rules also match the trap's 127.0.0.1 (fixtures only)."""
+    profile = guard.PROFILES[family]
+
+    def local(rules):
+        return tuple(dataclasses.replace(rule, hosts=("127.0.0.1",)) if rule.hosts else rule for rule in rules)
+
+    return dataclasses.replace(profile, deny=local(profile.deny), allow=local(profile.allow),
+                               credential_only=local(profile.credential_only))
+
+
 def test_workday_next_on_a_localized_earlier_step_is_still_allowed(tab, trap, monkeypatch):
+    """W2: a normal step's draft save is on Workday's allowlist; the deny rule does not block it."""
     _workday_snapshot(monkeypatch, steps_rule=True)
     frame = _serve(trap, tab, _workday(1, _STEPS, "Save and Continue").replace(
-        "/wday/cxs/t/job/x/submit", "/wday/cxs/t/job/x/jobapplications"))
+        "/wday/cxs/t/job/x/submit", "/wday/cxs/t/job/x/jobapplications"), family=_local("workday"))
     snapshot = preflight.inspect_page(tab)
     assert snapshot.safe_next and not snapshot.review
     preflight.advance(snapshot, "workday")
     assert trap.wait_for_write() == [("POST", "/wday/cxs/t/job/x/jobapplications")]
     assert _page(frame, "() => window.__clicks") == 1
-    assert tab.new_vetoes() == []
+    assert tab.new_vetoes() == [] and tab.network_blocks == []
+    assert {"method": "POST", "path": "/wday/cxs/t/job/x/jobapplications", "endpoint": "workday.draft",
+            "decision": "continue"} in tab.network_log
 
 
 def _with_bar(bar: str, extra: str = "", button: str = "Next") -> str:
@@ -682,8 +731,10 @@ def test_l2_owner_click_during_a_fill_stops_it_and_releases_the_tab(space, tab, 
 def test_the_veto_lapses_by_itself_when_kitty_stops_renewing_it(tab, trap, monkeypatch):
     monkeypatch.setattr(bidi_module, "LEASE_MS", 1500)
     monkeypatch.setattr(bidi_module, "HEARTBEAT_SECONDS", 60.0)
+    # L1's lease alone: an orphaned L2 intercept would hold the request (test_submit_network).
+    monkeypatch.setattr(bidi_module.Tab, "_arm_network", lambda self, guard: None)
     frame = _serve(trap, tab, APPLICATION, layer="off")
-    tab.arm()                                      # current frame, 1.5 s lease, no heartbeat yet
+    tab.arm(family="custom")                       # current frame, 1.5 s lease, no heartbeat yet
     submit = _node(frame, "#submit")               # kitty's last sandbox call renews it once
     owner_click(frame, submit)
     assert trap.wait_for_write(0.5) == []

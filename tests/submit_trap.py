@@ -4,8 +4,9 @@ It is the ground truth that nothing left the browser (research note N3 §6): a
 submit that kitty or the page lets through reaches this server as a POST.
 data: and file: pages cannot send real POSTs, so submit fixtures are served here,
 over HTTP or (with a throwaway self-signed certificate) HTTPS. Every request is
-recorded as (method, path); bodies are read and dropped. Fixture pages are
-synthetic: they come from `pages` or a folder of static test files.
+recorded as (method, path); bodies are read and dropped (`received` keeps each
+write's query and body length, to prove a request arrived unmodified). Fixture
+pages are synthetic: they come from `pages` or a folder of static test files.
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ class SubmitTrap:
         self.root = root
         self.pages: dict[str, str] = {}
         self.requests: list[tuple[str, str]] = []
+        self.received: list[tuple[str, str, str, int]] = []    # writes: method, path, query, body length
         self._lock = threading.Lock()
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         if tls is not None:
@@ -94,6 +96,7 @@ class SubmitTrap:
     def reset(self) -> None:
         with self._lock:
             self.requests.clear()
+            self.received.clear()
         self.pages.clear()
 
     def close(self) -> None:
@@ -138,10 +141,11 @@ class SubmitTrap:
             do_HEAD = do_GET
 
             def _write(self):
-                self._record()
+                path = self._record()
                 length = int(self.headers.get("Content-Length") or 0)
-                if length:
-                    self.rfile.read(length)
+                body = self.rfile.read(length) if length else b""
+                with trap._lock:
+                    trap.received.append((self.command, path, urlsplit(self.path).query, len(body)))
                 self._send(200, b"<!doctype html><p>The trap received this request.</p>")
 
             do_POST = do_PUT = do_PATCH = do_DELETE = _write

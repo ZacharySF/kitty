@@ -17,16 +17,20 @@ disconnecting alone would leave Firefox's direct BiDi session orphaned.
 
 Events are not dropped: a reader thread routes replies by command id and hands
 events to registered handlers, and it answers every request Firefox holds for
-a network intercept at once (the submit-proof layer's network tripwire needs
-that; see kitty.core.apply.guard). Nothing in the filler arms an intercept yet.
+a network intercept at once, never deferred.
 
 Input is the submit-proof layer's choke point (kitty.core.apply.guard): this is
 the only module that sends `input.performActions`. Every click, typed text and
 key press declares an intent and is inspected first (L0). A tab the filler is
-working in is armed (`Tab.arm`): an in-page veto in the sandbox (L1) cancels
-anything that could submit without the one-shot token the inspection set, and
-every sandbox script kitty runs there renews its lease. `Tab.release` disarms
-it before the tab is handed to me; kitty never acts in a released tab again.
+working in is armed (`Tab.arm`) for the whole fill: an in-page veto in the
+sandbox (L1) cancels anything that could submit without the one-shot token the
+inspection set, and every sandbox script kitty runs there renews its lease; a
+network intercept scoped to the tab (L2) holds each of its requests until the
+reader answers it with `guard.policy()` for the tab's ATS family. A failed
+request stops the fill (`guard.SubmitBlockedNetwork`). `Tab.release` disarms
+both before the tab is handed to me; kitty never acts in a released tab again.
+Request events are used for that one decision only: kitty keeps method, path
+(no query), rule id and verdict, never headers, cookies or bodies.
 """
 
 from __future__ import annotations
@@ -34,20 +38,25 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import math
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from websockets.exceptions import WebSocketException
 from websockets.sync.client import ClientConnection, connect
 
 from kitty.core.apply.credentials import redact
 from kitty.core.apply.guard import (
-    CLICK_INTENTS, FIELD, GUARD_JS, HEARTBEAT_SECONDS, INSPECT_CLICK_JS, INSPECT_KEYS_JS, KEY_INTENTS,
-    KEYS, LEASE_MS, LIST_COMMIT, MAILBOX, PRELOAD_JS, UnsafeAction, untypeable,
+    CLICK_INTENTS, FAIL, FIELD, GUARD_JS, HEARTBEAT_SECONDS, INSPECT_CLICK_JS, INSPECT_KEYS_JS, KEY_INTENTS,
+    KEYS, LEASE_MS, LIST_COMMIT, MAILBOX, NETWORK_INTENTS, NETWORK_TOKEN_SECONDS, OWNER_TOOK_OVER, PRELOAD_JS,
+    AllowlistMode, Decision, Profile, Request, SubmitBlockedNetwork, Token, UnsafeAction, allowlist_mode,
+    network_note, origin_of, policy, untypeable, veto_cause,
 )
 
 # Wire-level DEBUG output includes script arguments (and therefore passwords).
@@ -130,22 +139,55 @@ class _Waiter:
         self.lost: str | None = None
 
 
-class _TabGuard:
-    """One application tab's in-page veto (L1): armed or released, and its veto log.
+#: Network decisions a tab keeps (newest last); blocked and observed ones too.
+_DECISIONS_KEPT = 200
 
-    Entries are what the in-page log held (event kind, trusted, whether a kitty
+
+class _TabGuard:
+    """One application tab's submit guard: its in-page veto (L1), its network tripwire (L2).
+
+    Veto entries are what the in-page log held (event kind, trusted, whether a kitty
     token was live, the reason and a target descriptor): never labels or values.
+    Network decisions are method, path (no query), rule id and verdict
+    (guard.Decision): never headers, cookies, bodies or query values.
     """
 
-    __slots__ = ("armed", "entries", "preload", "reported", "stop", "thread")
+    __slots__ = ("allowlist", "armed", "arming", "blocked", "decisions", "entries", "family", "intercept",
+                 "network", "observed", "owner_at", "preload", "reported", "review", "stop", "subscription",
+                 "thread", "tokens")
 
-    def __init__(self) -> None:
+    def __init__(self, family: str | Profile = "custom", allowlist: AllowlistMode = "enforce") -> None:
         self.armed = False
         self.entries: list[dict] = []
         self.reported = 0                   # entries already returned by Tab.new_vetoes()
+        self.owner_at: float | None = None  # wall time of the owner's last key press here (L1)
         self.preload: str | None = None
         self.stop = threading.Event()
         self.thread: threading.Thread | None = None
+        self.family = family                # the policy profile (urls.detect_ats name or a Profile)
+        self.allowlist = allowlist
+        self.review = False                 # the page snapshot's review state (Workday: no non-GET)
+        # The intercept id stays after release: a request held just before its
+        # removal is still decided by this tab's policy (and recorded).
+        self.intercept: str | None = None
+        self.subscription: str | None = None
+        self.arming = False                 # the intercept is being added; its id is not known yet
+        self.network = "none"               # L2 in Firefox: none (never added) | armed | released
+        self.tokens: list[list] = []        # [guard.Token, expiry: monotonic, inf while its action runs]
+        self.decisions: list[Decision] = []  # every non-GET and every failed request
+        self.blocked: list[Decision] = []
+        self.observed: list[Decision] = []  # unlisted non-GETs an observe-only allowlist let through
+
+    def note(self, decision: Decision, *, logged: bool) -> None:
+        """Keep one decision (the caller holds the Bidi lock)."""
+        kept = [self.decisions] if logged else []
+        if decision.verdict == FAIL:
+            kept.append(self.blocked)
+        elif decision.observed:
+            kept.append(self.observed)
+        for log in kept:
+            log.append(decision)
+            del log[:-_DECISIONS_KEPT]
 
 
 class Bidi:
@@ -172,6 +214,7 @@ class Bidi:
         self._decider: RequestDecider | None = None
         self._lost: str | None = None
         self._guards: dict[str, _TabGuard] = {}    # application tabs by top-level context
+        self._tabs: frozenset[str] | None = None   # top-level contexts at the last full tree read
         try:
             # legacy=True: a plain connection object, closed in close() (the session
             # spans many calls, so a `with` block does not fit)
@@ -200,6 +243,10 @@ class Bidi:
         """Keep credentials local to this session's diagnostic redactor."""
         self._secrets = tuple(dict.fromkeys((*self._secrets, *values)))
 
+    def inherit_secrets(self, other: Bidi) -> None:
+        """Keep redacting what a replaced (lost) session was protecting."""
+        self.protect_secrets(*other._secrets)
+
     def redact(self, text: str) -> str:
         """Sanitize page/transport diagnostics before displaying or persisting them."""
         return redact(text, self._secrets)
@@ -214,6 +261,23 @@ class Bidi:
         """Whether Firefox confirmed release, not merely receipt of session.end."""
         return self._session_ended
 
+    @property
+    def connected(self) -> bool:
+        """Whether the WebSocket to Firefox still works (False once it broke or was closed)."""
+        with self._lock:
+            return self._lost is None
+
+    @property
+    def known_tabs(self) -> frozenset[str] | None:
+        """The tabs (top-level contexts) Firefox had at the last full tree read; None before one."""
+        with self._lock:
+            return self._tabs
+
+    @property
+    def port(self) -> int | None:
+        """The local remote-control port this session connected to."""
+        return urlsplit(self.url).port
+
     # ------------------------------------------------------------ submit guard
 
     def _guard(self, tab: str) -> _TabGuard | None:
@@ -221,24 +285,93 @@ class Bidi:
             return self._guards.get(tab)
 
     def _armed(self, tab: str) -> bool:
-        """Whether input goes to an armed application tab; never to a released one."""
+        """Whether input goes to an armed application tab; never to a released one.
+
+        Raises once L2 failed a request in the tab: the fill must stop.
+        """
         guard = self._guard(tab)
         if guard is None:
             return False            # not an application tab (the mail tab, a test's own tab)
         if not guard.armed:
             raise UnsafeAction("kitty released this tab to you and no longer acts in it")
+        self._check_network(tab)
         return True
+
+    def _check_network(self, tab: str) -> None:
+        """Raise SubmitBlockedNetwork once L2 failed a request in this armed tab."""
+        guard = self._guard(tab)
+        if guard is None or not guard.armed:
+            return
+        with self._lock:
+            blocked = guard.blocked[0] if guard.blocked else None
+        if blocked is not None:
+            raise SubmitBlockedNetwork(network_note(blocked))
 
     def _lease(self, tab: str) -> int:
         """The lease every sandbox script in this tab renews (0: not armed)."""
         guard = self._guard(tab)
         return LEASE_MS if guard is not None and guard.armed else 0
 
-    def _record_vetoes(self, tab: str, entries: list[dict]) -> None:
+    def _record_vetoes(self, tab: str, entries: list[dict], owner_at: float | None = None) -> None:
         guard = self._guard(tab)
-        if guard is not None and entries:
+        if guard is not None and (entries or owner_at):
             with self._lock:
                 guard.entries.extend(entries)
+                if owner_at:
+                    guard.owner_at = max(guard.owner_at or 0.0, owner_at / 1000)
+
+    def _grant(self, tab: str, intent: str, url: str) -> list | None:
+        """A network token for one kitty action in an armed tab (live until `_expire`)."""
+        guard = self._guard(tab)
+        if guard is None or not guard.armed or intent not in NETWORK_INTENTS:
+            return None
+        entry = [Token(intent, origin_of(url)), math.inf]
+        with self._lock:
+            guard.tokens.append(entry)
+        return entry
+
+    def _expire(self, entry: list | None) -> None:
+        """The action is done: its token lives on only for the requests it may still cause."""
+        if entry is not None:
+            with self._lock:
+                entry[1] = time.monotonic() + NETWORK_TOKEN_SECONDS
+
+    def _network_guard(self, params: dict) -> _TabGuard | None:
+        """The armed tab whose intercept holds this request (None: not one of kitty's fills)."""
+        intercepts = params.get("intercepts") or ()
+        with self._lock:
+            guards = list(self._guards.values())
+        for guard in guards:
+            if guard.intercept is not None and guard.intercept in intercepts:
+                return guard
+        known = {guard.intercept for guard in guards}
+        arming = [guard for guard in guards if guard.arming]
+        if len(arming) == 1 and any(intercept not in known for intercept in intercepts):
+            return arming[0]        # the intercept being added: its id has not arrived yet
+        return None
+
+    def _decide_network(self, guard: _TabGuard, params: dict) -> str:
+        """L2: decide one held request of an armed tab by its family's policy, now.
+
+        Reads only method, URL, navigation and context; keeps only the decision.
+        Any error fails the request and is kept as a failure (the fill stops).
+        """
+        request = params.get("request") or {}
+        try:
+            parsed = Request.from_event(params)
+            now = time.monotonic()
+            with self._lock:
+                guard.tokens = [entry for entry in guard.tokens if entry[1] > now]
+                tokens = tuple(entry[0] for entry in guard.tokens)
+                family, review, allowlist = guard.family, guard.review, guard.allowlist
+            decision = policy(parsed, family, tokens, review=review, allowlist=allowlist)
+            logged = parsed.method not in ("GET", "HEAD", "OPTIONS")
+        except Exception:  # noqa: BLE001 - a broken decision fails closed
+            decision = Decision(FAIL, "policy_error", str(request.get("method") or "?").upper()[:16], "?")
+            logged = True
+        with self._lock:
+            guard.note(decision, logged=logged)
+        return decision.verdict
 
     # ------------------------------------------------------------ events
 
@@ -330,7 +463,11 @@ class Bidi:
                 continue
 
     def _answer(self, method: str, params: dict) -> None:
-        """Answer one held request now. Headers, cookies and bodies are not kept."""
+        """Answer one held request now. Headers, cookies and bodies are not kept.
+
+        A request an armed tab's intercept holds is decided by that tab's policy
+        (L2); any other by the decider (`set_request_decider`), else it fails.
+        """
         request_id = (params.get("request") or {}).get("request")
         with self._lock:
             self._deciding += 1
@@ -338,7 +475,10 @@ class Bidi:
         try:
             if method == _BLOCKED_BEFORE_SENT:
                 verdict = "fail"
-                if decider is not None:
+                guard = self._network_guard(params)
+                if guard is not None:
+                    verdict = self._decide_network(guard, params)
+                elif decider is not None:
                     try:
                         verdict = decider(params)
                     except Exception:  # noqa: BLE001 - a broken decision fails closed
@@ -392,7 +532,13 @@ class Bidi:
             raise ConnectionLost(self.redact(
                 f"lost the connection to Firefox during {method}: {waiter.lost}"
             ))
-        return self._result(method, waiter.message or {})
+        result = self._result(method, waiter.message or {})
+        if method == "browsingContext.getTree" and "root" not in params:
+            # What a lost connection leaves behind is judged by the tabs seen last.
+            tabs = frozenset(node.get("context") for node in result.get("contexts") or ())
+            with self._lock:
+                self._tabs = tabs
+        return result
 
     def _result(self, method: str, message: dict) -> dict:
         if message.get("type") == "error":
@@ -589,7 +735,7 @@ class Frame:
         if not settled:
             return
         log = settled.get("log") or []
-        self.bidi._record_vetoes(self._top, log)
+        self.bidi._record_vetoes(self._top, log, settled.get("ownerAt"))
         if not quietly and (settled.get("vetoed") or any(entry.get("token") for entry in log)):
             raise UnsafeAction(f"the submit guard blocked this {what}: the page moved the focus "
                                "or put another control in its way")
@@ -605,6 +751,23 @@ class Frame:
             raise
         if armed:
             self._settle(what)
+            self.bidi._check_network(self._top)      # a request this action caused was failed
+
+    @contextmanager
+    def granting(self, intent: str) -> Iterator[None]:
+        """A same-origin network token for one kitty action in this frame (N3 §4.2).
+
+        While the block runs, and guard.NETWORK_TOKEN_SECONDS after it, L2 lets a
+        navigation POST (CREDENTIAL, PROFILE_GATE) or an unlisted non-GET request
+        to this frame's origin through, unless a deny rule matches. Clicks take
+        one themselves; in-page activations (kittyActivate) are wrapped in it.
+        Does nothing outside an armed tab or for an intent without an allowance.
+        """
+        entry = self.bidi._grant(self._top, intent, self.url)
+        try:
+            yield
+        finally:
+            self.bidi._expire(entry)
 
     def click(self, shared_id: str, *, intent: str) -> None:
         """A real mouse click at the centre of one element (scrolled into view first).
@@ -619,15 +782,16 @@ class Frame:
         if intent == MAILBOX and self.bidi._armed(self._top):
             raise UnsafeAction("refusing a mailbox click in an application tab")
         armed = self._inspect(INSPECT_CLICK_JS, shared_id, intent, what="click control")
-        self._perform({
-            "type": "pointer", "id": _MOUSE, "parameters": {"pointerType": "mouse"},
-            "actions": [
-                {"type": "pointerMove", "x": 0, "y": 0,
-                 "origin": {"type": "element", "element": {"sharedId": shared_id}}},
-                {"type": "pointerDown", "button": 0},
-                {"type": "pointerUp", "button": 0},
-            ],
-        }, armed, "click")
+        with self.granting(intent):
+            self._perform({
+                "type": "pointer", "id": _MOUSE, "parameters": {"pointerType": "mouse"},
+                "actions": [
+                    {"type": "pointerMove", "x": 0, "y": 0,
+                     "origin": {"type": "element", "element": {"sharedId": shared_id}}},
+                    {"type": "pointerDown", "button": 0},
+                    {"type": "pointerUp", "button": 0},
+                ],
+            }, armed, "click")
 
     def type(self, text: str, *, into: str, delay_ms: int = 25) -> None:
         """Type text into the remembered text box `into`, one real key press per character.
@@ -727,22 +891,28 @@ class Tab:
             guard.stop.set()
         self.bidi.command("browsingContext.close", {"context": self.context})
 
-    # ------------------------------------------------------------ submit guard (L1)
+    # ------------------------------------------------------------ submit guard (L1 + L2)
 
-    def arm(self) -> None:
-        """Arm the in-page veto for a fill of this tab; idempotent while armed.
+    def arm(self, *, family: str | Profile, allowlist: AllowlistMode | None = None) -> None:
+        """Arm the submit guard for a fill of this tab; idempotent while armed.
 
-        A preload script scoped to this tab gives every new document and iframe
-        the veto before any page script runs; every current frame gets it now; a
-        heartbeat renews the lease while the fill lasts (kitty may be busy in the
+        L1: a preload script scoped to this tab gives every new document and
+        iframe the veto before any page script runs, and every current frame gets
+        it now. L2: a `network.beforeRequestSent` subscription and intercept scoped
+        to this tab hold each of its requests until the reader answers it with
+        `guard.policy()` for `family` (a `urls.detect_ats` name or a Profile; the
+        allowlist mode defaults to `guard.allowlist_mode`). Then a heartbeat
+        renews the veto's lease while the fill lasts (kitty may be busy in the
         mail tab or drafting). From now on input here must be kitty's own,
         inspected and tokened (bidi.Frame.click/type/press).
         """
+        mode = allowlist or allowlist_mode(family.family if isinstance(family, Profile) else family)
         with self.bidi._lock:
             guard = self.bidi._guards.get(self.context)
             if guard is not None and guard.armed:
+                guard.family, guard.allowlist = family, mode
                 return
-            guard = self.bidi._guards[self.context] = _TabGuard()
+            guard = self.bidi._guards[self.context] = _TabGuard(family, mode)
             guard.armed = True
         guard.preload = self.bidi.command("script.addPreloadScript", {
             "functionDeclaration": PRELOAD_JS, "contexts": [self.context], "sandbox": SANDBOX,
@@ -754,9 +924,42 @@ class Tab:
                 raise
             except BidiError:
                 continue            # detached meanwhile; a click installs it if the frame lives on
+        self._arm_network(guard)
         guard.thread = threading.Thread(target=self._heartbeat, args=(guard,),
                                         name="kitty-guard-heartbeat", daemon=True)
         guard.thread.start()
+
+    def _arm_network(self, guard: _TabGuard) -> None:
+        """L2: hold every request of this tab (no URL patterns: the decision needs the method)."""
+        guard.subscription = self.bidi.command("session.subscribe", {
+            "events": [_BLOCKED_BEFORE_SENT], "contexts": [self.context]}).get("subscription")
+        guard.arming, guard.network = True, "armed"
+        try:
+            intercept = self.bidi.command("network.addIntercept", {
+                "phases": ["beforeRequestSent"], "contexts": [self.context]}).get("intercept")
+            with self.bidi._lock:
+                guard.intercept = intercept
+        finally:
+            guard.arming = False
+
+    def set_family(self, family: str | Profile, allowlist: AllowlistMode | None = None) -> None:
+        """The form now lives on another ATS family (a routed redirect or Apply link)."""
+        guard = self.bidi._guard(self.context)
+        if guard is not None and guard.armed:
+            mode = allowlist or allowlist_mode(family.family if isinstance(family, Profile) else family)
+            with self.bidi._lock:
+                guard.family, guard.allowlist = family, mode
+
+    def observe_review(self, review: bool) -> None:
+        """The latest page snapshot's review state (Workday fails every non-GET on Review)."""
+        guard = self.bidi._guard(self.context)
+        if guard is not None and guard.armed:
+            with self.bidi._lock:
+                guard.review = bool(review)
+
+    def check_network(self) -> None:
+        """Raise guard.SubmitBlockedNetwork if L2 failed a request of this armed tab."""
+        self.bidi._check_network(self.context)
 
     def _heartbeat(self, guard: _TabGuard) -> None:
         """Renew the lease in every frame (and install the veto where a frame lacks it)."""
@@ -779,12 +982,16 @@ class Tab:
                     continue
 
     def release(self) -> list[dict]:
-        """Disarm the in-page veto before the tab is handed over; return its whole log.
+        """Disarm the submit guard before the tab is handed over; return the whole veto log.
 
-        Order (N3 §7): no more kitty input here, stop the heartbeat, remove the
-        preload script, then disarm every current frame and drain its log. Kitty
-        never acts in a released tab again until a new fill arms it. A frame
-        that cannot be reached any more lapses by its lease (guard.LEASE_MS).
+        Order (N3 §7): no more kitty input here and stop the heartbeat; wait until
+        every request Firefox holds is answered, then remove the intercept and its
+        subscription (L2); remove the preload script, then disarm every current
+        frame and read back its log (L1). Only then may the caller record the
+        release and call the tab ready. Kitty never acts in a released tab again
+        until a new fill arms it. A frame that cannot be reached any more lapses
+        by its lease (guard.LEASE_MS); an intercept that cannot be removed (the
+        connection broke) holds this tab's requests until Firefox exits.
         """
         guard = self.bidi._guard(self.context)
         if guard is None:
@@ -796,6 +1003,13 @@ class Tab:
             if guard.thread is not None and guard.thread is not threading.current_thread():
                 guard.thread.join(timeout=40)
             try:
+                self.bidi.wait_answered(5)
+                if guard.intercept is not None:
+                    self.bidi.command("network.removeIntercept", {"intercept": guard.intercept})
+                    guard.network = "released"
+                if guard.subscription is not None:
+                    self.bidi.command("session.unsubscribe", {"subscriptions": [guard.subscription]})
+                    guard.subscription = None
                 if guard.preload:
                     self.bidi.command("script.removePreloadScript", {"script": guard.preload})
                 for frame in self.frames():
@@ -806,7 +1020,7 @@ class Tab:
                     except BidiError:
                         continue
                     if state:
-                        self.bidi._record_vetoes(self.context, state.get("log") or [])
+                        self.bidi._record_vetoes(self.context, state.get("log") or [], state.get("ownerAt"))
             except BidiError:
                 pass                # tab or connection gone: nothing is left to disarm in time
         with self.bidi._lock:
@@ -820,12 +1034,13 @@ class Tab:
         if guard.armed:
             for frame in self.frames():
                 try:
-                    self.bidi._record_vetoes(
-                        self.context, frame.call("() => globalThis.kittyGuard?.drain() ?? []") or [])
+                    state = frame.call("() => globalThis.kittyGuard?.drain() ?? null")
                 except ConnectionLost:
                     raise
                 except BidiError:
                     continue
+                if state:
+                    self.bidi._record_vetoes(self.context, state.get("log") or [], state.get("ownerAt"))
         with self.bidi._lock:
             fresh = guard.entries[guard.reported:]
             guard.reported = len(guard.entries)
@@ -839,6 +1054,50 @@ class Tab:
             return []
         with self.bidi._lock:
             return list(guard.entries)
+
+    @property
+    def network_blocks(self) -> list[Decision]:
+        """Every request L2 failed in this tab since it was last armed."""
+        guard = self.bidi._guard(self.context)
+        if guard is None:
+            return []
+        with self.bidi._lock:
+            return list(guard.blocked)
+
+    @property
+    def network_observed(self) -> list[Decision]:
+        """Unlisted non-GET requests an observe-only allowlist let through (the survey's evidence)."""
+        guard = self.bidi._guard(self.context)
+        if guard is None:
+            return []
+        with self.bidi._lock:
+            return list(guard.observed)
+
+    @property
+    def network_log(self) -> list[dict[str, str]]:
+        """Every non-GET and every failed request: method, path (no query), rule id, decision."""
+        guard = self.bidi._guard(self.context)
+        if guard is None:
+            return []
+        with self.bidi._lock:
+            return [decision.log_entry() for decision in guard.decisions]
+
+    @property
+    def network_released(self) -> bool:
+        """Whether no intercept of this tab can be left in Firefox (removed, or never added)."""
+        guard = self.bidi._guard(self.context)
+        return guard is None or guard.network != "armed"
+
+    def owner_active(self, within: float) -> bool:
+        """Whether the owner acted in this tab while kitty held it: a click or key the
+        veto blocked as his, or a key press in the last `within` seconds."""
+        guard = self.bidi._guard(self.context)
+        if guard is None:
+            return False
+        with self.bidi._lock:
+            entries, owner_at = list(guard.entries), guard.owner_at
+        return (veto_cause(entries) == OWNER_TOOK_OVER
+                or (owner_at is not None and time.time() - owner_at < within))
 
     @property
     def armed(self) -> bool:

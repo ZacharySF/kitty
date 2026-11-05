@@ -862,7 +862,9 @@ def google_session(page: Tab, policy: AuthenticationSettings, email: str) -> Aut
         contexts = page.bidi.command("browsingContext.getTree", {})["contexts"]
         existing = {c["context"] for c in contexts}
         try:
-            clicked = page.main.call(_GOOGLE_CLICK, [employer], _GOOGLE_ORIGIN, email, False)
+            employer_frame = page.main     # its in-page credential click gets L2's network token
+            with employer_frame.granting(CREDENTIAL):
+                clicked = employer_frame.call(_GOOGLE_CLICK, [employer], _GOOGLE_ORIGIN, email, False)
         except BidiError:
             # A same-tab navigation can discard the realm before its click
             # reply arrives. Do not repeat it; observe where this flow returns.
@@ -918,7 +920,9 @@ def google_session(page: Tab, policy: AuthenticationSettings, email: str) -> Aut
                     settle(active, timeout_ms=3000)
                     selected = True
                     try:
-                        clicked = active.main.call(_GOOGLE_CLICK, [employer], _GOOGLE_ORIGIN, email, True)
+                        chooser = active.main
+                        with chooser.granting(CREDENTIAL):
+                            clicked = chooser.call(_GOOGLE_CLICK, [employer], _GOOGLE_ORIGIN, email, True)
                     except BidiError:
                         # The choice may already have navigated. Never select
                         # again, even if its acknowledgement was lost.

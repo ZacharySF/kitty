@@ -580,10 +580,13 @@ def inspect_page(page: Tab) -> Preflight:
                          (s.step and s.has_fields)), None)
     if selected is None:
         selected = next((s for s in snapshots if s.entry), snapshots[0])
-    return replace(selected, errors=sum(s.errors for s in snapshots),
-                   unsupported_required=any(s.unsupported_required for s in snapshots),
-                   missing_profile_sections=tuple(dict.fromkeys(
-                       section for s in snapshots for section in s.missing_profile_sections)))
+    snapshot = replace(selected, errors=sum(s.errors for s in snapshots),
+                       unsupported_required=any(s.unsupported_required for s in snapshots),
+                       missing_profile_sections=tuple(dict.fromkeys(
+                           section for s in snapshots for section in s.missing_profile_sections)))
+    # The network tripwire (L2) fails every non-GET while Workday shows its Review page.
+    page.observe_review(snapshot.review)
+    return snapshot
 
 
 def wait_for_page(page: Tab, *, previous: str | None = None, seconds: float = 12) -> Preflight:

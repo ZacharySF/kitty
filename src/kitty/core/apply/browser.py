@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -31,6 +32,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from itertools import pairwise
 from pathlib import Path
 
 from kitty.core.apply.bidi import Bidi, BidiError, SessionBusy, SessionEndError, open_session
@@ -55,6 +57,9 @@ PREFS: dict[str, bool | int | str] = {
     "dom.timeout.enable_budget_timer_throttling": False,
     # lets hide_automation restart remote control in Firefox's non-automation mode
     "remote.experimental.dynamicstart.enabled": True,
+    # Firefox's default, written so that a start after kitty's own restart (which
+    # turns it off for that one start, see restart_own_firefox) does not keep it off
+    "browser.sessionstore.resume_from_crash": True,
 }
 
 
@@ -96,9 +101,14 @@ def own_scope(command: list[str]) -> list[str]:
     return [systemd_run, "--user", "--scope", "--quiet", "--collect", *command]
 
 
-def write_prefs(profile_dir: Path) -> None:
-    """Write PREFS to the profile's user.js, which Firefox reads at every start."""
-    lines = [f'user_pref("{name}", {_pref_value(value)});' for name, value in PREFS.items()]
+def write_prefs(profile_dir: Path, *, restore_session: bool = True) -> None:
+    """Write PREFS to the profile's user.js, which Firefox reads at every start.
+
+    `restore_session=False` is for kitty's own restart after a lost connection:
+    the killed session held only kitty's unfinished tabs, never one waiting for me.
+    """
+    prefs = {**PREFS, "browser.sessionstore.resume_from_crash": restore_session}
+    lines = [f'user_pref("{name}", {_pref_value(value)});' for name, value in prefs.items()]
     profile_dir.mkdir(parents=True, exist_ok=True)
     (profile_dir / "user.js").write_text(
         "// Written by kitty at every start of its Firefox (core/apply/browser.py).\n"
@@ -177,8 +187,9 @@ def busy_message(port: int) -> str:
         "controller was identified. It may be a disconnected controller's session. "
         "If its owner is still running, retry close() there; a disconnected direct "
         "BiDi session cannot be reattached. Keep open forms intact. If no owner can "
-        "release it, preserve your work before manually restarting only the rika! "
-        "Firefox window; rika! will not restart it automatically."
+        "release it, finish or discard the tabs waiting for you, then restart the "
+        "rika! Firefox with `kitty apply restart-firefox` (or Restart Firefox in Apply): "
+        "it kills that Firefox, so requests the lost session still holds die unsent."
     )
 
 
@@ -217,7 +228,7 @@ def _wait_for_port(port: int, wait_seconds: float, process: subprocess.Popen | N
     return False
 
 
-def ensure_firefox(settings: Settings, *, wait_seconds: float = 30.0) -> int:
+def ensure_firefox(settings: Settings, *, wait_seconds: float = 30.0, restore_session: bool = True) -> int:
     """Start kitty's Firefox unless it is already up; return its remote-control port."""
     port = settings.browser_port
     if is_listening(port):
@@ -226,7 +237,7 @@ def ensure_firefox(settings: Settings, *, wait_seconds: float = 30.0) -> int:
         raise BrowserError("Firefox not found. Install it or set KITTY_FIREFOX to the binary.")
     if sys.platform == "linux" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         raise BrowserError("Firefox requires an active desktop display. Launch rika! from your desktop session.")
-    write_prefs(settings.browser_profile_dir)
+    write_prefs(settings.browser_profile_dir, restore_session=restore_session)
     process = _start(own_scope(firefox_command(settings.firefox_path, settings.browser_profile_dir, port)))
     if not _wait_for_port(port, wait_seconds, process):
         if process.poll() is not None:
@@ -236,6 +247,80 @@ def ensure_firefox(settings: Settings, *, wait_seconds: float = 30.0) -> int:
             "(is another program using it? set KITTY_BROWSER_PORT)."
         )
     return port
+
+
+def own_firefox_pids(port: int) -> list[int]:
+    """The process of kitty's own Firefox on this remote-control port, never another Firefox.
+
+    Matched by the command line kitty starts it with (firefox_command): this
+    port's --remote-debugging-port, --no-remote and the window name. Linux only
+    (reads /proc); elsewhere the list is empty.
+    """
+    wanted = f"--remote-debugging-port={port}"
+    pids: list[int] = []
+    try:
+        procs = list(Path("/proc").iterdir())
+    except OSError:
+        return pids
+    for proc in procs:
+        if not proc.name.isdigit() or int(proc.name) == os.getpid():
+            continue
+        try:
+            args = [arg.decode(errors="replace") for arg in (proc / "cmdline").read_bytes().split(b"\0") if arg]
+        except OSError:
+            continue                      # gone, or another user's process
+        if (args and Path(args[0]).name != "systemd-run" and wanted in args and "--no-remote" in args
+                and any(name == "--name" and value == APP_ID for name, value in pairwise(args))):
+            pids.append(int(proc.name))
+    return pids
+
+
+def kill_own_firefox(port: int, *, wait_seconds: float = 15.0) -> bool:
+    """Kill kitty's own Firefox on this port at once; True if one was running.
+
+    SIGKILL, not a normal quit: when a lost connection orphaned kitty's session,
+    Firefox still holds that session's intercepted requests. Ending a session
+    sends whatever it still holds (tests/test_bidi_events.py); a normal quit of
+    Firefox 155 did not send one in a probe, but that is shutdown-order detail
+    kitty does not rely on. Killed, they die unsent. Only kitty's own Firefox
+    (own_firefox_pids) is ever signalled.
+    """
+    pids = own_firefox_pids(port)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            continue                      # already gone
+    deadline = time.monotonic() + wait_seconds
+    while pids and time.monotonic() < deadline and (is_listening(port) or any(map(_running, pids))):
+        time.sleep(0.2)
+    if pids and is_listening(port):
+        raise BrowserError(f"kitty's Firefox did not stop; something still listens on port {port}")
+    return bool(pids)
+
+
+def _running(pid: int) -> bool:
+    """False once the process is gone or a zombie (killed, not yet reaped by its parent)."""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return False
+    return state != "Z"
+
+
+def restart_own_firefox(settings: Settings) -> int:
+    """The owner's Restart Firefox (a `restart_firefox:` handoff): kill, then start fresh.
+
+    Refused while a program is connected to its remote-control port (a running
+    rika! fill or watch owns that session). The new start restores no tabs: the
+    owner restarts after finishing or discarding the tabs that waited for him.
+    """
+    port = settings.browser_port
+    if holders := session_holders(port):
+        raise BrowserError("Another program is remote-controlling the rika! Firefox; stop it first. "
+                           "Connected: " + "; ".join(holders))
+    kill_own_firefox(port)
+    return ensure_firefox(settings, restore_session=False)
 
 
 #: Chrome-scope script: is remote control running in automation mode? Wrapped in a
@@ -325,13 +410,17 @@ def _free_port() -> int:
 @contextmanager
 def headless_firefox(settings: Settings, *, profile_dir: Path | None = None) -> Iterator[Bidi]:
     """An invisible Firefox: a throwaway empty profile (tests and smoke runs), or
-    `profile_dir`, a separate profile kept between runs (hiring.cafe discovery)."""
+    `profile_dir`, a separate profile kept between runs (hiring.cafe discovery).
+
+    It quits normally, unless its session could not be ended (a lost connection
+    orphaned it): then it is killed, so requests that session holds die unsent."""
     if not settings.firefox_path:
         raise BrowserError("Firefox not found. Install it or set KITTY_FIREFOX to the binary.")
     profile = profile_dir or Path(tempfile.mkdtemp(prefix="kitty-firefox-"))
     port = _free_port()
     write_prefs(profile)
     process = _start(firefox_command(settings.firefox_path, profile, port, headless=True))
+    ended = False
     try:
         if not _wait_for_port(port, 30.0, process):
             raise BrowserError("headless Firefox did not start within 30s")
@@ -340,8 +429,12 @@ def headless_firefox(settings: Settings, *, profile_dir: Path | None = None) -> 
             yield bidi
         finally:
             bidi.close()
+            ended = True
     finally:
-        process.terminate()
+        if ended:
+            process.terminate()
+        else:
+            process.kill()
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:

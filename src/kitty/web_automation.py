@@ -20,6 +20,8 @@ Only core confirmation rules record submissions::
             effect: {id, digest, expires_at}, demo, watch_hours, firefox_configured, known_answers}
     POST /api/automation/start  {effect_id, digest, confirmed: true, watch?, background?,
                                  authorize_authentication?, authorize_recovery_ai?} -> status
+    POST /api/automation/restart-firefox  {confirmed: true} -> status (phase restarting, then
+        restarted or failed): a restart_firefox: handoff's button; refused while a worker runs
     GET  /api/apply/health  -> kitty.core.apply.health.report (read-only attempt records)
 """
 from __future__ import annotations
@@ -272,6 +274,46 @@ class AutomationController:
                 self._watch.stop.set()
                 self._state["phase"] = "stopping"
             return copy.deepcopy(self._state)
+
+    def restart_firefox(self) -> dict:
+        """The owner's Restart Firefox for a `restart_firefox:` handoff (browser.restart_own_firefox).
+
+        Only while no browser worker runs; the restart itself runs in the worker
+        thread (killing and starting Firefox takes seconds). The handoffs it
+        answers then say the job needs a new preparation plan.
+        """
+        if self.settings.demo:
+            raise _error(403, "Browser automation is disabled in demo mode")
+        with self._lock:
+            if self._closed:
+                raise _error(409, "Browser controller is shutting down")
+            if self._state["running"]:
+                raise _error(409, "A browser worker is active; stop it and wait before restarting Firefox")
+            self._state.update(running=True, phase="restarting", error=None, activity=None,
+                               started_at=_stamp(), finished_at=None)
+            self._thread = threading.Thread(target=self._restart, name="kitty-web-firefox-restart", daemon=True)
+            self._thread.start()
+            return copy.deepcopy(self._state)
+
+    def _restart(self) -> None:
+        from kitty.core.apply.browser import BrowserError, restart_own_firefox
+
+        error = None
+        try:
+            restart_own_firefox(self.settings)
+        except BrowserError as exc:
+            error = str(exc).strip().splitlines()[0][:300] if str(exc).strip() else "Firefox could not restart"
+        except Exception as exc:  # noqa: BLE001 - the worker reports instead of dying silently
+            error = f"Firefox could not restart ({type(exc).__name__})"
+        with self._lock:
+            if error is None:
+                self._tabs.clear()              # every tab went with the old Firefox
+                for row in self._state["reports"]:
+                    if (row.get("note") or "").startswith("restart_firefox:"):
+                        row["note"] = ("Firefox restarted: review a new preparation plan for this job "
+                                       "(Continue filling).")
+            self._state.update(running=False, phase="failed" if error else "restarted", error=error,
+                               finished_at=_stamp())
 
     def close(self) -> None:
         """Wait for the session to release before deleting a temporary workspace."""
@@ -583,6 +625,12 @@ def post(app, conn, path: str, body: dict) -> dict | None:
     if path == "/api/automation/stop":
         _keys(body, set())
         return app.automation.stop()
+    if path == "/api/automation/restart-firefox":
+        # A restart_firefox: handoff's button: kills the rika! Firefox (requests its lost
+        # session still held die unsent) and starts it without restoring tabs.
+        _keys(body, {"confirmed"})
+        _confirm(app, body)
+        return app.automation.restart_firefox()
     if path == "/api/questions/refresh":
         _keys(body, set())
         with transaction(conn):
