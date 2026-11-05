@@ -65,6 +65,9 @@ class VerificationMessage:
     subject: str = field(repr=False)
     text: str = field(repr=False)
     links: tuple[str, ...] = field(default=(), repr=False)
+    #: Gmail's own Authentication-Results show dkim=pass and dmarc=pass for the
+    #: sender's domain. Emailed links are opened only when this is True.
+    authenticated: bool = False
 
 
 def _address(value: str) -> str:
@@ -142,6 +145,9 @@ def _original_headers(source: str) -> dict[str, str]:
             if len(values) > 1:
                 raise VerificationMailError("unsupported")
             result[name] = str(values[0]) if values else ""
+        # Gmail prepends its own result; any lower copy may be sender-written.
+        results = parsed.get_all("authentication-results", [])
+        result["authentication-results"] = str(results[0]) if results else ""
         received = parsed.get_all("received", [])
         if not received:
             raise VerificationMailError("unsupported")
@@ -171,6 +177,33 @@ def _qualify(headers: dict, request: MailRequest) -> tuple[str, tuple[str, ...],
     if not request.requested_at <= received_at <= min(request.expires_at, datetime.now(UTC)):
         return None
     return senders[0][1].casefold(), recipients, received_at
+
+
+def gmail_authenticated(results: str, sender: str) -> bool:
+    """Whether Gmail's uppermost Authentication-Results (authserv-id mx.google.com,
+    RFC 8601) shows dkim=pass and dmarc=pass, both aligned (relaxed, one domain inside
+    the other) with `sender`'s domain. Anything missing or different is False."""
+    text = re.sub(r"\s+", " ", results or "").strip().casefold()
+    authserv, _, rest = text.partition(";")
+    if authserv.strip() != "mx.google.com" or not rest:
+        return False
+    domain = sender.rsplit("@", 1)[-1].casefold()
+
+    def aligned(other: str) -> bool:
+        return "." in other and (other == domain or domain.endswith("." + other) or other.endswith("." + domain))
+
+    dkim = dmarc = False
+    for clause in rest.split(";"):
+        match = re.match(r"\s*(dkim|dmarc)=([a-z]+)\b(.*)", clause)
+        if not match or match[2] != "pass":
+            continue
+        if match[1] == "dkim":
+            signer = re.search(r"\bheader\.(?:d|i)=@?([a-z0-9.-]+)", match[3])
+            dkim = dkim or bool(signer and aligned(signer[1]))
+        else:
+            author = re.search(r"\bheader\.from=([a-z0-9.-]+)", match[3])
+            dmarc = dmarc or bool(author and aligned(author[1]))
+    return dkim and dmarc
 
 
 # Every DOM operation repeats the origin/account check *inside* the sandbox
@@ -553,6 +586,7 @@ def _read_message(
     return VerificationMessage(
         id=message_id, sender=qualified[0], recipients=qualified[1], received_at=qualified[2],
         subject=headers.get("subject", ""), text=payload["text"], links=tuple(payload["links"]),
+        authenticated=gmail_authenticated(headers.get("authentication-results", ""), qualified[0]),
     )
 
 

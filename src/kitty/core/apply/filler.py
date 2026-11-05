@@ -34,7 +34,9 @@ from kitty.core import resumes as resumes_core
 from kitty.core.resume_versions import default_resume
 from kitty.core.discovery.text import authorization_jurisdiction
 from kitty.core.refresh import PostingCheck, persist_check
-from kitty.core.apply.auth import authenticate, authentication_pending, google_session
+from kitty.core.apply import accounts as accounts_core
+from kitty.core.apply.account_flow import AccountStage
+from kitty.core.apply.auth import AuthResult, authenticate, authentication_pending, google_session
 from kitty.core.apply.residence_gate import complete_residence_gate, prepare_profile_bootstrap, residence_gate, submit_profile_bootstrap
 from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, SessionEndError, Tab, TabClosed, open_session, open_tab
 from kitty.core.apply.browser import (
@@ -603,6 +605,8 @@ def fill_job(
     credentials = None
     closed_url: str | None = None
     policy = config.apply.authentication
+    # A granted ATS-family tenant (accounts.tenant_for): its own credentials and policy.
+    tenant: accounts_core.Tenant | None = None
     foreground: Tab | None = None
     recovery = None
 
@@ -652,6 +656,22 @@ def fill_job(
             approved_resume(approval, conn, settings, current)
         recovery.checkpoint()
 
+    def granted() -> str | None:
+        """Adopt the granted tenant at the current page (policy and credentials), or a handoff."""
+        nonlocal tenant, policy
+        if research:
+            return None
+        from kitty.config import _authentication_origin
+        if tenant is not None and tenant.origin == _authentication_origin(page.main.url):
+            return None
+        try:
+            found = accounts_core.tenant_for(conn, settings, config, page.main.url)
+        except accounts_core.AccountError as exc:
+            return str(exc)
+        if found is not None:
+            tenant, policy = found, found.policy
+        return None
+
     def verify_email(*, started=None, sent=False):
         nonlocal credentials, authentication_attempted, verification_attempts
         if verification_attempts >= 2:
@@ -660,14 +680,16 @@ def fill_job(
         verification_attempts += 1
         attempt.reach("verify")
         verify()
-        try:
-            credentials = load_credentials(settings)
-        except CredentialError as exc:
-            report.status, report.note = "blocked", str(exc)
-            return False
-        if policy._credential_binding is not None and credential_binding(credentials) != policy._credential_binding:
-            raise ApprovalError(APPROVAL_CHANGED)
-        page.bidi.protect_secrets(credentials.email, credentials.password)
+        if tenant is not None:
+            credentials = tenant.credentials
+        else:
+            try:
+                credentials = load_credentials(settings)
+            except CredentialError as exc:
+                report.status, report.note = "blocked", str(exc)
+                return False
+            if policy._credential_binding is not None and credential_binding(credentials) != policy._credential_binding:
+                raise ApprovalError(APPROVAL_CHANGED)
         if progress:
             progress(f'verifying:{job.id}')
         result = complete_email_verification(
@@ -685,6 +707,8 @@ def fill_job(
             if "employer email verification" not in report.filled:
                 report.filled.append("employer email verification")
                 written.append(attempts_core.Written("employer email verification", "account"))
+            if tenant is not None and tenant.account.state in ("unknown", "created"):
+                accounts_core.set_state(conn, tenant.origin, "verified", event="verified")
             authentication_attempted = False
             recovery.accepted_navigation()
             return True
@@ -756,6 +780,14 @@ def fill_job(
                 attempt.reach("entry")
             if (before.blocker or "").startswith("verification:"):
                 attempt.reach("verify")
+            family = None if research else accounts_core.granted_family(conn, page.main.url)
+            if family is not None and (
+                    (before.blocker or "").startswith(("verification:", "login:"))
+                    or authentication_pending(page) or (family == "eightfold" and residence_gate(page))):
+                # The owner's family grant covers this tenant: its own account policy.
+                if handoff := granted():
+                    report.status, report.note = "blocked", handoff
+                    break
             if (not research and policy.enabled and policy.email_verification.enabled
                     and before.blocker and before.blocker.startswith("verification:")):
                 if verify_email():
@@ -800,6 +832,22 @@ def fill_job(
                 authentication_attempted = True
                 if policy.account_mode == "google":
                     authentication = google_session(page, policy, config.profile.email.strip())
+                elif tenant is not None:
+                    def account_checkpoint():
+                        # Account pages are guarded auth transactions: a navigation that
+                        # stays inside the tenant's approval becomes the owned page.
+                        if policy.approves(page.main.url):
+                            recovery.accepted_navigation()
+                        verify()
+
+                    stage = AccountStage(page, conn, settings, tenant, job_id=job.id,
+                                         application_url=job.apply_url or job.url, checkpoint=account_checkpoint)
+                    try:
+                        authentication = stage.run()
+                    except accounts_core.AccountError as exc:
+                        authentication = AuthResult(blocker=str(exc))
+                    tenant = stage.tenant
+                    credentials = tenant.credentials
                 else:
                     try:
                         credentials = load_credentials(settings)
@@ -808,7 +856,8 @@ def fill_job(
                         break
                     page.bidi.protect_secrets(credentials.email, credentials.password)
                     authentication = authenticate(page, policy, credentials,
-                                                  application_url=job.apply_url or job.url)
+                                                  application_url=job.apply_url or job.url,
+                                                  memory=accounts_core.Memory(conn, settings))
                 report.filled.extend(_ACCOUNT_FIELD_LABELS[role] for role in authentication.filled)
                 written.extend(attempts_core.Written(_ACCOUNT_FIELD_LABELS[role], "account")
                                for role in authentication.filled)
@@ -1445,6 +1494,24 @@ def fill_jobs(
         if len(local_reports) == len(job_ids):
             report_filled(local_reports)
             return local_reports
+        if locked := accounts_core.keyring_blocker(conn, settings):
+            # Employer account passwords live in a keyring that is locked: a typed
+            # handoff before any browser opens, never an unlock prompt nobody sees.
+            say(locked)
+            reports = []
+            for job_id in job_ids:
+                job = jobs_core.get_job(conn, job_id)
+                if job is None or preparation_blocker(job, eligibility_override=eligibility_override):
+                    reports.append(next(r for r in local_reports if r.job_id == job_id))
+                    continue
+                report = _blocked_report(job, locked)
+                report.attempt_id = attempts_core.record(
+                    conn, job_id=job.id, ats=report.ats, url=report.url, progress=attempts_core.Progress(),
+                    status=report.status, note=report.note, error=None, outcome_cause=report.cause, run=run,
+                )
+                reports.append(report)
+            report_filled(reports)
+            return reports
         if approval is not None:
             for job_id in job_ids:
                 job = jobs_core.get_job(conn, job_id)

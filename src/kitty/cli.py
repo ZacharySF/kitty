@@ -627,8 +627,9 @@ def _print_discover_report(report) -> None:
 def apply(
     job_ids: Annotated[Optional[list[str]], typer.Argument(
         help="Job ids to open and fill; `report` for the apply health report; `resolve [JOB_IDS]...` "
-             "to check postings are open and resolve redirects.",
-        metavar="[JOB_IDS]... | report | resolve [JOB_IDS]...",
+             "to check postings are open and resolve redirects; `accounts [grant|revoke FAMILY]` for "
+             "the employer account registry and ATS-family grants.",
+        metavar="[JOB_IDS]... | report | resolve [JOB_IDS]... | accounts [grant|revoke FAMILY]",
     )] = None,
     queued: Annotated[bool, typer.Option("--queued", help="Every queued job you have not applied to.")] = False,
     top: Annotated[Optional[int], typer.Option("--top", help="The N best new/queued jobs you have not applied to.")] = None,
@@ -659,6 +660,11 @@ def apply(
     Tesla, employer-own portals, Paradox) become typed handoffs. Without job ids it checks
     every new/queued job (or --queued / --top N); public GETs only, robots.txt respected, at
     most one request per second per host. `--dry-run` reports the changes and writes nothing.
+
+    `kitty apply accounts` lists the employer account registry (state, login email, password
+    profile and where it is stored, never a password) and the ATS-family grants;
+    `kitty apply accounts grant workday` (or revoke) is your one-time approval for kitty to
+    create, verify, sign in to and reset accounts on that family's tenants (web, CLI, autofill).
     """
     from kitty.core.apply.filler import EligibilityOverride, fill_jobs
     from kitty.core.apply.watch import Watch
@@ -668,6 +674,12 @@ def apply(
             error_console.print("`kitty apply report` takes no job ids or fill options (only --json).")
             raise typer.Exit(code=1)
         _apply_report(as_json)
+        return
+    if job_ids and job_ids[0] == "accounts":
+        if queued or top or track or headless or no_watch or include_ineligible or dry_run:
+            error_console.print("`kitty apply accounts` takes only grant/revoke FAMILY and --json.")
+            raise typer.Exit(code=1)
+        _apply_accounts(job_ids[1:], as_json)
         return
     resolving = bool(job_ids) and job_ids[0] == "resolve"
     if resolving:
@@ -758,6 +770,50 @@ def _rate_text(rate: float | None, low: float | None, high: float | None, n: int
     if rate is None:
         return f"insufficient data (n = {n})"
     return f"{_percent(rate)} ({_percent(low)}–{_percent(high)}), n = {n}"
+
+
+def _apply_accounts(args: list[str], as_json: bool) -> None:
+    """List the account registry and family grants, or grant/revoke one family."""
+    import json
+
+    from kitty.core.apply import accounts
+    from kitty.core.apply.grants import FAMILIES
+
+    if args and (len(args) != 2 or args[0] not in ("grant", "revoke") or args[1] not in FAMILIES):
+        error_console.print(f"Use `kitty apply accounts [grant|revoke FAMILY]`; families: {', '.join(FAMILIES)}.")
+        raise typer.Exit(code=1)
+    workspace = _open()
+    try:
+        if args:
+            accounts.set_grant(workspace.conn, args[1], args[0] == "grant")
+        found = accounts.listing(workspace.conn, workspace.settings, workspace.config)
+    finally:
+        workspace.close()
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+        return
+    console.print("[bold]ATS-family grants[/bold] (create, verify, sign in and reset on matching tenants)")
+    for grant in found["grants"]:
+        state = f"[green]granted {grant['granted_at']}[/green]" if grant["granted"] else "[dim]not granted[/dim]"
+        console.print(f"  {grant['label']:<26} {state}  [dim]{', '.join(grant['patterns'])}[/dim]")
+    caps = found["caps"]
+    console.print(f"\nNew accounts in the last 24 h: {caps['new_accounts_today']}/{caps['new_accounts_per_day']}; "
+                  f"sign-in tries per employer per day: at most {caps['sign_ins_per_tenant_per_day']}.")
+    if found["keyring_locked"]:
+        console.print("[yellow]The OS keyring is locked: runs hand off until you unlock it.[/yellow]")
+    for warning in found["warnings"]:
+        console.print(f"[yellow]{escape(warning)}[/yellow]")
+    if not found["accounts"]:
+        console.print("\nNo employer accounts recorded yet.")
+        return
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    for column in ("family", "employer", "login email", "state", "password", "stored", "last sign-in"):
+        table.add_column(column)
+    for row in found["accounts"]:
+        table.add_row(row["family"], row["origin"], row["login_email"], row["state"], row["password_profile"],
+                      row["password_stored"] or "-", row["last_sign_in_at"] or "-")
+    console.print()
+    console.print(table)
 
 
 def _apply_report(as_json: bool) -> None:
@@ -1792,6 +1848,11 @@ def keys_list() -> None:
     if not status["keyring"]:
         console.print("[yellow]No OS keyring is available: new keys are stored in an owner-only file "
                       "under .private/.[/yellow]")
+    if status["account_passwords"]["count"]:
+        console.print(f"{status['account_passwords']['count']} employer account password(s) (APPLY_PW_*) are "
+                      "listed per employer by `kitty apply accounts`.")
+    for warning in status["warnings"]:
+        console.print(f"[yellow]{escape(warning)}[/yellow]")
 
 
 @keys_app.command("set")

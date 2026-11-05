@@ -37,11 +37,11 @@ import re
 import time
 from dataclasses import dataclass
 from hmac import compare_digest
-from weakref import WeakKeyDictionary
+from typing import Protocol
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from kitty.config import AuthenticationSettings, _authentication_origin
-from kitty.core.apply.bidi import Bidi, BidiError, Frame, Tab
+from kitty.core.apply.bidi import BidiError, Frame, Tab
 from kitty.core.apply.credentials import ApplicationCredentials, credential_binding
 from kitty.core.apply.guard import ACTIVATE_JS, CREDENTIAL, FIELD, UnsafeAction
 from kitty.core.apply.oracle_email import oracle_email_gate
@@ -55,12 +55,44 @@ _SIGN_IN_REJECTED = (
     "login: employer rejected sign-in or the account may be locked; "
     "resolve it in the retained tab before retrying"
 )
+_ACCOUNT_LOCKED = "login: employer rejected sign-in: this account is locked; sign in yourself after it unlocks"
+_EMAIL_IN_USE = "login: this email already has an account; use the existing-account sign-in"
+_SEPARATE_SIGN_IN = "login: account creation reached a separate sign-in step; continue yourself"
+_PASSWORD_REFUSED = "login: the employer refused the new account password's format"
 
-# Process-local reviewed credential tokens only: never persist/log raw credentials.
-# Retain rejection/account existence across reloads and new owned tabs, then
-# release it with the controller. Durable manual/existing-origin policy is separate.
-_REJECTED_ACCOUNTS: WeakKeyDictionary[Bidi, set[tuple[str, str]]] = WeakKeyDictionary()
-_EXISTING_ACCOUNTS: WeakKeyDictionary[Bidi, set[tuple[str, str]]] = WeakKeyDictionary()
+
+class AccountMemory(Protocol):
+    """Durable account facts authenticate consults and records.
+
+    The registry implementation is kitty.core.apply.accounts.Memory (apply_accounts);
+    a rejected identity is never submitted again with the same password, and an
+    observed existing account forces sign-in instead of another registration.
+    """
+
+    def rejected(self, origin: str, credentials: ApplicationCredentials) -> bool: ...
+    def reject(self, origin: str, credentials: ApplicationCredentials, *, locked: bool) -> None: ...
+    def exists(self, origin: str, email: str) -> bool: ...
+    def mark_exists(self, origin: str, email: str) -> None: ...
+
+
+class _CallMemory:
+    """Account facts for one authenticate call when no registry is supplied."""
+
+    def __init__(self) -> None:
+        self._rejected: set[tuple[str, str]] = set()
+        self._existing: set[tuple[str, str]] = set()
+
+    def rejected(self, origin: str, credentials: ApplicationCredentials) -> bool:
+        return (origin, credential_binding(credentials)) in self._rejected
+
+    def reject(self, origin: str, credentials: ApplicationCredentials, *, locked: bool) -> None:
+        self._rejected.add((origin, credential_binding(credentials)))
+
+    def exists(self, origin: str, email: str) -> bool:
+        return (origin, email.casefold()) in self._existing
+
+    def mark_exists(self, origin: str, email: str) -> None:
+        self._existing.add((origin, email.casefold()))
 
 
 # Workday's login URL carries the retained application in a once-encoded
@@ -150,7 +182,7 @@ _ANALYZE = r"""
     catch { return false; }
   };
   const state = {blocker: null, submitBlocker: null, hasPassword: false, hasIdentity: false,
-                 rejected: false,
+                 rejected: false, locked: false, passwordRefused: false,
                  stage: null, accountStatus: null, mode: null, roles: [], signature: '',
                  url: location.href, action: null, preparePost: false, top: window.top === window};
   const els = {};
@@ -195,6 +227,11 @@ _ANALYZE = r"""
     /\b(?:wrong|incorrect|invalid) (?:e-?mail(?: address)?|user ?name|password|credentials|login)\b/i.test(credentialAlerts) ||
     /\b(?:password|credentials|sign[ -]?in|log[ -]?in)\b[^.!?]{0,80}\b(?:incorrect|invalid|not correct|do(?:es)? not match|failed|unsuccessful)\b/i.test(credentialAlerts) ||
     /\baccount (?:is|has been|might be) (?:temporarily )?locked\b/i.test(credentialAlerts);
+  state.locked = /\baccount (?:is|has been) (?:temporarily )?locked\b/i.test(credentialAlerts);
+  // A new-account password the employer's policy refused (create forms only).
+  state.passwordRefused =
+    /\bpassword\b[^.!?]{0,80}\b(?:must|should|requirements?|too (?:short|long|weak|common|simple)|not (?:strong|valid|allowed)|does not meet|invalid|cannot (?:contain|be|include)|at least|at most|no more than)\b/i.test(credentialAlerts) ||
+    /\b(?:must|should) (?:contain|include|have|be)\b[^.!?]{0,80}\b(?:characters?|letters?|numbers?|digits?|symbols?)\b/i.test(credentialAlerts);
   const accountAlerts = alertTexts.filter(t => !/^(?:if|when)\b/i.test(t)).join(' ');
   if (/(?:account(?: with (?:this|your) email(?: address)?)? already exists|email (?:is )?already (?:registered|in use))/i.test(accountAlerts))
     state.accountStatus = 'exists';
@@ -323,9 +360,11 @@ _ANALYZE = r"""
       headings.some(t => CREATE_HEADING.test(t))
       ? 'create' : 'login';
   state.stage = identityFirst ? 'identity' : 'password';
-  if (state.rejected) return stop('""" + _SIGN_IN_REJECTED + r"""');
+  if (state.mode === 'create' && state.passwordRefused && !state.locked) state.rejected = false;
+  else state.passwordRefused = false;
+  if (state.rejected) return stop(state.locked ? '""" + _ACCOUNT_LOCKED + r"""' : '""" + _SIGN_IN_REJECTED + r"""');
   if (state.mode === 'create' && state.accountStatus === 'exists')
-    return stop('login: this email already has an account; use the existing-account sign-in');
+    return stop('""" + _EMAIL_IN_USE + r"""');
   if (/submit|apply/i.test(button.getAttribute('aria-label') || '') &&
       !(nativeAction && /^submit$/i.test(text(button))))
     return stop('login: the account button also holds application actions; continue yourself');
@@ -466,6 +505,29 @@ _WRITE_JS = r"""
   }
   el.blur();
   return el.value === value;
+}
+"""
+
+#: Empty the refused password boxes of a still-displayed create form (no value is
+#: read back), so the replacement password is written into empty fields.
+_CLEAR_PASSWORDS_JS = r"""
+(approved) => {
+  const {state, els} = (""" + _ANALYZE + r""")(approved, null, null);
+  if (state.blocker || state.mode !== 'create' || !state.passwordRefused) return false;
+  for (const role of ['password', 'passwordConfirm']) {
+    const el = els[role];
+    if (!el || !el.value) continue;
+    el.focus();
+    if (typeof el.select === 'function') el.select();
+    if (!document.execCommand('delete') || el.value) {
+      el.value = '';
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      el.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+    el.blur();
+    if (el.value) return false;
+  }
+  return true;
 }
 """
 
@@ -673,11 +735,16 @@ _FAILED = "login: the browser refused a sign-in step; sign in yourself"
 
 @dataclass(frozen=True)
 class AuthResult:
-    """Credential request attempted, or Google returned; filled contains credential roles only."""
+    """Credential request attempted, or Google returned; filled contains credential roles only.
+
+    `modes` lists each account action submitted, in order (``create`` / ``login``),
+    so the registry can record a new account or a sign-in try.
+    """
 
     acted: bool = False
     blocker: str | None = None
     filled: tuple[str, ...] = ()
+    modes: tuple[str, ...] = ()
 
 
 def _guarded_click(
@@ -869,8 +936,12 @@ def google_session(page: Tab, policy: AuthenticationSettings, email: str) -> Aut
         return handoff("the browser could not safely identify or complete this session flow")
 
 
-
-_AUTH_WAIT_SECONDS = 15.0  # Workday account creation alone took ~3s live
+#: Sign-in and account receipts wait on page evidence (navigation, an error banner,
+#: the next screen) this long; a navigation still pending at the end gets one more
+#: wait (slow redirect). Credentials are never submitted again by the wait.
+_AUTH_WAIT_SECONDS = 45.0
+#: A disabled account action may enable itself after validation (Workday ~3 s).
+_ENABLE_WAIT_SECONDS = 15.0
 _NO_PROGRESS = (
     "login: the account action did not advance to a verified next step; "
     "continue in the retained tab without repeating credentials"
@@ -926,8 +997,8 @@ def _auth_context(
                 return frame, state, "login: application ownership changed; review a new preparation plan"
         blocker = state["blocker"]
         if state["rejected"]:
-            return frame, state, _SIGN_IN_REJECTED
-        if blocker and (blocker == _SIGN_IN_REJECTED or
+            return frame, state, _ACCOUNT_LOCKED if state.get("locked") else _SIGN_IN_REJECTED
+        if blocker and (blocker in (_SIGN_IN_REJECTED, _ACCOUNT_LOCKED) or
                         blocker.startswith(("captcha:", "verification:", "consent:"))):
             return frame, state, blocker
         if state["hasPassword"] or state["stage"] or state["accountStatus"]:
@@ -966,19 +1037,31 @@ def _wait_auth_receipt(
     """Wait for semantic account progress or a loaded application, never DOM churn.
 
     After credential submission, replacing an unchanged form is not progress.
-    Observe a new stage/mode, explicit account-status receipt, or a recognized
-    application boundary. Read-only navigation races never repeat the action.
+    Observe a new stage/mode, explicit account-status receipt, a new password-policy
+    refusal, or a recognized application boundary. Read-only navigation races never
+    repeat the action; a navigation still pending when the wait ends gets one more.
     """
     from kitty.core.apply.preflight import inspect_page
 
     deadline = time.monotonic() + _AUTH_WAIT_SECONDS
-    while time.monotonic() < deadline:
+    pending = extended = False
+    while True:
+        if time.monotonic() >= deadline:
+            if not pending or extended:
+                return None, None, _NO_PROGRESS
+            extended = True
+            deadline = time.monotonic() + _AUTH_WAIT_SECONDS
         try:
             frame, state, blocker = _auth_context(
                 page, approved, application_binding=application_binding,
             )
+            pending = False
             if blocker:
                 return frame, state, blocker
+            if state and state.get("passwordRefused") and (
+                not before or not before.get("passwordRefused") or state["signature"] != before["signature"]
+            ):
+                return frame, state, _PASSWORD_REFUSED
             if state:
                 changed = not before or state["signature"] != before["signature"]
                 semantic = not before or any(
@@ -1013,29 +1096,30 @@ def _wait_auth_receipt(
         except BidiError:
             # Only observations are retried; a discarded click reply is not an
             # authorization to submit the same password a second time.
-            pass
+            pending = True
         time.sleep(0.15)
-    return None, None, _NO_PROGRESS
 
 
 def authenticate(
     page: Tab, policy: AuthenticationSettings, credentials: ApplicationCredentials, *,
-    application_url: str | None = None,
+    application_url: str | None = None, memory: AccountMemory | None = None,
+    refused_ok: bool = False,
 ) -> AuthResult:
     """Run bounded account stages, retaining a supplied Workday posting binding.
 
     The caller supplies its reviewed job URL, never the current login redirect.
     Binding checks supplement approved origins and existing one-shot credential
     guards; accepting a login redirect never permits another account submission.
+    Tenant credentials (``credentials.origin``) are typed only on that origin.
+    `memory` holds durable account facts (kitty.core.apply.accounts.Memory).
+    `refused_ok` lets a caller that replaced a refused new-account password fill
+    the still-displayed create form once more with the new one.
     """
     if policy.account_mode == "google":
         return AuthResult(blocker="login: Google session reuse never accepts employer credentials")
     if not policy.enabled:
         return AuthResult(blocker="login: login automation is off (apply.yaml authentication.enabled)")
     binding = credential_binding(credentials)
-    # Existence belongs to the identity, not its current password. This empty
-    # password is fingerprint input only and is never sent to a browser realm.
-    identity_binding = credential_binding(ApplicationCredentials(credentials.email, ""))
     if policy._credential_binding is not None and not compare_digest(
         policy._credential_binding, binding,
     ):
@@ -1045,33 +1129,36 @@ def authenticate(
     application_binding = workday_application_binding(application_url) if application_url else None
     secrets = (credentials.email, credentials.password)
     filled: list[str] = []
+    modes: list[str] = []
     acted = False
     desired = policy.account_mode
     submitted: set[tuple[str, str]] = set()
     entries: set[tuple[str, str | None]] = set()
     existing_account = False
-    rejected_accounts = _REJECTED_ACCOUNTS.setdefault(page.bidi, set())
-    existing_accounts = _EXISTING_ACCOUNTS.setdefault(page.bidi, set())
+    memory = memory if memory is not None else _CallMemory()
     origin: str | None = None
+    wrong_tenant = "login: these account credentials belong to another employer origin; continue yourself"
 
     def result(blocker: str | None = None) -> AuthResult:
-        if blocker == _SIGN_IN_REJECTED:
+        if blocker in (_SIGN_IN_REJECTED, _ACCOUNT_LOCKED):
             rejected_origin = origin
             try:
                 rejected_origin = _authentication_origin(page.main.url)
             except (BidiError, UnsafeAction):
                 pass
             if rejected_origin in approved:
-                rejected_accounts.add((rejected_origin, binding))
-        return AuthResult(acted=acted, blocker=blocker, filled=tuple(filled))
+                memory.reject(rejected_origin, credentials, locked=blocker == _ACCOUNT_LOCKED)
+        return AuthResult(acted=acted, blocker=blocker, filled=tuple(filled), modes=tuple(modes))
 
     try:
         origin = _authentication_origin(page.main.url)
         if origin in policy.manual_account_origins:
             return result("login: this account origin is configured for manual authentication; continue yourself")
-        if (origin, binding) in rejected_accounts:
+        if credentials.origin is not None and origin != credentials.origin:
+            return result(wrong_tenant)
+        if memory.rejected(origin, credentials):
             return result(_SIGN_IN_REJECTED)
-        if origin in policy.existing_account_origins or (origin, identity_binding) in existing_accounts:
+        if origin in policy.existing_account_origins or memory.exists(origin, credentials.email):
             existing_account = True
             desired = "login"
             policy = policy.model_copy(update={"account_mode": "login", "allow_account_creation": False})
@@ -1082,7 +1169,7 @@ def authenticate(
             origin = _authentication_origin(page.main.url)
             if origin in policy.manual_account_origins:
                 return result("login: this account origin is configured for manual authentication; continue yourself")
-            if (origin, binding) in rejected_accounts:
+            if memory.rejected(origin, credentials):
                 return result(_SIGN_IN_REJECTED)
             # Never retain a frame/form locator across navigation or identity
             # transitions. The writer also binds each field to this DOM instance.
@@ -1092,24 +1179,29 @@ def authenticate(
             document_origin = _authentication_origin(state["url"]) if state else origin
             if document_origin in policy.manual_account_origins:
                 return result("login: this account origin is configured for manual authentication; continue yourself")
-            if (document_origin, binding) in rejected_accounts:
+            if credentials.origin is not None and credentials.origin != origin or (
+                    credentials.origin is not None and credentials.origin != document_origin):
+                return result(wrong_tenant)
+            if memory.rejected(document_origin, credentials):
                 return result(_SIGN_IN_REJECTED)
             if (origin in policy.existing_account_origins or
                     document_origin in policy.existing_account_origins or
-                    (origin, identity_binding) in existing_accounts or
-                    (document_origin, identity_binding) in existing_accounts):
+                    memory.exists(origin, credentials.email) or
+                    memory.exists(document_origin, credentials.email)):
                 existing_account = True
                 desired = "login"
             if blocker:
                 return result(blocker)
+            if state and state.get("passwordRefused") and not refused_ok:
+                return result(_PASSWORD_REFUSED)
             if state and state["accountStatus"] == "exists":
                 existing_account = True
                 if document_origin in approved:
-                    existing_accounts.add((document_origin, identity_binding))
+                    memory.mark_exists(document_origin, credentials.email)
                 if policy.account_mode == "auto":
                     desired = "login"
                 elif desired == "create":
-                    return result("login: this email already has an account; use the existing-account sign-in")
+                    return result(_EMAIL_IN_USE)
             elif state and state["accountStatus"] == "missing" and policy.account_mode == "auto":
                 if existing_account or ("create", "password") in submitted:
                     return result("login: account-state evidence conflicts; do not create another account")
@@ -1174,6 +1266,8 @@ def authenticate(
             attempt = (state["mode"], state["stage"])
             if attempt in submitted:
                 return result(_NO_PROGRESS)
+            if refused_ok and state.get("passwordRefused") and frame.call(_CLEAR_PASSWORDS_JS, approved) is not True:
+                return result(_CHANGED)
             for role in state["roles"]:
                 done = frame.call(_WRITE_JS, approved, *secrets, state["signature"], role)
                 if done is not True:
@@ -1211,7 +1305,7 @@ def authenticate(
             # field commit before the single account action.
             frame.call("() => { document.activeElement?.blur?.(); }")
             time.sleep(0.8)
-            deadline = time.monotonic() + _AUTH_WAIT_SECONDS
+            deadline = time.monotonic() + min(_AUTH_WAIT_SECONDS, _ENABLE_WAIT_SECONDS)
             while True:
                 readiness = frame.call("""(...args) => {
                   const target = (""" + _ACCOUNT_TARGET_JS + r""")(...args);
@@ -1237,6 +1331,7 @@ def authenticate(
             if blocker:
                 return result(blocker)
             acted = True
+            modes.append(state["mode"])
             _, observed, blocker = _wait_auth_receipt(
                 page, approved, state, application_binding=application_binding,
             )
@@ -1244,15 +1339,15 @@ def authenticate(
                 return result(blocker)
             if observed is None:
                 if document_origin is not None:
-                    existing_accounts.add((document_origin, identity_binding))
+                    memory.mark_exists(document_origin, credentials.email)
                 return result()
             if (state["stage"] == "password" and state["mode"] == "create" and
                     observed["mode"] == "login" and not observed["blocker"]):
                 existing_account = True
                 if document_origin is not None:
-                    existing_accounts.add((document_origin, identity_binding))
+                    memory.mark_exists(document_origin, credentials.email)
                 if policy.account_mode != "auto":
-                    return result("login: account creation reached a separate sign-in step; continue yourself")
+                    return result(_SEPARATE_SIGN_IN)
                 desired = "login"
             elif state["stage"] == "password" and not observed["accountStatus"]:
                 return result(_NO_PROGRESS)

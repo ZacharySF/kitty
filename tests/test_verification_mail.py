@@ -468,3 +468,41 @@ def test_browser_header_operations_have_a_hard_message_budget(mailbox):
     assert len(originals) == 5
     assert mailbox.page.main.call("() => location.hash") == "#inbox"
     assert mailbox.application.main.call("() => document.visibilityState") == "visible"
+
+
+# ---------------------------------------------------------------- DKIM/DMARC (Step 5 link rules)
+
+GOOD_RESULTS = ("mx.google.com; dkim=pass header.i=@sender.example.invalid header.s=s1 header.b=abc; "
+                "spf=pass (google.com: domain of bounce@sender.example.invalid) smtp.mailfrom=sender.example.invalid; "
+                "dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=sender.example.invalid")
+
+
+@pytest.mark.parametrize("results, expected", [
+    (GOOD_RESULTS, True),
+    # Relaxed alignment: the signing/From domain may be the sender's parent domain.
+    (GOOD_RESULTS.replace("@sender.example.invalid", "@example.invalid")
+     .replace("header.from=sender.example.invalid", "header.from=example.invalid"), True),
+    (GOOD_RESULTS.replace("dkim=pass", "dkim=fail"), False),
+    (GOOD_RESULTS.replace("dmarc=pass", "dmarc=fail"), False),
+    (GOOD_RESULTS.replace("dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=sender.example.invalid", ""), False),
+    # Signed by somebody else's domain, or Gmail never stamped it.
+    (GOOD_RESULTS.replace("@sender.example.invalid", "@attacker.example"), False),
+    (GOOD_RESULTS.replace("header.from=sender.example.invalid", "header.from=attacker.example"), False),
+    (GOOD_RESULTS.replace("mx.google.com", "mx.attacker.example"), False),
+    ("", False),
+])
+def test_gmail_authentication_results_need_aligned_dkim_and_dmarc_pass(results, expected):
+    assert verification_mail.gmail_authenticated(results, SENDER) is expected
+
+
+def test_only_the_uppermost_authentication_results_header_counts():
+    fresh = format_datetime(request_at().requested_at + timedelta(seconds=30))
+    forged = GOOD_RESULTS
+    headers = _original_headers(
+        f"Authentication-Results: mx.google.com; dkim=fail header.i=@sender.example.invalid; "
+        f"dmarc=fail header.from=sender.example.invalid\r\n"
+        f"Delivered-To: {RECIPIENT}\r\nReceived: by synthetic.mail.invalid; {fresh}\r\n"
+        f"Authentication-Results: {forged}\r\n"
+        f"From: {SENDER}\r\nTo: {RECIPIENT}\r\n\r\n"
+    )
+    assert not verification_mail.gmail_authenticated(headers["authentication-results"], SENDER)

@@ -21,6 +21,10 @@ export interface KeysState {
   keyring_label: string | null;
   /** Where a new key is stored. */
   store: "keyring" | "file";
+  /** Generated employer account passwords (APPLY_PW_*), listed per employer in Settings → Accounts. */
+  account_passwords: { count: number; in_file: number };
+  /** Visible warnings, e.g. account passwords held in owner-only files without a keyring. */
+  warnings: string[];
 }
 
 export const KEY_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;

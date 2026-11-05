@@ -18,9 +18,10 @@ const repository = fileURLToPath(new URL("../..", import.meta.url));
 const DEFAULT = { width: 1280, height: 850 };
 const GUIDE = "https://github.com/ZacharySF/kitty/blob/main/docs/GOOGLE_ONBOARDING.md";
 const PAGES = ["Appearance", "Desktop", "Quiet hours", "Build", "Account", "Modules", "Graphs", "Tags", "Connected apps", "Agents", "Keys", "Devices"];
+const APPLY_PAGES = ["Accounts"];
 const RIKA_PAGES = ["Routing memory", "Email", "Memory"];
 /** The pages' own regions (their components keep their names; Build's is "Build settings"). */
-const REGIONS = [...PAGES, ...RIKA_PAGES, "Build settings"];
+const REGIONS = [...PAGES, ...APPLY_PAGES, ...RIKA_PAGES, "Build settings"];
 
 let backend;
 let secret;
@@ -142,15 +143,15 @@ describe("settings index", () => {
     const title = page.getByRole("heading", { level: 1, name: "Settings" });
     assert.match(await title.evaluate((node) => getComputedStyle(node).fontFamily), /Fraunces/);
     const items = index(page).locator("a, button");
-    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 17);
+    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 18);
     assert.deepEqual(await items.allTextContents().then((texts) => texts.map((text) => text.trim())),
-      [...PAGES, "Profile & saved answers", "AI & privacy", ...RIKA_PAGES]);
+      [...PAGES, "Profile & saved answers", "AI & privacy", ...APPLY_PAGES, ...RIKA_PAGES]);
     for (const item of await items.all()) assert.equal(await item.locator("svg").count(), 1, "index item without its icon");
     const groups = await index(page).locator("h2").evaluateAll((nodes) => nodes.map((node) => {
       const style = getComputedStyle(node);
       return { text: node.textContent.trim(), family: style.fontFamily, weight: style.fontWeight, transform: style.textTransform, italic: style.fontStyle };
     }));
-    assert.deepEqual(groups.map((group) => group.text), ["General", "Workspace", "Connections", "Careers & AI", "Rika"]);
+    assert.deepEqual(groups.map((group) => group.text), ["General", "Workspace", "Connections", "Careers & AI", "Apply", "Rika"]);
     for (const group of groups) {
       assert.match(group.family, /^"?Inter/, `${group.text} is not Inter`);
       assert.equal(group.weight, "600");
@@ -215,7 +216,7 @@ describe("settings index", () => {
     await region(page, "Account").waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#settings/account");
     await find.fill("");
-    assert.equal((await names()).length, 17);
+    assert.equal((await names()).length, 18);
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -319,7 +320,7 @@ describe("settings pages", () => {
   test("every page is one surface with hairline sections, no nested boxes and no native select", async () => {
     const { page, problems, context } = await open("settings");
     await index(page).waitFor();
-    for (const name of [...PAGES, ...RIKA_PAGES]) {
+    for (const name of [...PAGES, ...APPLY_PAGES, ...RIKA_PAGES]) {
       await index(page).getByRole("link", { name, exact: true }).click();
       const label = name === "Build" ? "Build settings" : name;
       const shown = region(page, label);

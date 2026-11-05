@@ -65,6 +65,10 @@ CAUSES: dict[str, tuple[str, str]] = {
     "account_exists": ("needs_owner", "Existing account needs its sign-in"),
     "login_no_advance": ("needs_owner", "Sign-in did not advance"),
     "consent_account": ("needs_owner", "Account terms or consent"),
+    # Unattended accounts (proposal-07 Step 4, kitty.core.apply.accounts).
+    "account_problem": ("needs_owner", "Employer account needs you (reset, security question, refused)"),
+    "account_cap": ("needs_owner", "Daily account cap reached"),
+    "keyring_locked": ("needs_owner", "OS keyring locked"),
     "consent": ("needs_owner", "Consent dialog"),
     "missing_answer": ("needs_owner", "Missing answer"),
     "upload_deferred": ("needs_owner", "Resume upload deferred on a retained tab"),
@@ -110,6 +114,9 @@ _RULES: tuple[tuple[str, re.Pattern[str]], ...] = tuple((cause, re.compile(patte
     ("approval_changed", r"preparation approval changed|review a new preparation plan|review the plan again"),
     ("stopped", r"preparation cancelled|time budget reached"),
     ("captcha", r"^captcha:"),
+    ("keyring_locked", r"^keyring_locked:"),
+    ("account_cap", r"^account_cap:"),
+    ("account_problem", r"^account_problem:"),
     ("verification", r"^verification:"),
     ("credentials", r"^login: .*(application-credentials|credentials file)"),
     ("login_not_authorized", r"^login: .*(not authorized for this run|automation is off|account creation is off"

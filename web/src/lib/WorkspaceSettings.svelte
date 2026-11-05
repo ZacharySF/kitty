@@ -2,7 +2,7 @@
   /** The short pages Settings opens beside its index, deep-linked as `#settings/<page>`. */
   export const SETTINGS_PAGES = [
     "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "connected-apps", "agents", "keys", "devices",
-    "rika-routing", "rika-email", "rika-memory",
+    "apply-accounts", "rika-routing", "rika-email", "rika-memory",
   ] as const;
   export type SettingsPage = (typeof SETTINGS_PAGES)[number];
   const isPage = (value: unknown): value is SettingsPage => SETTINGS_PAGES.includes(value as SettingsPage);
@@ -24,6 +24,7 @@
   import AccountSettings from "./AccountSettings.svelte";
   import ConnectedApps from "./ConnectedApps.svelte";
   import Keys from "./Keys.svelte";
+  import ApplyAccounts from "./ApplyAccounts.svelte";
   import Devices from "./Devices.svelte";
   import TagSettings from "./TagSettings.svelte";
   import BuildSettings from "./BuildSettings.svelte";
@@ -71,6 +72,9 @@
     { label: "Careers & AI", items: [
       ...(activeModules.enabled.includes("applyai") ? [{ view: "profile", label: "Profile & saved answers", icon: "questions", keywords: "resume answers questions personal details" } as Entry] : []),
       { view: "ai", label: "AI & privacy", icon: "ai", keywords: "openrouter key provider budget privacy model" },
+    ] },
+    { label: "Apply", items: [
+      ...(activeModules.enabled.includes("applyai") ? [{ page: "apply-accounts", label: "Accounts", icon: "shield", keywords: "apply employer accounts grants workday oracle eightfold icims sign in create reset password keyring" } as Entry] : []),
     ] },
     { label: "Rika", items: [
       { page: "rika-routing", label: "Routing memory", icon: "reports", keywords: "rika tokens cost cache tier route tool path shortcut forget learned cheaper requests" },
@@ -321,6 +325,8 @@
         <Keys />
       {:else if shown === "devices"}
         <Devices />
+      {:else if shown === "apply-accounts"}
+        <ApplyAccounts />
       {/if}
     </div>
   </div>

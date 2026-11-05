@@ -2,6 +2,13 @@
 
 Requests are bound to one job, tab-storage token, origin and saved alias. Codes,
 message bodies and verification-link URLs never enter the database or reports.
+
+Emailed links (account activation, and password reset for a granted tenant via
+:func:`account_link`) are opened only when the link is on the tenant origin and
+its host matches the tenant's family grant pattern (kitty.core.apply.grants), the
+sender is the tenant's listed sender, Gmail's authentication results show DKIM
+and DMARC pass, the recipient matches and the message was never used before.
+Links get the same ``protect_secrets`` redaction as codes.
 """
 from __future__ import annotations
 
@@ -10,7 +17,7 @@ import re
 import sqlite3
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 from urllib.parse import urlsplit
@@ -21,7 +28,9 @@ from kitty.core.apply.bidi import BidiError, Tab
 from kitty.core.apply.credentials import ApplicationCredentials, credential_binding
 from kitty.core.apply.guard import CREDENTIAL, UnsafeAction
 from kitty.core.apply.preflight import inspect_page
-from kitty.core.apply.verification_mail import MailRequest, VerificationMailError, read_verification_mail
+from kitty.core.apply.verification_mail import (
+    MailRequest, VerificationMailError, VerificationMessage, read_verification_mail,
+)
 from kitty.db.connection import transaction
 
 _MARKER = 'kitty.application.email-verification'
@@ -124,7 +133,18 @@ def _code(text: str, length: int) -> str | None:
     return next(iter(codes)) if len(codes) == 1 else None
 
 
-def _link(links: tuple[str, ...], origin: str) -> str | None:
+_LINK_PATHS = {
+    "verify": r'(?:^|[/_-])(?:verify(?:email)?|verification|activate|activation|confirm(?:email)?)(?:[/_.-]|$)',
+    "reset": r'(?:^|[/_-])(?:reset(?:password)?|passwordreset|resetpassword|password|recover(?:y)?|forgot(?:password)?)(?:[/_.-]|$)',
+}
+
+
+def _link(links: tuple[str, ...], origin: str, *, family: str | None = None,
+          purpose: str = 'verify') -> str | None:
+    """The one emailed link of `purpose` on the tenant origin and, for a granted
+    tenant, inside its family's grant patterns; None when not exactly one."""
+    from kitty.core.apply.grants import in_family
+
     eligible = set()
     for value in links:
         try:
@@ -132,11 +152,29 @@ def _link(links: tuple[str, ...], origin: str) -> str | None:
             approved_origin = _authentication_origin(value)
         except ValueError:
             continue
-        if approved_origin != origin:
+        # The tenant's own origin, and (for a granted tenant) inside its family's
+        # grant patterns: a family-shaped host of some other tenant is not enough.
+        if approved_origin != origin or (family is not None and not in_family(family, value)):
             continue
-        if re.search(r'(?:^|[/_-])(?:verify(?:email)?|verification|activate|activation|confirm(?:email)?)(?:[/_.-]|$)', parts.path, re.I):
+        if re.search(_LINK_PATHS[purpose], parts.path, re.I):
             eligible.add(value)
     return next(iter(eligible)) if len(eligible) == 1 else None
+
+
+def message_refusal(message: VerificationMessage, *, sender: str, recipient: str,
+                    requested_at: datetime, expires_at: datetime, link: bool) -> str | None:
+    """Why an emailed message may not be used (sender, recipient, time, DKIM/DMARC), or None."""
+    received_at = message.received_at
+    if (not isinstance(received_at, datetime) or received_at.tzinfo is None
+            or received_at.utcoffset() is None or received_at > datetime.now(timezone.utc)):
+        return 'verification: employer email has no trustworthy delivery time'
+    if (message.sender.casefold() != sender.casefold()
+            or recipient.casefold() not in {value.casefold() for value in message.recipients}
+            or received_at < requested_at or received_at > expires_at):
+        return 'verification: employer email does not match this request'
+    if link and not message.authenticated:
+        return "verification: the employer email did not pass Gmail's DKIM and DMARC checks; its link was not opened"
+    return None
 
 
 def _pending(conn, job_id, origin, recipient, sender, token, now):
@@ -242,17 +280,15 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
         message = messages[0]
         # The reader qualifies independently; retain this trust boundary if an
         # additional read-only provider is introduced later.
-        received_at = message.received_at
-        if (not isinstance(received_at, datetime) or received_at.tzinfo is None
-                or received_at.utcoffset() is None or received_at > datetime.now(timezone.utc)):
-            return VerificationResult(acted=acted,blocker='verification: employer email has no trustworthy delivery time')
-        if (message.sender.casefold()!=sender.casefold() or recipient.casefold() not in {value.casefold() for value in message.recipients} or
-                message.received_at < request.requested_at or message.received_at > request.expires_at):
-            return VerificationResult(acted=acted,blocker='verification: employer email does not match this request')
+        refusal = message_refusal(message, sender=sender, recipient=recipient,
+                                  requested_at=request.requested_at, expires_at=request.expires_at,
+                                  link=gate['kind'] == 'link')
+        if refusal:
+            return VerificationResult(acted=acted,blocker=refusal)
         code = _code(message.text,6) if gate['kind']=='code' else None
-        link = _link(message.links,origin) if gate['kind']=='link' else None
+        link = _link(message.links,origin,family=policy._family) if gate['kind']=='link' else None
         if code is None and link is None:
-            return VerificationResult(acted=acted,blocker='verification: matching email has no unique supported code or same-origin verification link')
+            return VerificationResult(acted=acted,blocker='verification: matching email has no unique supported code or verification link inside the approved employer')
         if checkpoint:
             checkpoint()
         fingerprint = _binding(sender+'\0'+message.id+'\0'+message.received_at.isoformat())
@@ -330,3 +366,94 @@ def complete_email_verification(page: Tab, conn: sqlite3.Connection, job_id: int
         if row is not None:
             with transaction(conn):
                 conn.execute('UPDATE application_email_verification_requests SET state=\'blocked\',updated_at=? WHERE id=? AND state=\'consuming\'',(datetime.now(timezone.utc).isoformat(),row['id']))
+
+
+class AccountLinkError(RuntimeError):
+    """A typed, value-free reason an emailed account link was not used."""
+
+
+@dataclass(frozen=True)
+class AccountLink:
+    """One consumed emailed link (the URL stays in process; the row id marks it used)."""
+
+    url: str = field(repr=False)
+    request_id: int
+
+
+def account_link(page: Tab, conn: sqlite3.Connection, job_id: int, policy: AuthenticationSettings,
+                 recipient: str, *, requested_at: datetime, purpose: str = 'reset',
+                 checkpoint: Callable[[], None] | None = None) -> AccountLink:
+    """The tenant's one fresh emailed `purpose` link, consumed once; AccountLinkError otherwise.
+
+    Call right after the employer was asked to send it (`requested_at` is the time
+    just before that click). The same sender, recipient, delivery-time, DKIM/DMARC,
+    family/origin and one-use rules as activation links apply. The caller opens the
+    link (after ``protect_secrets``) and reports the result with
+    :func:`finish_account_link`.
+    """
+    settings = policy.email_verification
+    origin = _origin(page)
+    scopes = settings.scopes_for([origin]) if origin else []
+    if (not policy.enabled or not settings.enabled or not origin or not policy.approves(origin)
+            or origin in policy.manual_account_origins or len(scopes) != 1):
+        raise AccountLinkError('account_problem: this employer has no listed sender for its reset email')
+    sender = scopes[0].sender_email
+    try:
+        row = _record_request(conn, page, job_id, origin, sender, recipient, requested_at, settings.max_age_seconds)
+    except (BidiError, UnsafeAction):
+        raise AccountLinkError('account_problem: the reset request could not be bound to this tab') from None
+    consumed = False
+    try:
+        request = MailRequest(recipient=recipient, sender=sender,
+                              requested_at=datetime.fromisoformat(row['requested_at']),
+                              expires_at=datetime.fromisoformat(row['expires_at']))
+        deadline = time.monotonic() + min(settings.max_wait_seconds, max(
+            0, (request.expires_at - datetime.now(timezone.utc)).total_seconds()))
+        messages: list[VerificationMessage] = []
+        while time.monotonic() < deadline:
+            if checkpoint:
+                checkpoint()
+            if _origin(page) != origin:
+                raise AccountLinkError('account_problem: the employer page changed before the reset email was used')
+            messages = read_verification_mail(page.bidi, request, checkpoint=checkpoint)
+            if messages:
+                break
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
+        if len(messages) != 1:
+            raise AccountLinkError('account_problem: no unique fresh reset email from the listed sender arrived')
+        message = messages[0]
+        refusal = message_refusal(message, sender=sender, recipient=recipient,
+                                  requested_at=request.requested_at, expires_at=request.expires_at, link=True)
+        if refusal:
+            raise AccountLinkError('account_problem: ' + refusal.removeprefix('verification: '))
+        link = _link(message.links, origin, family=policy._family, purpose=purpose)
+        if link is None:
+            raise AccountLinkError('account_problem: the reset email has no single link on this employer\'s approved host')
+        page.bidi.protect_secrets(link)
+        fingerprint = _binding(sender + '\0' + message.id + '\0' + message.received_at.isoformat())
+        try:
+            with transaction(conn):
+                cursor = conn.execute(
+                    "UPDATE application_email_verification_requests SET state='consuming',message_binding=?,updated_at=?"
+                    " WHERE id=? AND state='pending'", (fingerprint, datetime.now(timezone.utc).isoformat(), row['id']))
+        except sqlite3.IntegrityError:
+            raise AccountLinkError('account_problem: this reset email was already used') from None
+        if cursor.rowcount != 1:
+            raise AccountLinkError('account_problem: this reset request was already consumed')
+        consumed = True
+        return AccountLink(link, row['id'])
+    except VerificationMailError as exc:
+        raise AccountLinkError(f'account_problem: {exc}') from None
+    finally:
+        if not consumed:
+            with transaction(conn):
+                conn.execute("UPDATE application_email_verification_requests SET state='blocked',updated_at=?"
+                             " WHERE id=? AND state='pending'", (datetime.now(timezone.utc).isoformat(), row['id']))
+
+
+def finish_account_link(conn: sqlite3.Connection, link: AccountLink, *, used: bool) -> None:
+    """Mark a consumed account link verified (it worked) or blocked; never reusable either way."""
+    with transaction(conn):
+        conn.execute("UPDATE application_email_verification_requests SET state=?,updated_at=?"
+                     " WHERE id=? AND state='consuming'",
+                     ('verified' if used else 'blocked', datetime.now(timezone.utc).isoformat(), link.request_id))
