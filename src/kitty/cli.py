@@ -626,7 +626,9 @@ def _print_discover_report(report) -> None:
 @app.command()
 def apply(
     job_ids: Annotated[Optional[list[str]], typer.Argument(
-        help="Job ids to open and fill, or `report` for the apply health report.", metavar="[JOB_IDS]... | report",
+        help="Job ids to open and fill; `report` for the apply health report; `resolve [JOB_IDS]...` "
+             "to check postings are open and resolve redirects.",
+        metavar="[JOB_IDS]... | report | resolve [JOB_IDS]...",
     )] = None,
     queued: Annotated[bool, typer.Option("--queued", help="Every queued job you have not applied to.")] = False,
     top: Annotated[Optional[int], typer.Option("--top", help="The N best new/queued jobs you have not applied to.")] = None,
@@ -637,7 +639,9 @@ def apply(
         "--include-ineligible",
         help="Explicit compatibility research on ineligible jobs only; never ready, authenticated or watched.",
     )] = False,
-    as_json: Annotated[bool, typer.Option("--json", help="With `report`: machine-readable output.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="With `report` or `resolve`: machine-readable output.")] = False,
+    dry_run: Annotated[bool, typer.Option(
+        "--dry-run", help="With `resolve`: report what would change; write nothing.")] = False,
 ) -> None:
     """Open each job's application form in Firefox and fill it. You review and submit.
 
@@ -647,24 +651,41 @@ def apply(
     `kitty apply report` shows apply health instead: the unattended ready rate per ATS
     family (unit = job, closed postings removed, Wilson 95% intervals), top causes and
     per-field correctness by provenance class. It only reads the attempt records.
+
+    `kitty apply resolve` checks the queue's postings before any attempt: closed postings
+    (HTTP 404/410, a closed notice, Workday cxs 403 S22 with an empty page shell, Greenhouse
+    ?questions=true 404) are marked closed; zapply/recruitics/appcast/Litos redirects are
+    resolved to the employer's posting, stored as the apply URL; excluded flows (Indeed Apply,
+    Tesla, employer-own portals, Paradox) become typed handoffs. Without job ids it checks
+    every new/queued job (or --queued / --top N); public GETs only, robots.txt respected, at
+    most one request per second per host. `--dry-run` reports the changes and writes nothing.
     """
     from kitty.core.apply.filler import EligibilityOverride, fill_jobs
     from kitty.core.apply.watch import Watch
 
     if job_ids and job_ids[0] == "report":
-        if len(job_ids) > 1 or queued or top or track or headless or no_watch or include_ineligible:
+        if len(job_ids) > 1 or queued or top or track or headless or no_watch or include_ineligible or dry_run:
             error_console.print("`kitty apply report` takes no job ids or fill options (only --json).")
             raise typer.Exit(code=1)
         _apply_report(as_json)
         return
-    if as_json:
-        error_console.print("--json applies to `kitty apply report` only.")
+    resolving = bool(job_ids) and job_ids[0] == "resolve"
+    if resolving:
+        job_ids = job_ids[1:]
+        if headless or no_watch or include_ineligible:
+            error_console.print("`kitty apply resolve` takes job ids, --queued, --top, --track, --dry-run and --json.")
+            raise typer.Exit(code=1)
+    elif as_json or dry_run:
+        error_console.print("--json applies to `kitty apply report` / `resolve`; --dry-run to `resolve` only.")
         raise typer.Exit(code=1)
     try:
         ids = [int(value) for value in job_ids or []]
     except ValueError:
-        error_console.print("Job ids must be whole numbers (or use `kitty apply report`).")
+        error_console.print("Job ids must be whole numbers (or use `kitty apply report` / `resolve`).")
         raise typer.Exit(code=1) from None
+    if resolving:
+        _apply_resolve(ids, queued=queued, top=top, track=track, dry_run=dry_run, as_json=as_json)
+        return
 
     workspace = _open()
     try:
@@ -775,6 +796,69 @@ def _apply_report(as_json: bool) -> None:
         for item in found["correctness"]:
             console.print(f"  {item['class']:<16} filled {item['filled']:>4}  edited {item['edited']:>3}/{item['compared']:<4} "
                           f"{_rate_text(item['rate'], item['low'], item['high'], item['compared'])}")
+
+
+def _apply_resolve(ids: list[int], *, queued: bool, top: int | None, track: str | None,
+                   dry_run: bool, as_json: bool) -> None:
+    """`kitty apply resolve`: liveness, redirect resolution and handoffs (kitty.core.apply.resolve)."""
+    import json
+    from dataclasses import asdict
+
+    from kitty.core.apply import resolve
+
+    workspace = _open()
+    try:
+        config = workspace.config
+        if track and config.track(track) is None:
+            error_console.print(f"[red]Unknown track '{track}'. Known: {', '.join(config.track_names)}[/red]")
+            raise typer.Exit(code=1)
+        chosen = []
+        for job_id in dict.fromkeys(ids):
+            job = jobs_core.get_job(workspace.conn, job_id)
+            if job is None:
+                error_console.print(f"No job with id {job_id}.")
+                raise typer.Exit(code=1)
+            chosen.append(job)
+        if not ids or queued or top:
+            picked = jobs_core.list_jobs(workspace.conn, jobs_core.JobFilter(
+                order="best", prefer_cities=config.prefer_cities, prefer_remote=config.profile.open_to_remote,
+                queue_states=["queued"] if queued and not top else ["new", "queued"],
+                eligibility=["boosted", "eligible", "ambiguous", "unknown"],
+                not_applied=True, tracks=[track] if track else None, limit=top,
+            ))
+            chosen += [job for job in picked if job.id not in ids]
+        say = None if as_json else (lambda message: error_console.print(f"[dim]{escape(message)}[/dim]"))
+        if not as_json:
+            console.print(f"{'Dry run: nothing is written. ' if dry_run else ''}"
+                          f"Checking {len(chosen)} posting(s); public pages only, robots.txt respected, "
+                          f"at most one request per second per host.")
+        results = resolve.resolve_jobs(workspace.conn, workspace.settings, chosen, dry_run=dry_run, say=say)
+    finally:
+        workspace.close()
+    if as_json:
+        typer.echo(json.dumps({"dry_run": dry_run, "results": [
+            {"job_id": r.job_id, "company": r.company, "title": r.title, "changes": list(r.changes),
+             **asdict(r.check)} for r in results]}, indent=2))
+        return
+    verb = {"close": "would close" if dry_run else "closed",
+            "apply_url": "would set apply URL" if dry_run else "apply URL set",
+            "handoff": "would file handoff" if dry_run else "handoff filed"}
+    counts: dict[str, int] = {}
+    for result in results:
+        check = result.check
+        counts[check.status] = counts.get(check.status, 0) + 1
+        route = f"{check.source} → " if check.source else ""
+        console.print(f"{result.job_id}  {escape(result.company)} - {escape(result.title)}: "
+                      f"[bold]{check.status}[/bold] ({route}{check.family})")
+        console.print(f"    {escape(check.reason)}")
+        for change in result.changes:
+            detail = f": {escape(check.resolved_url or '')}" if change == "apply_url" else ""
+            console.print(f"    [yellow]{verb[change]}{detail}[/yellow]")
+    summary = ", ".join(f"{count} {status}" for status, count in sorted(counts.items())) or "nothing"
+    changed = sum(1 for result in results if result.changes)
+    console.print(f"\nChecked {len(results)} posting(s): {summary}. "
+                  f"{changed} job(s) {'would change' if dry_run else 'changed'}; nothing submitted.")
+
 
 
 @contextmanager
