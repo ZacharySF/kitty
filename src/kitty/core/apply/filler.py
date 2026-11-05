@@ -9,6 +9,15 @@ invents a value. Required questions it could not answer are logged to the
 unanswered-questions queue so I can add them to answers.yaml once. It does not
 record an application while filling; with a Watch it then waits for my submit
 and records the application when the tab shows the confirmation page (watch.py).
+
+Each tab is armed by the submit guard for its whole fill (kitty.core.apply.guard):
+the in-page veto and the network tripwire. If the connection to Firefox breaks
+mid-fill, the tripwire's intercept is orphaned in Firefox and keeps holding that
+tab's requests. Kitty then restarts its own Firefox (killing it: a graceful quit
+would send every request the orphaned session still holds) and fills the job
+again, but only while no tab is waiting for me; otherwise it leaves one typed
+`restart_firefox:` handoff and restarts nothing. It never reloads the tab: a
+reload does not clear a session-scoped intercept.
 """
 
 from __future__ import annotations
@@ -19,6 +28,7 @@ import re
 import sqlite3
 import time
 import tempfile
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime, timezone
@@ -38,7 +48,7 @@ from kitty.core.apply.auth import authenticate, authentication_pending, google_s
 from kitty.core.apply.residence_gate import complete_residence_gate, prepare_profile_bootstrap, residence_gate, submit_profile_bootstrap
 from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, SessionBusy, SessionEndError, Tab, TabClosed, open_session, open_tab
 from kitty.core.apply.browser import (
-    BrowserError, busy_message, ensure_firefox, headless_firefox, hide_automation,
+    BrowserError, busy_message, ensure_firefox, headless_firefox, hide_automation, kill_own_firefox,
 )
 from kitty.core.apply.credentials import CredentialError, credential_binding, load_credentials
 from kitty.core.apply.email_verification import complete_email_verification
@@ -51,7 +61,8 @@ from kitty.core.apply.fields import (
     MANUAL_CONSENT, TEXT_KINDS, FormField, Plan, is_affirmative, is_resume_input, lookup_answer, match_option,
     plan_for,
 )
-from kitty.core.apply.guard import OWNER_HINT, OwnerTookOver, SubmitGuardStop, UnsafeAction, stop_for
+from kitty.core.apply.guard import OWNER_HINT, OwnerTookOver, SubmitGuardStop, UnsafeAction, network_note, stop_for
+from kitty.core.apply import endpoints as endpoints_core
 from kitty.core.apply.page import (
     ChoiceSelectionError, choose_select, fill_text, form_frames, pick_from_list, pick_from_search,
     read_fields, settle, tick, upload, uploads_pending, wait_for_form, wait_for_uploads,
@@ -65,7 +76,7 @@ from kitty.core.apply.preflight import advance, inspect_page, wait_for_page
 from kitty.core.apply import attempts as attempts_core
 from kitty.core.apply.state import record_attempt
 from kitty.core.apply.watch import (
-    CONTEXT_MARKER, RULES, Watch, WatchedTab, look, owned_context, reattach, watch_tabs,
+    CONTEXT_MARKER, RULES, SubmitLearner, Watch, WatchedTab, look, owned_context, reattach, watch_tabs,
 )
 from kitty.db import connect
 from kitty.db.connection import transaction
@@ -75,6 +86,29 @@ from kitty.settings import Settings
 
 #: Seconds between opening one job's page and the next: polite over fast.
 PAUSE_BETWEEN_JOBS = 2.0
+#: A tab the owner pressed a key in this recently is his: a lost connection must not restart Firefox.
+OWNER_TYPED_SECONDS = 120.0
+#: The connection broke mid-fill and no tab waits for the owner: kitty restarts its own Firefox.
+LOST_NOTE = ("browser: connection lost while kitty was filling this tab; kitty restarts its own Firefox "
+             "and fills this job again. Nothing was submitted.")
+
+
+def restart_note(waiting: int) -> str:
+    """The one typed handoff when kitty must not restart its Firefox by itself (N3 §7.4).
+
+    The restart is the owner's button (Restart Firefox in Apply, or `kitty apply
+    restart-firefox`): kitty kills its Firefox, so the requests the orphaned session
+    still holds die with it (browser.kill_own_firefox).
+    """
+    restart = ("restart the rika! Firefox" if waiting else "Restart the rika! Firefox")
+    if waiting:
+        restart = f"Finish or discard the {waiting} tab{'s' if waiting != 1 else ''} waiting for you, then {restart}"
+    return ("restart_firefox: kitty lost its connection to its Firefox while filling this tab. "
+            f"{restart} with Restart Firefox in Apply or `kitty apply restart-firefox`. Until then "
+            "a Submit in this tab will not go through; your other tabs work normally. "
+            "Nothing was submitted.")
+
+
 _ACCOUNT_FIELD_LABELS = {
     "email": "account email", "emailConfirm": "account email confirmation",
     "password": "account password", "passwordConfirm": "account password confirmation",
@@ -131,7 +165,7 @@ def _outcome_cause(report: FillReport) -> OutcomeCause:
         return "human_boundary"
     if report.error or report.status == "error":
         return "browser_error"
-    if note.startswith(("login:", "captcha:", "verification:", "consent:", UNSUPPORTED_FLOW)):
+    if note.startswith(("login:", "captcha:", "verification:", "consent:", "restart_firefox:", UNSUPPORTED_FLOW)):
         return "human_boundary"
     if note.startswith("owner:"):
         return "human_boundary"         # the owner acted in the tab while kitty filled it
@@ -166,6 +200,9 @@ class FillReport:
         # In-memory only (never a dataclass field, so never serialized): the salt and
         # sandbox keys the watcher needs to re-read a ready tab (attempts.Capture).
         self.capture: attempts_core.Capture | None = None
+        # In-memory only: the connection broke and no tab waits for the owner, so the
+        # batch restarts kitty's Firefox and fills this job again (_fill_all).
+        self.restart = False
 
 
 @dataclass
@@ -559,12 +596,20 @@ def fill_job(
     *, resume_tab: bool = False, approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
     recovery_planner=None, progress=None, stop=None, run: attempts_core.Run | None = None,
+    waiting: Callable[[], int] | None = None, restartable: bool = False,
 ) -> FillReport:
     """Prepare through review, never submit; excluded jobs leave the browser untouched.
 
     Every browser attempt (not compatibility research) appends an apply_attempts row
     with its stage, typed cause and written fields' provenance; a ready one also gets
     its value hashes and the watcher's Submit capture (kitty.core.apply.attempts).
+
+    The submit guard is armed in the tab for the whole fill with the job's ATS
+    family and released before anything calls the tab ready. When the connection
+    to Firefox breaks, `waiting()` counts the other tabs waiting for the owner;
+    with none (and this tab not touched by him) and `restartable`, the report asks
+    the batch to restart kitty's Firefox (`report.restart`); otherwise it is the
+    one typed `restart_firefox:` handoff.
     """
     if eligibility_override is not None and (
         eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approval is not None
@@ -611,6 +656,7 @@ def fill_job(
         nonlocal url, ats
         url, ats = destination, detect_ats(destination)
         report.url, report.ats = destination, ats
+        page.set_family(ats)            # the network tripwire follows the form's family
         # A reviewed plan's identity includes the job's URL; research changes nothing.
         if approval is None and not research:
             resolve_core.store_url(conn, job.id, destination, source_url=job.apply_url or job.url)
@@ -642,15 +688,21 @@ def fill_job(
             report.resume_label = "existing attachment (retained)"
 
     def verify():
-        # The per-step checkpoint reads the submit guard's veto log first: the
-        # owner acting in this tab, or a blocked submit, stops the fill.
+        # The per-step checkpoint reads the submit guard first: the owner acting in
+        # this tab, a blocked submit, or a request the network tripwire failed stops the fill.
         stop_for(page.new_vetoes())
+        page.check_network()
         if approval is not None:
             current = jobs_core.get_job(conn, job.id)
             if current is None:
                 raise ApprovalError(APPROVAL_CHANGED)
             approved_resume(approval, conn, settings, current)
         recovery.checkpoint()
+
+    def checkpoint(result=None):
+        # fill_form's per-field checkpoint: a failed request stops it before the next write.
+        page.check_network()
+        return recovery.checkpoint(result)
 
     def verify_email(*, started=None, sent=False):
         nonlocal credentials, authentication_attempted, verification_attempts
@@ -721,10 +773,11 @@ def fill_job(
             except BidiError:
                 continue
         page.activate()
-        # From here until the finally below, the submit guard's in-page veto is
-        # armed in this tab (new documents too): nothing kitty or the page does
-        # can activate a submit without kitty's one-shot token (guard.py).
-        page.arm()
+        # From here until the finally below, the submit guard is armed in this tab
+        # (new documents too): nothing kitty or the page does can activate a submit
+        # without kitty's one-shot token (L1), and every request the tab sends is
+        # decided by its family's network policy (L2).
+        page.arm(family=ats)
         if not resume_tab:
             page.goto(url)
         settle(page)
@@ -900,7 +953,7 @@ def fill_job(
                 upload_resume=(lambda frame, key, path: _upload_approved(
                     frame, key, path, approval, job.id, conn, settings
                 )) if approval is not None else None,
-                checkpoint=recovery.checkpoint,
+                checkpoint=checkpoint,
             )
             absorb(result)
             attempt.page(page.bidi.redact(before.step) if before.step else None)
@@ -1045,6 +1098,15 @@ def fill_job(
                 report.status, report.note = "blocked", str(exc)
             elif isinstance(exc, OwnerTookOver) and OWNER_HINT not in (report.note or ""):
                 report.note = f"{report.note} {OWNER_HINT}" if report.note else str(exc)
+        # A request the network tripwire failed (the page tried to send what may
+        # be a submit) stops the fill, even one that failed after the last
+        # checkpoint; a navigation it failed is not a browser error. The tab stays
+        # for the owner. Only his own takeover keeps its note.
+        blocked = page.network_blocks
+        if blocked and not (report.note or "").startswith("owner:"):
+            report.status, report.note, report.error = "blocked", network_note(blocked[0]), None
+        with suppress(OSError):         # survey evidence never changes the outcome
+            endpoints_core.record_fill(settings, ats, observed=page.network_observed, blocked=blocked)
         if foreground is not None:
             try:
                 contexts = page.bidi.command("browsingContext.getTree", {"maxDepth": 0})["contexts"]
@@ -1055,6 +1117,19 @@ def fill_job(
                     foreground.activate()
             except BidiError:
                 pass                    # closed/moved tabs or a new user selection win
+    if not page.bidi.connected and not page.network_released:
+        # The connection broke before the network tripwire was removed: its
+        # intercept is orphaned in Firefox and holds this tab's requests (the
+        # owner's Submit too) until Firefox exits. A reload would not clear it.
+        # This tab is his too if he acted in it or it stopped on a blocked request.
+        mine = int(page.owner_active(OWNER_TYPED_SECONDS) or bool(page.network_blocks))
+        others = waiting() if waiting is not None else 0
+        if restartable and waiting is not None and not others and not mine:
+            report.restart = True
+            report.status, report.note = "blocked", LOST_NOTE
+        else:
+            report.status, report.error = "blocked", None
+            report.note = restart_note(others + mine)
     try:
         current_url = page.main.call("""(key, context) => {
           try { sessionStorage.setItem(key, context); } catch {}
@@ -1228,6 +1303,40 @@ def _retained_tab(bidi: Bidi, job: Job) -> Tab | None:
     return None
 
 
+#: Stops that leave no tab for the owner: a closed posting or a browser failure.
+_NOT_WAITING = frozenset({"closed", "tab_closed", "browser_frame", "browser_connection", "browser_error"})
+
+
+def _waits_for_owner(status: str, note: str | None, error: str | None) -> bool:
+    """Whether a kept tab is left for the owner: ready, or a handoff of any kind
+    (missing answers, a CAPTCHA, an account problem, his own takeover), not a closed
+    or ineligible posting and not a browser failure."""
+    if status not in ("ready", "partial", "blocked") or (note or "").startswith("ineligible:"):
+        return False
+    return attempts_core.classify(status, note, error, "unsupported_controls") not in _NOT_WAITING
+
+
+def _waiting_tabs(conn: sqlite3.Connection, bidi: Bidi, job_id: int,
+                  kept: Sequence[tuple[FillReport, Tab]], watch: Watch | None) -> int:
+    """How many tabs wait for the owner besides job `job_id`'s (the restart gate, N3 §7.4).
+
+    This run's kept tabs and the watched ones, plus tabs earlier runs left for him
+    (their jobs' preparation state, no application recorded) that were still open
+    at the last tab-tree read. Unknown tabs count: no restart under his hands.
+    """
+    contexts = {tab.context for report, tab in kept
+                if report.job_id != job_id and _waits_for_owner(report.status, report.note, report.error)}
+    contexts |= {tab.context for tab in (watch.tabs if watch is not None else ()) if tab.job_id != job_id}
+    known = bidi.known_tabs
+    for context, state, blocker in conn.execute(
+            "SELECT fill_context_id, fill_state, fill_blocker FROM jobs WHERE id != ? "
+            "AND fill_context_id IS NOT NULL AND fill_state IN ('ready', 'partial', 'blocked') "
+            "AND NOT EXISTS (SELECT 1 FROM applications WHERE applications.job_id = jobs.id)", (job_id,)):
+        if (known is None or context in known) and _waits_for_owner(state, blocker, None):
+            contexts.add(context)
+    return len(contexts)
+
+
 def _fill_all(
     bidi: Bidi, conn: sqlite3.Connection, settings: Settings, config: Config,
     job_ids: list[int], say: Callable[[str], None], *, keep_open: bool,
@@ -1235,22 +1344,53 @@ def _fill_all(
     approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
     recovery_planner=None, on_report=None, stop=None, run: attempts_core.Run | None = None,
+    firefox: _Firefox | None = None,
 ) -> list[FillReport]:
     """Fill each job in its own new tab, pausing `pause` seconds between jobs.
 
     Kept-open tabs on a board the watcher knows are added to `watch.tabs`; a
     set stop flag ends the run before the next job. `background` tabs open
     behind the current one and the first is not brought forward afterwards.
+
+    A lost connection to Firefox orphans its session. With `firefox` (kitty's
+    own, restartable) and no tab waiting for the owner, kitty restarts it once
+    and fills the job again; otherwise the job is the one `restart_firefox:`
+    handoff (when its fill was cut off) and the rest of the run cannot start.
     """
     if eligibility_override is not None and (
         eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH or approval is not None
     ):
         raise ApprovalError(APPROVAL_CHANGED)
     reports: list[FillReport] = []
+    kept: list[tuple[FillReport, Tab]] = []
     first_tab: Tab | None = None
+    restarted = False
+
     def publish():
         if on_report is not None:
             on_report(reports)
+
+    def restart(why: str) -> bool:
+        """Kill and start kitty's own Firefox (at most once per run); True with a new session."""
+        nonlocal bidi, restarted, first_tab
+        restarted = True
+        say(f"{why} and no tab is waiting for you: restarting the rika! Firefox (nothing was submitted)")
+        try:
+            bidi = firefox.restart()
+        except (BrowserError, BidiError) as exc:
+            say(f"Could not restart the rika! Firefox: {bidi.redact(str(exc)).strip().splitlines()[0][:300]}")
+            return False
+        first_tab = None                # every earlier tab went with the old Firefox
+        return True
+
+    def disconnected(after: int) -> None:
+        for remaining_id in job_ids[after + 1:]:
+            remaining = jobs_core.get_job(conn, remaining_id)
+            blocker = preparation_blocker(remaining, eligibility_override=eligibility_override) if remaining else None
+            reports.append(_excluded_report(conn, remaining, blocker, run) if blocker else _error_report(
+                remaining_id, remaining,
+                "Browser disconnected before this job could be prepared; reconnect Firefox and review a new plan.",
+            ))
 
     for position, job_id in enumerate(job_ids):
         if position:
@@ -1276,22 +1416,45 @@ def _fill_all(
         say(f"[{position + 1}/{len(job_ids)}] {job.company_name} - {job.title}")
         opened = attempts_core.Progress()
         try:
-            retained = _retained_tab(bidi, job)
-            tab = retained or open_tab(bidi, background=background)
-            first_tab = first_tab or tab
-            report = fill_job(tab, conn, settings, config, job, resume_tab=retained is not None,
-                              approval=approval, eligibility_override=eligibility_override,
-                              recovery_planner=recovery_planner, progress=say,
-                              stop=stop if stop is not None else watch.stop if watch is not None else None,
-                              run=run)
+            report: FillReport | None = None
+            while report is None:
+                restartable = firefox is not None and not restarted
+                try:
+                    retained = _retained_tab(bidi, job)
+                    tab = retained or open_tab(bidi, background=background)
+                except ConnectionLost:
+                    # Lost between two jobs: every filled tab was released, but the
+                    # session is orphaned and no new one can start until a restart.
+                    if (restartable and not _waiting_tabs(conn, bidi, job.id, kept, watch)
+                            and restart("Lost the connection to the rika! Firefox")):
+                        continue
+                    raise
+                first_tab = first_tab or tab
+                report = fill_job(tab, conn, settings, config, job, resume_tab=retained is not None,
+                                  approval=approval, eligibility_override=eligibility_override,
+                                  recovery_planner=recovery_planner, progress=say,
+                                  stop=stop if stop is not None else watch.stop if watch is not None else None,
+                                  run=run, restartable=restartable,
+                                  waiting=lambda job_id=job_id: _waiting_tabs(conn, bidi, job_id, kept, watch))
+                if report.restart:
+                    if restart("Lost the connection to the rika! Firefox while filling this job"):
+                        job = jobs_core.get_job(conn, job_id) or job
+                        report = None   # fill it again in the new Firefox
+                        continue
+                    # The restart failed: this job becomes the one typed handoff.
+                    report.restart, report.error, report.note = False, None, restart_note(0)
+                    report.cause = _outcome_cause(report)
+                    record_attempt(conn, job.id, "blocked", blocker=report.note, context_id=tab.context,
+                                   url=report.url)
             reports.append(report)
             if watch is not None:
                 watch.tabs[:] = [old for old in watch.tabs if old.context != tab.context and old.job_id != job.id]
             if not keep_open:
                 tab.close()
-            elif (watch is not None and report.ats in RULES
-                  and report.cause not in ("unavailable", "ineligible")):
-                watch.tabs.append(_watched_tab(job, tab, report))
+            else:
+                kept.append((report, tab))
+                if watch is not None and report.ats in RULES and report.cause not in ("unavailable", "ineligible"):
+                    watch.tabs.append(_watched_tab(job, tab, report))
         except BidiError as exc:
             message = bidi.redact(str(exc)).strip().splitlines()[0][:300]
             # An unavailable later tab must not erase reports already prepared.
@@ -1305,15 +1468,14 @@ def _fill_all(
                 reports.append(report)
             say(f"Browser stopped this job: {message}")
             if isinstance(exc, ConnectionLost):
-                for remaining_id in job_ids[position + 1:]:
-                    remaining = jobs_core.get_job(conn, remaining_id)
-                    blocker = preparation_blocker(remaining, eligibility_override=eligibility_override) if remaining else None
-                    reports.append(_excluded_report(conn, remaining, blocker, run) if blocker else _error_report(
-                        remaining_id, remaining,
-                        "Browser disconnected before this job could be prepared; reconnect Firefox and review a new plan.",
-                    ))
+                disconnected(position)
                 publish()
                 break
+        if not bidi.connected:
+            # This fill was the last one this session could make (its own report says why).
+            disconnected(position)
+            publish()
+            break
         publish()
     if first_tab is not None and keep_open and not background:
         try:
@@ -1331,29 +1493,94 @@ def _fill_and_watch(
     approval: effects.Effect | None = None,
     eligibility_override: EligibilityOverride | None = None,
     recovery_planner=None, on_report=None, stop=None, run: attempts_core.Run | None = None,
+    firefox: _Firefox | None = None,
 ) -> list[FillReport]:
     """Fill, hand the reports over, then (with a Watch) watch the tabs in the same session.
 
     Tabs carried over in `watch.tabs` are found again first (their ids are per session).
+    While watching, released tabs also feed passive submit-endpoint learning
+    (watch.SubmitLearner: read-only, after the owner's own Submit).
     """
     emit = say
-    say = lambda message: emit(bidi.redact(message))
+
+    def current() -> Bidi:
+        """The live session: after a restart (_fill_all), the new Firefox's."""
+        return firefox.bidi if firefox is not None and firefox.bidi is not None else bidi
+
+    say = lambda message: emit(current().redact(message))
     if watch is not None and watch.tabs:
         watch.tabs[:] = reattach(bidi, watch.tabs)
     reports = _fill_all(bidi, conn, settings, config, job_ids, say, keep_open=keep_open,
                         watch=watch, background=background, pause=pause, approval=approval,
                         eligibility_override=eligibility_override, recovery_planner=recovery_planner,
-                        on_report=on_report, stop=stop, run=run)
+                        on_report=on_report, stop=stop, run=run, firefox=firefox)
     on_filled(reports)
-    if watch is None or not watch.tabs or watch.stop.is_set():
+    bidi = current()
+    if watch is None or not watch.tabs or watch.stop.is_set() or not bidi.connected:
         return reports
     watch.on_start(len(watch.tabs))
+    learner = SubmitLearner(bidi, lambda family, method, path: endpoints_core.record_learned(
+        settings, family, method, path))
     try:
         watch_tabs(lambda tab: look(bidi, tab), conn, config, watch, say,
-                   observe=lambda tab, confirmed: attempts_core.observe(conn, bidi, tab, confirmed=confirmed))
+                   observe=lambda tab, confirmed: attempts_core.observe(conn, bidi, tab, confirmed=confirmed),
+                   learner=learner)
     except BidiError as exc:              # Firefox quit or the connection broke
         say(f"stopped watching: {str(exc).strip().splitlines()[0][:200]}")
     return reports
+
+
+class _Firefox:
+    """kitty's own Firefox for one fill run: its session, and the one restart a lost
+    connection allows (_fill_all decides when; never while a tab waits for me)."""
+
+    def __init__(self, settings: Settings, run: attempts_core.Run, say: Callable[[str], None],
+                 *, headless: bool) -> None:
+        self.settings, self.run, self.say, self.headless = settings, run, say, headless
+        self.bidi: Bidi | None = None
+        self._stack = ExitStack()
+
+    def start(self, *, restarting: bool = False) -> Bidi:
+        if self.headless:
+            self.bidi = self._stack.enter_context(headless_firefox(self.settings))
+            return self.bidi
+        if restarting:
+            port = ensure_firefox(self.settings, restore_session=False)
+        else:
+            self.say("opening the rika! Firefox window")
+            port = ensure_firefox(self.settings)
+        try:
+            self.run.hide_automation = hide_automation(port)
+            if not self.run.hide_automation:
+                self.say("warning: pages can see this Firefox is remote-controlled (navigator.webdriver)")
+            self.bidi = open_session(port)
+        except SessionBusy as exc:
+            raise SessionBusy(busy_message(port)) from exc
+        return self.bidi
+
+    def restart(self) -> Bidi:
+        """Kill kitty's own Firefox and start it again with a new session.
+
+        Killed, not quit: the requests the orphaned session still holds die with
+        it (browser.kill_own_firefox). The new start restores no tabs: the killed
+        Firefox held none waiting for me, only kitty's unfinished ones.
+        """
+        old = self.bidi
+        kill_own_firefox(old.port)
+        if self.headless:
+            stack, self._stack = self._stack, ExitStack()
+            with suppress(BidiError):     # its session died with the process
+                stack.close()
+        new = self.start(restarting=True)
+        new.inherit_secrets(old)
+        return new
+
+    def close(self) -> None:
+        """End remote control only: a visible window and its tabs stay."""
+        if self.headless:
+            self._stack.close()
+        elif self.bidi is not None:
+            self.bidi.close()
 
 
 def fill_jobs(
@@ -1454,34 +1681,22 @@ def fill_jobs(
                     raise ApprovalError(APPROVAL_CHANGED)
                 approved_resume(approval, conn, settings, job)
         recovery_ai, recovery_budget = model_planner(config)
-        if headless:
-            with headless_firefox(settings) as bidi:
-                return _fill_and_watch(bidi, conn, settings, config, job_ids, say,
-                                       keep_open=watch is not None, on_filled=report_filled,
-                                       watch=watch, background=background, pause=pause, approval=approval,
-                                       eligibility_override=eligibility_override, recovery_planner=recovery_ai,
-                                       on_report=on_report, stop=stop, run=run)
-        say("opening the rika! Firefox window")
-        port = ensure_firefox(settings)
+        firefox = _Firefox(settings, run, say, headless=headless)
+        bidi = firefox.start()
         try:
-            run.hide_automation = hide_automation(port)
-            if not run.hide_automation:
-                say("warning: pages can see this Firefox is remote-controlled (navigator.webdriver)")
-            bidi = open_session(port)
-        except SessionBusy as exc:
-            raise SessionBusy(busy_message(port)) from exc
-        try:
-            return _fill_and_watch(bidi, conn, settings, config, job_ids, say, keep_open=True,
+            return _fill_and_watch(bidi, conn, settings, config, job_ids, say,
+                                   keep_open=watch is not None if headless else True,
                                    on_filled=report_filled, watch=watch, background=background,
                                    pause=pause, approval=approval, eligibility_override=eligibility_override,
-                                   recovery_planner=recovery_ai, on_report=on_report, stop=stop, run=run)
+                                   recovery_planner=recovery_ai, on_report=on_report, stop=stop, run=run,
+                                   firefox=firefox)
         finally:
-            bidi.close()                  # ends remote control only: the window and tabs stay
+            firefox.close()
     except (BrowserError, BidiError) as exc:
         if isinstance(exc, SessionEndError) and completed is not None:
             # Filling and its callback already finished. Teardown is a separate
             # failure, not evidence that the prepared applications failed.
-            message = f"Browser cleanup unconfirmed: {bidi.redact(str(exc))}"
+            message = f"Browser cleanup unconfirmed: {firefox.bidi.redact(str(exc))}"
             for report in completed:
                 report.note = f"{report.note}\n{message}" if report.note else message
             say(message)

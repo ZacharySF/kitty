@@ -797,3 +797,57 @@ def test_recovery_reservation_is_released_if_worker_never_started(app, workspace
         })
     assert web_ai._spent(workspace.conn) == 0
     assert workspace.conn.execute('SELECT state FROM ai_reviews').fetchone()[0] == 'failed'
+
+
+def test_restart_firefox_answers_a_restart_handoff_only_when_confirmed_and_idle(app, workspace, posting, monkeypatch):
+    """The restart_firefox: handoff's button (no real Firefox: the restart itself is browser.py's)."""
+    from kitty.core.apply import browser, filler
+
+    restarted = []
+    monkeypatch.setattr(browser, "restart_own_firefox", lambda settings: restarted.append(settings) or 6000)
+    for body in ({}, {"confirmed": False}):
+        with pytest.raises(APIError) as caught:
+            web.post(app, workspace.conn, "/api/automation/restart-firefox", body)
+        assert caught.value.status == 400
+    with pytest.raises(APIError):
+        web.post(app, workspace.conn, "/api/automation/restart-firefox", {"confirmed": True, "force": True})
+
+    held, release = threading.Event(), threading.Event()
+    item = report(posting.id, "blocked")
+    item.note = filler.restart_note(1)
+
+    def fill(settings, config, ids, *, on_filled, **kwargs):
+        on_filled([item])
+        held.set()
+        assert release.wait(3)
+
+    monkeypatch.setattr(web.filler, "fill_jobs", fill)
+    app.automation.start(app.config, controller_plan(app, posting))
+    assert held.wait(3)
+    with pytest.raises(APIError) as caught:               # never under a running worker
+        web.post(app, workspace.conn, "/api/automation/restart-firefox", {"confirmed": True})
+    assert caught.value.status == 409 and restarted == []
+    release.set()
+    assert finish(app.automation)["reports"][0]["note"].startswith("restart_firefox:")
+
+    state = web.post(app, workspace.conn, "/api/automation/restart-firefox", {"confirmed": True})
+    assert state["running"] and state["phase"] == "restarting"
+    state = finish(app.automation)
+    assert restarted == [app.settings] and state["phase"] == "restarted" and state["error"] is None
+    assert state["reports"][0]["note"].startswith("Firefox restarted")
+
+
+def test_restart_firefox_failure_is_reported_and_demo_refuses_it(app, workspace, monkeypatch):
+    from kitty.core.apply import browser
+
+    def busy(settings):
+        raise browser.BrowserError("Another program is remote-controlling the rika! Firefox; stop it first.")
+
+    monkeypatch.setattr(browser, "restart_own_firefox", busy)
+    web.post(app, workspace.conn, "/api/automation/restart-firefox", {"confirmed": True})
+    state = finish(app.automation)
+    assert state["phase"] == "failed" and "stop it first" in state["error"] and not state["running"]
+    app.settings = replace(app.settings, demo=True)
+    with pytest.raises(APIError) as caught:
+        web.post(app, workspace.conn, "/api/automation/restart-firefox", {"confirmed": True})
+    assert caught.value.status == 403

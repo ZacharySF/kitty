@@ -1749,7 +1749,7 @@ def test_later_browser_failure_preserves_completed_job_reports(space, monkeypatc
     monkeypatch.setattr(filler, 'open_tab', open_next)
     monkeypatch.setattr(filler, 'fill_job', prepare)
     reports = filler._fill_all(
-        SimpleNamespace(redact=lambda value: value), space.conn, space.settings,
+        SimpleNamespace(redact=lambda value: value, connected=True), space.conn, space.settings,
         space.config, [job.id for job in postings], lambda message: None,
         keep_open=True, pause=0,
     )

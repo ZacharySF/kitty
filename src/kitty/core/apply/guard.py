@@ -30,7 +30,10 @@ applies it. Three layers share one set of action intents:
 - L2, the network tripwire's request policy (N3 §4.4-4.5): while kitty fills a
   tab, Firefox holds every request of that tab at `network.beforeRequestSent`
   and kitty answers each one at once with `continueRequest` or
-  `failRequest`. `policy()` is that answer. (Not armed during fills yet.)
+  `failRequest`. `policy()` is that answer; kitty.core.apply.bidi arms it per
+  tab for the whole fill (`Tab.arm`) and releases it before the tab is handed
+  over. A failed request stops the fill (`SubmitBlockedNetwork`, cause
+  `submit_blocked_network`) and the tab stays open for the owner.
 
 It reads only the request's method, URL origin and path (plus query parameter
 *names*, and the value of Ashby's GraphQL `op` parameter), whether it is a
@@ -96,6 +99,18 @@ KEY_INTENTS = frozenset({FIELD, LIST_COMMIT})
 #: Deny rules are enforced in both modes.
 AllowlistMode = Literal["enforce", "observe"]
 
+#: The survey stage (N3 §4.5 staging): these families' allowlists are inferred,
+#: not observed, so an unlisted non-GET continues (recorded as observed) until
+#: the dry-run survey has seen their upload paths. Every deny rule, the generic
+#: submit pattern and the navigation-POST rule stay enforced for them.
+OBSERVED_ALLOWLISTS = frozenset({"greenhouse", "lever", "smartrecruiters"})
+
+#: Intents whose action may need a network allowance (policy rules 3 and 4):
+#: while kitty performs one, its tab holds a same-origin token for it.
+NETWORK_INTENTS = frozenset({CREDENTIAL, PROFILE_GATE, NEXT})
+#: How long such a token outlives the action that caused its requests.
+NETWORK_TOKEN_SECONDS = 10.0
+
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # Firefox 155 gives top-level and iframe form posts a navigation id
 # (tests/test_bidi_events.py); a document destination still counts as a
@@ -106,6 +121,10 @@ _REQUEST_TOKENS = frozenset({CREDENTIAL, PROFILE_GATE})
 
 #: N3 §4.5 custom row: a path or query parameter name that looks like a submit.
 GENERIC_SUBMIT = re.compile(r"submit|submission|finali[sz]e|sendapplication|applications?/?$", re.IGNORECASE)
+#: The same for a GET navigation (N3 §8 R11, a legacy site that submits by GET): the
+#: submit verbs only. A page whose path ends in "application(s)" is where a form
+#: is read and filled (seen in the account fixtures' post-login redirect), not a send.
+GENERIC_SUBMIT_GET = re.compile(r"submit|submission|finali[sz]e|sendapplication", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -284,7 +303,9 @@ PROFILES: dict[str, Profile] = {
         ),
     ),
     # Custom employer sites, redirects and every family without a profile.
-    "custom": Profile("custom", deny=(_generic(navigations=True),), unlisted=CONTINUE),
+    "custom": Profile("custom", deny=(
+        _generic(), Rule("generic.submit", path=GENERIC_SUBMIT_GET, query=GENERIC_SUBMIT_GET, navigations=True),
+    ), unlisted=CONTINUE),
 }
 
 _GENERIC = _generic()
@@ -293,6 +314,11 @@ _GENERIC = _generic()
 def profile_for(family: str) -> Profile:
     """The profile for kitty's ATS classification (`urls.detect_ats`); unknown → custom."""
     return PROFILES.get(family, PROFILES["custom"])
+
+
+def allowlist_mode(family: str) -> AllowlistMode:
+    """How strictly a family's allowlist applies during fills (`OBSERVED_ALLOWLISTS`)."""
+    return "observe" if family in OBSERVED_ALLOWLISTS else "enforce"
 
 
 def policy(event: Mapping | Request, family: str | Profile, tokens: Iterable[Token], *,
@@ -378,6 +404,34 @@ def _on_hosts(origin: str, domains: tuple[str, ...]) -> bool:
     return any(host == domain or host.endswith("." + domain) for domain in domains)
 
 
+_UUID_SEGMENT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+_HEX_SEGMENT = re.compile(r"[0-9a-f]{16,}", re.IGNORECASE)
+
+
+def path_template(path: str) -> str:
+    """A decoded URL path with its identifier-like segments replaced: the endpoint's shape.
+
+    Numbers become {n}, UUIDs {uuid}, long hex strings {hex}, and any other
+    segment holding an @, more than 40 characters, or a digit (beyond a short tag
+    such as v2) becomes {id}. Evidence records (survey observations, passive
+    learning) keep this template, never the candidate or record ids a path names.
+    """
+    def template(segment: str) -> str:
+        if not segment:
+            return segment
+        if segment.isdigit():
+            return "{n}"
+        if _UUID_SEGMENT.fullmatch(segment):
+            return "{uuid}"
+        if _HEX_SEGMENT.fullmatch(segment):
+            return "{hex}"
+        if "@" in segment or len(segment) > 40 or (len(segment) > 4 and any(c.isdigit() for c in segment)):
+            return "{id}"
+        return segment
+
+    return "/".join(template(segment) for segment in path.split("/"))
+
+
 # ------------------------------------------------------------ L0 and L1
 
 
@@ -386,7 +440,7 @@ class UnsafeAction(RuntimeError):
 
 
 class SubmitGuardStop(Exception):
-    """The veto log says the fill must stop. Not an UnsafeAction: helpers that turn a
+    """The submit guard says the fill must stop. Not an UnsafeAction: helpers that turn a
     refused interaction into a blocker must not swallow it."""
 
 
@@ -398,6 +452,10 @@ class OwnerTookOver(SubmitGuardStop):
     """The owner clicked or pressed a key in the tab while kitty was filling it."""
 
 
+class SubmitBlockedNetwork(SubmitGuardStop):
+    """L2 failed a request this tab sent during a fill (a possible submit): the fill stops."""
+
+
 #: Fill-report notes (and their attempt causes, kitty.core.apply.attempts).
 OWNER_TOOK_OVER = "owner_took_over"
 SUBMIT_VETOED = "submit_vetoed"
@@ -407,6 +465,15 @@ OWNER_NOTE = ("owner: you clicked or pressed a key in this tab while kitty was f
 OWNER_HINT = "You also clicked or pressed a key in this tab during the fill; if you pressed Submit, press Submit again."
 VETO_NOTE = ("vetoed: the submit guard blocked an action in this tab while kitty was filling it; "
              "kitty stopped. Review the tab before you submit.")
+SUBMIT_BLOCKED_NETWORK = "submit_blocked_network"
+
+
+def network_note(decision: Decision) -> str:
+    """The fill-report note for a request L2 failed: method, path and rule only."""
+    return (f"network: the submit guard blocked a request this tab sent while kitty was filling it "
+            f"({decision.method} {decision.path}, rule {decision.rule}); kitty stopped and kept the tab "
+            "for you. Review it before you submit.")
+
 
 #: How long the in-page veto stays armed after kitty last renewed it (N3 §4.3):
 #: every sandbox script kitty runs in the tab renews it, and so does a heartbeat,
@@ -550,11 +617,14 @@ RULES_JS = r"""(() => {
 #: has passed. Tokens: `grant` names the one element a click may activate (for
 #: one intent, 5 s, consumed by the first matching click); `keys` names the one
 #: element key events may reach; `settle` clears both and returns the log.
+#: `ownerAt` is the wall time of the last trusted key press while no kitty keys
+#: were bound (the owner typing in the tab; never which key): a lost connection
+#: must not restart Firefox under the owner's hands.
 GUARD_JS = r"""(lease) => {
   if (globalThis.kittyGuard) return globalThis.kittyGuard.arm(lease);
   const rules = """ + RULES_JS + r""";
   const now = () => performance.now();
-  const g = {leaseUntil: 0, token: null, keys: null, chain: null, log: []};
+  const g = {leaseUntil: 0, token: null, keys: null, chain: null, log: [], ownerAt: null};
   const armed = () => now() < g.leaseUntil;
   const liveToken = () => g.token && !g.token.used && now() < g.token.until ? g.token : null;
   // `kitty` says whether kitty caused the vetoed event; each listener decides it
@@ -606,6 +676,7 @@ GUARD_JS = r"""(lease) => {
     if (!armed()) return;
     const target = event.composedPath()[0];
     const keys = g.keys;
+    if (event.isTrusted && event.type === 'keydown' && !keys) g.ownerAt = Date.now();
     // A keyup that follows focus to the next text box (segmented code fields)
     // cannot activate anything; every other stray key is cancelled.
     if (keys && target !== keys.el && !(event.type === 'keyup' && rules.textEntry(target)))
@@ -638,13 +709,13 @@ GUARD_JS = r"""(lease) => {
       const token = g.token, log = g.log;
       g.token = null; g.keys = null;
       if (drain) g.log = [];
-      return {used: !!token?.used, vetoed: !!token?.vetoed, log};
+      return {used: !!token?.used, vetoed: !!token?.vetoed, log, ownerAt: g.ownerAt};
     },
-    drain() { const log = g.log; g.log = []; return log; },
+    drain() { const log = g.log; g.log = []; return {log, ownerAt: g.ownerAt}; },
     release() {
       g.leaseUntil = 0; g.token = null; g.keys = null; g.chain = null;
       const log = g.log; g.log = [];
-      return {armed: armed(), token: g.token !== null || g.keys !== null, log};
+      return {armed: armed(), token: g.token !== null || g.keys !== null, log, ownerAt: g.ownerAt};
     },
   };
   return globalThis.kittyGuard.arm(lease);

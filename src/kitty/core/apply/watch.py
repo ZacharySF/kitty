@@ -7,6 +7,13 @@ pressing "a" would. It only reads: the tab's URL (and its iframes' URLs) and,
 when a board needs it, the page title and visible text, from the private
 sandbox realm. It never clicks, types or submits anything.
 
+It also learns submit endpoints passively (`SubmitLearner`, OWNER RULING
+R-PASSIVE, 2026-11-04): with no intercept (the submit guard was released before
+watching), it subscribes to the watched tabs' requests and, at a confirmation,
+records the method and path template of the first non-GET request that followed
+my own Submit click. Nothing is held, blocked or changed; bodies, query values,
+headers and cookies are never read.
+
 Firefox allows one remote-control session at a time, so the watcher runs in
 the filler's session right after filling (filler.fill_jobs). Watching ends when
 every tab is confirmed or closed, when the stop flag is set (Ctrl-C, the TUI),
@@ -31,14 +38,16 @@ import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from typing import Callable
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from kitty.config import Config, _authentication_origin
 from kitty.core import applications as applications_core
 from kitty.core import followups
-from kitty.core.apply.bidi import Bidi, BidiError, ConnectionLost, Frame, Tab, TabClosed
+from kitty.core.apply.bidi import SANDBOX, Bidi, BidiError, ConnectionLost, Frame, Tab, TabClosed
+from kitty.core.apply.guard import RULES_JS, origin_of, path_template
 from kitty.db.connection import transaction
 
 #: Seconds between two looks at the same tab: cheap reads, and I submit by hand anyway.
@@ -280,6 +289,160 @@ def record_submission(
     return True
 
 
+# ------------------------------------------------------------- passive learning
+
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_SUBMIT_CLICK_KEY = "kitty.application.submitClick"
+#: Non-GET requests remembered per frame (newest last): only method, origin, path, time.
+_REQUESTS_KEPT = 32
+
+#: The passive Submit-click recorder (kitty's sandbox; a preload script gives new
+#: documents of a watched tab it before any page script): the time of the last
+#: trusted click whose activation target is a submit-capable or final-labelled
+#: control (guard.RULES_JS), kept in sessionStorage too, so the same-origin
+#: confirmation page still has it. Never prevents, stops or changes anything.
+_CLICK_RECORDER_JS = r"""(key) => {
+  if (globalThis.kittySubmitClick !== undefined) return true;
+  const rules = """ + RULES_JS + r""";
+  globalThis.kittySubmitClick = null;
+  window.addEventListener('click', event => {
+    if (!event.isTrusted) return;
+    const target = rules.targetOf(event.composedPath());
+    if (!target || !(rules.submitCapable(target) || rules.final(target))) return;
+    const at = Date.now();
+    globalThis.kittySubmitClick = at;
+    try { sessionStorage.setItem(key, String(at)); } catch {}
+  }, {capture: true, passive: true});
+  return true;
+}"""
+
+_CLICK_READ_JS = r"""(key) => {
+  let at = globalThis.kittySubmitClick ?? null;
+  try { const stored = Number(sessionStorage.getItem(key)); if (stored && !(at >= stored)) at = stored; } catch {}
+  return at;
+}"""
+
+
+class SubmitLearner:
+    """Passive, read-only learning of submit endpoints from my own Submit (N3 §4.5).
+
+    OWNER RULING R-PASSIVE (2026-11-04), within its text: after release only (a
+    tab kitty still arms is skipped), with a `network.beforeRequestSent`
+    subscription and no intercept, so nothing is held, blocked or altered;
+    triggered by my own trusted Submit click; it keeps the method, origin, path
+    and time of non-GET requests in memory and records only the method and path
+    template (endpoints.record_learned) of the first one after that click, to the
+    form's or the confirmation's origin, once a confirmation is recognised (RULES).
+    Bodies, query values, headers and cookies are never read. A learned path
+    becomes a deny rule only through a reviewed change to guard.PROFILES.
+    """
+
+    def __init__(self, bidi: Bidi, record: Callable[[str, str, str], None]) -> None:
+        self.bidi = bidi
+        self.record = record                  # (family, method, path) -> None
+        self._lock = threading.Lock()
+        self._requests: dict[str, list[tuple[float, str, str, str]]] = {}   # frame -> (ms, method, origin, path)
+        self._frames: dict[str, set[str]] = {}    # watched tab -> every frame context seen in it
+        self._clicks: dict[str, float] = {}       # watched tab -> time of my latest Submit click (ms)
+        self._subscriptions: list[str] = []
+        self._preloads: list[str] = []
+        self._remove: Callable[[], None] | None = None
+
+    def start(self, tabs: Sequence[WatchedTab]) -> None:
+        """Subscribe to the watched tabs' requests and install the click recorder."""
+        if self._remove is None:
+            self._remove = self.bidi.on("network.beforeRequestSent", self._seen)
+        for tab in tabs:
+            page = Tab(self.bidi, tab.context)
+            if page.armed:
+                continue                      # never while kitty holds the tab
+            try:
+                self._subscriptions.append(self.bidi.command("session.subscribe", {
+                    "events": ["network.beforeRequestSent"], "contexts": [tab.context]})["subscription"])
+                self._preloads.append(self.bidi.command("script.addPreloadScript", {
+                    "functionDeclaration": f"() => {{ ({_CLICK_RECORDER_JS})({_SUBMIT_CLICK_KEY!r}); }}",
+                    "contexts": [tab.context], "sandbox": SANDBOX}).get("script"))
+                for frame in page.frames():
+                    with suppress(BidiError):
+                        frame.call(_CLICK_RECORDER_JS, _SUBMIT_CLICK_KEY, timeout=_LOOK_TIMEOUT)
+            except ConnectionLost:
+                raise
+            except BidiError:
+                continue                      # closed meanwhile: nothing to learn from it
+
+    def _seen(self, params: dict) -> None:
+        """Event reader thread: remember one non-GET request (never its query, headers or body)."""
+        if params.get("isBlocked"):
+            return                            # held by an armed fill: never the owner's Submit
+        request = params.get("request") or {}
+        method = str(request.get("method") or "").upper()
+        if not method or method in _SAFE_METHODS:
+            return
+        parts = urlsplit(str(request.get("url") or ""))
+        entry = (float(params.get("timestamp") or 0), method, origin_of(parts.geturl()),
+                 unquote(parts.path) or "/")
+        with self._lock:
+            seen = self._requests.setdefault(str(params.get("context")), [])
+            seen.append(entry)
+            del seen[:-_REQUESTS_KEPT]
+
+    def look(self, tab: WatchedTab) -> None:
+        """One poll: note the tab's frames and the time of my latest Submit click there."""
+        try:
+            frames = Tab(self.bidi, tab.context).frames()
+        except ConnectionLost:
+            raise
+        except BidiError:
+            return
+        self._frames.setdefault(tab.context, {tab.context}).update(frame.context for frame in frames)
+        for frame in frames:
+            try:
+                at = frame.call(_CLICK_READ_JS, _SUBMIT_CLICK_KEY, timeout=_LOOK_TIMEOUT)
+            except ConnectionLost:
+                raise
+            except BidiError:
+                continue
+            if isinstance(at, (int, float)) and at > self._clicks.get(tab.context, 0):
+                self._clicks[tab.context] = float(at)
+
+    def confirmed(self, tab: WatchedTab, url: str) -> tuple[str, str] | None:
+        """At a recognised confirmation: record the first non-GET after my Submit click.
+
+        Returns the recorded (method, path template), or None when no Submit click
+        or no such request was seen (nothing is guessed).
+        """
+        self.look(tab)                        # the confirmation document keeps the click time
+        clicked = self._clicks.get(tab.context)
+        if clicked is None:
+            return None
+        origins = {origin_of(url), origin_of(tab.form_url)}
+        now = time.time() * 1000
+        with self._lock:
+            candidates = [entry for context in self._frames.get(tab.context, {tab.context})
+                          for entry in self._requests.get(context, ())
+                          if clicked <= entry[0] <= now and entry[2] in origins]
+        if not candidates:
+            return None
+        _, method, _, path = min(candidates)
+        with suppress(OSError):              # learning never stops the watcher
+            self.record(tab.ats, method, path)
+        return method, path_template(path)
+
+    def stop(self) -> None:
+        """Unsubscribe and remove the recorder (best effort: Firefox may be gone)."""
+        if self._remove is not None:
+            self._remove()
+            self._remove = None
+        with suppress(BidiError):
+            if self._subscriptions:
+                self.bidi.command("session.unsubscribe", {"subscriptions": self._subscriptions})
+        for script in self._preloads:
+            with suppress(BidiError):
+                self.bidi.command("script.removePreloadScript", {"script": script})
+        self._subscriptions, self._preloads = [], []
+
+
 def watch_tabs(
     looker: Callable[[WatchedTab], PageView | None],
     conn: sqlite3.Connection,
@@ -289,6 +452,7 @@ def watch_tabs(
     *,
     poll_seconds: float = POLL_SECONDS,
     observe: Callable[[WatchedTab, bool], None] | None = None,
+    learner: SubmitLearner | None = None,
 ) -> None:
     """Look at every tab in `watch.tabs` each round until none is left, stop is set or time is up.
 
@@ -296,23 +460,35 @@ def watch_tabs(
     is recorded once and dropped; a closed tab is dropped. `observe(tab, confirmed)`
     runs after each look at an open tab, before a confirmation is recorded
     (attempts.observe: value hashes for per-field correctness, read-only).
+    `learner` (SubmitLearner) passively learns the submit endpoint at a confirmation.
     """
     deadline = time.monotonic() + watch.hours * 3600
-    while watch.tabs and not watch.stop.is_set() and time.monotonic() < deadline:
-        for tab in list(watch.tabs):
-            if watch.stop.is_set():
-                return
-            view = looker(tab)
-            if view is None:
-                watch.tabs.remove(tab)
-                say(f"{tab.label}: tab closed, no longer watching it")
-                continue
-            url = confirmed(RULES[tab.ats], view, posting_key(tab.form_url))
-            if observe is not None:
-                observe(tab, url is not None)
-            if url is not None:
-                watch.tabs.remove(tab)
-                if record_submission(conn, config, tab, url, say):
-                    watch.on_applied(tab)
-        if watch.tabs:
-            watch.stop.wait(poll_seconds)
+    if learner is not None:
+        learner.start(watch.tabs)
+    try:
+        while watch.tabs and not watch.stop.is_set() and time.monotonic() < deadline:
+            for tab in list(watch.tabs):
+                if watch.stop.is_set():
+                    return
+                view = looker(tab)
+                if view is None:
+                    watch.tabs.remove(tab)
+                    say(f"{tab.label}: tab closed, no longer watching it")
+                    continue
+                url = confirmed(RULES[tab.ats], view, posting_key(tab.form_url))
+                if learner is not None:
+                    if url is not None:
+                        learner.confirmed(tab, url)
+                    else:
+                        learner.look(tab)
+                if observe is not None:
+                    observe(tab, url is not None)
+                if url is not None:
+                    watch.tabs.remove(tab)
+                    if record_submission(conn, config, tab, url, say):
+                        watch.on_applied(tab)
+            if watch.tabs:
+                watch.stop.wait(poll_seconds)
+    finally:
+        if learner is not None:
+            learner.stop()

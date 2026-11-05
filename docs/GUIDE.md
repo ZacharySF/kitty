@@ -2225,6 +2225,20 @@ blocks it too, rika! stops filling that tab and says so ("press Submit again").
 The guard is lifted before the tab is reported ready, so my own Submit then works
 normally; other tabs are never affected.
 
+The guard also holds every request the tab sends while rika! fills it and lets
+through only what the form provider's profile allows (deny lists of submit
+endpoints always; Greenhouse, Lever and SmartRecruiters unknown requests are only
+recorded during the survey, method and path only, in `data/apply-endpoints/`). A
+blocked request stops the fill (`network:` note, cause `submit_blocked_network`)
+and keeps the tab for me to review. If the connection to rika!'s Firefox breaks
+mid-fill, rika! restarts that Firefox itself and fills the job again only when no
+tab is waiting for me; otherwise the job shows one `restart_firefox:` item: finish
+or discard the waiting tabs, then press Restart Firefox in Apply (or run
+`kitty apply restart-firefox`), which kills rika!'s Firefox so nothing it still
+held is sent. After the guard is lifted, the watcher only reads: it records the
+method and path of the first request after my own Submit click that led to a
+recognized confirmation, never bodies, query values, headers or cookies.
+
 Preparation states are **unattempted**, **attempted**, **partial**, **blocked** and
 **ready**. Only verified required fields, completed uploads and a recognized
 review/submit boundary permit ready; detection of fields alone does not.

@@ -627,8 +627,9 @@ def _print_discover_report(report) -> None:
 def apply(
     job_ids: Annotated[Optional[list[str]], typer.Argument(
         help="Job ids to open and fill; `report` for the apply health report; `resolve [JOB_IDS]...` "
-             "to check postings are open and resolve redirects.",
-        metavar="[JOB_IDS]... | report | resolve [JOB_IDS]...",
+             "to check postings are open and resolve redirects; `restart-firefox` after a "
+             "restart_firefox handoff.",
+        metavar="[JOB_IDS]... | report | resolve [JOB_IDS]... | restart-firefox",
     )] = None,
     queued: Annotated[bool, typer.Option("--queued", help="Every queued job you have not applied to.")] = False,
     top: Annotated[Optional[int], typer.Option("--top", help="The N best new/queued jobs you have not applied to.")] = None,
@@ -659,6 +660,11 @@ def apply(
     Tesla, employer-own portals, Paradox) become typed handoffs. Without job ids it checks
     every new/queued job (or --queued / --top N); public GETs only, robots.txt respected, at
     most one request per second per host. `--dry-run` reports the changes and writes nothing.
+
+    `kitty apply restart-firefox` answers a `restart_firefox:` handoff (the connection to the
+    rika! Firefox broke while tabs waited for you): finish or discard those tabs first. It kills
+    that Firefox, so requests its lost session still held are dropped, never sent, and starts it
+    again without restoring tabs.
     """
     from kitty.core.apply.filler import EligibilityOverride, fill_jobs
     from kitty.core.apply.watch import Watch
@@ -668,6 +674,13 @@ def apply(
             error_console.print("`kitty apply report` takes no job ids or fill options (only --json).")
             raise typer.Exit(code=1)
         _apply_report(as_json)
+        return
+    if job_ids and job_ids[0] == "restart-firefox":
+        if (len(job_ids) > 1 or queued or top or track or headless or no_watch or include_ineligible
+                or dry_run or as_json):
+            error_console.print("`kitty apply restart-firefox` takes no job ids or options.")
+            raise typer.Exit(code=1)
+        _apply_restart_firefox()
         return
     resolving = bool(job_ids) and job_ids[0] == "resolve"
     if resolving:
@@ -758,6 +771,24 @@ def _rate_text(rate: float | None, low: float | None, high: float | None, n: int
     if rate is None:
         return f"insufficient data (n = {n})"
     return f"{_percent(rate)} ({_percent(low)}–{_percent(high)}), n = {n}"
+
+
+def _apply_restart_firefox() -> None:
+    """`kitty apply restart-firefox`: kill the rika! Firefox and start it again (browser.restart_own_firefox)."""
+    from kitty.core.apply.browser import BrowserError, restart_own_firefox
+
+    workspace = _open()
+    try:
+        settings = workspace.settings
+    finally:
+        workspace.close()
+    try:
+        port = restart_own_firefox(settings)
+    except BrowserError as exc:
+        error_console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(f"Restarted the rika! Firefox (remote control on port {port}). Requests its lost "
+                  "session still held were dropped, not sent; no tabs were restored.")
 
 
 def _apply_report(as_json: bool) -> None:
