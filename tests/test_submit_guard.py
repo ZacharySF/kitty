@@ -324,6 +324,20 @@ def test_c1_overlay_swapped_in_after_inspection_is_vetoed(tab, trap, layer):
         frame.click(option, intent=FIELD)
     assert _quiet(trap) == []
     assert [entry["reason"] for entry in tab.vetoes] == ["missed_target"]
+    # kitty's own diverted click is a defect, never mistaken for the owner acting
+    assert veto_cause(tab.vetoes) == guard.SUBMIT_VETOED
+
+
+def test_owner_click_while_kitty_types_is_the_owners_not_kittys(tab, trap):
+    frame = _serve(trap, tab, T1)
+    frame.call("() => { const city = document.querySelector('#city'); city.focus();"
+               " globalThis.kittyGuard.keys(city, 'field'); }")      # kitty's keys are bound, as while typing
+    owner_click(frame, _node(frame, "button"))
+    assert _quiet(trap) == []
+    vetoes = tab.new_vetoes()
+    assert [(entry["reason"], entry["token"]) for entry in vetoes] == [("unguarded", False)]
+    assert veto_cause(vetoes) == guard.OWNER_TOOK_OVER
+    frame.call("() => globalThis.kittyGuard.settle()")
 
 
 _C_CASES = {
@@ -524,13 +538,19 @@ def test_workday_next_on_a_localized_earlier_step_is_still_allowed(tab, trap, mo
     assert tab.new_vetoes() == []
 
 
+def _with_bar(bar: str, extra: str = "", button: str = "Next") -> str:
+    """A Workday-like step page whose progress bar is `bar` (plus other page markup)."""
+    return re.sub(r'<div data-automation-id="progressBar">.*?</div>', lambda _: bar,
+                  _workday(1, _STEPS, button), count=1, flags=re.S) + extra
+
+
+_UNREADABLE = '<div data-automation-id="progressBar"><span data-automation-id="progressBarActiveStep">Angaben</span></div>'
+
+
 def test_workday_next_refuses_an_unreadable_progress_bar_and_a_review_container(tab, trap, monkeypatch):
     _workday_snapshot(monkeypatch, steps_rule=True)
-    unreadable = (_workday(1, _STEPS, "Next").replace("aktueller Schritt 2 von 5 ", "")
-                  .replace(' data-automation-id="progressBarCompletedStep"', "")
-                  .replace(' data-automation-id="progressBarInactiveStep"', ""))
-    _serve(trap, tab, unreadable)
-    assert not preflight.inspect_page(tab).safe_next      # one marked item and no numbers
+    _serve(trap, tab, _with_bar(_UNREADABLE))
+    assert not preflight.inspect_page(tab).safe_next      # one marked item, no list, no numbers
     _serve(trap, tab, _workday(1, _STEPS, "Next") +
            '<section data-automation-id="reviewJobApplicationSection"><h2>Angaben</h2></section>')
     snapshot = preflight.inspect_page(tab)
@@ -538,6 +558,64 @@ def test_workday_next_refuses_an_unreadable_progress_bar_and_a_review_container(
     with pytest.raises(UnsafeAction):
         preflight.advance(snapshot, "workday")
     assert _quiet(trap) == []
+
+
+@pytest.mark.parametrize("marker", ['aria-current="step"', 'aria-selected="true"'])
+@pytest.mark.parametrize(("active", "safe"), [(1, True), (4, False)])
+def test_workday_step_position_from_aria_marker_among_plain_list_items(tab, trap, monkeypatch, marker, active, safe):
+    _workday_snapshot(monkeypatch, steps_rule=True)
+    items = "".join(f"<li{' ' + marker if i == active else ''}><span>{label}</span></li>"
+                    for i, label in enumerate(_STEPS))
+    _serve(trap, tab, _with_bar(f'<div data-automation-id="progressBar"><ol>{items}</ol></div>'))
+    snapshot = preflight.inspect_page(tab)
+    assert (snapshot.safe_next, snapshot.review) == (safe, not safe)
+
+
+def test_workday_step_numbers_are_read_as_rendered_not_from_hidden_text(tab, trap, monkeypatch):
+    _workday_snapshot(monkeypatch, steps_rule=True)
+    bar = ('<div data-automation-id="progressBar"><span data-automation-id="progressBarActiveStep">'
+           '<span style="display:none">Schritt 1 von 5</span>Schritt 5 von 5 Überprüfen</span></div>')
+    _serve(trap, tab, _with_bar(bar))
+    snapshot = preflight.inspect_page(tab)
+    assert snapshot.review and not snapshot.safe_next
+
+
+@pytest.mark.parametrize("page", preflight._WORKDAY_STEP_PAGES)
+def test_workday_earlier_step_page_id_allows_next_when_the_bar_is_unreadable(tab, trap, monkeypatch, page):
+    _workday_snapshot(monkeypatch, steps_rule=True)
+    _serve(trap, tab, _with_bar(_UNREADABLE, f'<div data-automation-id="{page}"><h2>Angaben</h2></div>'))
+    snapshot = preflight.inspect_page(tab)
+    assert snapshot.safe_next and not snapshot.review
+
+
+@pytest.mark.parametrize("page", preflight._WORKDAY_REVIEW_PAGES)
+def test_workday_review_page_id_is_final_whatever_the_bar_says(tab, trap, monkeypatch, page):
+    _workday_snapshot(monkeypatch, steps_rule=True)
+    _serve(trap, tab, _workday(1, _STEPS, "Next") + f'<div data-automation-id="{page}"><h2>Angaben</h2></div>')
+    snapshot = preflight.inspect_page(tab)
+    assert snapshot.review and not snapshot.safe_next
+    with pytest.raises(UnsafeAction):
+        preflight.advance(snapshot, "workday")
+    assert _quiet(trap) == []
+
+
+_FINAL_WORDS = ["Invia", "Prześlij", "送信", "Enviar", "Envoyer", "Absenden", "Senden", "Verzenden",
+                "Indsend", "Skicka", "Lähetä", "Odeslat", "提交", "제출", "Bewerbung absenden", "Submit"]
+
+
+@LAYERS
+def test_final_labels_in_common_locales_are_never_field_clicks(tab, trap, layer):
+    buttons = "".join(f'<button type="button" id="b{i}" style="display:block;width:200px;height:30px">{word}</button>'
+                      for i, word in enumerate(_FINAL_WORDS))
+    frame = _serve(trap, tab, buttons + '<button type="button" id="benign" style="display:block;width:200px;height:30px">'
+                   'Weiter</button>', layer=layer)
+    for i, word in enumerate(_FINAL_WORDS):
+        with pytest.raises(UnsafeAction, match="final action"):
+            frame.click(_node(frame, f"#b{i}"), intent=FIELD)
+    frame.click(_node(frame, "#benign"), intent=FIELD)
+    if layer == "on":                               # the owner's own click on one is vetoed too
+        owner_click(frame, _node(frame, "#b0"))
+        assert [entry["reason"] for entry in tab.new_vetoes()] == ["unguarded"]
 
 
 # ------------------------------------------------------------ lifting the veto (N3 §7)
@@ -568,21 +646,30 @@ def test_l1_after_a_fill_the_owners_submit_reaches_the_server_exactly_once(space
     assert trap.writes() == [SUBMIT]
 
 
-def test_l2_owner_click_during_a_fill_stops_it_and_releases_the_tab(space, tab, trap, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize("outcome", ["ready", "blocked"])
+def test_l2_owner_click_during_a_fill_stops_it_and_releases_the_tab(space, tab, trap, monkeypatch, outcome):  # noqa: F811
     from kitty.core.apply import filler
 
     real = filler.fill_form
 
     def owner_presses_submit_mid_fill(page, *args, **kwargs):
         owner_click(page.main, _node(page.main, "#submit"))
-        return real(page, *args, **kwargs)
+        result = real(page, *args, **kwargs)
+        # "ready": the page would otherwise be handed over as ready; "blocked": it
+        # stops for its own reason (no verified resume), which keeps its cause.
+        result.resume_verified = outcome == "ready"
+        return result
 
     monkeypatch.setattr(filler, "fill_form", owner_presses_submit_mid_fill)
     report = fill_job(tab, space.conn, space.settings, space.config, _application_job(space, trap))
-    assert report.status == "blocked" and report.note == guard.OWNER_NOTE
-    assert report.cause == "human_boundary"
-    assert space.conn.execute("SELECT cause FROM apply_attempts WHERE id = ?",
-                              (report.attempt_id,)).fetchone()[0] == guard.OWNER_TOOK_OVER
+    cause = space.conn.execute("SELECT cause FROM apply_attempts WHERE id = ?", (report.attempt_id,)).fetchone()[0]
+    assert report.status == "blocked"
+    if outcome == "ready":
+        assert report.note == guard.OWNER_NOTE and report.cause == "human_boundary"
+        assert cause == guard.OWNER_TOOK_OVER
+    else:
+        assert report.note.startswith("Resume upload is not verified") and report.note.endswith(guard.OWNER_HINT)
+        assert cause == "resume_unverified"
     assert report.guard_released and not tab.armed
     assert veto_cause(tab.vetoes) == guard.OWNER_TOOK_OVER
     assert trap.writes() == []

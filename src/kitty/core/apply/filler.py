@@ -51,7 +51,7 @@ from kitty.core.apply.fields import (
     MANUAL_CONSENT, TEXT_KINDS, FormField, Plan, is_affirmative, is_resume_input, lookup_answer, match_option,
     plan_for,
 )
-from kitty.core.apply.guard import OwnerTookOver, SubmitGuardStop, UnsafeAction, stop_for
+from kitty.core.apply.guard import OWNER_HINT, OwnerTookOver, SubmitGuardStop, UnsafeAction, stop_for
 from kitty.core.apply.page import (
     ChoiceSelectionError, choose_select, fill_text, form_frames, pick_from_list, pick_from_search,
     read_fields, settle, tick, upload, uploads_pending, wait_for_form, wait_for_uploads,
@@ -1038,8 +1038,13 @@ def fill_job(
         try:
             stop_for(page.new_vetoes())
         except SubmitGuardStop as exc:
-            if isinstance(exc, OwnerTookOver) or report.status != "blocked":
+            # A stop already recorded keeps its own cause; a late veto only
+            # overrides an outcome that would otherwise hand the tab over as fine.
+            # The owner whose own Submit was blocked is still told to press it again.
+            if report.status != "blocked":
                 report.status, report.note = "blocked", str(exc)
+            elif isinstance(exc, OwnerTookOver) and OWNER_HINT not in (report.note or ""):
+                report.note = f"{report.note} {OWNER_HINT}" if report.note else str(exc)
         if foreground is not None:
             try:
                 contexts = page.bidi.command("browsingContext.getTree", {"maxDepth": 0})["contexts"]

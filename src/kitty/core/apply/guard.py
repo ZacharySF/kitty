@@ -403,6 +403,8 @@ OWNER_TOOK_OVER = "owner_took_over"
 SUBMIT_VETOED = "submit_vetoed"
 OWNER_NOTE = ("owner: you clicked or pressed a key in this tab while kitty was filling it, "
               "so kitty stopped filling this tab; if you pressed Submit, press Submit again.")
+#: Added to an earlier stop's note when the owner also acted (that stop keeps its cause).
+OWNER_HINT = "You also clicked or pressed a key in this tab during the fill; if you pressed Submit, press Submit again."
 VETO_NOTE = ("vetoed: the submit guard blocked an action in this tab while kitty was filling it; "
              "kitty stopped. Review the tab before you submit.")
 
@@ -483,7 +485,10 @@ RULES_JS = r"""(() => {
   const ACTIVATES = 'button, input, a[href], area[href], summary, [role=button], [role=link]';
   const BUTTONISH = 'button, input[type=submit], input[type=button], input[type=image], input[type=reset], ' +
     'a[href], area[href], summary, [role=button], [role=link]';
-  const FINAL = /^(?:submit|send|finish|complete|apply|absenden|abschicken|senden|einreichen|bewerben|envoyer|soumettre|postuler|enviar|solicitar|candidatar|inviare|verzenden|solliciteren)\b|\b(?:submit|absenden|abschicken|einreichen|soumettre)\b|\b(?:send|finish|complete) (?:my |your |the )?application\b|\bbewerbung (?:absenden|abschicken|senden|einreichen)\b|\bjetzt bewerben\b/i;
+  // A label that starts with a submit verb (several locales), names the
+  // application submit anywhere, or carries a CJK submit word. Letter
+  // boundaries are Unicode-aware (`lähetä`, `prześlij`).
+  const FINAL = /^(?:submit|send|finish|complete|apply|absenden|abschicken|senden|einreichen|bewerben|envoyer|soumettre|postuler|enviar|solicitar|candidatar|invia|inviare|verzenden|solliciteren|prześlij|indsend|skicka|lähetä|odeslat)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:submit|absenden|abschicken|einreichen|soumettre|prześlij)(?![\p{L}\p{N}])|\b(?:send|finish|complete) (?:my |your |the )?application\b|\bbewerbung (?:absenden|abschicken|senden|einreichen)\b|\bjetzt bewerben\b|送信|提交|제출/iu;
   const element = n => !!n && n.nodeType === 1;
   const activating = n => element(n) && (n.matches(ACTIVATES) || (n.matches('label') && !!n.control));
   const resolve = n => n.matches('label') ? n.control : n;
@@ -552,11 +557,16 @@ GUARD_JS = r"""(lease) => {
   const g = {leaseUntil: 0, token: null, keys: null, chain: null, log: []};
   const armed = () => now() < g.leaseUntil;
   const liveToken = () => g.token && !g.token.used && now() < g.token.until ? g.token : null;
-  const veto = (event, reason, target) => {
+  // `kitty` says whether kitty caused the vetoed event; each listener decides it
+  // for its own event before any token is consumed: the token's own click and a
+  // click it caused are kitty's; an untokened click is not (even while kitty
+  // types); a key is kitty's only while kitty's keys are bound; a submit only
+  // inside the chain of kitty's click.
+  const veto = (event, reason, target, kitty) => {
     event.preventDefault();
     event.stopImmediatePropagation();
     g.log.push({t: Math.round(now()), kind: event.type, trusted: event.isTrusted,
-      token: !!(liveToken() || g.keys || g.chain), reason, target: rules.describe(target)});
+      token: !!kitty, reason, target: rules.describe(target)});
     if (g.log.length > 100) g.log.splice(0, g.log.length - 100);
   };
   const exceptional = ['credential', 'profile_gate', 'record_save', 'mailbox'];
@@ -581,16 +591,16 @@ GUARD_JS = r"""(lease) => {
       const proven = rules.targetFrom(token.el);
       const wrong = !path.includes(token.el) ? 'missed_target' : rules.refusal(target, token.intent) ? 'intent' :
         token.intent !== 'field' && target && target !== proven && rules.refusal(target, 'field') ? 'intent' : null;
-      if (wrong) { token.vetoed = true; return veto(event, wrong, target); }
+      if (wrong) { token.vetoed = true; return veto(event, wrong, target, true); }
       g.chain = token;
       setTimeout(() => { if (g.chain === token) g.chain = null; }, 0);
       return;
     }
     if (g.chain) {
-      if (nestedRefusal(target, g.chain)) { g.chain.vetoed = true; veto(event, 'nested', target); }
+      if (nestedRefusal(target, g.chain)) { g.chain.vetoed = true; veto(event, 'nested', target, true); }
       return;
     }
-    if (target && (rules.submitCapable(target) || rules.final(target))) veto(event, 'unguarded', target);
+    if (target && (rules.submitCapable(target) || rules.final(target))) veto(event, 'unguarded', target, false);
   }, {capture: true});
   const onKey = event => {
     if (!armed()) return;
@@ -599,13 +609,13 @@ GUARD_JS = r"""(lease) => {
     // A keyup that follows focus to the next text box (segmented code fields)
     // cannot activate anything; every other stray key is cancelled.
     if (keys && target !== keys.el && !(event.type === 'keyup' && rules.textEntry(target)))
-      return veto(event, 'focus_moved', target);
+      return veto(event, 'focus_moved', target, !!keys);
     if (event.key === 'Enter') {
       if (!(keys && keys.intent === 'list_commit' && target === keys.el &&
-            (event.type !== 'keydown' || rules.listCommitReady(target)))) veto(event, 'enter', target);
+            (event.type !== 'keydown' || rules.listCommitReady(target)))) veto(event, 'enter', target, !!keys);
       return;
     }
-    if ((event.key === ' ' || event.key === 'Spacebar') && rules.buttonLike(target)) veto(event, 'space', target);
+    if ((event.key === ' ' || event.key === 'Spacebar') && rules.buttonLike(target)) veto(event, 'space', target, !!keys);
   };
   for (const type of ['keydown', 'keypress', 'keyup']) window.addEventListener(type, onKey, {capture: true});
   window.addEventListener('submit', event => {
@@ -615,7 +625,7 @@ GUARD_JS = r"""(lease) => {
         ((submitter && (submitter === chain.el || submitter === rules.targetFrom(chain.el))) ||
          event.target === rules.formOf(chain.el))) return;
     if (chain) chain.vetoed = true;
-    veto(event, 'submit', submitter || event.target);
+    veto(event, 'submit', submitter || event.target, !!chain);
   }, {capture: true});
   globalThis.kittyGuard = {
     armed,

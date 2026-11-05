@@ -224,26 +224,46 @@ _SMART_NEXT_JS = r"""
 # Workday's progress bar lists every step of the wizard and marks the current
 # one; its Submit is the last step's pageFooterNextButton (atsfill workday.md:67)
 # and step names are localized. So the step's position decides, not its label:
-# {index, count} of the marked step among the bar's step items, else from the
-# marked step's own "step N of M" numbers (digits in any language), or null.
+# {index, count} of the marked step (progressBarActiveStep, or aria-current=step /
+# aria-selected=true inside the bar) among the bar's step items (automation-id
+# step items, else its list items), else from the marked step's own rendered
+# "step N of M" numbers (digits in any language), or null.
 # Runs inside _SNAPSHOT (queryAll, closest).
 _WORKDAY_STEPS_JS = r"""
 () => {
-  const marked = queryAll('[data-automation-id=progressBarActiveStep]');
-  if (marked.length !== 1) return null;
   const bars = queryAll('[data-automation-id=progressBar]');
+  const bar = bars.length === 1 ? bars[0] : null;
+  let marked = queryAll('[data-automation-id=progressBarActiveStep]');
+  if (!marked.length && bar) marked = queryAll('[aria-current=step], [aria-selected=true]', bar);
+  if (marked.length !== 1) return null;
   const stepItem = e => /^progressBar[A-Za-z]*Step$/.test(e?.getAttribute('data-automation-id') || '');
   const owner = e => e.parentElement ? closest(e.parentElement, '[data-automation-id]') : null;
-  const items = bars.length === 1 ? queryAll('[data-automation-id]', bars[0])
-    .filter(e => e !== bars[0] && stepItem(e) && !stepItem(owner(e))) : [];
-  if (items.length >= 2 && items.includes(marked[0]))
-    return {index: items.indexOf(marked[0]), count: items.length};
+  let items = bar ? queryAll('[data-automation-id]', bar)
+    .filter(e => e !== bar && stepItem(e) && !stepItem(owner(e))) : [];
+  if (items.length < 2 && bar)
+    items = queryAll('li', bar).filter(e => !(e.parentElement && closest(e.parentElement, 'li')));
+  const current = items.find(e => e === marked[0] || e.contains(marked[0]));
+  if (items.length >= 2 && current) return {index: items.indexOf(current), count: items.length};
   if (items.length >= 2) return null;
-  const numbers = (marked[0].textContent.match(/\d+/g) || []).slice(0, 2).map(Number);
+  const numbers = ((marked[0].innerText || marked[0].textContent || '').match(/\d+/g) || []).slice(0, 2).map(Number);
   if (numbers.length < 2 || numbers[0] < 1 || numbers[0] > numbers[1]) return null;
   return {index: numbers[0] - 1, count: numbers[1]};
 }
 """
+
+#: Workday page containers (data-automation-id): which wizard page is shown,
+#: in any language. Review pages are final; the others are known earlier steps.
+_WORKDAY_REVIEW_PAGES = ("applyFlowReviewPage", "reviewJobApplicationPage")
+_WORKDAY_STEP_PAGES = (
+    "applyFlowMyInfoPage", "applyFlowMyExpPage", "applyFlowPrimaryQuestionsPage",
+    "applyFlowSecondaryQuestionsPage", "applyFlowSupplementaryQuestionsPage",
+    "applyFlowVoluntaryDisclosuresPage", "applyFlowAutoFillPage",
+    "contactInformationPage", "myExperiencePage", "voluntaryDisclosuresPage", "selfIdentificationPage",
+)
+_WORKDAY_PAGES_JS = (
+    "{review: " + repr(", ".join(f"[data-automation-id={page}]" for page in _WORKDAY_REVIEW_PAGES))
+    + ", step: " + repr(", ".join(f"[data-automation-id={page}]" for page in _WORKDAY_STEP_PAGES)) + "}"
+)
 
 # The same snapshot is rechecked in the click script, so a changed final button
 # cannot be clicked using a stale decision from Python.
@@ -289,8 +309,12 @@ _SNAPSHOT = r"""
   // says, and Next is safe only while a later step exists and no review
   // container is shown. The English label is a secondary check.
   const steps = workday ? (""" + _WORKDAY_STEPS_JS + r""")() : null;
-  const stepsLeft = !!steps && steps.index < steps.count - 1;
-  const review = workday && (/^review(?: your application)?$/i.test(stepLabel) ||
+  const pages = """ + _WORKDAY_PAGES_JS + r""";
+  const reviewPage = workday && has(pages.review);
+  // A readable position decides; a shown earlier-step page id stands in when the
+  // bar cannot be read. A review page id is final either way.
+  const stepsLeft = !reviewPage && (steps ? steps.index < steps.count - 1 : workday && has(pages.step));
+  const review = workday && (/^review(?: your application)?$/i.test(stepLabel) || reviewPage ||
     (!!steps && steps.index === steps.count - 1));
   const reviewShown = all('[data-automation-id*=review i]').some(e => !closest(e, '[data-automation-id=progressBar]'));
   const forbidden = /submit|finish|complete|accept|agree|consent|certif|sign|legal|privacy/i;
