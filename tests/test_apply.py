@@ -1842,7 +1842,7 @@ def test_unproven_or_explicit_resume_progress_still_blocks_readiness(space, page
     _assert_nothing_submitted(page)
 
 
-def test_retained_manual_values_are_protected_before_resume_parser_can_run(space, page):
+def test_retained_tab_uploads_and_puts_back_values_the_resume_parser_replaced(space, page):
     job = _safety_form(space, page)
     _js(page, """() => {
         const name = document.querySelector('[name=first_name]');
@@ -1854,12 +1854,11 @@ def test_retained_manual_values_are_protected_before_resume_parser_can_run(space
         };
     }""")
     result = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
-    assert result.status == "blocked"
-    assert "protect retained answers" in result.note
+    assert result.status == "ready"
+    assert "deferred" not in (result.note or "")
     assert _value(page, "[name=first_name]") == "My manual answer"
-    assert _files(page, "[name=resume]") == []
-    assert _js(page, "() => window.parsed") == 0
-    assert jobs_core.get_job(space.conn, job.id).fill_ready_at is None
+    assert _files(page, "[name=resume]") == ["resume.pdf"]
+    assert _js(page, "() => window.parsed") == 1
     _assert_nothing_submitted(page)
 
 
@@ -2338,7 +2337,7 @@ def test_nested_shadow_application_uses_real_fill_paths_and_preserves_manual_val
 
     resume = space.settings.root / "resume.pdf"
     upload(page.main, next(f.key for f in fields if f.kind == "file"), resume)
-    fill_form(page, space.config, None, preserve_existing=True)
+    fill_form(page, space.config, None)
     assert _js(page, "() => parts.first.querySelector('input').value") == "Pat"
     assert _js(page, "() => parts.last.querySelector('input').value") == "Manual surname"
     assert _js(page, "() => parts.email.querySelector('input').value") == space.config.profile.email
@@ -2540,18 +2539,16 @@ def test_standard_oracle_form_preserves_answers_and_verifies_separate_attachment
     report = fill_job(page, space.conn, space.settings, space.config, job, resume_tab=True)
     assert _js(page, "() => document.querySelector('[name=first_name]').value") == "Previously entered name"
     assert _js(page, "() => [window.parserCalls, window.submitted]") == [0, 0]
-    if surface == "ambiguous-upload":
+    # The retained tab's empty attachment control takes the resume (no deferral):
+    # anything a parser changes would be put back (fill_form).
+    assert page.main.call("async () => await document.querySelector('[name=attachment-upload]').files[0].text()",
+                          page_realm=True) == "%PDF-1.4\n% test resume\n"
+    if surface in ("complete", "ambiguous-upload"):
+        assert report.status == "ready"
+    elif surface == "missing-profile-record":
         assert report.status == "blocked"
-        assert _js(page, "() => document.querySelector('[name=attachment-upload]').files.length") == 0
     else:
-        assert page.main.call("async () => await document.querySelector('[name=attachment-upload]').files[0].text()",
-                              page_realm=True) == "%PDF-1.4\n% test resume\n"
-        if surface == "complete":
-            assert report.status == "ready"
-        elif surface == "missing-profile-record":
-            assert report.status == "blocked"
-        else:
-            assert report.status == "partial"
+        assert report.status == "partial"
 
 
 @pytest.mark.parametrize("embedded", [False, True])

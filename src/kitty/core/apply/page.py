@@ -6,10 +6,15 @@ Consent policy belongs to the caller; reading a legal choice never accepts it.
 Native/ARIA fields in nested open shadow roots use tree-local label and list IDs.
 Closed roots remain unsupported; composed ancestor guards apply to every write.
 Workday's owned native list icon, category rows and back header are navigation
-only; complete hierarchy discovery, unique leaf matching and committed receipts
-remain the answer boundary.
+only; a saved 'Category > Leaf' path, complete hierarchy discovery, unique leaf
+matching and committed receipts remain the answer boundary.
 Oracle date parts can also retain an observed trusted option click's changed
 native value before the shared date row is complete; later edits revoke it.
+Every writer first applies I-NoHidden′ to the element itself: traps (honey-pot,
+beecatcher, captcha, "leave this blank") are never written, and an element that
+is not painted is written only through its painted host (a label, upload group,
+family attach control, styled choice box or Workday prompt). The reader reports
+a required refused element (`FormField.refused`) and skips an optional one.
 
 All JavaScript here runs in the filler's private sandbox (see bidi.py). The
 reader remembers each element it found under a key such as "e12" in a
@@ -18,14 +23,16 @@ sandbox-only map, so the page's own HTML is never marked.
 
 from __future__ import annotations
 
+import random
 import re
 import time
 from pathlib import Path
 from typing import Any
 
-from kitty.core.apply.bidi import BidiError, Frame, Tab
-from kitty.core.apply.fields import FormField, clean_label, match_option
-from kitty.core.apply.guard import ACTIVATE_JS, FIELD, UnsafeAction
+from kitty.core.apply.bidi import BidiError, ConnectionLost, Frame, Tab
+from kitty.core.apply.fields import FormField, clean_label, match_option, pick_source_option
+from kitty.core.apply.guard import ACTIVATE_JS, FIELD, LIST_COMMIT, UnsafeAction
+from kitty.normalize import norm_location, norm_question
 
 #: Frames that never hold the application form.
 _SKIP_FRAMES = ("recaptcha", "hcaptcha", "googleapis.com", "about:blank", "google.com/maps")
@@ -84,8 +91,12 @@ e => {
   // never activates that ancestor, so it is not an action barrier for file inputs.
   const fileTrigger = node => e.matches('input[type=file]') && node !== e &&
     node.matches('a[href="#"]:not([target]):not([download])');
+  // Oracle renders some choice questions as type=button pills (fastapply notes):
+  // a pill only selects its own option, like an ARIA radio button.
+  const pill = node => node.matches('button[type=button].cx-select-pill-section') &&
+    !!closest(node, '.cx-select-pills-container');
   for (let node = e; node; node = node.assignedSlot || node.parentElement || node.getRootNode()?.host) {
-    if (node.matches?.(actions) && !fileTrigger(node) && !(node === e && (listButton(e) || e.matches('button[type=button][role=checkbox], button[type=button][role=radio], button[type=button][role=combobox], input[type=button][role=checkbox], input[type=button][role=radio]'))))
+    if (node.matches?.(actions) && !fileTrigger(node) && !(node === e && (listButton(e) || pill(e) || e.matches('button[type=button][role=checkbox], button[type=button][role=radio], button[type=button][role=combobox], input[type=button][role=checkbox], input[type=button][role=radio]'))))
       return false;
   }
   return true;
@@ -137,6 +148,13 @@ _DOM_HELPERS_JS = (
     }
     return hit;
   };
+  // An Oracle pill's selected state lives in its class (or aria-pressed/selected).
+  const pillOf = e => e?.matches?.('button[type=button].cx-select-pill-section') &&
+    closest(e, '.cx-select-pills-container') ? e : null;
+  const ariaChecked = e => pillOf(e)
+    ? e.classList.contains('cx-select-pill-section--selected') || ['aria-pressed', 'aria-selected', 'aria-checked']
+      .some(name => e.getAttribute(name) === 'true')
+    : e.getAttribute('aria-checked') === 'true';
 """
 )
 # Only a single native upload can represent a labelled ARIA upload group.
@@ -222,6 +240,10 @@ _CUSTOM_CONTROL_JS = r"""
 e => {""" + _DOM_HELPERS_JS + r"""
   if (!e || e.matches('input:not([type=button]), textarea, select') ||
       queryAll('input, textarea, select, button, a[href], [role=button], [role=link]', e).some(other => other !== e)) return '';
+  // Oracle pills (no role): one choice each; a multi-select container says so.
+  if (pillOf(e) && !e.hasAttribute('role'))
+    return !fieldSafe(e) ? '' :
+      closest(e, '.cx-select-pills-container').getAttribute('aria-multiselectable') === 'true' ? 'checkbox' : 'radio';
   const buttonList = e.matches('button[type=button][aria-haspopup=listbox]') &&
     !!closest(e, '[data-automation-id^="formField-"][data-fkit-id]');
   const role = buttonList ? 'combobox' : e.getAttribute('role');
@@ -238,6 +260,127 @@ e => {""" + _DOM_HELPERS_JS + r"""
     queryAll('[role=option][aria-selected=true], [role=option][aria-selected=false]', list).length ? role : '';
 }
 """
+
+#: I-NoHidden′ (research note no-hidden.md §2): kitty writes, ticks, chooses or
+#: uploads to an element only if it is not a trap (T) and is painted itself or is
+#: reached through a painted host from a closed list (H). An expression for a
+#: scope with the DOM helpers; `refusal(e, label)` gives {trap, host, refused}.
+#: Style alone cannot separate a decoy from a hidden backing input (Greenhouse's
+#: 1 px resume input is shaped like a clipped decoy): the host decides.
+_NO_HIDDEN_JS = r"""(() => {
+  const T1_NAME = /honey[-_ ]?pot|captcha|turnstile/i;
+  const T1_PHRASE = /(?:leave|keep) (?:this |it |the )?(?:field |box |input )?(?:blank|empty)|do not (?:fill|enter|type|complete|change)|don'?t (?:fill|enter)|if you are (?:a )?human|robots? only|for (?:bots|robots|spam)/i;
+  const T2 = [/(?:^|[-_ ])honey(?:$|[-_ ])/i, /^hp[-_]|[-_]hp$/i, /(?:^|[-_])(?:trap|bot[-_]?check|nospam|anti[-_]?spam)(?:$|[-_])/i];
+  const FILE_WORDS = /attach|upload|browse|choose file|select files?|drag|drop|resume|\bcv\b|cover letter/i;
+  const chain = e => { const out = []; for (let n = e; n; n = parentOf(n)) if (n.nodeType === 1) out.push(n); return out; };
+  const clipped = (n, style, own) => {
+    const r = n.getBoundingClientRect();
+    if (style.clip && style.clip !== 'auto' && /^(?:absolute|fixed)$/.test(style.position)) {
+      const [top, right, bottom, left] = (style.clip.match(/-?[\d.]+/g) || []).map(Number);
+      if (right - left <= 1 || bottom - top <= 1) return true;
+    }
+    const path = style.clipPath || 'none';
+    const inset = path.match(/^inset\(([^)]*)\)/);
+    if (inset && inset[1].split(/\s+/).some(v => /%$/.test(v) && Number.parseFloat(v) >= 50)) return true;
+    if (/^circle\(\s*0(?:px|%)?(?:\s|\))/.test(path)) return true;
+    return !own && (style.overflowX !== 'visible' || style.overflowY !== 'visible') && (r.width < 4 || r.height < 4);
+  };
+  // painted(e): '' when painted, else the failing clause (§2.1). `small` skips
+  // the element's own size test (a react-select input shrinks to its query).
+  const unpainted = (e, small = false) => {
+    if (!e?.isConnected || e.nodeType !== 1) return 'detached';
+    if (e.matches('input[type=hidden]') || !e.getClientRects().length) return 'shown';
+    if (typeof e.checkVisibility === 'function' &&
+        !e.checkVisibility({visibilityProperty: true, opacityProperty: true})) return 'shown';
+    let opacity = 1;
+    for (const [depth, n] of chain(e).entries()) {
+      if (n.hasAttribute('hidden') || n.hasAttribute('inert') || n.getAttribute('aria-hidden') === 'true') return 'ancestor';
+      const style = getComputedStyle(n);
+      opacity *= Number.parseFloat(style.opacity);
+      if (!(opacity >= 0.1)) return 'opacity';
+      if (depth <= 8 && clipped(n, style, n === e)) return 'clip';
+    }
+    const r = e.getBoundingClientRect();
+    if (!small && (r.width < 4 || r.height < 4)) return 'size';
+    const doc = document.documentElement;
+    const width = Math.max(doc.scrollWidth, innerWidth), height = Math.max(doc.scrollHeight, innerHeight);
+    const left = r.left + scrollX, top = r.top + scrollY;
+    if (left + r.width <= 0 || top + r.height <= 0 || left >= width || top >= height) return 'offscreen';
+    return '';
+  };
+  const painted = e => !unpainted(e);
+  const idsText = (e, name) => (e.getAttribute(name) || '').split(/\s+/).filter(Boolean)
+    .map(id => reference(e, id)).filter(Boolean).map(composedText).join(' ');
+  const tokens = e => [e.getAttribute('name') || '', e.id || '', ...Array.from(e.classList)].filter(Boolean);
+  const trap = (e, label = '') => {
+    let frame = null;
+    try { frame = window.frameElement; } catch { frame = null; }
+    const names = [...tokens(e), e.getAttribute('autocomplete'), e.getAttribute('aria-label'),
+      e.getAttribute('placeholder'), e.getAttribute('title'),
+      frame && [frame.title, frame.name, frame.id, frame.getAttribute('aria-label')].join(' ')].filter(Boolean).join(' ');
+    const phrases = [e.getAttribute('placeholder'), e.getAttribute('title'), e.getAttribute('aria-label'),
+      idsText(e, 'aria-describedby'), idsText(e, 'aria-labelledby'), ...labelsOf(e).map(composedText), label]
+      .filter(Boolean).join(' ').replace(/\s+/g, ' ');
+    if (T1_NAME.test(names) || tokens(e).some(t => /^beecatcher$/i.test(t)) || T1_PHRASE.test(phrases)) return 'T1';
+    if (!painted(e) && tokens(e).some(t => T2.some(pattern => pattern.test(t)))) return 'T2';
+    return '';
+  };
+  // A host must itself pass T; family hosts are painted or show a painted control.
+  const hostOk = h => !!h && !trap(h) && (painted(h) ||
+    queryAll('button, [role=button], label, a', h).some(painted));
+  const onlyFile = (h, e) => { const files = queryAll('input[type=file]', h); return files.length === 1 && files[0] === e; };
+  const fileHost = e => {
+    if (labelsOf(e).some(label => painted(label) && !trap(label))) return 'label';
+    const group = closest(e, '[role=group][aria-labelledby]');
+    if (group && onlyFile(group, e) && painted(group)) return 'group';
+    const lever = closest(e, 'a[href="#"]');
+    const family = [
+      closest(e, '.file-upload'), closest(e, '[data-role=dropzone]'),
+      closest(e, '.ashby-application-form-field-entry'),
+      lever && queryAll('.filename', parentOf(lever) || lever).length ? lever : null,
+      e.matches('[data-automation-id=file-upload-input-ref]') ? closest(e, '[data-automation-id^="formField-"]') : null,
+      closest(e, '[class*="apply-flow-block--"]') &&
+        closest(e, 'resume-upload-button, cover-letter-upload-button, attachment-upload-button'),
+      e.getRootNode()?.host?.matches?.('spl-dropzone') ? e.getRootNode().host : null,
+    ].find(h => h && onlyFile(h, e) && hostOk(h));
+    if (family) return 'family';
+    let node = parentOf(e);
+    for (let depth = 0; node && depth < 4; depth++, node = parentOf(node)) {
+      if (!queryAll('input[type=file]', node).includes(e)) continue;
+      if (!onlyFile(node, e)) return '';
+      if (painted(node) && queryAll('button, [role=button], label, a', node).some(control =>
+          painted(control) && !trap(control) &&
+          FILE_WORDS.test((control.innerText || composedText(control)) + ' ' + (control.getAttribute('aria-label') || ''))))
+        return 'generic';
+    }
+    return '';
+  };
+  const host = e => {
+    if (!e?.isConnected) return '';
+    if (painted(e)) return 'self';
+    if (e.matches('input[type=file]')) return fileHost(e);
+    if (e.matches('input[type=checkbox], input[type=radio]')) {
+      if (labelsOf(e).some(label => painted(label) && !trap(label))) return 'label';
+      // A styled box shows the option's own text; submit buttons are never hosts.
+      const box = parentOf(e);
+      return box && painted(box) && !trap(box) && (box.innerText || composedText(box)).trim() &&
+        !queryAll('button:not([type=button]), input[type=submit], input[type=image]', box).length ? 'box' : '';
+    }
+    if (!e.matches('input, textarea')) return '';   // ARIA controls and native selects: never substituted
+    const owner = multiselectOf(e);
+    if (owner && painted(owner) && queryAll('[data-automation-id=promptSearchButton]', owner).some(painted)) return 'prompt';
+    const control = closest(e, '[class*=control]');
+    if (e.matches('[role=combobox]') && !unpainted(e, true) && control && contains(control, e) &&
+        painted(control) && chain(e).indexOf(control) <= 4) return 'control';
+    return '';
+  };
+  const refusal = (e, label = '') => {
+    const via = host(e), clause = trap(e, label);
+    return {trap: clause, host: via, refused: clause || (via ? '' : 'H')};
+  };
+  return {painted, unpainted, trap, host, refusal};
+})()"""
+
 
 # A calling code is not a country identity (+1 also belongs to Canada). Carry
 # only an owned option's flag/code pair into the same control's value renderer.
@@ -415,7 +558,7 @@ _READ_FIELDS_JS = r"""
     if (lab && textOf(lab)) return textOf(lab);
     const aria = clean(el.getAttribute('aria-label'));
     if (aria) return aria;
-    if (['checkbox', 'radio'].includes(el.getAttribute('role'))) return textOf(el) || clean(el.value);
+    if (['checkbox', 'radio'].includes(el.getAttribute('role')) || pillOf(el)) return textOf(el) || clean(el.value);
     // Phenom's form components use a literal label attribute without <label for>.
     return el.matches('.phw-form-control[form-field]') ? clean(el.getAttribute('label')) : '';
   };
@@ -448,9 +591,11 @@ _READ_FIELDS_JS = r"""
   const uploadGroupFor = (""" + _UPLOAD_GROUP_JS + r""");
   const customKind = (""" + _CUSTOM_CONTROL_JS + r""");
   const retainedResume = (""" + _RETAINED_RESUME_JS + r""");
+  const noHidden = """ + _NO_HIDDEN_JS + r""";
   const rows = [];
   for (const el of queryAll(
-      'input, textarea, select, [role=checkbox], [role=radio], [role=combobox], button[type=button][aria-haspopup=listbox]')) {
+      'input, textarea, select, [role=checkbox], [role=radio], [role=combobox], button[type=button][aria-haspopup=listbox], ' +
+      'button.cx-select-pill-section')) {
     if (!fieldSafe(el)) continue;
     const tag = el.tagName.toLowerCase();
     const custom = customKind(el);
@@ -458,16 +603,23 @@ _READ_FIELDS_JS = r"""
     const type = custom || (el.getAttribute('type') || (tag === 'input' ? 'text' : tag)).toLowerCase();
     if (['hidden', 'submit', 'button', 'reset', 'image', 'search', 'password'].includes(type)) continue;
     const choice = type === 'radio' || type === 'checkbox';
+    // Elements without any layout are not part of the shown form (closed sections,
+    // unrevealed follow-ups). Laid-out ones go to the I-NoHidden′ check below.
     if (type === 'file') {
-      // file inputs are usually hidden behind an "Attach" button; keep them all
+      // File inputs are usually hidden behind an "Attach" control: the host check
+      // decides. A blank one in a region without layout (an inactive step) is not
+      // part of the shown form; an attached one stays as upload evidence.
+      if (!rendered(el) && !rendered(parentOf(el)) && !(el.files && el.files.length) && !retainedResume(el)) continue;
     } else if (choice) {
       if (el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') continue;
-      if (custom && (!rendered(el) || getComputedStyle(el).visibility === 'hidden')) continue;
+      if (custom && !rendered(el)) continue;
       // An unlabelled hidden backing input does not make submit-button choices safe.
       if (!rendered(el) && !labelsOf(el).length &&
           queryAll('button:not([type=button]), input[type=submit], input[type=image]', parentOf(el)).length) continue;
       if (!rendered(parentOf(el))) continue;
     } else {
+      // T3: a text-like aria-hidden / tabindex -1 input is never a field (Oracle's
+      // honey-pot, react-select's required proxy); no text host can carry one.
       if (!rendered(el) || el.getAttribute('aria-hidden') === 'true' || el.tabIndex < 0) continue;
       if (el.disabled || el.readOnly || el.getAttribute('aria-disabled') === 'true') continue;
     }
@@ -482,7 +634,8 @@ _READ_FIELDS_JS = r"""
       closest(el, 'oc-resume-upload, [data-test="resume-upload"], [data-test="resume-upload-container"]'));
     const uploadLabel = uploadGroup ? ownLabel(uploadGroup) : '';
     const own = ownLabel(el);
-    const group = choice ? closest(el, '[role=group], [role=radiogroup], fieldset') : null;
+    const group = choice ? (pillOf(el) ? closest(el, '.cx-select-pills-container') :
+      closest(el, '[role=group], [role=radiogroup], fieldset')) : null;
     const groupLabel = group ? ownLabel(group) : '';
     let kind = tag === 'textarea' ? 'textarea' : tag === 'select' ? 'select' : 'text';
     if (choice || type === 'file') kind = type;
@@ -497,12 +650,18 @@ _READ_FIELDS_JS = r"""
     // question is the group's fieldset legend.
     const listLegend = tag === 'button' && el.matches('[aria-haspopup=listbox]') &&
       /^select one\b/i.test(own) ? closest(el, '[data-automation-id^="formField-"]')?.querySelector('fieldset > legend') : null;
+    // Workday date sections (dateSectionMonth-input, ...) say only "Month"; the
+    // question is the field's label. The section stays in the label: "... Month".
+    const dateSection = tag === 'input' &&
+      (el.getAttribute('data-automation-id') || '').match(/^dateSection(Day|Month|Year)-input$/);
+    const dateLabel = dateSection ? closest(el, '[data-automation-id^="formField-"]')?.querySelector('label, legend') : null;
     const label = uploadLabel || (resumeRegion ? 'Resume' : '') || groupLabel || (listLegend ? textOf(listLegend) : '') ||
+      (dateLabel && textOf(dateLabel) ? clean(textOf(dateLabel).replace(/[*✱]\s*$/, '') + ' ' + dateSection[1]) : '') ||
       (choice || type === 'file'
       ? (question ? textOf(question) : own)
       : (own || (question ? textOf(question) : '')));
     let blank = !el.value;
-    if (choice) blank = custom ? el.getAttribute('aria-checked') !== 'true' : !el.checked;
+    if (choice) blank = custom ? !ariaChecked(el) : !el.checked;
     if (type === 'file') blank = !(el.files && el.files.length) && !retainedResume(el);
     if (kind === 'combobox') blank = comboValues(el).length === 0;
     const uncommitted = kind === 'combobox' && !!el.value && comboValues(el).length === 0 &&
@@ -510,18 +669,25 @@ _READ_FIELDS_JS = r"""
     if (uncommitted) blank = false;
     if (unownedPrompt) blank = true;
     if (tag === 'select') blank = !el.value || el.selectedIndex < 0;
+    const required = !!el.required || el.getAttribute('aria-required') === 'true' ||
+      uploadGroup?.getAttribute('aria-required') === 'true' ||
+      group?.getAttribute('aria-required') === 'true' || group?.hasAttribute('required') ||
+      (el.getAttribute('aria-required') !== 'false' &&
+       (looksRequired(ownLabelEl(el)) || looksRequired(question) || looksRequired(dateLabel) ||
+        looksRequired(group && queryAll('legend', group)[0]) || looksRequired(listLegend) ||
+        (!!listLegend && /\brequired$/i.test(el.getAttribute('aria-label') || ''))));
+    // I-NoHidden′: a trap, or a blank hidden element without a painted host, is
+    // never written. An optional one is skipped; a required one is reported
+    // (refused). A filled hidden element is only evidence (an earlier upload).
+    const verdict = noHidden.refusal(el, [label, own, question ? textOf(question) : ''].join(' '));
+    const refused = verdict.trap || (blank && !verdict.host ? 'H' : '');
+    if (refused && !required) continue;
     rows.push({
       key, kind, type, label, option: choice ? own : '',
       scope: keyOf(group || el.getRootNode()),
       name: el.getAttribute('name') || '', id: el.id || '',
       autocomplete: el.getAttribute('autocomplete') || '',
-      required: !!el.required || el.getAttribute('aria-required') === 'true' ||
-                uploadGroup?.getAttribute('aria-required') === 'true' ||
-                group?.getAttribute('aria-required') === 'true' || group?.hasAttribute('required') ||
-                (el.getAttribute('aria-required') !== 'false' &&
-                 (looksRequired(ownLabelEl(el)) || looksRequired(question) ||
-                  looksRequired(group && queryAll('legend', group)[0]) || looksRequired(listLegend) ||
-                  (!!listLegend && /\brequired$/i.test(el.getAttribute('aria-label') || '')))),
+      required, refused, host: verdict.host,
       options: tag === 'select'
         ? Array.from(el.options).filter(o => o.value !== '' && !o.disabled && !o.parentElement.disabled).map(o => clean(o.textContent))
         : [],
@@ -529,10 +695,6 @@ _READ_FIELDS_JS = r"""
       invalid: unownedPrompt || uncommitted || el.getAttribute('aria-invalid') === 'true' ||
                (!!el.willValidate && !el.validity.valid),
       autofill: !!closest(el, '[class*=autofill], oc-apply-with-resume, [data-test="apply-with-resume-container"], [class*="apply-flow-profile-import"]'),
-      attachmentOnly: type === 'file' && el.name === 'attachment-upload' &&
-        el.classList.contains('file-form-element__input') &&
-        !!closest(el, 'form.apply-flow__content-form') &&
-        queryAll('input.apply-flow-profile-import-awli__file-upload', el.form).length > 0,
     });
   }
   const uploadedGroup = (""" + _UPLOADED_FILE_GROUP_JS + r""");
@@ -546,8 +708,6 @@ _READ_FIELDS_JS = r"""
       required: group.getAttribute('aria-required') === 'true',
       options: [], blank: false, invalid: false,
       autofill: !!closest(group, '[class*=autofill], oc-apply-with-resume, [class*="apply-flow-profile-import"]'),
-      attachmentOnly: group.matches('resume-upload-button') &&
-        !!queryAll('input.apply-flow-profile-import-awli__file-upload', closest(group, 'form'))[0],
     });
   }
   // Active required questions whose only controls are unsupported actions stay
@@ -654,7 +814,7 @@ def _single(row: dict[str, Any], frame: int) -> FormField:
         autocomplete=row["autocomplete"], required=bool(row["required"]),
         options=tuple(row["options"]), blank=bool(row["blank"]), in_autofill=bool(row["autofill"]),
         invalid=bool(row.get("invalid", False)),
-        attachment_only=bool(row.get("attachmentOnly", False)),
+        refused=row.get("refused") or "", host=row.get("host") or "",
     )
 
 
@@ -670,6 +830,9 @@ def _choice(rows: list[dict[str, Any]], frame: int) -> FormField:
         option_keys=tuple(row["key"] for row in rows),
         blank=all(row["blank"] for row in rows),
         invalid=any(row.get("invalid", False) for row in rows),
+        # One refused option refuses the question: kitty never writes part of it.
+        refused=next((row["refused"] for row in rows if row.get("refused")), ""),
+        host=",".join(dict.fromkeys(row.get("host") or "" for row in rows)),
     )
 
 
@@ -683,15 +846,31 @@ _ELEMENT = (
 )
 
 
+class HiddenTargetRefused(UnsafeAction):
+    """I-NoHidden′ at write time: a trap (T1/T2/T3) or no painted host (H)."""
+
+    def __init__(self, clause: str) -> None:
+        self.clause = clause
+        super().__init__(f"hidden_target_refused: {clause}")
+
+
+#: Every writer's first check, on the element itself at write time (a re-render
+#: between read and write is covered): its kind, and the I-NoHidden′ verdict.
+_GUARD_JS = (
+    "(key) => {" + _DOM_HELPERS_JS + "const e = (" + _ELEMENT + ")(key); if (!e) return null;"
+    " return [e.tagName.toLowerCase(), (e.type || '').toLowerCase(), (" + _CUSTOM_CONTROL_JS + ")(e),"
+    " (" + _NO_HIDDEN_JS + ").refusal(e).refused]; }"
+)
+
+
 def _guard(frame: Frame, key: str, *, custom: tuple[str, ...] = ()) -> str:
-    """Refuse arbitrary actions; custom field kinds require a caller allowlist."""
-    found = frame.call(
-        f"(key) => {{ const e = ({_ELEMENT})(key);"
-        " return e ? [e.tagName.toLowerCase(), (e.type || '').toLowerCase(), "
-        f"({_CUSTOM_CONTROL_JS})(e)] : null; }}", key)
+    """Refuse arbitrary actions and hidden targets; custom kinds need a caller allowlist."""
+    found = frame.call(_GUARD_JS, key)
     if found is None:
         raise UnsafeAction("the field is detached, disabled, read-only or inside an action")
-    tag, kind, aria_kind = found
+    tag, kind, aria_kind, refused = found
+    if refused:
+        raise HiddenTargetRefused(refused)
     if aria_kind in custom:
         return aria_kind
     if tag not in ("input", "textarea", "select") or kind in ("submit", "button", "image", "reset"):
@@ -834,6 +1013,232 @@ def choose_select(frame: Frame, key: str, option_text: str) -> bool:
     return bool(frame.call(_SELECT_JS, key, option_text))
 
 
+# ------------------------------------------------------------ phone and dates
+
+
+#: intl-tel-input (v17 `.iti__selected-flag[role=combobox]`, v18+ `button.iti__selected-country`):
+#: the country list carries `data-country-code` / `data-dial-code` on each item.
+#: `want`: 'state' (what the widget shows), 'open' (its country control) or
+#: 'option' (the shown, unobstructed list item of `country`).
+_ITI_JS = r"""
+(key, want, country = '') => {""" + _DOM_HELPERS_JS + r"""
+  const box = globalThis.kittyByKey.get(key);
+  const none = want === 'state' ? {iti: false} : null;
+  const wrapper = box && fieldSafe(box) ? closest(box, '.iti') : null;
+  if (!wrapper) return none;
+  const inputs = queryAll('input', wrapper).filter(e => !e.matches('[type=hidden], [type=search], .iti__search-input'));
+  const controls = queryAll('.iti__selected-flag, .iti__selected-country', wrapper);
+  if (inputs.length !== 1 || inputs[0] !== box || controls.length !== 1) return none;
+  const control = controls[0];
+  if (!control.matches('[role=combobox], button[type=button]')) return none;
+  const list = reference(control, control.getAttribute('aria-controls') || control.getAttribute('aria-owns')) ||
+    queryAll('.iti__country-list', wrapper)[0] || null;
+  const items = list ? queryAll('li.iti__country[data-country-code][data-dial-code]', list) : [];
+  const shown = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const flag = queryAll('.iti__flag', control)[0];
+  const code = flag ? (Array.from(flag.classList).find(name => /^iti__[a-z]{2}$/.test(name)) || '').slice(5) : '';
+  const dialText = queryAll('.iti__selected-dial-code', control).map(e => e.textContent.trim()).find(Boolean) || '';
+  if (want === 'state') {
+    const countries = [], seen = new Set();
+    for (const item of items.sort((a, b) => a.classList.contains('iti__preferred') - b.classList.contains('iti__preferred'))) {
+      const iso = item.getAttribute('data-country-code');
+      if (seen.has(iso)) continue;
+      seen.add(iso);
+      countries.push([iso, item.getAttribute('data-dial-code'),
+        (queryAll('.iti__country-name', item)[0]?.textContent || '').trim()]);
+    }
+    const current = countries.find(entry => entry[0] === code);
+    return {iti: true, country: code, dial: dialText.replace(/^\+/, '') || (current ? current[1] : ''),
+      separate: wrapper.classList.contains('iti--separate-dial-code') ||
+        queryAll('.iti__selected-dial-code', control).some(e => shown(e) && e.textContent.trim()),
+      open: control.getAttribute('aria-expanded') === 'true' && !!list && shown(list), countries};
+  }
+  const reachable = e => {
+    e.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    const r = e.getBoundingClientRect();
+    const hit = r.width && r.height ? hitAt(r.left + r.width / 2, r.top + r.height / 2) : null;
+    return !!hit && contains(e, hit) && shown(e);
+  };
+  if (want === 'open') return control.getAttribute('aria-expanded') !== 'true' && reachable(control) ? control : null;
+  if (want === 'option') {
+    const matches = items.filter(item => item.getAttribute('data-country-code') === country && shown(item) &&
+      !queryAll('button, input, a[href], [role=button], [role=link]', item).length);
+    const item = matches.find(e => !e.classList.contains('iti__preferred')) || matches[0];
+    return item && reachable(item) ? item : null;
+  }
+  return null;
+}
+"""
+
+
+def _iti_country(state: dict[str, Any], code: str, region: str | None) -> str | None:
+    """The widget country for a dial code: the shown one, the saved region's, or the only one."""
+    offered = [entry for entry in state["countries"] if entry[1] == code]
+    if state["country"] in {entry[0] for entry in offered}:
+        return state["country"]
+    wanted = norm_question(region or "")
+    if wanted in {"us", "usa", "united states of america"}:
+        wanted = "united states"
+    named = [entry[0] for entry in offered if norm_question(entry[2]) == wanted or entry[0] == wanted]
+    if len(named) == 1:
+        return named[0]
+    return offered[0][0] if len(offered) == 1 else None
+
+
+def fill_phone(frame: Frame, key: str, phone: str, region: str | None = None) -> bool:
+    """Write a phone number; through intl-tel-input, its country and dial code first.
+
+    The country comes from the number's own calling code (never from residence
+    alone): the shown country when it has that code, the saved region's country
+    among those sharing it (+1: United States or Canada), or the only one. A
+    widget that shows the dial code separately gets the national number.
+    """
+    from kitty.core.apply.fields import _phone_country_code
+
+    _guard(frame, key)
+    state = frame.call(_ITI_JS, key, "state")
+    if not state["iti"]:
+        return fill_text(frame, key, phone)
+    codes = _phone_country_code(phone, region)
+    if not codes:
+        return False                    # no calling code: the widget's country would be a guess
+    code = codes[1]
+    country = _iti_country(state, code, region)
+    if country is None:
+        return False
+    if country != state["country"]:
+        opener = frame.node(_ITI_JS, key, "open")
+        if opener is None and not state["open"]:
+            return False
+        if opener is not None:
+            frame.click(opener, intent=FIELD)
+        deadline = time.monotonic() + 3.0
+        item = None
+        while item is None and time.monotonic() < deadline:
+            item = frame.node(_ITI_JS, key, "option", country)
+            if item is None:
+                time.sleep(0.15)
+        if item is None:
+            return False
+        frame.click(item, intent=FIELD)
+        state = frame.call(_ITI_JS, key, "state")
+        if not state["iti"] or state["country"] != country or state["dial"] != code:
+            return False
+    national = (re.sub(r"^\s*\+\s*" + code + r"[\s.()\-]*", "", phone)
+                if phone.lstrip().startswith("+") else phone.strip())
+    return fill_text(frame, key, national if state["separate"] else f"+{code} {national}")
+
+
+#: What a date-like text box expects: its type, placeholder, label hint and,
+#: on Workday, which date section (dateSectionMonth-input, ...) it is.
+_DATE_SHAPE_JS = r"""
+(key) => {""" + _DOM_HELPERS_JS + r"""
+  const e = globalThis.kittyByKey.get(key);
+  if (!fieldSafe(e)) return null;
+  const labelled = (e.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+    .map(id => reference(e, id)).filter(Boolean);
+  return {type: (e.getAttribute('type') || '').toLowerCase(), placeholder: e.getAttribute('placeholder') || '',
+    automation: e.getAttribute('data-automation-id') || '',
+    label: [...labelsOf(e), ...labelled].map(composedText).concat([e.getAttribute('aria-label') || ''])
+      .join(' ').replace(/\s+/g, ' ')};
+}
+"""
+
+_DATE_PATTERN = re.compile(r"\s*([A-Za-z]{2,4})([./\- ])([A-Za-z]{2,4})(?:\2([A-Za-z]{2,4}))?\s*")
+
+
+def _from_pattern(hint: str, year: str, month: str) -> str | None | bool:
+    """A month in a field's own pattern ('MM/YYYY', 'MM.JJJJ', 'AAAA-MM'); None if it
+    needs a day (never invented: 'DD/MM/YYYY', 'TT.MM.JJJJ'); False if not a pattern."""
+    found = _DATE_PATTERN.fullmatch(hint)
+    if not found:
+        return False
+    out = []
+    for part in (part.upper() for part in (found[1], found[3], found[4]) if part):
+        if part in ("YYYY", "JJJJ", "AAAA"):
+            out.append(year)
+        elif part == "MM":
+            out.append(month)
+        elif part in ("YY", "AA"):
+            out.append(year[2:])
+        elif part in ("DD", "TT", "JJ"):
+            return None
+        else:
+            return False
+    return found[2].join(out) if month in out or year in out else False
+
+
+def _date_value(shape: dict[str, Any], iso_month: str) -> tuple[bool, str | None]:
+    """(known shape, value): the saved YYYY-MM as this field writes it; None refuses."""
+    year, _, month = iso_month.partition("-")
+    section = {"dateSectionMonth-input": month, "dateSectionYear-input": year, "dateSectionDay-input": None}
+    if shape["automation"] in section:
+        return True, section[shape["automation"]]
+    if shape["type"] == "month":
+        return True, iso_month
+    if shape["type"] in ("date", "datetime-local", "week"):
+        return True, None
+    for hint in (shape["placeholder"], *re.findall(r"\(([^()]*)\)", shape["label"])):
+        value = _from_pattern(hint, year, month)
+        if value is not False:
+            return True, value
+    return False, None
+
+
+def fill_date(frame: Frame, key: str, iso_month: str) -> bool | None:
+    """Write a saved month (YYYY-MM) in the field's own locale format.
+
+    The format comes from the field itself: its type, placeholder, a label hint
+    such as '(MM/YYYY)' or Workday's date section (locale-independent: sections
+    are named, not ordered). None: no known shape (the caller's own spelling
+    applies); False: the field needs a day, which is never invented.
+    """
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", iso_month or ""):
+        return None
+    _guard(frame, key)
+    shape = frame.call(_DATE_SHAPE_JS, key)
+    if shape is None:
+        return False
+    known, value = _date_value(shape, iso_month)
+    if not known:
+        return None
+    return value is not None and fill_text(frame, key, value)
+
+
+#: What each remembered element shows now: [text value, committed choices, checked].
+#: Read in kitty's sandbox and kept in memory only (never logged or stored).
+_VALUES_JS = r"""
+(keys) => {""" + _DOM_HELPERS_JS + r"""
+  const comboValues = (""" + _COMBO_VALUES_JS + r""");
+  const out = {};
+  for (const key of keys) {
+    const e = globalThis.kittyByKey.get(key);
+    if (!e?.isConnected || e.matches('input[type=password]')) { out[key] = null; continue; }
+    const native = e.matches('input[type=checkbox], input[type=radio]');
+    out[key] = [e.matches('select') ? Array.from(e.selectedOptions).map(o => o.textContent.replace(/\s+/g, ' ').trim()).join('\n')
+        : e.matches('input, textarea') && !native && e.type !== 'file' ? e.value : '',
+      comboValues(e).join('\n'), native ? e.checked : ariaChecked(e)];
+  }
+  return out;
+}
+"""
+
+
+def field_values(frames: list[Frame], fields: list[FormField]) -> dict[tuple[int, str], tuple]:
+    """The value each field shows, keyed by (frame, key); a lost frame is skipped."""
+    values: dict[tuple[int, str], tuple] = {}
+    for index, frame in enumerate(frames):
+        own = [f for f in fields if f.frame == index and f.kind != "file"]
+        try:
+            shown = frame.call(_VALUES_JS, [k for f in own for k in (f.option_keys or (f.key,))])
+        except BidiError:
+            continue
+        for f in own:
+            values[(index, f.key)] = tuple(
+                tuple(shown[k]) if shown.get(k) is not None else None for k in (f.option_keys or (f.key,)))
+    return values
+
+
 #: Scroll an element into view and say whether a click at its centre would land
 #: on it (or on its own <label>) rather than on something drawn over it.
 _REACHABLE_JS = r"""
@@ -851,9 +1256,9 @@ _REACHABLE_JS = r"""
 }
 """
 
-_CHECKED_JS = r"""(key) => {
+_CHECKED_JS = r"""(key) => {""" + _DOM_HELPERS_JS + r"""
   const el = globalThis.kittyByKey.get(key);
-  return el.matches('input[type=checkbox], input[type=radio]') ? !!el.checked : el.getAttribute('aria-checked') === 'true';
+  return el.matches('input[type=checkbox], input[type=radio]') ? !!el.checked : ariaChecked(el);
 }"""
 
 #: Prefer a reachable native label over a synthetic click on its hidden input.
@@ -891,8 +1296,9 @@ def tick(frame: Frame, key: str) -> bool:
     if target is not None:
         frame.click(target, intent=FIELD)
     else:
-        # Preserve the exact native-input fallback for CSS-hidden choices. ARIA
-        # controls must be reachable: never bypass an overlay with their click().
+        # Preserve the exact native-input fallback for CSS-hidden choices; _guard
+        # proved their painted host (I-NoHidden′). ARIA controls must be
+        # reachable: never bypass an overlay with their click().
         frame.call("""(key) => {""" + _DOM_HELPERS_JS + r"""
           const kittyActivate = (""" + ACTIVATE_JS + r""");
           const el = globalThis.kittyByKey.get(key);
@@ -1167,7 +1573,7 @@ def _wait_workday_menu(frame: Frame, key: str, previous: str | None = None) -> d
 
 def _pick_workday_list(
     frame: Frame, key: str, candidates: tuple[str, ...], *, location: bool,
-    graduation: str | None,
+    graduation: str | None, pick_source: bool = False,
 ) -> bool | None:
     """Use the native list, raising terminal failures; None means another variant."""
     state = frame.call(_WORKDAY_MENU_JS, key)
@@ -1176,12 +1582,27 @@ def _pick_workday_list(
     if state["mode"] != "native":
         raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
     try:
-        return _choose_workday_leaf(frame, key, candidates, state,
-                                    location=location, graduation=graduation)
+        return _choose_workday_leaf(frame, key, candidates, state, location=location,
+                                    graduation=graduation, pick_source=pick_source)
     except ChoiceSelectionError:
         raise
     except (BidiError, UnsafeAction) as exc:
         raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete") from exc
+
+
+#: A saved answer may name its place in a hierarchical list: "Job Board > LinkedIn".
+_PATH_SEPARATOR = re.compile(r"\s+>\s+")
+
+
+def saved_path(candidate: str) -> tuple[str, ...] | None:
+    """The categories and leaf of a saved 'A > B > Leaf' answer, else None."""
+    parts = tuple(" ".join(part.split()) for part in _PATH_SEPARATOR.split(candidate.strip()))
+    return parts if len(parts) >= 2 and all(parts) else None
+
+
+def _same_place(path: tuple[str, ...], saved: tuple[str, ...]) -> bool:
+    return len(path) == len(saved) and all(
+        norm_question(a) == norm_question(b) for a, b in zip(path, saved))
 
 
 _COMPANY_SITE_ANSWER = re.compile(r"company (?:careers? )?(?:web ?site|site|page)")
@@ -1203,11 +1624,68 @@ def _menu_control(frame: Frame, key: str, want: str, expected: str = "") -> str 
         time.sleep(0.15)
 
 
-def _choose_workday_leaf(
-    frame: Frame, key: str, candidates: tuple[str, ...], state: dict[str, Any], *,
+def _walk_saved_path(
+    frame: Frame, key: str, root: dict[str, Any], path: tuple[str, ...], *,
     location: bool, graduation: str | None,
 ) -> bool:
-    """Discover the entire owned hierarchy before committing its unique saved leaf."""
+    """Follow a saved 'Category > ... > Leaf' from the root and commit its leaf.
+
+    The owner named the place, so a leaf repeated in other categories is not
+    ambiguous here. Each category must be offered exactly once; the leaf must
+    be unique in its own menu. A miss returns to the root through owned back
+    controls (False); an inconsistent menu or an uncommitted click raises.
+    """
+    current, depth = root, 0
+    for category in path[:-1]:
+        named = [name for name in current["categories"] if norm_question(name) == norm_question(category)]
+        if len(named) != 1:
+            break
+        target = _menu_control(frame, key, "category", named[0])
+        if target is None:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+        frame.click(target, intent=FIELD)
+        child = _wait_workday_menu(frame, key, current["signature"])
+        if child is None or not child["back"]:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+        current, depth = child, depth + 1
+    else:
+        options = [_option_title(text) for text in current["texts"]]
+        index = match_option((path[-1],), options, location=location, prefix=False, graduation=graduation)
+        if index is not None:
+            try:
+                committed = _click_match(frame, key, options, (options[index],), location=location,
+                                         prefix=False, graduation=graduation, preserve_query=True)
+            except (BidiError, UnsafeAction) as exc:
+                raise ChoiceSelectionError("Workday choice selection was not committed") from exc
+            if not committed:
+                raise ChoiceSelectionError("Workday choice selection was not committed")
+            return True
+    for _ in range(depth):
+        back = _menu_control(frame, key, "back")
+        if back is None:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+        frame.click(back, intent=FIELD)
+        current = _wait_workday_menu(frame, key, current["signature"])
+        if current is None:
+            raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+    if current["signature"] != root["signature"]:
+        raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+    return False
+
+
+def _choose_workday_leaf(
+    frame: Frame, key: str, candidates: tuple[str, ...], state: dict[str, Any], *,
+    location: bool, graduation: str | None, pick_source: bool = False,
+) -> bool:
+    """Commit the saved choice of an owned (possibly hierarchical) Workday list.
+
+    A saved path ('Job Board > LinkedIn') is walked directly. Otherwise the
+    entire owned hierarchy is discovered before committing a saved leaf; a leaf
+    offered in several categories is resolved by a saved path. On a source
+    question (`pick_source`) a saved leaf offered in several places is still the
+    saved source (the first place is taken, not nothing), and when no saved
+    candidate is offered a plain offered source is picked, as on flat lists.
+    """
     if not state["open"]:
         opener = frame.node(_WORKDAY_MENU_JS, key, "open")
         if opener is None:
@@ -1229,6 +1707,12 @@ def _choose_workday_leaf(
         state = _wait_workday_menu(frame, key, state["signature"])
     if state is None or state["back"]:
         raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
+    paths = [path for candidate in candidates if (path := saved_path(candidate))]
+    for path in paths:
+        if _walk_saved_path(frame, key, state, path, location=location, graduation=graduation):
+            return True
+    leaf_candidates = tuple(dict.fromkeys(
+        [candidate for candidate in candidates if saved_path(candidate) is None] + [path[-1] for path in paths]))
     remaining = 64
     menus: dict[tuple[str, ...], dict[str, Any]] = {}
     leaves: list[tuple[tuple[str, ...], str]] = []
@@ -1270,20 +1754,32 @@ def _choose_workday_leaf(
         raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
     # Count candidate occurrences across every category, not just the first
     # matching menu. Even two configured aliases cannot identify which source
-    # category the user intended when both are offered.
-    matches = [
+    # category the user intended when both are offered, unless a path says so.
+    # A leaf named exactly as a candidate precedes looser matches: "United
+    # States of America (+1)" is the saved region, not "+1"'s "Canada (+1)".
+    exact = {norm_question(candidate) for candidate in leaf_candidates} - {""}
+    matches = [(path, text) for path, text in leaves if not location and norm_question(text) in exact] or [
         (path, text) for path, text in leaves
-        if match_option(candidates, [text], location=location, prefix=False,
-                        graduation=graduation) is not None
+        if leaf_candidates and match_option(leaf_candidates, [text], location=location, prefix=False,
+                                            graduation=graduation) is not None
     ]
-    if not matches and any(_COMPANY_SITE_ANSWER.fullmatch(" ".join(c.casefold().split())) for c in candidates):
+    if not matches and any(_COMPANY_SITE_ANSWER.fullmatch(" ".join(c.casefold().split())) for c in leaf_candidates):
         # Tenants brand the company-site source ("AV Corporate Website"). A saved
         # "company careers site" answer means that leaf only when it is unique.
         matches = [(path, text) for path, text in leaves if _BRANDED_COMPANY_SITE.fullmatch(text.strip())]
+    if len(matches) > 1:
+        placed = [match for match in matches if any(_same_place(match[0], path[:-1]) for path in paths)]
+        if len(placed) == 1:
+            matches = placed
+        elif pick_source and len({norm_question(text) for _, text in matches}) == 1:
+            matches = matches[:1]
+        else:
+            raise ChoiceSelectionError("Workday saved choice is ambiguous")
+    if not matches and pick_source:
+        picked = pick_source_option([text for _, text in leaves], random.Random(0))
+        matches = [next(leaf for leaf in leaves if leaf[1] == picked)] if picked else []
     if not matches:
         raise ChoiceSelectionError("Workday saved choice was not found in the fully inspected hierarchy")
-    if len(matches) != 1:
-        raise ChoiceSelectionError("Workday saved choice is ambiguous")
     path, text = matches[0]
     current = _wait_workday_menu(frame, key)
     if current is None or current["signature"] != state["signature"]:
@@ -1309,7 +1805,7 @@ def _choose_workday_leaf(
 
 def pick_from_search(
     frame: Frame, key: str, search_text: str, candidates: tuple[str, ...], *,
-    location: bool, prefix: bool = True, graduation: str | None = None,
+    location: bool, prefix: bool = True, graduation: str | None = None, pick_source: bool = False,
 ) -> bool:
     """Type into a search-as-you-type box and click the suggestion that matches.
 
@@ -1328,7 +1824,8 @@ def pick_from_search(
         if not matches and frame.call(_WORKDAY_MENU_JS, key)["mode"] != "other":
             raise ChoiceSelectionError("Workday choice already has a different committed selection")
         return matches
-    native = _pick_workday_list(frame, key, candidates, location=location, graduation=graduation)
+    native = _pick_workday_list(frame, key, candidates, location=location, graduation=graduation,
+                                pick_source=pick_source)
     if native is not None:
         return native
     if not frame.call(_REACHABLE_JS, key):
@@ -1344,7 +1841,7 @@ def pick_from_search(
 
 def pick_from_list(
     frame: Frame, key: str, candidates: tuple[str, ...], *, location: bool,
-    graduation: str | None = None,
+    graduation: str | None = None, pick_source: bool = False,
 ) -> bool:
     """Open and inspect existing choices before resorting to a typed search.
 
@@ -1355,6 +1852,8 @@ def pick_from_list(
     never category names as answers; only a matching committed leaf succeeds.
     Native terminal failures raise ChoiceSelectionError rather than returning a
     retryable False, including a fully inspected but unmatched saved choice.
+    `pick_source` (a recruitment-source question whose choices show only once
+    opened) picks a plain offered source when no candidate is offered.
     """
     _guard(frame, key, custom=("combobox",))
     selected = frame.call(_SUGGESTIONS_JS, key, 0, "selected")
@@ -1364,7 +1863,8 @@ def pick_from_list(
         if not matches and frame.call(_WORKDAY_MENU_JS, key)["mode"] != "other":
             raise ChoiceSelectionError("Workday choice already has a different committed selection")
         return matches
-    native = _pick_workday_list(frame, key, candidates, location=location, graduation=graduation)
+    native = _pick_workday_list(frame, key, candidates, location=location, graduation=graduation,
+                                pick_source=pick_source)
     if native is not None:
         return native
     if not frame.call(_REACHABLE_JS, key):
@@ -1376,16 +1876,80 @@ def pick_from_list(
     frame.press("ArrowDown", intent=FIELD, into=_node(frame, key))  # open keyboard-only lists
     options = _wait_for_options(frame, key, seconds=0.8)
     return _click_match(frame, key, options, candidates, location=location, prefix=False,
-                        graduation=graduation)
+                        graduation=graduation, pick_source=pick_source)
+
+
+#: react-select's own commit condition (Select.tsx; guard.listCommitReady): an
+#: open, focused combobox input whose aria-activedescendant is the chosen option
+#: of the listbox it controls. Returns null when the box is not that widget. The
+#: option is found again by its id: lists re-render as the focus moves.
+_LIST_KEYS_JS = r"""
+(key, optionId, expected) => {""" + _DOM_HELPERS_JS + r"""
+  const box = globalThis.kittyByKey.get(key);
+  const option = optionId ? reference(box, optionId) : globalThis.kittySuggestionTargets?.get(key);
+  if (!box || !option?.isConnected || !fieldSafe(box) || !option.id) return null;
+  const title = (option.innerText || composedText(option)).split(/\r?\n/)
+    .map(s => s.replace(/\s+/g, ' ').trim()).find(Boolean) || '';
+  const reactSelect = box.matches('input[role=combobox][aria-autocomplete=list]') &&
+    (/^react-select-.+-input$/.test(box.id) || /^react-select-.+-option-\d+$/.test(option.id));
+  const list = reference(box, box.getAttribute('aria-controls') || box.getAttribute('aria-owns'));
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  if (!reactSelect || title !== expected || list?.getAttribute('role') !== 'listbox' || !contains(list, option) ||
+      active !== box || box.getAttribute('aria-expanded') !== 'true') return null;
+  return {active: box.getAttribute('aria-activedescendant') === option.id, id: option.id};
+}
+"""
+
+
+def _commit_by_keys(frame: Frame, key: str, rows: int, expected: str) -> bool | None:
+    """Move react-select's focused option to the chosen one, then Enter (LIST_COMMIT).
+
+    None: not a react-select under its commit condition (use the pointer).
+    False: the condition stopped holding after a key, so nothing else is tried.
+    Enter is pressed only while the condition holds; L0 and L1 check it again.
+    """
+    state = frame.call(_LIST_KEYS_JS, key, "", expected)
+    if state is None:
+        return None
+    option = state["id"]
+    for _ in range(rows + 2):
+        if state["active"]:
+            frame.press("Enter", intent=LIST_COMMIT, into=_node(frame, key))
+            return True
+        frame.press("ArrowDown", intent=FIELD, into=_node(frame, key))
+        state = frame.call(_LIST_KEYS_JS, key, option, expected)
+        if state is None:
+            return False
+    return False
+
+
+def _place_index(candidates: tuple[str, ...], options: list[str]) -> int | None:
+    """A unique suggestion naming a saved place with a postal code or country tail
+    ("Arlington, TX 76010, USA" for "Arlington, TX"); never a nearest place."""
+    def place(text: str) -> str:
+        return " ".join(word for word in norm_location(text).split() if not word.isdigit())
+    wanted = {place(candidate) for candidate in candidates} - {""}
+    found = [index for index, option in enumerate(options) if place(option) in wanted]
+    return found[0] if len(found) == 1 else None
 
 
 def _click_match(
     frame: Frame, key: str, options: list[str], candidates: tuple[str, ...], *,
     location: bool, prefix: bool, graduation: str | None = None, preserve_query: bool = False,
+    pick_source: bool = False,
 ) -> bool:
-    """Click a matching suggestion and verify that its selected value sticks."""
+    """Commit a matching suggestion (react-select by keys, else a click) and verify it sticks.
+
+    Only a real suggestion counts: typed text alone is never a value.
+    """
     index = match_option(candidates, options, location=location, prefix=prefix,
                          graduation=graduation)
+    if index is None and location:
+        index = _place_index(candidates, options)
+    if index is None and pick_source and options:
+        picked = pick_source_option(options, random.Random(0))
+        index = options.index(picked) if picked is not None else None
     if index is None:
         frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
@@ -1413,13 +1977,18 @@ def _click_match(
         frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         return False
     try:
-        if found["reachable"]:
-            frame.click(option, intent=FIELD)
-        else:
-            frame.call(_SUGGESTIONS_JS, key, index, "click", options[index])
+        keyed = _commit_by_keys(frame, key, len(options), options[index])
+        if keyed is None:                # not a react-select under its commit condition
+            if found["reachable"]:
+                frame.click(option, intent=FIELD)
+            else:
+                frame.call(_SUGGESTIONS_JS, key, index, "click", options[index])
     except BidiError:
         frame.call(_DISCARD_QUERY_JS, key, preserve_query)
         raise
+    if keyed is False:                   # the list changed under the keys: commit nothing
+        frame.call(_DISCARD_QUERY_JS, key, preserve_query)
+        return False
     frame.call(_SUGGESTIONS_JS, key, 0, "commit")
     frame.call("(key) => globalThis.kittyByKey.get(key).blur()", key)
     deadline = time.monotonic() + 0.8
@@ -1478,8 +2047,22 @@ _BUSY_JS = r"""
 
 
 def uploads_pending(tab: Tab) -> bool:
-    """Whether any application frame still reports an upload or resume parse in progress."""
-    return any(frame.call(_BUSY_JS) for frame in form_frames(tab))
+    """Whether any application frame still reports an upload or resume parse in progress.
+
+    An iframe replaced or removed between the tree read and its call ("no such
+    frame") is re-acquired by the next read, not a closed tab; only the tab's
+    own document failing is an error. Readiness still needs a verified resume.
+    """
+    for index, frame in enumerate(form_frames(tab)):
+        try:
+            if frame.call(_BUSY_JS):
+                return True
+        except ConnectionLost:
+            raise
+        except BidiError:
+            if not index:
+                raise
+    return False
 
 
 def wait_for_uploads(tab: Tab, *, timeout_ms: int = 30000) -> bool:

@@ -2258,8 +2258,10 @@ session-scoped tab IDs; origin and posting checks still apply. A matching URL al
 never adopts another tab, and ambiguous copied markers are rejected. Monitoring
 uses the same ownership checks and preserves the original attachment identity.
 If ownership cannot be verified, the tool explicitly restarts only saved facts.
-A new upload on a populated retained form stays manual because employer
-resume parsing can overwrite your entries. Login, verification, visible CAPTCHA,
+The resume goes into an empty resume control before any answer, on retained forms
+too; values employer resume parsing then changes are put back (yours as they were,
+parser-filled blanks with your saved values), otherwise the page stops for review.
+Login, verification, visible CAPTCHA,
 unsupported controls, validation errors and incomplete uploads remain blockers.
 
 The window is its own program (a separate systemd scope), so closing the terminal
@@ -2388,7 +2390,15 @@ its standard application sections are checked together, not advanced by guessing
 from the numeric URL. Missing required profile records still prevent readiness.
 Loaded embedded application forms take precedence over lingering parent Apply
 buttons. Separate Oracle resume attachments can be added without invoking the
-profile-import widget; ambiguous retained uploads remain deferred to protect answers.
+profile-import widget. A saved answer can name its place in a list with categories
+(`answer: "Job Board > LinkedIn"`), which Workday's "How did you hear about us?"
+tree then follows; without a saved source a plain offered one is picked. Answers
+that reveal follow-up questions are followed by a fresh read, so those are filled
+too. react-select lists, location suggestions, intl-tel-input phone fields (the
+country comes from your number's code), Oracle pill buttons and date fields in the
+field's own format (never inventing a day) are supported. Traps such as
+`honey-pot` or Workday's `beecatcher`, and hidden inputs without a visible control,
+are never written; a required one is reported as `hidden_target_refused`.
 Required native resume uploads inside labelled ARIA upload groups are supported.
 When Greenhouse removes the file input after upload, its visible filename/removal
 receipt can verify the retained attachment. Pending, failed or incomplete receipts

@@ -509,3 +509,31 @@ Stage 1: done.
   `unsupported_flow`). Public GETs only (Workday search POST after its robots check),
   robots.txt at every hop, one request/second/host. Checks: `uv run pytest
   tests/test_apply_entry.py tests/test_application_preflight.py`.
+- 2026-11-05: Widgets, branching, uploads and hidden targets (proposal-09 Step 7.1 and
+  the upload/branching parts of 7.2; I-NoHidden′ from no-hidden.md). A saved answer
+  may name its place in a hierarchical list (`Job Board > LinkedIn`): Workday's
+  source tree is walked along that path, and a saved path decides between the same
+  leaf in two categories. On a source question the saved leaf offered in several
+  places is still taken (its first place), and with no saved source a plain offered
+  one is picked, as on flat lists; other Workday prompts stay ambiguous. react-select
+  commits by ArrowDown + `list_commit` Enter under its own condition; other lists by
+  pointer. Location typeaheads commit only a real suggestion (a postal-code/country
+  tail allowed). intl-tel-input gets the number's own country (the shown one, the
+  saved region's among those sharing the code, or the only one) and the national
+  number. Dates follow the field: `type=month`, placeholders and label hints such as
+  `MM/YYYY`, `MM.JJJJ` or `AAAA-MM`, Workday's named date sections; a field needing a
+  day is left alone. Oracle `cx-select-pill-section` pills are one choice question.
+  After each choice answer the page is read again, so revealed follow-ups (Workday
+  branchingQuestion, Lever's disability signature, Greenhouse's EEOC race) are
+  filled and a dropped answer is given once more. The resume goes into an empty
+  resume control first on fresh and retained forms alike (no more deferral); what its
+  parser changed is put back (earlier values as they were, parser-filled blanks with
+  kitty's planned value), else the page stops (`parse_changed`). A detached iframe is
+  skipped and re-read, not a closed tab; a tab Firefox discarded is restored (its
+  BiDi id returns) and filled again, as is the one same-origin tab its page opened to
+  replace it; kitty's Firefox no longer unloads tabs on low memory. Writes refuse
+  traps (`honey-pot`, `beecatcher`, captcha, "leave this blank"; weak `hp_`/`honey`
+  tokens only when not painted) and hidden elements without a painted host (label,
+  upload group, family attach control, styled box, Workday prompt); a required one is
+  a `hidden_target_refused` handoff and never ready. Checks: `uv run pytest
+  tests/test_apply_widgets.py tests/test_no_hidden.py tests/test_apply.py tests/test_application_selectors.py`.

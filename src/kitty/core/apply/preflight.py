@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 import time
 from urllib.parse import urlsplit
 
-from kitty.core.apply.bidi import Frame, Tab
+from kitty.core.apply.bidi import BidiError, ConnectionLost, Frame, Tab
 from kitty.core.apply.guard import ENTRY, NEXT, UnsafeAction
 from kitty.core.apply.page import (
     _COMPOSED_CLOSEST_JS, _CUSTOM_CONTROL_JS, _DOM_HELPERS_JS, _QUERY_ALL_JS,
@@ -456,7 +456,7 @@ _SNAPSHOT = r"""
   const errors = all('[aria-invalid=true], [data-automation-id=errorMessage], .field-error, [role=alert]')
     .filter(e => e.getAttribute('aria-invalid') === 'true' || /required|invalid|error|please (?:select|enter|attach)/i.test(text(e)));
   const customKind = (""" + _CUSTOM_CONTROL_JS + r""");
-  const fieldSelector = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select, [role=checkbox], [role=radio], [role=combobox]';
+  const fieldSelector = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select, [role=checkbox], [role=radio], [role=combobox], button.cx-select-pill-section';
   const fields = all(fieldSelector).filter(e => e.matches('input, textarea, select') || customKind(e));
   const supportedControl = e => {
     const kind = customKind(e);
@@ -556,7 +556,17 @@ def inspect_page(page: Tab) -> Preflight:
             continue
         if blocker := _listing_blocker(frame.url):
             return Preflight(frame=frame, url=frame.url, signature=frame.url + "|listing", blocker=blocker)
-        data = frame.call(_SNAPSHOT)
+        try:
+            data = frame.call(_SNAPSHOT)
+        except ConnectionLost:
+            raise
+        except BidiError:
+            # An iframe replaced or removed since the tree was read ("no such
+            # frame"): the next inspection re-acquires the frames. Only the tab's
+            # own document failing is an error.
+            if not index:
+                raise
+            continue
         snapshot = Preflight(
             frame=frame, url=data['url'], signature=data['signature'], blocker=data['blocker'],
             step=data['step'], review=data['review'], boundary=data['boundary'],
