@@ -37,10 +37,12 @@ class PublicPage:
 
 
 class PageHTTPError(HttpError):
-    def __init__(self, status_code: int, url: str, *, observed_at: str | None = None):
+    def __init__(self, status_code: int, url: str, *, observed_at: str | None = None, text: str = ""):
         self.status_code = status_code
         self.url = url
         self.observed_at = observed_at
+        #: The (size-bounded) error body: some ATS error codes live only there.
+        self.text = text
         super().__init__(f"HTTP {status_code} from {url}")
 
 
@@ -280,6 +282,11 @@ class PublicPages:
         host = (parts.hostname or "").rstrip(".").encode("idna").decode("ascii")
         self._host_delays[host] = max(self._host_delays.get(host, 0), rules.delay)
 
+    def allowed(self, url: str) -> None:
+        """Raise HttpError unless robots.txt allows `url` (checked before non-GET helpers)."""
+        public_addresses(url)
+        self._allowed(url)
+
     def fetch(self, url: str) -> PublicPage:
         """Fetch HTML or JSON, checking robots at every resource redirect target."""
         current = url
@@ -293,7 +300,7 @@ class PublicPages:
                 current = urljoin(current, location)
                 continue
             if not 200 <= page.status_code < 300:
-                raise PageHTTPError(page.status_code, current, observed_at=page.retrieved_at)
+                raise PageHTTPError(page.status_code, current, observed_at=page.retrieved_at, text=page.text)
             return page
         raise HttpError(f"Too many redirects: {url}")
 

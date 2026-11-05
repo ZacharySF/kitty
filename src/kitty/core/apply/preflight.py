@@ -1,4 +1,4 @@
-"""Read form gates and recognize non-final Workday and Phenom entry navigation.
+"""Read form gates and recognize non-final entry navigation (Workday, Phenom, providers, Apply links).
 
 Account actions are handled separately. CAPTCHA, consent and final application
 actions stay manual. Unknown structures stop rather than guessing.
@@ -14,6 +14,7 @@ from kitty.core.apply.page import (
     UnsafeAction, _COMPOSED_CLOSEST_JS, _CUSTOM_CONTROL_JS, _DOM_HELPERS_JS, _QUERY_ALL_JS,
     _UPLOAD_GROUP_JS, _UPLOADED_FILE_GROUP_JS, form_frames,
 )
+from kitty.core.apply.urls import route_apply_link
 
 
 # Phenom posting pages expose an application link, not an application form.
@@ -79,8 +80,11 @@ _PROVIDER_ENTRY_JS = r"""
   const shown = e => !!e.getClientRects().length &&
     getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
   let selector = '';
-  if (/^[a-z0-9-]+\.fa\.[a-z0-9]+\.oraclecloud\.com$/i.test(location.hostname) &&
-      /^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/[^/]+\/job\/\d+\/?$/.test(location.pathname))
+  if (((/^[a-z0-9-]+\.fa\.[a-z0-9]+\.oraclecloud\.com$/i.test(location.hostname) &&
+        /^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/[^/]+\/job\/\d+\/?$/.test(location.pathname)) ||
+       // Oracle Recruiting Cloud on a company domain (/en/sites/CX_2001/job/<id>).
+       (!/(^|\.)oraclecloud\.com$/i.test(location.hostname) &&
+        /^\/[a-z]{2}(?:-[A-Z]{2})?\/sites\/CX(?:_\d+)?\/job\/\d+\/?$/.test(location.pathname))))
     selector = '.job-details__section-apply-button button.apply-now-button';
   else if (location.hostname === 'jobs.dayforcehcm.com' &&
       /^\/[^/]+\/[^/]+\/CANDIDATEPORTAL\/jobs\/\d+\/?$/i.test(location.pathname))
@@ -95,15 +99,19 @@ _PROVIDER_ENTRY_JS = r"""
     if (id && /^\d+$/.test(id) && location.pathname.endsWith('-' + id))
       selector = '[data-cy="Hero"] button[data-cy="Button"][type=button]';
   } else if (/^\/careers\/job\/\d+\/?$/.test(location.pathname) &&
-      document.querySelector('a[href*="/careers/apply?pid="]')) {
+      document.querySelector('a[href*="/careers/apply?"]')) {
     // Eightfold posting: the CTA is a same-origin link to this exact pid's form.
+    // Eightfold copies the posting's tracking parameters (utm_*, hl, _ccid) into it.
     const pid = location.pathname.match(/\d+/)[0];
-    const links = queryAll('a[href*="/careers/apply?pid="]').filter(shown).filter(a => {
+    const links = queryAll('a[href*="/careers/apply?"]').filter(shown).filter(a => {
       try {
         const u = new URL(a.href);
-        // Sandbox Xrays cannot iterate URLSearchParams; match the query exactly.
+        // Sandbox Xrays cannot iterate URLSearchParams; split the query exactly.
+        const query = u.search.replace(/^\?/, '').split('&');
         return u.origin === location.origin && u.pathname === '/careers/apply' &&
-          new RegExp('^\\?pid=' + pid + '(?:&domain=[A-Za-z0-9.-]+)?$').test(u.search) &&
+          query.filter(p => p.startsWith('pid=')).length === 1 && query.includes('pid=' + pid) &&
+          query.every(p => p === 'pid=' + pid ||
+            /^(?:domain=[A-Za-z0-9.-]+|hl=[A-Za-z_-]*|utm_[A-Za-z_]+=[A-Za-z0-9._~%+-]*|_ccid=[A-Za-z0-9._~%+-]*)$/.test(p)) &&
           !u.hash && !u.username && !u.password && (!a.target || a.target === '_self');
       } catch { return false; }
     });
@@ -124,12 +132,43 @@ _PROVIDER_ENTRY_JS = r"""
 }
 """
 
+# Custom career sites (N2: 14 of 15 visible Apply controls were links): one
+# visible, enabled, exact-label Apply link whose every copy leads to the same
+# other document. Returns that destination (no fragment); kitty navigates to it
+# only after routing it to a recognized family (filler), never by clicking.
+_APPLY_LINK_JS = r"""
+() => {
+  if (location.protocol !== 'https:' || !(""" + _ENTRY_CLEAR_JS + r""")()) return null;
+  const queryAll = (""" + _QUERY_ALL_JS + r""");
+  const closest = (""" + _COMPOSED_CLOSEST_JS + r""");
+  const shown = e => !!e.getClientRects().length &&
+    getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  const label = /^(?:apply|apply now|apply online|apply here|apply for (?:this )?(?:job|position|role)|apply to (?:this )?job|apply on (?:the )?(?:company|employer) (?:site|website))$/i;
+  const links = queryAll('a[href]').filter(shown).filter(a =>
+    label.test((a.innerText || a.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim()));
+  if (!links.length) return null;
+  const here = location.origin + location.pathname + location.search;
+  const targets = new Set();
+  for (const a of links) {
+    let u;
+    try { u = new URL(a.getAttribute('href'), location.href); } catch { return null; }
+    if (u.protocol !== 'https:' || u.username || u.password || a.hasAttribute('download') ||
+        closest(a, 'form, [role=form], [aria-disabled=true], [aria-hidden=true], [inert]')) return null;
+    const target = u.origin + u.pathname + u.search;
+    if (target === here) return null;
+    targets.add(target);
+  }
+  return targets.size === 1 ? [...targets][0] : null;
+}
+"""
+
 _COOKIE_REJECT_JS = r"""
 () => {
   // Only exact provider "reject all" controls; declining grants nothing.
   const dayforce = location.hostname === 'jobs.dayforcehcm.com' &&
     document.querySelector('button[test-id="cookie-preferences-banner-reject-button"][type=button]');
-  const oracle = /\.oraclecloud\.com$/.test(location.hostname) &&
+  const oracle = (/\.oraclecloud\.com$/.test(location.hostname) ||
+      /^\/[a-z]{2}(?:-[A-Z]{2})?\/sites\/CX(?:_\d+)?(?:\/|$)/.test(location.pathname)) &&
     document.querySelectorAll('.cookie-consent-modal button.cookie-consent__button.decline[type=button]');
   const ketch = document.querySelectorAll('#ketch-consent-banner button#ketch-banner-button-secondary');
   const single = list => list && list.length === 1 ? list[0] : null;
@@ -266,6 +305,11 @@ _SNAPSHOT = r"""
     const provider = (""" + _PROVIDER_ENTRY_JS + r""")();
     if (provider) { entry = 'provider-apply'; entryProof = provider.outerHTML; }
   }
+  let entryUrl = '';
+  if (!entry && !step && entryClear) {
+    const link = (""" + _APPLY_LINK_JS + r""")();
+    if (link) { entry = 'apply-link'; entryProof = entryUrl = link; }
+  }
   const ashbyForm = /(^|\.)ashbyhq\.com$/i.test(location.hostname) &&
     /^\/[^/]+\/[a-f0-9-]+\/application\/?$/i.test(location.pathname) &&
     has('input[id="_systemfield_name"], input[id="_systemfield_email"]');
@@ -393,7 +437,7 @@ _SNAPSHOT = r"""
     .some(e => visible(e.parentElement || e.getRootNode().host));
   const signature = location.href + '|' + step + '|' + entry + '|' + entryProof + '|' +
     fields.map(e => e.name + ':' + e.id + ':' + (e.type || customKind(e))).join('|');
-  return {blocker, step, review, boundary, safeNext, signature, entry, hasFields,
+  return {blocker, step, review, boundary, safeNext, signature, entry, entryUrl, hasFields,
     unsupportedRequired: unsupported, missingProfileSections,
     errors: errors.length + fields.filter(e => e.willValidate && !e.validity.valid).length,
     workday, url: location.href};
@@ -422,6 +466,8 @@ class Preflight:
     has_fields: bool = False
     unsupported_required: bool = False
     missing_profile_sections: tuple[str, ...] = ()
+    #: The destination of an `apply-link` entry (a custom site's visible Apply link).
+    entry_url: str = ''
 
 
 def _listing_blocker(url: str) -> str | None:
@@ -461,7 +507,12 @@ def inspect_page(page: Tab) -> Preflight:
             safe_next=data['safeNext'], errors=data['errors'], entry=data['entry'],
             has_fields=data['hasFields'], unsupported_required=data['unsupportedRequired'],
             missing_profile_sections=tuple(data.get('missingProfileSections', ())),
+            entry_url=data.get('entryUrl') or '',
         )
+        if snapshot.entry == 'apply-link' and route_apply_link(snapshot.url, snapshot.entry_url) == (None, None):
+            # An Apply link to an unrecognized site, or from a recognized family's
+            # own page, is not an entry; keep waiting for the page's real one.
+            snapshot = replace(snapshot, entry='', entry_url='')
         if snapshot.blocker:
             return snapshot
         snapshots.append(snapshot)

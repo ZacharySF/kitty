@@ -468,3 +468,19 @@ Stage 1: done.
   Ashby's `op`), navigation and context, and its record is method, path, endpoint
   and decision. Nothing arms an intercept during real fills yet (step 2d). Checks:
   `uv run pytest tests/test_apply_guard.py tests/test_bidi_events.py tests/test_apply.py`.
+- 2026-11-05: Reaching the form (proposal-05 Step 3, `kitty.core.apply.resolve`). A live
+  check runs before every `kitty apply` batch and as `kitty apply resolve [--dry-run]`
+  over the queue: closed markers per family (HTTP 404/410; a primary closed notice;
+  Greenhouse `?questions=true` 404; Workday cxs 403 `S22` plus an empty `og:title` page
+  shell; zapply landing on its `/jobs/` listing) close the job through the existing
+  verification fields; zapply/recruitics redirects, appcast's JavaScript redirect and
+  Litos's employer board plus an exact-title search resolve to the clean employer URL,
+  stored as the apply URL (source `resolve`; never under a reviewed plan). `detect_ats`
+  adds iCIMS, Eightfold (incl. company-domain `/careers/job/<id>`), Phenom, Avature and
+  Oracle on company domains; the Eightfold entry accepts tracking parameters; a custom
+  page's one visible Apply link to a recognized posting is followed by navigation.
+  Indeed Apply, Tesla, TikTok/ByteDance/Amazon/Meta portals, Paradox, unresolved Litos
+  and broken redirects are typed `unsupported_flow:` handoffs (attempt cause
+  `unsupported_flow`). Public GETs only (Workday search POST after its robots check),
+  robots.txt at every hop, one request/second/host. Checks: `uv run pytest
+  tests/test_apply_entry.py tests/test_application_preflight.py`.
