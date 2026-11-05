@@ -6,6 +6,7 @@
   import BriefChip from "../goals/BriefChip.svelte";
   import { SpaceHold } from "./hold";
   import { agentChips, downloadLabel } from "./rika";
+  import RikaMark from "./RikaMark.svelte";
   import { rika } from "./session.svelte";
 
   /**
@@ -109,7 +110,7 @@
 <svelte:window onkeyup={keyup} />
 <section bind:this={bar} class="rika-bar" class:breathing={rika.streaming || listening} data-streaming={String(rika.streaming)}
   data-listening={listening ? rika.voice.mode : undefined} data-tutorial="rika" aria-label="Rika">
-  <span class="mark" aria-hidden="true"><span class="orb"></span></span>
+  <span class="mark" aria-hidden="true"><RikaMark size={18} active={rika.streaming || listening} /></span>
   <label class="field">
     <input bind:this={input} bind:value placeholder={heard} aria-label="Ask Rika" aria-busy={listening} spellcheck="false" autocomplete="off" onkeydown={keydown} />
   </label>
@@ -187,13 +188,6 @@
     place-items: center;
     width: 34px;
     height: 34px;
-  }
-  .orb {
-    width: 20px;
-    height: 20px;
-    border-radius: 999px;
-    background: radial-gradient(circle at 35% 30%, color-mix(in srgb, white 70%, var(--c1)), var(--c1) 45%, color-mix(in srgb, var(--c2) 80%, transparent) 100%);
-    box-shadow: 0 0 9px color-mix(in srgb, var(--c1) 55%, transparent);
   }
   .field {
     display: flex;

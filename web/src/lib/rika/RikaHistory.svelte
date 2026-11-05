@@ -3,6 +3,7 @@
   import EditDrawer from "../ui/EditDrawer.svelte";
   import RikaAgents from "./RikaAgents.svelte";
   import RikaPlan from "./RikaPlan.svelte";
+  import RikaMark from "./RikaMark.svelte";
   import { costLabel, entryKey, holdClock, holdLeft, mailLine, talkClock, usageReadout } from "./rika";
   import { rika } from "./session.svelte";
 
@@ -78,7 +79,7 @@
             {:else if entry.kind === "message"}
               {@const readout = usageReadout(entry)}
               <div class="said">
-                <i class="mark" aria-hidden="true"></i>
+                <span class="mark"><RikaMark size={12} active={!entry.text} /></span>
                 <div>
                   <p class:thinking={!entry.text}>{entry.text || "Thinking…"}</p>
                   <span class="meta-line">
@@ -273,12 +274,8 @@
     color: var(--muted);
   }
   .mark {
-    width: 12px;
-    height: 12px;
+    display: grid;
     margin-top: 3px;
-    border-radius: 999px;
-    background: radial-gradient(circle at 35% 30%, color-mix(in srgb, white 70%, var(--c1)), var(--c1) 45%, color-mix(in srgb, var(--c2) 80%, transparent) 100%);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--c1) 55%, transparent);
   }
   .meta-line {
     display: flex;
