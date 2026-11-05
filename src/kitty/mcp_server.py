@@ -431,6 +431,7 @@ class KittyTools:
         most-seen first. Answers live only in config/answers.yaml, which the owner writes:
         this server never writes, drafts or suggests answers."""
         with self._workspace() as workspace:
+            questions_core.refresh_if_changed(workspace.conn, workspace.config)
             found = questions_core.list_questions(workspace.conn, unanswered_only=True)
             return {"questions": [
                 {"id": q.id, "text": q.text, "times_seen": q.times_seen,

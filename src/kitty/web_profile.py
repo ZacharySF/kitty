@@ -330,6 +330,7 @@ def get(app, conn, path: str, query: dict) -> dict | None:
         except Exception as exc:
             raise _error(409, f'Local diagnostics failed ({type(exc).__name__})') from None
         return {'checks': checks}
+    questions.refresh_if_changed(conn, app.config)
     return {'sections': list(SECTIONS), 'profile': app.config.profile.model_dump(mode='json'),
             'tracks': [{'name': t.name, 'weekly_target': t.weekly_target,
                         'default_resume': t.default_resume} for t in app.config.tracks.tracks],
@@ -352,6 +353,7 @@ def post(app, conn, path: str, body: dict) -> dict | None:
             value = _text(value, field, maximum=5000)
             current[field] = None if field in BASIC_OPTIONAL_FIELDS and value == '' else value
         _save(app, 'profile', current, version)
+        questions.refresh_if_changed(conn, app.config)
         return _basics(app)
     if path == '/api/profile/config':
         _keys(body, {'section', 'text', 'version', 'confirm'})
@@ -359,8 +361,7 @@ def post(app, conn, path: str, body: dict) -> dict | None:
         section = _section(body.get('section'))
         saved = _save(app, section, _parse(_text(body.get('text'), 'YAML', maximum=MAX_CONFIG_TEXT)),
                       _revision(body.get('version')))
-        if section == 'answers':
-            questions.refresh_answered_flags(conn, app.config)
+        questions.refresh_if_changed(conn, app.config)
         return saved
     if path == '/api/profile/answer':
         _keys(body, {'question', 'answer', 'version', 'confirm'})

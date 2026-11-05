@@ -160,6 +160,7 @@ class ProfileScreen(Screen):
             lines.append(f"  [{MOSS}]{escape(answer.answer)}[/]")
         if not config.answers.answers:
             lines.append(muted("no answers yet"))
+        questions_core.refresh_if_changed(conn, config)
         waiting = questions_core.list_questions(conn)
         lines.append("")
         lines.append(f"[bold]{len(waiting)} question(s) seen on forms with no answer yet[/bold]"

@@ -20,6 +20,7 @@ Only core confirmation rules record submissions::
             effect: {id, digest, expires_at}, demo, watch_hours, firefox_configured, known_answers}
     POST /api/automation/start  {effect_id, digest, confirmed: true, watch?, background?,
                                  authorize_authentication?, authorize_recovery_ai?} -> status
+    GET  /api/apply/health  -> kitty.core.apply.health.report (read-only attempt records)
 """
 from __future__ import annotations
 
@@ -534,6 +535,10 @@ def get(app, conn, path: str, query: dict) -> dict | None:
     if path == "/api/automation/status":
         _keys(query, set())
         return app.automation.snapshot()
+    if path == "/api/apply/health":
+        _keys(query, set())
+        from kitty.core.apply import health
+        return health.report(conn)
     if path == "/api/questions":
         _keys(query, {"kind", "job_id", "min_jobs"})
         from kitty.web_server import _integer

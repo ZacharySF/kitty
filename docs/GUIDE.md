@@ -2484,6 +2484,42 @@ choices; `--include-essays`, `--include-demographic`, `--all`, `--min-jobs N`,
 `--json`. Questions profile.yaml fills and file uploads are left out, and
 questions the filler logged are listed too.
 
+### Apply attempts and health
+
+Every browser attempt appends one `apply_attempts` row (the run, of kind `apply` in
+`runs`; the ATS family and tenant origin; start, end and duration; how far it got:
+live-check, entry, account, verify, page N with its name, or review; the outcome,
+`ready`, `needs_owner`, `unsupported`, `failed` or `closed`; a typed cause from a
+closed vocabulary, `kitty.core.apply.attempts.CAUSES`, mapped from the blocker
+text; the labels of the fields that stopped it; how many owner inputs it relied
+on; and whether automation was hidden). `jobs.fill_*` stays the latest snapshot.
+A closed job selected for preparation is recorded as a live-check attempt.
+Compatibility research is not recorded.
+
+Each field the filler writes records where its value came from: `profile`,
+`saved_answer:<question>`, `account` (and, as later steps add them,
+`confirmed_rule:<id>`, `resume_derived`, `ai_draft`, `consent_ruling`). **No field
+value is stored.** At ready, rika! keeps a salted SHA-256 of each written field's
+value (the salt stays in memory). While the watcher waits for your Submit, each
+poll re-reads those fields in rika!'s private sandbox and stores the latest hashes.
+A passive listener on your Submit click (it never blocks or changes anything)
+keeps one final snapshot, even when the page replaces the form with its
+confirmation. When the confirmation shows, a changed hash is an owner edit, so it
+counts as a rika! error for that field's provenance class. Only fields still on the
+ready page are compared.
+
+`kitty apply report [--json]` (and `GET /api/apply/health`, shown under Find jobs
+→ Preparation → Health) reports the unattended ready rate (URR) per ATS family.
+The unit is the job: a job is ready if any attempt reached ready, and a job with a
+closed attempt and no ready one is removed. The report also gives URR with no owner
+input, Wilson 95% intervals, the top causes for live jobs that were never ready,
+and per-class correctness (fields you kept unchanged ÷ fields compared). Fewer than
+20 jobs or fields show as insufficient data.
+
+The `answered` flags of the unanswered-questions queue are re-checked after every
+attempt and whenever `answers.yaml` or `profile.yaml` changed since the last
+check (readers compare a digest first), so hand edits no longer leave stale rows.
+
 ### Favorites and autofill
 
 - Star jobs I like: `*` in the Inbox, Jobs, Apply and Job Detail screens (★ marks
@@ -2950,6 +2986,9 @@ Two design points worth knowing:
   background imports and changes already logged elsewhere (`flash_reviews`,
   `status_events`, `study_sessions`) are not captured; the route lists live in
   `kitty.core.record_events`.
+* `apply_attempts` is **append-only** (an update trigger refuses changes): one row per
+  preparation attempt, never a field value. `jobs.fill_*` keeps only the latest
+  state. See "Apply attempts and health" above.
 
 ## Tests
 

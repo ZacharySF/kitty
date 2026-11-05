@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { api, safeUrl } from "./api";
+  import ApplyHealth from "./ApplyHealth.svelte";
   import Questions from "./Questions.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
@@ -102,6 +103,7 @@
   let allowRecoveryAI = $state(false);
   let showQuestions = $state(false);
   let showOptions = $state(false);
+  let showHealth = $state(false);
   const labels: Record<string, string> = {
     idle: "Not running",
     starting: "Opening Firefox",
@@ -384,6 +386,19 @@
         {demo}
       />{/if}
   </details>
+  {#if !compact}
+    <div class="health-toggle">
+      <button
+        type="button"
+        class="text-button"
+        aria-expanded={showHealth}
+        aria-controls="apply-health"
+        title="Ready rates per form provider, top causes and fill correctness"
+        onclick={() => (showHealth = !showHealth)}>Health</button
+      >
+    </div>
+    {#if showHealth}<ApplyHealth id="apply-health" />{/if}
+  {/if}
   {#if status}
     <div aria-live="polite">
       <span class="badge">Browser: {label(status.phase)}</span
@@ -645,6 +660,11 @@
     margin-top: 1rem;
     border-top: 1px solid var(--border);
     padding-top: 0.8rem;
+  }
+  .health-toggle {
+    margin-top: 0.8rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.4rem;
   }
   summary {
     cursor: pointer;
