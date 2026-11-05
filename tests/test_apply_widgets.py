@@ -227,7 +227,8 @@ _REACT_SELECT_JS = '''
     const box=document.querySelector('.select__value-container');
     box.querySelector('.select__placeholder')?.remove();box.querySelector('.select__single-value')?.remove();
     const single=document.createElement('div');single.className='select__single-value';single.textContent=text;box.prepend(single);render();};
-  const filter=()=>{shown=options.filter(o=>o.toLowerCase().includes(input.value.toLowerCase()));focused=shown.length?0:-1;};
+  // An async select (window.asyncOnly) offers nothing until a query is typed.
+  const filter=()=>{shown=window.asyncOnly&&!input.value?[]:options.filter(o=>o.toLowerCase().includes(input.value.toLowerCase()));focused=shown.length?0:-1;};
   input.addEventListener('input',()=>{open=true;filter();render();});
   input.addEventListener('mousedown',()=>{open=true;filter();render();});
   input.addEventListener('keydown',e=>{
@@ -250,6 +251,17 @@ def test_react_select_commits_by_arrow_down_and_list_commit_enter(page, space, a
     assert _js(page, "() => window.enters") == 1             # Enter only under the commit condition
     assert _js(page, "() => document.querySelector('.select__single-value').textContent") == answer
     assert not _field(page, element_id="react-select-2-input").blank
+    _quiet(page)
+
+
+def test_async_react_select_is_typed_then_committed_by_list_commit_enter(page, space):  # noqa: F811
+    _serve(page, _REACT_SELECT.replace("__ID__", "react-select-7-input"), "window.asyncOnly=true;" + _REACT_SELECT_JS)
+    field = _field(page, element_id="react-select-7-input")
+    config = _with_answers(space, AnswerEntry(question="Preferred office", answer="Boston"))
+    assert _apply_plan([page.main], field, plan_for(field, config))
+    assert _js(page, "() => window.commits") == [["key", "Boston"]]
+    assert _js(page, "() => window.enters") == 1
+    assert _js(page, "() => document.querySelector('.select__single-value').textContent") == "Boston"
     _quiet(page)
 
 
