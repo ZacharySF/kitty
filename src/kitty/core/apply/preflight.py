@@ -10,8 +10,9 @@ import time
 from urllib.parse import urlsplit
 
 from kitty.core.apply.bidi import Frame, Tab
+from kitty.core.apply.guard import ENTRY, NEXT, UnsafeAction
 from kitty.core.apply.page import (
-    UnsafeAction, _COMPOSED_CLOSEST_JS, _CUSTOM_CONTROL_JS, _DOM_HELPERS_JS, _QUERY_ALL_JS,
+    _COMPOSED_CLOSEST_JS, _CUSTOM_CONTROL_JS, _DOM_HELPERS_JS, _QUERY_ALL_JS,
     _UPLOAD_GROUP_JS, _UPLOADED_FILE_GROUP_JS, form_frames,
 )
 
@@ -181,6 +182,30 @@ _SMART_NEXT_JS = r"""
 }
 """
 
+# Workday's progress bar lists every step of the wizard and marks the current
+# one; its Submit is the last step's pageFooterNextButton (atsfill workday.md:67)
+# and step names are localized. So the step's position decides, not its label:
+# {index, count} of the marked step among the bar's step items, else from the
+# marked step's own "step N of M" numbers (digits in any language), or null.
+# Runs inside _SNAPSHOT (queryAll, closest).
+_WORKDAY_STEPS_JS = r"""
+() => {
+  const marked = queryAll('[data-automation-id=progressBarActiveStep]');
+  if (marked.length !== 1) return null;
+  const bars = queryAll('[data-automation-id=progressBar]');
+  const stepItem = e => /^progressBar[A-Za-z]*Step$/.test(e?.getAttribute('data-automation-id') || '');
+  const owner = e => e.parentElement ? closest(e.parentElement, '[data-automation-id]') : null;
+  const items = bars.length === 1 ? queryAll('[data-automation-id]', bars[0])
+    .filter(e => e !== bars[0] && stepItem(e) && !stepItem(owner(e))) : [];
+  if (items.length >= 2 && items.includes(marked[0]))
+    return {index: items.indexOf(marked[0]), count: items.length};
+  if (items.length >= 2) return null;
+  const numbers = (marked[0].textContent.match(/\d+/g) || []).slice(0, 2).map(Number);
+  if (numbers.length < 2 || numbers[0] < 1 || numbers[0] > numbers[1]) return null;
+  return {index: numbers[0] - 1, count: numbers[1]};
+}
+"""
+
 # The same snapshot is rechecked in the click script, so a changed final button
 # cannot be clicked using a stale decision from Python.
 _SNAPSHOT = r"""
@@ -221,10 +246,17 @@ _SNAPSHOT = r"""
   const nextSelector = '[data-automation-id=bottom-navigation-next-button]' +
     (footerNext ? ', [data-automation-id=pageFooterNextButton]' : '');
   const workday = !!step && has(nextSelector);
-  const review = workday && /^review(?: your application)?$/i.test(stepLabel);
+  // Locale-independent: the last progress step is Review whatever its label
+  // says, and Next is safe only while a later step exists and no review
+  // container is shown. The English label is a secondary check.
+  const steps = workday ? (""" + _WORKDAY_STEPS_JS + r""")() : null;
+  const stepsLeft = !!steps && steps.index < steps.count - 1;
+  const review = workday && (/^review(?: your application)?$/i.test(stepLabel) ||
+    (!!steps && steps.index === steps.count - 1));
+  const reviewShown = all('[data-automation-id*=review i]').some(e => !closest(e, '[data-automation-id=progressBar]'));
   const forbidden = /submit|finish|complete|accept|agree|consent|certif|sign|legal|privacy/i;
   const next = all(nextSelector);
-  let safeNext = workday && !review && next.length === 1 &&
+  let safeNext = workday && !review && stepsLeft && !reviewShown && next.length === 1 &&
     /^(next|continue|save and continue)$/i.test(text(next[0])) &&
     !forbidden.test(text(next[0]) + ' ' + (next[0].getAttribute('aria-label') || '')) &&
     actionSafe(next[0]) &&
@@ -526,4 +558,4 @@ def advance(snapshot: Preflight, ats: str) -> None:
     )
     if target is None:
         raise UnsafeAction('application step changed or has validation errors; stopped before navigation')
-    snapshot.frame.click(target)
+    snapshot.frame.click(target, intent=ENTRY if snapshot.entry else NEXT)

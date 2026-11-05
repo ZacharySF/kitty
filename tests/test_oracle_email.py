@@ -121,8 +121,8 @@ def oracle_navigation(monkeypatch):
         nav.targets += 1
         return "oracle-next"
 
-    def click(frame, target):
-        assert frame.url == nav.entry and target == "oracle-next"
+    def click(frame, target, *, intent):
+        assert frame.url == nav.entry and target == "oracle-next" and intent == "credential"
         nav.next_clicks += 1
 
     def sleep(seconds):

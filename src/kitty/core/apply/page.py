@@ -25,6 +25,7 @@ from typing import Any
 
 from kitty.core.apply.bidi import BidiError, Frame, Tab
 from kitty.core.apply.fields import FormField, clean_label, match_option
+from kitty.core.apply.guard import ACTIVATE_JS, FIELD, UnsafeAction
 
 #: Frames that never hold the application form.
 _SKIP_FRAMES = ("recaptcha", "hcaptcha", "googleapis.com", "about:blank", "google.com/maps")
@@ -572,10 +573,6 @@ _READ_FIELDS_JS = r"""
 """
 
 
-class UnsafeAction(RuntimeError):
-    """Raised when a fill helper is pointed at something that is not a form field."""
-
-
 class ChoiceSelectionError(BidiError):
     """A known choice widget failed terminally; do not retry with typed queries."""
 
@@ -892,14 +889,16 @@ def tick(frame: Frame, key: str) -> bool:
         return True
     target = frame.node(_CHOICE_TARGET_JS, key)
     if target is not None:
-        frame.click(target)
+        frame.click(target, intent=FIELD)
     else:
         # Preserve the exact native-input fallback for CSS-hidden choices. ARIA
         # controls must be reachable: never bypass an overlay with their click().
         frame.call("""(key) => {""" + _DOM_HELPERS_JS + r"""
+          const kittyActivate = (""" + ACTIVATE_JS + r""");
           const el = globalThis.kittyByKey.get(key);
           if (fieldSafe(el) && el.matches('input[type=checkbox], input[type=radio]') &&
-              !labelsOf(el).some(label => closest(label, 'button, a[href], [role=button], [role=link]'))) el.click();
+              !labelsOf(el).some(label => closest(label, 'button, a[href], [role=button], [role=link]')))
+            kittyActivate(el, 'field', () => el.click());
         }""", key)
     return bool(frame.call(_CHECKED_JS, key))
 
@@ -1040,9 +1039,10 @@ _SUGGESTIONS_JS = (r"""
     if ((role !== 'option' && !(oracleGrid && role === 'gridcell') && !option.classList.contains('__CLASS__')) ||
         ['button', 'input', 'a'].includes(tag)) return false;
     // the events a mouse click sends: Lever picks a place on mousedown, react-select on click
+    const kittyActivate = (""" + ACTIVATE_JS + r""");
     for (const type of ['mousedown', 'mouseup', 'click'])
       if (fieldSafe(box) && fieldSafe(option) && !hasActions(option))
-        option.dispatchEvent(new MouseEvent(type, {bubbles: true, composed: true, cancelable: true, button: 0}));
+        kittyActivate(option, 'field', () => option.dispatchEvent(new MouseEvent(type, {bubbles: true, composed: true, cancelable: true, button: 0})));
     return true;
   }
   option.scrollIntoView({block: 'nearest'});
@@ -1067,10 +1067,6 @@ _SUGGESTIONS_JS = (r"""
   };
 }
 """).replace("__CLASS__", _SUGGESTION_CLASS).replace("__LOADING__", _LOADING_SELECTOR)
-
-
-#: WebDriver's code for the Down arrow key: opens a dropdown's list without typing.
-_ARROW_DOWN = "\ue015"
 
 
 # Workday's native list icon and hierarchical prompt have explicit owner IDs.
@@ -1216,7 +1212,7 @@ def _choose_workday_leaf(
         opener = frame.node(_WORKDAY_MENU_JS, key, "open")
         if opener is None:
             raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
-        frame.click(opener)
+        frame.click(opener, intent=FIELD)
     state = _wait_workday_menu(frame, key)
     # An existing child, even one containing a matching leaf, cannot establish
     # uniqueness across its siblings. Reach the root through owned back controls
@@ -1229,7 +1225,7 @@ def _choose_workday_leaf(
         back = _menu_control(frame, key, "back")
         if back is None:
             raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
-        frame.click(back)
+        frame.click(back, intent=FIELD)
         state = _wait_workday_menu(frame, key, state["signature"])
     if state is None or state["back"]:
         raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
@@ -1255,7 +1251,7 @@ def _choose_workday_leaf(
             if target is None:
                 return False
             remaining -= 1
-            frame.click(target)
+            frame.click(target, intent=FIELD)
             child = _wait_workday_menu(frame, key, menu["signature"])
             if child is None or not child["back"] or not visit(child, (*path, category)):
                 return False
@@ -1264,7 +1260,7 @@ def _choose_workday_leaf(
             target = _menu_control(frame, key, "back")
             if target is None:
                 return False
-            frame.click(target)
+            frame.click(target, intent=FIELD)
             restored = _wait_workday_menu(frame, key, child["signature"])
             if restored is None or restored["signature"] != menu["signature"]:
                 return False
@@ -1296,7 +1292,7 @@ def _choose_workday_leaf(
         target = _menu_control(frame, key, "category", category)
         if target is None:
             raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
-        frame.click(target)
+        frame.click(target, intent=FIELD)
         current = _wait_workday_menu(frame, key, current["signature"])
         if current is None or current["signature"] != menus[path[:depth]]["signature"]:
             raise ChoiceSelectionError("Workday choice hierarchy is unavailable or incomplete")
@@ -1340,7 +1336,7 @@ def pick_from_search(
     typed = " ".join(search_text.split())[:80]     # no newlines: typing one would press Enter
     frame.call(_CLEAR_JS, key)                     # empty it and keep the focus there ...
     _guard(frame, key)
-    frame.type(typed)                              # ... then real key presses open the list
+    frame.type(typed, into=_node(frame, key))     # ... then real key presses open the list
     options = _wait_for_options(frame, key)
     return _click_match(frame, key, options, candidates, location=location, prefix=prefix,
                         graduation=graduation)
@@ -1375,9 +1371,9 @@ def pick_from_list(
         return False
     frame.call(_CLEAR_JS, key)
     if frame.call(_REACHABLE_JS, key):
-        frame.click(_node(frame, key))
+        frame.click(_node(frame, key), intent=FIELD)
     _guard(frame, key, custom=("combobox",))
-    frame.type(_ARROW_DOWN)                        # open keyboard-only lists; never Enter
+    frame.press("ArrowDown", intent=FIELD, into=_node(frame, key))  # open keyboard-only lists
     options = _wait_for_options(frame, key, seconds=0.8)
     return _click_match(frame, key, options, candidates, location=location, prefix=False,
                         graduation=graduation)
@@ -1418,7 +1414,7 @@ def _click_match(
         return False
     try:
         if found["reachable"]:
-            frame.click(option)
+            frame.click(option, intent=FIELD)
         else:
             frame.call(_SUGGESTIONS_JS, key, index, "click", options[index])
     except BidiError:

@@ -2217,6 +2217,14 @@ screening questions from `answers.yaml`, and stops. **It never submits.** The wi
 each tab, fill what is left and click submit. Attempted forms with fields enter
 the "Apply queue" view (Jobs, key 5); being queued does not mean ready.
 
+While rika! fills a tab, a submit guard in that tab blocks anything that could
+submit the application: a click that would press a submit or final button, Enter,
+Space on a button, and form submits, whether rika! or the page causes them. If I
+click or press a key in that tab meanwhile (for example on Submit), the guard
+blocks it too, rika! stops filling that tab and says so ("press Submit again").
+The guard is lifted before the tab is reported ready, so my own Submit then works
+normally; other tabs are never affected.
+
 Preparation states are **unattempted**, **attempted**, **partial**, **blocked** and
 **ready**. Only verified required fields, completed uploads and a recognized
 review/submit boundary permit ready; detection of fields alone does not.

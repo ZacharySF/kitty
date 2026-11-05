@@ -82,7 +82,7 @@ def test_workday_footer_next_is_exact_nonfinal_control(site, page, monkeypatch, 
 
 
 def test_workday_footer_next_rechecks_changed_final_label(site, page, monkeypatch):
-    _document(site, page, '<div data-automation-id="progressBarActiveStep">My Information</div>'
+    _document(site, page, '<div data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</div>'
               '<button data-automation-id="pageFooterNextButton">Save and Continue</button>')
     monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, WORKDAY))
     snapshot = preflight.inspect_page(page)
@@ -128,7 +128,7 @@ def test_smart_shadow_next_and_required_consent_handoff(site, page, monkeypatch)
 
 
 def test_workday_unknown_required_history_prevents_next(site, page, monkeypatch):
-    _document(site, page, '<div data-automation-id="progressBarActiveStep">My Information</div>'
+    _document(site, page, '<div data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</div>'
               '<fieldset><legend>Have you ever worked for PwC?</legend>'
               '<label>Yes<input type="radio" name="history" required></label>'
               '<label>No<input type="radio" name="history" required></label></fieldset>'
@@ -220,7 +220,7 @@ def test_workday_posting_entry_rechecks_target_identity_and_action(site, page, c
 def test_required_committed_aria_button_is_represented_before_next(site, page, role):
     state = 'aria-checked="true"' if role != 'combobox' else 'aria-controls="choices" aria-expanded="false"'
     _document(site, page, f'''
-      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <div data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</div>
       <button type="button" role="{role}" aria-required="true" {state}
         aria-label="Known answer">Known answer</button>
       <div role="listbox" id="choices"><div role="option" aria-selected="true">Known answer</div></div>
@@ -239,7 +239,7 @@ def test_required_committed_aria_button_is_represented_before_next(site, page, r
 
 def test_submit_button_disguised_as_required_aria_control_stays_unsupported(site, page):
     _document(site, page, '''
-      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <div data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</div>
       <form><button type="submit" role="checkbox" aria-required="true" aria-checked="true">Known answer</button></form>
       <button type="button" data-automation-id="bottom-navigation-next-button">Next</button>
       <script>window.submissions = 0;
@@ -382,7 +382,7 @@ def test_required_container_with_supported_unanswered_radios_is_not_unsupported(
     from kitty.core.apply import filler
 
     _document(site, page, '''
-      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <div data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</div>
       <div class="question">
         <label id="radio-label1">Have you ever worked for PwC? *</label>
         <div id="previousWorker--candidateIsPreviousWorker" aria-required="true" aria-labelledby="radio-label1">
@@ -425,7 +425,7 @@ def test_saved_employer_history_advances_to_review_without_submit_or_manual_over
     from kitty.core.apply.page import upload
 
     _document(site, page, f'''
-      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <div data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</div>
       <form onsubmit="window.submissions++;return false">
         <label>Last Name<input id="surname" value="Manually retained surname" required></label>
         <label>Resume<input type="file" required></label>
@@ -493,7 +493,7 @@ def test_saved_employer_history_advances_to_review_without_submit_or_manual_over
 ])
 def test_required_owner_descendants_match_choice_semantics(site, page, role, control, unsupported):
     _document(site, page, f'''
-      <div data-automation-id="progressBarActiveStep">My Information</div>
+      <div data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</div>
       <div role="{role}" aria-required="true" aria-label="Required answer">{control}</div>
       <button type="button" data-automation-id="bottom-navigation-next-button"
         onclick="window.nextClicks++">Next</button>

@@ -478,7 +478,8 @@ def test_owner_edit_before_submit_on_a_replaced_form_counts_per_provenance_class
       box.dispatchEvent(new Event('input', {bubbles: true}));
       box.dispatchEvent(new Event('change', {bubbles: true}));
     }""", OWNER_EDIT, page_realm=True)
-    page.main.click(page.main.node("() => document.querySelector('#submit')"))
+    from submit_trap import owner_click
+    owner_click(page.main, page.main.node("() => document.querySelector('#submit')"))   # the owner's own Submit
     assert page.main.call("() => [window.__submitted, location.pathname]", page_realm=True) == [
         1, "/synthetic/jobs/4242/confirmation"]
     assert page.main.call("() => document.querySelector('form')", page_realm=True) is None

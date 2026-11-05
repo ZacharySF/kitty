@@ -70,6 +70,7 @@ CAUSES: dict[str, tuple[str, str]] = {
     "upload_deferred": ("needs_owner", "Resume upload deferred on a retained tab"),
     "approval_changed": ("needs_owner", "Reviewed plan changed"),
     "handoff": ("needs_owner", "Other handoff"),
+    "owner_took_over": ("needs_owner", "You acted in the tab while kitty filled it"),
     "login_unsupported": ("unsupported", "Unsupported sign-in form"),
     "profile_records": ("unsupported", "Profile records need manual entry"),
     "custom_controls": ("unsupported", "Unsupported custom controls"),
@@ -91,6 +92,7 @@ CAUSES: dict[str, tuple[str, str]] = {
     "tab_closed": ("failed", "Tab closed or replaced"),
     "browser_frame": ("failed", "Browser frame lost (no such frame)"),
     "browser_connection": ("failed", "Browser connection lost"),
+    "submit_vetoed": ("failed", "Submit guard blocked an action"),
     "browser_error": ("failed", "Browser error"),
     "unknown": ("failed", "Unclassified stop"),
 }
@@ -98,6 +100,8 @@ CAUSES: dict[str, tuple[str, str]] = {
 # Ordered (cause, pattern) rules over today's blocker and error strings (casefolded).
 _RULES: tuple[tuple[str, re.Pattern[str]], ...] = tuple((cause, re.compile(pattern)) for cause, pattern in (
     ("closed", r"^closed:"),
+    ("owner_took_over", r"^owner:"),
+    ("submit_vetoed", r"^vetoed:"),
     ("evidence_save", r"recovery evidence could not be saved"),
     ("approval_changed", r"preparation approval changed|review a new preparation plan|review the plan again"),
     ("stopped", r"preparation cancelled|time budget reached"),

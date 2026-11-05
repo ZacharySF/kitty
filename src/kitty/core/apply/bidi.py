@@ -3,7 +3,7 @@
 WebDriver BiDi is the W3C remote-control protocol built into Firefox: JSON
 commands and replies over a WebSocket on a local port. This module has only
 what the form filler needs: open or reload a tab, go to a URL, list its frames,
-run a JavaScript function, type, click one element, and attach a file.
+run a JavaScript function, type, press a key, click one element, and attach a file.
 
 Page scripts run in a private "sandbox" realm, the same isolation browser
 extensions get: they see and change the page's DOM, but the page cannot see
@@ -19,6 +19,14 @@ Events are not dropped: a reader thread routes replies by command id and hands
 events to registered handlers, and it answers every request Firefox holds for
 a network intercept at once (the submit-proof layer's network tripwire needs
 that; see kitty.core.apply.guard). Nothing in the filler arms an intercept yet.
+
+Input is the submit-proof layer's choke point (kitty.core.apply.guard): this is
+the only module that sends `input.performActions`. Every click, typed text and
+key press declares an intent and is inspected first (L0). A tab the filler is
+working in is armed (`Tab.arm`): an in-page veto in the sandbox (L1) cancels
+anything that could submit without the one-shot token the inspection set, and
+every sandbox script kitty runs there renews its lease. `Tab.release` disarms
+it before the tab is handed to me; kitty never acts in a released tab again.
 """
 
 from __future__ import annotations
@@ -37,6 +45,10 @@ from websockets.exceptions import WebSocketException
 from websockets.sync.client import ClientConnection, connect
 
 from kitty.core.apply.credentials import redact
+from kitty.core.apply.guard import (
+    CLICK_INTENTS, FIELD, GUARD_JS, HEARTBEAT_SECONDS, INSPECT_CLICK_JS, INSPECT_KEYS_JS, KEY_INTENTS,
+    KEYS, LEASE_MS, LIST_COMMIT, MAILBOX, PRELOAD_JS, UnsafeAction, untypeable,
+)
 
 # Wire-level DEBUG output includes script arguments (and therefore passwords).
 # An unregistered, disabled logger cannot inherit application/root debug handlers.
@@ -118,6 +130,24 @@ class _Waiter:
         self.lost: str | None = None
 
 
+class _TabGuard:
+    """One application tab's in-page veto (L1): armed or released, and its veto log.
+
+    Entries are what the in-page log held (event kind, trusted, whether a kitty
+    token was live, the reason and a target descriptor): never labels or values.
+    """
+
+    __slots__ = ("armed", "entries", "preload", "reported", "stop", "thread")
+
+    def __init__(self) -> None:
+        self.armed = False
+        self.entries: list[dict] = []
+        self.reported = 0                   # entries already returned by Tab.new_vetoes()
+        self.preload: str | None = None
+        self.stop = threading.Event()
+        self.thread: threading.Thread | None = None
+
+
 class Bidi:
     """One WebDriver BiDi session with a running Firefox.
 
@@ -141,6 +171,7 @@ class Bidi:
         self._handlers: dict[str, tuple[EventHandler, ...]] = {}
         self._decider: RequestDecider | None = None
         self._lost: str | None = None
+        self._guards: dict[str, _TabGuard] = {}    # application tabs by top-level context
         try:
             # legacy=True: a plain connection object, closed in close() (the session
             # spans many calls, so a `with` block does not fit)
@@ -182,6 +213,32 @@ class Bidi:
     def session_ended(self) -> bool:
         """Whether Firefox confirmed release, not merely receipt of session.end."""
         return self._session_ended
+
+    # ------------------------------------------------------------ submit guard
+
+    def _guard(self, tab: str) -> _TabGuard | None:
+        with self._lock:
+            return self._guards.get(tab)
+
+    def _armed(self, tab: str) -> bool:
+        """Whether input goes to an armed application tab; never to a released one."""
+        guard = self._guard(tab)
+        if guard is None:
+            return False            # not an application tab (the mail tab, a test's own tab)
+        if not guard.armed:
+            raise UnsafeAction("kitty released this tab to you and no longer acts in it")
+        return True
+
+    def _lease(self, tab: str) -> int:
+        """The lease every sandbox script in this tab renews (0: not armed)."""
+        guard = self._guard(tab)
+        return LEASE_MS if guard is not None and guard.armed else 0
+
+    def _record_vetoes(self, tab: str, entries: list[dict]) -> None:
+        guard = self._guard(tab)
+        if guard is not None and entries:
+            with self._lock:
+                guard.entries.extend(entries)
 
     # ------------------------------------------------------------ events
 
@@ -432,6 +489,11 @@ class Frame:
     bidi: Bidi
     context: str        # BiDi browsing-context id
     url: str
+    tab: str = ""       # the top-level tab's context ("" when this frame is a tab's top page)
+
+    @property
+    def _top(self) -> str:
+        return self.tab or self.context
 
     def call(self, function: str, *args: Any, timeout: float = 30.0, page_realm: bool = False) -> Any:
         """Run a JavaScript function with JSON-able arguments and return its JSON-able result.
@@ -455,11 +517,19 @@ class Frame:
         result = self._call_function(wrapper, json.dumps(list(args)), 30.0, False)
         return result.get("sharedId") if result.get("type") == "node" else None
 
+    def _renewing(self, declaration: str) -> str:
+        """Every sandbox script in an armed tab renews the in-page veto's lease first."""
+        lease = self.bidi._lease(self._top)
+        if not lease:
+            return declaration
+        return f"(...args) => {{ globalThis.kittyGuard?.renew({lease}); return ({declaration})(...args); }}"
+
     def _call_function(self, declaration: str, args_json: str, timeout: float,
                        page_realm: bool) -> dict:
         target: dict[str, Any] = {"context": self.context}
         if not page_realm:
             target["sandbox"] = SANDBOX
+            declaration = self._renewing(declaration)
         reply = self.bidi.command("script.callFunction", {
             "functionDeclaration": declaration,
             "arguments": [{"type": "string", "value": args_json}],
@@ -474,37 +544,82 @@ class Frame:
             )) from None
         return reply.get("result", {})
 
-    def click(self, shared_id: str) -> None:
-        """A real mouse click at the centre of one element (scrolled into view first)."""
-        inspected = self.bidi.command("script.callFunction", {
-            "functionDeclaration": """element => {
-              if (!element.isConnected) throw new Error('The requested control is detached');
-              element.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});
-              const r = element.getClientRects()[0];
-              if (!r?.width || !r.height) throw new Error('The requested control has no visible bounds');
-              const x = Math.floor((Math.max(0, r.left) + Math.min(innerWidth, r.right)) / 2);
-              const y = Math.floor((Math.max(0, r.top) + Math.min(innerHeight, r.bottom)) / 2);
-              let hit = document.elementFromPoint(x, y);
-              while (hit?.shadowRoot) {
-                const inner = hit.shadowRoot.elementFromPoint(x, y);
-                if (!inner || inner === hit) break;
-                hit = inner;
-              }
-              for (let n = hit; n; n = n.assignedSlot || n.parentElement || n.getRootNode()?.host)
-                if (n === element) return true;
-              throw new Error('Another element covers the requested control');
-            }""",
-            "arguments": [{"sharedId": shared_id}],
-            "target": {"context": self.context, "sandbox": SANDBOX},
-            "awaitPromise": True,
-            "resultOwnership": "none",
-        })
-        if inspected.get("type") == "exception":
-            details = inspected.get("exceptionDetails", {})
-            raise BidiError(self.bidi.redact(
-                f"Cannot click control: {details.get('text', 'viewport inspection failed')}"
-            ))
-        self.bidi.command("input.performActions", {"context": self.context, "actions": [{
+    def install_guard(self) -> None:
+        """Install (or re-arm) the in-page veto in this document; idempotent."""
+        self.call(GUARD_JS, LEASE_MS)
+
+    def _inspect(self, declaration: str, shared_id: str, intent: str, *extra: bool, what: str) -> bool:
+        """L0: inspect one element for an intent in a single round trip; True if the tab is armed.
+
+        In an armed tab the inspection also sets the one-shot token; a frame that
+        lacks the veto (it existed before arming and missed the install) gets it first.
+        """
+        armed = self.bidi._armed(self._top)
+        for _ in range(2):
+            reply = self.bidi.command("script.callFunction", {
+                "functionDeclaration": self._renewing(declaration),
+                "arguments": [{"sharedId": shared_id}, {"type": "string", "value": intent},
+                              {"type": "boolean", "value": armed},
+                              *({"type": "boolean", "value": value} for value in extra)],
+                "target": {"context": self.context, "sandbox": SANDBOX},
+                "awaitPromise": True,
+                "resultOwnership": "none",
+            })
+            if reply.get("type") == "exception":
+                details = reply.get("exceptionDetails", {})
+                raise BidiError(self.bidi.redact(
+                    f"Cannot {what}: {details.get('text', 'viewport inspection failed')}"
+                ))
+            verdict = json.loads((reply.get("result") or {}).get("value") or "{}")
+            if verdict.get("refused"):
+                raise UnsafeAction(f"refusing to {what}: {verdict['refused']}")
+            if not armed or verdict.get("guard"):
+                return armed
+            self.install_guard()
+        raise UnsafeAction(f"refusing to {what}: the submit guard is not installed in this frame")
+
+    def _settle(self, what: str, *, quietly: bool = False) -> None:
+        """Clear the action's token or key binding; raise if the veto blocked what it caused."""
+        try:
+            settled = self.call("() => globalThis.kittyGuard?.settle() ?? null")
+        except ConnectionLost:
+            raise
+        except BidiError:
+            return                  # the action navigated or closed the frame: its token went with it
+        if not settled:
+            return
+        log = settled.get("log") or []
+        self.bidi._record_vetoes(self._top, log)
+        if not quietly and (settled.get("vetoed") or any(entry.get("token") for entry in log)):
+            raise UnsafeAction(f"the submit guard blocked this {what}: the page moved the focus "
+                               "or put another control in its way")
+
+    def _perform(self, actions: dict, armed: bool, what: str, *, timeout: float = 30.0) -> None:
+        try:
+            self.bidi.command("input.performActions", {"context": self.context, "actions": [actions]},
+                              timeout=timeout)
+            self.bidi.command("input.releaseActions", {"context": self.context})
+        except BidiError:
+            if armed:
+                self._settle(what, quietly=True)
+            raise
+        if armed:
+            self._settle(what)
+
+    def click(self, shared_id: str, *, intent: str) -> None:
+        """A real mouse click at the centre of one element (scrolled into view first).
+
+        `intent` (kitty.core.apply.guard) says what the click is for. The control
+        it would activate must pass that intent (a FIELD click never reaches a
+        submit control, link or final action), and in an armed tab the in-page
+        veto lets through only a click on this element.
+        """
+        if intent not in CLICK_INTENTS:
+            raise UnsafeAction(f"refusing a click with undeclared intent {intent!r}")
+        if intent == MAILBOX and self.bidi._armed(self._top):
+            raise UnsafeAction("refusing a mailbox click in an application tab")
+        armed = self._inspect(INSPECT_CLICK_JS, shared_id, intent, what="click control")
+        self._perform({
             "type": "pointer", "id": _MOUSE, "parameters": {"pointerType": "mouse"},
             "actions": [
                 {"type": "pointerMove", "x": 0, "y": 0,
@@ -512,22 +627,44 @@ class Frame:
                 {"type": "pointerDown", "button": 0},
                 {"type": "pointerUp", "button": 0},
             ],
-        }]})
-        self.bidi.command("input.releaseActions", {"context": self.context})
+        }, armed, "click")
 
-    def type(self, text: str, *, delay_ms: int = 25) -> None:
-        """Type text into whatever has focus, one real key press per character.
+    def type(self, text: str, *, into: str, delay_ms: int = 25) -> None:
+        """Type text into the remembered text box `into`, one real key press per character.
 
-        Callers pass text without newlines, so this never presses Enter.
+        Refused before any key is sent: newlines, tabs, control characters and
+        WebDriver special keys (so never Enter), and a box without the focus.
+        In an armed tab a key that reaches anything else (focus moved while
+        typing) is cancelled, and typing raises.
         """
+        if reason := untypeable(text):
+            raise UnsafeAction(f"refusing to type a {reason}")
+        armed = self._inspect(INSPECT_KEYS_JS, into, FIELD, True, False, what="type")
         keys: list[dict[str, Any]] = []
         for char in text:
             keys += [{"type": "keyDown", "value": char}, {"type": "keyUp", "value": char},
                      {"type": "pause", "duration": delay_ms}]
-        self.bidi.command("input.performActions", {"context": self.context, "actions": [{
-            "type": "key", "id": _KEYBOARD, "actions": keys,
-        }]}, timeout=30 + len(text) * delay_ms / 1000)
-        self.bidi.command("input.releaseActions", {"context": self.context})
+        self._perform({"type": "key", "id": _KEYBOARD, "actions": keys}, armed, "typing",
+                      timeout=30 + len(text) * delay_ms / 1000)
+
+    def press(self, key: str, *, intent: str, into: str) -> None:
+        """Press one allowlisted key (guard.KEYS) in the remembered control `into`.
+
+        ArrowDown, ArrowUp and Escape open and close lists (intent FIELD). Enter
+        only commits an open list's focused option (intent LIST_COMMIT: a
+        combobox with aria-expanded=true whose aria-activedescendant is a shown
+        option of its list, react-select's own condition), checked now and again
+        by the veto at keydown. Tab and Space are never pressed.
+        """
+        code = KEYS.get(key)
+        if code is None:
+            raise UnsafeAction(f"refusing to press {key!r}: not an allowed key")
+        if intent not in KEY_INTENTS or (key == "Enter") != (intent == LIST_COMMIT):
+            raise UnsafeAction(f"refusing to press {key} for intent {intent!r}")
+        armed = self._inspect(INSPECT_KEYS_JS, into, intent, False, key == "Enter", what=f"press {key}")
+        self._perform({"type": "key", "id": _KEYBOARD, "actions": [
+            {"type": "keyDown", "value": code}, {"type": "keyUp", "value": code},
+        ]}, armed, f"{key} key")
 
     def set_files(self, shared_id: str, path: Path) -> None:
         """Attach a file to a file input (fires its input and change events)."""
@@ -569,7 +706,7 @@ class Tab:
 
         def walk(nodes: list[dict]) -> None:
             for node in nodes:
-                frames.append(Frame(self.bidi, node["context"], node.get("url", "")))
+                frames.append(Frame(self.bidi, node["context"], node.get("url", ""), self.context))
                 walk(node.get("children") or [])
 
         walk(tree.get("contexts", []))
@@ -584,7 +721,129 @@ class Tab:
         self.bidi.command("browsingContext.activate", {"context": self.context})
 
     def close(self) -> None:
+        guard = self.bidi._guard(self.context)
+        if guard is not None:
+            guard.armed = False
+            guard.stop.set()
         self.bidi.command("browsingContext.close", {"context": self.context})
+
+    # ------------------------------------------------------------ submit guard (L1)
+
+    def arm(self) -> None:
+        """Arm the in-page veto for a fill of this tab; idempotent while armed.
+
+        A preload script scoped to this tab gives every new document and iframe
+        the veto before any page script runs; every current frame gets it now; a
+        heartbeat renews the lease while the fill lasts (kitty may be busy in the
+        mail tab or drafting). From now on input here must be kitty's own,
+        inspected and tokened (bidi.Frame.click/type/press).
+        """
+        with self.bidi._lock:
+            guard = self.bidi._guards.get(self.context)
+            if guard is not None and guard.armed:
+                return
+            guard = self.bidi._guards[self.context] = _TabGuard()
+            guard.armed = True
+        guard.preload = self.bidi.command("script.addPreloadScript", {
+            "functionDeclaration": PRELOAD_JS, "contexts": [self.context], "sandbox": SANDBOX,
+        }).get("script")
+        for frame in self.frames():
+            try:
+                frame.install_guard()
+            except ConnectionLost:
+                raise
+            except BidiError:
+                continue            # detached meanwhile; a click installs it if the frame lives on
+        guard.thread = threading.Thread(target=self._heartbeat, args=(guard,),
+                                        name="kitty-guard-heartbeat", daemon=True)
+        guard.thread.start()
+
+    def _heartbeat(self, guard: _TabGuard) -> None:
+        """Renew the lease in every frame (and install the veto where a frame lacks it)."""
+        while not guard.stop.wait(HEARTBEAT_SECONDS):
+            try:
+                frames = self.frames()
+            except (ConnectionLost, TabClosed):
+                return
+            except BidiError:
+                continue
+            for frame in frames:
+                if guard.stop.is_set() or not guard.armed:
+                    return
+                try:
+                    if frame.call("() => !!globalThis.kittyGuard") is False:
+                        frame.install_guard()
+                except ConnectionLost:
+                    return
+                except BidiError:
+                    continue
+
+    def release(self) -> list[dict]:
+        """Disarm the in-page veto before the tab is handed over; return its whole log.
+
+        Order (N3 §7): no more kitty input here, stop the heartbeat, remove the
+        preload script, then disarm every current frame and drain its log. Kitty
+        never acts in a released tab again until a new fill arms it. A frame
+        that cannot be reached any more lapses by its lease (guard.LEASE_MS).
+        """
+        guard = self.bidi._guard(self.context)
+        if guard is None:
+            return []
+        with self.bidi._lock:
+            armed, guard.armed = guard.armed, False
+        if armed:
+            guard.stop.set()
+            if guard.thread is not None and guard.thread is not threading.current_thread():
+                guard.thread.join(timeout=40)
+            try:
+                if guard.preload:
+                    self.bidi.command("script.removePreloadScript", {"script": guard.preload})
+                for frame in self.frames():
+                    try:
+                        state = frame.call("() => globalThis.kittyGuard?.release() ?? null")
+                    except ConnectionLost:
+                        raise
+                    except BidiError:
+                        continue
+                    if state:
+                        self.bidi._record_vetoes(self.context, state.get("log") or [])
+            except BidiError:
+                pass                # tab or connection gone: nothing is left to disarm in time
+        with self.bidi._lock:
+            return list(guard.entries)
+
+    def new_vetoes(self) -> list[dict]:
+        """Drain every frame's veto log; return the entries not returned before."""
+        guard = self.bidi._guard(self.context)
+        if guard is None:
+            return []
+        if guard.armed:
+            for frame in self.frames():
+                try:
+                    self.bidi._record_vetoes(
+                        self.context, frame.call("() => globalThis.kittyGuard?.drain() ?? []") or [])
+                except ConnectionLost:
+                    raise
+                except BidiError:
+                    continue
+        with self.bidi._lock:
+            fresh = guard.entries[guard.reported:]
+            guard.reported = len(guard.entries)
+        return fresh
+
+    @property
+    def vetoes(self) -> list[dict]:
+        """Every veto recorded since this tab was last armed."""
+        guard = self.bidi._guard(self.context)
+        if guard is None:
+            return []
+        with self.bidi._lock:
+            return list(guard.entries)
+
+    @property
+    def armed(self) -> bool:
+        guard = self.bidi._guard(self.context)
+        return guard is not None and guard.armed
 
 
 def open_tab(bidi: Bidi, *, background: bool = False) -> Tab:

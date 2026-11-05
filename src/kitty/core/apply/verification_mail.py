@@ -21,6 +21,7 @@ from email.utils import getaddresses, parsedate_to_datetime
 from urllib.parse import parse_qs, quote, urlsplit
 
 from kitty.core.apply.bidi import Bidi, BidiError, Frame, Tab, open_tab
+from kitty.core.apply.guard import ACTIVATE_JS, MAILBOX
 
 _MAIL_ORIGIN = "https://mail.google.com"
 _ACCOUNT_PATH = re.compile(r"/mail/u/[0-9]+/")
@@ -308,7 +309,8 @@ def _open_thread(frame: Frame, account: tuple[str, str], route: str, thread: str
       if (links.length !== 1) return {error: 'unsupported'};
       // This is Gmail's observed read-only message link, not a row checkbox,
       // toolbar action, form submission or guessed URL.
-      links[0].click();
+      const kittyActivate = (""" + ACTIVATE_JS + """);
+      kittyActivate(links[0], 'mailbox', () => links[0].click());
       return {};
     """, route, thread))
     deadline = time.monotonic() + _WAIT_SECONDS
@@ -407,7 +409,7 @@ def _original_source(
             raise VerificationMailError("unsupported")
         # A real user activation on the harmless header menu allows Gmail's
         # normal Show original popup; no popup policy is modified.
-        frame.click(button)
+        frame.click(button, intent=MAILBOX)
         deadline = time.monotonic() + _WAIT_SECONDS
         while True:
             _checkpoint(request, checkpoint)
@@ -419,7 +421,8 @@ def _original_source(
               const items = [...menus[0].querySelectorAll('li[role="menuitem"]')]
                 .filter(el => visible(el) && el.textContent.trim() === 'Show original');
               if (items.length !== 1) return {error: 'unsupported'};
-              items[0].click(); return {};
+              const kittyActivate = (""" + ACTIVATE_JS + """);
+              kittyActivate(items[0], 'mailbox', () => items[0].click()); return {};
             """))
             if not menu.get("pending"):
                 original_opened = True

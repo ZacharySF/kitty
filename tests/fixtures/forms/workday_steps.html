@@ -1,6 +1,6 @@
 <!doctype html><html><body>
 <div data-automation-id="progressBar"><span data-automation-id="progressBarActiveStep">current step 1 of 6 My Information</span></div>
-<form id="workday-application">
+<form id="workday-application" method="post" action="/trap/submit">
 <section id="information">
 <label>First Name <input name="first_name" autocomplete="given-name" required></label>
 <label>Resume <input name="resume" type="file" required></label>
@@ -15,10 +15,11 @@
 <script>
 window.__steps = 0; window.__submitted = 0; window.__uploads = 0;
 document.querySelector('[name=resume]').addEventListener('change', () => window.__uploads++);
-document.addEventListener('submit', e => { window.__submitted++; e.preventDefault(); });
+document.addEventListener('submit', () => window.__submitted++);
 const button = document.querySelector('button');
 button.addEventListener('click', () => {
-  if (button.textContent === 'Submit') { window.__submitted++; return; }
+  // Workday's Submit is the Review step's own Next button, posting by script.
+  if (button.textContent === 'Submit') { window.__submitted++; fetch('/trap/submit', {method: 'POST'}); return; }
   const step = window.__steps++;
   document.querySelector(step === 0 ? '#information' : '#questions').hidden = true;
   document.querySelector(step === 0 ? '#questions' : '#review').hidden = false;

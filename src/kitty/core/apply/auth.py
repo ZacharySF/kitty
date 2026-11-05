@@ -43,10 +43,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from kitty.config import AuthenticationSettings, _authentication_origin
 from kitty.core.apply.bidi import Bidi, BidiError, Frame, Tab
 from kitty.core.apply.credentials import ApplicationCredentials, credential_binding
+from kitty.core.apply.guard import ACTIVATE_JS, CREDENTIAL, FIELD, UnsafeAction
 from kitty.core.apply.oracle_email import oracle_email_gate
-from kitty.core.apply.page import (
-    UnsafeAction, _CHOICE_TARGET_JS, _DOM_HELPERS_JS, form_frames, settle,
-)
+from kitty.core.apply.page import _CHOICE_TARGET_JS, _DOM_HELPERS_JS, form_frames, settle
 
 #: Frames that are themselves a challenge widget (form_frames skips them, so look here).
 _CHALLENGE_FRAMES = re.compile(
@@ -682,7 +681,7 @@ class AuthResult:
 
 
 def _guarded_click(
-    frame: Frame, target_js: str, *args: object, fallback: str = _CHANGED,
+    frame: Frame, target_js: str, *args: object, intent: str, fallback: str = _CHANGED,
 ) -> str | None:
     """Resolve a guarded element, then use the driver's real pointer interaction."""
     target = frame.node("""(...args) => {
@@ -697,7 +696,7 @@ def _guarded_click(
           return typeof target === 'string' ? target : false;
         }""", *args)
         return reason if isinstance(reason, str) else fallback
-    frame.click(target)
+    frame.click(target, intent=intent)
     return None
 
 
@@ -767,7 +766,8 @@ _GOOGLE_CLICK = r"""
       return 'Google link points to an unapproved origin';
     if (el.target && !['_self', '_blank'].includes(el.target)) return 'unassociated named target';
   } else if (el.form && el.type !== 'button') return 'form submission is not a Google account selection';
-  el.click();
+  const kittyActivate = (""" + ACTIVATE_JS + r""");
+  kittyActivate(el, 'credential', () => el.click());
   return true;
 }
 """
@@ -1144,7 +1144,7 @@ def authenticate(
                 entries.add(entry_key)
                 try:
                     blocker = _guarded_click(
-                        page.main, _ENTRY_TARGET_JS, approved, desired,
+                        page.main, _ENTRY_TARGET_JS, approved, desired, intent=CREDENTIAL,
                         fallback="login: no safe entry to the chosen account form; open it yourself",
                     )
                 except BidiError:
@@ -1188,7 +1188,7 @@ def authenticate(
                     if not proof["allowed"] or not proof["pending"]:
                         break
                     blocker = _guarded_click(
-                        frame, _TERMS_TARGET_JS, approved, *secrets, state["signature"],
+                        frame, _TERMS_TARGET_JS, approved, *secrets, state["signature"], intent=FIELD,
                         fallback="consent: the required account terms changed or cannot be selected safely",
                     )
                     if blocker:
@@ -1229,7 +1229,7 @@ def authenticate(
             try:
                 blocker = _guarded_click(
                     frame, _ACCOUNT_TARGET_JS, approved, *secrets,
-                    state["signature"], authorize_terms,
+                    state["signature"], authorize_terms, intent=CREDENTIAL,
                 )
             except BidiError:
                 # The request may already have left; keep its one-shot guard.
