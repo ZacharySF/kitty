@@ -56,7 +56,11 @@ from kitty.core.apply.page import (
     ChoiceSelectionError, choose_select, fill_text, form_frames, pick_from_list, pick_from_search,
     read_fields, settle, tick, upload, uploads_pending, wait_for_form, wait_for_uploads,
 )
-from kitty.core.apply.urls import detect_ats, form_url
+from kitty.core.apply.urls import (
+    UNSUPPORTED_FLOW, clean_url, detect_ats, form_url, names_posting, redirect_source, route_apply_link,
+    unsupported_flow,
+)
+from kitty.core.apply import resolve as resolve_core
 from kitty.core.apply.preflight import advance, inspect_page, wait_for_page
 from kitty.core.apply import attempts as attempts_core
 from kitty.core.apply.state import record_attempt
@@ -88,14 +92,29 @@ class EligibilityOverride(Enum):
     COMPATIBILITY_RESEARCH = "compatibility_research"
 
 
+class _EntryHandoff(PreparationStopped):
+    """The loaded page is an explicitly excluded flow: stop before touching it."""
+
+
 def preparation_blocker(job: Job, *, eligibility_override: EligibilityOverride | None = None) -> str | None:
-    """Local exclusions, before inspecting tabs, credentials, or applicant files."""
+    """Local exclusions, before inspecting tabs, credentials, or applicant files.
+
+    Explicitly excluded flows (Indeed Apply, Tesla, employer-own portals, Paradox,
+    unresolved Litos; `urls.unsupported_flow`) are typed handoffs, as is a stored
+    `unsupported_flow:` handoff for the very URL the job would open.
+    """
     if not job.is_active:
         return "closed: Posting unavailable; refresh availability before preparing it."
     if (job.queue_state == "not_eligible" or job.eligibility == "ineligible") and (
         eligibility_override is not EligibilityOverride.COMPATIBILITY_RESEARCH
     ):
         return "ineligible: " + (job.eligibility_reason or "marked not eligible")
+    url = job.apply_url or job.url
+    if flow := unsupported_flow(url):
+        return flow
+    if (job.fill_state == "blocked" and (job.fill_blocker or "").startswith(UNSUPPORTED_FLOW)
+            and job.fill_url == url):
+        return job.fill_blocker
     return None
 
 
@@ -112,7 +131,7 @@ def _outcome_cause(report: FillReport) -> OutcomeCause:
         return "human_boundary"
     if report.error or report.status == "error":
         return "browser_error"
-    if note.startswith(("login:", "captcha:", "verification:", "consent:")):
+    if note.startswith(("login:", "captcha:", "verification:", "consent:", UNSUPPORTED_FLOW)):
         return "human_boundary"
     if note.startswith("owner:"):
         return "human_boundary"         # the owner acted in the tab while kitty filled it
@@ -587,6 +606,15 @@ def fill_job(
     foreground: Tab | None = None
     recovery = None
 
+    def routed(destination: str) -> None:
+        """The form now lives at `destination` (a resolved redirect or a routed Apply link)."""
+        nonlocal url, ats
+        url, ats = destination, detect_ats(destination)
+        report.url, report.ats = destination, ats
+        # A reviewed plan's identity includes the job's URL; research changes nothing.
+        if approval is None and not research:
+            resolve_core.store_url(conn, job.id, destination, source_url=job.apply_url or job.url)
+
     def absorb(result):
         nonlocal resume_verified, owner_inputs
         # Account values can be echoed in field labels/errors; never persist them.
@@ -700,6 +728,18 @@ def fill_job(
         if not resume_tab:
             page.goto(url)
         settle(page)
+        if not resume_tab and redirect_source(url):
+            # A JavaScript redirect (appcast) can leave after the load settles.
+            deadline = time.monotonic() + 5
+            while redirect_source(page.main.url) and time.monotonic() < deadline:
+                time.sleep(0.25)
+            landed = page.main.url
+            if (redirect_source(landed) is None and urlsplit(landed).scheme == "https"
+                    and (unsupported_flow(landed) or names_posting(landed))):
+                # An opaque redirect resolved by loading it (appcast's JavaScript redirect too).
+                routed(clean_url(landed))
+                if flow := unsupported_flow(url):
+                    raise _EntryHandoff(flow)
         recovery = JobRecovery(conn, settings, config, job, page, jurisdiction=jurisdiction,
                                planner=recovery_planner, progress=progress, stop=stop)
         for _ in range(12):
@@ -817,6 +857,18 @@ def fill_job(
                 break
             visited.add(before.signature)
             previous = before.signature
+            if before.entry == "apply-link":
+                # A custom site's Apply link, routed by its destination (inspect_page
+                # keeps only recognized families and excluded flows). A GET navigation.
+                destination, flow = route_apply_link(before.url, before.entry_url)
+                if flow:
+                    report.status, report.note = "blocked", flow
+                    break
+                page.goto(destination)
+                routed(destination)
+                settle(page)
+                recovery.accepted_navigation()
+                continue
             if before.entry:
                 advance(before, ats)
                 settle(page)
@@ -1073,9 +1125,13 @@ def _blocked_report(job: Job, message: str) -> FillReport:
 
 
 def _excluded_report(conn: sqlite3.Connection, job: Job, message: str, run: attempts_core.Run | None) -> FillReport:
-    """A local exclusion before any browser access; a closed posting is also its live-check attempt."""
+    """A local exclusion before any browser access.
+
+    A closed posting, and an explicitly excluded flow (it stays in the URR
+    denominator with zero credit), are also live-check attempts.
+    """
     report = _blocked_report(job, message)
-    if report.cause == "unavailable":
+    if report.cause == "unavailable" or message.startswith(UNSUPPORTED_FLOW):
         report.attempt_id = attempts_core.record(
             conn, job_id=job.id, ats=report.ats, url=report.url, progress=attempts_core.Progress(),
             status=report.status, note=report.note, error=None, outcome_cause=report.cause, run=run,
@@ -1364,6 +1420,11 @@ def fill_jobs(
             raise ApprovalError(APPROVAL_CHANGED)
         run = attempts_core.start_run(conn)
         run_open = True
+        # The live check right before preparing (proposal-05 Step 3): closed postings
+        # leave the queue, opaque redirects resolve to the employer URL (not under a
+        # reviewed plan, whose identity includes that URL) and excluded flows become
+        # handoffs. Public GETs only, robots-checked, one request/second/host.
+        resolve_core.before_attempt(conn, settings, job_ids, write_url=approval is None, say=say)
         # Entirely excluded runs require no browser session. Mixed runs retain
         # their original ordering and recheck each exclusion immediately before use.
         local_reports = []

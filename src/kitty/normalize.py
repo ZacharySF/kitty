@@ -47,8 +47,8 @@ _STATE_ABBREV = {
 # Query parameters boards add for tracking; dropping them makes URLs comparable.
 # gh_jid is not tracking: it is the Greenhouse job id on a company's own careers
 # page (pinterestcareers.com/jobs/?gh_jid=...), so it stays.
-_TRACKING_PARAMS = re.compile(
-    r"^(utm_|gh_(?!jid$)|ref$|source$|src$|trk|ss$|from$|lever-|_gl$|fbclid$|gclid$)", re.I
+TRACKING_PARAMS = re.compile(
+    r"^(utm_|gh_(?!jid$)|ref$|source$|src$|trk|ss$|from$|lever-|_gl$|fbclid$|gclid$|_ccid$)", re.I
 )
 
 
@@ -102,7 +102,7 @@ def dedupe_key(company: str, title: str, location: str | None) -> str:
 def canonical_url(url: str) -> str:
     """Strip tracking parameters and trailing slashes so URLs compare equal."""
     parts = urlsplit(url.strip())
-    kept = [(k, v) for k, v in parse_qsl(parts.query) if not _TRACKING_PARAMS.match(k)]
+    kept = [(k, v) for k, v in parse_qsl(parts.query) if not TRACKING_PARAMS.match(k)]
     path = parts.path.rstrip("/") or "/"
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, urlencode(kept), ""))
 

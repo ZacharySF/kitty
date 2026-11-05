@@ -85,6 +85,9 @@ CAUSES: dict[str, tuple[str, str]] = {
     "unsupported_step": ("unsupported", "Unsupported application step"),
     "unsupported_page": ("unsupported", "Unsupported application page"),
     "unsupported": ("unsupported", "Other unsupported page"),
+    # Explicit exclusions (proposal-05 Step 3): Indeed Apply, Tesla, employer-own portals,
+    # Paradox, unresolved Litos, broken redirects. Typed handoffs; never attempted.
+    "unsupported_flow": ("unsupported", "Excluded flow (handed to you)"),
     "loading": ("failed", "Page kept loading"),
     "upload_pending": ("failed", "Upload or resume parsing still pending"),
     "stopped": ("failed", "Stopped or out of time"),
@@ -102,6 +105,7 @@ _RULES: tuple[tuple[str, re.Pattern[str]], ...] = tuple((cause, re.compile(patte
     ("closed", r"^closed:"),
     ("owner_took_over", r"^owner:"),
     ("submit_vetoed", r"^vetoed:"),
+    ("unsupported_flow", r"^unsupported_flow:"),
     ("evidence_save", r"recovery evidence could not be saved"),
     ("approval_changed", r"preparation approval changed|review a new preparation plan|review the plan again"),
     ("stopped", r"preparation cancelled|time budget reached"),

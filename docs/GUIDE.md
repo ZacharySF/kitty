@@ -2528,6 +2528,51 @@ The `answered` flags of the unanswered-questions queue are re-checked after ever
 attempt and whenever `answers.yaml` or `profile.yaml` changed since the last
 check (readers compare a digest first), so hand edits no longer leave stale rows.
 
+### Reaching the form: liveness, redirects and entry
+
+Before preparing, rika! checks that each posting is still open and finds where its
+form really lives (`kitty.core.apply.resolve`). `kitty apply` runs this live check
+right before each batch, and `kitty apply resolve` runs it over the queue on its own:
+
+```
+kitty apply resolve --dry-run          # every new/queued job: report what would change
+kitty apply resolve 12 34              # just these jobs, and write the changes
+kitty apply resolve --queued --top 50  # also --track T and --json
+```
+
+- **Closed postings** are marked closed with the usual posting-verification fields,
+  so they leave the queues (a later open observation reopens them). The markers: the
+  posting answers HTTP 404 or 410; its title, heading or alert says it is closed ("no
+  longer accepting applications", "this job has been filled", "page not found"…);
+  Greenhouse's public `?questions=true` detail answers 404; Workday's public cxs detail
+  answers 403 with error `S22` **and** the posting page is an empty `og:title` shell;
+  a zapply link that now lands on zapply's generic `/jobs/` listing. Anything else
+  (robots.txt, a 403 wall, a timeout) is "unknown" and changes nothing.
+- **Opaque redirects** resolve to the employer's posting, stored as the job's apply
+  URL without tracking parameters (`utm_*`, `_ccid`, …): zapply and recruitics by
+  their HTTP redirects; appcast by the target of its JavaScript redirect (or, when
+  only the browser can follow it, from the page the browser landed on); Litos by the
+  employer board in its page's `company-logo?board=` parameter and a search of that
+  board (Workday, Greenhouse, Lever) for exactly the job's title, broken by its city.
+  Under a reviewed web plan the URL is never rewritten, since the plan approved it.
+- **Entry routing.** `detect_ats` also recognizes iCIMS, Eightfold (also its
+  `/careers/job/<id>` pages on company domains), Phenom, Avature and Oracle Recruiting
+  Cloud on company domains (`/en/sites/CX_<n>/job/<id>`). Eightfold Apply links keep
+  working when they carry the posting's tracking parameters. On an unrecognized
+  employer page, one visible, exact "Apply" link to a recognized family's posting
+  (e.g. a Jibe front's link to iCIMS) is followed by navigating to it, never by a
+  click; the destination becomes the apply URL.
+- **Explicit exclusions** are typed handoffs, `unsupported_flow: <kind>: …`, never
+  attempted and counted (with zero credit) in apply health: Indeed's own apply form
+  (`indeed_apply`), Tesla's bot wall (`bot_wall`), employer-own login portals
+  (TikTok/ByteDance, Amazon, Meta: `employer_portal`), Paradox chats
+  (`conversational`), Litos jobs with no unique posting on the employer board
+  (`third_party_account`) and malformed appcast targets (`broken_redirect`).
+
+Every request is a public GET (Workday's board search is its one POST), checked
+against robots.txt at every redirect hop, at most one per second per host, cached
+for an hour. Nothing is clicked, signed in or submitted.
+
 ### Favorites and autofill
 
 - Star jobs I like: `*` in the Inbox, Jobs, Apply and Job Detail screens (★ marks

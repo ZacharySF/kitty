@@ -571,13 +571,127 @@ def test_autofill_suppression_is_not_verification_but_code_fields_are(site, page
     ('https://lockheedmartin.eightfold.ai/careers/apply?pid=996477261987', True),
     ('https://lockheedmartin.eightfold.ai/careers/apply?pid=111', False),
     ('https://other.example/careers/apply?pid=996477261987', False),
+    # Eightfold copies the posting's tracking parameters into the CTA (N2: 3 of 8 missed).
+    ('https://lockheedmartin.eightfold.ai/careers/apply?pid=996477261987&utm_source=indeed&domain=micron.com', True),
+    ('https://lockheedmartin.eightfold.ai/careers/apply?pid=996477261987&utm_source=appcast_indeedo&hl=en'
+     '&domain=starbucks.com&_ccid=1700000000abc', True),
+    ('https://lockheedmartin.eightfold.ai/careers/apply?utm_source=indeed&pid=996477261987', True),
+    ('https://lockheedmartin.eightfold.ai/careers/apply?pid=111&utm_source=indeed', False),
+    ('https://lockheedmartin.eightfold.ai/careers/apply?pid=996477261987&pid=111', False),
+    ('https://lockheedmartin.eightfold.ai/careers/apply?pid=996477261987&next=/submit', False),
 ])
 def test_eightfold_entry_requires_exact_same_pid_link(site, page, monkeypatch, href, entry):
-    _document(site, page, f'<h1>Software Engineer Intern</h1><a class="action-2lm8g linkbutton-module_link-button__-XtWC" href="{href}">Apply Now</a>')
+    _document(site, page, '<h1>Software Engineer Intern</h1><a class="action-2lm8g linkbutton-module_link-button__-XtWC" '
+              f'href="{href.replace("&", "&amp;")}">Apply Now</a>')
     url = 'https://lockheedmartin.eightfold.ai/careers/job/996477261987'
     monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, url))
     snapshot = preflight.inspect_page(page)
     assert (snapshot.entry == 'provider-apply') is entry
+    assert snapshot.entry in ('provider-apply', '')
+
+
+CUSTOM_POSTING = 'https://careers.synth-grocers.com/jobs/12345'
+ICIMS_LOGIN = 'https://careers-synth.icims.com/jobs/12345/login'
+
+
+@pytest.mark.parametrize('markup, entry_url', [
+    # Jibe-style front: the visible Apply link names the iCIMS posting.
+    (f'<h1>Firmware Intern</h1><a class="btn" href="{ICIMS_LOGIN}?mode=job&amp;iis=Synth" target="_blank">'
+     '<span>Apply Now</span></a>', ICIMS_LOGIN + '?mode=job&iis=Synth'),
+    # Every copy of the link agrees on one destination.
+    (f'<a href="{ICIMS_LOGIN}">Apply</a><footer><a href="{ICIMS_LOGIN}#apply">Apply now</a></footer>', ICIMS_LOGIN),
+    # Two destinations, a hidden link, a link inside a form, or an unrecognized destination: no entry.
+    (f'<a href="{ICIMS_LOGIN}">Apply</a><a href="https://careers-synth.icims.com/jobs/99999/login">Apply</a>', ''),
+    (f'<a href="{ICIMS_LOGIN}" style="display:none">Apply</a>', ''),
+    (f'<form><a href="{ICIMS_LOGIN}">Apply</a></form>', ''),
+    ('<a href="https://careers.synth-grocers.com/apply/12345">Apply</a>', ''),
+    # A header "Apply" link to a board's home names no posting.
+    ('<a href="https://synth.wd5.myworkdayjobs.com/External">Apply</a>', ''),
+    # Not an Apply label.
+    (f'<a href="{ICIMS_LOGIN}">Submit application</a>', ''),
+])
+def test_custom_site_apply_link_is_an_entry_only_to_a_recognized_posting(site, page, monkeypatch, markup, entry_url):
+    _document(site, page, markup)
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, CUSTOM_POSTING))
+    snapshot = preflight.inspect_page(page)
+    assert (snapshot.entry, snapshot.entry_url) == (('apply-link', entry_url) if entry_url else ('', ''))
+
+
+def test_apply_link_to_an_excluded_flow_stays_an_entry_for_its_handoff(site, page, monkeypatch):
+    _document(site, page, '<a href="https://smartapply.indeed.com/beta/indeedapply/form/12345">Apply now</a>')
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, CUSTOM_POSTING))
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.entry == 'apply-link' and 'smartapply.indeed.com' in snapshot.entry_url
+
+
+@pytest.mark.parametrize('url, entry', [
+    ('https://jobs.synth-grocers.com/en/sites/CX_2001/job/123456', 'provider-apply'),
+    ('https://jobs.synth-grocers.com/en/sites/Other_1/job/123456', ''),
+])
+def test_oracle_recruiting_on_a_company_domain_has_its_provider_entry(site, page, monkeypatch, url, entry):
+    _document(site, page, '<h1>Firmware Intern</h1><div class="job-details__section-apply-button">'
+              '<button type="button" class="apply-now-button">Apply Now</button></div>')
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(preflight._SNAPSHOT, url))
+    assert preflight.inspect_page(page).entry == entry
+
+
+def test_oracle_company_domain_cookie_decline_is_the_exact_reject(site, page, monkeypatch):
+    _document(site, page, '<div class="cookie-consent-modal" role="dialog">We use cookies.'
+              '<button type="button" class="cookie-consent__button decline">Reject all</button></div>')
+    monkeypatch.setattr(preflight, '_SNAPSHOT', _location(
+        preflight._SNAPSHOT, 'https://jobs.synth-grocers.com/en/sites/CX_2001/job/123456'))
+    snapshot = preflight.inspect_page(page)
+    assert snapshot.blocker is None and snapshot.entry == 'cookie-reject'
+
+
+def test_filler_follows_a_routed_apply_link_by_navigation_and_stores_it(site, page, space, monkeypatch):
+    """End to end on the local HTTPS site: a GET to the routed posting, never a click or POST."""
+    from kitty.core import jobs as jobs_core
+    from kitty.core.apply import filler
+
+    destination = site.origin + '/icims/jobs/12345/login'
+    site.pages['/careers/jobs/12345'] = (
+        '<!doctype html><body><h1>Firmware Intern</h1>'
+        f'<a href="{destination}?utm_source=jibe">Apply Now</a>')
+    site.pages['/icims/jobs/12345/login'] = (
+        '<!doctype html><body><h2>Enter Your Information</h2><form><label>Email'
+        '<input type="email" name="css_loginName"></label><input type="submit" value="Next"></form>')
+    # The local site stands in for an iCIMS host: route its login page as that family.
+    def route(page_url, link):
+        return (link.split('?')[0], None) if '/icims/' in link and '/careers/' in page_url else (None, None)
+    monkeypatch.setattr(preflight, 'route_apply_link', route)
+    monkeypatch.setattr(filler, 'route_apply_link', route)
+    monkeypatch.setattr(filler, 'wait_for_page',
+                        lambda tab, **kwargs: preflight.wait_for_page(tab, seconds=1, **kwargs))
+    job, _ = jobs_core.upsert_job(space.conn, company='Synthetic Grocers', title='Firmware Intern',
+                                  url=site.origin + '/careers/jobs/12345', tracks=[space.track.name])
+    report = filler.fill_job(page, space.conn, space.settings, space.config, job)
+    assert report.url == destination and report.status == 'blocked'
+    assert report.note.startswith('login:') and report.filled == []
+    assert ('GET', '/icims/jobs/12345/login', {}) in site.requests
+    assert not [request for request in site.requests if request[0] == 'POST']
+    assert jobs_core.get_job(space.conn, job.id).apply_url == destination
+
+
+def test_filler_stores_a_javascript_redirect_destination_and_closes_from_it(site, page, space, monkeypatch):
+    """appcast-style: the browser follows the JS redirect; the landed posting is stored, then checked."""
+    from kitty.core import jobs as jobs_core
+    from kitty.core.apply import filler
+
+    site.pages['/appcast/t/abc'] = ('<!doctype html><title>Redirecting...</title><script>'
+                                    'location.replace("/careers/job/56789?utm_source=appcast");</script>')
+    site.pages['/careers/job/56789'] = '<!doctype html><body><h1>This job is no longer available</h1>'
+    monkeypatch.setattr(filler, 'redirect_source', lambda url: 'appcast' if '/appcast/' in url else None)
+    monkeypatch.setattr(filler, 'wait_for_page',
+                        lambda tab, **kwargs: preflight.wait_for_page(tab, seconds=1, **kwargs))
+    job, _ = jobs_core.upsert_job(space.conn, company='Synthetic Coffee', title='Barista Intern',
+                                  url=site.origin + '/appcast/t/abc', tracks=[space.track.name])
+    report = filler.fill_job(page, space.conn, space.settings, space.config, job)
+    assert report.url == site.origin + '/careers/job/56789'
+    assert report.note.startswith('closed:') and report.cause == 'unavailable'
+    stored = jobs_core.get_job(space.conn, job.id)
+    assert stored.apply_url == site.origin + '/careers/job/56789' and not stored.is_active
+    assert not [request for request in site.requests if request[0] == 'POST']
 
 
 def test_icims_email_login_is_an_account_gate_not_an_unsupported_page(site, page, monkeypatch):
