@@ -11,6 +11,7 @@ from rich.table import Table
 from kitty.cli.common import _open, _settings, console, error_console
 from kitty.cli.root import app
 from kitty.core import applications as applications_core
+from kitty.db.connection import transaction
 
 # ---- gmail (Stage 6: read-only Gmail proposes status changes; I confirm them)
 
@@ -155,11 +156,13 @@ def proposals_confirm(
 
     workspace = _open()
     try:
-        proposal = get_pending(workspace.conn, event_id)
-        if proposal is None:
-            error_console.print(f"[red]No pending proposal with id {event_id}.[/red]")
-            raise typer.Exit(code=1)
-        applications_core.confirm_proposal(workspace.conn, event_id)
+        # Checking the proposal is still pending and confirming it happen in one write transaction.
+        with transaction(workspace.conn, immediate=True):
+            proposal = get_pending(workspace.conn, event_id)
+            if proposal is None:
+                error_console.print(f"[red]No pending proposal with id {event_id}.[/red]")
+                raise typer.Exit(code=1)
+            applications_core.confirm_proposal(workspace.conn, event_id)
         console.print(f"[green]Confirmed[/green]: {escape(proposal.company)} - {escape(proposal.title)} "
                       f"is now [bold]{proposal.to_status}[/bold].")
     finally:

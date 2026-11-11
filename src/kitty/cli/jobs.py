@@ -16,6 +16,7 @@ from kitty.core import resumes as resumes_core
 from kitty.core import urlmeta
 from kitty.core.workspace import Workspace
 from kitty.dates import now_iso, parse_user_date
+from kitty.db.connection import transaction
 from kitty.models import PIPELINE_STATUSES
 
 # -------------------------------------------------------------- add a job
@@ -64,26 +65,30 @@ def add(
             )
             raise typer.Exit(code=1)
 
-        job, created = jobs_core.upsert_job(
-            conn, company=company, title=title, url=url, location=location,
-            source="manual", tracks=[track] if track else (), match_reason="added by hand",
-            deadline_at=parse_user_date(deadline) if deadline else None,
-        )
-        if tier:
-            jobs_core.set_tier(conn, job.id, tier.upper(), reason="set by hand", tier_source="manual")
+        resume_row = None
+        if applied and resume:
+            resume_row = resumes_core.get_resume_by_label(conn, resume)
+            if resume_row is None:
+                error_console.print(f"[yellow]No resume labelled '{resume}'; recording without one.[/yellow]")
+
+        # The job, its tier and the application land together or not at all.
+        with transaction(conn, immediate=True):
+            job, created = jobs_core.upsert_job(
+                conn, company=company, title=title, url=url, location=location,
+                source="manual", tracks=[track] if track else (), match_reason="added by hand",
+                deadline_at=parse_user_date(deadline) if deadline else None,
+            )
+            if tier:
+                jobs_core.set_tier(conn, job.id, tier.upper(), reason="set by hand", tier_source="manual")
+            application = applications_core.record_application(
+                conn, job.id, resume_id=resume_row.id if resume_row else None, track=track,
+            ) if applied else None
 
         console.print(
             f"[green]{'Added' if created else 'Updated'}[/green] job {job.id}: "
             f"{job.company_name} - {job.title}"
         )
-
-        if applied:
-            resume_row = resumes_core.get_resume_by_label(conn, resume) if resume else None
-            if resume and resume_row is None:
-                error_console.print(f"[yellow]No resume labelled '{resume}'; recording without one.[/yellow]")
-            application = applications_core.record_application(
-                conn, job.id, resume_id=resume_row.id if resume_row else None, track=track,
-            )
+        if application is not None:
             console.print(f"[green]Applied[/green] recorded as application {application.id}")
     finally:
         workspace.close()
@@ -113,28 +118,33 @@ def status(
             error_console.print(f"[red]Could not read the date '{when}'.[/red]")
             raise typer.Exit(code=1)
 
-        application = applications_core.get_application_for_job(conn, job_id)
         track = job.tracks[0] if job.tracks else None
-        if new_status == "applied":
-            # Stage 4: "applied" also schedules the follow-ups from config/apply.yaml.
-            from kitty.core import followups as followups_core
+        from kitty.core import followups as followups_core
 
-            application = followups_core.mark_applied(
-                conn, workspace.config, job_id, track=track, resume_id=job.resume_id,
-                applied_at=occurred,
-            )
-            if application.status == "applied":
-                days = ", ".join(f"+{day}" for day in workspace.config.apply.followup_days)
-                console.print(f"[dim]Follow-up reminders: {days} days (config/apply.yaml).[/dim]")
-        else:
-            if application is None:
-                application = applications_core.record_application(
-                    conn, job_id, track=track, resume_id=job.resume_id, applied_at=occurred,
+        # Recording the application and appending its status event land together or not at all.
+        recorded = False
+        with transaction(conn, immediate=True):
+            application = applications_core.get_application_for_job(conn, job_id)
+            if new_status == "applied":
+                # Stage 4: "applied" also schedules the follow-ups from config/apply.yaml.
+                application = followups_core.mark_applied(
+                    conn, workspace.config, job_id, track=track, resume_id=job.resume_id,
+                    applied_at=occurred,
                 )
-                console.print("[dim]No application yet; recorded one first.[/dim]")
-            applications_core.set_status(
-                conn, application.id, new_status, occurred_at=occurred, evidence=note
-            )
+            else:
+                if application is None:
+                    application = applications_core.record_application(
+                        conn, job_id, track=track, resume_id=job.resume_id, applied_at=occurred,
+                    )
+                    recorded = True
+                applications_core.set_status(
+                    conn, application.id, new_status, occurred_at=occurred, evidence=note
+                )
+        if new_status == "applied" and application.status == "applied":
+            days = ", ".join(f"+{day}" for day in workspace.config.apply.followup_days)
+            console.print(f"[dim]Follow-up reminders: {days} days (config/apply.yaml).[/dim]")
+        if recorded:
+            console.print("[dim]No application yet; recorded one first.[/dim]")
         console.print(
             f"[green]{job.company_name} - {job.title}[/green] is now "
             f"[bold]{new_status}[/bold]"
