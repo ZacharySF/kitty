@@ -400,10 +400,11 @@ def test_kitty_effects_propose_records_an_agent_session_proposal(workspace, monk
     from typer.testing import CliRunner
 
     from kitty import cli
+    from kitty.cli import common as cli_common
 
     page, (keep, drop, child) = _page(workspace.conn)
     job_id = _job(workspace)
-    monkeypatch.setattr(cli, "_open", lambda: SimpleNamespace(
+    monkeypatch.setattr(cli_common, "open_workspace", lambda _settings: SimpleNamespace(
         settings=workspace.settings, config=workspace.config, conn=workspace.conn, close=lambda: None))
     monkeypatch.setenv("KITTY_AGENT_NAME", "omp")
     deleted = CliRunner().invoke(cli.app, ["effects", "propose-delete", drop, "--reason", "duplicate"])

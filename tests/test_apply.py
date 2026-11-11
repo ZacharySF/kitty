@@ -2809,11 +2809,12 @@ def test_cli_requires_explicit_ineligible_research_choice(space, monkeypatch):
     from types import SimpleNamespace
     from typer.testing import CliRunner
     from kitty import cli
+    from kitty.cli import common as cli_common
     from kitty.core.apply import filler
 
     job = _job(space, "lever")
     jobs_core.set_eligibility(space.conn, job.id, "ineligible", "Requires PhD enrollment")
-    monkeypatch.setattr(cli, "_open", lambda: SimpleNamespace(
+    monkeypatch.setattr(cli_common, "open_workspace", lambda _settings: SimpleNamespace(
         settings=space.settings, config=space.config, conn=space.conn, close=lambda: None,
     ))
     with monkeypatch.context() as guard:

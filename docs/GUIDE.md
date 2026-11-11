@@ -31,7 +31,7 @@ src/kitty/
   core/           all behaviour, no UI imports - the CLI, TUI and MCP server call this
   db/             schema migrations and the connection
   tui/            Textual screens
-  cli.py          the command line
+  cli/            the command line: one module per command group (root.py builds `kitty`)
   mcp_server.py   the MCP server (`kitty mcp`), a thin layer like the CLI
   web_server.py   loopback-only website adapter (`kitty-web`)
 tests/            pytest, including headless TUI tests

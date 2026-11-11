@@ -320,10 +320,11 @@ def test_apply_report_cli_and_health_api(space, monkeypatch):
     from typer.testing import CliRunner
 
     from kitty import cli
+    from kitty.cli import common as cli_common
     from kitty import web_automation
 
     _seed(space)
-    monkeypatch.setattr(cli, "_open", lambda: SimpleNamespace(
+    monkeypatch.setattr(cli_common, "open_workspace", lambda _settings: SimpleNamespace(
         settings=space.settings, config=space.config, conn=space.conn, close=lambda: None,
     ))
     shown = CliRunner().invoke(cli.app, ["apply", "report"])

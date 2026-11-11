@@ -970,7 +970,7 @@ scheduled oracle"). Code: `src/kitty/core/search.py`, `src/kitty/core/blocks/sea
 The paper's §13 step 2 ("block read, write and search tools are added to the API"), closing
 the §11 limit "MCP and CLI expose the job-search module only". Code:
 `src/kitty/core/block_api.py` (no web imports), `WorkspaceTools` in `src/kitty/mcp_server.py`,
-`kitty notes` in `src/kitty/cli.py`, routes in `src/kitty/web_blocks.py`; block-level search
+`kitty notes` in `src/kitty/cli/notes.py`, routes in `src/kitty/web_blocks.py`; block-level search
 (`search.block_hits`, `search.phrase_blocks`) in `src/kitty/core/search.py`.
 
 - **One core, three thin consumers.** `block_api` holds every rule; the MCP notes tools,
