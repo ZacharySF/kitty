@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import http.client
 import json
-import threading
-import time
-from types import SimpleNamespace
 
 import pytest
 
 from kitty import web_auth
-from kitty.web_server import ROUTE_MODULES, _announce_links, _link
+from kitty.web_server import ROUTE_MODULES
 from terminal_support import FrontSite, front_site, make_root, site, websocket
 
 #: One path per route family: every module prefix plus the always-on core routes.
@@ -239,21 +236,3 @@ def test_codes_and_tickets_follow_their_clock():
     assert not auth.follow(tickets[0], "0") and auth.follow(tickets[-1], str(web_auth.MAX_LINKS + 4))
 
 
-def test_kitty_web_prints_a_fresh_link_once_one_is_used_and_never_the_secret(capsys):
-    server = SimpleNamespace(origin="http://127.0.0.1:8765", ui_auth=web_auth.UiAuth())
-    link = _link(server)
-    assert link.startswith("http://127.0.0.1:8765/?code=")
-    stop = threading.Event()
-    worker = threading.Thread(target=_announce_links, args=(server, link, stop), daemon=True)
-    worker.start()
-    assert server.ui_auth.redeem(link.rsplit("=", 1)[1]) == server.ui_auth.secret
-    printed, deadline = "", time.monotonic() + 5
-    while "next link" not in printed and time.monotonic() < deadline:
-        time.sleep(0.05)
-        printed += capsys.readouterr().out
-    stop.set()
-    worker.join(timeout=5)
-    assert "rika! next link" in printed and "?code=" in printed
-    assert server.ui_auth.secret not in printed
-    fresh = printed.strip().rsplit("=", 1)[1]
-    assert server.ui_auth.redeem(fresh) == server.ui_auth.secret

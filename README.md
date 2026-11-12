@@ -80,18 +80,21 @@ same functions against the same database.
 
 ## Run it
 
-Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22+.
+Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22+, Rust (cargo).
 
 ```bash
 uv sync
 npm --prefix web ci && npm --prefix web run build
+cargo build --release --manifest-path server/Cargo.toml   # rika-server, the local front
 uv run kitty-web --demo        # disposable workspace with synthetic data
 ```
 
-Open the printed `http://127.0.0.1:…` address (not `localhost`: the server
-checks the exact Host). To use a real workspace, run `uv run kitty init` and
-`uv run kitty-web`. The [guide](docs/GUIDE.md) covers modules, the desktop
-build, configuration and every command.
+`kitty-web` starts rika-server (`server/`, the Rust front) with the Python backend
+behind it; it stops with the build command above when the binary is missing
+(`KITTY_RIKA_SERVER` names another one). Open the printed `http://127.0.0.1:…`
+address (not `localhost`: the server checks the exact Host). To use a real
+workspace, run `uv run kitty init` and `uv run kitty-web`. The [guide](docs/GUIDE.md)
+covers modules, the desktop build, configuration and every command.
 
 ## Develop
 

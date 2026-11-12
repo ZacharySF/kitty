@@ -1,12 +1,16 @@
 """Loopback-only website adapter over the shared rika! core.
 
-Run ``kitty-web`` after building ``web/dist``. The API never submits forms,
-starts paid discovery, or exposes configuration/credentials. Demo workspaces use
-only public example configuration and are discarded when the process exits.
+Run ``kitty-web`` after building ``web/dist`` and ``server/`` (rika-server). It starts
+rika-server, the Rust front (docs/rust-core-design.md), which serves the page and the
+routes ported to Rust and runs this module behind itself as its worker
+(``kitty-web --worker``) for every other route. The API never submits forms, starts paid
+discovery, or exposes configuration/credentials. Demo workspaces use only public example
+configuration and are discarded when the process exits.
 
 Features belong to the ``applyai``, ``workspace`` and ``terminal`` modules
 (kitty.modules). The active set is frozen at start-up; routes of a disabled module
 answer 403 and none of its extensions, workers, processes or credentials are loaded.
+The selection itself (``/api/modules``) is answered by rika-server (server/src/modules.rs).
 """
 from __future__ import annotations
 
@@ -34,7 +38,6 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from kitty import web_auth, web_clients
 from kitty.config import Config, ConfigError
 from kitty.core import endpoint, record_events
-from kitty.core.bootstrap import configure_modules
 from kitty.core.builds.project import startup_modules
 from kitty.core.builds.store import BuildStoreError
 from kitty.core.workspace import open_workspace
@@ -172,7 +175,7 @@ class WebApplication:
 
     The active module set is frozen when the process starts (``config.modules``).
     Only the extensions, workers and credentials of active modules exist; a pending
-    selection saved through ``/api/modules`` takes effect in the next process.
+    selection saved through ``/api/modules`` (rika-server) takes effect in the next process.
     """
 
     def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None, safe: bool = False):
@@ -274,9 +277,6 @@ class WebApplication:
             result = extension.get(self, conn, path, query)
             if result is not None:
                 return result
-        if path == "/api/modules":
-            self._no_query(query)
-            return self.modules_state()
         if path == "/api/bootstrap":
             self._no_query(query)
             return self._bootstrap(conn)
@@ -361,25 +361,12 @@ class WebApplication:
             raise APIError(404, "Job not found")
         return job
 
-    def set_modules(self, body: dict) -> dict:
-        """Persist the pending module selection; the active snapshot never changes."""
-        enabled = body.get("enabled")
-        if set(body) != {"enabled"} or not isinstance(enabled, list):
-            raise APIError(400, "Expected {\"enabled\": [module ids]}")
-        try:
-            configure_modules(self.settings.config_dir, enabled)
-        except ValueError as exc:
-            raise APIError(400, str(exc)) from None
-        return self.modules_state()
-
     def mutate(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
         if path == "/api/reload":
             if body:
                 raise APIError(400, "Reload expects an empty object")
             self.reload_config()
             return {"ok": True}
-        if path == "/api/modules":
-            return self.set_modules(body)
         self.guard(path)
         op_log_before = record_events.op_log_mark(conn)
         result = self._dispatch_mutation(conn, path, body)
@@ -822,23 +809,21 @@ def _interrupt(*_args: object) -> None:
     raise KeyboardInterrupt
 
 
-def _link(server: LocalHTTPServer) -> str:
-    """A browser-mode link: the page trades its one-time code for the UI secret."""
-    return f"{server.origin}/?code={server.ui_auth.issue_code()}"
+def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, ...]) -> str:
+    """The worker's readiness line rika-server waits for (server/src/worker.rs `Readiness`).
+
+    It holds this backend's UI secret, so it goes only to the front (or the desktop shell),
+    plus the workspace the front answers its own routes from: the config directory, this
+    process's frozen module snapshot and the version a new build file records.
+    """
+    from kitty import __version__
+
+    return json.dumps({"origin": server.origin, "secret": server.ui_auth.secret,
+                       "config_dir": str(settings.config_dir), "modules": list(modules),
+                       "version": __version__})
 
 
-def _announce_links(server: LocalHTTPServer, code_link: str, stop: threading.Event) -> None:
-    """Print a fresh link whenever the current one is used or expires (kitty.web_auth)."""
-    while True:
-        server.ui_auth.wait_code(code_link.rsplit("=", 1)[1], stop)
-        if stop.is_set():
-            return
-        code_link = _link(server)
-        print(f"rika! next link (one browser tab each, works once within {int(web_auth.CODE_TTL // 60)} minutes): {code_link}", flush=True)
-
-
-def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = False,
-           front_secret: str | None = None, public_origin: str | None = None) -> None:
+def _serve(settings: Settings, static_dir: Path, *, safe: bool, front_secret: str, public_origin: str) -> None:
     # A build file saved with an error starts the server on the last good build (Q9).
     with open_workspace(settings, modules=startup_modules(settings)) as workspace:
         if settings.demo and workspace.config.enabled("applyai"):
@@ -852,33 +837,23 @@ def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = Fals
             demo_seed.seed(workspace.conn)
             agent_demo.seed_demo(workspace.conn, settings.root)
         app = WebApplication(settings, workspace.config, static_dir, safe=safe)
-    # A plain `kill` stops kitty-web like Ctrl+C: workers drain and the endpoint file goes.
+    # A plain `kill` stops the worker like Ctrl+C: workers drain and the endpoint file goes.
     signal.signal(signal.SIGTERM, _interrupt)
     # Behind rika-server the port is the system's choice: only the front knows it.
-    with LocalHTTPServer(app, 0 if front_secret else port) as server:
-        if front_secret:
-            server.front_secret = front_secret
-            app.origin = public_origin
-        stop = threading.Event()
+    with LocalHTTPServer(app, 0) as server:
+        server.front_secret = front_secret
+        app.origin = public_origin
         try:
-            # Paired programs find rika! (the front, when there is one) through the owner-only endpoint file.
+            # Paired programs find rika! (the front) through the owner-only endpoint file.
             with endpoint.published(settings.root, app.origin):
                 # A stop signal right after the announcement must still end serving cleanly.
                 try:
-                    if front_secret:
-                        # The readiness line rika-server waits for; it holds this backend's UI secret.
-                        print(json.dumps({"origin": server.origin, "secret": server.ui_auth.secret}), flush=True)
-                        threading.Thread(target=_stop_when_front_leaves, daemon=True, name="kitty-front").start()
-                    else:
-                        link = _link(server)
-                        print(f"rika! {'synthetic demo ' if settings.demo else ''}website: {link}", flush=True)
-                        threading.Thread(target=_announce_links, args=(server, link, stop),
-                                         daemon=True, name="kitty-links").start()
+                    print(readiness(server, settings, app.modules), flush=True)
+                    threading.Thread(target=_stop_when_front_leaves, daemon=True, name="kitty-front").start()
                     server.serve_forever()
                 except KeyboardInterrupt:
                     pass
         finally:
-            stop.set()
             app.close()
 
 
@@ -899,6 +874,39 @@ def front_handshake(public_origin: str | None) -> tuple[str, str]:
     return secret, public_origin
 
 
+#: How to build the front kitty-web starts (docs/GUIDE.md, "The Rust front").
+RIKA_SERVER_BUILD = ("cargo build --release --manifest-path server/Cargo.toml (from the project root; on NixOS:"
+                     " nix develop ./desktop -c cargo build --release --manifest-path server/Cargo.toml)")
+
+
+def rika_server() -> Path | None:
+    """The rika-server binary: $KITTY_RIKA_SERVER, else the checkout's release build."""
+    configured = os.environ.get("KITTY_RIKA_SERVER")
+    path = Path(configured) if configured else Path(__file__).resolve().parents[2] / "server" / "target" / "release" / "rika-server"
+    return path if path.is_file() and os.access(path, os.X_OK) else None
+
+
+def _launch_front(args: argparse.Namespace, static_dir: Path) -> None:
+    """Plain `kitty-web`: become rika-server, with this module behind it as its worker."""
+    binary = rika_server()
+    if binary is None:
+        raise SystemExit(f"rika-server is not built; build it with: {RIKA_SERVER_BUILD}\n"
+                         "or set KITTY_RIKA_SERVER to a built rika-server.")
+    command = [str(binary), "--port", str(args.port), "--static-dir", str(static_dir)]
+    if args.root:
+        command += ["--root", str(args.root.expanduser().resolve())]
+    if args.demo:
+        command.append("--demo")
+    if args.safe:
+        command.append("--safe")
+    # As the `kitty-web` console script runs it: `python -m kitty.web_server` would load the
+    # module twice (as __main__ too). rika-server adds --worker and its own origin.
+    command += ["--worker-program", sys.executable, "--worker-arg", "-c",
+                "--worker-arg", "from kitty.web_server import main; main()"]
+    sys.stdout.flush()
+    os.execv(command[0], command)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
@@ -911,14 +919,15 @@ def main() -> None:
                         help="Serve behind rika-server: read its secret from stdin, print a readiness line")
     parser.add_argument("--public-origin", help="With --worker: rika-server's origin, the address pages and paired programs use")
     args = parser.parse_args()
-    if not 1 <= args.port <= 65535:
-        parser.error("--port must be between 1 and 65535")
+    if not 0 <= args.port <= 65535:
+        parser.error("--port must be between 0 and 65535")
+    static_dir = (args.static_dir or Path(__file__).resolve().parents[2] / "web" / "dist").resolve()
+    if not args.worker:
+        _launch_front(args, static_dir)
+        return
     root = (args.root or find_project_root()).expanduser().resolve()
-    static_dir = args.static_dir or Path(__file__).resolve().parents[2] / "web" / "dist"
     try:
-        front: dict[str, str] = {}
-        if args.worker:
-            front["front_secret"], front["public_origin"] = front_handshake(args.public_origin)
+        front_secret, public_origin = front_handshake(args.public_origin)
         if args.demo:
             with TemporaryDirectory(prefix="kitty-web-demo-") as folder:
                 demo_root = Path(folder)
@@ -930,9 +939,9 @@ def main() -> None:
                 for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
                     shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
                 settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
-                _serve(settings, static_dir, args.port, safe=args.safe, **front)
+                _serve(settings, static_dir, safe=args.safe, front_secret=front_secret, public_origin=public_origin)
         else:
-            _serve(Settings.load(root=root), static_dir, args.port, safe=args.safe, **front)
+            _serve(Settings.load(root=root), static_dir, safe=args.safe, front_secret=front_secret, public_origin=public_origin)
     except (ConfigError, OSError, ValueError):
         parser.exit(1, "Unable to open the local website. Check the port, workspace configuration and public example files with the CLI.\n")
 

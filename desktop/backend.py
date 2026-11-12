@@ -1,10 +1,10 @@
-"""Frozen kitty-web sidecar; stdout is a private readiness channel to its owner."""
+"""Frozen kitty-web sidecar, run only behind rika-server (`--worker`); stdout is a private
+readiness channel to its owner."""
 from __future__ import annotations
 
 import argparse
 import fcntl
 import importlib
-import json
 import os
 import signal
 import sys
@@ -35,8 +35,7 @@ def prepare_workspace(root: Path, examples: Path, package: str) -> None:
         (root / directory).mkdir(exist_ok=True, mode=0o700)
 
 
-def serve(root: Path, assets: Path, package: str, *, safe: bool = False,
-          front: tuple[str, str] | None = None) -> None:
+def serve(root: Path, assets: Path, package: str, *, front: tuple[str, str], safe: bool = False) -> None:
     server_module = importlib.import_module(f"{package}.web_server")
     settings_module = importlib.import_module(f"{package}.settings")
     workspace_module = importlib.import_module(f"{package}.core.workspace")
@@ -71,10 +70,9 @@ def serve(root: Path, assets: Path, package: str, *, safe: bool = False,
     except BaseException:
         app.close()
         raise
-    if front is not None:
-        # Behind rika-server: only the front reaches this server, and pages and paired
-        # programs are given the front's address (kitty.web_server.RequestHandler._front).
-        server.front_secret, app.origin = front
+    # Behind rika-server: only the front reaches this server, and pages and paired
+    # programs are given the front's address (kitty.web_server.RequestHandler._front).
+    server.front_secret, app.origin = front
     with server:
         stop = threading.Event()
 
@@ -105,7 +103,8 @@ def serve(root: Path, assets: Path, package: str, *, safe: bool = False,
             with endpoint_module.published(settings.root, app.origin):
                 # The UI secret travels only on this private pipe: the shell (or the front)
                 # injects it into rika!'s own windows (docs/platform-design.md, "UI secret").
-                send(json.dumps({"origin": server.origin, "secret": server.ui_auth.secret}))
+                # The front also learns the workspace it answers its own routes from.
+                send(server_module.readiness(server, settings, app.modules))
                 server.serve_forever(poll_interval=0.1)
         finally:
             server.server_close()
@@ -135,13 +134,13 @@ def main() -> None:
         parser.exit(1, "The packaged website is missing; reinstall rika!.\n")
     root = args.workspace.expanduser().resolve()
     package = (bundle / "backend-package.txt").read_text().strip()
-    front = None
-    if args.worker:
-        # Read before the owner channel starts: stdin is the owner pipe from then on.
-        try:
-            front = importlib.import_module(f"{package}.web_server").front_handshake(args.public_origin)
-        except ValueError:
-            parser.exit(1, "rika-server's handshake is missing or malformed.\n")
+    if not args.worker:
+        parser.exit(1, "The desktop backend runs only behind rika-server (--worker).\n")
+    # Read before the owner channel starts: stdin is the owner pipe from then on.
+    try:
+        front = importlib.import_module(f"{package}.web_server").front_handshake(args.public_origin)
+    except ValueError:
+        parser.exit(1, "rika-server's handshake is missing or malformed.\n")
     prepare_workspace(root, bundle / "examples", package)
     # Also serialize distinct desktop processes accidentally selecting the same root.
     with (root / ".private" / "desktop.lock").open("a") as lock:

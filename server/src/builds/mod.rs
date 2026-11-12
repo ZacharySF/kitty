@@ -1,12 +1,12 @@
 //! Build files (`kitty.core.builds`): the reader, ported with Python-identical results.
 
 mod css;
-mod document;
-mod json;
+pub mod document;
+pub mod json;
 mod regex;
 mod schema;
 mod unicode;
-mod value;
+pub mod value;
 
 use std::io::{Read, Write};
 

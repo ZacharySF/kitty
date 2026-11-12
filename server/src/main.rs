@@ -13,6 +13,7 @@
 mod auth;
 mod builds;
 mod front;
+mod modules;
 mod target;
 mod worker;
 
@@ -126,6 +127,7 @@ async fn run(options: Options) -> Result<(), String> {
             secret: worker.secret.clone(),
             front_secret: worker.front_secret.clone(),
         },
+        workspace: worker.workspace.take().expect("a started worker reports its workspace"),
     });
 
     if options.desktop {

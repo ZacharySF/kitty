@@ -2,7 +2,9 @@
 // (a disposable synthetic workspace in a temporary directory; never the owner's data), or
 // `kitty-web --root <dir>` on a temporary workspace the test created, on a free port, plus a
 // Vite dev server for the test harness that proxies /api (HTTP and the live WebSocket) to it
-// with the exact Host and Origin rika!'s request guard expects.
+// with the exact Host and Origin rika!'s request guard expects. `kitty-web` is rika-server
+// (server/, built with `cargo build --release --manifest-path server/Cargo.toml`, or the binary KITTY_RIKA_SERVER
+// names) with the Python backend behind it as its worker.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
@@ -62,19 +64,11 @@ export async function authorize(context, secret) {
  * serves. Without `root` it is `--demo`; with `root` (a temporary workspace the caller made) it
  * serves that workspace, so a test can edit its files, such as config/build.json, like an
  * outside editor. The announced one-time code is spent on `secret`, as a browser tab would.
- *
- * With KITTY_RIKA_SERVER set to a built `server/target/release/rika-server`, the Rust front
- * serves instead, with kitty-web behind it as its worker: the same announcement, the same
- * rules, so every browser suite can run against it unchanged.
  */
 export async function startKitty({ root } = {}) {
   const port = await freePort();
   const where = root ? ["--root", root] : ["--demo"];
-  const kittyWeb = ["run", "--project", repo, "kitty-web"];
-  const [program, args] = process.env.KITTY_RIKA_SERVER
-    ? [process.env.KITTY_RIKA_SERVER, ["--worker-program", "uv", ...kittyWeb.flatMap((arg) => ["--worker-arg", arg])]]
-    : ["uv", kittyWeb];
-  const child = spawn(program, [...args, ...where, "--port", String(port)], {
+  const child = spawn("uv", ["run", "--project", repo, "kitty-web", ...where, "--port", String(port)], {
     cwd: repo, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KITTY_KEYRING: "none", KITTY_SYNC: "off" },
   });
   let output = "";

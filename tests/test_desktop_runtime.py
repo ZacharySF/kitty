@@ -1,8 +1,8 @@
 """Real desktop sidecar lifecycle against isolated public-example workspaces.
 
-Every lifecycle test runs twice: the backend as the shell used to start it, and behind
-rika-server --desktop (server/), which the shell starts now: the same readiness line, owner
-pipe, quit and published endpoint, with the front's origin and secret.
+The backend runs as the shell starts it: behind rika-server --desktop (server/), which
+owns the readiness line (the front's origin and secret), relays the owner pipe and quit,
+and is the address the published endpoint names. The backend refuses to run without it.
 """
 from __future__ import annotations
 
@@ -52,17 +52,26 @@ def test_selected_workspace_is_reused_without_overwriting(tmp_path):
     assert (root / ".private").is_dir()
 
 
-@pytest.fixture(params=["direct", "front"])
-def through(request):
-    """How the shell reaches the backend: directly, or through rika-server --desktop."""
-    if request.param == "front" and not RIKA_SERVER.is_file():
-        pytest.skip(f"rika-server is not built ({RIKA_SERVER}); run cargo build --release in server/")
-    return request.param
+def test_the_backend_refuses_to_serve_without_the_front(tmp_path):
+    bundle = tmp_path / "bundle"
+    (bundle / "website").mkdir(parents=True)
+    (bundle / "website" / "index.html").write_text("<!doctype html>")
+    (bundle / "backend-package.txt").write_text("kitty\n")
+    code = ("import runpy, sys; sys._MEIPASS=sys.argv[1]; entry=sys.argv[3]; "
+            "sys.argv=['kitty-web', '--workspace', sys.argv[2]]; runpy.run_path(entry, run_name='__main__')")
+    environment = {**os.environ, "PYTHONPATH": os.pathsep.join((str(PROJECT), str(PROJECT / "src")))}
+    result = subprocess.run([sys.executable, "-c", code, str(bundle), str(tmp_path / "workspace"),
+                             str(PROJECT / "desktop/backend.py")],
+                            env=environment, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1 and "only behind rika-server" in result.stderr
+    assert result.stdout == "" and not (tmp_path / "workspace").exists()
 
 
 @pytest.fixture
-def backend(tmp_path, request, through):
+def backend(tmp_path, request):
     """The frozen entrypoint; indirect parametrization passes extra arguments (e.g. --safe)."""
+    if not RIKA_SERVER.is_file():
+        pytest.skip(f"rika-server is not built ({RIKA_SERVER}); run cargo build --release in server/")
     extra = list(getattr(request, "param", ()))
     root = tmp_path / "workspace"
     bundle = tmp_path / "bundle"
@@ -83,10 +92,9 @@ def backend(tmp_path, request, through):
         environment.pop(key, None)
     environment["PYTHONPATH"] = os.pathsep.join((str(PROJECT), str(PROJECT / "src")))
     command = [sys.executable, "-c", code, str(bundle), str(root), str(PROJECT / "desktop/backend.py"), *extra]
-    if through == "front":
-        # As desktop/src/main.rs starts it: the backend's arguments pass through unchanged.
-        command = [str(RIKA_SERVER), "--desktop", "--port", "0", "--static-dir", str(assets),
-                   "--worker-program", command[0], *[part for arg in command[1:] for part in ("--worker-arg", arg)]]
+    # As desktop/src/main.rs starts it: the backend's arguments pass through unchanged.
+    command = [str(RIKA_SERVER), "--desktop", "--port", "0", "--static-dir", str(assets),
+               "--worker-program", command[0], *[part for arg in command[1:] for part in ("--worker-arg", arg)]]
     process = subprocess.Popen(
         command, cwd=tmp_path, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True,

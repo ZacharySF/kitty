@@ -110,16 +110,6 @@ class UiAuth:
                 return None
         return self.secret
 
-    def wait_code(self, code: str, stop: threading.Event) -> None:
-        """Block until `code` is used, replaced or expired, or `stop` is set."""
-        with self._changed:
-            while not stop.is_set() and self._code is not None and self._code[0] == code:
-                remaining = self._code[1] - self._clock()
-                if remaining <= 0:
-                    self._code = None
-                    return
-                self._changed.wait(min(remaining, 0.5))
-
     # Link tickets.
 
     def issue_link(self, target: str) -> str:

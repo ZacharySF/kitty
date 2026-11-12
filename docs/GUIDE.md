@@ -368,16 +368,20 @@ applied before the app draws.
 No Rust service is needed: the Python core
 owns application behavior.
 
-From the project root, with Node 22+ and npm available:
+From the project root, with Node 22+, npm and cargo available:
 
 ```bash
 npm --prefix web ci
 npm --prefix web run build
+cargo build --release --manifest-path server/Cargo.toml
 uv run kitty-web                 # rika! website: http://127.0.0.1:8765/?code=…
 ```
 
-On NixOS without Node on PATH, prefix either npm command with
-`nix shell nixpkgs#nodejs_22 --command`.
+`kitty-web` runs rika-server, the Rust front ([below](#the-rust-front-rika-server)),
+with `kitty-web --worker` behind it; without a built binary it exits and prints the
+cargo command (`KITTY_RIKA_SERVER=<path>` uses another build). On NixOS without Node
+on PATH, prefix either npm command with `nix shell nixpkgs#nodejs_22 --command`, and run
+cargo as `nix develop ./desktop -c cargo …`.
 Open the printed link, `127.0.0.1` and not `localhost`: the server validates its
 exact loopback Host/Origin. The link carries a one-time `code` (as Jupyter's token
 link does) that the page trades for this launch's UI secret; it works once, within
@@ -563,22 +567,25 @@ at start-up and kept only in memory (never in a log, a URL or `.private/endpoint
 ### The Rust front (`rika-server`, in progress)
 
 `server/` holds `rika-server`, the Rust server that is gradually taking over from the
-Python one ([docs/rust-core-design.md](rust-core-design.md)). Today it serves the built
+Python one ([docs/rust-core-design.md](rust-core-design.md)). It serves the built
 website, enforces every rule above (Host, Origin, `X-Kitty-Request`, the UI secret,
-one-time codes and link tickets) and forwards every other request, including WebSocket
+one-time codes and link tickets), answers the routes already ported to Rust (the module
+selection, `/api/modules`) and forwards every other request, including WebSocket
 upgrades and the paired-client ingress, to `kitty-web --worker` running behind it. The
 worker binds a port only the front knows, answers only requests carrying the front's
-private secret (sent on its stdin, never in a URL or the environment), and stops when
-the front does. The front's 1.5 MB binary is not in the desktop app yet.
+private secret (sent on its stdin, never in a URL or the environment), reports the
+workspace it opened on its readiness line, and stops when the front does. `kitty-web`
+and the desktop app both start rika!'s backend through it; only `--worker` runs the
+Python server, and only behind a front.
 
 ```bash
 cargo build --release --manifest-path server/Cargo.toml
-uv run server/target/release/rika-server --demo   # same link and flags as kitty-web
+uv run kitty-web --demo   # execs server/target/release/rika-server with itself as worker
 ```
 
-`tests/test_ui_secret.py` runs every rule against both servers; setting
-`KITTY_RIKA_SERVER=server/target/release/rika-server` makes the browser suites
-(`web/tests/kittyServer.js`) start the front instead of `kitty-web`.
+`tests/test_ui_secret.py` runs every rule against both servers; the browser suites
+(`web/tests/kittyServer.js`) and `tests/terminal_support.py`'s `front_site` start the
+front (`KITTY_RIKA_SERVER` overrides which binary).
 
 ### Connected apps (pairing)
 

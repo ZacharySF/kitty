@@ -4,7 +4,9 @@
 //! The worker binds a port of the system's choice on 127.0.0.1, reads the front's private
 //! secret as the first line on stdin, and answers only requests that carry it
 //! (`web_server.RequestHandler._front`). Its readiness line, the first line on stdout, is
-//! `{"origin", "secret"}`: its own origin and UI secret, which only the front ever sees.
+//! `{"origin", "secret", "config_dir", "modules", "version"}` (`web_server.readiness`): its own
+//! origin and UI secret, which only the front ever sees, and the workspace it opened with its
+//! frozen module snapshot, which the routes answered by the front need.
 //! Closing its stdin stops it, so it never outlives the front.
 
 use std::process::Stdio;
@@ -29,6 +31,9 @@ pub struct Worker {
     pub secret: String,
     /// The secret the front sends on every request it forwards.
     pub front_secret: String,
+    /// The workspace the worker opened (`Settings.config_dir`), its active modules and version;
+    /// the front takes it once.
+    pub workspace: Option<crate::modules::Workspace>,
     child: Child,
     /// Held open for the worker's lifetime; closing it tells the worker to stop. Shared with
     /// the desktop owner-pipe relay, which writes the shell's lines into it.
@@ -41,6 +46,9 @@ pub struct Worker {
 struct Readiness {
     origin: String,
     secret: String,
+    config_dir: String,
+    modules: Vec<String>,
+    version: String,
 }
 
 /// How to start the worker: a program and its arguments before rika!'s own flags.
@@ -108,6 +116,11 @@ impl Worker {
             origin: ready.origin,
             secret: ready.secret,
             front_secret,
+            workspace: Some(crate::modules::Workspace {
+                config_dir: ready.config_dir.into(),
+                active: ready.modules,
+                version: ready.version,
+            }),
             child,
             stdin: Arc::new(Mutex::new(Some(stdin))),
             output: Some(stdout),

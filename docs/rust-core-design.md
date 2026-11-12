@@ -1,6 +1,7 @@
 # Rust core: a gradual rewrite, a minimal base and download modules
 
-Status: milestones 0 and 1 built; milestone 2 next (branch `feat/rust-core`).
+Status: milestones 0 and 1 built; milestone 2 started: `/api/modules` is served by Rust
+(branch `feat/rust-core`).
 
 ## Goal
 
@@ -123,6 +124,41 @@ selection: base only.
    settings, themes, keys, effects, Rika text chat) and the migration runner, so
    a base-only install starts without Python. Module registry with requirements
    and packs; UI gating per new module.
+
+   Inventory (2026-11-12): what each base route group touches and what must exist in Rust
+   before it can move.
+
+   | Route group | Python handler | Data it touches | Tests | Blocks porting |
+   | --- | --- | --- | --- | --- |
+   | Modules `GET/POST /api/modules` | ~~`WebApplication.set_modules`~~, `modules_state` | `config/build.json` (`modules`), careers templates | `test_web_modules.py`, `test_modules.py` | **Ported** (below) |
+   | Bootstrap `GET /api/bootstrap` | `WebApplication._bootstrap` | modules state; with applyai, jobs, tracks and today's digest in SQLite | `test_web_modules.py`, `test_web_server.py` | the applyai half reads careers tables: needs rusqlite plus `jobs.count_jobs`/`today.build_digest`, or a split route |
+   | Build and settings `/api/build/*` | `web_build.py`, `core/builds/{store,project,share}` | build file, `data/build-history/`, settings rows projected into SQLite | `test_web_build.py`, `test_builds.py`, browser `settings`/`build` suites | the watcher's live push goes out over `web_live`'s WebSocket (Python), and `project.sync` writes SQLite; `fetch` needs an HTTPS client |
+   | Themes | no route: the theme list and `theme.base` live in the build (`document.theme_ids`, already in Rust) | build file | as build | moves with the build routes |
+   | Keys `/api/keys/*` | `web_keys.py`, `core/keys.py` | OS keyring (Secret Service over D-Bus) or owner-only file | `test_keys.py` | a Secret Service client in Rust; Python's AI providers keep reading the same store until they move |
+   | Effects `/api/effects/*` | `web_effects.py`, `core/effects.py`, `effect_kinds` | effect tables in SQLite | `test_effects.py` | executors call into Python modules (blocks, applications); approvals are bound to the worker's `ui_session`, which would have to move to the front |
+   | Rika text chat `/api/rika/*` | `web_rika.py`, `core/rika/*` | conversations, plans, memory in SQLite; AI provider calls | `test_web_rika*.py`, `test_rika_*.py` | AI client and streaming WebSocket; Rika's tools reach every module's Python core |
+   | Migration runner | `kitty.db.migrations` | the SQLite schema (55 SQL files) | `test_migrations.py`, `test_migration_numbers.py` | three migrations run Python steps (`blocks.legacy:migrate_notes`, `blocks.tags:backfill`, `search:build`); those need Rust ports, or must be folded so a fresh database never needs them |
+
+   *Built (first slice):* `/api/modules` is answered by rika-server (`server/src/modules.rs`)
+   with Python's responses and error messages (`kitty.modules.normalize_modules`, `store.edit`
+   refusals, the 500 for an exception Python had no handler for), and the same atomic,
+   `flock`ed write of `config/build.json`; the careers templates are compiled in. Python's
+   handler is gone; `modules_state` stays for bootstrap and the build push. The worker's
+   readiness line now also carries its `config_dir`, frozen `modules` and `version`.
+   `tests/test_web_modules.py` runs the route through the front and compares every answer
+   with the Python functions as the reference. Deliberate difference: a pre-build
+   `modules.yaml` written by hand while rika! runs is not parsed (the worker migrated it at
+   start; the next start reads it). Since Python no longer serves every route, plain
+   `kitty-web` now execs rika-server with itself as `--worker`, and the desktop backend
+   refuses to run without the front: a Python-only install (a checkout without
+   `cargo build --release --manifest-path server/Cargo.toml`) no longer serves the website.
+   Measured on one synthetic workspace (median of 300 fresh-connection GETs, two alternating
+   runs each): `GET /api/modules` went from 6.3 / 6.5 ms (forwarded to Python) to 1.06 /
+   1.02 ms (Rust), while a still-forwarded route stays at 5.8 ms; start to announcement is
+   unchanged (1.2 to 1.4 s, the worker dominates); the release binary grew from 1.82 to
+   1.91 MB.
+   Next: bootstrap (needs rusqlite for the applyai figures), then the build routes once the
+   live channel can be driven from Rust.
 3. **Packs.** Signed pack builds and index in the release pipeline; download,
    verify and atomic install in the shell; Settings → Modules with size and
    progress.

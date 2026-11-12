@@ -5,8 +5,9 @@
 //! (`_security`: no Authorization, exact Host and Origin, `Sec-Fetch-Site`, and for a
 //! mutation `X-Kitty-Request: 1` plus `application/json`), then the UI secret (`_authorize`:
 //! the header, or a single-use link ticket on a GET, or the code exchange); upgrades need
-//! the exact Origin and the secret as a subprotocol. The session routes and the built
-//! website are answered here; every other route is forwarded to the Python worker with
+//! the exact Origin and the secret as a subprotocol. The session routes, the ported routes
+//! (`/api/modules`, crate::modules) and the built website are answered here; every other
+//! route is forwarded to the Python worker with
 //! the worker's own secrets, so the page never learns the worker's address or secrets.
 
 use std::convert::Infallible;
@@ -25,6 +26,7 @@ use serde_json::{json, Map, Value};
 use tokio::net::TcpStream;
 
 use crate::auth::{self, UiAuth};
+use crate::modules::{self, Workspace};
 use crate::target::{parse_target, Invalid, Target};
 
 pub type Body = BoxBody<Bytes, hyper::Error>;
@@ -64,6 +66,8 @@ pub struct Front {
     /// The built website (`web/dist`), canonical.
     pub static_dir: PathBuf,
     pub backend: Backend,
+    /// The workspace the worker opened: the routes answered here read and write its files.
+    pub workspace: Workspace,
 }
 
 /// A refusal the Python server would also send: status, message and extra headers.
@@ -79,6 +83,12 @@ fn refuse(status: u16, message: impl Into<String>) -> Refusal {
 
 fn unauthorized() -> Refusal {
     Refusal { headers: vec![("www-authenticate", "Kitty realm=\"rika!\"")], ..refuse(401, auth::REFUSAL) }
+}
+
+impl From<modules::Failure> for Refusal {
+    fn from(failure: modules::Failure) -> Self {
+        refuse(failure.status, failure.message)
+    }
 }
 
 impl From<Invalid> for Refusal {
@@ -370,6 +380,20 @@ impl Front {
             let length = content_length(request.headers())?;
             let body = json_object(&read_body(request.into_body(), length).await?)?;
             return Ok(send_json(StatusCode::OK, &self.session(&target.path, body)?, false));
+        }
+        if target.path == modules::PATH && !upgrade {
+            if !target.query.is_empty() {
+                return Err(refuse(400, "This route does not accept query parameters"));
+            }
+            let state = if mutation {
+                let length = content_length(request.headers())?;
+                let raw = read_body(request.into_body(), length).await?;
+                json_object(&raw)?;
+                tokio::task::block_in_place(|| self.workspace.configure(&raw))?
+            } else {
+                tokio::task::block_in_place(|| self.workspace.state())?
+            };
+            return Ok(send_json(StatusCode::OK, &state, method == Method::HEAD));
         }
         if mutation {
             // Native desktop commands additionally require an explicit page origin.
