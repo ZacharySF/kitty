@@ -191,7 +191,10 @@ selection: base only.
      `kitty-web` and the desktop backend), then checks that nothing is left. Without a
      worker program (a future base-only install) the front refuses with "open the
      workspace once with rika! 0.3.36". Fresh and current workspaces never start Python
-     for migrations.
+     for migrations. A front that stops before readiness ends its stderr with the reason
+     (`rika-server: ...`); the desktop shell captures that stderr, shows the last line in an
+     error dialog (the app exits when it is dismissed) and writes the whole text to
+     `.private/startup-error.log`; before, it discarded it and the window never appeared.
 
    Tracked exception to "no two live implementations": `kitty.db.migrate` stays for its
    other callers, the CLI and TUI (`open_workspace`), the MCP server, `demo.reset`, the
