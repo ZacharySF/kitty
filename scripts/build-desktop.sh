@@ -24,6 +24,10 @@ uv run --locked python desktop/package_learnharness.py
 uv run --locked --with pyinstaller==6.16.0 python desktop/package_backend.py
 # The Terminal module's runtime: the pinned herdr release, checksum-verified.
 uv run --locked python desktop/fetch_herdr.py
+# The Rust front the desktop shell starts (server/); it starts the backend above behind itself.
+cargo build --release --locked --manifest-path server/Cargo.toml
+triple="$(rustc -vV | sed -n 's/^host: //p')"
+install -m 0755 server/target/release/rika-server "desktop/binaries/rika-server-$triple"
 # CI delegates the native build/sign/upload to the official Tauri action.
 if [ "$prepare_only" = true ]; then
   exit 0

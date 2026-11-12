@@ -76,9 +76,7 @@ impl UiAuth {
         }
     }
 
-    /// The secret itself. Only tests read it until the desktop shell embeds the front and
-    /// sends it on its private readiness line.
-    #[cfg(test)]
+    /// The secret itself: only for the desktop shell's private readiness line (`--desktop`).
     pub fn secret(&self) -> &str {
         &self.secret
     }

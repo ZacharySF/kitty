@@ -5,8 +5,9 @@ On NixOS invoke inside the build dependency shell. Only runtime library/schema
 settings are captured, never API keys, shell setup or a reference to the checkout.
 
 Loose files mirror the .deb layout under ``application/``: ``bin/kitty-workspace``,
-``bin/kitty-herdr`` and the unpacked backend in ``libexec/kitty-workspace/kitty-web/``,
-where the desktop binary looks for it (desktop/src/main.rs ``BACKEND``).
+``bin/kitty-herdr``, ``bin/rika-server`` and the unpacked backend in
+``libexec/kitty-workspace/kitty-web/``, where the desktop binary looks for them
+(desktop/src/main.rs ``sidecar`` and ``BACKEND``).
 """
 from __future__ import annotations
 
@@ -92,22 +93,26 @@ def main() -> None:
     parser.add_argument("--appimage", type=Path, help="Install a signed published AppImage instead of loose build files")
     parser.add_argument("--backend", type=Path, help="Packaged backend directory (default: desktop/binaries/kitty-web)")
     parser.add_argument("--herdr", type=Path, help="Pinned herdr runtime (default: sole desktop/binaries/kitty-herdr-* file)")
+    parser.add_argument("--server", type=Path, help="rika-server front (default: sole desktop/binaries/rika-server-* file)")
     parser.add_argument("--icon", type=Path, default=root / "desktop/icons/icon.png")
     parser.add_argument("--workspace", type=Path, help="Reuse this workspace; omitted means the native default")
     parser.add_argument("--appimage-runner", type=Path, help="Launch the AppImage through this runner (NixOS: appimage-run)")
     args = parser.parse_args()
-    if args.appimage is not None and (args.backend is not None or args.herdr is not None):
-        parser.error("--appimage excludes --backend and --herdr")
+    if args.appimage is not None and (args.backend is not None or args.herdr is not None or args.server is not None):
+        parser.error("--appimage excludes --backend, --herdr and --server")
     if args.appimage is None:
         if args.backend is None:
             args.backend = root / "desktop/binaries/kitty-web"
-        if args.herdr is None:
-            candidates = list((root / "desktop/binaries").glob("kitty-herdr-*"))
-            if len(candidates) != 1:
-                parser.error("pass --herdr when there is not exactly one staged herdr runtime")
-            args.herdr = candidates[0]
+        for option, pattern, label in (("herdr", "kitty-herdr-*", "staged herdr runtime"),
+                                       ("server", "rika-server-*", "staged rika-server")):
+            if getattr(args, option) is None:
+                candidates = list((root / "desktop/binaries").glob(pattern))
+                if len(candidates) != 1:
+                    parser.error(f"pass --{option} when there is not exactly one {label}")
+                setattr(args, option, candidates[0])
     executables = ([(args.appimage, "kitty.AppImage")] if args.appimage is not None else
-                   [(args.binary, "bin/kitty-workspace"), (args.herdr, "bin/kitty-herdr")])
+                   [(args.binary, "bin/kitty-workspace"), (args.herdr, "bin/kitty-herdr"),
+                    (args.server, "bin/rika-server")])
     for source in [*(source for source, _ in executables), args.icon]:
         if not source.is_file():
             parser.error(f"missing build artifact: {source}")

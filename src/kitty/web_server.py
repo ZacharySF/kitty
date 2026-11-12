@@ -889,8 +889,8 @@ def _stop_when_front_leaves() -> None:
     os.kill(os.getpid(), signal.SIGTERM)
 
 
-def _front_handshake(public_origin: str | None) -> tuple[str, str]:
-    """The front's secret (first stdin line) and its origin, validated."""
+def front_handshake(public_origin: str | None) -> tuple[str, str]:
+    """The front's secret (first stdin line) and its origin, validated (kitty-web and the desktop backend)."""
     secret = sys.stdin.readline().strip()
     if not re.fullmatch(r"[0-9a-f]{64}", secret):
         raise ValueError("rika-server must send its secret first")
@@ -918,7 +918,7 @@ def main() -> None:
     try:
         front: dict[str, str] = {}
         if args.worker:
-            front["front_secret"], front["public_origin"] = _front_handshake(args.public_origin)
+            front["front_secret"], front["public_origin"] = front_handshake(args.public_origin)
         if args.demo:
             with TemporaryDirectory(prefix="kitty-web-demo-") as folder:
                 demo_root = Path(folder)

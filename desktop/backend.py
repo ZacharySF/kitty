@@ -35,7 +35,8 @@ def prepare_workspace(root: Path, examples: Path, package: str) -> None:
         (root / directory).mkdir(exist_ok=True, mode=0o700)
 
 
-def serve(root: Path, assets: Path, package: str, *, safe: bool = False) -> None:
+def serve(root: Path, assets: Path, package: str, *, safe: bool = False,
+          front: tuple[str, str] | None = None) -> None:
     server_module = importlib.import_module(f"{package}.web_server")
     settings_module = importlib.import_module(f"{package}.settings")
     workspace_module = importlib.import_module(f"{package}.core.workspace")
@@ -70,6 +71,10 @@ def serve(root: Path, assets: Path, package: str, *, safe: bool = False) -> None
     except BaseException:
         app.close()
         raise
+    if front is not None:
+        # Behind rika-server: only the front reaches this server, and pages and paired
+        # programs are given the front's address (kitty.web_server.RequestHandler._front).
+        server.front_secret, app.origin = front
     with server:
         stop = threading.Event()
 
@@ -95,11 +100,11 @@ def serve(root: Path, assets: Path, package: str, *, safe: bool = False) -> None
         threading.Thread(target=owner_channel, daemon=True, name="kitty-owner").start()
         threading.Thread(target=shutdown, daemon=True, name="kitty-shutdown").start()
         try:
-            # Paired programs (Q7) find this random port through the owner-only
-            # .private/endpoint.json; it is removed again when serving stops.
-            with endpoint_module.published(settings.root, server.origin):
-                # The UI secret travels only on this private pipe: the shell injects it into
-                # rika!'s own windows (docs/platform-design.md, "UI secret").
+            # Paired programs (Q7) find rika! (the front, when there is one) through the
+            # owner-only .private/endpoint.json; it is removed again when serving stops.
+            with endpoint_module.published(settings.root, app.origin):
+                # The UI secret travels only on this private pipe: the shell (or the front)
+                # injects it into rika!'s own windows (docs/platform-design.md, "UI secret").
                 send(json.dumps({"origin": server.origin, "secret": server.ui_auth.secret}))
                 server.serve_forever(poll_interval=0.1)
         finally:
@@ -121,12 +126,22 @@ def main() -> None:
     parser.add_argument("--workspace", required=True, type=Path)
     parser.add_argument("--safe", action="store_true",
                         help="Start every window without the build's custom CSS and theme.")
+    parser.add_argument("--worker", action="store_true",
+                        help="Serve behind rika-server, whose secret is the first line on stdin.")
+    parser.add_argument("--public-origin", help="With --worker: rika-server's loopback origin.")
     args = parser.parse_args()
     assets = bundle / "website"
     if not (assets / "index.html").is_file():
         parser.exit(1, "The packaged website is missing; reinstall rika!.\n")
     root = args.workspace.expanduser().resolve()
     package = (bundle / "backend-package.txt").read_text().strip()
+    front = None
+    if args.worker:
+        # Read before the owner channel starts: stdin is the owner pipe from then on.
+        try:
+            front = importlib.import_module(f"{package}.web_server").front_handshake(args.public_origin)
+        except ValueError:
+            parser.exit(1, "rika-server's handshake is missing or malformed.\n")
     prepare_workspace(root, bundle / "examples", package)
     # Also serialize distinct desktop processes accidentally selecting the same root.
     with (root / ".private" / "desktop.lock").open("a") as lock:
@@ -135,7 +150,7 @@ def main() -> None:
         except BlockingIOError:
             parser.exit(1, "This workspace already has a desktop backend.\n")
         try:
-            serve(root, assets, package, safe=args.safe)
+            serve(root, assets, package, safe=args.safe, front=front)
         except Exception:
             # Config errors and SDK exceptions can contain secrets; don't print them.
             parser.exit(1, "Unable to open the private workspace; check its configuration.\n")

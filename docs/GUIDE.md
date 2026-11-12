@@ -1876,7 +1876,8 @@ directory (`desktop/binaries/kitty-web/`, a PyInstaller onedir), stages the pinn
 herdr release as the `kitty-herdr` sidecar
 (`desktop/fetch_herdr.py` downloads it and refuses any binary whose SHA-256 differs
 from its pin; `--from <downloaded asset>` verifies an already downloaded file
-instead), then builds the Tauri app. It requires Python 3.12, uv, Node/npm, Rust,
+instead), builds the Rust front (`server/`) as the `rika-server` sidecar, then
+builds the Tauri app. It requires Python 3.12, uv, Node/npm, Rust,
 GTK3/WebKitGTK 4.1 development libraries, tray/media libraries and packaging tools.
 The frontend CLI comes from `web/package-lock.json`; no global CLI is needed.
 
@@ -1885,11 +1886,15 @@ extracting ~400 MB to a temporary folder first (about 10 s before). The `.deb`
 and the AppImage install it at `/usr/libexec/kitty-workspace/kitty-web/`
 (`files` in `desktop/tauri.conf.json`); its bundled data (website, examples,
 LearnHarness, textbook, Tern plugin) is in its `_internal/` folder. The desktop
-binary starts only the backend at `../libexec/kitty-workspace/kitty-web/kitty-web`
-relative to its own folder (debug builds fall back to `desktop/binaries/kitty-web/`),
-never one from PATH. It sits outside `usr/lib`, so the AppImage tool leaves its
-libraries untouched; the release guard checks the deb's and the AppImage's copies
-are identical.
+binary never starts the backend directly: it starts the `rika-server` beside itself
+(`/usr/bin/rika-server`) with `--desktop`, which serves the bundled website, prints the
+shell's readiness line with its own origin and UI secret, starts the backend at
+`../libexec/kitty-workspace/kitty-web/kitty-web` relative to the desktop binary's
+folder behind itself, and relays the owner pipe (desktop commands, `quit`) both ways.
+Both are taken only from the installed bundle (debug builds fall back to
+`desktop/binaries/`), never from PATH. The backend sits outside `usr/lib`, so the
+AppImage tool leaves its libraries untouched; the release guard checks the deb's and
+the AppImage's copies are identical and that both carry `rika-server`.
 
 ```bash
 # NixOS: reuse the installed cargo/rustc with pinned GTK/WebKit dependencies.
@@ -1900,7 +1905,7 @@ nix develop 'path:./desktop#host-toolchain' --offline --command \
 # To keep using an existing workspace, add: --workspace /absolute/path/to/workspace
 ```
 
-The installer copies the built app and its `kitty-herdr` sidecar to
+The installer copies the built app and its `kitty-herdr` and `rika-server` sidecars to
 `$XDG_DATA_HOME/kitty/application/bin` (default `~/.local/share/kitty/application`)
 and the backend directory to `application/libexec/kitty-workspace/kitty-web`, the
 same layout as the `.deb`; a reinstall keeps the replaced backend beside it as
@@ -1911,8 +1916,8 @@ It captures only runtime library/schema/media settings from the build environmen
 not secrets, and does not depend on the repository at launch. Keep those Nix
 runtime store paths available. The launcher does not run `nix develop` or need an
 open terminal. The installer never copies over or deletes workspace files.
-`--binary`, `--backend` (the backend directory), `--herdr`, and `--icon` can select
-explicit build artifacts.
+`--binary`, `--backend` (the backend directory), `--herdr`, `--server`, and `--icon`
+can select explicit build artifacts.
 Alternatively, `--appimage /absolute/path/to/downloaded.AppImage` installs a
 published AppImage rather than loose binaries. Its writable installed location
 remains fixed across signed replacements, with an adjacent `.previous` recovery

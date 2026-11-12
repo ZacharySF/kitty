@@ -1,4 +1,9 @@
-"""Real desktop sidecar lifecycle against isolated public-example workspaces."""
+"""Real desktop sidecar lifecycle against isolated public-example workspaces.
+
+Every lifecycle test runs twice: the backend as the shell used to start it, and behind
+rika-server --desktop (server/), which the shell starts now: the same readiness line, owner
+pipe, quit and published endpoint, with the front's origin and secret.
+"""
 from __future__ import annotations
 
 import http.client
@@ -18,7 +23,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from kitty import web_auth
-from terminal_support import FakeHerdr, FrameReader, websocket
+from terminal_support import RIKA_SERVER, FakeHerdr, FrameReader, websocket
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -47,8 +52,16 @@ def test_selected_workspace_is_reused_without_overwriting(tmp_path):
     assert (root / ".private").is_dir()
 
 
+@pytest.fixture(params=["direct", "front"])
+def through(request):
+    """How the shell reaches the backend: directly, or through rika-server --desktop."""
+    if request.param == "front" and not RIKA_SERVER.is_file():
+        pytest.skip(f"rika-server is not built ({RIKA_SERVER}); run cargo build --release in server/")
+    return request.param
+
+
 @pytest.fixture
-def backend(tmp_path, request):
+def backend(tmp_path, request, through):
     """The frozen entrypoint; indirect parametrization passes extra arguments (e.g. --safe)."""
     extra = list(getattr(request, "param", ()))
     root = tmp_path / "workspace"
@@ -69,9 +82,13 @@ def backend(tmp_path, request):
     for key in ("KITTY_HOME", "KITTY_DB", "KITTY_HOME", "KITTY_DB", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"):
         environment.pop(key, None)
     environment["PYTHONPATH"] = os.pathsep.join((str(PROJECT), str(PROJECT / "src")))
+    command = [sys.executable, "-c", code, str(bundle), str(root), str(PROJECT / "desktop/backend.py"), *extra]
+    if through == "front":
+        # As desktop/src/main.rs starts it: the backend's arguments pass through unchanged.
+        command = [str(RIKA_SERVER), "--desktop", "--port", "0", "--static-dir", str(assets),
+                   "--worker-program", command[0], *[part for arg in command[1:] for part in ("--worker-arg", arg)]]
     process = subprocess.Popen(
-        [sys.executable, "-c", code, str(bundle), str(root), str(PROJECT / "desktop/backend.py"), *extra],
-        cwd=tmp_path, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        command, cwd=tmp_path, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True,
     )
     try:
@@ -98,7 +115,8 @@ def request(origin, method="GET", path="/", headers=None, body=None, *, secret=N
         fields = {**({web_auth.HEADER: secret} if secret else {}), **(headers or {})}
         connection.request(method, path, body=body, headers=fields)
         response = connection.getresponse()
-        return response.status, dict(response.getheaders()), response.read()
+        # http.client's header mapping: names are case-insensitive, as HTTP says (the Rust front sends lowercase).
+        return response.status, response.headers, response.read()
     finally:
         connection.close()
 

@@ -5,6 +5,7 @@ mod updates;
 mod workspace_path;
 
 use std::{
+    ffi::OsString,
     fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -178,18 +179,34 @@ fn bundled(packaged: PathBuf, staged: Option<PathBuf>) -> Option<PathBuf> {
     staged.filter(|path| path.is_file())
 }
 
+/// rika-server's command line (server/src/main.rs `--desktop`): it serves the backend's
+/// bundled website itself and starts `backend` behind it with exactly these arguments.
+fn front_arguments(backend: &Path, root: &Path, safe: bool) -> Vec<OsString> {
+    // PyInstaller's onedir keeps its data beside the executable in `_internal` (sys._MEIPASS).
+    let website = backend.parent().unwrap_or(Path::new("")).join("_internal/website");
+    let mut arguments: Vec<OsString> = ["--desktop", "--port", "0", "--static-dir"].map(OsString::from).into();
+    arguments.push(website.into());
+    arguments.extend(["--worker-program".into(), backend.into(), "--worker-arg".into(), "--workspace".into(), "--worker-arg".into(), root.into()]);
+    if safe { arguments.extend(["--worker-arg".into(), "--safe".into()]); }
+    arguments
+}
+
+/// Starts rika-server, which starts the backend behind it and relays the owner pipe both
+/// ways: its readiness line carries rika-server's own origin and UI secret.
 fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc::Receiver<owner::Command>), Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let directory = executable.parent().ok_or("Desktop executable has no directory")?;
     let staging = cfg!(debug_assertions).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
     let binary = backend(directory, staging.as_deref())
         .ok_or("The bundled kitty-web backend is missing")?;
-    let mut command = Command::new(binary);
-    // The Terminal module runs only rika!'s pinned herdr, never one from the environment.
+    let front = sidecar(directory, "rika-server", staging.as_deref())
+        .ok_or("The bundled rika-server is missing")?;
+    let mut command = Command::new(front);
+    // The Terminal module runs only rika!'s pinned herdr, never one from the environment;
+    // rika-server passes its environment on to the backend.
     command.env_remove("KITTY_HERDR");
     if let Some(herdr) = sidecar(directory, "kitty-herdr", staging.as_deref()) { command.env("KITTY_HERDR", herdr); }
-    command.arg("--workspace").arg(root);
-    if safe { command.arg("--safe"); }
+    command.args(front_arguments(&binary, root, safe));
     let child = command
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
     let mut backend = Backend(Some(child));
@@ -502,6 +519,13 @@ mod tests {
         assert_eq!(sidecar(&bundle, "kitty-herdr", None), None);
         fs::write(bundle.join("kitty-herdr"), b"bundled").unwrap();
         assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), Some(bundle.join("kitty-herdr")));
+        // rika-server, which the shell starts in front of the backend, follows the same rule.
+        assert_eq!(sidecar(&bundle, "rika-server", None), None);
+        let staged = staging.join(format!("rika-server-{}", env!("KITTY_TARGET_TRIPLE")));
+        fs::write(&staged, b"staged").unwrap();
+        assert_eq!(sidecar(&bundle, "rika-server", Some(&staging)), Some(staged));
+        fs::write(bundle.join("rika-server"), b"bundled").unwrap();
+        assert_eq!(sidecar(&bundle, "rika-server", Some(&staging)), Some(bundle.join("rika-server")));
 
         // The backend is an unpacked directory: never a file beside the binary (the old
         // onefile location) and never a directory standing in for its executable.
@@ -519,6 +543,21 @@ mod tests {
         fs::write(&packaged, b"bundled").unwrap();
         assert_eq!(backend(&bundle, Some(&staging)), Some(bundle.parent().unwrap().join(BACKEND)));
         fs::remove_dir_all(&folder).unwrap();
+    }
+    #[test]
+    fn the_front_serves_the_bundled_website_and_starts_exactly_this_backend() {
+        let backend = Path::new("/usr/libexec/kitty-workspace/kitty-web/kitty-web");
+        let root = Path::new("/home/someone/rika workspace");
+        let expected = |safe: &[&str]| {
+            let mut arguments = vec!["--desktop", "--port", "0",
+                "--static-dir", "/usr/libexec/kitty-workspace/kitty-web/_internal/website",
+                "--worker-program", "/usr/libexec/kitty-workspace/kitty-web/kitty-web",
+                "--worker-arg", "--workspace", "--worker-arg", "/home/someone/rika workspace"];
+            arguments.extend_from_slice(safe);
+            arguments.into_iter().map(OsString::from).collect::<Vec<_>>()
+        };
+        assert_eq!(front_arguments(backend, root, false), expected(&[]));
+        assert_eq!(front_arguments(backend, root, true), expected(&["--worker-arg", "--safe"]));
     }
     #[test]
     fn quick_note_launch_flag_is_exact() {

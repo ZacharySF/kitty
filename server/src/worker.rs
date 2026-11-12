@@ -1,4 +1,5 @@
-//! The Python backend behind the front (`kitty-web --worker`).
+//! The Python backend behind the front (`kitty-web --worker`, or the desktop backend with
+//! `--worker`).
 //!
 //! The worker binds a port of the system's choice on 127.0.0.1, reads the front's private
 //! secret as the first line on stdin, and answers only requests that carry it
@@ -7,11 +8,13 @@
 //! Closing its stdin stops it, so it never outlives the front.
 
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::Mutex;
 
 /// How long the worker may take to open the workspace (the desktop shell allows the same).
 pub const READY_TIMEOUT: Duration = Duration::from_secs(90);
@@ -27,8 +30,11 @@ pub struct Worker {
     /// The secret the front sends on every request it forwards.
     pub front_secret: String,
     child: Child,
-    /// Held open for the worker's lifetime; dropping it tells the worker to stop.
-    stdin: Option<ChildStdin>,
+    /// Held open for the worker's lifetime; closing it tells the worker to stop. Shared with
+    /// the desktop owner-pipe relay, which writes the shell's lines into it.
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
+    /// The worker's stdout after its readiness line, until drained or relayed.
+    output: Option<BufReader<ChildStdout>>,
 }
 
 #[derive(Deserialize)]
@@ -97,29 +103,66 @@ impl Worker {
         if ready.secret.len() != 64 || !ready.secret.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(WorkerError("the Python backend's secret is malformed".into()));
         }
-        // Anything the worker prints later is not for the page; keep the pipe from filling.
-        tokio::spawn(async move {
-            let mut sink = Vec::new();
-            let _ = stdout.read_to_end(&mut sink).await;
-        });
         Ok(Self {
             authority: format!("127.0.0.1:{port}"),
             origin: ready.origin,
             secret: ready.secret,
             front_secret,
             child,
-            stdin: Some(stdin),
+            stdin: Arc::new(Mutex::new(Some(stdin))),
+            output: Some(stdout),
         })
     }
 
-    /// Wait until the worker exits by itself (it crashed or failed).
+    /// Browser mode: anything the worker prints later is not for the page; keep the pipe from filling.
+    pub fn drain_output(&mut self) {
+        if let Some(mut output) = self.output.take() {
+            tokio::spawn(async move {
+                let mut sink = Vec::new();
+                let _ = output.read_to_end(&mut sink).await;
+            });
+        }
+    }
+
+    /// Desktop mode: the front stands in the shell's private owner pipe (desktop/src/owner.rs).
+    /// The worker's lines after readiness (its fixed commands: check-updates, new-quick-note,
+    /// ...) go to the front's stdout for the shell to parse; the shell's lines on the front's
+    /// stdin (`quit`, keep-running reports) go to the worker. The shell closing the front's
+    /// stdin closes the worker's, which stops it.
+    pub fn relay_owner_pipe(&mut self) {
+        if let Some(output) = self.output.take() {
+            tokio::spawn(async move {
+                let mut lines = output.lines();
+                let mut shell = tokio::io::stdout();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if shell.write_all(format!("{line}\n").as_bytes()).await.is_err() || shell.flush().await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let input = self.stdin.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(tokio::io::stdin()).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let mut guard = input.lock().await;
+                let Some(worker) = guard.as_mut() else { return };
+                if worker.write_all(format!("{line}\n").as_bytes()).await.is_err() {
+                    return;
+                }
+            }
+            input.lock().await.take();
+        });
+    }
+
+    /// Wait until the worker exits by itself (it crashed, failed, or the shell said quit).
     pub async fn exited(&mut self) -> std::io::Result<std::process::ExitStatus> {
         self.child.wait().await
     }
 
     /// Ask the worker to stop (close its stdin) and wait up to `grace` for it to drain.
     pub async fn stop(mut self, grace: Duration) {
-        drop(self.stdin.take());
+        self.stdin.lock().await.take();
         if tokio::time::timeout(grace, self.child.wait()).await.is_err() {
             let _ = self.child.kill().await;
         }

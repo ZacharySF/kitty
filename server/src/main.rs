@@ -5,6 +5,10 @@
 //! current link is used or expires), and starts `kitty-web --worker` behind itself for every
 //! route not ported yet. Quitting (Ctrl+C, SIGTERM) stops the worker cleanly; a worker that
 //! dies stops the front.
+//!
+//! `--desktop` is the desktop shell's mode (desktop/src/main.rs): no link, the readiness line
+//! `{"origin", "secret"}` on stdout instead, and the shell's private owner pipe relayed to the
+//! desktop backend behind it. The worker arguments are passed through unchanged.
 
 mod auth;
 mod front;
@@ -23,7 +27,7 @@ use tokio::net::TcpListener;
 use front::{Backend, Front};
 use worker::{Launch, Worker};
 
-const USAGE: &str = "usage: rika-server [--port N] [--root DIR] [--static-dir DIR] [--demo] [--safe] [--worker-program PATH] [--worker-arg ARG]...";
+const USAGE: &str = "usage: rika-server [--port N] [--root DIR] [--static-dir DIR] [--demo] [--safe] [--desktop] [--worker-program PATH] [--worker-arg ARG]...";
 /// How long a quitting front waits for the worker to drain its accepted writes.
 const WORKER_GRACE: Duration = Duration::from_secs(30);
 
@@ -33,6 +37,7 @@ struct Options {
     static_dir: PathBuf,
     demo: bool,
     safe: bool,
+    desktop: bool,
     launch: Launch,
 }
 
@@ -44,6 +49,7 @@ fn options() -> Result<Options, String> {
         static_dir: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../web/dist")),
         demo: false,
         safe: false,
+        desktop: false,
         launch: Launch { program: "kitty-web".into(), args: Vec::new() },
     };
     while let Some(flag) = args.next() {
@@ -54,6 +60,7 @@ fn options() -> Result<Options, String> {
             "--static-dir" => options.static_dir = PathBuf::from(value()?),
             "--demo" => options.demo = true,
             "--safe" => options.safe = true,
+            "--desktop" => options.desktop = true,
             "--worker-program" => options.launch.program = value()?,
             "--worker-arg" => options.launch.args.push(value()?),
             "-h" | "--help" => return Err(USAGE.into()),
@@ -88,16 +95,19 @@ async fn run(options: Options) -> Result<(), String> {
     let origin = format!("http://127.0.0.1:{port}");
     let static_dir = std::fs::canonicalize(&options.static_dir).unwrap_or(options.static_dir.clone());
 
+    // kitty-web takes the front's options; the desktop backend's come whole from the shell.
     let mut flags = Vec::new();
-    if let Some(root) = &options.root {
-        flags.extend(["--root".to_owned(), root.display().to_string()]);
-    }
-    flags.extend(["--static-dir".to_owned(), static_dir.display().to_string()]);
-    if options.demo {
-        flags.push("--demo".into());
-    }
-    if options.safe {
-        flags.push("--safe".into());
+    if !options.desktop {
+        if let Some(root) = &options.root {
+            flags.extend(["--root".to_owned(), root.display().to_string()]);
+        }
+        flags.extend(["--static-dir".to_owned(), static_dir.display().to_string()]);
+        if options.demo {
+            flags.push("--demo".into());
+        }
+        if options.safe {
+            flags.push("--safe".into());
+        }
     }
     let mut worker = Worker::start(&options.launch, &origin, &flags).await.map_err(|error| {
         eprintln!("rika-server: {error}");
@@ -117,9 +127,17 @@ async fn run(options: Options) -> Result<(), String> {
         },
     });
 
-    let code = front.auth.issue_code();
-    println!("rika! {}website: {origin}/?code={code}", if options.demo { "synthetic demo " } else { "" });
-    tokio::spawn(announce_links(front.clone(), code));
+    if options.desktop {
+        // The shell's readiness contract (desktop/src/owner.rs `readiness`): it injects this
+        // secret into rika!'s own windows. This pipe is private to the shell.
+        println!("{}", serde_json::json!({ "origin": origin, "secret": front.auth.secret() }));
+        worker.relay_owner_pipe();
+    } else {
+        worker.drain_output();
+        let code = front.auth.issue_code();
+        println!("rika! {}website: {origin}/?code={code}", if options.demo { "synthetic demo " } else { "" });
+        tokio::spawn(announce_links(front.clone(), code));
+    }
 
     let serving = async {
         loop {
@@ -140,8 +158,12 @@ async fn run(options: Options) -> Result<(), String> {
     let outcome = tokio::select! {
         () = serving => Ok(()),
         () = stopped() => Ok(()),
-        status = worker.exited() => Err(format!("rika-server: the Python backend stopped ({})",
-                                                status.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()))),
+        // The shell's quit reaches the worker through the owner pipe: a clean exit ends the front too.
+        status = worker.exited() => match status {
+            Ok(status) if status.success() => Ok(()),
+            status => Err(format!("rika-server: the Python backend stopped ({})",
+                                  status.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()))),
+        },
     };
     worker.stop(WORKER_GRACE).await;
     outcome
@@ -149,6 +171,7 @@ async fn run(options: Options) -> Result<(), String> {
 
 #[tokio::main]
 async fn main() {
+    // Hidden and test-only: the build reader on stdin, for tests/test_build_reader_parity.py.
     let options = match options() {
         Ok(options) => options,
         Err(message) => {
@@ -160,4 +183,10 @@ async fn main() {
         eprintln!("{message}");
         std::process::exit(1);
     }
+    // The worker has stopped and nothing is left to drain. Exit now: returning would make the
+    // runtime wait for the blocking stdin reader (the owner-pipe relay), which only ends when
+    // the shell closes our stdin, and a `quit` does not.
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::process::exit(0);
 }

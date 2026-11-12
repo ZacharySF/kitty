@@ -18,7 +18,7 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     build.mkdir()
     binary = build / "kitty-workspace"
     binary.write_text('#!/bin/sh\nprintf "%s\\n" "$LD_LIBRARY_PATH" "$GST_PLUGIN_SYSTEM_PATH_1_0" "$@"\n'
-                      'exec "$(dirname "$0")/../libexec/kitty-workspace/kitty-web/kitty-web"\n')
+                      'exec "$(dirname "$0")/rika-server"\n')
     binary.chmod(0o755)
     backend = build / "kitty-web"
     (backend / "_internal").mkdir(parents=True)
@@ -28,6 +28,11 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     herdr = build / "kitty-herdr-x86_64-unknown-linux-gnu"
     herdr.write_text('#!/bin/sh\nprintf "herdr\\n"\n')
     herdr.chmod(0o755)
+    # The shell starts rika-server beside it, which starts the backend behind itself.
+    server = build / "rika-server-x86_64-unknown-linux-gnu"
+    server.write_text('#!/bin/sh\nprintf "front started\\n"\n'
+                      'exec "$(dirname "$0")/../libexec/kitty-workspace/kitty-web/kitty-web"\n')
+    server.chmod(0o755)
     icon = build / "icon.png"
     icon.write_bytes(b"fixture icon")
     data = tmp_path / "user data"
@@ -45,7 +50,7 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(tmp_path / "user bin"),
                         "LD_LIBRARY_PATH": "/fixture/nix/lib", "GST_PLUGIN_SYSTEM_PATH_1_0": "/fixture/nix/gstreamer"}
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
-                             "--binary", str(binary), "--backend", str(backend), "--herdr", str(herdr),
+                             "--binary", str(binary), "--backend", str(backend), "--herdr", str(herdr), "--server", str(server),
                              "--icon", str(icon), "--workspace", str(workspace)], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     entry = (data / "applications/com.zacharysf.kitty.desktop").read_text()
@@ -53,7 +58,8 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     # This fixture uses spaces, not desktop-entry escape-sensitive shell syntax.
     launch = subprocess.run(shlex.split(command), env={"PATH": os.environ["PATH"], "HOME": str(tmp_path)}, capture_output=True, text=True)
     assert launch.returncode == 0, launch.stderr
-    assert launch.stdout.splitlines() == ["/fixture/nix/lib", "/fixture/nix/gstreamer", "--workspace", str(workspace), "sidecar started"]
+    assert launch.stdout.splitlines() == ["/fixture/nix/lib", "/fixture/nix/gstreamer", "--workspace", str(workspace),
+                                          "front started", "sidecar started"]
     assert database.read_bytes() == b"untouched database"
     assert sentinel.read_text() == "keep user configuration"
     assert "Terminal=false" in entry
@@ -64,10 +70,12 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     # The desktop app runs rika!'s pinned herdr only from beside its own executable.
     installed_herdr = application / "bin/kitty-herdr"
     assert installed_herdr.read_bytes() == herdr.read_bytes() and os.access(installed_herdr, os.X_OK)
+    installed_server = application / "bin/rika-server"
+    assert installed_server.read_bytes() == server.read_bytes() and os.access(installed_server, os.X_OK)
     # Reinstalling swaps in a whole new backend directory and keeps the replaced one.
     (backend / "_internal/website.txt").write_text("new data")
     again = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
-                            "--binary", str(binary), "--backend", str(backend), "--herdr", str(herdr),
+                            "--binary", str(binary), "--backend", str(backend), "--herdr", str(herdr), "--server", str(server),
                             "--icon", str(icon), "--workspace", str(workspace)], env=env, capture_output=True, text=True)
     assert again.returncode == 0, again.stderr
     assert (application / "libexec/kitty-workspace/kitty-web/_internal/website.txt").read_text() == "new data"
@@ -86,7 +94,7 @@ def test_install_without_workspace_uses_native_default(tmp_path):
     backend.mkdir()
     (backend / "kitty-web").write_bytes(binary.read_bytes())
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"), "--binary", str(binary),
-                             "--backend", str(backend), "--herdr", str(binary), "--icon", str(icon)],
+                             "--backend", str(backend), "--herdr", str(binary), "--server", str(binary), "--icon", str(icon)],
                             env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     launch = subprocess.run([str(tmp_path / "bin/kitty-workspace")], env=env, capture_output=True, text=True)

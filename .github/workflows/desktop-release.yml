@@ -128,6 +128,8 @@ jobs:
           test -f "release-deb/$backend/_internal/website/index.html"
           test -x "release-deb/$backend/_internal/learnharness/node"
           "release-deb/$backend/kitty-web" agent-launch --help >/dev/null
+          # The shell starts rika-server (server/) beside itself, which starts that backend.
+          test -x release-deb/usr/bin/rika-server
           chmod +x release-assets/*.AppImage
           appimage="$(realpath release-assets/*.AppImage)"
           (mkdir release-appimage && cd release-appimage && "$appimage" --appimage-extract >/dev/null)
@@ -136,6 +138,7 @@ jobs:
           # linuxdeploy rewrites libraries under usr/lib only; the AppImage's backend is the deb's, byte for byte.
           test ! -e release-appimage/squashfs-root/usr/bin/kitty-web
           diff -r "release-deb/$backend" "release-appimage/squashfs-root/$backend"
+          test -x release-appimage/squashfs-root/usr/bin/rika-server
       - name: Publish validated release and updater feed
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
