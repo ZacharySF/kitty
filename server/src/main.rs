@@ -13,7 +13,9 @@
 mod auth;
 mod builds;
 mod front;
+mod migrations;
 mod modules;
+mod settings;
 mod target;
 mod worker;
 
@@ -177,6 +179,10 @@ async fn main() {
     // Hidden and test-only: the build reader on stdin, for tests/test_build_reader_parity.py.
     if std::env::args().nth(1).as_deref() == Some("check-build") {
         std::process::exit(builds::check_build_command());
+    }
+    // Hidden and test-only: the migration runner on one database, for tests/test_migration_parity.py.
+    if std::env::args().nth(1).as_deref() == Some("migrate") {
+        std::process::exit(migrations::migrate_command(&std::env::args().skip(2).collect::<Vec<_>>()));
     }
     let options = match options() {
         Ok(options) => options,
