@@ -1,5 +1,9 @@
 """The per-launch UI secret (kitty.web_auth): local programs that forge every browser
-header still reach no /api route, upgrade or terminal token without it."""
+header still reach no /api route, upgrade or terminal token without it.
+
+Every HTTP-level rule runs against both servers that face the page: the Python server and
+rika-server (server/) in front of `kitty-web --worker`; the front must behave identically.
+"""
 from __future__ import annotations
 
 import http.client
@@ -12,7 +16,7 @@ import pytest
 
 from kitty import web_auth
 from kitty.web_server import ROUTE_MODULES, _announce_links, _link
-from terminal_support import make_root, site, websocket
+from terminal_support import FrontSite, front_site, make_root, site, websocket
 
 #: One path per route family: every module prefix plus the always-on core routes.
 CORE_ROUTES = (
@@ -24,8 +28,16 @@ CORE_ROUTES = (
 ROUTES = tuple(sorted({prefix for prefix, _module in ROUTE_MODULES} | set(CORE_ROUTES)))
 
 
+@pytest.fixture(params=["python", "front"])
+def running(request, tmp_path):
+    serve = site if request.param == "python" else front_site
+    with serve(make_root(tmp_path, ("workspace", "terminal"))) as server:
+        yield server
+
+
 @pytest.fixture
-def running(tmp_path):
+def python_running(tmp_path):
+    """The Python server alone: for checks that reach into its UiAuth (codes, clock)."""
     with site(make_root(tmp_path, ("workspace", "terminal"))) as server:
         yield server
 
@@ -80,7 +92,8 @@ def test_the_right_secret_works_and_the_page_itself_needs_none(running):
 
 
 def test_each_launch_has_its_own_secret(running, tmp_path):
-    with site(make_root(tmp_path / "other", ("workspace",))) as other:
+    serve = front_site if isinstance(running, FrontSite) else site
+    with serve(make_root(tmp_path / "other", ("workspace",))) as other:
         assert other.secret != running.secret and len(other.secret) == 64
         assert refused(other.request("/api/bootstrap", headers={web_auth.HEADER: running.secret}))
 
@@ -121,7 +134,8 @@ def test_websocket_upgrades_need_the_secret_as_a_subprotocol(running, session, s
         assert status == 101 and headers["sec-websocket-protocol"] == web_auth.PROTOCOL
 
 
-def test_the_bootstrap_code_is_single_use_and_short_lived(running):
+def test_the_bootstrap_code_is_single_use_and_short_lived(python_running):
+    running = python_running
     page = {web_auth.HEADER: None}
     code = running.server.ui_auth.issue_code()
     status, body = running.request(web_auth.SESSION_PATH, {"code": code}, headers=page)
@@ -161,18 +175,42 @@ def test_a_link_ticket_opens_one_exact_get_once(running):
     url = running.request(web_auth.LINK_PATH, {"path": "/api/notes/pages?notebook_id=1"})[1]["url"]
     assert url.startswith("/api/notes/pages?notebook_id=1&ticket=")
     assert refused(running.request(url.replace("notebook_id=1", "notebook_id=2"), headers=page))
-    # Short-lived.
-    url = running.request(web_auth.LINK_PATH, {"path": "/api/quick-notes"})[1]["url"]
-    clock = running.server.ui_auth._clock
-    running.server.ui_auth._clock = lambda: clock() + web_auth.LINK_TTL + 1
-    assert refused(running.request(url, headers=page))
-    running.server.ui_auth._clock = clock
     # Minting needs the secret; links reach only rika!'s own API downloads.
     assert refused(running.request(web_auth.LINK_PATH, {"path": "/api/quick-notes"}, headers=forged(running)))
     for bad in ("/", "/index.html", "/api/ingress/recent", web_auth.SESSION_PATH, web_auth.LINK_PATH,
                 "/api/quick-notes?ticket=x", "https://example.com/api/x", "/api/../x"):
         assert running.request(web_auth.LINK_PATH, {"path": bad})[0] == 400, bad
     assert running.request(web_auth.LINK_PATH, {"path": 1})[0] == 400
+
+
+def test_a_link_ticket_is_short_lived(python_running):
+    running = python_running
+    url = running.request(web_auth.LINK_PATH, {"path": "/api/quick-notes"})[1]["url"]
+    clock = running.server.ui_auth._clock
+    running.server.ui_auth._clock = lambda: clock() + web_auth.LINK_TTL + 1
+    assert refused(running.request(url, headers={web_auth.HEADER: None}))
+    running.server.ui_auth._clock = clock
+
+
+def test_the_front_announces_a_fresh_code_once_one_is_used_and_never_a_secret(tmp_path):
+    with front_site(make_root(tmp_path, ("workspace",))) as front:
+        # Its first code was traded on start; the announcement that followed is fresh.
+        announced = front.next_line()
+        assert announced.startswith("rika! next link") and front.secret not in announced
+        code = announced.strip().rsplit("=", 1)[1]
+        page = {web_auth.HEADER: None}
+        assert front.request(web_auth.SESSION_PATH, {"code": code}, headers=page) == (200, {"secret": front.secret})
+        assert refused(front.request(web_auth.SESSION_PATH, {"code": code}, headers=page))
+        assert front.secret not in front.next_line()
+
+
+def test_behind_the_front_the_worker_answers_only_the_front(tmp_path):
+    with site(make_root(tmp_path, ("workspace",))) as worker:
+        worker.server.front_secret = "f" * 64
+        assert worker.request("/api/bootstrap")[0] == 403, "the page's own secret is not enough"
+        assert worker.request("/api/ingress/recent", headers={"Origin": None})[0] == 403, "nor a paired client"
+        assert worker.request("/api/bootstrap", headers={web_auth.FRONT_HEADER: "e" * 64})[0] == 403
+        assert worker.request("/api/bootstrap", headers={web_auth.FRONT_HEADER: "f" * 64})[0] == 200
 
 
 def test_the_secret_object_never_shows_its_value():

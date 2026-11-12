@@ -13,13 +13,16 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import hmac
 import importlib
 import json
+import os
 import re
 import secrets
 import shutil
 import signal
 import sqlite3
+import sys
 import threading
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -302,7 +305,7 @@ class WebApplication:
         return result
 
     def _applyai_get(self, conn: sqlite3.Connection, path: str, query: dict[str, str]) -> dict | None:
-        from kitty.core import applications, jobs, resumes, resume_versions
+        from kitty.core import applications, resume_versions, resumes
         from kitty.core.apply.filler import choose_resume
 
         match = re.fullmatch(r"/api/jobs/([1-9][0-9]{0,17})", path)
@@ -488,6 +491,9 @@ class LocalHTTPServer(ThreadingHTTPServer):
         self.origin = f"http://{self.authority}"
         #: This launch's UI secret, bootstrap code and link tickets (kitty.web_auth).
         self.ui_auth = web_auth.UiAuth()
+        #: Behind rika-server (``kitty-web --worker``): the front's private secret, required
+        #: on every request; None when this server faces the page itself.
+        self.front_secret: str | None = None
         #: The address paired programs use (Settings → Connected apps shows it for the browser extension).
         app.origin = self.origin
 
@@ -613,8 +619,35 @@ class RequestHandler(BaseHTTPRequestHandler):
         else:
             self._json(405, {"error": "Cross-origin preflight is not supported"})
 
+    def _front(self) -> None:
+        """Behind rika-server, serve only requests that carry its private secret."""
+        expected = self.server.front_secret
+        if expected is None:
+            return
+        presented = self.headers.get_all(web_auth.FRONT_HEADER, [])
+        if (len(presented) != 1 or not presented[0].isascii()
+                or not hmac.compare_digest(presented[0].encode(), expected.encode())):
+            raise APIError(403, "This backend answers only rika!'s front")
+
+    def connection_ports(self) -> tuple[int, int]:
+        """The caller's port and this server's port on the loopback connection the caller opened.
+
+        Behind rika-server that connection ends at the front, which reports both ports in
+        headers that only it can send (``_front``); agent verification needs them (web_agents).
+        """
+        if self.server.front_secret is None:
+            return self.client_address[1], self.server.server_address[1]
+        ports = []
+        for name in (web_auth.PEER_PORT_HEADER, web_auth.FRONT_PORT_HEADER):
+            values = self.headers.get_all(name, [])
+            if len(values) != 1:
+                raise APIError(400, f"A single {name} is required")
+            ports.append(_integer(values[0], name, 1, 65535))
+        return ports[0], ports[1]
+
     def _dispatch(self, mutation: bool) -> None:
         try:
+            self._front()
             if web_clients.is_ingress(self.path):
                 web_clients.ingress_request(self)
                 return
@@ -804,7 +837,8 @@ def _announce_links(server: LocalHTTPServer, code_link: str, stop: threading.Eve
         print(f"rika! next link (one browser tab each, works once within {int(web_auth.CODE_TTL // 60)} minutes): {code_link}", flush=True)
 
 
-def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = False) -> None:
+def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = False,
+           front_secret: str | None = None, public_origin: str | None = None) -> None:
     # A build file saved with an error starts the server on the last good build (Q9).
     with open_workspace(settings, modules=startup_modules(settings)) as workspace:
         if settings.demo and workspace.config.enabled("applyai"):
@@ -820,23 +854,49 @@ def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = Fals
         app = WebApplication(settings, workspace.config, static_dir, safe=safe)
     # A plain `kill` stops kitty-web like Ctrl+C: workers drain and the endpoint file goes.
     signal.signal(signal.SIGTERM, _interrupt)
-    with LocalHTTPServer(app, port) as server:
+    # Behind rika-server the port is the system's choice: only the front knows it.
+    with LocalHTTPServer(app, 0 if front_secret else port) as server:
+        if front_secret:
+            server.front_secret = front_secret
+            app.origin = public_origin
         stop = threading.Event()
         try:
-            # Paired programs find this server through the owner-only endpoint file.
-            with endpoint.published(settings.root, server.origin):
+            # Paired programs find rika! (the front, when there is one) through the owner-only endpoint file.
+            with endpoint.published(settings.root, app.origin):
                 # A stop signal right after the announcement must still end serving cleanly.
                 try:
-                    link = _link(server)
-                    print(f"rika! {'synthetic demo ' if settings.demo else ''}website: {link}", flush=True)
-                    threading.Thread(target=_announce_links, args=(server, link, stop),
-                                     daemon=True, name="kitty-links").start()
+                    if front_secret:
+                        # The readiness line rika-server waits for; it holds this backend's UI secret.
+                        print(json.dumps({"origin": server.origin, "secret": server.ui_auth.secret}), flush=True)
+                        threading.Thread(target=_stop_when_front_leaves, daemon=True, name="kitty-front").start()
+                    else:
+                        link = _link(server)
+                        print(f"rika! {'synthetic demo ' if settings.demo else ''}website: {link}", flush=True)
+                        threading.Thread(target=_announce_links, args=(server, link, stop),
+                                         daemon=True, name="kitty-links").start()
                     server.serve_forever()
                 except KeyboardInterrupt:
                     pass
         finally:
             stop.set()
             app.close()
+
+
+def _stop_when_front_leaves() -> None:
+    """End serving once rika-server closes this worker's stdin (it quit or crashed)."""
+    for _line in sys.stdin:
+        pass
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+def _front_handshake(public_origin: str | None) -> tuple[str, str]:
+    """The front's secret (first stdin line) and its origin, validated."""
+    secret = sys.stdin.readline().strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", secret):
+        raise ValueError("rika-server must send its secret first")
+    if not public_origin or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", public_origin):
+        raise ValueError("--public-origin must be rika-server's loopback origin")
+    return secret, public_origin
 
 
 def main() -> None:
@@ -847,12 +907,18 @@ def main() -> None:
     parser.add_argument("--demo", action="store_true", help="Disposable synthetic workspace; no live discovery")
     parser.add_argument("--safe", action="store_true",
                         help="Safe mode: open every window without the build's custom CSS and theme overrides")
+    parser.add_argument("--worker", action="store_true",
+                        help="Serve behind rika-server: read its secret from stdin, print a readiness line")
+    parser.add_argument("--public-origin", help="With --worker: rika-server's origin, the address pages and paired programs use")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
     root = (args.root or find_project_root()).expanduser().resolve()
     static_dir = args.static_dir or Path(__file__).resolve().parents[2] / "web" / "dist"
     try:
+        front: dict[str, str] = {}
+        if args.worker:
+            front["front_secret"], front["public_origin"] = _front_handshake(args.public_origin)
         if args.demo:
             with TemporaryDirectory(prefix="kitty-web-demo-") as folder:
                 demo_root = Path(folder)
@@ -864,9 +930,9 @@ def main() -> None:
                 for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
                     shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
                 settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
-                _serve(settings, static_dir, args.port, safe=args.safe)
+                _serve(settings, static_dir, args.port, safe=args.safe, **front)
         else:
-            _serve(Settings.load(root=root), static_dir, args.port, safe=args.safe)
+            _serve(Settings.load(root=root), static_dir, args.port, safe=args.safe, **front)
     except (ConfigError, OSError, ValueError):
         parser.exit(1, "Unable to open the local website. Check the port, workspace configuration and public example files with the CLI.\n")
 

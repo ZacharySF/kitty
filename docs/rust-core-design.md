@@ -1,6 +1,6 @@
 # Rust core: a gradual rewrite, a minimal base and download modules
 
-Status: milestones 0 and 1 in progress (branch `feat/rust-core`).
+Status: milestone 1 built; milestone 0 in progress (branch `feat/rust-core`).
 
 ## Goal
 
@@ -106,7 +106,14 @@ selection: base only.
 1. **The seam.** `server/` crate `rika-server`: static UI, the full security
    front, and a proxy (HTTP and WebSocket) to the Python backend. Verified by
    porting the web security tests to run against it and by running the browser
-   suites through it.
+   suites through it. *Built:* a 1.5 MB release binary; `tests/test_ui_secret.py`
+   runs every rule against both servers; the seven browser suites that start a real
+   server pass through it (`KITTY_RIKA_SERVER`). Measured on one workspace: a
+   forwarded API call costs 0.6 ms more (9.6 vs 9.0 ms), and the page and its
+   scripts, now served by Rust, are faster (0.8 vs 1.9 ms and 1.4 vs 2.2 ms). The
+   worker (`kitty-web --worker`) answers only requests carrying the front's private
+   secret, and trusts the forwarded connection ports agent verification needs only
+   on those. Not yet: the desktop shell still starts the Python sidecar directly.
 2. **Base in Rust.** Port the base's routes (bootstrap, modules, build and
    settings, themes, keys, effects, Rika text chat) and the migration runner, so
    a base-only install starts without Python. Module registry with requirements

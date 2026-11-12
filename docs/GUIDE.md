@@ -560,6 +560,26 @@ at start-up and kept only in memory (never in a log, a URL or `.private/endpoint
   directly, and a program running as you can still read your workspace files or
   attach a debugger to rika!. Paired programs use their own tokens (below).
 
+### The Rust front (`rika-server`, in progress)
+
+`server/` holds `rika-server`, the Rust server that is gradually taking over from the
+Python one ([docs/rust-core-design.md](rust-core-design.md)). Today it serves the built
+website, enforces every rule above (Host, Origin, `X-Kitty-Request`, the UI secret,
+one-time codes and link tickets) and forwards every other request, including WebSocket
+upgrades and the paired-client ingress, to `kitty-web --worker` running behind it. The
+worker binds a port only the front knows, answers only requests carrying the front's
+private secret (sent on its stdin, never in a URL or the environment), and stops when
+the front does. The front's 1.5 MB binary is not in the desktop app yet.
+
+```bash
+cargo build --release --manifest-path server/Cargo.toml
+uv run server/target/release/rika-server --demo   # same link and flags as kitty-web
+```
+
+`tests/test_ui_secret.py` runs every rule against both servers; setting
+`KITTY_RIKA_SERVER=server/target/release/rika-server` makes the browser suites
+(`web/tests/kittyServer.js`) start the front instead of `kitty-web`.
+
 ### Connected apps (pairing)
 
 Outside programs, such as the planned kitty Tern plugin and the browser extension,

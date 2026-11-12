@@ -51,6 +51,12 @@ LINK_TTL = 60.0
 MAX_LINKS = 64
 #: The one message for every refusal: it says nothing about which part was wrong.
 REFUSAL = "rika! did not recognise this window; open rika! or the link kitty-web printed"
+#: Behind rika-server (``kitty-web --worker``), the front's private secret on every request it
+#: forwards, and the two ports of the loopback connection the caller opened to the front
+#: (agent verification matches them against /proc; web_server.RequestHandler.connection_ports).
+FRONT_HEADER = "X-Kitty-Front"
+PEER_PORT_HEADER = "X-Kitty-Peer-Port"
+FRONT_PORT_HEADER = "X-Kitty-Front-Port"
 
 
 class UiAuth:

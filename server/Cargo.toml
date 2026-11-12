@@ -1,0 +1,26 @@
+[package]
+name = "rika-server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "rika!'s local web front: serves the UI, enforces its security rules, answers ported routes and forwards the rest to the Python backend"
+
+[dependencies]
+# Versions match desktop/Cargo.lock so the shell can embed this crate without new builds.
+bytes = "1.12"
+form_urlencoded = "1.2"
+getrandom = "0.3"
+hex = "0.4"
+http-body-util = "0.1.5"
+hyper = { version = "1.12", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+percent-encoding = "2.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.154"
+subtle = "2.6"
+tokio = { version = "1.54", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

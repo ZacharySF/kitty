@@ -13,10 +13,14 @@ from __future__ import annotations
 import base64
 import http.client
 import json
+import os
+import queue
 import re
 import secrets
+import signal
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -427,6 +431,76 @@ class Site:
 @contextmanager
 def site(settings: Settings, server_class=LocalHTTPServer):
     running = Site(settings, server_class)
+    try:
+        yield running
+    finally:
+        running.close()
+
+
+#: The built front; CI builds it with `cargo build --release --manifest-path server/Cargo.toml`.
+RIKA_SERVER = Path(os.environ.get("KITTY_RIKA_SERVER") or Path(__file__).resolve().parents[1] / "server/target/release/rika-server")
+_ANNOUNCEMENT = re.compile(r"website: (http://127\.0\.0\.1:(\d+))/\?code=([0-9a-f]{32})")
+
+
+class FrontSite(Site):
+    """rika-server (server/) in front of `kitty-web --worker` on the same synthetic workspace.
+
+    The same interface as ``Site``: requests reach the front, which forwards what it does not
+    answer itself. The UI secret is obtained as a browser tab obtains it, by trading the
+    announced one-time code; the secret never appears in the front's output.
+    """
+
+    def __init__(self, settings: Settings):
+        import pytest
+
+        if not RIKA_SERVER.is_file():
+            pytest.skip(f"rika-server is not built ({RIKA_SERVER}); run cargo build --release in server/")
+        static = settings.root / "dist"
+        static.mkdir(exist_ok=True)
+        (static / "index.html").write_text("<!doctype html><title>Synthetic</title>")
+        with open_workspace(settings):
+            pass
+        # As the `kitty-web` console script runs it: `python -m kitty.web_server` would load the
+        # module twice (as __main__ too), with two APIError classes.
+        self.process = subprocess.Popen(
+            [str(RIKA_SERVER), "--port", "0", "--root", str(settings.root), "--static-dir", str(static),
+             "--worker-program", sys.executable, "--worker-arg", "-c",
+             "--worker-arg", "from kitty.web_server import main; main()"],
+            stdout=subprocess.PIPE, text=True, env={**os.environ, "KITTY_DB": str(settings.db_path)})
+        self.lines: queue.Queue[str] = queue.Queue()
+        threading.Thread(target=lambda: [self.lines.put(line) for line in self.process.stdout], daemon=True).start()
+        match = _ANNOUNCEMENT.search(self.next_line(timeout=90))
+        assert match, "rika-server announces its link first"
+        self.port = int(match[2])
+        self.server = type("Front", (), {"origin": match[1]})()
+        self._secret = None
+        status, body = self.request(web_auth.SESSION_PATH, {"code": match[3]}, headers={web_auth.HEADER: None})
+        assert status == 200, body
+        self._secret = body["secret"]
+
+    def next_line(self, timeout: float = 10) -> str:
+        return self.lines.get(timeout=timeout)
+
+    @property
+    def secret(self) -> str:
+        return self._secret
+
+    def request(self, path, body=None, headers=None, method=None):
+        fields = {} if self._secret is not None else {web_auth.HEADER: None}
+        return super().request(path, body, {**fields, **(headers or {})}, method)
+
+    def close(self):
+        self.process.send_signal(signal.SIGTERM)
+        try:
+            self.process.wait(timeout=40)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            raise
+
+
+@contextmanager
+def front_site(settings: Settings):
+    running = FrontSite(settings)
     try:
         yield running
     finally:

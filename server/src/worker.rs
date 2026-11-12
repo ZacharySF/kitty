@@ -1,0 +1,141 @@
+//! The Python backend behind the front (`kitty-web --worker`).
+//!
+//! The worker binds a port of the system's choice on 127.0.0.1, reads the front's private
+//! secret as the first line on stdin, and answers only requests that carry it
+//! (`web_server.RequestHandler._front`). Its readiness line, the first line on stdout, is
+//! `{"origin", "secret"}`: its own origin and UI secret, which only the front ever sees.
+//! Closing its stdin stops it, so it never outlives the front.
+
+use std::process::Stdio;
+use std::time::Duration;
+
+use serde::Deserialize;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, Command};
+
+/// How long the worker may take to open the workspace (the desktop shell allows the same).
+pub const READY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// The running worker: where to reach it and the secrets it requires.
+pub struct Worker {
+    /// `127.0.0.1:<port>`, the Host header it expects.
+    pub authority: String,
+    /// `http://127.0.0.1:<port>`, the Origin header it expects.
+    pub origin: String,
+    /// The worker's own UI secret.
+    pub secret: String,
+    /// The secret the front sends on every request it forwards.
+    pub front_secret: String,
+    child: Child,
+    /// Held open for the worker's lifetime; dropping it tells the worker to stop.
+    stdin: Option<ChildStdin>,
+}
+
+#[derive(Deserialize)]
+struct Readiness {
+    origin: String,
+    secret: String,
+}
+
+/// How to start the worker: a program and its arguments before rika!'s own flags.
+#[derive(Debug, Clone)]
+pub struct Launch {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct WorkerError(pub String);
+
+impl std::fmt::Display for WorkerError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for WorkerError {}
+
+fn loopback_port(origin: &str) -> Option<u16> {
+    let port = origin.strip_prefix("http://127.0.0.1:")?;
+    (!port.starts_with('0') && port.bytes().all(|b| b.is_ascii_digit())).then(|| port.parse().ok()).flatten()
+}
+
+impl Worker {
+    /// Start the worker for the front at `public_origin` and wait for its readiness line.
+    pub async fn start(launch: &Launch, public_origin: &str, flags: &[String]) -> Result<Self, WorkerError> {
+        let front_secret = crate::auth::token_hex(32);
+        let mut child = Command::new(&launch.program)
+            .args(&launch.args)
+            .arg("--worker")
+            .arg("--public-origin")
+            .arg(public_origin)
+            .args(flags)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|error| WorkerError(format!("could not start the Python backend ({}): {error}", launch.program)))?;
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        stdin
+            .write_all(format!("{front_secret}\n").as_bytes())
+            .await
+            .map_err(|_| WorkerError("the Python backend closed its input before starting".into()))?;
+        let mut stdout = BufReader::new(child.stdout.take().expect("stdout is piped"));
+        let mut line = String::new();
+        let read = tokio::time::timeout(READY_TIMEOUT, stdout.read_line(&mut line))
+            .await
+            .map_err(|_| WorkerError("the Python backend did not become ready in time".into()))?
+            .map_err(|error| WorkerError(format!("reading the Python backend's readiness line: {error}")))?;
+        if read == 0 {
+            return Err(WorkerError("the Python backend exited before becoming ready".into()));
+        }
+        let ready: Readiness = serde_json::from_str(line.trim())
+            .map_err(|_| WorkerError("the Python backend's readiness line is malformed".into()))?;
+        let port = loopback_port(&ready.origin)
+            .ok_or_else(|| WorkerError("the Python backend must listen on 127.0.0.1".into()))?;
+        if ready.secret.len() != 64 || !ready.secret.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(WorkerError("the Python backend's secret is malformed".into()));
+        }
+        // Anything the worker prints later is not for the page; keep the pipe from filling.
+        tokio::spawn(async move {
+            let mut sink = Vec::new();
+            let _ = stdout.read_to_end(&mut sink).await;
+        });
+        Ok(Self {
+            authority: format!("127.0.0.1:{port}"),
+            origin: ready.origin,
+            secret: ready.secret,
+            front_secret,
+            child,
+            stdin: Some(stdin),
+        })
+    }
+
+    /// Wait until the worker exits by itself (it crashed or failed).
+    pub async fn exited(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.child.wait().await
+    }
+
+    /// Ask the worker to stop (close its stdin) and wait up to `grace` for it to drain.
+    pub async fn stop(mut self, grace: Duration) {
+        drop(self.stdin.take());
+        if tokio::time::timeout(grace, self.child.wait()).await.is_err() {
+            let _ = self.child.kill().await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_plain_loopback_origin_is_accepted() {
+        assert_eq!(loopback_port("http://127.0.0.1:8765"), Some(8765));
+        for origin in ["http://localhost:8765", "http://127.0.0.1", "http://127.0.0.1:08765",
+                       "http://127.0.0.1:99999", "https://127.0.0.1:1", "http://127.0.0.1:1/"] {
+            assert_eq!(loopback_port(origin), None, "{origin}");
+        }
+    }
+}

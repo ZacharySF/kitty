@@ -107,9 +107,9 @@ def ingress(handler, path: str, query: dict) -> None:
                     if set(body) != {"nonce", "pid", "report"}:
                         raise _error(400, "Expected {\"nonce\", \"pid\", \"report\"}")
                     # No mutation lock: the tab's start (which holds it) waits for this exchange.
+                    peer_port, server_port = handler.connection_ports()
                     result = app.agent_launches.exchange(conn, body["nonce"], pid=body["pid"], report=body["report"],
-                                                         peer_port=handler.client_address[1],
-                                                         server_port=handler.server.server_address[1])
+                                                         peer_port=peer_port, server_port=server_port)
         except agent_sessions.LaunchError as exc:
             raise _error(exc.status, str(exc)) from None
         handler._json(200, result)
