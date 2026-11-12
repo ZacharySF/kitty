@@ -19,6 +19,10 @@ fi
 # is explicit and temporary so the application dependency set stays unchanged.
 npm --prefix web ci
 npm --prefix web run build
+# Module packs (docs/rust-core-design.md, milestone 3): the Brain's web code leaves the website
+# the installers carry and becomes an archive plus the index the release signs and publishes.
+rm -rf desktop/.build/packs
+uv run --locked python scripts/build-packs.py --dist web/dist --out desktop/.build/packs
 # No source checkout, Git, npm or system Node is required by installed Study.
 uv run --locked python desktop/package_learnharness.py
 uv run --locked --with pyinstaller==6.16.0 python desktop/package_backend.py

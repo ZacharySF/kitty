@@ -59,6 +59,14 @@ jobs:
         run: |
           uv sync --locked --group dev
           bash scripts/build-desktop.sh --prepare-only
+      - name: Sign the module pack index
+        # scripts/build-packs.py (run by build-desktop.sh) moved the Brain's web code out of the
+        # website into desktop/.build/packs; its index is signed with the updater key, which the
+        # app embeds and rika-server verifies it against (server/src/packs.rs).
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: web/node_modules/.bin/tauri signer sign desktop/.build/packs/packs.json
       - name: Check frontend and isolated application runtime
         run: |
           npm --prefix web run check
@@ -82,7 +90,7 @@ jobs:
           projectPath: desktop
           tauriScript: ${{ github.workspace }}/web/node_modules/.bin/tauri
           args: --bundles appimage,deb -- --locked
-      - name: Upload installers to the draft public release
+      - name: Upload installers and module packs to the draft public release
         # tauri-action reported large uploads as successful while none reached the release
         # (v0.3.31); scripts/publish-desktop-release.py uploads with gh and checks every asset.
         env:
@@ -98,17 +106,18 @@ jobs:
           NOTES
           uv run --no-project python scripts/publish-desktop-release.py --tag "$RELEASE_TAG" \
             --notes release-notes.md --title "rika! $RELEASE_TAG (Linux x86_64)"
-      - name: Validate actual uploaded installers and updater metadata
+      - name: Validate actual uploaded installers, module packs and updater metadata
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           mkdir release-assets
-          gh release download "$RELEASE_TAG" --repo ZacharySF/kitty-releases --dir release-assets
+          gh release download "$RELEASE_TAG" --repo ZacharySF/rika --dir release-assets
           # Draft releases are not addressable by tag; select from the authenticated list.
-          gh api repos/ZacharySF/kitty-releases/releases \
+          gh api repos/ZacharySF/rika/releases \
             --jq "map(select(.tag_name == \"$RELEASE_TAG\"))[0]" > release-assets-info.json
-          uv run --no-project python scripts/validate-desktop-release.py \
+          # The project environment: the pack index's signature is checked with cryptography.
+          uv run --locked python scripts/validate-desktop-release.py \
             --tag "$RELEASE_TAG" --assets release-assets --release release-assets-info.json
           test "$(dpkg-deb --field release-assets/*.deb Version)" = "${RELEASE_TAG#v}"
           test "$(dpkg-deb --field release-assets/*.deb Architecture)" = amd64
@@ -126,6 +135,8 @@ jobs:
           test -x "release-deb/$backend/kitty-web"
           test ! -e release-deb/usr/bin/kitty-web
           test -f "release-deb/$backend/_internal/website/index.html"
+          # The Brain is a pack: the base website lists its files (for rika-server) but carries none.
+          uv run --no-project python -c 'import json, pathlib, sys; site = pathlib.Path(sys.argv[1]); files = [name for pack in json.loads((site / "pack-files.json").read_text()).values() for name in pack]; assert files and not any((site / name).exists() for name in files)' "release-deb/$backend/_internal/website"
           test -x "release-deb/$backend/_internal/learnharness/node"
           "release-deb/$backend/kitty-web" agent-launch --help >/dev/null
           # The shell starts rika-server (server/) beside itself, which starts that backend.
@@ -143,4 +154,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: gh release edit "$RELEASE_TAG" --repo ZacharySF/kitty-releases --draft=false --latest
+        run: gh release edit "$RELEASE_TAG" --repo ZacharySF/rika --draft=false --latest

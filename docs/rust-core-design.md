@@ -1,7 +1,8 @@
 # Rust core: a gradual rewrite, a minimal base and download modules
 
 Status: milestones 0 and 1 built; milestone 2 under way: `/api/modules`, `/api/bootstrap` and
-the migration runner are Rust (branch `feat/rust-core`).
+the migration runner are Rust; milestone 3 built for its first pack, the Brain (branch
+`feat/rust-core`).
 
 ## Goal
 
@@ -86,7 +87,8 @@ shared by two modules downloads once. Activation stays at start-up.
 | `flashcards` | FSRS flashcards, Anki import | – |
 | `math` | Topics, lessons, sprints, answer checking | sympy worker (until replaced) |
 | `learnharness` | LearnHarness | LearnHarness app (275 MB) |
-| `opportunities`, `goals`, `brain` | Opportunities, goals, Brain/atlas home | – |
+| `opportunities`, `goals` | Opportunities, goals | – |
+| `brain` | Brain/atlas home, the 3D graph look | its views and the 3D engine (1.6 MB of web code); **built**, the first pack |
 | `mail` | Rika's Gmail drafts | – |
 | `voice` | Rika voice input and speech | speech engine and models |
 | `devices` | Pairing and sync | – |
@@ -231,6 +233,73 @@ selection: base only.
 3. **Packs.** Signed pack builds and index in the release pipeline; download,
    verify and atomic install in the shell; Settings → Modules with size and
    progress.
+
+   *Built:* the module registry is one file, `src/kitty/modules.json` (ids, labels, the packs
+   each module needs), read by `kitty.modules` and compiled into rika-server;
+   `tests/test_modules.py` fails if the build schema, `api.ts` or `buildCore.ts` drift from it.
+   A new module `brain` (the atlas home, 3D and 2D, and the 3D graph look) needs pack `brain`
+   and is off by default: `DEFAULT_MODULES` (a workspace without a selection) is every module
+   needing no download; `kitty-web --demo` turns every module on. `/api/brain` is now the
+   brain module's route. Without the module, or with its files missing, the home's stage is
+   one "Brain isn't installed · Download" widget leading to Settings → Modules, and the
+   home-look and 3D-look switches are hidden (2D only); every other view is unchanged.
+
+   Pack format: `web/vite.config.ts` marks every chunk holding a module of a pack's patterns
+   (for the Brain: `src/lib/brain/`, `three`, `3d-force-graph`) and the chunks only those reach,
+   fails the build if the base imports one statically, and writes `dist/pack-files.json`.
+   `scripts/build-packs.py` (run by `scripts/build-desktop.sh` after the web build) writes
+   `rika-pack-<id>-<version>.tar.gz` (a `pack.json` plus `web/<files>`, reproducible), removes
+   those files from the website the installers carry, and writes the index `packs.json`
+   (`format`, `version`, per pack `file`, `size`, `sha256`, `installed_size`). The release
+   workflow signs the index with the updater key (`tauri signer sign`, the installers' setup);
+   `scripts/publish-desktop-release.py` uploads archives, index and signature to the release
+   and checks each upload's size; `scripts/validate-desktop-release.py` verifies the uploaded
+   index against `tauri.conf.json`'s updater key and each archive's size and SHA-256, and the
+   workflow checks the `.deb`'s website carries none of the pack's files. The releases
+   repository is now named `ZacharySF/rika` (GitHub redirects `kitty-releases`); every
+   reference moved.
+
+   rika-server (`server/src/packs.rs`): `GET /api/packs` lists each pack (built-in, installed,
+   downloading with progress, outdated, available, unavailable, with sizes and the last error)
+   from its own version's index,
+   `https://github.com/ZacharySF/rika/releases/download/v<version>/packs.json`, fetched over
+   HTTPS (reqwest with rustls and ring, the updater's stack), verified with `minisign-verify`
+   against the key and version compiled in from `desktop/tauri.conf.json` (its trusted comment
+   must name `packs.json`), cached 10 min in memory and, verified again on read, on disk for
+   offline listing. `POST /api/packs/install {id}` streams the archive into a `.tmp-` folder,
+   refuses it unless size and SHA-256 match the signed index, unpacks it (regular files and
+   folders only, no path leaving the pack, exact unpacked size, a matching `pack.json`), moves it
+   beside the others and makes it installed by one atomic write of `installed.json` under a
+   `flock`; the old version goes only after that. Anything that fails leaves the previous state,
+   and a start sweeps unreferenced folders and day-old downloads. `POST /api/packs/uninstall
+   {id}` is refused while a module needing it is selected. A pack counts only for the exact app
+   version (its chunks import the base's hashed chunks). The static route serves a missing
+   website file from an installed pack. `POST /api/modules` refuses (409) to turn on a module
+   whose pack is not ready; the CLI's `kitty modules enable` does not check (the home then shows
+   the card). Packs live under `$XDG_DATA_HOME/kitty/packs/`. `KITTY_PACKS_URL` and
+   `KITTY_PACKS_KEY` are test-only overrides; the test harnesses point the index at a closed
+   loopback port so no test reaches GitHub.
+
+   Tests: `tests/test_packs.py` (22, through the front: signed install, progress, bad
+   signature, signature of another file, tampered index, other version, missing signature,
+   bad hash, truncated, oversized, escaping path, wrong manifest, failed update keeps the old
+   install, sweep, uninstall gate, built-in, offline cache, the front's secret, Origin, Host,
+   `Sec-Fetch-Site`, `X-Kitty-Request` and content-type rules), Rust unit tests for index
+   verification and unpacking, release-guard and publisher tests, and
+   `web/tests/packs.browser.test.mjs` (the built website without the Brain, Settings → Modules
+   download with progress, turning the Brain on, the Brain drawn from the pack after a restart,
+   removal).
+
+   Measured (this build): the website the installer carries went from 11,928,862 to
+   10,291,704 bytes (−1,637,158, 13.7 %: seven chunks, three.js and 3d-force-graph included);
+   the installers carry the website twice (the backend's `_internal/website` and Tauri's
+   embedded `frontendDist`), so the base install drops at least 1.6 MB, and the pack download is
+   a 0.5 MB archive. A full `.deb` was not rebuilt for this change (the installed size is
+   dominated by the backend, 1.15 GiB, until the next packs). rika-server grew from 1.91 to
+   4.68 MB (the HTTPS client, rustls with ring, gzip and tar).
+
+   Next packs: LearnHarness, the speech engine, the discovery worker and herdr, each once its
+   module owns its routes.
 4. **Modules, one by one.** Notes and blocks (loro is already Rust), calendar,
    study, flashcards (`fsrs` crate), goals, maps, opportunities, brain, search,
    devices, terminal, documents, mail, voice (whisper in Rust), math and

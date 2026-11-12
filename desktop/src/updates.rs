@@ -48,7 +48,7 @@ async fn run(app: &AppHandle) -> Result<(), String> {
             .buttons(MessageDialogButtons::OkCancelCustom("Open downloads".into(), "Cancel".into()))
             .blocking_show();
         if open {
-            open::that_detached("https://github.com/ZacharySF/kitty-releases/releases/latest")
+            open::that_detached("https://github.com/ZacharySF/rika/releases/latest")
                 .map_err(|error| format!("Could not open the downloads page: {error}"))?;
         }
         return Ok(());
@@ -110,7 +110,7 @@ async fn run(app: &AppHandle) -> Result<(), String> {
     if let Err(error) = installed {
         // Installation can fail after changing files. Never revive an old sidecar
         // against a partially replaced installation: restart its installed owner.
-        message(app, format!("The update could not be installed. Your workspace was saved and its workers stopped safely.\n\n{error}\n\nrika! will now restart to reopen the installed application. If it does not reopen, launch rika! from your desktop menu, or download the installer again from https://github.com/ZacharySF/kitty-releases/releases/latest . Your workspace has not been deleted. For .deb updates, administrator authentication and working package dependencies are required; for AppImage updates, check directory permissions and free space."), MessageDialogKind::Error);
+        message(app, format!("The update could not be installed. Your workspace was saved and its workers stopped safely.\n\n{error}\n\nrika! will now restart to reopen the installed application. If it does not reopen, launch rika! from your desktop menu, or download the installer again from https://github.com/ZacharySF/rika/releases/latest . Your workspace has not been deleted. For .deb updates, administrator authentication and working package dependencies are required; for AppImage updates, check directory permissions and free space."), MessageDialogKind::Error);
     }
     app.state::<Desktop>().lifecycle.lock().restart();
     if appimage.is_some() && std::env::var_os("KITTY_DESKTOP_LAUNCHER").is_some() {

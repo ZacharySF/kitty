@@ -7,7 +7,9 @@ description = "rika!'s local web front: serves the UI, enforces its security rul
 
 [dependencies]
 # Versions match desktop/Cargo.lock so the shell can embed this crate without new builds.
+base64 = "0.22.1"
 bytes = "1.12"
+flate2 = "1.1.10"
 form_urlencoded = "1.2"
 getrandom = "0.3"
 hex = "0.4"
@@ -15,16 +17,22 @@ http-body-util = "0.1.5"
 libc = "0.2.191"
 hyper = { version = "1.12", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
+minisign-verify = "0.2.5"
 percent-encoding = "2.3"
 # `kitty.core.sources.safe_error`'s redaction patterns (crate::bootstrap).
 regex = "1.13"
 # The workspace database (crate::migrations, crate::bootstrap); bundled, so the FTS5 and
 # trigram tokenizers the schema uses are always there.
 rusqlite = { version = "0.42", default-features = false, features = ["bundled"] }
+# The desktop updater's HTTPS stack (tauri-plugin-updater's rustls-tls): rustls with ring.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
 # Python's dict order in answers the front builds itself.
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha2 = "0.10.9"
 subtle = "2.6"
+tar = { version = "0.4.46", default-features = false }
 tokio = { version = "1.54", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 
 [profile.release]

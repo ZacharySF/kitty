@@ -3,10 +3,11 @@
 The full reference: setup, every module, the desktop app, configuration and the
 database. The [README](../README.md) is the short overview.
 
-A local workspace with three optional built-in modules: **ApplyAI** for job discovery,
+A local workspace with four optional built-in modules: **ApplyAI** for job discovery,
 application preparation and tracking, **Workspace** for notes, documents, study and
-planning, and **Terminal** for rika!'s own bundled herdr terminal session. The shell
-and settings work with any combination of modules, or none.
+planning, **Terminal** for rika!'s own bundled herdr terminal session, and **Brain**, the
+atlas home, whose code is a separate download. The shell and settings work with any
+combination of modules, or none.
 
 **Two rules the code enforces, not just documents:**
 
@@ -74,6 +75,7 @@ source .venv/bin/activate    # then just `kitty ...`
 | ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports |
 | Workspace (`workspace`) | Notes, documents/PDFs, canvas, mind maps, backlinks, flashcards, study, calendar, tasks and projects/opportunities |
 | Terminal (`terminal`) | rika!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window; your installed [Stencil Tern](https://stencil.so/tern), if any, opened on a session of rika!'s own |
+| Brain (`brain`) | The atlas home: your workspace as a 3D brain or a 2D map, and the 3D look of section and schema graphs. A download (its pack), off until installed |
 | Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
@@ -97,11 +99,32 @@ start. Their data, attachments and configuration are retained for re-enabling.
 ApplyAI reminders work without Workspace; career calendar contributions and
 cross-module results appear only while both modules are enabled.
 
-Existing workspaces with no module selection retain every module; a pre-build
+Existing workspaces with no module selection retain every module that needs no download; a pre-build
 `config/modules.yaml` is moved into `config/build.json` on the first open. Fresh CLI and
 desktop workspaces start core-only. The database still uses the existing global
 migrations; disabling does not drop tables or run down-migrations. These are
 built-in modules, not installable third-party extensions.
+
+### Module packs
+
+A module whose code is large ships as a **pack**, downloaded when you ask for it rather
+than carried by every install. Today that is the Brain (its views and the three.js 3D
+engine). Settings → Modules shows each pack's size and state on its module's row:
+**Download** fetches it with a progress bar, **Installed** shows its size with
+**Remove**, and **Included** means this build carries it already (a source checkout's
+website). A module that needs a pack can be turned on only once the pack is installed,
+and a pack can be removed only after its module is turned off and saved.
+
+Packs are published with each desktop release on GitHub (`ZacharySF/rika`): one archive
+per pack plus an index, `packs.json`, signed with the same key as the app's updates.
+rika! downloads only the index of its own version, checks the signature against the key
+built into the app, then the archive's size and SHA-256 against that index, and installs
+it in one atomic step under `$XDG_DATA_HOME/kitty/packs/` (`~/.local/share/kitty/packs/`);
+a download that fails or does not match changes nothing. After an app update the old
+pack shows **Download** again: a pack is tied to the build it came with. Without the
+Brain the home shows a "Brain isn't installed" card leading to the download; every other
+view works as before. `kitty modules enable brain` writes the selection without
+checking for the pack; the home then shows the same card until it is downloaded.
 
 ### Builds
 
@@ -1791,7 +1814,7 @@ Demo restrictions intentionally prevent testing live employer, Gmail or paid cal
 
 ### Download, install, and launch
 
-Open the **[latest desktop release](https://github.com/ZacharySF/kitty-releases/releases/latest)**.
+Open the **[latest desktop release](https://github.com/ZacharySF/rika/releases/latest)**.
 Downloads are published in a separate public, releases-only repository; application
 source is not included. The supported downloadable platform is **Linux x86_64**,
 built on Ubuntu 22.04 (glibc 2.35); older distributions, ARM, Windows and macOS
@@ -1974,7 +1997,7 @@ first, then push the matching tag, or dispatch the workflow on that commit.
 Configure repository secrets `TAURI_SIGNING_PRIVATE_KEY`,
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (empty when the key is unencrypted), and
 `RELEASE_TOKEN`. The latter must grant release/contents write access **only** to
-`ZacharySF/kitty-releases`; the source workflow itself has read-only contents
+`ZacharySF/rika`; the source workflow itself has read-only contents
 permissions. Keep a secure backup of the signing key: replacing it breaks trust
 for already-installed applications. Never commit the private key or password.
 
@@ -1994,7 +2017,7 @@ by the workflow. Bundles do include LearnHarness's public corresponding source a
 licenses; GitHub's automatic source archives cover only the releases repository.
 
 The signed updater feed is
-[`latest.json`](https://github.com/ZacharySF/kitty-releases/releases/latest/download/latest.json).
+[`latest.json`](https://github.com/ZacharySF/rika/releases/latest/download/latest.json).
 Metadata generation is owned by the official action, not a separate custom feed
 generator; the executable guard is covered by `tests/test_release_packaging.py`.
 For local verification of release/install tooling:

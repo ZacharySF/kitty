@@ -43,7 +43,7 @@ from kitty.core.workspace import open_workspace
 from kitty.db import connect, migrate
 from kitty.db.connection import transaction
 from kitty.models import Job, Resume
-from kitty.modules import ModuleDisabledError, modules_state
+from kitty.modules import BUILD_FILE, MODULE_IDS, ModuleDisabledError, modules_state
 from kitty.settings import Settings, find_project_root
 from kitty.web_tasks import TaskRunner
 
@@ -126,7 +126,7 @@ def _pdf_available(settings: Settings, resume: Resume) -> bool:
 
 
 #: API route prefix -> owning module; the longest matching prefix wins. Anything not
-#: listed (tasks, ai status/settings/models, atlas home, brain, bootstrap, modules, reload)
+#: listed (tasks, ai status/settings/models, atlas home, bootstrap, modules, reload)
 #: belongs to the always-on core.
 ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "applyai") for prefix in (
@@ -140,6 +140,7 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
         "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness",
         "/api/blocks", "/api/tags", "/api/mirror", "/api/math")),
     ("/api/terminal", "terminal"),
+    ("/api/brain", "brain"),
 ), key=lambda item: -len(item[0])))
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
 #: The live channel starts first and the build second: other extensions read both.
@@ -151,7 +152,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
     ("workspace", "web_math"),
     (None, "web_ai"),
-    ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
+    ("workspace", "web_schema"), (None, "web_atlas"), ("brain", "web_brain"), ("workspace", "web_backlinks"),
     ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
     ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_agents"),
     (None, "web_keys"),
@@ -930,6 +931,9 @@ def main() -> None:
                 example_dir = Path(__file__).resolve().parents[2] / "config"
             for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
                 shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
+            # The demo shows every module, the Brain too: a source checkout's website carries
+            # its pack, and without it the home says how to download it.
+            (config_dir / BUILD_FILE).write_text(json.dumps({"schema": 1, "modules": list(MODULE_IDS)}), encoding="utf-8")
             settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
             _serve(settings, static_dir, safe=args.safe, front_secret=front_secret, public_origin=public_origin)
         else:

@@ -18,7 +18,7 @@ import pytest
 
 from kitty.core import jobs, today, tracks
 from kitty.core.followups import mark_applied
-from kitty.modules import MODULE_IDS, modules_state
+from kitty.modules import DEFAULT_MODULES, modules_state
 from terminal_support import RIKA_SERVER, front_site
 
 SECRET = "synthetic-secret-value-1234"
@@ -117,7 +117,7 @@ def test_bootstrap_through_the_front_matches_the_python_functions(workspace, mon
     with front_site(workspace.settings) as running:
         status, answer = running.request("/api/bootstrap")
         assert status == 200
-        expected = {"demo": False, "modules": modules_state(MODULE_IDS, workspace.settings.config_dir),
+        expected = {"demo": False, "modules": modules_state(DEFAULT_MODULES, workspace.settings.config_dir),
                     **applyai_reference(workspace.conn, workspace.config)}
         assert answer == expected
         assert list(answer) == list(expected), "the same key order"

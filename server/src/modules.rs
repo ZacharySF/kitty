@@ -25,12 +25,42 @@ use crate::builds::json;
 use crate::builds::value::{float_repr, lossy, repr_text, text, Text, Value};
 
 pub const PATH: &str = "/api/modules";
-/// `kitty.modules.MODULE_IDS`, with each module's label and description (`_INFO`).
-const MODULES: [(&str, &str, &str); 3] = [
-    ("applyai", "ApplyAI", "Job discovery, sources, companies, resumes, preparation, applications, follow-ups, mail and career reports."),
-    ("workspace", "Workspace", "Notes, documents, canvas, schema maps, backlinks, flashcards, study, calendar, tasks and opportunities."),
-    ("terminal", "Terminal", "rika!'s own herdr terminal session: workspaces, tabs, splits and agents, streamed into the window; plus your installed Stencil Tern, if any."),
-];
+/// `kitty.modules.REGISTRY`: the same file Python reads, so the two lists never drift.
+const REGISTRY: &str = include_str!("../../src/kitty/modules.json");
+
+#[derive(serde::Deserialize)]
+pub struct ModuleInfo {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    /// The packs (crate::packs) this module needs before it can be turned on.
+    pub packs: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct PackInfo {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct Registry {
+    pub modules: Vec<ModuleInfo>,
+    pub packs: Vec<PackInfo>,
+}
+
+/// `kitty.modules.MODULE_IDS` and their metadata, in canonical order.
+static PARSED: std::sync::LazyLock<Registry> =
+    std::sync::LazyLock::new(|| serde_json::from_str(REGISTRY).expect("src/kitty/modules.json is a valid registry"));
+
+pub fn registry() -> &'static Registry {
+    &PARSED
+}
+
+fn module_ids() -> impl Iterator<Item = &'static str> {
+    registry().modules.iter().map(|module| module.id.as_str())
+}
 const BUILD_FILE: &str = "build.json";
 const LEGACY_MODULES_FILE: &str = "modules.yaml";
 /// `kitty.config.CONFIG_FILES`: every careers file has a public template, provisioned when
@@ -179,7 +209,8 @@ impl Workspace {
             if self.legacy_present() {
                 return Err(Ok(config_problem(&self.config_dir.join(LEGACY_MODULES_FILE), None, "", LEGACY_LATE, LEGACY_HINT)));
             }
-            return Ok(MODULES.iter().map(|(id, _, _)| (*id).to_owned()).collect());
+            // `modules.DEFAULT_MODULES`: every module that needs no download.
+            return Ok(registry().modules.iter().filter(|m| m.packs.is_empty()).map(|m| m.id.clone()).collect());
         };
         let checked = document::check(&source).map_err(|_| Err(()))?;
         let Some(build) = checked.build.as_ref() else {
@@ -195,12 +226,17 @@ impl Workspace {
         }
     }
 
+    /// What the next start selects: the build's modules, or the active ones while it is unreadable.
+    pub fn configured(&self) -> Vec<String> {
+        self.load().unwrap_or_else(|_| self.active.clone())
+    }
+
     /// `modules.modules_state`.
     pub fn state(&self) -> Result<Json, Failure> {
         let mut state = Map::new();
         state.insert("enabled".into(), json!(self.active));
-        state.insert("available".into(), Json::Array(MODULES.iter().map(|(id, label, description)| {
-            json!({ "id": id, "label": label, "description": description })
+        state.insert("available".into(), Json::Array(registry().modules.iter().map(|m| {
+            json!({ "id": m.id, "label": m.label, "description": m.description, "packs": m.packs })
         }).collect()));
         let configured = match self.load() {
             Ok(configured) => configured,
@@ -216,8 +252,9 @@ impl Workspace {
         Ok(Json::Object(state))
     }
 
-    /// `WebApplication.set_modules` → `bootstrap.configure_modules`.
-    pub fn configure(&self, body: &[u8]) -> Result<Json, Failure> {
+    /// `WebApplication.set_modules` → `bootstrap.configure_modules`. A module turned on here
+    /// needs its packs ready first (`ready`, crate::packs); one already selected keeps its place.
+    pub fn configure(&self, body: &[u8], ready: impl Fn(&str) -> bool) -> Result<Json, Failure> {
         let expected = || fail(400, "Expected {\"enabled\": [module ids]}");
         // The front already refused repeated keys and non-finite numbers; reading the body
         // again as Python does keeps every value (big integers too) as Python's repr shows it.
@@ -229,6 +266,13 @@ impl Workspace {
             _ => return Err(expected()),
         };
         let selection = normalize(enabled).map_err(|message| fail(400, message))?;
+        let before = self.configured();
+        for module in registry().modules.iter().filter(|m| selection.contains(&m.id) && !before.contains(&m.id)) {
+            if let Some(pack) = module.packs.iter().find(|pack| !ready(pack)) {
+                let label = registry().packs.iter().find(|p| &p.id == pack).map_or(pack.as_str(), |p| p.label.as_str());
+                return Err(fail(409, format!("{} needs its download first: download {label} in Settings > Modules, then turn it on", module.label)));
+            }
+        }
         fs::create_dir_all(&self.config_dir).map_err(|_| internal())?;
         if selection.iter().any(|id| id == "applyai") {
             self.copy_templates().map_err(|_| internal())?;
@@ -361,9 +405,9 @@ impl Workspace {
 fn normalize(selection: &[Value]) -> Result<Vec<String>, String> {
     let mut chosen: Vec<&str> = Vec::new();
     for item in selection {
-        let known = item.as_str().map(|s| lossy(s)).and_then(|s| MODULES.iter().map(|(id, _, _)| *id).find(|id| *id == s));
+        let known = item.as_str().map(|s| lossy(s)).and_then(|s| module_ids().find(|id| *id == s));
         let Some(id) = known else {
-            let ids = MODULES.iter().map(|(id, _, _)| format!("'{id}'")).collect::<Vec<_>>().join(", ");
+            let ids = module_ids().map(|id| format!("'{id}'")).collect::<Vec<_>>().join(", ");
             return Err(format!("unknown module {}; use [{ids}]", lossy(&repr_text(item))));
         };
         if chosen.contains(&id) {
@@ -371,7 +415,7 @@ fn normalize(selection: &[Value]) -> Result<Vec<String>, String> {
         }
         chosen.push(id);
     }
-    Ok(MODULES.iter().map(|(id, _, _)| *id).filter(|id| chosen.contains(id)).map(str::to_owned).collect())
+    Ok(module_ids().filter(|id| chosen.contains(id)).map(str::to_owned).collect())
 }
 
 /// `json.dumps(value, indent=2, ensure_ascii=False)`.
@@ -462,8 +506,8 @@ mod tests {
             _ => unreachable!(),
         };
         assert_eq!(normalize(&items("[\"terminal\", \"applyai\"]")), Ok(vec!["applyai".to_owned(), "terminal".to_owned()]));
-        assert_eq!(normalize(&items("[1]")).unwrap_err(), "unknown module 1; use ['applyai', 'workspace', 'terminal']");
-        assert_eq!(normalize(&items("[true]")).unwrap_err(), "unknown module True; use ['applyai', 'workspace', 'terminal']");
+        assert_eq!(normalize(&items("[1]")).unwrap_err(), "unknown module 1; use ['applyai', 'workspace', 'terminal', 'brain']");
+        assert_eq!(normalize(&items("[true]")).unwrap_err(), "unknown module True; use ['applyai', 'workspace', 'terminal', 'brain']");
         assert_eq!(normalize(&items("[\"applyai\", \"applyai\"]")).unwrap_err(), "duplicate module 'applyai'");
     }
 }

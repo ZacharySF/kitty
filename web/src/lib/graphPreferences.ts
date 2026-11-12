@@ -4,6 +4,7 @@
 import { ATLAS_NODES_EVENT } from "./atlasNodes";
 import { buildStore, onBuildChange, setPreferences } from "./build.svelte";
 import type { GraphLayout, GraphLook, GraphPhysics } from "./graph3d";
+import { activeModules } from "./modules.svelte";
 import type { View } from "./workspace";
 
 export const GRAPH_SETTINGS_EVENT = "kitty:graph-settings";
@@ -19,8 +20,9 @@ onBuildChange((next, previous) => {
     window.dispatchEvent(new CustomEvent(ATLAS_NODES_EVENT));
 });
 
+/** The 3D look is the Brain module's (its pack carries the 3D engine); without it, 2D. */
 export function graphLook(): GraphLook {
-  return buildStore.build.ui.graph.look;
+  return activeModules.enabled.includes("brain") ? buildStore.build.ui.graph.look : "2d";
 }
 export function setGraphLook(look: GraphLook): Promise<boolean> {
   return setPreferences({ ui: { graph: { look } } });

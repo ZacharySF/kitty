@@ -450,7 +450,7 @@ class FrontSite(Site):
     announced one-time code; the secret never appears in the front's output.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, env: dict[str, str] | None = None):
         import pytest
 
         if not RIKA_SERVER.is_file():
@@ -459,13 +459,17 @@ class FrontSite(Site):
         static.mkdir(exist_ok=True)
         (static / "index.html").write_text("<!doctype html><title>Synthetic</title>")
         # The front migrates the database itself (server/src/startup.rs); the worker only opens it.
+        # Packs (server/src/packs.rs) live under the test's own data folder, and the download
+        # list is a closed loopback port unless a test serves one: no test reaches GitHub.
+        isolated = {"KITTY_DB": str(settings.db_path), "XDG_DATA_HOME": str(settings.root / "xdg-data"),
+                    "KITTY_PACKS_URL": "http://127.0.0.1:9/"}
         # As the `kitty-web` console script runs it: `python -m kitty.web_server` would load the
         # module twice (as __main__ too), with two APIError classes.
         self.process = subprocess.Popen(
             [str(RIKA_SERVER), "--port", "0", "--root", str(settings.root), "--static-dir", str(static),
              "--worker-program", sys.executable, "--worker-arg", "-c",
              "--worker-arg", "from kitty.web_server import main; main()"],
-            stdout=subprocess.PIPE, text=True, env={**os.environ, "KITTY_DB": str(settings.db_path)})
+            stdout=subprocess.PIPE, text=True, env={**os.environ, **isolated, **(env or {})})
         self.lines: queue.Queue[str] = queue.Queue()
         threading.Thread(target=lambda: [self.lines.put(line) for line in self.process.stdout], daemon=True).start()
         match = _ANNOUNCEMENT.search(self.next_line(timeout=90))
@@ -498,8 +502,8 @@ class FrontSite(Site):
 
 
 @contextmanager
-def front_site(settings: Settings):
-    running = FrontSite(settings)
+def front_site(settings: Settings, env: dict[str, str] | None = None):
+    running = FrontSite(settings, env)
     try:
         yield running
     finally:

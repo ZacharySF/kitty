@@ -27,6 +27,7 @@ use tokio::net::TcpStream;
 
 use crate::auth::{self, UiAuth};
 use crate::modules::{self, Workspace};
+use crate::packs::{self, Packs};
 use crate::target::{parse_target, Invalid, Target};
 
 pub type Body = BoxBody<Bytes, hyper::Error>;
@@ -65,6 +66,8 @@ pub struct Front {
     pub auth: UiAuth,
     /// The built website (`web/dist`), canonical.
     pub static_dir: PathBuf,
+    /// Module packs (crate::packs): listed, installed and served from the user's data folder.
+    pub packs: Arc<Packs>,
     pub backend: Backend,
     /// The workspace the worker opened: the routes answered here read and write its files.
     pub workspace: Workspace,
@@ -251,7 +254,11 @@ impl Front {
         if !is_file && (path == "/" || Path::new(path).extension().is_none()) {
             target = tokio::fs::canonicalize(root.join("index.html")).await.ok();
         }
-        let target = target.filter(|found| inside(found)).ok_or_else(|| refuse(404, "Website not built; run npm run build in web/"))?;
+        // A file the website lacks may come from an installed pack (its web chunks).
+        let target = match target.filter(|found| inside(found)) {
+            Some(found) => found,
+            None => self.packs.web_file(path).ok_or_else(|| refuse(404, "Website not built; run npm run build in web/"))?,
+        };
         let extension = target.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_ascii_lowercase();
         let kind = STATIC_TYPES.iter().find(|(ext, _)| *ext == extension).map(|(_, kind)| *kind).ok_or_else(|| refuse(404, "Not found"))?;
         let data = tokio::fs::read(&target).await.map_err(|_| refuse(404, "Website not built; run npm run build in web/"))?;
@@ -399,11 +406,31 @@ impl Front {
                 let length = content_length(request.headers())?;
                 let raw = read_body(request.into_body(), length).await?;
                 json_object(&raw)?;
-                tokio::task::block_in_place(|| self.workspace.configure(&raw))?
+                tokio::task::block_in_place(|| self.workspace.configure(&raw, |pack| self.packs.ready(pack)))?
             } else {
                 tokio::task::block_in_place(|| self.workspace.state())?
             };
             return Ok(send_json(StatusCode::OK, &state, method == Method::HEAD));
+        }
+        if (target.path == packs::PATH || target.path.starts_with("/api/packs/")) && !upgrade {
+            if !target.query.is_empty() {
+                return Err(refuse(400, "This route does not accept query parameters"));
+            }
+            let listing = match (mutation, target.path.as_str()) {
+                (false, packs::PATH) => self.packs.listing().await,
+                (true, packs::INSTALL_PATH | packs::UNINSTALL_PATH) => {
+                    let length = content_length(request.headers())?;
+                    let body = json_object(&read_body(request.into_body(), length).await?)?;
+                    if target.path == packs::INSTALL_PATH {
+                        self.packs.install(&body).await?
+                    } else {
+                        let configured = tokio::task::block_in_place(|| self.workspace.configured());
+                        self.packs.uninstall(&body, &configured).await?
+                    }
+                }
+                _ => return Err(refuse(404, "Not found")),
+            };
+            return Ok(send_json(StatusCode::OK, &listing, method == Method::HEAD));
         }
         if mutation {
             // Native desktop commands additionally require an explicit page origin.

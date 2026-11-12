@@ -1,0 +1,35 @@
+{
+  "modules": [
+    {
+      "id": "applyai",
+      "label": "ApplyAI",
+      "description": "Job discovery, sources, companies, resumes, preparation, applications, follow-ups, mail and career reports.",
+      "packs": []
+    },
+    {
+      "id": "workspace",
+      "label": "Workspace",
+      "description": "Notes, documents, canvas, schema maps, backlinks, flashcards, study, calendar, tasks and opportunities.",
+      "packs": []
+    },
+    {
+      "id": "terminal",
+      "label": "Terminal",
+      "description": "rika!'s own herdr terminal session: workspaces, tabs, splits and agents, streamed into the window; plus your installed Stencil Tern, if any.",
+      "packs": []
+    },
+    {
+      "id": "brain",
+      "label": "Brain",
+      "description": "The atlas home: your workspace as a 3D brain or a 2D map, and the 3D look of section and schema graphs.",
+      "packs": ["brain"]
+    }
+  ],
+  "packs": [
+    {
+      "id": "brain",
+      "label": "Brain",
+      "description": "The Brain's views and 3D engine (three.js, 3d-force-graph)."
+    }
+  ]
+}

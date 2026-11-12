@@ -24,7 +24,7 @@ from kitty.core.bootstrap import configure_modules
 from kitty.core.builds import store
 from kitty.core.workspace import open_workspace
 from kitty.db import connect
-from kitty.modules import MODULE_IDS, load_modules, modules_state, normalize_modules, save_modules
+from kitty.modules import DEFAULT_MODULES, MODULE_IDS, load_modules, modules_state, normalize_modules, save_modules
 from kitty.settings import Settings
 from kitty.web_server import LocalHTTPServer, WebApplication
 from terminal_support import front_site
@@ -176,7 +176,7 @@ def test_legacy_workspace_without_a_build_file_is_unchanged(tmp_path):
     assert not (settings.config_dir / "build.json").exists()
     with front(settings) as request:
         status, boot = request("/api/bootstrap")
-        assert status == 200 and boot["modules"]["enabled"] == list(MODULE_IDS)
+        assert status == 200 and boot["modules"]["enabled"] == list(DEFAULT_MODULES)
         assert boot["modules"]["restart_required"] is False
         assert "tracks" in boot and request("/api/dashboard")[0] == 200
         assert request("/api/calendar")[0] == 200

@@ -62,3 +62,36 @@ def test_a_missing_or_truncated_upload_is_an_error_not_a_success(tmp_path):
         {"name": "kitty_0.3.32_amd64.AppImage", "size": 1, "url": "https://api.example/assets/1", "browser_download_url": "https://example/app"}]}
     with pytest.raises(ValueError):
         publish.updater_manifest("0.3.32", "notes", "2026-11-03T00:00:00Z", truncated, out)
+
+
+def packs(tmp_path, version="0.3.32"):
+    """A module pack build (scripts/build-packs.py) with its signed index."""
+    from pack_support import Key, make_pack
+
+    index, _, _ = make_pack(tmp_path / "site", {"assets/a.js": b"a"}, version=version)
+    out = tmp_path / "site" / "packs-out"
+    (out / "packs.json.sig").write_bytes(Key().sign((out / "packs.json").read_bytes()))
+    return out, index
+
+
+def test_stages_every_pack_its_index_lists_with_the_signed_index(tmp_path):
+    out, index = packs(tmp_path)
+    staged = publish.stage_packs(out, "0.3.32", tmp_path / "upload")
+    assert [path.name for path in staged] == ["rika-pack-brain-0.3.32.tar.gz", "packs.json", "packs.json.sig"]
+    assert (tmp_path / "upload" / "packs.json").read_bytes() == (out / "packs.json").read_bytes()
+    release = {"assets": [{"name": path.name, "size": path.stat().st_size} for path in staged]}
+    publish.check_uploaded(release, staged)
+    release["assets"][0]["size"] -= 1
+    with pytest.raises(ValueError, match="did not upload completely"):
+        publish.check_uploaded(release, staged)
+
+
+@pytest.mark.parametrize("fault", ["unsigned", "altered", "version"])
+def test_staging_refuses_an_unsigned_altered_or_other_version_pack(tmp_path, fault):
+    out, index = packs(tmp_path)
+    if fault == "unsigned":
+        (out / "packs.json.sig").unlink()
+    elif fault == "altered":
+        (out / index["packs"][0]["file"]).write_bytes(b"other")
+    with pytest.raises(ValueError):
+        publish.stage_packs(out, "0.3.33" if fault == "version" else "0.3.32", tmp_path / "upload")
