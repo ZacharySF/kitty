@@ -106,10 +106,11 @@ async fn run(options: Options) -> Result<(), String> {
         return Err(format!("--desktop needs --root, the workspace the shell opens\n{USAGE}"));
     }
     // The workspace database is migrated here, before the worker opens it (crate::startup).
-    let database = startup::prepare(options.root.clone(), options.demo && !options.desktop, options.desktop, &options.launch).await.map_err(|message| {
-        eprintln!("rika-server: {message}");
-        UNAVAILABLE.to_owned()
-    })?;
+    // A start-up failure ends with its reason as the last line on stderr: the desktop shell
+    // shows that line to the user (desktop/src/main.rs `startup_failure`).
+    let failed = |reason: &dyn std::fmt::Display| format!("{UNAVAILABLE}\nrika-server: {reason}");
+    let database = startup::prepare(options.root.clone(), options.demo && !options.desktop, options.desktop, &options.launch)
+        .await.map_err(|message| failed(&message))?;
 
     // kitty-web takes the front's options; the desktop backend's come whole from the shell.
     let mut flags = Vec::new();
@@ -128,14 +129,10 @@ async fn run(options: Options) -> Result<(), String> {
             flags.push("--safe".into());
         }
     }
-    let mut worker = Worker::start(&options.launch, &origin, &flags).await.map_err(|error| {
-        eprintln!("rika-server: {error}");
-        UNAVAILABLE.to_owned()
-    })?;
+    let mut worker = Worker::start(&options.launch, &origin, &flags).await.map_err(|error| failed(&error))?;
     if let Err(message) = database.opened_by_worker(&worker.db_path) {
-        eprintln!("rika-server: {message}");
         worker.stop(WORKER_GRACE).await;
-        return Err(UNAVAILABLE.to_owned());
+        return Err(failed(&message));
     }
     let front = Arc::new(Front {
         authority: format!("127.0.0.1:{port}"),

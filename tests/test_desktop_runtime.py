@@ -67,6 +67,47 @@ def test_the_backend_refuses_to_serve_without_the_front(tmp_path):
     assert result.stdout == "" and not (tmp_path / "workspace").exists()
 
 
+def shown_reason(stderr: str) -> str:
+    """What the shell's start-up error dialog shows (desktop/src/main.rs `startup_failure`)."""
+    line = next((line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "")
+    return line.removeprefix("rika-server: ") or "rika-server stopped before it was ready"
+
+
+@pytest.mark.parametrize("case", ["pre-block workspace without a backend", "backend exits before readiness"])
+def test_a_front_that_cannot_start_ends_its_stderr_with_the_reason_the_shell_shows(tmp_path, case):
+    """The shell captures rika-server's stderr; before readiness, its last line is the dialog's reason."""
+    if not RIKA_SERVER.is_file():
+        pytest.skip(f"rika-server is not built ({RIKA_SERVER}); run cargo build --release in server/")
+    from test_front_migrations import MAIN_SCHEMA
+
+    from kitty.db import connect, migrate
+    from kitty.db.migrations import available_migrations
+
+    root = tmp_path / "workspace"
+    (root / "data").mkdir(parents=True)
+    if case.startswith("pre-block"):
+        files = tmp_path / "main-files"
+        files.mkdir()
+        for migration in available_migrations():
+            if migration.version in MAIN_SCHEMA:
+                shutil.copy(migration.path, files / migration.path.name)
+        conn = connect(root / "data" / "apply.db")
+        migrate(conn, files)
+        conn.execute("INSERT INTO quick_notes(body, created_at, updated_at) VALUES ('Synthetic note', 't', 't')")
+        conn.close()
+        program, expected = str(tmp_path / "no-backend"), "open the workspace once with rika! 0.3.36"
+    else:
+        program, expected = shutil.which("false"), "the Python backend exited before becoming ready"
+    environment = {key: value for key, value in os.environ.items() if key not in {"KITTY_HOME", "KITTY_DB"}}
+    # As desktop/src/main.rs `front_arguments` starts it.
+    result = subprocess.run(
+        [str(RIKA_SERVER), "--desktop", "--port", "0", "--static-dir", str(tmp_path), "--root", str(root),
+         "--worker-program", program, "--worker-arg", "--workspace", "--worker-arg", str(root)],
+        cwd=tmp_path, env=environment, stdin=subprocess.PIPE, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1 and result.stdout == "", "no readiness line"
+    assert expected in shown_reason(result.stderr)
+
+
 @pytest.fixture
 def backend(tmp_path, request):
     """The frozen entrypoint; indirect parametrization passes extra arguments (e.g. --safe)."""

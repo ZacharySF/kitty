@@ -10,7 +10,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, mpsc},
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, mpsc, Arc},
     thread,
     time::Duration,
 };
@@ -21,7 +21,31 @@ use tauri::{
     webview::{NewWindowResponse, PermissionKind, PermissionResponse},
     Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use url::Url;
+
+/// rika-server stopped before its readiness line: the reason for the user and what it wrote.
+#[derive(Debug)]
+struct StartupFailed {
+    reason: String,
+    details: String,
+}
+
+impl std::fmt::Display for StartupFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
+impl std::error::Error for StartupFailed {}
+
+/// The reason to show for a front that stopped before readiness: the last line it wrote to
+/// stderr (rika-server ends a start-up failure with `rika-server: <reason>`).
+fn startup_failure(stderr: &str) -> String {
+    stderr.lines().rev().map(str::trim).find(|line| !line.is_empty())
+        .map(|line| line.strip_prefix("rika-server: ").unwrap_or(line).to_owned())
+        .unwrap_or_else(|| "rika-server stopped before it was ready".into())
+}
 
 struct Backend(Option<Child>);
 
@@ -210,9 +234,30 @@ fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc:
     if let Some(herdr) = sidecar(directory, "kitty-herdr", staging.as_deref()) { command.env("KITTY_HERDR", herdr); }
     command.args(front_arguments(&binary, root, safe));
     let child = command
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let mut backend = Backend(Some(child));
     let output = backend.0.as_mut().unwrap().stdout.take().ok_or("Backend readiness pipe unavailable")?;
+    let errors = backend.0.as_mut().unwrap().stderr.take().ok_or("Backend error pipe unavailable")?;
+    // What the front writes to stderr before readiness is kept for a start-up failure; after
+    // readiness it is read and dropped, as /dev/null took it before.
+    let written = Arc::new(Mutex::new(Some(String::new())));
+    let (closed, errors_closed) = mpsc::channel::<()>();
+    let keep = written.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(errors).lines().map_while(Result::ok) {
+            if let Some(text) = keep.lock().as_mut() {
+                text.push_str(&line);
+                text.push('\n');
+                // Only the end matters (the reason is the last line): keep at most 64 KiB of it.
+                if text.len() > 64 * 1024 {
+                    let cut = text.len() - 32 * 1024;
+                    let cut = (cut..text.len()).find(|&at| text.is_char_boundary(at)).unwrap_or(text.len());
+                    text.drain(..cut);
+                }
+            }
+        }
+        let _ = closed.send(());
+    });
     let (send, receive) = mpsc::sync_channel(1);
     let (commands, receiver) = mpsc::channel();
     thread::spawn(move || {
@@ -239,6 +284,14 @@ fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc:
             return Err(error.into());
         }
     };
+    if line.is_empty() {
+        // The front exited before readiness: its stderr says why.
+        if let Some(mut child) = backend.0.take() { let _ = child.wait(); }
+        let _ = errors_closed.recv_timeout(Duration::from_secs(2));
+        let details = written.lock().take().unwrap_or_default();
+        return Err(Box::new(StartupFailed { reason: startup_failure(&details), details }));
+    }
+    written.lock().take();
     // The readiness line also carries the UI secret; it is never logged or written anywhere.
     let (origin, secret) = owner::readiness(&line).ok_or("Invalid backend readiness message")?;
     let origin = Url::parse(&origin)?;
@@ -247,6 +300,23 @@ fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc:
         return Err("Backend did not bind a private loopback origin".into());
     }
     Ok((backend, origin, secret, receiver))
+}
+
+/// A start-up that never reached readiness: the reason in an error dialog (the app exits when
+/// it is dismissed) and the front's whole stderr in `.private/startup-error.log` and on ours.
+fn report_startup_failure(app: &tauri::AppHandle, root: &Path, error: &(dyn std::error::Error + 'static)) {
+    let (reason, details) = match error.downcast_ref::<StartupFailed>() {
+        Some(failed) => (failed.reason.clone(), failed.details.clone()),
+        None => (error.to_string(), format!("{error}\n")),
+    };
+    let log = root.join(".private/startup-error.log");
+    let logged = fs::write(&log, &details).is_ok();
+    eprint!("{details}");
+    let mut message = format!("rika! could not start.\n\n{reason}");
+    if logged { message.push_str(&format!("\n\nThe full report is in {}.", log.display())); }
+    let handle = app.clone();
+    app.dialog().message(message).title("rika!").kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
 }
 
 fn show(app: &tauri::AppHandle) {
@@ -348,7 +418,13 @@ fn main() {
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                 .and_then(|value| value["background"].as_bool()).unwrap_or(false);
             let safe = wants_safe_mode(&std::env::args().collect::<Vec<_>>());
-            let (backend, origin, secret, commands) = start_backend(&root, safe)?;
+            let (backend, origin, secret, commands) = match start_backend(&root, safe) {
+                Ok(started) => started,
+                Err(error) => {
+                    report_startup_failure(app.handle(), &root, error.as_ref());
+                    return Ok(());
+                }
+            };
             let window_script = owner::window_script(&origin, &secret);
             let show_item = MenuItem::with_id(app, "show", "Show rika!", true, None::<&str>)?;
             let note_item = MenuItem::with_id(app, "quick-note", "New quick note", true, None::<&str>)?;
@@ -561,6 +637,13 @@ mod tests {
         };
         assert_eq!(front_arguments(backend, root, false), expected(&[]));
         assert_eq!(front_arguments(backend, root, true), expected(&["--worker-arg", "--safe"]));
+    }
+    #[test]
+    fn a_start_up_failure_shows_the_fronts_last_line() {
+        let stderr = "Traceback ...\nUnable to open the local website. Check the port.\nrika-server: open the workspace once with rika! 0.3.36\n\n";
+        assert_eq!(startup_failure(stderr), "open the workspace once with rika! 0.3.36");
+        assert_eq!(startup_failure("worker said no\n"), "worker said no");
+        assert_eq!(startup_failure(""), "rika-server stopped before it was ready");
     }
     #[test]
     fn quick_note_launch_flag_is_exact() {
