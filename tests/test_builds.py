@@ -185,6 +185,18 @@ def test_css_problems_carry_their_line_and_column():
     assert css.check_css("x" * (css.MAX_CSS + 1))[0].message.startswith("custom CSS is limited")
 
 
+@pytest.mark.parametrize("text", ["a\\41", ".a { color: \\ }", "a{b:..5}", "a{b:-.}", "a{b:.}"])
+def test_the_css_check_finishes_on_text_that_ends_mid_token(text):
+    """A shared build is untrusted text: an escape at the very end, or `..5`, once looped forever."""
+    import threading
+
+    result: list = []
+    worker = threading.Thread(target=lambda: result.append(css.check_css(text)), daemon=True)
+    worker.start()
+    worker.join(5)
+    assert result, f"check_css did not finish on {text!r}"
+
+
 # What a build holds and never holds -------------------------------------------------------
 
 def test_a_build_has_exactly_the_documented_sections():
