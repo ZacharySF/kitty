@@ -14,7 +14,9 @@
   import YearHeatmap from "./calendar/YearHeatmap.svelte";
   import MiniMonth from "./calendar/MiniMonth.svelte";
   import DayPlan from "./calendar/DayPlan.svelte";
-  import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START, type DayLoad } from "./calendar/plan";
+  import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START } from "./calendar/plan";
+  import { addDays, dateAt, dayLoad, localInput, placeTimed, shiftWall, slot, wallParts, weekStart,
+    type TimedPlacement } from "./calendar/dates";
   import EditDrawer from "./ui/EditDrawer.svelte";
   import Select from "./ui/Select.svelte";
   import CalendarQuickAdd from "./calendar/CalendarQuickAdd.svelte";
@@ -348,16 +350,6 @@
     return { destroy: () => cancelAnimationFrame(frame) };
   }
   let loadCounter = 0;
-  const dateAt = (value: string) => new Date(`${value}T12:00:00Z`);
-  function addDays(value: string, count: number) {
-    const d = dateAt(value);
-    d.setUTCDate(d.getUTCDate() + count);
-    return d.toISOString().slice(0, 10);
-  }
-  function weekStart(value: string) {
-    const d = dateAt(value);
-    return addDays(value, -((d.getUTCDay() + 6) % 7));
-  }
   let firstDay = $derived(
     view === "month"
       ? weekStart(anchor.slice(0, 8) + "01")
@@ -393,29 +385,9 @@
   }
   const today = $derived(parts(clock).date);
   const currentMinute = $derived(parts(clock).hour * 60 + parts(clock).minute);
+  /** Wall parts in the display timezone unless another zone is given. */
   function parts(value: string, zoneName = tz) {
-    const values = new Intl.DateTimeFormat("en-CA", {
-      timeZone: zoneName,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(new Date(value));
-    const get = (key: string) =>
-      values.find((p) => p.type === key)?.value || "";
-    return {
-      date: `${get("year")}-${get("month")}-${get("day")}`,
-      time: `${get("hour")}:${get("minute")}`,
-      hour: Number(get("hour")),
-      minute: Number(get("minute")),
-    };
-  }
-  function localInput(value: string, allDay: boolean, zoneName: string) {
-    if (allDay) return value;
-    const p = parts(value, zoneName);
-    return `${p.date}T${p.time}`;
+    return wallParts(value, zoneName);
   }
   async function resolveTime(value: string, zoneName = tz) {
     return (
@@ -446,9 +418,6 @@
           !(parts(e.end).date === day && parts(e.end).time === "00:00"),
     );
   }
-  /** Wall time "YYYY-MM-DDTHH:MM" moved by `minutes`. */
-  const shiftWall = (wall: string, minutes: number) =>
-    new Date(Date.parse(`${wall}:00Z`) + minutes * 60000).toISOString().slice(0, 16);
   /** Events as drawn: the one open in the drawer shows its unsaved title, calendar, place and times. */
   const shownEvents = $derived.by(() => {
     const open = editor;
@@ -496,55 +465,15 @@
         (t.due.length === 10 ? t.due : parts(t.due).date) === day,
     );
   }
-  type TimedPlacement = {
-    event: Event;
-    start: number;
-    end: number;
-    column: number;
-    columns: number;
-  };
-  function timedEvents(day: string): TimedPlacement[] {
-    const events = eventsOn(day)
-      .filter((event) => !event.all_day)
-      .map((event) => {
-        const start = parts(event.start);
-        const end = parts(event.end);
-        return {
-          event,
-          start: start.date < day ? 0 : start.hour * 60 + start.minute,
-          end: end.date > day ? 1440 : end.hour * 60 + end.minute,
-          column: 0,
-          columns: 1,
-        };
-      })
-      .sort((a, b) => a.start - b.start || b.end - a.end);
-    let group: TimedPlacement[] = [];
-    let laneEnds: number[] = [];
-    let groupEnd = 0;
-    function finishGroup() {
-      for (const placement of group) placement.columns = laneEnds.length;
-      group = [];
-      laneEnds = [];
-    }
-    for (const placement of events) {
-      if (placement.start >= groupEnd) finishGroup();
-      let column = laneEnds.findIndex((end) => end <= placement.start);
-      if (column === -1) column = laneEnds.length;
-      placement.column = column;
-      const visibleEnd = Math.min(1440, Math.max(placement.end, placement.start + 30));
-      laneEnds[column] = visibleEnd;
-      groupEnd = group.length ? Math.max(groupEnd, visibleEnd) : visibleEnd;
-      group.push(placement);
-    }
-    finishGroup();
-    return events;
+  function timedEvents(day: string): TimedPlacement<Event>[] {
+    return placeTimed(eventsOn(day).filter((event) => !event.all_day), day, tz);
   }
   const weekEvents = $derived.by(() =>
     Object.fromEntries(
       view === "week" || view === "day"
         ? days.map((day) => [day, timedEvents(day)])
         : [],
-    ) as Record<string, TimedPlacement[]>,
+    ) as Record<string, TimedPlacement<Event>[]>,
   );
   const weekTasks = $derived.by(() => {
     const slots: Record<string, Task[][]> = {};
@@ -593,29 +522,8 @@
     }
   }
   let loadVersion = $state(0);
-  /** Event counts and booked minutes per local date; timed events split across midnight, all-day ones book no time. */
-  function dayLoad(events: Event[]): DayLoad {
-    const result: DayLoad = {};
-    const add = (day: string, minutes: number, count: number) => {
-      const entry = (result[day] ??= { minutes: 0, events: 0 });
-      entry.minutes += minutes;
-      entry.events += count;
-    };
-    for (const event of events) {
-      if (event.all_day) { add(event.start, 0, 1); continue; }
-      const start = parts(event.start);
-      const end = parts(event.end);
-      const startMinute = start.hour * 60 + start.minute;
-      const endMinute = end.hour * 60 + end.minute;
-      if (start.date === end.date) { add(start.date, endMinute - startMinute, 1); continue; }
-      add(start.date, 1440 - startMinute, 1);
-      for (let day = addDays(start.date, 1); day < end.date; day = addDays(day, 1)) add(day, 1440, 0);
-      if (endMinute) add(end.date, endMinute, 0);
-    }
-    return result;
-  }
   const yearMinutes = $derived(view === "year"
-    ? Object.fromEntries(Object.entries(dayLoad(data.events)).map(([day, load]) => [day, load.minutes]))
+    ? Object.fromEntries(Object.entries(dayLoad(data.events, tz)).map(([day, load]) => [day, load.minutes]))
     : {});
   async function loadBusy(from: string, to: string) {
     const start = await resolveTime(from + "T00:00");
@@ -623,7 +531,7 @@
     const result = await api<Snapshot>(
       `/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&timezone=${encodeURIComponent(tz)}`,
     );
-    return dayLoad(result.events);
+    return dayLoad(result.events, tz);
   }
   /** Open tasks on the plan day (undated, dated that day, or timed that day), with planned start minute. */
   const planTasks = $derived(view === "plan"
@@ -930,10 +838,6 @@
     } else void openQuick(a, a === b ? undefined : shiftWall(b, 30));
     rangeStart = null;
     rangeEnd = null;
-  }
-  function slot(day: string, halfHour: number) {
-    const offset = halfHour % 48;
-    return `${addDays(day, Math.floor(halfHour / 48))}T${String(Math.floor(offset / 2)).padStart(2, "0")}:${offset % 2 ? "30" : "00"}`;
   }
   function slotKey(day: string, halfHour: number, event: KeyboardEvent) {
     const shifts: Record<string, number> = {

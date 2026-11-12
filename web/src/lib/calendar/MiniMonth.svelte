@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { addDays } from "./dates";
   import { duration, isoWeek, type DayLoad } from "./plan";
 
   /** Mini-month navigator: ISO weeks; hover a week to preview its load, click a date to jump there. */
@@ -11,11 +12,6 @@
     onpick: (day: string) => void;
   } = $props();
 
-  const addDays = (day: string, count: number) => {
-    const d = new Date(`${day}T12:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + count);
-    return d.toISOString().slice(0, 10);
-  };
   let month = $state("");
   $effect.pre(() => {
     month = selected.slice(0, 7);
