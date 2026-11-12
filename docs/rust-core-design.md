@@ -1,6 +1,6 @@
 # Rust core: a gradual rewrite, a minimal base and download modules
 
-Status: milestone 1 built; milestone 0 in progress (branch `feat/rust-core`).
+Status: milestones 0 and 1 built; milestone 2 next (branch `feat/rust-core`).
 
 ## Goal
 
@@ -102,7 +102,12 @@ selection: base only.
 
 0. **Fast start now.** Ship the Python backend as a PyInstaller onedir (unpacked
    once at install, not on every launch). Target: under 1 s to readiness, measured
-   on the built `.deb`.
+   on the built `.deb`. *Built:* the onedir took the `.deb` backend from 11.2 / 10.9 s
+   to 3.3 / 2.9 s; the rest was mDNS probing (about 1.75 s) inside
+   `WebApplication.__init__`, now on a background thread, which took the same server
+   on a fresh workspace from 2.77 to 0.93 s. The installed size grows to 1.15 GiB
+   (the bytes that used to be unpacked to `/tmp` on every launch) until milestone 3
+   moves the large payloads into packs.
 1. **The seam.** `server/` crate `rika-server`: static UI, the full security
    front, and a proxy (HTTP and WebSocket) to the Python backend. Verified by
    porting the web security tests to run against it and by running the browser

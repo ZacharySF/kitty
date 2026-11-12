@@ -132,7 +132,8 @@ class SyncService:
             if self.use_discovery:
                 self.discovery = Discovery(device_id=self.identity.device_id, name=self.identity.name, port=self.port,
                                            fingerprint=self.identity.fingerprint)
-                self.discovery.start()
+                # mDNS probing takes about 1.75 s; the window must not wait for it.
+                self._spawn(self.discovery.start, "kitty-sync-discovery")
         if self.use_scheduler:
             self._spawn(self._schedule_loop, "kitty-sync-schedule")
 
