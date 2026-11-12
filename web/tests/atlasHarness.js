@@ -32,7 +32,8 @@ window.atlasHarness = {
     host.replaceChildren();
     tabs = [];
     await setPreferences({ ui: { home: { look: "2d" }, atlas: { hidden } } });
-    setActiveModules(enabled);
+    // The atlas home is the Brain module's.
+    setActiveModules(enabled.includes("brain") ? enabled : [...enabled, "brain"]);
     for (let index = 0; index < count; index += 1) {
       const target = document.createElement("div");
       target.className = `tab tab-${index}`;

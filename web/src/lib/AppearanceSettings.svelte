@@ -5,6 +5,7 @@
   import { buildStore, setTheme } from "./build.svelte";
   import type { GraphLook } from "./graph3d";
   import { setGraphLook, setHomeLook, type HomeLook } from "./graphPreferences";
+  import { activeModules } from "./modules.svelte";
   import { THEMES, getTheme } from "./themes/catalog";
 
   /**
@@ -17,6 +18,8 @@
   const theme = $derived(getTheme(buildStore.build.theme.base).id);
   const look = $derived<GraphLook>(buildStore.build.ui.graph.look);
   const home = $derived<HomeLook>(buildStore.build.ui.home.look);
+  /** The home look and the 3D graph look belong to the Brain module (its download). */
+  const brainOn = $derived(activeModules.enabled.includes("brain"));
 
   type Choice = { [K in keyof Appearance]: Appearance[K] extends boolean ? never : K }[keyof Appearance];
   const CHOICES: { key: Choice; label: string; options: [string, string][] }[] = [
@@ -84,8 +87,10 @@
         {@render segments(choice.label, `appearance-${choice.key}`, choice.options, appearance[choice.key], (id) =>
           change({ ...appearance, [choice.key]: id } as Appearance))}
       {/each}
-      {@render segments("Home", "appearance-home", HOME_LOOKS, home, (id) => chooseHome(id as HomeLook))}
-      {@render segments("Section graph look", "appearance-look", LOOKS, look, (id) => chooseLook(id as GraphLook))}
+      {#if brainOn}
+        {@render segments("Home", "appearance-home", HOME_LOOKS, home, (id) => chooseHome(id as HomeLook))}
+        {@render segments("Section graph look", "appearance-look", LOOKS, look, (id) => chooseLook(id as GraphLook))}
+      {/if}
       <label class="check wide">
         <input type="checkbox" checked={appearance.motif} onchange={(event) => change({ ...appearance, motif: event.currentTarget.checked })} />
         Theme motif

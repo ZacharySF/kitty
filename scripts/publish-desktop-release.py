@@ -1,14 +1,17 @@
-"""Publish signed desktop bundles to the public draft release and write its updater feed.
+"""Publish signed desktop bundles and module packs to the public draft release and write its updater feed.
 
 tauri-action reported large uploads as successful while none reached the release (v0.3.31), so
 the workflow builds with tauri-action and publishes here: it stages the installers under the
-pinned asset names, uploads them with gh, re-reads the release and refuses a missing or
-truncated asset before writing latest.json against the uploaded files. The feed uses each asset's
-API URL: a draft's browser_download_url is an untagged-… path that 404s once published (v0.3.32).
+pinned asset names, and the module packs (scripts/build-packs.py) with their signed index,
+uploads them with gh, re-reads the release and refuses a missing or truncated asset before
+writing latest.json against the uploaded files. The feed uses each asset's API URL: a draft's
+browser_download_url is an untagged-… path that 404s once published (v0.3.32). rika-server
+fetches packs by the release's tag (`releases/download/v<version>/`), valid once it is published.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import subprocess
@@ -16,9 +19,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO = "ZacharySF/kitty-releases"
+REPO = "ZacharySF/rika"
 #: (installer folder and extension, updater targets it serves)
 INSTALLERS = (("appimage", "AppImage", ("linux-x86_64", "linux-x86_64-appimage")), ("deb", "deb", ("linux-x86_64-deb",)))
+PACK_INDEX = "packs.json"
 
 
 def asset_name(version: str, extension: str) -> str:
@@ -43,19 +47,48 @@ def stage(bundle: Path, version: str, out: Path) -> list[Path]:
     return staged
 
 
+def stage_packs(packs: Path, version: str, out: Path) -> list[Path]:
+    """Copies the signed pack index and every archive it lists into `out`, each checked against it."""
+    out.mkdir(parents=True, exist_ok=True)
+    index = json.loads((packs / PACK_INDEX).read_text())
+    if index.get("format") != 1 or index.get("version") != version:
+        raise ValueError(f"the pack index is not format 1 for {version}")
+    signature = packs / (PACK_INDEX + ".sig")
+    if not signature.is_file() or not signature.read_text().strip():
+        raise ValueError("missing signature for the pack index")
+    staged = []
+    for entry in index["packs"]:
+        archive = packs / entry["file"]
+        data = archive.read_bytes() if archive.is_file() else b""
+        if entry["version"] != version or len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
+            raise ValueError(f"pack {entry['id']} does not match its index")
+        shutil.copyfile(archive, out / archive.name)
+        staged.append(out / archive.name)
+    for name in (PACK_INDEX, PACK_INDEX + ".sig"):
+        shutil.copyfile(packs / name, out / name)
+        staged.append(out / name)
+    return staged
+
+
+def check_uploaded(release: dict, files: list[Path]) -> None:
+    """Every staged file is on the release at its full size."""
+    by_name = {asset["name"]: asset for asset in release["assets"]}
+    for local in files:
+        asset = by_name.get(local.name)
+        if asset is None or asset["size"] != local.stat().st_size:
+            raise ValueError(f"{local.name} did not upload completely")
+
+
 def updater_manifest(version: str, notes: str, pub_date: str, release: dict, out: Path) -> dict:
     """latest.json for the uploaded installers; any missing or truncated upload is an error."""
     by_name = {asset["name"]: asset for asset in release["assets"]}
     platforms = {}
     for _, extension, targets in INSTALLERS:
         name = asset_name(version, extension)
-        local = out / name
-        asset = by_name.get(name)
-        if asset is None or asset["size"] != local.stat().st_size:
-            raise ValueError(f"{name} did not upload completely")
+        check_uploaded(release, [out / name])
         signature = (out / (name + ".sig")).read_text()
         for target in targets:
-            platforms[target] = {"signature": signature, "url": asset["url"]}
+            platforms[target] = {"signature": signature, "url": by_name[name]["url"]}
     return {"version": version, "notes": notes, "pub_date": pub_date, "platforms": platforms}
 
 
@@ -78,20 +111,24 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--bundle", type=Path, default=Path("desktop/target/release/bundle"))
+    parser.add_argument("--packs", type=Path, default=Path("desktop/.build/packs"))
     parser.add_argument("--out", type=Path, default=Path("release-upload"))
     parser.add_argument("--notes", type=Path, required=True)
     parser.add_argument("--title", required=True)
     args = parser.parse_args()
     version = args.tag.removeprefix("v")
     staged = stage(args.bundle, version, args.out)
+    packs = stage_packs(args.packs, version, args.out)
     existing = [release for release in json.loads(gh("api", f"repos/{REPO}/releases")) if release["tag_name"] == args.tag]
     if not existing:
         gh("release", "create", args.tag, "--repo", REPO, "--draft", "--target", "main",
            "--title", args.title, "--notes-file", str(args.notes))
-    gh("release", "upload", args.tag, "--repo", REPO, "--clobber", *map(str, staged))
+    gh("release", "upload", args.tag, "--repo", REPO, "--clobber", *map(str, staged + packs))
     notes = args.notes.read_text().strip()
     pub_date = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    manifest = updater_manifest(version, notes, pub_date, release_json(args.tag), args.out)
+    release = release_json(args.tag)
+    check_uploaded(release, packs)
+    manifest = updater_manifest(version, notes, pub_date, release, args.out)
     (args.out / "latest.json").write_text(json.dumps(manifest, indent=2))
     gh("release", "upload", args.tag, "--repo", REPO, "--clobber", str(args.out / "latest.json"))
     return 0

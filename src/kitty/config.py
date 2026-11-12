@@ -894,7 +894,7 @@ class Config:
     triage: TriageFile
     apply: ApplyFile
     #: Active module snapshot for this process (see kitty.modules); never re-read mid-run.
-    modules: tuple[str, ...] = field(default_factory=lambda: _all_modules())
+    modules: tuple[str, ...] = field(default_factory=lambda: _default_modules())
 
     def enabled(self, module: str) -> bool:
         """Whether `module` is in this process's active snapshot."""
@@ -1013,10 +1013,10 @@ class Config:
         return choose(phrased)
 
 
-def _all_modules() -> tuple[str, ...]:
-    from kitty.modules import MODULE_IDS
+def _default_modules() -> tuple[str, ...]:
+    from kitty.modules import DEFAULT_MODULES
 
-    return MODULE_IDS
+    return DEFAULT_MODULES
 
 
 def _inert_config(modules: tuple[str, ...]) -> Config:

@@ -7,7 +7,7 @@ plug in as modules.
 
 ![rika! demo: the atlas home, writing a note and finding it again](docs/media/demo.gif)
 
-**[Download for Linux](https://github.com/ZacharySF/kitty-releases/releases/latest)**
+**[Download for Linux](https://github.com/ZacharySF/rika/releases/latest)**
 (signed AppImage and .deb with in-app updates) ·
 **[Full guide](docs/GUIDE.md)** · **[Behaviour spec](docs/SPEC.md)**
 

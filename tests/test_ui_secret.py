@@ -17,7 +17,8 @@ from terminal_support import FrontSite, front_site, make_root, site, websocket
 
 #: One path per route family: every module prefix plus the always-on core routes.
 CORE_ROUTES = (
-    "/api", "/api/bootstrap", "/api/tasks/1", "/api/modules", "/api/brain", "/api/reload",
+    "/api", "/api/bootstrap", "/api/tasks/1", "/api/modules", "/api/packs", "/api/packs/install",
+    "/api/packs/uninstall", "/api/reload",
     "/api/ai/status", "/api/atlas", "/api/desktop", "/api/desktop/command", "/api/live/session",
     "/api/build", "/api/build/export", "/api/clients", "/api/clients/approve", "/api/keys",
     "/api/devices", "/api/search", "/api/session/link", "/api/not-a-route",

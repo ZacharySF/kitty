@@ -17,7 +17,9 @@ NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    application = WebApplication(workspace.settings, workspace.config, tmp_path)
+    # /api/brain is the brain module's (kitty.web_server.ROUTE_MODULES).
+    config = dataclasses.replace(workspace.config, modules=(*workspace.config.modules, "brain"))
+    application = WebApplication(workspace.settings, config, tmp_path)
     yield application
     application.close()
 
@@ -164,7 +166,7 @@ def test_disabled_modules_are_neither_listed_nor_returned(workspace, tmp_path):
         seed(full, conn)
     finally:
         full.close()
-    config = dataclasses.replace(workspace.config, modules=("workspace",))
+    config = dataclasses.replace(workspace.config, modules=("workspace", "brain"))
     app = WebApplication(workspace.settings, config, tmp_path)
     try:
         result = brain(app, conn)

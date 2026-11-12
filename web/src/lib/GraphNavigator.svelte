@@ -48,7 +48,8 @@
   } from "./graphPreferences";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import Loader from "./Loader.svelte";
-  import BrainStage from "./brain/BrainStage.svelte";
+  // The Brain is the brain module's download (its pack): loaded on demand, never in the base.
+  import type BrainStageView from "./brain/BrainStage.svelte";
 
   const pane = useWorkspaceContext();
 
@@ -112,7 +113,18 @@
       collapsed = !collapsed;
     }
   }
-  let brain = $state<BrainStage>();
+  let brain = $state<BrainStageView>();
+  /** Without the Brain module the atlas home is not drawn: the stage says how to get it. */
+  const brainOn = $derived(enabled.includes("brain"));
+  let BrainView = $state.raw<typeof BrainStageView | null>(null);
+  /** The module is on but its pack's files are missing (removed, or left from an older version). */
+  let brainMissing = $state(false);
+  $effect(() => {
+    if (!brainOn || look !== "brain" || BrainView || brainMissing) return;
+    import("./brain/BrainStage.svelte")
+      .then((loaded) => { BrainView = loaded.default; })
+      .catch(() => { brainMissing = true; });
+  });
   let sectionsControl = $state<HomeSections>();
   let sectionsOpen = $state(false);
   const physics = graphPhysics();
@@ -120,7 +132,8 @@
   let notice = $state("");
   let hovered = $state<GraphNode | null>(null);
   let selected = $state<GraphNode | null>(null);
-  let container: HTMLDivElement;
+  // Bound only while the Brain module is on (the stage draws nothing else without it).
+  let container = $state.raw<HTMLDivElement>();
   let handle = $state.raw<GraphHandle | null>(null);
   let pendingGroup: string | null = null;
   let draggedSection = $state<View | null>(null);
@@ -286,7 +299,7 @@
     window.addEventListener("pointercancel", endNodeDrag);
     void (async () => {
       await loadAtlas();
-      if (disposed) return;
+      if (disposed || !brainOn || !container) return;
       try {
         const mounted = await mountGraph(container, {
           ...graph,
@@ -361,6 +374,15 @@
   </div>
 {/snippet}
 
+{#snippet brainCard()}
+  <div class="brain-off">
+    <HomeWidget id={`${atlasId}-brain`} title="Brain isn't installed">
+      <p class="note">The atlas home, your workspace as a 3D brain or a 2D map, is a separate download.</p>
+      <Button intent="primary" size="sm" onclick={openModuleSettings}>Download <Icon name="arrow" size={14} /></Button>
+    </HomeWidget>
+  </div>
+{/snippet}
+
 <div
   class="atlas"
   class:list-mode={mode === "list"}
@@ -377,6 +399,11 @@
       {/if}
     </aside>
   {/if}
+  {#if !brainOn}
+    <div class="stage" role="region" data-kitty-panel="graph" tabindex="-1" aria-label="Brain">
+      {@render brainCard()}
+    </div>
+  {:else}
   <div
     class="stage"
     class:drop-target={!!draggedSection && hidden.has(draggedSection) && mode === "graph"}
@@ -395,7 +422,13 @@
     <!-- Hidden under the Brain, whose stage is transparent. -->
     <div class="canvas" class:behind={look === "brain"} bind:this={container}></div>
     {#if look === "brain"}
-      <BrainStage bind:this={brain} active={pane.active} {revision} start={sectionsButton} end={lookSwitch} />
+      {#if BrainView}
+        <BrainView bind:this={brain} active={pane.active} {revision} start={sectionsButton} end={lookSwitch} />
+      {:else if brainMissing}
+        {@render brainCard()}
+      {:else}
+        <div class="stage-loading"><Loader kind="view" label="Waking the brain…" /></div>
+      {/if}
     {:else}
       <div class="corners">
         {@render sectionsButton()}
@@ -428,6 +461,7 @@
       {/if}
     {/if}
   </div>
+  {/if}
 
   {#if hasRight}
     <div class="side" class:collapsed>
@@ -655,6 +689,13 @@
   }
   .notice span {
     color: var(--warning);
+  }
+  /* The Brain module is off or its download missing: one plain home widget, centred. */
+  .brain-off {
+    position: absolute;
+    inset: 50% auto auto 50%;
+    transform: translate(-50%, -50%);
+    width: min(320px, calc(100% - 40px));
   }
   .note {
     margin: 0 0 8px;

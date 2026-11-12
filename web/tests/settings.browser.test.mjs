@@ -46,6 +46,8 @@ before(async () => {
   backend = spawn("uv", ["run", "--quiet", "kitty-web", "--demo", "--port", String(await freePort())], {
     cwd: repository,
     stdio: ["ignore", "pipe", "pipe"],
+    // Module packs' download list (server/src/packs.rs): a closed loopback port, never GitHub.
+    env: { ...process.env, KITTY_PACKS_URL: "http://127.0.0.1:9/" },
   });
   const { origin, code } = await new Promise((resolve, reject) => {
     let output = "";

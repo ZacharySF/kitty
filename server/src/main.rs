@@ -14,6 +14,7 @@ mod auth;
 mod builds;
 mod front;
 mod modules;
+mod packs;
 mod target;
 mod worker;
 
@@ -120,6 +121,7 @@ async fn run(options: Options) -> Result<(), String> {
         origin: origin.clone(),
         port,
         auth: auth::UiAuth::new(),
+        packs: Arc::new(packs::Packs::open(&static_dir)),
         static_dir,
         backend: Backend {
             authority: worker.authority.clone(),

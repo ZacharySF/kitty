@@ -227,6 +227,8 @@ describe("look switching and preference", () => {
         : stub.fetch(input, init) ?? serverFetch(input, init));
       const { loadBuild } = await import("/src/lib/build.svelte.ts");
       await loadBuild();
+      // The 3D look is the Brain module's (graphPreferences.graphLook).
+      (await import("/src/lib/modules.svelte.ts")).setActiveModules(["brain"]);
       const prefs = await import("/src/lib/graphPreferences.ts");
       const initial = prefs.graphLook();
       const heard = [];

@@ -1,6 +1,7 @@
 """Exercise the release guard against real asset and metadata files, without GitHub."""
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -8,13 +9,17 @@ from pathlib import Path
 
 import pytest
 
+from pack_support import Key
+
 ROOT = Path(__file__).resolve().parents[1]
+#: Stands in for the updater key in each fixture's tauri.conf.json.
+KEY = Key()
 
 
 @pytest.fixture
 def release(tmp_path):
     config = tmp_path / "tauri.conf.json"
-    config.write_text(json.dumps({"version": "0.1.1"}))
+    config.write_text(json.dumps({"version": "0.1.1", "plugins": {"updater": {"pubkey": KEY.public}}}))
     assets = tmp_path / "assets"
     assets.mkdir()
     entries = []
@@ -28,6 +33,18 @@ def release(tmp_path):
         entries.append({"id": number, "name": name, "size": 21, "url": url,
                         "browser_download_url": f"https://github.com/ZacharySF/kitty/releases/download/v0.1.1/{name}"})
         platforms[f"linux-x86_64-{installer}"] = {"url": url, "signature": signature}
+    # A module pack (scripts/build-packs.py) and its index, signed with the same key.
+    pack = b"synthetic pack archive"
+    (assets / "rika-pack-brain-0.1.1.tar.gz").write_bytes(pack)
+    index = json.dumps({"format": 1, "version": "0.1.1", "packs": [{
+        "id": "brain", "version": "0.1.1", "file": "rika-pack-brain-0.1.1.tar.gz", "size": len(pack),
+        "sha256": hashlib.sha256(pack).hexdigest(), "installed_size": 100}]}).encode()
+    (assets / "packs.json").write_bytes(index)
+    (assets / "packs.json.sig").write_bytes(KEY.sign(index))
+    for name in ("rika-pack-brain-0.1.1.tar.gz", "packs.json", "packs.json.sig"):
+        entries.append({"id": len(entries) + 1, "name": name, "size": (assets / name).stat().st_size,
+                        "url": f"https://api.github.com/repos/ZacharySF/kitty/releases/assets/{len(entries) + 1}",
+                        "browser_download_url": f"https://github.com/ZacharySF/kitty/releases/download/v0.1.1/{name}"})
     metadata = {"version": "0.1.1", "platforms": platforms}
     release_data = {"tag_name": "v0.1.1", "draft": True, "assets": entries}
     return config, assets, metadata, release_data
@@ -49,7 +66,8 @@ def test_valid_signed_installer_specific_release(release):
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("fault", ["version", "tag", "target", "signature", "missing", "url", "empty", "asset-version"])
+@pytest.mark.parametrize("fault", ["version", "tag", "target", "signature", "missing", "url", "empty", "asset-version",
+                                   "pack-key", "pack-file", "pack-tampered", "pack-truncated", "pack-missing"])
 def test_reject_incomplete_or_mismatched_release(release, fault):
     config, assets, metadata, remote = release
     if fault == "version":
@@ -68,6 +86,16 @@ def test_reject_incomplete_or_mismatched_release(release, fault):
         (assets / "kitty_0.1.1_amd64.deb").write_bytes(b"")
     elif fault == "asset-version":
         remote["assets"][0]["name"] = "kitty_0.1.0_amd64.AppImage"
+    elif fault == "pack-key":
+        (assets / "packs.json.sig").write_bytes(Key().sign((assets / "packs.json").read_bytes()))
+    elif fault == "pack-file":
+        (assets / "packs.json.sig").write_bytes(KEY.sign((assets / "packs.json").read_bytes(), file="latest.json"))
+    elif fault == "pack-tampered":
+        (assets / "packs.json").write_bytes((assets / "packs.json").read_bytes().replace(b"100", b"101"))
+    elif fault == "pack-truncated":
+        (assets / "rika-pack-brain-0.1.1.tar.gz").write_bytes(b"synthetic")
+    elif fault == "pack-missing":
+        remote["assets"] = [asset for asset in remote["assets"] if not asset["name"].startswith("rika-pack-")]
     result = run_guard(release)
     assert result.returncode == 1, result.stderr
     assert "Invalid desktop release:" in result.stderr
@@ -81,7 +109,7 @@ def test_rika_product_name_keeps_updater_and_package_identity():
     assert config["identifier"] == "com.zacharysf.kitty"
     assert config["mainBinaryName"] == "kitty-workspace"
     assert config["plugins"]["updater"]["endpoints"] == [
-        "https://github.com/ZacharySF/kitty-releases/releases/latest/download/latest.json"]
+        "https://github.com/ZacharySF/rika/releases/latest/download/latest.json"]
     # Asset names (parsed by the release guard) stay pinned, independent of productName: the
     # publish step uploads under kitty_<version>_amd64.* (tests/test_publish_desktop_release.py).
     assert "scripts/publish-desktop-release.py" in workflow

@@ -70,11 +70,35 @@ export interface Discovery {
   error: string | null;
   result: string | null;
 }
-export type ModuleId = "applyai" | "workspace" | "terminal";
+export type ModuleId = "applyai" | "workspace" | "terminal" | "brain";
 export interface ModuleInfo {
   id: ModuleId;
   label: string;
   description: string;
+  /** Packs (downloads) the module needs before it can be turned on. */
+  packs: string[];
+}
+/** A module pack's state in `GET /api/packs` (rika-server, server/src/packs.rs). */
+export type PackState = "built-in" | "installed" | "downloading" | "outdated" | "available" | "unavailable";
+export interface PackInfo {
+  id: string;
+  label: string;
+  description: string;
+  modules: ModuleId[];
+  state: PackState;
+  /** Download size in bytes, when the signed index (or the install) says. */
+  size: number | null;
+  installed_size: number | null;
+  installed_version: string | null;
+  progress: { received: number; total: number } | null;
+  /** Why the last download failed. */
+  error: string | null;
+}
+export interface PacksState {
+  version: string;
+  /** `error`: why the download list could not be read (offline, not published). */
+  index: { error?: string };
+  packs: PackInfo[];
 }
 export interface ModulesState {
   /** Active for this process. Never changes until kitty restarts. */

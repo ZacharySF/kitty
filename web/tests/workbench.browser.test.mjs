@@ -230,7 +230,8 @@ describe("the Brain home fills the window above the Rika bar", () => {
     for (const [name, options] of [
       ["all modules", {}],
       ["all modules, rail collapsed", { storage: { [RAIL_KEY]: "collapsed" } }],
-      ["core only", { modules: [] }],
+      // The atlas home is the Brain module's; without it the stage is the download card.
+      ["core and the Brain", { modules: ["brain"] }],
     ]) {
       test(`${size}, ${name}`, async () => {
         const { page, problems, context } = await open("today", { viewport, ...options });

@@ -64,12 +64,16 @@ export async function authorize(context, secret) {
  * serves. Without `root` it is `--demo`; with `root` (a temporary workspace the caller made) it
  * serves that workspace, so a test can edit its files, such as config/build.json, like an
  * outside editor. The announced one-time code is spent on `secret`, as a browser tab would.
+ * `args` are more kitty-web options (such as `--static-dir`); `env` overrides its environment.
+ * Module packs' download list (server/src/packs.rs) is a closed loopback port unless `env`
+ * names one, so no test reaches GitHub.
  */
-export async function startKitty({ root } = {}) {
+export async function startKitty({ root, args = [], env = {} } = {}) {
   const port = await freePort();
   const where = root ? ["--root", root] : ["--demo"];
-  const child = spawn("uv", ["run", "--project", repo, "kitty-web", ...where, "--port", String(port)], {
-    cwd: repo, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KITTY_KEYRING: "none", KITTY_SYNC: "off" },
+  const child = spawn("uv", ["run", "--project", repo, "kitty-web", ...where, ...args, "--port", String(port)], {
+    cwd: repo, detached: true, stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, KITTY_KEYRING: "none", KITTY_SYNC: "off", KITTY_PACKS_URL: "http://127.0.0.1:9/", ...env },
   });
   let output = "";
   const { origin, code } = await new Promise((resolve, reject) => {
