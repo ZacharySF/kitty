@@ -55,8 +55,10 @@ def serve(root: Path, assets: Path, package: str, *, front: tuple[str, str], saf
 
     owner = desktop_module.DesktopOwner(send)
     settings = settings_module.Settings.load(root=root)
-    # A build saved with an error starts on the last good build, as kitty-web does.
-    with workspace_module.open_workspace(settings, modules=project_module.startup_modules(settings)) as workspace:
+    # A build saved with an error starts on the last good build, as kitty-web does. rika-server
+    # migrated the database before starting this backend (server/src/startup.rs).
+    with workspace_module.open_workspace(settings, modules=project_module.startup_modules(settings),
+                                         auto_migrate=False) as workspace:
         app = server_module.WebApplication(settings, workspace.config, assets, desktop=owner, safe=safe)
 
     class DesktopHTTPServer(server_module.LocalHTTPServer):
@@ -128,12 +130,18 @@ def main() -> None:
     parser.add_argument("--worker", action="store_true",
                         help="Serve behind rika-server, whose secret is the first line on stdin.")
     parser.add_argument("--public-origin", help="With --worker: rika-server's loopback origin.")
+    parser.add_argument("--migrate-database", type=Path,
+                        help="Apply the pending migrations with the Python runner and exit (rika-server runs this"
+                             " only for a workspace from rika! 0.3.33 or older whose notes must be converted).")
     args = parser.parse_args()
+    package = (bundle / "backend-package.txt").read_text().strip()
+    if args.migrate_database:
+        importlib.import_module(f"{package}.web_server").migrate_database(args.migrate_database)
+        return
     assets = bundle / "website"
     if not (assets / "index.html").is_file():
         parser.exit(1, "The packaged website is missing; reinstall rika!.\n")
     root = args.workspace.expanduser().resolve()
-    package = (bundle / "backend-package.txt").read_text().strip()
     if not args.worker:
         parser.exit(1, "The desktop backend runs only behind rika-server (--worker).\n")
     # Read before the owner channel starts: stdin is the owner pipe from then on.

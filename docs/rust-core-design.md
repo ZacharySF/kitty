@@ -1,7 +1,7 @@
 # Rust core: a gradual rewrite, a minimal base and download modules
 
-Status: milestones 0 and 1 built; milestone 2 started: `/api/modules` is served by Rust
-(branch `feat/rust-core`).
+Status: milestones 0 and 1 built; milestone 2 under way: `/api/modules`, `/api/bootstrap` and
+the migration runner are Rust (branch `feat/rust-core`).
 
 ## Goal
 
@@ -131,13 +131,13 @@ selection: base only.
    | Route group | Python handler | Data it touches | Tests | Blocks porting |
    | --- | --- | --- | --- | --- |
    | Modules `GET/POST /api/modules` | ~~`WebApplication.set_modules`~~, `modules_state` | `config/build.json` (`modules`), careers templates | `test_web_modules.py`, `test_modules.py` | **Ported** (below) |
-   | Bootstrap `GET /api/bootstrap` | `WebApplication._bootstrap` | modules state; with applyai, jobs, tracks and today's digest in SQLite | `test_web_modules.py`, `test_web_server.py` | the applyai half reads careers tables: needs rusqlite plus `jobs.count_jobs`/`today.build_digest`, or a split route |
+   | Bootstrap `GET /api/bootstrap` | ~~`WebApplication._bootstrap`~~ | modules state; with applyai, jobs, tracks and today's digest in SQLite | `test_web_bootstrap.py`, `test_web_modules.py` | **Ported** (below) |
    | Build and settings `/api/build/*` | `web_build.py`, `core/builds/{store,project,share}` | build file, `data/build-history/`, settings rows projected into SQLite | `test_web_build.py`, `test_builds.py`, browser `settings`/`build` suites | the watcher's live push goes out over `web_live`'s WebSocket (Python), and `project.sync` writes SQLite; `fetch` needs an HTTPS client |
    | Themes | no route: the theme list and `theme.base` live in the build (`document.theme_ids`, already in Rust) | build file | as build | moves with the build routes |
    | Keys `/api/keys/*` | `web_keys.py`, `core/keys.py` | OS keyring (Secret Service over D-Bus) or owner-only file | `test_keys.py` | a Secret Service client in Rust; Python's AI providers keep reading the same store until they move |
    | Effects `/api/effects/*` | `web_effects.py`, `core/effects.py`, `effect_kinds` | effect tables in SQLite | `test_effects.py` | executors call into Python modules (blocks, applications); approvals are bound to the worker's `ui_session`, which would have to move to the front |
    | Rika text chat `/api/rika/*` | `web_rika.py`, `core/rika/*` | conversations, plans, memory in SQLite; AI provider calls | `test_web_rika*.py`, `test_rika_*.py` | AI client and streaming WebSocket; Rika's tools reach every module's Python core |
-   | Migration runner | `kitty.db.migrations` | the SQLite schema (55 SQL files) | `test_migrations.py`, `test_migration_numbers.py` | three migrations run Python steps (`blocks.legacy:migrate_notes`, `blocks.tags:backfill`, `search:build`); those need Rust ports, or must be folded so a fresh database never needs them |
+   | Migration runner | `kitty.db.migrations` (kept for the CLI, TUI, MCP, demo reset and tests) | the SQLite schema (55 SQL files) | `test_migration_parity.py`, `test_front_migrations.py`, `test_migrations.py`, `test_migration_numbers.py` | **Ported** (below) |
 
    *Built (first slice):* `/api/modules` is answered by rika-server (`server/src/modules.rs`)
    with Python's responses and error messages (`kitty.modules.normalize_modules`, `store.edit`
@@ -157,8 +157,77 @@ selection: base only.
    1.02 ms (Rust), while a still-forwarded route stays at 5.8 ms; start to announcement is
    unchanged (1.2 to 1.4 s, the worker dominates); the release binary grew from 1.82 to
    1.91 MB.
-   Next: bootstrap (needs rusqlite for the applyai figures), then the build routes once the
-   live channel can be driven from Rust.
+
+   *Built (second slice): the migration runner.* `server/src/migrations.rs` applies the same
+   numbered files (compiled in by `server/build.rs` from `src/kitty/db/migrations/`) with the
+   same bookkeeping as `kitty.db.migrations.migrate`: one `BEGIN ... COMMIT` script per
+   migration with its `schema_version` row, `PRAGMA foreign_key_check` before the commit,
+   `-- foreign_keys: off` set around the transaction, versions applied by number (a lower
+   number landing late still applies). rusqlite with SQLite bundled (FTS5 and the trigram
+   tokenizer included). rika-server resolves the workspace as `Settings.load` does
+   (`server/src/settings.rs`: `--root`, `$KITTY_HOME`, the root markers, `$KITTY_DB` from the
+   environment or the root's `.env`) and migrates it at start-up before it starts the worker
+   (`server/src/startup.rs`); the worker opens it with `open_workspace(auto_migrate=False)`,
+   which refuses a database still behind the files, and its readiness line names the
+   database it opened, which must be the one the front migrated. The desktop shell now
+   passes the workspace to rika-server with `--root`; in desktop mode the front creates
+   files owner-only (`umask 077`, as the backend does). `--demo`'s throwaway workspace is
+   made, migrated and removed by the front and handed to the worker as `--demo-workspace`.
+   The three Python-step migrations:
+   - `047` (`search:build`) is folded into SQL: the script now queues every existing record,
+     blocks included, in `search_pending`, and `search.sync`, which every query runs first,
+     builds their documents (`page_titles_within` now syncs too; it was the one reader that
+     did not). Both runners read the same file, so they agree; a fresh database has nothing
+     to queue.
+   - `033` (`blocks.legacy:migrate_notes`) and `039` (`blocks.tags:backfill`) are not
+     ported: they convert only what a pre-block workspace (rika! 0.3.33 and older) holds,
+     through the whole block store (transactions, op log, ordering keys, tagging), a large
+     port for a one-time upgrade. On every other database they are no-ops, so the Rust
+     runner applies their scripts alone; when the database has notes, documents or quick
+     notes (033) or `#tags` (039) to convert, it stops before that migration and the front
+     runs the Python runner once through the worker program (`--migrate-database DB`, in
+     `kitty-web` and the desktop backend), then checks that nothing is left. Without a
+     worker program (a future base-only install) the front refuses with "open the
+     workspace once with rika! 0.3.36". Fresh and current workspaces never start Python
+     for migrations.
+
+   Tracked exception to "no two live implementations": `kitty.db.migrate` stays for its
+   other callers, the CLI and TUI (`open_workspace`), the MCP server, `demo.reset`, the
+   pre-block conversion above and the tests' fixtures, and is deleted when those callers
+   move to Rust. `tests/test_migration_parity.py` keeps the two from drifting: a fresh
+   database, every prefix of the numbered files and every released set with gaps (main's
+   releases up to v0.3.33), each migrated by both runners and each upgraded to the latest
+   schema by both, must give the same `sqlite_master`, pragmas and rows of every table (FTS
+   shadow tables included; clock values and the random device id compared by shape), plus
+   a seeded v0.3.33 database upgraded both ways and the stop-and-hand-over on one with notes.
+
+   *Built (third slice): bootstrap.* `GET /api/bootstrap` is answered by rika-server
+   (`server/src/bootstrap.rs`): `{"demo", "modules"}`, and with ApplyAI the tracks, the four
+   job counts, this week's total and streak and today's digest text, computed over rusqlite
+   as `tracks.weekly_targets`, `jobs.count_jobs` with the job views and
+   `today.build_digest`/`digest_text` do (stored timestamps read as `kitty.dates.parse`
+   reads them, `sources.safe_error`'s redaction with the worker's environment and `.env`,
+   Python's 503 for a busy database). Python's handler is deleted; the functions it
+   composed stay (other routes and the CLI use them) and are the reference in
+   `tests/test_web_bootstrap.py`, which compares the front's answer with them on a
+   synthetic workspace covering every digest section. Deliberate difference: the digest's
+   two `apply.yaml` settings (`deadline_window_days`, `archive_after_days`) are the ones the
+   worker validated at start, sent in its readiness line; a hand edit followed by
+   `/api/reload` reaches them at the next start.
+
+   Measured on one synthetic ApplyAI workspace (400 jobs; medians; base commit and this
+   branch run alternately twice on a machine also running other agents' suites): start to
+   announcement is unchanged within the noise, fresh 4.7 / 3.5 s before and 4.9 / 4.0 s after,
+   existing 3.6 / 3.1 s and 3.8 / 3.7 s, since the worker's start dominates and both runners
+   cost the same: a fresh database takes 0.30 s in Python and 0.33 s in Rust (SQLite's own
+   work), a current one 0.7 ms in Python and 12 ms for a whole `rika-server migrate` process.
+   `GET /api/bootstrap` (median of 300 fresh-connection GETs) went from 8.9 / 9.7 / 13.7 /
+   10.4 ms (forwarded to Python) to 5.0 / 3.5 / 2.9 / 2.9 ms, while a still-forwarded route
+   (`/api/dashboard`) stayed at 7.3-14.8 ms. A cold answer is most of its time in SQLite
+   parsing the schema, so the front keeps its database connection open between answers. The
+   release binary grew from 1.91 to 5.96 MB (SQLite bundled, `regex`).
+
+   Next: the build routes once the live channel can be driven from Rust.
 3. **Packs.** Signed pack builds and index in the release pipeline; download,
    verify and atomic install in the shell; Settings → Modules with size and
    progress.

@@ -92,8 +92,9 @@ def backend(tmp_path, request):
         environment.pop(key, None)
     environment["PYTHONPATH"] = os.pathsep.join((str(PROJECT), str(PROJECT / "src")))
     command = [sys.executable, "-c", code, str(bundle), str(root), str(PROJECT / "desktop/backend.py"), *extra]
-    # As desktop/src/main.rs starts it: the backend's arguments pass through unchanged.
-    command = [str(RIKA_SERVER), "--desktop", "--port", "0", "--static-dir", str(assets),
+    # As desktop/src/main.rs starts it: the workspace for rika-server to migrate, and the
+    # backend's arguments passed through unchanged.
+    command = [str(RIKA_SERVER), "--desktop", "--port", "0", "--static-dir", str(assets), "--root", str(root),
                "--worker-program", command[0], *[part for arg in command[1:] for part in ("--worker-arg", arg)]]
     process = subprocess.Popen(
         command, cwd=tmp_path, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -148,7 +149,10 @@ def test_random_loopback_origin_preserves_same_origin_csrf(backend):
     assert request(origin, "POST", "/api/not-a-route", local_headers, "{}", secret=secret)[0] == 404
     local_headers.pop("X-Kitty-Request")
     assert request(origin, "POST", "/api/not-a-route", local_headers, "{}", secret=secret)[0] == 403
+    # rika-server made and migrated the database before the backend started: owner-only.
     assert (root / "data/apply.db").is_file()
+    assert {path.name: path.stat().st_mode & 0o777 for path in (root, root / "data", root / "data/apply.db")} == {
+        "workspace": 0o700, "data": 0o700, "apply.db": 0o600}
 
 
 @pytest.mark.parametrize("backend", [(), ("--safe",)], indirect=True, ids=["normal", "safe"])

@@ -31,7 +31,6 @@ import threading
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -41,7 +40,7 @@ from kitty.core import endpoint, record_events
 from kitty.core.builds.project import startup_modules
 from kitty.core.builds.store import BuildStoreError
 from kitty.core.workspace import open_workspace
-from kitty.db import connect
+from kitty.db import connect, migrate
 from kitty.db.connection import transaction
 from kitty.models import Job, Resume
 from kitty.modules import ModuleDisabledError, modules_state
@@ -251,7 +250,7 @@ class WebApplication:
         The active module snapshot is pinned: a pending module edit in the build is neither
         applied nor validated here.
         """
-        with open_workspace(self.settings, modules=self.modules) as workspace:
+        with open_workspace(self.settings, modules=self.modules, auto_migrate=False) as workspace:
             self.config = workspace.config
 
     def job_filter(self, view: str):
@@ -277,32 +276,11 @@ class WebApplication:
             result = extension.get(self, conn, path, query)
             if result is not None:
                 return result
-        if path == "/api/bootstrap":
-            self._no_query(query)
-            return self._bootstrap(conn)
         if "applyai" in self.modules:
             result = self._applyai_get(conn, path, query)
             if result is not None:
                 return result
         raise APIError(404, "API route not found")
-
-    def _bootstrap(self, conn: sqlite3.Connection) -> dict:
-        """Core shell state; careers figures exist only while applyai is active."""
-        result: dict[str, Any] = {"demo": self.settings.demo, "modules": self.modules_state()}
-        if "applyai" in self.modules:
-            from kitty.core import jobs, today, tracks
-
-            digest = today.build_digest(conn, self.config)
-            result.update({
-                "tracks": [{"name": name, "label": name.replace("_", " ").title(),
-                            "weekly_target": target} for name, target in tracks.weekly_targets(conn).items()],
-                "counts": {key: jobs.count_jobs(conn, self.job_filter(view)) for key, view in (
-                    ("jobs", "jobs"), ("queued", "queue"),
-                    ("applications", "applications"), ("favorites", "favorites"))},
-                "weekly_total": digest.weekly_total, "streak_days": digest.streak_days,
-                "today": today.digest_text(digest),
-            })
-        return result
 
     def _applyai_get(self, conn: sqlite3.Connection, path: str, query: dict[str, str]) -> dict | None:
         from kitty.core import applications, resume_versions, resumes
@@ -813,19 +791,24 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
     """The worker's readiness line rika-server waits for (server/src/worker.rs `Readiness`).
 
     It holds this backend's UI secret, so it goes only to the front (or the desktop shell),
-    plus the workspace the front answers its own routes from: the config directory, this
-    process's frozen module snapshot and the version a new build file records.
+    plus the workspace the front answers its own routes from: the config directory and the
+    database, this process's frozen module snapshot, the version a new build file records
+    and, with ApplyAI, the digest settings its config validated (server/src/bootstrap.rs).
     """
     from kitty import __version__
 
+    apply = server.app.config.apply if "applyai" in modules else None
     return json.dumps({"origin": server.origin, "secret": server.ui_auth.secret,
-                       "config_dir": str(settings.config_dir), "modules": list(modules),
-                       "version": __version__})
+                       "config_dir": str(settings.config_dir), "db_path": str(settings.db_path),
+                       "modules": list(modules), "version": __version__,
+                       "digest": {"deadline_window_days": apply.deadline_window_days,
+                                  "archive_after_days": apply.archive_after_days} if apply else None})
 
 
 def _serve(settings: Settings, static_dir: Path, *, safe: bool, front_secret: str, public_origin: str) -> None:
     # A build file saved with an error starts the server on the last good build (Q9).
-    with open_workspace(settings, modules=startup_modules(settings)) as workspace:
+    # rika-server migrated the database before starting this worker (server/src/migrations.rs).
+    with open_workspace(settings, modules=startup_modules(settings), auto_migrate=False) as workspace:
         if settings.demo and workspace.config.enabled("applyai"):
             from kitty.core import demo
 
@@ -918,7 +901,15 @@ def main() -> None:
     parser.add_argument("--worker", action="store_true",
                         help="Serve behind rika-server: read its secret from stdin, print a readiness line")
     parser.add_argument("--public-origin", help="With --worker: rika-server's origin, the address pages and paired programs use")
+    parser.add_argument("--demo-workspace", type=Path,
+                        help="With --worker --demo: the disposable workspace rika-server made and migrated")
+    parser.add_argument("--migrate-database", type=Path,
+                        help="Apply the pending migrations with the Python runner and exit (rika-server runs this"
+                             " only for a workspace from rika! 0.3.33 or older whose notes must be converted)")
     args = parser.parse_args()
+    if args.migrate_database:
+        migrate_database(args.migrate_database)
+        return
     if not 0 <= args.port <= 65535:
         parser.error("--port must be between 0 and 65535")
     static_dir = (args.static_dir or Path(__file__).resolve().parents[2] / "web" / "dist").resolve()
@@ -929,21 +920,28 @@ def main() -> None:
     try:
         front_secret, public_origin = front_handshake(args.public_origin)
         if args.demo:
-            with TemporaryDirectory(prefix="kitty-web-demo-") as folder:
-                demo_root = Path(folder)
-                config_dir = demo_root / "config"
-                config_dir.mkdir()
-                example_dir = root / "config"
-                if not (example_dir / "tracks.yaml.example").is_file():
-                    example_dir = Path(__file__).resolve().parents[2] / "config"
-                for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
-                    shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
-                settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
-                _serve(settings, static_dir, safe=args.safe, front_secret=front_secret, public_origin=public_origin)
+            if args.demo_workspace is None:
+                raise ValueError("--demo behind rika-server needs its --demo-workspace")
+            demo_root = args.demo_workspace.resolve()
+            config_dir = demo_root / "config"
+            config_dir.mkdir()
+            example_dir = root / "config"
+            if not (example_dir / "tracks.yaml.example").is_file():
+                example_dir = Path(__file__).resolve().parents[2] / "config"
+            for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
+                shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
+            settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
+            _serve(settings, static_dir, safe=args.safe, front_secret=front_secret, public_origin=public_origin)
         else:
             _serve(Settings.load(root=root), static_dir, safe=args.safe, front_secret=front_secret, public_origin=public_origin)
     except (ConfigError, OSError, ValueError):
         parser.exit(1, "Unable to open the local website. Check the port, workspace configuration and public example files with the CLI.\n")
+
+
+def migrate_database(path: Path) -> None:
+    """The Python runner on one database, for the conversions only it has (server/src/startup.rs)."""
+    with closing(connect(path)) as conn:
+        migrate(conn)
 
 
 if __name__ == "__main__":

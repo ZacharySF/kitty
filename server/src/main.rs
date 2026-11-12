@@ -3,19 +3,22 @@
 //! The same command line and announcement as `kitty-web` (`kitty.web_server.main`): it serves
 //! the built UI on 127.0.0.1, prints a link with a one-time code (a fresh one whenever the
 //! current link is used or expires), and starts `kitty-web --worker` behind itself for every
-//! route not ported yet. Quitting (Ctrl+C, SIGTERM) stops the worker cleanly; a worker that
-//! dies stops the front.
+//! route not ported yet, after migrating the workspace database itself (crate::startup).
+//! Quitting (Ctrl+C, SIGTERM) stops the worker cleanly; a worker that dies stops the front.
 //!
 //! `--desktop` is the desktop shell's mode (desktop/src/main.rs): no link, the readiness line
 //! `{"origin", "secret"}` on stdout instead, and the shell's private owner pipe relayed to the
-//! desktop backend behind it. The worker arguments are passed through unchanged.
+//! desktop backend behind it. The shell names the workspace with `--root` (to migrate it) and
+//! the worker arguments are passed through unchanged.
 
 mod auth;
+mod bootstrap;
 mod builds;
 mod front;
 mod migrations;
 mod modules;
 mod settings;
+mod startup;
 mod target;
 mod worker;
 
@@ -99,16 +102,28 @@ async fn run(options: Options) -> Result<(), String> {
     let origin = format!("http://127.0.0.1:{port}");
     let static_dir = std::fs::canonicalize(&options.static_dir).unwrap_or(options.static_dir.clone());
 
+    if options.desktop && options.root.is_none() {
+        return Err(format!("--desktop needs --root, the workspace the shell opens\n{USAGE}"));
+    }
+    // The workspace database is migrated here, before the worker opens it (crate::startup).
+    let database = startup::prepare(options.root.clone(), options.demo && !options.desktop, options.desktop, &options.launch).await.map_err(|message| {
+        eprintln!("rika-server: {message}");
+        UNAVAILABLE.to_owned()
+    })?;
+
     // kitty-web takes the front's options; the desktop backend's come whole from the shell.
     let mut flags = Vec::new();
     if !options.desktop {
-        if let Some(root) = &options.root {
-            flags.extend(["--root".to_owned(), root.display().to_string()]);
+        match &database.demo {
+            Some(folder) => {
+                if let Some(root) = &options.root {
+                    flags.extend(["--root".to_owned(), root.display().to_string()]);
+                }
+                flags.extend(["--demo".to_owned(), "--demo-workspace".to_owned(), folder.path().display().to_string()]);
+            }
+            None => flags.extend(["--root".to_owned(), database.paths.root.display().to_string()]),
         }
         flags.extend(["--static-dir".to_owned(), static_dir.display().to_string()]);
-        if options.demo {
-            flags.push("--demo".into());
-        }
         if options.safe {
             flags.push("--safe".into());
         }
@@ -117,6 +132,11 @@ async fn run(options: Options) -> Result<(), String> {
         eprintln!("rika-server: {error}");
         UNAVAILABLE.to_owned()
     })?;
+    if let Err(message) = database.opened_by_worker(&worker.db_path) {
+        eprintln!("rika-server: {message}");
+        worker.stop(WORKER_GRACE).await;
+        return Err(UNAVAILABLE.to_owned());
+    }
     let front = Arc::new(Front {
         authority: format!("127.0.0.1:{port}"),
         origin: origin.clone(),
@@ -130,6 +150,8 @@ async fn run(options: Options) -> Result<(), String> {
             front_secret: worker.front_secret.clone(),
         },
         workspace: worker.workspace.take().expect("a started worker reports its workspace"),
+        bootstrap: bootstrap::Bootstrap::new(database.paths.db_path.clone(), database.paths.root.clone(),
+                                             database.demo.is_some(), worker.digest),
     });
 
     if options.desktop {
@@ -183,6 +205,10 @@ async fn main() {
     // Hidden and test-only: the migration runner on one database, for tests/test_migration_parity.py.
     if std::env::args().nth(1).as_deref() == Some("migrate") {
         std::process::exit(migrations::migrate_command(&std::env::args().skip(2).collect::<Vec<_>>()));
+    }
+    // Hidden and test-only: the bootstrap digest on one database, for tests/test_web_bootstrap.py.
+    if std::env::args().nth(1).as_deref() == Some("bootstrap-digest") {
+        std::process::exit(bootstrap::digest_command(&std::env::args().skip(2).collect::<Vec<_>>()));
     }
     let options = match options() {
         Ok(options) => options,

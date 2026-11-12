@@ -77,7 +77,7 @@ def test_a_wrong_repeated_or_reshaped_secret_is_refused_alike(running):
 
 
 def test_the_right_secret_works_and_the_page_itself_needs_none(running):
-    assert running.request("/api/bootstrap")[0] == 200
+    assert running.request("/api/ai/status")[0] == 200
     assert running.request("/api/quick-notes/create", {"body": "with the secret"})[0] == 200
     assert running.request("/", headers={web_auth.HEADER: None})[0] == 200
     # The browser-mode link's code is the page's to read; the server does not check it there.
@@ -207,7 +207,7 @@ def test_behind_the_front_the_worker_answers_only_the_front(tmp_path):
         assert worker.request("/api/bootstrap")[0] == 403, "the page's own secret is not enough"
         assert worker.request("/api/ingress/recent", headers={"Origin": None})[0] == 403, "nor a paired client"
         assert worker.request("/api/bootstrap", headers={web_auth.FRONT_HEADER: "e" * 64})[0] == 403
-        assert worker.request("/api/bootstrap", headers={web_auth.FRONT_HEADER: "f" * 64})[0] == 200
+        assert worker.request("/api/ai/status", headers={web_auth.FRONT_HEADER: "f" * 64})[0] == 200
 
 
 def test_the_secret_object_never_shows_its_value():

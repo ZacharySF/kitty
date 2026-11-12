@@ -180,12 +180,14 @@ fn bundled(packaged: PathBuf, staged: Option<PathBuf>) -> Option<PathBuf> {
 }
 
 /// rika-server's command line (server/src/main.rs `--desktop`): it serves the backend's
-/// bundled website itself and starts `backend` behind it with exactly these arguments.
+/// bundled website itself, migrates the workspace at `root` and starts `backend` behind it
+/// with exactly these arguments.
 fn front_arguments(backend: &Path, root: &Path, safe: bool) -> Vec<OsString> {
     // PyInstaller's onedir keeps its data beside the executable in `_internal` (sys._MEIPASS).
     let website = backend.parent().unwrap_or(Path::new("")).join("_internal/website");
     let mut arguments: Vec<OsString> = ["--desktop", "--port", "0", "--static-dir"].map(OsString::from).into();
     arguments.push(website.into());
+    arguments.extend(["--root".into(), root.into()]);
     arguments.extend(["--worker-program".into(), backend.into(), "--worker-arg".into(), "--workspace".into(), "--worker-arg".into(), root.into()]);
     if safe { arguments.extend(["--worker-arg".into(), "--safe".into()]); }
     arguments
@@ -551,6 +553,7 @@ mod tests {
         let expected = |safe: &[&str]| {
             let mut arguments = vec!["--desktop", "--port", "0",
                 "--static-dir", "/usr/libexec/kitty-workspace/kitty-web/_internal/website",
+                "--root", "/home/someone/rika workspace",
                 "--worker-program", "/usr/libexec/kitty-workspace/kitty-web/kitty-web",
                 "--worker-arg", "--workspace", "--worker-arg", "/home/someone/rika workspace"];
             arguments.extend_from_slice(safe);

@@ -174,8 +174,7 @@ def test_workers_and_credentials_belong_only_to_enabled_modules(tmp_path, module
 def test_legacy_workspace_without_a_build_file_is_unchanged(tmp_path):
     settings = make_root(tmp_path, None)
     assert not (settings.config_dir / "build.json").exists()
-    with site(settings) as (app, request):
-        assert app.modules == MODULE_IDS
+    with front(settings) as request:
         status, boot = request("/api/bootstrap")
         assert status == 200 and boot["modules"]["enabled"] == list(MODULE_IDS)
         assert boot["modules"]["restart_required"] is False
@@ -188,7 +187,7 @@ def test_malformed_careers_yaml_is_ignored_while_applyai_is_disabled(tmp_path, m
     settings = make_root(tmp_path, modules, careers=False)
     for name in ("profile", "tracks", "sources", "answers", "apply", "triage"):
         (settings.config_dir / f"{name}.yaml").write_text("{{{ broken: [", encoding="utf-8")
-    with site(settings) as (app, request):
+    with front(settings) as request:
         assert request("/api/bootstrap")[0] == 200
         assert request("/api/reload", {})[0] == 200
         assert request("/api/profile")[0] == 403

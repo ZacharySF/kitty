@@ -68,6 +68,8 @@ pub struct Front {
     pub backend: Backend,
     /// The workspace the worker opened: the routes answered here read and write its files.
     pub workspace: Workspace,
+    /// What `/api/bootstrap` reads besides the module state (crate::bootstrap).
+    pub bootstrap: crate::bootstrap::Bootstrap,
 }
 
 /// A refusal the Python server would also send: status, message and extra headers.
@@ -380,6 +382,14 @@ impl Front {
             let length = content_length(request.headers())?;
             let body = json_object(&read_body(request.into_body(), length).await?)?;
             return Ok(send_json(StatusCode::OK, &self.session(&target.path, body)?, false));
+        }
+        if target.path == crate::bootstrap::PATH && !mutation && !upgrade {
+            // The query as the worker would have seen it: a spent link ticket removed.
+            if !parse_target(&forward_target)?.query.is_empty() {
+                return Err(refuse(400, "This route does not accept query parameters"));
+            }
+            let answer = tokio::task::block_in_place(|| self.bootstrap.answer(&self.workspace))?;
+            return Ok(send_json(StatusCode::OK, &answer, method == Method::HEAD));
         }
         if target.path == modules::PATH && !upgrade {
             if !target.query.is_empty() {

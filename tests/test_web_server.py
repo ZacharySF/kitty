@@ -85,9 +85,6 @@ def test_list_filters_pagination_detail_and_counts(website, workspace, posting):
     status, detail, _ = website.request(f"/api/jobs/{posting.id}")
     assert status == 200 and detail["description"] == "Synthetic posting evidence"
     assert detail["application"] is None
-    status, bootstrap, _ = website.request("/api/bootstrap")
-    assert status == 200 and bootstrap["counts"]["jobs"] == 2
-    assert bootstrap["counts"]["applications"] == 0
     assert second.id != posting.id
 
 
@@ -173,7 +170,7 @@ def test_rejects_cross_origin_or_unmarked_mutations(website, workspace, posting,
     {"Sec-Fetch-Site": "cross-site"},
 ])
 def test_private_reads_also_validate_origin_and_host(website, headers):
-    assert website.request("/api/bootstrap", headers=headers)[0] == 403
+    assert website.request("/api/ai/status", headers=headers)[0] == 403
     assert website.request("/api/reports/export?format=csv&dataset=jobs", headers=headers)[0] == 403
 
 
@@ -297,7 +294,6 @@ def test_discovery_rejects_demo_empty_sources_and_custom_inputs(website):
     assert website.request("/api/sources/run", {"confirm": True})[0] == 400
     website.app.settings = replace(website.app.settings, demo=True)
     assert website.request("/api/sources/run", {"confirm": True})[0] == 403
-    assert website.request("/api/bootstrap")[1]["demo"] is True
 
 
 @pytest.mark.parametrize("upstream_status,available", [(200, True), (302, False), (500, False)])
@@ -346,7 +342,7 @@ def test_learnharness_unavailable_is_not_a_kitty_failure(website, monkeypatch):
     assert website.request("/api/extensions/learnharness")[:2] == (
         200, {"url": "http://127.0.0.1:3210", "available": False},
     )
-    assert website.request("/api/bootstrap")[0] == 200
+    assert website.request("/api/ai/status")[0] == 200
 
 
 def test_study_start_reports_missing_packaged_runtime_not_unknown_route(website):

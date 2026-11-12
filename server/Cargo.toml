@@ -16,6 +16,8 @@ libc = "0.2.191"
 hyper = { version = "1.12", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 percent-encoding = "2.3"
+# `kitty.core.sources.safe_error`'s redaction patterns (crate::bootstrap).
+regex = "1.13"
 # The workspace database (crate::migrations, crate::bootstrap); bundled, so the FTS5 and
 # trigram tokenizers the schema uses are always there.
 rusqlite = { version = "0.42", default-features = false, features = ["bundled"] }

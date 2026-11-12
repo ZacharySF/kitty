@@ -458,8 +458,7 @@ class FrontSite(Site):
         static = settings.root / "dist"
         static.mkdir(exist_ok=True)
         (static / "index.html").write_text("<!doctype html><title>Synthetic</title>")
-        with open_workspace(settings):
-            pass
+        # The front migrates the database itself (server/src/startup.rs); the worker only opens it.
         # As the `kitty-web` console script runs it: `python -m kitty.web_server` would load the
         # module twice (as __main__ too), with two APIError classes.
         self.process = subprocess.Popen(

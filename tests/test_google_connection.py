@@ -38,7 +38,7 @@ def test_no_credentials_preserves_local_api_and_remembers_tutorial(tmp_path, mon
             monkeypatch.setenv(name, value)
     settings = make_root(tmp_path, ())
     with site(settings) as (_, request):
-        assert request("/api/bootstrap")[0] == 200
+        assert request("/api/ai/status")[0] == 200
         status, state = request("/api/account")
         assert status == 200
         assert state["configured"] is False and state["identity"] is None
@@ -49,7 +49,7 @@ def test_no_credentials_preserves_local_api_and_remembers_tutorial(tmp_path, mon
         assert request("/api/account/onboarding", {"tutorial_completed": "yes"})[0] == 400
     with site(settings) as (_, request):
         assert request("/api/account")[1]["onboarding"] == {"welcome_completed": True, "tutorial_completed": True}
-        assert request("/api/bootstrap")[0] == 200
+        assert request("/api/ai/status")[0] == 200
 
 
 def test_loopback_state_pkce_and_receipt_are_independent(monkeypatch):
@@ -190,4 +190,4 @@ def test_identity_is_saved_only_by_one_use_initiator_receipt_and_disconnect_keep
         assert request("/api/account")[1]["identity"] == identity
         assert request("/api/account/google/disconnect", {})[1]["identity"] is None
         assert request("/api/account")[1]["onboarding"]["tutorial_completed"] is True
-        assert request("/api/bootstrap")[0] == 200
+        assert request("/api/ai/status")[0] == 200
