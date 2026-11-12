@@ -154,22 +154,36 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
     });
 }
 
-/// A bundled executable beside the desktop binary. Tauri dev and cargo smoke
-/// binaries use the target-suffixed staging copy; installed bundles always use
-/// their own sibling executable, never a checkout.
+/// Where the desktop binary's own bundle installs the backend, relative to the binary's
+/// directory (`/usr/bin` in the .deb, `usr/bin` inside the AppImage): an unpacked
+/// PyInstaller directory (tauri.conf.json `files`), started in place on every launch.
+/// Outside `usr/lib`, so linuxdeploy never rewrites its libraries.
+const BACKEND: &str = "libexec/kitty-workspace/kitty-web/kitty-web";
+
+/// The backend executable from this binary's bundle. Tauri dev and cargo smoke binaries
+/// use the staging folder's `kitty-web/` directory; installed bundles always use their
+/// own copy, never a checkout or PATH.
+fn backend(directory: &Path, staging: Option<&Path>) -> Option<PathBuf> {
+    bundled(directory.parent()?.join(BACKEND), staging.map(|folder| folder.join("kitty-web/kitty-web")))
+}
+
+/// A bundled sidecar executable beside the desktop binary (Tauri `externalBin`), or the
+/// target-suffixed staging copy.
 fn sidecar(directory: &Path, name: &str, staging: Option<&Path>) -> Option<PathBuf> {
-    let packaged = directory.join(name);
+    bundled(directory.join(name), staging.map(|folder| folder.join(format!("{name}-{}", env!("KITTY_TARGET_TRIPLE")))))
+}
+
+fn bundled(packaged: PathBuf, staged: Option<PathBuf>) -> Option<PathBuf> {
     if packaged.is_file() { return Some(packaged); }
-    staging.map(|folder| folder.join(format!("{name}-{}", env!("KITTY_TARGET_TRIPLE"))))
-        .filter(|path| path.is_file())
+    staged.filter(|path| path.is_file())
 }
 
 fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc::Receiver<owner::Command>), Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let directory = executable.parent().ok_or("Desktop executable has no directory")?;
     let staging = cfg!(debug_assertions).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
-    let binary = sidecar(directory, "kitty-web", staging.as_deref())
-        .ok_or("The bundled kitty-web executable is missing")?;
+    let binary = backend(directory, staging.as_deref())
+        .ok_or("The bundled kitty-web backend is missing")?;
     let mut command = Command::new(binary);
     // The Terminal module runs only rika!'s pinned herdr, never one from the environment.
     command.env_remove("KITTY_HERDR");
@@ -478,7 +492,7 @@ mod tests {
     #[test]
     fn sidecars_come_only_from_the_bundle_or_the_debug_staging_folder() {
         let folder = std::env::temp_dir().join(format!("kitty-sidecar-test-{}", std::process::id()));
-        let (bundle, staging) = (folder.join("bundle"), folder.join("binaries"));
+        let (bundle, staging) = (folder.join("bundle/bin"), folder.join("binaries"));
         fs::create_dir_all(&bundle).unwrap();
         fs::create_dir_all(&staging).unwrap();
         assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), None);
@@ -488,6 +502,22 @@ mod tests {
         assert_eq!(sidecar(&bundle, "kitty-herdr", None), None);
         fs::write(bundle.join("kitty-herdr"), b"bundled").unwrap();
         assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), Some(bundle.join("kitty-herdr")));
+
+        // The backend is an unpacked directory: never a file beside the binary (the old
+        // onefile location) and never a directory standing in for its executable.
+        fs::write(bundle.join("kitty-web"), b"old onefile").unwrap();
+        fs::create_dir_all(staging.join("kitty-web")).unwrap();
+        assert_eq!(backend(&bundle, Some(&staging)), None);
+        let staged = staging.join("kitty-web/kitty-web");
+        fs::write(&staged, b"staged").unwrap();
+        assert_eq!(backend(&bundle, Some(&staging)), Some(staged));
+        assert_eq!(backend(&bundle, None), None);
+        let packaged = folder.join("bundle/libexec/kitty-workspace/kitty-web/kitty-web");
+        fs::create_dir_all(&packaged).unwrap();
+        assert_eq!(backend(&bundle, None), None);
+        fs::remove_dir(&packaged).unwrap();
+        fs::write(&packaged, b"bundled").unwrap();
+        assert_eq!(backend(&bundle, Some(&staging)), Some(bundle.parent().unwrap().join(BACKEND)));
         fs::remove_dir_all(&folder).unwrap();
     }
     #[test]

@@ -1,7 +1,13 @@
-"""Freeze the locked Python project and built website into a relocatable sidecar."""
+"""Freeze the locked Python project and built website into a relocatable backend directory.
+
+The backend is a PyInstaller onedir, not a onefile: a onefile unpacks its whole payload
+(~400 MB) into a temporary directory on every launch, which took ~10 s. The directory is
+shipped unpacked (tauri.conf.json ``files``) and started in place by the desktop shell.
+"""
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -34,11 +40,11 @@ def main() -> None:
     examples.mkdir(exist_ok=True)
     for source in (root / "config").glob("*.yaml.example"):
         shutil.copyfile(source, examples / source.name)
-    triple = subprocess.check_output(["rustc", "-vV"], text=True)
-    triple = next(line.removeprefix("host: ") for line in triple.splitlines() if line.startswith("host: "))
+    binaries = desktop / "binaries"
     command = [
-        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
-        "--name", "kitty-web", "--distpath", str(build / "dist"),
+        # Output: binaries/kitty-web/{kitty-web,_internal/}; sys._MEIPASS is _internal.
+        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir",
+        "--name", "kitty-web", "--distpath", str(binaries),
         "--workpath", str(build / "work"), "--specpath", str(build),
         "--collect-all", package, "--recursive-copy-metadata", project["name"],
         "--add-data", f"{root / 'web/dist'}:website",
@@ -59,12 +65,23 @@ def main() -> None:
             command.extend(["--collect-all", module])
     command.append(str(desktop / "backend.py"))
     subprocess.run(command, cwd=root, check=True)
-    binaries = desktop / "binaries"
-    binaries.mkdir(exist_ok=True)
-    target = binaries / f"kitty-web-{triple}"
-    shutil.copyfile(build / "dist/kitty-web", target)
-    target.chmod(0o755)
-    print(f"Packaged relocatable backend: {target.name}")
+    target = binaries / "kitty-web"
+    internal = target / "_internal"
+    for required in (target / "kitty-web", internal / "learnharness/node"):
+        if not required.is_file() or not os.access(required, os.X_OK):
+            raise SystemExit(f"Packaged backend lacks the executable {required.relative_to(target)}")
+    if not (internal / "website/index.html").is_file():
+        raise SystemExit("Packaged backend lacks the website")
+    # Tauri's .deb writer stores every entry by following links: a linked file becomes a
+    # copy, but a linked directory would arrive empty.
+    for folder, directories, _files in os.walk(target):
+        for name in directories:
+            if os.path.islink(os.path.join(folder, name)):
+                raise SystemExit(f"Packaged backend has a linked directory: {os.path.join(folder, name)}")
+    # The onefile sidecar this layout replaced must not be picked up by an installer.
+    for stale in binaries.glob("kitty-web-*"):
+        stale.unlink()
+    print(f"Packaged relocatable backend directory: {target}")
 
 
 if __name__ == "__main__":

@@ -120,11 +120,22 @@ jobs:
           dpkg-deb -x release-assets/*.deb release-deb
           test "$(sha256sum release-deb/usr/bin/kitty-herdr | cut -d ' ' -f 1)" = "$pinned"
           cmp release-deb/usr/lib/rika!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
+          # The backend ships unpacked (desktop/package_backend.py), where the shell looks for it
+          # (desktop/src/main.rs BACKEND), and starts from there; the old onefile location is gone.
+          backend=usr/libexec/kitty-workspace/kitty-web
+          test -x "release-deb/$backend/kitty-web"
+          test ! -e release-deb/usr/bin/kitty-web
+          test -f "release-deb/$backend/_internal/website/index.html"
+          test -x "release-deb/$backend/_internal/learnharness/node"
+          "release-deb/$backend/kitty-web" agent-launch --help >/dev/null
           chmod +x release-assets/*.AppImage
           appimage="$(realpath release-assets/*.AppImage)"
           (mkdir release-appimage && cd release-appimage && "$appimage" --appimage-extract >/dev/null)
           test "$(sha256sum release-appimage/squashfs-root/usr/bin/kitty-herdr | cut -d ' ' -f 1)" = "$pinned"
           cmp release-appimage/squashfs-root/usr/lib/rika!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
+          # linuxdeploy rewrites libraries under usr/lib only; the AppImage's backend is the deb's, byte for byte.
+          test ! -e release-appimage/squashfs-root/usr/bin/kitty-web
+          diff -r "release-deb/$backend" "release-appimage/squashfs-root/$backend"
       - name: Publish validated release and updater feed
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}

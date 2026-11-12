@@ -20,7 +20,7 @@
     "category": "Productivity",
     "shortDescription": "Private local opportunities, learning and planning workspace",
     "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/kitty-web", "binaries/kitty-herdr"],
+    "externalBin": ["binaries/kitty-herdr"],
     "resources": {
       "third_party/herdr/LICENSE": "licenses/herdr/LICENSE",
       "../third_party/grinstead-snell/LICENSE": "licenses/grinstead-snell/LICENSE",
@@ -28,8 +28,8 @@
       ".build/learnharness-legal/": "licenses/learnharness/"
     },
     "linux": {
-      "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "xdg-utils", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio", "pkexec"], "conflicts": ["kitty-workspace"], "replaces": ["kitty-workspace"] },
-      "appimage": { "bundleMediaFramework": true }
+      "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "xdg-utils", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio", "pkexec"], "conflicts": ["kitty-workspace"], "replaces": ["kitty-workspace"], "files": { "/usr/libexec/kitty-workspace/kitty-web": "binaries/kitty-web" } },
+      "appimage": { "bundleMediaFramework": true, "files": { "/usr/libexec/kitty-workspace/kitty-web": "binaries/kitty-web" } }
     }
   },
   "plugins": {

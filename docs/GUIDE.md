@@ -925,7 +925,7 @@ On NixOS, build the desktop in the native toolchain shell:
 nix develop 'path:./desktop#host-toolchain' --command bash scripts/build-desktop.sh
 ```
 
-Keep the native executable and bundled `kitty-web` sidecar together. The desktop
+Keep the native executable and its bundled `kitty-web` backend directory together. The desktop
 uses a single instance per session: verification must use an isolated workspace,
 profile and session, not relaunch or replace an owner's running instance.
 
@@ -1872,12 +1872,24 @@ automatically. Custom launchers are not silently rewritten.
 
 For development/build machines, the existing packaging script builds the locked
 website and freezes the locked Python backend into a relocatable `kitty-web`
-sidecar, stages the pinned herdr release as the `kitty-herdr` sidecar
+directory (`desktop/binaries/kitty-web/`, a PyInstaller onedir), stages the pinned
+herdr release as the `kitty-herdr` sidecar
 (`desktop/fetch_herdr.py` downloads it and refuses any binary whose SHA-256 differs
 from its pin; `--from <downloaded asset>` verifies an already downloaded file
 instead), then builds the Tauri app. It requires Python 3.12, uv, Node/npm, Rust,
 GTK3/WebKitGTK 4.1 development libraries, tray/media libraries and packaging tools.
 The frontend CLI comes from `web/package-lock.json`; no global CLI is needed.
+
+The backend ships unpacked, so each launch starts it in place instead of
+extracting ~400 MB to a temporary folder first (about 10 s before). The `.deb`
+and the AppImage install it at `/usr/libexec/kitty-workspace/kitty-web/`
+(`files` in `desktop/tauri.conf.json`); its bundled data (website, examples,
+LearnHarness, textbook, Tern plugin) is in its `_internal/` folder. The desktop
+binary starts only the backend at `../libexec/kitty-workspace/kitty-web/kitty-web`
+relative to its own folder (debug builds fall back to `desktop/binaries/kitty-web/`),
+never one from PATH. It sits outside `usr/lib`, so the AppImage tool leaves its
+libraries untouched; the release guard checks the deb's and the AppImage's copies
+are identical.
 
 ```bash
 # NixOS: reuse the installed cargo/rustc with pinned GTK/WebKit dependencies.
@@ -1888,15 +1900,19 @@ nix develop 'path:./desktop#host-toolchain' --offline --command \
 # To keep using an existing workspace, add: --workspace /absolute/path/to/workspace
 ```
 
-The installer copies the built app and its `kitty-web` and `kitty-herdr` sidecars to
-`$XDG_DATA_HOME/kitty/application` (default `~/.local/share/kitty/application`),
+The installer copies the built app and its `kitty-herdr` sidecar to
+`$XDG_DATA_HOME/kitty/application/bin` (default `~/.local/share/kitty/application`)
+and the backend directory to `application/libexec/kitty-workspace/kitty-web`, the
+same layout as the `.deb`; a reinstall keeps the replaced backend beside it as
+`kitty-web.previous` and removes the flat files of earlier installations. It
 installs the icon and **rika!** application-menu entry, and creates
 `$XDG_BIN_HOME/kitty-workspace` (default `~/.local/bin/kitty-workspace`).
 It captures only runtime library/schema/media settings from the build environment,
 not secrets, and does not depend on the repository at launch. Keep those Nix
 runtime store paths available. The launcher does not run `nix develop` or need an
 open terminal. The installer never copies over or deletes workspace files.
-`--binary`, `--sidecar`, `--herdr`, and `--icon` can select explicit build artifacts.
+`--binary`, `--backend` (the backend directory), `--herdr`, and `--icon` can select
+explicit build artifacts.
 Alternatively, `--appimage /absolute/path/to/downloaded.AppImage` installs a
 published AppImage rather than loose binaries. Its writable installed location
 remains fixed across signed replacements, with an adjacent `.previous` recovery
@@ -1931,7 +1947,7 @@ and WebKitGTK 2.52 has media streams on by default. Capture goes through WebKit'
 GStreamer and needs both **gst-plugins-base** and **gst-plugins-good**: with base
 alone the microphone fails to start. The `.deb` depends on them, and the AppImage
 bundles the build host's GStreamer plugins (`bundleMediaFramework`), because
-NixOS's `appimage-run` provides only base and ugly. The backend sidecar freezes
+NixOS's `appimage-run` provides only base and ugly. The backend freezes
 faster-whisper with its native CTranslate2, PyAV and tokenizers libraries
 (`desktop/package_backend.py`); the Whisper model itself is downloaded on first use.
 
@@ -1957,7 +1973,9 @@ and native Rust tests before the official
 the `.deb`, `.AppImage`, their `.sig` files and `latest.json` to a **draft** in the
 public releases repository. A guard downloads the actual uploaded files and
 validates the version/tag, nonempty complete assets, signatures and installer-specific
-`linux-x86_64-deb` / `linux-x86_64-appimage` metadata before publishing as latest.
+`linux-x86_64-deb` / `linux-x86_64-appimage` metadata, and that both installers
+carry the pinned herdr and the same unpacked backend (which must start), before
+publishing as latest.
 A failed guard leaves a draft, not a new public updater feed.
 No rika! source archive, checkout, private workspace or applicant data is uploaded
 by the workflow. Bundles do include LearnHarness's public corresponding source and

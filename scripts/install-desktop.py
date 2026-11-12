@@ -3,6 +3,10 @@
 
 On NixOS invoke inside the build dependency shell. Only runtime library/schema
 settings are captured, never API keys, shell setup or a reference to the checkout.
+
+Loose files mirror the .deb layout under ``application/``: ``bin/kitty-workspace``,
+``bin/kitty-herdr`` and the unpacked backend in ``libexec/kitty-workspace/kitty-web/``,
+where the desktop binary looks for it (desktop/src/main.rs ``BACKEND``).
 """
 from __future__ import annotations
 
@@ -35,6 +39,19 @@ def atomic_copy(source: Path, destination: Path) -> None:
         staged = Path(temporary) / destination.name
         shutil.copy2(source, staged)
         staged.chmod(0o755)
+        os.replace(staged, destination)
+
+
+def atomic_copy_tree(source: Path, destination: Path) -> None:
+    """Swap in a complete copy of the backend; the replaced one stays as ``<name>.previous``."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=f".{destination.name}-") as temporary:
+        staged = Path(temporary) / destination.name
+        shutil.copytree(source, staged, symlinks=True)
+        if destination.is_dir():
+            previous = destination.with_name(destination.name + ".previous")
+            shutil.rmtree(previous, ignore_errors=True)
+            os.replace(destination, previous)
         os.replace(staged, destination)
 
 
@@ -73,27 +90,29 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=root / "desktop/target/release/kitty-workspace")
     parser.add_argument("--appimage", type=Path, help="Install a signed published AppImage instead of loose build files")
-    parser.add_argument("--sidecar", type=Path, help="Packaged backend (default: sole desktop/binaries/kitty-web-* file)")
+    parser.add_argument("--backend", type=Path, help="Packaged backend directory (default: desktop/binaries/kitty-web)")
     parser.add_argument("--herdr", type=Path, help="Pinned herdr runtime (default: sole desktop/binaries/kitty-herdr-* file)")
     parser.add_argument("--icon", type=Path, default=root / "desktop/icons/icon.png")
     parser.add_argument("--workspace", type=Path, help="Reuse this workspace; omitted means the native default")
     parser.add_argument("--appimage-runner", type=Path, help="Launch the AppImage through this runner (NixOS: appimage-run)")
     args = parser.parse_args()
-    if args.appimage is not None and (args.sidecar is not None or args.herdr is not None):
-        parser.error("--appimage excludes --sidecar and --herdr")
+    if args.appimage is not None and (args.backend is not None or args.herdr is not None):
+        parser.error("--appimage excludes --backend and --herdr")
     if args.appimage is None:
-        for option, pattern, label in (("sidecar", "kitty-web-*", "packaged backend"),
-                                       ("herdr", "kitty-herdr-*", "staged herdr runtime")):
-            if getattr(args, option) is None:
-                candidates = list((root / "desktop/binaries").glob(pattern))
-                if len(candidates) != 1:
-                    parser.error(f"pass --{option} when there is not exactly one {label}")
-                setattr(args, option, candidates[0])
+        if args.backend is None:
+            args.backend = root / "desktop/binaries/kitty-web"
+        if args.herdr is None:
+            candidates = list((root / "desktop/binaries").glob("kitty-herdr-*"))
+            if len(candidates) != 1:
+                parser.error("pass --herdr when there is not exactly one staged herdr runtime")
+            args.herdr = candidates[0]
     executables = ([(args.appimage, "kitty.AppImage")] if args.appimage is not None else
-                   [(args.binary, "kitty-workspace"), (args.sidecar, "kitty-web"), (args.herdr, "kitty-herdr")])
+                   [(args.binary, "bin/kitty-workspace"), (args.herdr, "bin/kitty-herdr")])
     for source in [*(source for source, _ in executables), args.icon]:
         if not source.is_file():
             parser.error(f"missing build artifact: {source}")
+    if args.appimage is None and not (args.backend / "kitty-web").is_file():
+        parser.error(f"missing build artifact: {args.backend / 'kitty-web'}")
     home = Path.home()
     data = Path(os.environ.get("XDG_DATA_HOME", home / ".local/share")).expanduser().resolve()
     bin_dir = Path(os.environ.get("XDG_BIN_HOME", home / ".local/bin")).expanduser().resolve()
@@ -106,7 +125,7 @@ def main() -> None:
     installed_image = application / "kitty.AppImage"
     runtime = [f"export {name}={shlex.quote(os.environ[name])}"
                for name in RUNTIME_ENVIRONMENT if name in os.environ]
-    command = [str(application / ("kitty.AppImage" if args.appimage is not None else "kitty-workspace"))]
+    command = [str(application / ("kitty.AppImage" if args.appimage is not None else "bin/kitty-workspace"))]
     if args.appimage is not None and installed_image.is_file() and launcher.is_file():
         try:
             runtime, command = previous_appimage_launcher(launcher, installed_image)
@@ -122,9 +141,16 @@ def main() -> None:
         command.extend(("--workspace", str(args.workspace.expanduser().resolve())))
     for source, name in executables:
         destination = application / name
+        destination.parent.mkdir(exist_ok=True)
         if destination.is_file():
-            atomic_copy(destination, destination.with_name(name + ".previous"))
+            atomic_copy(destination, destination.with_name(destination.name + ".previous"))
         atomic_copy(source, destination)
+    if args.appimage is None:
+        atomic_copy_tree(args.backend, application / "libexec/kitty-workspace/kitty-web")
+        # The flat layout of the earlier onefile backend; the new launcher no longer uses it.
+        for name in ("kitty-workspace", "kitty-web", "kitty-herdr"):
+            for obsolete in (application / name, application / f"{name}.previous"):
+                obsolete.unlink(missing_ok=True)
     shutil.copy2(args.icon, icon)
     lines = ["#!/bin/sh", "# Captured runtime dependencies; no build shell is needed at launch.", *runtime]
     # Never let an ambient developer workspace leak into a desktop installation.
