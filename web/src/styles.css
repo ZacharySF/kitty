@@ -1418,6 +1418,7 @@ main > :is(.panel, .br-panel, .br-card) {
   border-radius: 9px;
   background: var(--c1);
   color: var(--solid-void, var(--br-void));
+  overflow: hidden;
 }
 :root body .workspace-groups {
   border-color: var(--hairline);

@@ -4,6 +4,7 @@
   import { tutorialSteps, type AccountState } from "./onboarding";
   import type { View } from "./workspace";
   import Icon from "./Icon.svelte";
+  import BrandMark from "./BrandMark.svelte";
   import ThemePicker from "./ThemePicker.svelte";
 
   let { workspace, onview }: { workspace: Bootstrap | null; onview: (view: View) => void } = $props();
@@ -199,17 +200,17 @@
       <p class="step-count">{String(stepIndex + 1).padStart(2, "0")} / {String(steps.length).padStart(2, "0")}{#if step.unavailable}<span>MODULE OFF</span>{/if}</p>
       <h2 id="onboarding-title">{step.title}</h2>
       <p class="description">{step.text}</p>
-      <p class="tip"><Icon name="kitty" size={18} />{step.tip}</p>
+      <p class="tip"><span class="brand-ink"><BrandMark size={18} /></span>{step.tip}</p>
       {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
       <footer><button class="quiet" disabled={stepIndex === 0} onclick={() => stepIndex -= 1}>← Back</button><button class="primary" onclick={advance}>{stepIndex === steps.length - 1 ? "Finish tour" : "Next"}<span>→</span></button></footer>
     </section>
   {:else if mode}
     <div class="welcome-shell">
-      <header><span class="wordmark"><Icon name="kitty" size={27} />rika<span class="brand-dot">!</span></span><ThemePicker /><button class="quiet" disabled={busy} onclick={finish} aria-label="Skip onboarding">Skip for now ↗</button></header>
+      <header><span class="wordmark"><span class="brand-ink"><BrandMark size={27} /></span>rika<span class="brand-dot">!</span></span><ThemePicker /><button class="quiet" disabled={busy} onclick={finish} aria-label="Skip onboarding">Skip for now ↗</button></header>
       <div class="welcome-grid">
         <aside class="welcome-art" aria-hidden="true">
           <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit orbit-three"></div>
-          <div class="art-center"><Icon name="kitty" size={72} /></div>
+          <div class="art-center brand-ink"><BrandMark size={126} /></div>
           <span class="art-node node-notes"><Icon name="notes" size={20} />A thought</span>
           <span class="art-node node-study"><Icon name="study" size={20} />A little focus</span>
           <span class="art-node node-atlas"><Icon name="atlas" size={20} />A place for it</span>
@@ -218,7 +219,7 @@
         <section class="welcome-reading">
           <p class="eyebrow">{mode === "finish" ? "READY WHEN YOU ARE" : welcomeStep === 0 ? "WELCOME TO YOUR WORKSPACE" : "A QUICK LOOK AROUND"}</p>
           {#if mode === "finish"}
-            <div class="completion-mark"><Icon name="kitty" size={35} /></div>
+            <div class="completion-mark brand-ink"><BrandMark size={35} /></div>
             <h1 id="onboarding-title">Make room for<br />your next idea.</h1>
             <p class="description">You're ready to explore. Start small: capture a thought, open your Atlas, or settle into a little focus.</p>
             <div class="privacy-note"><Icon name="shield" size={19} /><p>Everything you've seen is local. Reopen this tour anytime from Settings → Welcome & account.</p></div>
@@ -267,7 +268,8 @@
   .welcome-art { position: relative; min-width: 0; overflow: hidden; border-right: 1px solid var(--border); background: radial-gradient(ellipse at 50% 42%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 65%); }
   .orbit { position: absolute; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); border-radius: 50%; left: 50%; top: 43%; transform: translate(-50%, -50%) rotate(-25deg); }
   .orbit-one { width: 240px; height: 240px; }.orbit-two { width: 380px; height: 280px; }.orbit-three { width: 470px; height: 410px; border-style: dashed; opacity: .6; }
-  .art-center { position: absolute; left: 50%; top: 43%; transform: translate(-50%, -50%); width: 126px; height: 126px; display: grid; place-items: center; border-radius: 36px; color: var(--accent); background: color-mix(in srgb, var(--surface-raised) 75%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: 0 0 70px color-mix(in srgb, var(--accent) 12%, transparent); }
+  .art-center { position: absolute; left: 50%; top: 43%; transform: translate(-50%, -50%); }
+  .brand-ink { display: inline-grid; flex: none; color: var(--solid-void, var(--br-void)); --brand-liquid: var(--accent); }
   .art-node { position: absolute; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); background: color-mix(in srgb, var(--surface-raised) 87%, transparent); font-size: 13px; color: var(--muted); }
   .node-notes { left: 9%; top: 20%; transform: rotate(-7deg); }.node-study { right: 5%; top: 52%; transform: rotate(7deg); }.node-atlas { left: 10%; top: 65%; transform: rotate(-4deg); }
   .art-caption { position: absolute; bottom: 32px; left: 34px; right: 24px; }.art-caption span, .eyebrow, .welcome-footnote { font: 10px var(--font-mono); letter-spacing: .14em; color: var(--muted); }.art-caption p { font: 23px var(--font-ui); max-width: 240px; margin: 12px 0 0; }

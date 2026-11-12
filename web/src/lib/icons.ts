@@ -31,8 +31,9 @@ export const ICONS: Record<string, IconDef> = {
   schema: { path: "M3 16h4v4H3ZM17 16h4v4h-4ZM12 9.6V12M5 16v-4h14v4", accents: [[12, 5.6, 3.9]] },
   ai: { path: "M5 7h14v13H5ZM8 11h.01M16 11h.01M8 16h8M2 10v6M22 10v6", accents: [[12, 3.6, 2.6]] },
   terminal: { path: "M3 4h18v16H3Zm4 5 3 3-3 3", accents: [[15.6, 14.8, 3]] },
-  // The brand mark sits on a pastel squircle in the top bar; a blossom there would vanish.
-  kitty: plain("M4 10V3l5 4a10 10 0 0 1 6 0l5-4v7a8 8 0 1 1-16 0ZM8 12h.01M16 12h.01m-6 4 2 1 2-1"),
+  // The brand mark, the poured cat (scripts/brand_icons.py `hairline()`): the surface line rises into the
+  // ears, and the tail breaks the surface. It sits on a pastel squircle in the top bar; a blossom there would vanish.
+  kitty: plain("M2.00 15.26H2.11Q4.25 15.26 4.25 14.42L4.25 13.91Q4.25 13.24 4.44 12.59L5.35 9.55Q5.60 8.74 5.97 9.49L7.21 11.96Q7.51 12.56 8.18 12.56H9.98Q10.65 12.56 10.95 11.96L12.19 9.49Q12.56 8.74 12.80 9.55L13.72 12.59Q13.91 13.24 13.91 13.91L13.91 14.42Q13.91 15.26 16.04 15.26H22.00M19.30 15.26V11.44C19.30 9.98 19.87 9.42 21.33 9.42"),
   jobs: { path: "m21 21-4.4-4.4M19 10.5a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0", accents: [[10.5, 10.5, 3.8]] },
   queue: { path: "M4 5h16M4 12h10M4 19h10", accents: [[19, 12, 3]] },
   applications: { path: "M8 5V3h8v2M3 7h18v14H3ZM3 12h9.6M14.4 12H21", accents: [[12, 13.6, 2.4]] },
@@ -79,7 +80,7 @@ export const ICONS: Record<string, IconDef> = {
   "actor-omp": plain("M4 7h16M9 7v13M15 7v10a3 3 0 0 0 3 3h1"),
   "actor-claude": plain("M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"),
   "actor-codex": plain("M8 6 3 12l5 6M16 6l5 6-5 6M13.5 4l-3 16"),
-  "actor-rika": plain("M4 10V3l5 4a10 10 0 0 1 6 0l5-4v7a8 8 0 1 1-16 0ZM9 12h.01M15 12h.01"),
+  "actor-rika": plain("M2.00 15.26H2.11Q4.25 15.26 4.25 14.42L4.25 13.91Q4.25 13.24 4.44 12.59L5.35 9.55Q5.60 8.74 5.97 9.49L7.21 11.96Q7.51 12.56 8.18 12.56H9.98Q10.65 12.56 10.95 11.96L12.19 9.49Q12.56 8.74 12.80 9.55L13.72 12.59Q13.91 13.24 13.91 13.91L13.91 14.42Q13.91 15.26 16.04 15.26H22.00M19.30 15.26V11.44C19.30 9.98 19.87 9.42 21.33 9.42"),
   "actor-client": plain("M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0ZM12 17v4"),
   "actor-system": plain("M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.2 2.2M16.2 16.2l2.2 2.2M5.6 18.4l2.2-2.2M16.2 7.8l2.2-2.2"),
   "actor-peer": plain("M3 5h13v9H3ZM1 17h17M19 9h3v11h-3Z"),

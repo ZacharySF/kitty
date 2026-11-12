@@ -5,6 +5,7 @@
   import { setActiveModules } from "./lib/modules.svelte";
   import { Badge, Button } from "@nunera/bracket";
   import Icon from "./lib/Icon.svelte";
+  import BrandMark from "./lib/BrandMark.svelte";
   import GettingStarted from "./lib/GettingStarted.svelte";
   import AddJob from "./lib/AddJob.svelte";
   import CommandPalette from "./lib/CommandPalette.svelte";
@@ -412,7 +413,7 @@
   <header class="system-bar" role="group" aria-label="Workspace controls" oncontextmenu={(event) => tabBar?.openMenu(event)}>
     {#if view !== "today"}<button class="schema-back" onclick={schemaBack} aria-label={schemaNodes.length ? "Back to parent schema" : "Back to rika! schema"} title="Back to parent schema">←</button>{/if}
     <a class="wordmark" class:current-schema={view === "today"} href="#today" aria-label="rika! home" aria-current={view === "today" ? "page" : undefined} title="Main rika! schema" onclick={(event) => { event.preventDefault(); navigate("today"); }}>
-      <span class="brand-mark" aria-hidden="true"><Icon name="kitty" size={22} /></span>
+      <span class="brand-mark" aria-hidden="true"><BrandMark size={26} /></span>
       <span class="word">rika<span class="brand-dot">!</span></span>
     </a>
     <nav class="breadcrumb" aria-label="Schema tabs">
