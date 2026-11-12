@@ -11,6 +11,7 @@
 //! desktop backend behind it. The worker arguments are passed through unchanged.
 
 mod auth;
+mod builds;
 mod front;
 mod target;
 mod worker;
@@ -172,6 +173,9 @@ async fn run(options: Options) -> Result<(), String> {
 #[tokio::main]
 async fn main() {
     // Hidden and test-only: the build reader on stdin, for tests/test_build_reader_parity.py.
+    if std::env::args().nth(1).as_deref() == Some("check-build") {
+        std::process::exit(builds::check_build_command());
+    }
     let options = match options() {
         Ok(options) => options,
         Err(message) => {
