@@ -16,7 +16,7 @@
 
   /**
    * An agent's mediation guarantee (Full / Attribution only / Not mediated) in the theme's
-   * roles: success, warning, error. `compact` draws only the shield (a Rika bar chip); its
+   * roles: success, warning, error. `compact` draws only the shield (a small chip); its
    * name and tooltip still say the level. `detail` replaces the tooltip (a launch's message).
    */
   let { guarantee, compact = false, detail = "" }: { guarantee: unknown; compact?: boolean; detail?: string } = $props();

@@ -131,15 +131,15 @@ async function shot(page, name) {
 }
 
 describe("module packs", () => {
-  test("a base install has no Brain files; the home says so and leads to the download", async () => {
+  test("a base install has no Brain files; home shows no Brain and Settings → Modules offers it", async () => {
     const { page, context, problems } = await open();
-    const card = page.getByRole("region", { name: "Brain", exact: true });
-    await card.getByRole("heading", { name: "Brain isn't installed" }).waitFor();
+    await page.locator(".home").getByRole("region", { name: "Rika" }).waitFor();
+    assert.equal(await page.getByRole("heading", { name: "Brain isn't installed" }).count(), 0, "home offers the Brain's download");
+    assert.equal(await page.getByRole("navigation", { name: "Workspace groups" }).getByRole("button", { name: "Brain" }).count(), 0, "the Brain is in the navigation");
     if (shots) await page.screenshot({ path: join(shots, "home-brain-not-installed.png") });
     for (const name of listed) assert.equal(await asset(page, name), 404, `${name} is still served`);
-    await card.getByRole("button", { name: "Download" }).click();
-    await modulesRegion(page).waitFor();
-    assert.equal(await page.evaluate(() => location.hash), "#settings/modules");
+    await page.goto(`${kitty.origin}/#settings/modules`);
+    await brainRow(page).getByText(`Download · ${megabytes(index.packs[0].size)}`).waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -182,22 +182,24 @@ describe("module packs", () => {
     await context.close();
   });
 
-  test("after a restart the home draws the Brain from the pack", async () => {
+  test("after a restart the Brain is its own place, drawn from the pack", async () => {
     await kitty.stop();
     kitty = await start();
     const { page, context, problems } = await open();
+    await page.getByRole("navigation", { name: "Workspace groups" }).getByRole("button", { name: "Brain" }).click();
+    await page.waitForFunction(() => location.hash === "#brain");
     // The Brain (WebGL in software here) or, without WebGL, the 2D map: never the card.
     await page.locator(".atlas .stage canvas >> visible=true").first().waitFor({ timeout: 30_000 });
     assert.equal(await page.getByRole("heading", { name: "Brain isn't installed" }).count(), 0);
     const stage = await page.locator(".atlas .stage").getAttribute("aria-label");
     assert.ok(["Brain of every record and edit in your workspace", "2D atlas of your workspace"].includes(stage), stage);
     if (stage.startsWith("Brain")) await page.locator("[data-brain-stage] canvas").first().waitFor();
-    if (shots) await page.screenshot({ path: join(shots, "home-brain-from-pack.png") });
+    if (shots) await page.screenshot({ path: join(shots, "brain-from-pack.png") });
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("with the Brain off its download can be removed, and the base is back to the card", async () => {
+  test("with the Brain off its download can be removed", async () => {
     await kitty.request("/modules", { enabled: ["workspace"] });
     const { page, context, problems } = await open("#settings/modules");
     const row = brainRow(page);

@@ -20,7 +20,7 @@ export function atlasSections(
   return groups.map((group) => ({
     label: group.label,
     items: group.views
-      .filter((id) => id !== "today" && (group.label !== "Job search" || id === "jobs"))
+      .filter((id) => id !== "today" && id !== "brain" && (group.label !== "Job search" || id === "jobs"))
       .map((id) => navigation.find((item) => item.id === id)!),
   }));
 }

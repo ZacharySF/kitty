@@ -482,10 +482,10 @@
   .acts button.danger:hover:not(:disabled) {
     color: var(--error);
   }
-  /* Fixed above the Rika bar so it stays in reach however far the list is scrolled. */
+  /* Fixed to the window's foot so it stays in reach however far the list is scrolled. */
   .undo {
     position: fixed;
-    bottom: max(24px, calc(var(--rika-space, 0px) + 12px));
+    bottom: 24px;
     left: 50%;
     z-index: 25;
     display: inline-flex;

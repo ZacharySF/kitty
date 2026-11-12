@@ -53,7 +53,9 @@ test('relations never cross into a disabled module',()=>{
 
 test('keyboard help lists only reachable shortcuts',()=>{
   const titles=(enabled)=>shortcutsFor(enabled).map(group=>group.title);
-  assert.deepEqual(titles([]),['Navigate','Atlas home']);
+  assert.deepEqual(titles([]),['Navigate']);
+  assert.ok(titles(['brain']).includes('Brain'));
+  assert.ok(titles(['voice']).includes('Talk to Rika'));
   assert.ok(titles(['workspace']).includes('Study'));
   assert.ok(titles(['workspace']).includes('Flashcards'));
   assert.ok(!titles(['workspace']).includes('Job decisions'));

@@ -2,7 +2,7 @@
   import { onMount, type Snippet } from "svelte";
 
   /**
-   * Q60: the app's toast stack, bottom-right above the Rika bar. Toasts overlap as a deck;
+   * Q60: the app's toast stack, bottom-right. Toasts overlap as a deck;
    * pointer or keyboard focus inside fans it out and pauses every countdown. Each toast's
    * `left` (ms) counts down in place and its life line shrinks with it; at zero it is
    * dismissed. The notification stack and Rika's reply stack share this look.
@@ -90,10 +90,10 @@
 <style>
   .toasts {
     position: fixed;
-    /* Rika's history drawer, while open, keeps the stack beside it rather than under it. */
+    /* Rika's drawer, while open, keeps the stack beside it rather than under it. */
     right: calc(16px + var(--rika-drawer, 0px));
     transition: right 200ms;
-    bottom: calc(max(16px, calc(var(--rika-space, 0px) + 12px)) + var(--offset));
+    bottom: calc(16px + var(--offset));
     z-index: 40;
     display: grid;
     width: min(320px, calc(100vw - 32px));

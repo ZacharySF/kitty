@@ -1,0 +1,64 @@
+<script lang="ts">
+  import { untrack } from "svelte";
+  import HomeWidget from "../HomeWidget.svelte";
+  import RikaConversation from "./RikaConversation.svelte";
+  import RikaInput from "./RikaInput.svelte";
+  import { rika } from "./session.svelte";
+
+  /**
+   * Rika on home: the whole right-hand column, the conversation above and the field at its
+   * foot. While it is on screen (`active`: its tab is the one shown) it stands in for the
+   * drawer and the reply toasts: Ctrl + J, Ctrl K and anything that would open the drawer
+   * focus its field or switch its section instead.
+   */
+  let { id, active }: { id: string; active: boolean } = $props();
+  let field = $state<RikaInput>();
+  const waiting = $derived(rika.pending.length + rika.pendingPlans.length);
+
+  $effect(() => {
+    if (active) return untrack(() => rika.showPanel());
+  });
+  let seen = rika.focusRequest;
+  $effect(() => {
+    const request = rika.focusRequest;
+    if (!active || request === seen) return;
+    seen = request;
+    field?.focus();
+  });
+</script>
+
+<div class="rika-panel" data-tutorial="rika">
+  <HomeWidget {id} title="Rika" eyebrow={waiting ? `${waiting} waiting` : ""} fill>
+    <div class="scroll">
+      <RikaConversation brief={active} />
+    </div>
+    <div class="foot"><RikaInput bind:this={field} /></div>
+  </HomeWidget>
+</div>
+
+<style>
+  .rika-panel {
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+  }
+  .scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-right: 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline) transparent;
+  }
+  .foot {
+    flex: none;
+    padding: 12px 0 2px;
+  }
+  .rika-panel :global(.home-widget > header .eyebrow) {
+    color: var(--warning);
+  }
+</style>

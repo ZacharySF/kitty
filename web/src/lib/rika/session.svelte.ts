@@ -1,6 +1,7 @@
 import { api, socketProtocols } from "../api";
+import { activeModules } from "../modules.svelte";
 import { Mic, MicError } from "./mic";
-import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
+import { mergeEntries, rikaSocketUrl, voiceEnabled, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
 
 /** How long a finished reply's toast stays before it leaves for the drawer. */
 export const RIKA_TOAST_MS = 9000;
@@ -28,7 +29,7 @@ const IDLE: VoiceState = { phase: "idle", mode: "command", session: "", partial:
 /**
  * The browser side of Rika (docs/rika-design.md Q2 D, Q3–Q8, Q19, Q20): the conversation,
  * its actions, approvals and brain-dump plans, voice input, the live worker agents, the
- * reply toasts and the history drawer. One socket (`/api/rika/stream`) carries every
+ * home panel, and elsewhere the reply toasts and the drawer. One socket (`/api/rika/stream`) carries every
  * live event and the microphone's audio; REST loads history and agents and sends
  * requests, dumps, decisions, undos and opens.
  */
@@ -40,6 +41,10 @@ export class RikaSession {
   error = $state("");
   connected = $state(false);
   drawer = $state<{ open: boolean; section: DrawerSection; auto: boolean }>({ open: false, section: "conversation", auto: false });
+  /** Home panels on screen (the active tab's home). While one is, it stands in for the drawer and the toasts. */
+  private panels = $state(0);
+  /** Bumped to ask the visible panel to focus its field. */
+  focusRequest = $state(0);
   voice = $state<VoiceState>({ ...IDLE });
   /** The Whisper model's first-use download, while it runs. */
   model = $state<{ received: number; total: number } | null>(null);
@@ -68,6 +73,7 @@ export class RikaSession {
         !this.pending.some((approval) => String(approval.message_id) === String(entry.id))),
   );
   readonly listening = $derived(this.voice.phase !== "idle");
+  readonly panelVisible = $derived(this.panels > 0);
 
   /** Connects; returns the disconnect. `onnavigate` runs Rika's "open view" client actions. */
   start(onnavigate: (view: string) => void): () => void {
@@ -250,7 +256,8 @@ export class RikaSession {
    * drawer, which opens by itself, and is planned when it ends.
    */
   async listen(mode: VoiceMode, prefix = "") {
-    if (this.listening) return;
+    // Without the voice module Rika is text only.
+    if (this.listening || !voiceEnabled(activeModules)) return;
     this.error = "";
     const session = `v${Date.now().toString(36)}${this.nextVoice++}`;
     this.voice = { ...IDLE, phase: "starting", mode, session, prefix };
@@ -399,8 +406,24 @@ export class RikaSession {
     this.onnavigate(view);
   }
 
+  /** A home panel came into view: it holds the conversation, so the drawer and toasts go. Returns its removal. */
+  showPanel(): () => void {
+    this.panels += 1;
+    this.toasts = [];
+    if (this.drawer.open) this.drawer = { ...this.drawer, open: false, auto: false };
+    let shown = true;
+    return () => {
+      if (shown) this.panels -= 1;
+      shown = false;
+    };
+  }
+
+  /** Opens the drawer on `section`; with the home panel in view, the panel shows it and takes focus instead. */
   showDrawer(section: DrawerSection = this.drawer.section) {
-    this.drawer = { open: true, section, auto: false };
+    if (this.panelVisible) {
+      this.drawer = { ...this.drawer, section };
+      this.focusRequest += 1;
+    } else this.drawer = { open: true, section, auto: false };
   }
   closeDrawer() {
     this.drawer = { ...this.drawer, open: false, auto: false };
@@ -437,7 +460,7 @@ export class RikaSession {
   }
 
   private openAuto() {
-    if (!this.drawer.open) this.drawer = { open: true, section: "conversation", auto: true };
+    if (!this.drawer.open && !this.panelVisible) this.drawer = { open: true, section: "conversation", auto: true };
     else if (this.drawer.section !== "conversation") this.drawer = { ...this.drawer, section: "conversation" };
   }
 
@@ -477,6 +500,8 @@ export class RikaSession {
 
   /** One toast per live reply, newest last; finished replies count down. */
   private raise(message: Id) {
+    // The home panel shows the reply itself.
+    if (this.panelVisible) return;
     const key = String(message);
     if (this.toasts.some((toast) => toast.message === key)) {
       this.toasts = this.toasts.map((toast) => (toast.message === key ? { ...toast, left: RIKA_TOAST_MS } : toast));

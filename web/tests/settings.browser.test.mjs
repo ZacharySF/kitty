@@ -387,12 +387,12 @@ describe("settings pages", () => {
     await memory.getByText(/Note text stays local|Notes AI sharing is on/).waitFor();
 
     // A deterministic demo reply reads Direct · its tool · 0 tokens · $0 in the drawer.
-    const ask = page.getByRole("textbox", { name: "Ask Rika" });
+    await page.keyboard.press("Control+j");
+    const ask = page.getByRole("dialog", { name: "Rika" }).getByRole("textbox", { name: "Ask Rika" });
     await ask.fill("add a task review the Rika readout");
     await ask.press("Enter");
     await page.getByRole("list", { name: "Rika replies" }).getByText("Added the task review the Rika readout.").waitFor();
-    await page.getByRole("button", { name: "Rika history", exact: true }).click();
-    const reply = page.getByRole("dialog", { name: "Rika history" }).locator(".said").filter({ hasText: "Added the task review the Rika readout." });
+    const reply = page.getByRole("dialog", { name: "Rika" }).locator(".said").filter({ hasText: "Added the task review the Rika readout." });
     await reply.getByText("create_task · 0 tokens · $0").waitFor();
     assert.equal(await reply.locator(".rika-chip").getAttribute("data-tier"), "direct");
     assert.deepEqual(problems, []);

@@ -6,7 +6,7 @@ database. The [README](../README.md) is the short overview.
 A local workspace with four optional built-in modules: **ApplyAI** for job discovery,
 application preparation and tracking, **Workspace** for notes, documents, study and
 planning, **Terminal** for rika!'s own bundled herdr terminal session, and **Brain**, the
-atlas home, whose code is a separate download. The shell and settings work with any
+3D brain and 2D map of the workspace, whose code is a separate download. The shell and settings work with any
 combination of modules, or none.
 
 **Two rules the code enforces, not just documents:**
@@ -75,7 +75,7 @@ source .venv/bin/activate    # then just `kitty ...`
 | ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports |
 | Workspace (`workspace`) | Notes, documents/PDFs, canvas, mind maps, backlinks, flashcards, study, calendar, tasks and projects/opportunities |
 | Terminal (`terminal`) | rika!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window; your installed [Stencil Tern](https://stencil.so/tern), if any, opened on a session of rika!'s own |
-| Brain (`brain`) | The atlas home: your workspace as a 3D brain or a 2D map, and the 3D look of section and schema graphs. A download (its pack), off until installed |
+| Brain (`brain`) | The Brain view: your workspace as a 3D brain or a 2D map, and the 3D look of section and schema graphs. A download (its pack), off until installed |
 | Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
@@ -122,9 +122,9 @@ built into the app, then the archive's size and SHA-256 against that index, and 
 it in one atomic step under `$XDG_DATA_HOME/kitty/packs/` (`~/.local/share/kitty/packs/`);
 a download that fails or does not match changes nothing. After an app update the old
 pack shows **Download** again: a pack is tied to the build it came with. Without the
-Brain the home shows a "Brain isn't installed" card leading to the download; every other
-view works as before. `kitty modules enable brain` writes the selection without
-checking for the pack; the home then shows the same card until it is downloaded.
+Brain module there is no Brain entry in the header and nothing else changes. `kitty modules
+enable brain` writes the selection without checking for the pack; the Brain view then
+shows a "Brain isn't installed" card leading to the download.
 
 ### Builds
 
@@ -171,10 +171,9 @@ seconds and is issued only by the header- and secret-protected `POST
 /api/terminal/session`. A development `kitty-web` uses `KITTY_HERDR=<herdr 0.9.5
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
-**Terminals.** There is no terminal dock: the bottom of the window is the Rika bar
-(see **Rika** below). Terminals open as native Tern windows: **Open terminal** in
+**Terminals.** There is no terminal dock. Terminals open as native Tern windows: **Open terminal** in
 Ctrl K, or ask Rika ("open a terminal"). Without a usable Tern, Open terminal
-shows the **Tern** view, which says why. The **herdr** node under Plan in the atlas
+shows the **Tern** view, which says why. **herdr** under Plan (Sections on home)
 opens the whole herdr session in the workspace tab, in a transparent terminal drawn
 in the Harness colours. In a terminal, bare keys (including `f`) go to the shell;
 **Ctrl+Shift+F** fullscreens the terminal panel and **Esc** returns. The v0.3.25
@@ -204,7 +203,7 @@ list workspaces, create a separately labelled tab with `tab create --workspace
 <id> --cwd <directory> --label <name> --no-focus`, then target the returned
 `root_pane.pane_id` explicitly. Read herdr's own skill before controlling panes.
 Never rely on another client's focused pane or switch to the `default` session.
-Their tabs appear live in the herdr view, and Rika's history drawer (**Agents**)
+Their tabs appear live in the herdr view, and Rika's **Agents**
 shows one card per detected agent: its state, task (the pane's title), last output
 line and how long it has been in that state; **Open window** focuses its Tern window.
 Local CLI/socket access grants full shell access as your user.
@@ -245,8 +244,7 @@ These act only on rika!'s own daemon and its `kitty` session
 **Agent skills (docs/agent-skills-design.md).** Each agent card in Rika's history
 drawer (**Agents**) shows a **now: skill · tool** chip, what the agent is using right
 now (for example "now: lavish · read"; "now: —" until something answers), and a
-**Skills (N)** button that lists that agent's skills in the drawer. The Rika bar's
-agent chips carry the same text in their tooltip, with omp's one-line intent.
+**Skills (N)** button that lists that agent's skills in the drawer.
 **All agent skills**, under Plan beside Tern (also in Ctrl K, or ask Rika to open
 "agent skills"), catalogues every agent kind's **Agent skills**, **Tools (MCP)** and
 **Plugins**, even with no agent running, with the running agents and their now
@@ -380,7 +378,7 @@ previous page; plain `#settings` opens Appearance. Explanations of individual
 controls, such as the graph physics sliders, are tooltips on their ⓘ.
 **Settings → Appearance** sets the whole look in one panel beside a live
 preview: theme, title font (Fraunces or plain), density (compact 13px or
-comfortable 14px), motion (full or reduced), home (Brain or 2D map), section graph look
+comfortable 14px), motion (full or reduced), Brain view (Brain or 2D map), section graph look
 (2D or 3D), the theme motif (turn it off to keep a theme's surfaces without its
 bullets, ticks, dividers and ornaments) and the background (the theme's backdrop,
 or with drifting petals). Reduce motion, here or in the system, stops every theme
@@ -421,7 +419,7 @@ configuration from disk; saves in My profile reload it automatically.
 
 The first-run welcome offers **Continue locally** or an optional Google identity
 connection, followed by a skippable guided tour of workspace panels, modules,
-Atlas, quick notes, Study and the Rika bar. Completion is
+home, quick notes, Study and Rika. Completion is
 remembered per workspace. Reopen either flow in **Settings → Account** (**Connect
 Google** or **Take the tour**; **Setup guide** links to the Google setup document).
 Google is not required for local/offline use and does not secure the local API or
@@ -442,53 +440,54 @@ browser filling, Gmail, notifications and paid operations are disabled. Syntheti
 text resume placeholders correctly appear as unavailable PDFs; real test PDFs can
 be registered inside the disposable workspace.
 
-### The Rika bar
+### Rika
 
 **Rika** is rika!'s own agent; what it can do, its tiers and what it asks first are
-under **Rika** in the AI settings section below. It lives in the **Rika bar**,
-the slim bar along the bottom of the window: type a request in **Ask Rika…** and
-press Enter. While Rika writes its reply the whole bar breathes with a soft ring of
-light (under Reduce motion the ring stays lit and still). Each reply lands as a toast
-above the bar, in the reminder toasts' look, with the reply, its tier chip (**fast**,
-**standard** or **deep**: the model size Rika chose) and what it did; anything it
-changed in the app carries **Undo**. Reminder toasts stack above Rika's.
+under **Rika** in the AI settings section below. On home it fills the right-hand
+column: the conversation above, **Ask Rika…** at its foot; type a request and press
+Enter. While Rika writes its reply its mark turns and the field's edge takes the
+theme's accent (under Reduce motion the mark stays still). Elsewhere **Ctrl+J** (from
+anywhere but a terminal) or **Rika** in Ctrl K opens the same conversation in a drawer
+on the right, with the field focused; on home Ctrl+J and `/` focus the panel's field.
+Away from home each reply also lands as a toast in the reminder toasts' look, with the
+reply, its tier chip (**Fast**, **Standard** or **Deep**: the model size Rika chose) and
+what it did; anything it changed in the app carries **Undo**. Reminder toasts stack
+above Rika's. On home the panel shows replies itself and no toast is raised.
 
-**History** on the bar, or **Ctrl+J** from anywhere but a terminal, opens the history
-drawer on the right: **Conversation** holds every request and reply, the action
-cards Rika ran (Undo while it can still be undone) and its approvals. Anything
-outward or irreversible waits for **Approve** or **Reject** on an approval card
-that says what will happen and, when it has one, the estimated cost. The drawer
-opens by itself when Rika asks for an approval and
-closes once you decide; one you opened yourself stays open. **Agents** holds a live
-card per worker agent (omp, Claude Code, Codex) in herdr or Tern: state, task, last
-output line, a timer and **Open window**. Each Rika reply in the drawer ends with
-its readout (tier, tool path, tokens and cost; **Direct** when no model ran), and
-each email Rika drafted or holds for sending is a card with **Send**, **Undo send**
-and its countdown, or **Discard**.
+**Conversation** holds every request and reply, the action cards Rika ran (Undo while
+it can still be undone) and its approvals. Anything outward or irreversible waits for
+**Approve** or **Reject** on an approval card that says what will happen and, when it
+has one, the estimated cost. Away from home the drawer opens by itself when Rika asks
+for an approval (without taking focus) and closes once you decide; one you opened
+yourself stays open. On home the approval waits in the panel, whose title counts what
+waits for you. **Agents** holds a live card per worker agent (omp, Claude Code, Codex)
+in herdr or Tern: state, task, last output line, a timer and **Open window**. Each
+Rika reply ends with its readout (tier, tool path, tokens and cost; **Direct** when no
+model ran), and each email Rika drafted or holds for sending is a card with **Send**,
+**Undo send** and its countdown, or **Discard**.
 
-When today's morning brief exists, a **Morning brief · N** chip sits left of the
-agent chips; its popover lists the day's finds and **Open Goals**, and opening it
-marks the brief seen.
+When today's morning brief exists, a **Morning brief · N** chip sits beside the
+Conversation and Agents switch; its popover lists the day's finds and **Open Goals**,
+and opening it marks the brief seen.
 
-Running worker agents also show as chips on the right of the bar, a state dot and
-name each (working, blocked, idle, done); a chip opens that agent's Tern window.
-Past four agents the chips collapse to one count, which opens the drawer's Agents.
 When Rika opens a page ("open calendar"), the workspace tab navigates there; when an
-agent has no Tern window to focus, its chip opens the herdr view.
+agent has no Tern window to focus, its card opens the herdr view.
 
-**Talk to Rika.** Hold **Space** in the bar's field for at least 0.3 s and speak;
+**Talk to Rika.** Voice is the **voice** module's (its pack holds the speech engine);
+without it Rika is text only: Space types and there is no Brain dump. Hold **Space** in
+Rika's field for at least 0.3 s and speak;
 let go and Rika gets what you said (a quick tap still types a space; words typed
-first lead the spoken request). While it listens the whole bar breathes and the field
-shows the words as they are heard; **Escape** drops them and nothing is sent. The
-bar draws no Space keycap or hint: the breathing ring is the only sign. Keep holding
+first lead the spoken request). While it listens the mark turns and the field shows
+the words as they are heard; **Escape** drops them and nothing is sent. No Space
+keycap or hint is drawn. Keep holding
 for 8 s and it becomes a **brain dump**, which keeps listening after you let go;
-press Space again to finish. **Brain dump** in the history drawer or in Ctrl K starts
-one directly. A dump's transcript grows live in the drawer, which opens by itself;
-**Done · make plan** ends it (Cancel drops it). Rika then puts **one plan** in the
-drawer, grouped by area (notes, tasks, calendar, cards, jobs, agents), every item
+press Space again to finish. **Brain dump** beside Rika's field or in Ctrl K starts
+one directly. A dump's transcript grows live in the conversation (away from home the
+drawer opens by itself); **Make plan** ends it (Cancel drops it). Rika then puts **one
+plan** in the conversation, grouped by area (notes, tasks, calendar, cards, jobs, agents), every item
 ticked and showing the words it came from. Untick what was misheard (or a whole
 area), answer its one question if it asks one, then **Approve all** or **Approve
-N of M**; **Dismiss** makes nothing. The drawer closes by itself once you decide.
+N of M**; **Dismiss** makes nothing. A drawer that opened by itself closes once you decide.
 Each dump is kept as a note in the **Brain dumps** notebook: the timestamped
 transcript, and once the plan has run, links under **Created from this dump** to
 everything it made (`[[Page]]` links, and links into Calendar, Flashcards, Study and
@@ -1009,7 +1008,7 @@ offer a Link action. Copy a `((block-uuid))` reference or `{{embed:block-uuid}}`
 live embed from a block's tools; its citation count opens referencing contexts
 in the right sidebar. Referenced text follows edits to the original.
 The canvas retains paper templates, ink/fill palettes, layers and handwriting, and
-fills the window above the Rika bar.
+fills the window.
 A page is the theme's flat background colour with no grid; the pill's **⋯ → Paper**
 adds lines, a grid, dots or Cornell margins when you want them.
 Its tools sit in one floating pill at the bottom of the canvas: select, pen,
@@ -1350,34 +1349,37 @@ supports actively recalling material.
 limits and browser progress; Fill and Shift+F open it too. With jobs selected,
 **Change selected** sets their progress, rank or category (g and t open it).
 
-Home is the **Brain** (below), every record and edit in the workspace as a
-point of light in a glowing neural-network brain, or the 2D **atlas** of workspace sections; the
-**Brain | 2D** switch in the stage's top-right corner, beside **View** (or
-Settings → Appearance) chooses, and the choice is remembered (`kitty.home.look`;
-an earlier 3D choice opens the Brain). It sits in the centre between two narrow
-rails of widgets that scroll on their own. The left rail holds **Today** (today's
-events with a live now-line, the current event's progress and a countdown to the
-next) and **Quick note** (Ctrl+Enter saves; the last three stay visible). The
-right rail holds **Agents** (what each herdr workspace agent is doing; **Approve**
-opens herdr on a blocked one) and **Up next**: open dated tasks and job-search
-reminders (overdue ones on top), flashcards due for review, then the next seven
-days of the calendar, where deadlines and follow-ups from every module land (a
-reminder already copied to the calendar shows once); a row opens its page; at most
-six rows show, with the total beside the title.
-The chevron on the right rail's inner edge, or **]**, folds that rail to a thin
-strip so the Brain widens (and unfolds it); every home follows the one remembered
-choice (`kitty.home.rail`).
-**Sections**, in the stage's top-left corner, opens a popover with a section
+Home is a dashboard: the day's widgets on the left, **Rika** filling the right-hand
+column (see **Rika** above). The widgets sit in two columns when there is room (one in
+a narrow window) and scroll on their own, so the page never does. **Morning brief**
+leads, then **Today** (today's events with a live now-line, the current event's
+progress and a countdown to the next) and **Quick note** (Ctrl+Enter saves; the last
+three stay visible); beside them **Up next**: open dated tasks and job-search
+reminders (overdue ones on top), flashcards due for review, then the next seven days
+of the calendar, where deadlines and follow-ups from every module land (a reminder
+already copied to the calendar shows once; a row opens its page; at most six rows
+show, with the total beside the title), **Agents** (what each herdr workspace agent is
+doing; **Approve** opens herdr on a blocked one) and **Sections**, every page the
+active modules provide, by group. With every module off, one line says so and leads
+to Settings → Modules. Ctrl K also finds every section.
+
+The **Brain** is its own view (the **Brain** entry in the header, or Sections), there
+when the Brain module is on: every record and edit in the workspace as a point in a
+brain, or the 2D **atlas** of workspace sections; the **Brain | 2D** switch in the
+stage's top-right corner, beside **View** (or Settings → Appearance), chooses, and the
+choice is remembered (`ui.home.look` in the build; an earlier 3D choice opens the
+Brain). **Sections**, in the stage's top-left corner, opens a popover with a section
 search (`/` opens it there; Enter shows the first match in the Brain or on the
 map, Enter again opens it) and the grouped section list. Each row's ⋯ opens the
 section, shows it on the map, or hides it from (or shows it on) the 2D atlas;
 hidden rows stay listed, dimmed. On the 2D atlas, drop a node on **Sections** to
-hide it and drag a dimmed row onto the graph to show it again. Ctrl K also finds
-every section.
+hide it and drag a dimmed row onto the graph to show it again. On the Brain view
+the group shortcuts (Ctrl+Alt, Ctrl+X, Ctrl+C) find their group on the map; elsewhere
+they open the group.
 The full job-search brief (reminders, deadlines and weekly goals) lives in **Find
 jobs**. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
 Appearance); every schema starts in Tree, and an explicit layout preference can
-then be changed in **Settings → Graphs**, with the graph physics and **Reset to defaults**. Home has one Study entry and only
+then be changed in **Settings → Graphs**, with the graph physics and **Reset to defaults**. The atlas has one Study entry and only
 the Jobs section entry, not separate job-action nodes.
 The rika! logo returns home. Clickable schema tabs show section →
 notebook/type → page/job/node; the Back control returns through that hierarchy.
@@ -1390,7 +1392,7 @@ Browse lists remain available when labels overlap or WebGL is unavailable.
 Left or middle-button drag rotates; the wheel zooms; right-button drag pans.
 Ctrl + Left/Right rotates the visible 3D schema in ten-degree steps, except while
 editing text, selecting text, or using a dialog.
-The **Brain** on home draws every record and every edit from `GET /api/brain` as one
+The **Brain** view draws every record and every edit from `GET /api/brain` as one
 point of light in a brain made of a glowing neural network, seen three-quarters from the
 front and slowly turnable, over the theme's own backdrop. Its folded surface is a faint
 rim of light with its sulci traced across it: two hemispheres split by the longitudinal
@@ -1423,7 +1425,7 @@ the brain
 highlights its group; clicking it opens that group alone, laid out by kind to
 fill the stage, until **← All** or Escape. Labels never overlap; ones without
 room hide. Hovering a point shows its label, section, type and date. Without
-WebGL home is the 2D atlas; a backend without `/api/brain` gets a notice, never
+WebGL the Brain view is the 2D atlas; a backend without `/api/brain` gets a notice, never
 invented data. Reduced motion skips the build-up, twinkle, pulses and
 turning.
 Theme presets include dark cherry-pink **Cherry cat**, with blossom ASCII,
@@ -1443,7 +1445,7 @@ automatically; output remains a draft. Provider requests disallow data collectio
 and failed requests are not automatically retried. Paid calls are disabled in demo.
 
 **Rika** is rika!'s own agent (design: `docs/rika-design.md`). You type to it in
-the Rika bar, and it does the work through the app's own functions.
+its panel on home or its drawer (Ctrl+J), and it does the work through the app's own functions.
 
 - **Tiers.** Each request goes to the smallest tier that can do it:
   - **fast** for talk, simple edits, and everything you say aloud;
@@ -1488,7 +1490,7 @@ the Rika bar, and it does the work through the app's own functions.
   - open views;
   - search the whole workspace and its local memory index.
 
-  These changes apply at once, and each one is in the history drawer with
+  These changes apply at once, and each one is in Rika's conversation with
   **Undo**. Calendar undo uses the calendar's own history and mind-map undo uses
   the map's own undo snapshot. Undo refuses, and keeps the record, when you edited
   it since.
@@ -1553,7 +1555,7 @@ the Rika bar, and it does the work through the app's own functions.
   Shortcuts never cover outward tools. For Anthropic and Gemini models the stable
   part of the system prompt (instructions and preferences) carries OpenRouter's
   `cache_control` breakpoint; other providers cache repeated prefixes on their own.
-  Every reply in the history drawer shows a readout: its tier, the tool path (and
+  Every reply in Rika's conversation shows a readout: its tier, the tool path (and
   whether the path or shortcut was remembered), tokens in (cached) and out, and the
   cost, e.g. `remembered path search → add card · 1,180 in (960 cached) · 64 out ·
   $0.0002`; phrases and shortcuts show **Direct** · 0 tokens · $0. **Settings → Rika
@@ -1589,7 +1591,7 @@ the Rika bar, and it does the work through the app's own functions.
   matches them to your active goals by their words. In live mode the unclear ones
   go to one fast-tier request, only when it fits today's AI budget; it never asks
   for approval and is skipped with a note otherwise. The brief is a **Morning
-  brief** panel at the top of home, a **Morning brief · N** chip in the Rika bar
+  brief** panel at the top of home, a **Morning brief · N** chip in Rika's panel and drawer
   (its popover lists the items) and a "Good morning…" message in the history. Each
   item waits on its goal under **Rika found** with **Link** and **Not relevant** (a
   dismissed find never returns). Only a strong match whose deadline, start or

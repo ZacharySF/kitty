@@ -155,20 +155,16 @@ export function downloadLabel(received: number, total: number): string {
   return `${percent}% of ${Math.round(total / 1_000_000)} MB`;
 }
 
-export type History = { items: Entry[]; has_more?: boolean; next_before?: string | null };
-
-/** How many agents get a chip each before the bar shows one count instead. */
-export const CHIP_LIMIT = 4;
-const URGENCY: AgentStatus[] = ["blocked", "working", "idle", "done"];
-
-export type Chips = { kind: "agents"; agents: RikaAgent[] } | { kind: "count"; count: number; status: AgentStatus };
-
-/** Q19 B: a chip per running agent; past four, one count in the most urgent state. */
-export function agentChips(agents: RikaAgent[], limit = CHIP_LIMIT): Chips {
-  if (agents.length <= limit) return { kind: "agents", agents };
-  const status = URGENCY.find((state) => agents.some((agent) => agent.status === state)) ?? "idle";
-  return { kind: "count", count: agents.length, status };
+/**
+ * Voice input and speech are the `voice` module's (its pack holds the speech engine): on,
+ * with its pack's files present. Without it Rika is text only. `missing` lists modules
+ * turned on whose pack is not installed (optional until every bootstrap carries it).
+ */
+export function voiceEnabled(modules: { enabled: readonly string[]; missing?: readonly string[] }): boolean {
+  return modules.enabled.includes("voice") && !(modules.missing ?? []).includes("voice");
 }
+
+export type History = { items: Entry[]; has_more?: boolean; next_before?: string | null };
 
 /** The stream stays on the page's own origin; only the scheme changes. */
 export function rikaSocketUrl(location: { protocol: string; host: string }): string {

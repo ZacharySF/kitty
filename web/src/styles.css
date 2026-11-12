@@ -275,9 +275,9 @@ details[open] > summary {
   flex-direction: column;
   gap: 12px;
 }
-/* The atlas home fills the window above the Rika bar (padding-bottom, below). Each
-   level passes the height down; the atlas's own floor (GraphNavigator) is the
-   only content that can grow the page, so cramped windows scroll, never clip. */
+/* Home and the Brain fill the window. Each level passes the height down; their
+   own floor (Home, GraphNavigator) is the only content that can grow the page, so
+   cramped windows scroll, never clip. */
 .workbench.atlas-home {
   height: 100vh;
   height: 100dvh;
@@ -1428,9 +1428,7 @@ main > :is(.panel, .br-panel, .br-card) {
 :root body .workspace-groups button {
   border-radius: 999px;
   padding: 5px 12px;
-  font: 500 10.5px var(--font-mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font: 500 12px var(--font-ui);
 }
 :root body .workspace-groups button[aria-current="page"] {
   border-color: transparent;
@@ -1441,9 +1439,7 @@ main > :is(.panel, .br-panel, .br-card) {
   min-height: 28px;
   border-color: var(--hairline);
   background: transparent;
-  font: 10.5px var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font: 12px var(--font-ui);
 }
 :root body .schema-tab.current-schema {
   background: color-mix(in srgb, var(--ink) 9%, transparent);
@@ -1602,20 +1598,15 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
   visibility: hidden !important;
 }
 
-/* The Rika bar (RikaBar.svelte) along the bottom of the window publishes its height as
-   --rika-space; the page always ends above it, and scrolling a control into view stops
-   above it too. The build editor (BuildEditor.svelte) is docked at the right and
-   publishes --build-editor-space; the workbench narrows beside it. */
-:root {
-  scroll-padding-bottom: var(--rika-space, 0px);
-}
+/* The build editor (BuildEditor.svelte) is docked at the right and publishes
+   --build-editor-space; the workbench narrows beside it. */
 :root body .workbench {
-  padding-bottom: calc(10px + var(--rika-space, 0px));
+  padding-bottom: 10px;
   margin-right: var(--build-editor-space, 0px);
 }
-/* The herdr view fills its workspace tab above the bar. */
+/* The herdr view fills its workspace tab. */
 .herdr-view {
-  height: calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 34px);
+  height: calc(100dvh - var(--workbench-top, 0px) - 34px);
   min-height: 240px;
 }
 

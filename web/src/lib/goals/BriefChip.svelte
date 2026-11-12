@@ -5,8 +5,7 @@
   import { mailLine } from "./goals";
 
   /**
-   * Q15 A: the Rika bar's "Morning brief · N" chip. It opens a small popover above the
-   * bar listing today's items; opening it marks the brief seen. Hidden while today has
+   * Q15 A: Rika's "Morning brief · N" chip, in the home panel and the drawer. It opens a small popover listing today's items; opening it marks the brief seen. Hidden while today has
    * no brief. Ctrl K "Morning brief" opens it too.
    */
   $effect(() => morningBrief.start());
@@ -74,7 +73,7 @@
   /* Outranks the popover's own padding and height (ui/Popover.svelte). */
   :global(html:root body .kitty-popover.rika-brief-popover) {
     width: min(380px, calc(100vw - 16px));
-    max-height: min(560px, calc(100dvh - var(--rika-space, 0px) - 24px));
+    max-height: min(560px, calc(100dvh - 24px));
     padding: 10px 12px 12px;
   }
   .brief-pop {

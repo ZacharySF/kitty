@@ -4,14 +4,8 @@
   import { api } from "./api";
   import { prefersReducedMotion } from "./appearance";
   import Icon from "./Icon.svelte";
-  import HomeAgents from "./HomeAgents.svelte";
-  import HomeQuickNote from "./HomeQuickNote.svelte";
   import HomeSections from "./HomeSections.svelte";
-  import HomeUpNext from "./HomeUpNext.svelte";
   import HomeWidget from "./HomeWidget.svelte";
-  import TodayAgenda from "./TodayAgenda.svelte";
-  import HomeBrief from "./goals/HomeBrief.svelte";
-  import { morningBrief } from "./goals/brief.svelte";
   import Select from "./ui/Select.svelte";
   import {
     navigation,
@@ -35,14 +29,11 @@
   } from "./graph3d";
   import {
     GRAPH_SETTINGS_EVENT,
-    HOME_RAIL_KEY,
     graphLayout,
     graphPhysics,
     hiddenSections,
     homeLook,
-    homeRailCollapsed,
     setHomeLook,
-    setHomeRailCollapsed,
     setSectionHidden,
     type HomeLook,
   } from "./graphPreferences";
@@ -69,14 +60,6 @@
   const reducedMotion = prefersReducedMotion();
 
   const enabled = $derived(activeModules.enabled);
-  const workspaceTools = $derived(enabled.includes("workspace"));
-  const terminal = $derived(enabled.includes("terminal"));
-  /** Q13: the rails hold only widgets; the right one also carries the modules-off notice. */
-  const upNext = $derived((["calendar", "flashcards", "reminders"] as View[]).some((view) => viewEnabled(view, enabled)));
-  const hasRight = $derived(terminal || upNext || !enabled.length);
-  /** Q15 A: the morning brief leads the left rail, which shows for it even with Study tools off. */
-  $effect(() => morningBrief.start());
-  const hasLeft = $derived(workspaceTools || !!morningBrief.brief);
   const sections = $derived(atlasSections(visibleGroups(enabled), navigation));
   let hidden = $state(hiddenSections());
   const listed = (view: string): view is View =>
@@ -85,7 +68,7 @@
   let atlas = $state<Atlas | null>(null);
   let atlasError = $state("");
   const layout = graphLayout();
-  // Home is the Brain or the 2D atlas. The Brain replaces the stage; the 2D atlas then waits,
+  // The Brain view is the Brain or the 2D atlas. The Brain replaces the stage; the 2D atlas then waits,
   // paused and hidden, underneath. Without WebGL there is only the 2D atlas.
   const supportsBrain = webglAvailable();
   let chosen = $state(homeLook());
@@ -96,31 +79,20 @@
       setHomeLook(next as HomeLook);
       lookError = "";
     } catch {
-      lookError = "This browser could not save the home look.";
+      lookError = "This browser could not save the look.";
     }
   }
-  /** Q13: the side rail folds to an edge strip so the Brain widens; every home follows one choice. */
-  let collapsed = $state(homeRailCollapsed());
-  /** "Open module settings" lands on Settings' Modules page (`#settings/modules`). */
+  /** "Download" lands on Settings' Modules page (`#settings/modules`). */
   function openModuleSettings() {
     onview("settings");
     if (location.hash === "#settings") history.replaceState(history.state, "", "#settings/modules");
   }
-  function toggleRail() {
-    try {
-      setHomeRailCollapsed(!collapsed);
-    } catch {
-      collapsed = !collapsed;
-    }
-  }
   let brain = $state<BrainStageView>();
-  /** Without the Brain module the atlas home is not drawn: the stage says how to get it. */
-  const brainOn = $derived(enabled.includes("brain"));
   let BrainView = $state.raw<typeof BrainStageView | null>(null);
   /** The module is on but its pack's files are missing (removed, or left from an older version). */
   let brainMissing = $state(false);
   $effect(() => {
-    if (!brainOn || look !== "brain" || BrainView || brainMissing) return;
+    if (look !== "brain" || BrainView || brainMissing) return;
     import("./brain/BrainStage.svelte")
       .then((loaded) => { BrainView = loaded.default; })
       .catch(() => { brainMissing = true; });
@@ -132,7 +104,6 @@
   let notice = $state("");
   let hovered = $state<GraphNode | null>(null);
   let selected = $state<GraphNode | null>(null);
-  // Bound only while the Brain module is on (the stage draws nothing else without it).
   let container = $state.raw<HTMLDivElement>();
   let handle = $state.raw<GraphHandle | null>(null);
   let pendingGroup: string | null = null;
@@ -185,13 +156,6 @@
   /** "/" opens Sections on its search. */
   export function focusSearch() {
     if (pane.active) void sectionsControl?.focusSearch();
-  }
-  /** Home's own keys: "]" folds or unfolds the side rail. */
-  export function handleKey(event: KeyboardEvent): boolean {
-    if (!pane.active || event.key !== "]" || !hasRight) return false;
-    event.preventDefault();
-    toggleRail();
-    return true;
   }
   /** Screen position of a drawn node, or null when it is not on the atlas. */
   export function nodePoint(id: string) {
@@ -279,15 +243,10 @@
       handle?.setLayout(graphLayout());
       handle?.setPhysics(graphPhysics());
       chosen = homeLook();
-      collapsed = homeRailCollapsed();
     };
     window.addEventListener(GRAPH_SETTINGS_EVENT, syncSettings);
     // Every atlas, in this window's tabs or another window, follows the same build.
     const syncHidden = () => { hidden = hiddenSections(); };
-    // The rail's state is this device's (another window of it may toggle it).
-    const syncStorage = (event: StorageEvent) => {
-      if (event.key === HOME_RAIL_KEY || event.key === null) collapsed = homeRailCollapsed();
-    };
     window.addEventListener(ATLAS_NODES_EVENT, syncHidden);
     // Capture phase: the renderers own the pointer while a node is dragged.
     const trackNodeDrag = (event: PointerEvent) => {
@@ -299,7 +258,7 @@
     window.addEventListener("pointercancel", endNodeDrag);
     void (async () => {
       await loadAtlas();
-      if (disposed || !brainOn || !container) return;
+      if (disposed || !container) return;
       try {
         const mounted = await mountGraph(container, {
           ...graph,
@@ -365,7 +324,7 @@
   <div class="corner" data-home-corner>
     {#if lookError}<span class="look-error" role="alert">{lookError}</span>{/if}
     <Select
-      label="Home look"
+      label="Look"
       kind="segments"
       value={look}
       options={[{ value: "brain", label: "Brain", disabled: !supportsBrain }, { value: "2d", label: "2D" }]}
@@ -377,33 +336,12 @@
 {#snippet brainCard()}
   <div class="brain-off">
     <HomeWidget id={`${atlasId}-brain`} title="Brain isn't installed">
-      <p class="note">The atlas home, your workspace as a 3D brain or a 2D map, is a separate download.</p>
       <Button intent="primary" size="sm" onclick={openModuleSettings}>Download <Icon name="arrow" size={14} /></Button>
     </HomeWidget>
   </div>
 {/snippet}
 
-<div
-  class="atlas"
-  class:list-mode={mode === "list"}
-  class:with-left={hasLeft}
-  class:with-right={hasRight}
-  class:rail-collapsed={hasRight && collapsed}
->
-  {#if hasLeft}
-    <aside class="rail" aria-label="Home widgets">
-      <HomeBrief id={`${atlasId}-brief`} />
-      {#if workspaceTools}
-        <TodayAgenda id={`${atlasId}-agenda`} {revision} {onview} />
-        <HomeQuickNote id={`${atlasId}-note`} {onview} />
-      {/if}
-    </aside>
-  {/if}
-  {#if !brainOn}
-    <div class="stage" role="region" data-kitty-panel="graph" tabindex="-1" aria-label="Brain">
-      {@render brainCard()}
-    </div>
-  {:else}
+<div class="atlas" class:list-mode={mode === "list"}>
   <div
     class="stage"
     class:drop-target={!!draggedSection && hidden.has(draggedSection) && mode === "graph"}
@@ -417,7 +355,7 @@
     onpointerdowncapture={stagePointerDown}
   >
     <p id={`${atlasId}-description`} class="sr-only">
-      {#if look === "brain"}Every record and every edit in your workspace as a point of light in a glowing neural-network brain. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto Sections to hide it; each section's options menu shows or hides it.{/if}
+      {#if look === "brain"}Every record and every edit in your workspace as a point in a brain. Drag to rotate, scroll to zoom; the View panel changes the layout and the legend highlights one section.{:else}A map of workspace sections. Drag nodes to move, drag the background to pan, scroll to zoom, select a section to open its map. Drag a node onto Sections to hide it; each section's options menu shows or hides it.{/if}
     </p>
     <!-- Hidden under the Brain, whose stage is transparent. -->
     <div class="canvas" class:behind={look === "brain"} bind:this={container}></div>
@@ -427,7 +365,7 @@
       {:else if brainMissing}
         {@render brainCard()}
       {:else}
-        <div class="stage-loading"><Loader kind="view" label="Waking the brain…" /></div>
+        <div class="stage-loading"><Loader kind="view" label="Drawing the Brain…" /></div>
       {/if}
     {:else}
       <div class="corners">
@@ -461,62 +399,17 @@
       {/if}
     {/if}
   </div>
-  {/if}
-
-  {#if hasRight}
-    <div class="side" class:collapsed>
-      <button
-        type="button"
-        class="rail-toggle"
-        aria-label="Side widgets"
-        aria-expanded={!collapsed}
-        aria-controls={collapsed ? undefined : `${atlasId}-activity`}
-        title={collapsed ? "Show the side widgets (])" : "Hide the side widgets (])"}
-        onclick={toggleRail}><span class="chevron" aria-hidden="true"></span></button
-      >
-      {#if !collapsed}
-        <aside id={`${atlasId}-activity`} class="rail" aria-label="Activity">
-          {#if terminal}<HomeAgents id={`${atlasId}-agents`} {onview} />{/if}
-          {#if upNext}<HomeUpNext id={`${atlasId}-next`} {revision} {onview} />{/if}
-          {#if !enabled.length}
-            <HomeWidget id={`${atlasId}-modules`} title="Modules are off">
-              <p class="note">Turn on modules in Settings; they start after a restart.</p>
-              <Button intent="primary" size="sm" onclick={openModuleSettings}>Open module settings <Icon name="arrow" size={14} /></Button>
-            </HomeWidget>
-          {/if}
-        </aside>
-      {/if}
-    </div>
-  {/if}
 </div>
 
 <style>
-  /* Q18 (layout C): the atlas in the centre with narrow widget rails that scroll on
-     their own. Fills the room App gives it (zero basis: a rail never sizes the
-     row). The floor keeps a cramped graph usable. Q13: the right rail folds to a
-     thin strip so the stage takes its room. */
+  /* The Brain view: one stage filling the room App gives it (zero basis). The floor keeps a
+     cramped graph usable. */
   .atlas {
-    --rail-left: clamp(180px, 20vw, 280px);
-    --rail-right: clamp(196px, 22vw, 300px);
-    --rail-strip: 18px;
     flex: 1 1 0px;
     min-height: 120px;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
-    gap: 12px;
-  }
-  .atlas.with-left {
-    grid-template-columns: var(--rail-left) minmax(0, 1fr);
-  }
-  .atlas.with-right {
-    grid-template-columns: minmax(0, 1fr) var(--rail-right);
-  }
-  .atlas.with-left.with-right {
-    grid-template-columns: var(--rail-left) minmax(0, 1fr) var(--rail-right);
-  }
-  .atlas.rail-collapsed {
-    --rail-right: var(--rail-strip);
   }
   .stage {
     position: relative;
@@ -546,72 +439,6 @@
   }
   .stage:has(> :global([data-brain-stage][data-background="transparent"])) {
     background: none;
-  }
-  .rail {
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding-right: 2px;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--hairline) transparent;
-  }
-  .rail > :global(*) {
-    flex: none;
-  }
-  .side {
-    position: relative;
-    min-width: 0;
-    min-height: 0;
-    display: grid;
-    grid-template-rows: minmax(0, 1fr);
-  }
-  /* Expanded: a small tab in the gap on the rail's inner edge. Collapsed: the whole strip. */
-  .rail-toggle {
-    position: absolute;
-    top: 50%;
-    left: -13px;
-    z-index: 3;
-    display: grid;
-    place-items: center;
-    width: 14px;
-    height: 44px;
-    padding: 0;
-    border: 1px solid var(--hairline);
-    border-radius: var(--r-chip, 6px);
-    background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 70%, transparent);
-    color: var(--muted);
-    transform: translateY(-50%);
-    cursor: pointer;
-  }
-  .rail-toggle:hover,
-  .rail-toggle:focus-visible {
-    border-color: var(--br-lineHot, var(--ink));
-    color: var(--ink);
-  }
-  .side.collapsed .rail-toggle {
-    inset: 0;
-    width: auto;
-    height: auto;
-    transform: none;
-    border-radius: var(--r-panel, 14px);
-    background: transparent;
-  }
-  /* Points the way the rail moves: right to hide it, left to bring it back. */
-  .chevron {
-    width: 6px;
-    height: 6px;
-    margin-left: -3px;
-    border-top: 1.5px solid currentColor;
-    border-right: 1.5px solid currentColor;
-    rotate: 45deg;
-  }
-  .side.collapsed .chevron {
-    margin: 0 -3px 0 0;
-    rotate: -135deg;
   }
   .canvas {
     position: absolute;
@@ -690,17 +517,12 @@
   .notice span {
     color: var(--warning);
   }
-  /* The Brain module is off or its download missing: one plain home widget, centred. */
+  /* The Brain's download is missing: one plain widget, centred. */
   .brain-off {
     position: absolute;
     inset: 50% auto auto 50%;
     transform: translate(-50%, -50%);
     width: min(320px, calc(100% - 40px));
-  }
-  .note {
-    margin: 0 0 8px;
-    color: var(--muted);
-    font-size: 12px;
   }
   .stage.drop-target {
     outline: 1px dashed var(--accent);
@@ -709,44 +531,16 @@
   .stage.drop-target .stage-caption {
     color: var(--ink);
   }
-  /* Phone widths stack. The desktop minimum window (760×500) stays side by side
-     even when display scaling lays it out narrower in CSS pixels. */
   @media (max-width: 599.98px) {
-    .atlas,
-    .atlas.with-left,
-    .atlas.with-right,
-    .atlas.with-left.with-right {
+    .atlas {
       flex: none;
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: none;
     }
     .stage {
-      order: -1;
       height: 58vh;
       min-height: 320px;
     }
     .list-mode .stage {
       height: auto;
-    }
-    .rail {
-      overflow: visible;
-    }
-    .side {
-      gap: 8px;
-    }
-    .rail-toggle,
-    .side.collapsed .rail-toggle {
-      position: static;
-      inset: auto;
-      width: 100%;
-      height: 24px;
-      transform: none;
-    }
-    .chevron {
-      rotate: 135deg;
-    }
-    .side.collapsed .chevron {
-      rotate: -45deg;
     }
     .fallback {
       padding: 56px 16px 16px;

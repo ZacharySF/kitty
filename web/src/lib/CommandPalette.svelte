@@ -74,7 +74,7 @@
     ...(onterminal ? [{ label: "Open terminal", meta: "Tern window", icon: "terminal", run: () => onterminal() }] : []),
     { label: "Rika history", meta: "Rika", icon: "kitty", run: () => onrika() },
     { label: "Brain dump", meta: "Rika · talk, then one plan", icon: "kitty", run: () => void rika.listen("dump") },
-    // Q15 A: opens the Rika bar's brief, sweeping first when today has none yet.
+    // Q15 A: opens Rika's brief, sweeping first when today has none yet.
     { label: "Morning brief", meta: "Rika", icon: "goals", run: () => void morningBrief.show() },
     ...(mathOn ? [
       { label: "Mental math sprint", meta: "Math", icon: "math", run: () => openMath("sprint") },

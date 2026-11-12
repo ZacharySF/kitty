@@ -1,5 +1,5 @@
-// The Rika bar, its toasts and the history drawer (docs/rika-design.md Q2 D, Q4 C,
-// Q19, Q20) in a real browser. The page is the real Rika UI; the backend is a scripted
+// Rika's home panel, its drawer and toasts (docs/rika-design.md Q2 D, Q4 C, Q19, Q20)
+// in a real browser. The page is the real Rika UI; the backend is a scripted
 // stand-in served through Playwright routes and a routed WebSocket, so nothing reaches
 // OpenRouter, herdr or Tern.
 // Run from web/ with Node >=22 and a matching Playwright Chromium:
@@ -66,7 +66,7 @@ const LINKS = { i1: ["[[CS 220 · Final project idea]]"], i2: ["[Orgo midterm (F
 /**
  * A scripted Rika backend for one browser context: a fake for this test harness only.
  * "add a task …" applies a reversible action; "start an agent" waits for an approval.
- * `hold` keeps a turn streaming until `release()` so the breathing ring can be seen.
+ * `hold` keeps a turn streaming (or its approval back) until `release()`.
  */
 async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
   const posts = [];
@@ -94,7 +94,9 @@ async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
     } else if (/^start an agent/i.test(text)) {
       send({ type: "token", message_id: id, reply_to: userId, text: "Starting omp needs your approval. " });
       turns.set(9, id);
-      send({ type: "approval", approval: { id: 9, message_id: id, tool: "start_agent", summary: "Start omp in a herdr pane", detail: "omp runs shell commands in ~/projects/kitty and spends tokens.", cost_usd: 0.42, status: "pending", created_at: now() } });
+      const ask = () => send({ type: "approval", approval: { id: 9, message_id: id, tool: "start_agent", summary: "Start omp in a herdr pane", detail: "omp runs shell commands in ~/projects/kitty and spends tokens.", cost_usd: 0.42, status: "pending", created_at: now() } });
+      if (hold) held = ask;
+      else ask();
     } else if (/^move my study block/i.test(text)) {
       // Q13: a deterministic reply runs its tool with no model.
       send({ type: "action", action: { id: 11, message_id: id, tool: "move_event", summary: "Moved “Study: React deck” to 14:00", reversible: true, status: "done", created_at: now() } });
@@ -245,7 +247,11 @@ async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
   };
 }
 
-async function harness({ reducedMotion, ...options } = {}) {
+/**
+ * The Rika harness page. `panel` mounts the home's Rika panel (on screen) in the page;
+ * `modules` are the active modules (voice input is the voice module's).
+ */
+async function harness({ reducedMotion, panel = false, modules = ["voice"], ...options } = {}) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 800 }, reducedMotion });
   const rika = await fakeRika(context, options);
   // Spoken replies are recorded instead of played.
@@ -256,55 +262,53 @@ async function harness({ reducedMotion, ...options } = {}) {
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
-  await page.goto(new URL("tests/rika-harness.html", base).href);
+  const query = new URLSearchParams({ modules: modules.join(",") });
+  if (panel) query.set("panel", "");
+  await page.goto(new URL(`tests/rika-harness.html?${query}`, base).href);
   await page.waitForFunction(() => !!window.rikaHarness);
-  const bar = page.getByRole("region", { name: "Rika" });
-  await bar.waitFor();
   await page.waitForFunction(() => window.rikaHarness.connected());
-  return { page, bar, rika, problems, context };
+  return { page, rika, problems, context };
 }
-const ask = async (page, text) => {
-  const field = page.getByRole("textbox", { name: "Ask Rika" });
-  await field.fill(text);
-  await field.press("Enter");
-};
-const drawer = (page) => page.getByRole("dialog", { name: "Rika history" });
+const drawer = (page) => page.getByRole("dialog", { name: "Rika" });
+const field = (page) => page.getByRole("textbox", { name: "Ask Rika" });
 const toasts = (page) => page.getByRole("list", { name: "Rika replies" });
+/** Types into Rika's field, opening the drawer (Ctrl + J) first when no field is on screen. */
+const ask = async (page, text) => {
+  if (!(await field(page).count())) await page.keyboard.press("Control+j");
+  await field(page).fill(text);
+  await field(page).press("Enter");
+};
 
-test("a slim bar at the bottom: Ask Rika…, no Space keycap or hint, and the page ends above it", async () => {
-  const { page, bar, problems, context } = await harness();
-  const box = await bar.boundingBox();
-  assert.equal(Math.round(box.y + box.height), 800, "the bar is not on the bottom edge");
-  assert.equal(box.width, 1200);
-  assert.ok(box.height <= 60, `the bar is not slim: ${box.height}px`);
-  assert.equal(await page.getByRole("textbox", { name: "Ask Rika" }).getAttribute("placeholder"), "Ask Rika…");
-  assert.equal(await bar.locator("kbd").count(), 0);
-  assert.doesNotMatch(await bar.innerText(), /space|hold/i);
-  const space = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--rika-space").trim());
-  assert.equal(space, `${Math.round(box.height)}px`);
+test("no bar: the page keeps the whole window; Ctrl + J opens the drawer with Ask Rika… focused at its foot", async () => {
+  const { page, problems, context } = await harness();
+  assert.equal(await page.locator(".rika-bar").count(), 0, "a Rika bar is still drawn");
+  assert.equal(await field(page).count(), 0, "a Rika field is drawn outside the drawer");
   const view = await page.locator("#view").boundingBox();
-  assert.equal(Math.round(view.y + view.height), Math.round(box.y), "the page does not end at the bar");
+  assert.equal(Math.round(view.y + view.height), 800, "the page does not reach the window's foot");
+  await page.keyboard.press("Control+j");
+  await drawer(page).waitFor();
+  assert.equal(await field(page).getAttribute("placeholder"), "Ask Rika…");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Ask Rika", "the field is not focused");
+  const [box, input] = await Promise.all([drawer(page).boundingBox(), field(page).boundingBox()]);
+  assert.ok(input.y > box.y + box.height - 80, "the field is not at the drawer's foot");
+  assert.equal(await drawer(page).locator("kbd").count(), 0);
   assert.deepEqual(problems, []);
   await context.close();
 });
 
-test("Enter sends; the reply lands as a toast with its tier, and the drawer holds the exchange", async () => {
+test("Enter sends; the reply lands as a toast with its tier beside the drawer, which holds the exchange", async () => {
   const { page, rika, problems, context } = await harness();
   await ask(page, "Add a task buy milk");
   const toast = toasts(page).getByRole("listitem").filter({ hasText: "Added “buy milk” to your tasks." });
   await toast.waitFor();
   assert.deepEqual(rika.posts.map(({ path, body, header }) => [path, body, header]), [["/api/rika/messages", { text: "Add a task buy milk" }, "1"]]);
-  assert.equal(await page.getByRole("textbox", { name: "Ask Rika" }).inputValue(), "");
+  assert.equal(await field(page).inputValue(), "");
   assert.equal((await toast.locator("[data-tier]").innerText()).toLowerCase(), "fast");
   assert.ok(await toast.getByRole("button", { name: "Undo" }).isVisible());
-  // The toast sits above the bar, in the notification stack's corner, once it has risen into place.
   await toast.evaluate((node) => Promise.all(node.getAnimations().map((animation) => animation.finished)));
-  const [card, bar] = await Promise.all([toast.boundingBox(), page.getByRole("region", { name: "Rika" }).boundingBox()]);
-  assert.ok(card.y + card.height <= bar.y, "the toast overlaps the bar");
-  assert.ok(card.x + card.width > 1100, "the toast is not on the right");
-  await page.getByRole("button", { name: "Rika history", exact: true }).click();
+  const [card, side] = await Promise.all([toast.boundingBox(), drawer(page).boundingBox()]);
+  assert.ok(card.x + card.width <= side.x, "the toast is under the drawer");
   const history = drawer(page);
-  await history.waitFor();
   await history.getByText("Add a task buy milk").waitFor();
   await history.getByText("Added “buy milk” to your tasks.").waitFor();
   const action = history.getByRole("article").filter({ hasText: "Added the task “buy milk”" });
@@ -321,7 +325,6 @@ test("Undo reverts the action, from the toast or the drawer", async () => {
   await toast.getByText("Undone").waitFor();
   assert.deepEqual(rika.posts.at(-1), { path: "/api/rika/actions/7/undo", body: {}, header: "1" });
   assert.equal(await toast.getByRole("button", { name: "Undo" }).count(), 0);
-  await page.keyboard.press("Control+j");
   const action = drawer(page).getByRole("article").filter({ hasText: "Added the task “buy milk”" });
   await action.getByText("Undone").waitFor();
   assert.equal(await action.getByRole("button", { name: "Undo" }).count(), 0);
@@ -329,17 +332,21 @@ test("Undo reverts the action, from the toast or the drawer", async () => {
   await context.close();
 });
 
-test("an approval opens the drawer by itself; Approve continues the turn and the drawer closes", async () => {
+test("an approval opens the drawer by itself without taking focus; Approve continues the turn and the drawer closes", async () => {
   const { page, rika, problems, context } = await harness();
-  await page.getByRole("textbox", { name: "Ask Rika" }).focus();
+  rika.holdTurns();
   await ask(page, "Start an agent");
+  await page.keyboard.press("Escape");
+  await drawer(page).waitFor({ state: "detached" });
+  const before = await page.evaluate(() => document.activeElement?.tagName);
+  rika.release();
   const history = drawer(page);
   await history.waitFor();
   const card = history.getByRole("article").filter({ hasText: "Start omp in a herdr pane" });
   await card.waitFor();
   assert.match(await card.innerText(), /omp runs shell commands in ~\/projects\/kitty and spends tokens\./);
   assert.match(await card.innerText(), /\$0\.42/);
-  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Ask Rika", "opening by itself stole focus from the bar");
+  assert.equal(await page.evaluate(() => document.activeElement?.tagName), before, "opening by itself took focus");
   await card.getByRole("button", { name: "Approve" }).click();
   await history.waitFor({ state: "detached" });
   assert.deepEqual(rika.posts.at(-1), { path: "/api/rika/approvals/9", body: { decision: "approve" }, header: "1" });
@@ -353,7 +360,6 @@ test("an approval opens the drawer by itself; Approve continues the turn and the
 
 test("a drawer you opened yourself stays open after Reject, which the turn reports", async () => {
   const { page, rika, problems, context } = await harness();
-  await page.getByRole("button", { name: "Rika history", exact: true }).click();
   await ask(page, "Start an agent");
   const card = drawer(page).getByRole("article").filter({ hasText: "Start omp in a herdr pane" });
   await card.getByRole("button", { name: "Reject" }).click();
@@ -365,68 +371,59 @@ test("a drawer you opened yourself stays open after Reject, which the turn repor
   await context.close();
 });
 
-test("agent chips: state dot and name each, clicking opens its Tern window; past four they collapse to a count", async () => {
-  const { page, bar, rika, problems, context } = await harness();
-  const chips = bar.getByRole("group", { name: "Running agents" });
-  await chips.getByRole("button").first().waitFor();
-  assert.deepEqual(await chips.getByRole("button").allInnerTexts(), ["omp", "claude", "codex"]);
-  assert.deepEqual(await chips.getByRole("button").evaluateAll((nodes) => nodes.map((node) => node.dataset.state)), ["working", "blocked", "done"]);
-  await chips.getByRole("button", { name: /claude/ }).click();
-  await until(() => rika.posts.length === 1, "the open request");
-  assert.deepEqual(rika.posts.at(-1), { path: "/api/rika/agents/herdr%3Aw1%3Ap2/open", body: {}, header: "1" });
-  assert.deepEqual(await page.evaluate(() => window.rikaHarness.navigations), [], "a focused Tern window also navigated");
-  await chips.getByRole("button", { name: /^omp/ }).click();
-  await page.waitForFunction(() => window.rikaHarness.navigations.length === 1);
-  assert.deepEqual(await page.evaluate(() => window.rikaHarness.navigations), ["herdr"]);
-  rika.send({ type: "agents", agents: MORE });
-  const count = chips.getByRole("button", { name: /5 agents/ });
-  await count.waitFor();
-  assert.equal(await chips.getByRole("button").count(), 1);
-  assert.equal(await count.getAttribute("data-state"), "blocked");
-  await count.click();
+test("Agents lists every running agent with its state; a card opens its Tern window", async () => {
+  const { page, rika, problems, context } = await harness();
+  await page.keyboard.press("Control+j");
+  const sections = drawer(page).getByRole("group", { name: "Rika sections" });
+  await sections.getByRole("button", { name: /^Agents/ }).click();
   const section = drawer(page).getByRole("region", { name: "Agents" });
-  await section.waitFor();
+  await section.getByRole("article").first().waitFor();
+  assert.equal(await section.getByRole("article").count(), 3);
+  rika.send({ type: "agents", agents: MORE });
+  await section.getByRole("article").nth(4).waitFor();
   assert.equal(await section.getByRole("article").count(), 5);
   const blocked = section.getByRole("article").filter({ hasText: "Tailor the CV for Lumen" });
   assert.match(await blocked.innerText(), /blocked/i);
   assert.match(await blocked.innerText(), /Allow writing resumes\/lumen\.pdf\? \[y\/n\]/);
   assert.match(await blocked.innerText(), /\d+:\d\d/);
   await blocked.getByRole("button", { name: "Open window" }).click();
-  await until(() => rika.posts.length === 3, "the open request from the Agents card");
+  await until(() => rika.posts.length === 1, "the open request from the Agents card");
   assert.equal(rika.posts.at(-1).path, "/api/rika/agents/herdr%3Aw1%3Ap2/open");
   assert.deepEqual(problems, []);
   await context.close();
 });
 
-const ring = (bar) => bar.evaluate((node) => {
-  const glow = getComputedStyle(node, "::after");
-  return { streaming: node.dataset.streaming === "true", animation: glow.animationName, opacity: Number(glow.opacity) };
+const working = (page) => page.locator(".rika-field").evaluate((node) => {
+  const ring = node.querySelector(".rika-mark .ring");
+  return { streaming: node.dataset.streaming === "true", accent: node.classList.contains("working"), animation: getComputedStyle(ring).animationName,
+    glow: getComputedStyle(node).boxShadow };
 });
 
-test("the bar breathes with a soft ring of light while Rika streams, then rests", async () => {
-  const { page, bar, rika, problems, context } = await harness();
-  assert.deepEqual(await ring(bar), { streaming: false, animation: "none", opacity: 0 });
+test("while Rika writes, its mark turns and the field takes the accent, with no glow; then it rests", async () => {
+  const { page, rika, problems, context } = await harness();
+  await page.keyboard.press("Control+j");
+  assert.deepEqual(await working(page), { streaming: false, accent: false, animation: "none", glow: "none" });
   rika.holdTurns();
   await ask(page, "Add a task buy milk");
-  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.streaming === "true");
-  const lit = await ring(bar);
-  assert.notEqual(lit.animation, "none");
+  await page.waitForFunction(() => document.querySelector(".rika-field")?.dataset.streaming === "true");
+  const lit = await working(page);
+  assert.ok(lit.accent && lit.animation !== "none" && lit.glow === "none", JSON.stringify(lit));
   rika.release();
   await toasts(page).getByText("Added “buy milk” to your tasks.").waitFor();
-  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.streaming === "false");
-  assert.equal((await ring(bar)).animation, "none");
+  await page.waitForFunction(() => document.querySelector(".rika-field")?.dataset.streaming === "false");
+  assert.equal((await working(page)).animation, "none");
   assert.deepEqual(problems, []);
   await context.close();
 });
 
-test("under Reduce motion the streaming ring is lit but static", async () => {
-  const { page, bar, rika, problems, context } = await harness({ reducedMotion: "reduce" });
+test("under Reduce motion the mark stays still while Rika writes", async () => {
+  const { page, rika, problems, context } = await harness({ reducedMotion: "reduce" });
   rika.holdTurns();
   await ask(page, "Add a task buy milk");
-  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.streaming === "true");
-  const lit = await ring(bar);
+  await page.waitForFunction(() => document.querySelector(".rika-field")?.dataset.streaming === "true");
+  const lit = await working(page);
+  assert.ok(lit.accent, "the field does not show that Rika is writing");
   assert.equal(lit.animation, "none");
-  assert.ok(lit.opacity > 0.3, "the static ring is not lit");
   rika.release();
   assert.deepEqual(problems, []);
   await context.close();
@@ -439,11 +436,10 @@ test("Rika opening a view navigates; the shortcut toggles the drawer and Escape 
   assert.deepEqual(await page.evaluate(() => window.rikaHarness.navigations), ["calendar"]);
   await page.keyboard.press("Control+j");
   await drawer(page).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Rika history", exact: true }).getAttribute("aria-pressed"), "true");
   await page.keyboard.press("Control+j");
   await drawer(page).waitFor({ state: "detached" });
   await page.keyboard.press("Control+j");
-  await drawer(page).getByRole("button", { name: "Close Rika history" }).focus();
+  await drawer(page).getByRole("button", { name: "Close Rika" }).focus();
   await page.keyboard.press("Escape");
   await drawer(page).waitFor({ state: "detached" });
   assert.deepEqual(problems, []);
@@ -466,13 +462,60 @@ test("earlier history loads into the drawer, oldest first", async () => {
   await context.close();
 });
 
+// The home panel ---------------------------------------------------------------------
+
+test("on screen, the home panel holds the conversation: replies land in it, never as toasts or a drawer", async () => {
+  const { page, rika, problems, context } = await harness({ panel: true });
+  const panel = page.getByRole("region", { name: "Rika" });
+  await panel.waitFor();
+  const [box, input] = await Promise.all([panel.boundingBox(), field(page).boundingBox()]);
+  assert.ok(input.y + input.height >= box.y + box.height - 12, "the field is not at the panel's foot");
+  await panel.getByText("Ask anything below. Hold Space to talk.").waitFor();
+  await ask(page, "Add a task buy milk");
+  await panel.getByText("Added “buy milk” to your tasks.").waitFor();
+  await panel.getByRole("article").filter({ hasText: "Added the task “buy milk”" }).getByRole("button", { name: "Undo" }).waitFor();
+  assert.equal(await toasts(page).count(), 0, "a toast showed beside the panel");
+  // An approval waits in the panel, not in a drawer.
+  await ask(page, "Start an agent");
+  const card = panel.getByRole("article").filter({ hasText: "Start omp in a herdr pane" });
+  await card.waitFor();
+  assert.equal(await drawer(page).count(), 0, "the approval opened the drawer over the panel");
+  assert.match(await panel.locator("header").first().innerText(), /1 waiting/);
+  await card.getByRole("button", { name: "Approve" }).click();
+  await card.getByText("Approved").waitFor();
+  // Ctrl + J focuses the panel's field instead of opening the drawer.
+  await page.locator("body").click({ position: { x: 10, y: 10 } });
+  await page.keyboard.press("Control+j");
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Ask Rika");
+  assert.equal(await drawer(page).count(), 0);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("without the voice module Rika is text only: Space types, no Brain dump, no hint", async () => {
+  const { page, rika, problems, context } = await harness({ panel: true, modules: [] });
+  const panel = page.getByRole("region", { name: "Rika" });
+  await panel.getByText("Ask anything below.", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Brain dump" }).count(), 0);
+  await field(page).focus();
+  await page.keyboard.down(" ");
+  await page.waitForTimeout(500);
+  await page.keyboard.up(" ");
+  assert.equal(await field(page).inputValue(), " ", "a held Space did not type");
+  assert.equal(rika.voice.controls.length, 0, "the microphone was opened");
+  await page.evaluate(async () => (await import("/src/lib/rika/session.svelte.ts")).rika.listen("dump"));
+  assert.equal(rika.voice.controls.length, 0, "a brain dump started without the voice module");
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
 // Voice and brain dumps (Q3 A, Q4 C, Q5 A, Q6 C, Q7 A, Q8 A, Q20 A) ------------------
 
-const field = (page) => page.getByRole("textbox", { name: "Ask Rika" });
-const listeningMode = (page) => page.evaluate(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening ?? null);
+const listeningMode = (page) => page.evaluate(() => document.querySelector(".rika-field")?.dataset.listening ?? null);
 
-test("a Space tap types a space; a hold past 0.3 s listens, the bar breathes, and letting go sends it spoken", async () => {
-  const { page, bar, rika, problems, context } = await harness();
+test("a Space tap types a space; a hold past 0.3 s listens, the mark turns, and letting go sends it spoken", async () => {
+  const { page, rika, problems, context } = await harness();
+  await page.keyboard.press("Control+j");
   await field(page).fill("hi");
   await field(page).press("Space");
   assert.equal(await field(page).inputValue(), "hi ", "a tap did not type its space");
@@ -481,14 +524,13 @@ test("a Space tap types a space; a hold past 0.3 s listens, the bar breathes, an
   await page.keyboard.down(" ");
   await page.waitForTimeout(200);
   assert.equal(await listeningMode(page), null, "listening began before 0.3 s");
-  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening === "command");
-  assert.notEqual((await ring(bar)).animation, "none", "the bar does not breathe while listening");
+  await page.waitForFunction(() => document.querySelector(".rika-field")?.dataset.listening === "command");
+  assert.notEqual((await working(page)).animation, "none", "the mark does not turn while listening");
   await until(() => rika.voice.bytes > 16000, "microphone audio on the socket");
   assert.deepEqual(rika.voice.controls[0], { type: "voice.start", session: rika.voice.controls[0].session, mode: "command" });
   await page.waitForFunction(() => document.querySelector('[aria-label="Ask Rika"]').placeholder.startsWith("Add a task"));
-  // Q5: no keycap or hint, even while listening.
-  assert.equal(await bar.locator("kbd").count(), 0);
-  assert.doesNotMatch(await bar.innerText(), /space|hold/i);
+  // Q5: no keycap, even while listening.
+  assert.equal(await drawer(page).locator("kbd").count(), 0);
   assert.equal(await field(page).inputValue(), "", "holding typed spaces");
   await page.keyboard.up(" ");
   await until(() => rika.posts.some((post) => post.path === "/api/rika/messages"), "the spoken request");
@@ -500,8 +542,7 @@ test("a Space tap types a space; a hold past 0.3 s listens, the bar breathes, an
   await page.waitForFunction(() => window.__played.length === 1);
   assert.ok(rika.gets.some((path) => /^\/api\/rika\/speech\/\d+$/.test(path)));
   assert.match(await page.evaluate(() => window.__played[0]), /^data:audio\/wav;base64,/);
-  await page.keyboard.press("Control+j");
-  await drawer(page).getByText(/· spoken/).waitFor();
+  await drawer(page).locator(".you").getByText("spoken", { exact: true }).waitFor();
   assert.deepEqual(problems, []);
   await context.close();
 });
@@ -512,7 +553,7 @@ test("a typed request is never spoken; Escape drops what is being said", async (
   await toasts(page).getByText("Added “buy milk” to your tasks.").waitFor();
   await field(page).fill("remind me");
   await page.keyboard.down(" ");
-  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening === "command");
+  await page.waitForFunction(() => document.querySelector(".rika-field")?.dataset.listening === "command");
   await until(() => rika.voice.controls.some((control) => control.type === "voice.start"), "voice.start");
   await page.keyboard.press("Escape");
   await page.keyboard.up(" ");
@@ -527,11 +568,12 @@ test("a typed request is never spoken; Escape drops what is being said", async (
   await context.close();
 });
 
-test("a long hold becomes a brain dump: the drawer opens by itself with the live transcript, the plan arrives grouped by area", async () => {
+test("a long hold becomes a brain dump: the live transcript follows in the drawer, the plan arrives grouped by area", async () => {
   const { page, rika, problems, context } = await harness();
+  await page.keyboard.press("Control+j");
   await field(page).focus();
   await page.keyboard.down(" ");
-  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening === "dump", null, { timeout: 12_000 });
+  await page.waitForFunction(() => document.querySelector(".rika-field")?.dataset.listening === "dump", null, { timeout: 12_000 });
   await page.keyboard.up(" ");
   assert.ok(rika.voice.controls.some((control) => control.type === "voice.mode" && control.mode === "dump"));
   const history = drawer(page);
@@ -557,9 +599,6 @@ test("a long hold becomes a brain dump: the drawer opens by itself with the live
   await plan.getByRole("button", { name: "Next Tue 10 Nov" }).click();
   await plan.getByRole("button", { name: "Approve 4 of 5" }).click();
   assert.deepEqual(rika.posts.at(-1), { path: "/api/rika/plans/77", body: { decision: "approve", items: ["i1", "i2", "i3", "i4"], choices: { i3: 1 } }, header: "1" });
-  // Q20 A: the drawer that opened by itself closes once the plan is decided.
-  await history.waitFor({ state: "detached" });
-  await page.keyboard.press("Control+j");
   const done = drawer(page).getByRole("article", { name: "Brain dump plan" });
   await done.getByText("Done", { exact: true }).waitFor();
   assert.match(await done.innerText(), /Study group \(Tue 10 Nov, 19:00\)/);
@@ -571,16 +610,16 @@ test("a long hold becomes a brain dump: the drawer opens by itself with the live
   await context.close();
 });
 
-test("Brain dump mode from the drawer keeps listening until Done; ticking an area off and Dismiss make nothing", async () => {
+test("Brain dump from the drawer keeps listening until Make plan; ticking an area off and Dismiss make nothing", async () => {
   const { page, rika, problems, context } = await harness();
   await page.keyboard.press("Control+j");
   const history = drawer(page);
   await history.getByRole("button", { name: "Brain dump" }).click();
-  await page.waitForFunction(() => document.querySelector('[aria-label="Rika"]')?.dataset.listening === "dump");
+  await page.waitForFunction(() => document.querySelector(".rika-field")?.dataset.listening === "dump");
   await until(() => rika.voice.controls.length > 0, "voice.start");
   assert.equal(rika.voice.controls[0].mode, "dump");
   await history.getByRole("region", { name: "Brain dump transcript" }).getByText("Orgo midterm is Friday at ten.").waitFor({ timeout: 10_000 });
-  await history.getByRole("button", { name: "Done · make plan" }).click();
+  await history.getByRole("button", { name: "Make plan" }).click();
   const plan = history.getByRole("article", { name: "Brain dump plan" });
   await plan.waitFor();
   await plan.getByRole("checkbox", { name: "All of Calendar" }).uncheck();
@@ -613,14 +652,12 @@ test("each reply carries its readout: tier, remembered path, tokens in (cached),
   assert.equal(await shortcut.locator(".rika-chip").getAttribute("data-tier"), "direct");
   assert.equal((await shortcut.locator(".rika-chip").innerText()).toLowerCase(), "direct");
   await shortcut.getByText("find_deck → add_card · 0 tokens · $0").waitFor();
-  await page.keyboard.press("Control+j");
   // A live deterministic reply: its toast's chip says Direct too.
   await ask(page, "Move my study block to 2");
   const toast = toasts(page).getByRole("listitem").filter({ hasText: "Moved “Study: React deck” to 14:00." });
   await toast.waitFor();
   assert.equal((await toast.locator("[data-tier]").innerText()).toLowerCase(), "direct");
   assert.equal(await toast.locator("[data-tier]").getAttribute("title"), "Direct · move_event · 0 tokens · $0");
-  await page.keyboard.press("Control+j");
   await drawer(page).getByText("move_event · 0 tokens · $0").waitFor();
   assert.deepEqual(problems, []);
   await context.close();
@@ -643,10 +680,10 @@ test("a mail item: who and what, Auto-send · scheduling with an Undo-send count
   assert.match(text, /Re: Onsite interview: pick a time/);
   assert.match(text, /Tuesday after 1pm/);
   assert.match(text, /auto-send · scheduling/i);
-  const undo = card.getByRole("button", { name: /^Undo send · 0:2\d$/ });
+  const undo = card.getByRole("button", { name: /^Undo send 0:2\d$/ });
   await undo.waitFor();
   const first = await undo.innerText();
-  await page.waitForFunction((before) => [...document.querySelectorAll("button")].some((node) => /^Undo send · /.test(node.textContent.trim()) && node.textContent.trim() !== before), first);
+  await page.waitForFunction((before) => [...document.querySelectorAll("button")].some((node) => /^Undo send /.test(node.textContent.trim()) && node.textContent.trim() !== before), first);
   await undo.click();
   await card.getByText("Cancelled").waitFor();
   assert.deepEqual(rika.posts.at(-1), { path: `/api/rika/mail/drafts/${"a".padEnd(32, "0")}/undo`, body: {}, header: "1" });
@@ -654,11 +691,11 @@ test("a mail item: who and what, Auto-send · scheduling with an Undo-send count
   const okafor = drawer(page).getByRole("article", { name: /Reply to Prof\. Okafor/ });
   assert.match(await okafor.innerText(), /Reply · question/i);
   await okafor.getByRole("button", { name: "Send", exact: true }).click();
-  await okafor.getByRole("button", { name: /^Undo send · 0:(2\d|30)$/ }).waitFor();
+  await okafor.getByRole("button", { name: /^Undo send 0:(2\d|30)$/ }).waitFor();
   assert.deepEqual(rika.posts.at(-1), { path: `/api/rika/mail/drafts/${"b".padEnd(32, "0")}/send`, body: {}, header: "1" });
   // The stream says it went out: no more Undo, and the copy says it can't be unsent.
   rika.send({ type: "mail", mail: { ...held, status: "sent", send_after: null, sent_at: now(), updated_at: now() } });
-  await card.getByText("Sent — Gmail can't unsend it").waitFor();
+  await card.getByText("Sent. Gmail can't unsend it.").waitFor();
   assert.match(await card.innerText(), /Auto-sent · scheduling/i);
   assert.equal(await card.getByRole("button").count(), 0);
   assert.deepEqual(problems, []);

@@ -6,7 +6,7 @@
   /**
    * Q15 A: today's morning brief on home, at the top of the left rail: the first few
    * things that moved toward your goals overnight, one line each, so the rail's other
-   * widgets stay in reach. The rest (and mail and notes) wait in the Rika bar's Morning
+   * widgets stay in reach. The rest (and mail and notes) wait in Rika's Morning
    * brief and on Goals. Absent until today's sweep has run.
    */
   let { id }: { id: string } = $props();

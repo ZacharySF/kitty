@@ -126,7 +126,7 @@ const SCREENS = [
   ["notes", (page) => page.locator(".notes-workspace").first().waitFor()],
   ["study", (page) => page.getByRole("heading", { name: "Study", exact: true }).first().waitFor()],
   ["settings", (page) => page.getByRole("heading", { level: 1 }).first().waitFor()],
-  ["today", (page) => page.locator(".atlas").first().waitFor()],
+  ["today", (page) => page.locator(".home").first().waitFor()],
 ];
 
 for (const theme of ["kitty", "liquid-glass"]) {

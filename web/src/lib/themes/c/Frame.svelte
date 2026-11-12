@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * c's frame: twisted rope borders in the window's gutters, tied off at each corner with an
-   * interlaced knot around a blood-red diamond. The foot rope runs just above the Rika bar.
+   * interlaced knot around a blood-red diamond. The foot rope runs along the window's foot.
    * Edges only; the pointer passes through.
    */
   const CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"];

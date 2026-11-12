@@ -33,26 +33,13 @@ export function graphLayout(): GraphLayout {
 export function graphPhysics(): GraphPhysics {
   return { ...buildStore.build.ui.graph.physics };
 }
-/** Home's look: the Brain (default) or the 2D atlas (`ui.home.look`). */
+/** The Brain view's look: the Brain (default) or the 2D atlas (`ui.home.look`, named when it was the home). */
 export type HomeLook = "brain" | "2d";
 export function homeLook(): HomeLook {
   return buildStore.build.ui.home.look;
 }
 export function setHomeLook(look: HomeLook): Promise<boolean> {
   return setPreferences({ ui: { home: { look } } });
-}
-
-/**
- * Q13: home's side rail of widgets, collapsed to an edge strip so the Brain widens. Window
- * layout state of this device, not a build preference.
- */
-export const HOME_RAIL_KEY = "kitty.home.rail";
-export function homeRailCollapsed(): boolean {
-  try { return localStorage.getItem(HOME_RAIL_KEY) === "collapsed"; } catch { return false; }
-}
-export function setHomeRailCollapsed(collapsed: boolean): void {
-  localStorage.setItem(HOME_RAIL_KEY, collapsed ? "collapsed" : "expanded");
-  window.dispatchEvent(new CustomEvent(GRAPH_SETTINGS_EVENT));
 }
 
 /** Save the default layout and physics together (Settings → Schemas). */

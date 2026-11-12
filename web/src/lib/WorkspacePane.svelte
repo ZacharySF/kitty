@@ -3,6 +3,7 @@
   import type { Bootstrap } from "./api";
   import { viewEnabled, type View } from "./workspace";
   import { activeModules } from "./modules.svelte";
+  import Home from "./Home.svelte";
   import GraphNavigator from "./GraphNavigator.svelte";
 
   import WorkspaceSettings from "./WorkspaceSettings.svelte";
@@ -46,7 +47,8 @@
     },
   });
 
-  let atlas: { focusSearch: () => void; focusGroup: (label: string) => void; handleKey: (event: KeyboardEvent) => boolean } | undefined = $state();
+  let home: { focusSearch: () => void } | undefined = $state();
+  let atlas: { focusSearch: () => void; focusGroup: (label: string) => void } | undefined = $state();
   let jobBrowser: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
   let pipeline: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
   let study: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
@@ -71,8 +73,14 @@
     if (view === "schema") return maps?.hasUnsavedChanges() ?? false;
     return false;
   }
-  export function focusGroup(label: string) { if (active) atlas?.focusGroup(label); }
-  export function focusSearch() { if (active) atlas?.focusSearch(); }
+  /** Finds a navigation group on the Brain (the only view that maps them). */
+  export function focusGroup(label: string) { if (active && view === "brain") atlas?.focusGroup(label); }
+  /** "/": home asks Rika; the Brain opens Sections on its search. */
+  export function focusSearch() {
+    if (!active) return;
+    if (view === "today") home?.focusSearch();
+    else if (view === "brain") atlas?.focusSearch();
+  }
   export async function createCanvasTab(): Promise<boolean> {
     if (!active || !notes?.isCanvasFullscreen()) return false;
     await notes.newCanvasTab();
@@ -80,7 +88,6 @@
   }
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
     if (!active) return false;
-    if (view === "today") return atlas?.handleKey(event) ?? false;
     if (view === "pipeline") return await pipeline?.handleKey(event) ?? false;
     if (view === "study") return await study?.handleKey(event) ?? false;
     if (view === "math") return math?.handleKey(event) ?? false;
@@ -95,6 +102,8 @@
   {#if !viewEnabled(view, activeModules.enabled)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
   {:else if view === "today"}
+    <Home bind:this={home} {revision} {onview} />
+  {:else if view === "brain"}
     <GraphNavigator bind:this={atlas} {revision} {onview} />
   {:else if view === "goals"}
     {#await import("./goals/Goals.svelte")}{@render pending()}{:then { default: Goals }}

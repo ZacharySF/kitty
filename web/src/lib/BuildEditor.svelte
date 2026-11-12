@@ -271,7 +271,7 @@
     position: fixed;
     top: 0;
     right: 0;
-    bottom: var(--rika-space, 0px);
+    bottom: 0;
     z-index: 35;
     display: flex;
     flex-direction: column;

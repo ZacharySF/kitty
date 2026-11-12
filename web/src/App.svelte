@@ -91,6 +91,10 @@
   );
   const ownsTrail = $derived(trail.section === view);
   const schemaNodes = $derived(ownsTrail ? trail.nodes : []);
+  /** Home and the Brain fill the window instead of scrolling. */
+  const fills = $derived(view === "today" || view === "brain");
+  // The Brain is a place only with its pack's files here (`missing`: modules on whose pack is not installed).
+  const brainView = $derived(viewEnabled("brain", enabled) && !((workspace?.modules as { missing?: string[] } | undefined)?.missing ?? []).includes("brain"));
   const sectionGroup = $derived(navigationGroups.find(group => group.views.includes(view))?.label ?? "Workspace");
 
   function mayLeaveEditor(tab = activeTab) {
@@ -175,11 +179,11 @@
   function openModuleSettings() {
     if (navigate("settings")) window.history.replaceState(window.history.state, "", "#settings/modules");
   }
-  async function focusGroup(label: string) {
-    const id = activeId;
-    if (view !== "today" && !navigate("today")) return;
-    await tick();
-    if (activeId === id && view === "today") activeTab.pane?.focusGroup(label);
+  /** A group's shortcut opens it as its header button does; on the Brain it finds the group on the map. */
+  function focusGroup(label: string) {
+    if (view === "brain") { activeTab.pane?.focusGroup(label); return; }
+    const group = groups.find(item => item.label === label);
+    if (group && group.views[0] !== view) navigate(group.views[0]);
   }
   function schemaRoot() {
     if (ownsTrail && trail.root) trail.root();
@@ -398,7 +402,7 @@
     if (event.key === "?") { event.preventDefault(); help = true; return; }
     const control = target?.closest('button,a,summary,input[type="checkbox"],input[type="radio"],input[type="button"],input[type="submit"]');
     if (control && !control.matches(".job-row,[data-pipeline]") && ["Enter", " "].includes(event.key)) return;
-    if (view === "today" && event.key === "/") { event.preventDefault(); activeTab.pane?.focusSearch(); return; }
+    if (fills && event.key === "/") { event.preventDefault(); activeTab.pane?.focusSearch(); return; }
     await activeTab.pane?.handleKey(event);
   }
 </script>
@@ -408,7 +412,7 @@
 {#if background === "petals"}<PetalDrift />{/if}
 <svelte:head><title>{title} · rika!</title></svelte:head>
 <a href="#main-content" class="skip-link">Skip to content</a>
-<div class="workbench" class:atlas-home={view === "today"}>
+<div class="workbench" class:atlas-home={fills}>
   <div class="workbench-top" bind:this={topBar}>
   <header class="system-bar" role="group" aria-label="Workspace controls" oncontextmenu={(event) => tabBar?.openMenu(event)}>
     {#if view !== "today"}<button class="schema-back" onclick={schemaBack} aria-label={schemaNodes.length ? "Back to parent schema" : "Back to rika! schema"} title="Back to parent schema">←</button>{/if}
@@ -431,8 +435,10 @@
       {/if}
     </nav>
     <nav class="workspace-groups" aria-label="Workspace groups">
-      {#each groups as group}<button aria-current={sectionGroup === group.label ? "page" : undefined}
-        title={`${group.label} · Focus its schema node: ${group.shortcut}`}
+      {#if brainView}<button data-tutorial="brain" aria-current={view === "brain" ? "page" : undefined}
+        onclick={() => navigate("brain")}>Brain</button>{/if}
+      {#each groups as group}<button aria-current={sectionGroup === group.label && view !== "brain" ? "page" : undefined}
+        title={`${group.label} (${group.shortcut})`}
         onclick={() => navigate(group.views[0])}>{group.label}</button>{/each}
     </nav>
     {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
@@ -457,7 +463,7 @@
   </header>
   <WorkspaceTabs bind:this={tabBar} tabs={tabLabels} {activeId} onselect={selectTab} onclose={closeTab} onnew={newTab} />
   </div>
-  <main id="main-content" tabindex="-1" class:atlas-main={view === "today"}>
+  <main id="main-content" tabindex="-1" class:atlas-main={fills}>
     {#if workspace && view !== "settings"}<PairingPrompt onsettings={() => navigate("settings")} />{/if}
     {#if workspace}<EffectsPrompt />{/if}
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">

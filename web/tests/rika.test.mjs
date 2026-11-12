@@ -1,24 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agentChips, costLabel, entryKey, holdLeft, holdClock, mergeEntries, mailLine, rikaSocketUrl, usageReadout, usd } from '../src/lib/rika/rika.ts';
+import { costLabel, entryKey, holdLeft, holdClock, mergeEntries, mailLine, rikaSocketUrl, usageReadout, usd, voiceEnabled } from '../src/lib/rika/rika.ts';
 import { compactTokens, trendPath, trendRange } from '../src/lib/rika/settings/settings.ts';
 
-const agent = (id, status) => ({ id, kind: 'omp', name: `omp ${id}`, status, task: '', line: '', since: 0, where: {} });
-
-test('up to four running agents get a chip each; past four they collapse to one count', () => {
-  const four = ['a', 'b', 'c', 'd'].map((id) => agent(id, 'working'));
-  assert.deepEqual(agentChips(four), { kind: 'agents', agents: four });
-  assert.deepEqual(agentChips([]), { kind: 'agents', agents: [] });
-  const five = [...four, agent('e', 'done')];
-  assert.deepEqual(agentChips(five), { kind: 'count', count: 5, status: 'working' });
-});
-
-test('the count chip takes the most urgent state: blocked, then working, idle, done', () => {
-  const many = (states) => agentChips(states.map((status, index) => agent(String(index), status)));
-  assert.equal(many(['done', 'idle', 'working', 'blocked', 'done']).status, 'blocked');
-  assert.equal(many(['done', 'idle', 'idle', 'working', 'done']).status, 'working');
-  assert.equal(many(['done', 'idle', 'done', 'done', 'done']).status, 'idle');
-  assert.equal(many(['done', 'done', 'done', 'done', 'done']).status, 'done');
+test('voice is the voice module with its pack installed: otherwise Rika is text only', () => {
+  assert.equal(voiceEnabled({ enabled: ['workspace', 'voice'] }), true);
+  assert.equal(voiceEnabled({ enabled: ['workspace', 'voice'], missing: [] }), true);
+  assert.equal(voiceEnabled({ enabled: ['workspace', 'voice'], missing: ['voice'] }), false);
+  assert.equal(voiceEnabled({ enabled: ['workspace', 'brain'] }), false);
+  assert.equal(voiceEnabled({ enabled: [] }), false);
 });
 
 test('the stream socket stays on the page origin; only the scheme changes', () => {

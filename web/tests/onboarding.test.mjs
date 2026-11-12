@@ -20,12 +20,12 @@ test('enabled study tools point at real views; the Rika step ends every tour and
   assert.match(steps.at(-1).tip, /Ctrl \+ J/);
 });
 
-test('the Rika step targets markup the Rika bar actually renders', async () => {
+test('the Rika step targets markup the home Rika panel actually renders', async () => {
   const { readFile } = await import('node:fs/promises');
-  const bar = await readFile(new URL('../src/lib/rika/RikaBar.svelte', import.meta.url), 'utf8');
+  const panel = await readFile(new URL('../src/lib/rika/RikaPanel.svelte', import.meta.url), 'utf8');
   const step = tutorialSteps([]).find(item => item.id === 'rika');
   const token = step.selector.replace(/^\[([^=]+)="([^"]+)"\]$/, '$1="$2"');
-  assert.ok(bar.includes(token), `${step.selector} not rendered by RikaBar.svelte`);
+  assert.ok(panel.includes(token), `${step.selector} not rendered by RikaPanel.svelte`);
 });
 
 test('providers step explains paid AI is opt-in and reviewed, on the real AI settings view', () => {

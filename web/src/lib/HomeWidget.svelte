@@ -3,17 +3,19 @@
 
   /**
    * Q19: one home widget, framed "hairline minimal": no fill or box, only a
-   * rule above, a small Inter title and the eyebrow on the right.
+   * rule above, a small Inter title and an optional short tag on the right.
+   * `fill` makes it a column that takes its whole slot (the home's Rika panel).
    */
   let {
     id,
     title,
     eyebrow = "",
+    fill = false,
     children,
-  }: { id: string; title: string; eyebrow?: string; children: Snippet } = $props();
+  }: { id: string; title: string; eyebrow?: string; fill?: boolean; children: Snippet } = $props();
 </script>
 
-<section class="home-widget" aria-labelledby={id}>
+<section class="home-widget" class:fill aria-labelledby={id}>
   <header>
     <h3 {id}>{title}</h3>
     {#if eyebrow}<span class="eyebrow">{eyebrow}</span>{/if}
@@ -28,6 +30,14 @@
     padding: 2px 0 6px;
     color: var(--ink);
     container-type: inline-size;
+  }
+  .home-widget.fill {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    box-sizing: border-box;
+    padding-bottom: 0;
   }
   header {
     display: flex;

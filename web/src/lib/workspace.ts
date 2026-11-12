@@ -2,7 +2,8 @@ import type { ModuleId } from "./api";
 
 /** `module` is the owner; core views (null) are always available. */
 export const navigation = [
-  { id: "today", label: "Atlas", icon: "atlas", module: null },
+  { id: "today", label: "Home", icon: "today", module: null },
+  { id: "brain", label: "Brain", icon: "atlas", module: "brain" },
   { id: "goals", label: "Goals", icon: "goals", module: null },
   { id: "calendar", label: "Calendar", icon: "calendar", module: "workspace" },
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
@@ -64,7 +65,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
     label: "Plan",
     shortcut: "Ctrl + Alt",
     tone: "var(--c1)",
-    views: ["today", "goals", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
+    views: ["today", "goals", "brain", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
   },
   { label: "Study", shortcut: "Ctrl + X", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
@@ -145,35 +146,44 @@ export const navigationRelations: [View, View][] = [
   ["ai", "notes"],
   ["ai", "flashcards"],
 ];
-type ShortcutGroup = { title: string; module?: ModuleId; shortcuts: string[][] };
+/** `module` gates the group; "voice" is the voice module's id (ModuleId gains it with the voice pack). */
+type ShortcutGroup = { title: string; module?: ModuleId | "voice"; shortcuts: string[][] };
 const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Navigate",
     shortcuts: [
-      ["rika!", "Return to the main schema"],
+      ["rika!", "Go home"],
       ["Ctrl + Alt / Ctrl + X / Ctrl + C / Ctrl + V", "Plan / Study / Job search / Settings (outside text editing)"],
       ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
       [
         "Calendar / Study / Notes / Mind maps / AI",
-        "Pick a node on the atlas, Sections on the stage, or Ctrl / ⌘ + K",
+        "Sections on home, or Ctrl / ⌘ + K",
       ],
       ["?", "Show keyboard help"],
-      ["Ctrl + J", "Open or close Rika's history drawer (anywhere but a terminal)"],
-      ["Enter in the Rika bar", "Ask Rika; the reply lands as a toast above the bar"],
-      ["Hold Space in the Rika bar", "Talk to Rika; let go to send (a tap types a space)"],
-      ["Hold Space for 8 s", "Brain dump: keeps listening; press Space again to make the plan"],
-      ["Escape while Rika listens", "Drop what you said; nothing is sent"],
+      ["/ on home", "Ask Rika"],
+      ["Ctrl + J", "Ask Rika: the field on home, the drawer elsewhere (anywhere but a terminal)"],
+      ["Enter in Rika's field", "Ask Rika; away from home the reply lands as a toast"],
       ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
       ["Ctrl + Shift + F", "Toggle panel fullscreen inside terminal views"],
       ["Escape", "Close dialog or details; leave a text field"],
     ],
   },
   {
-    title: "Atlas home",
+    title: "Talk to Rika",
+    module: "voice",
+    shortcuts: [
+      ["Hold Space in Rika's field", "Talk to Rika; let go to send (a tap types a space)"],
+      ["Hold Space for 8 s", "Brain dump: keeps listening; press Space again to make the plan"],
+      ["Escape while Rika listens", "Drop what you said; nothing is sent"],
+    ],
+  },
+  {
+    title: "Brain",
+    module: "brain",
     shortcuts: [
       ["/", "Open Sections and find a section"],
       ["Enter in section search", "Show the first match on the map; Enter again opens it"],
-      ["]", "Hide or show the side widgets"],
+      ["Ctrl + Alt / Ctrl + X / Ctrl + C", "Find Plan / Study / Job search on the map"],
       ["Drag / scroll", "Turn / zoom the Brain, or pan / zoom the 2D map"],
       ["Click a Brain group", "Open that group on its own; Escape returns to all"],
       ["Ctrl + ← / →", "Rotate the visible 3D schema left / right (outside editors and dialogs)"],
