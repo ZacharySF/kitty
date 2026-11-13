@@ -350,11 +350,24 @@ selection: base only.
    bytes; `$KITTY_PACKS` is validated; JobSpy without its pack is an error. Rust unit tests
    cover the new unpack rules; `web/tests/workspaceModules.test.mjs` the view gating.
 
-   The 0.3.36 `.deb` before this change (`425506f`, built here; the build stops afterwards at
-   updater signing without the release key): installer 466,391,472 B, installed 1,240,559,554 B
-   (`Installed-Size` 1,217,335 KiB). Not measured yet: the `.deb` with this change and start to
-   ready of either. Next: PyMuPDF (the largest base library) as a Documents pack once
-   Workspace is split.
+   Measured on the built `.deb`s (0.3.36, this machine; both builds stop afterwards at updater
+   signing without the release key, after the `.deb` is written). Start to ready is rika-server
+   `--desktop` with the installed backend behind it until its readiness line, median of five,
+   on a new workspace (base only) and on the same workspace again:
+
+   | | Before (`425506f`) | After (this change) |
+   | --- | --- | --- |
+   | `.deb` download | 466,391,472 B (445 MiB) | 137,661,216 B (131 MiB), −70.5 % |
+   | Installed (`data/`) | 1,240,559,554 B | 298,879,634 B, −75.9 % |
+   | `Installed-Size` | 1,217,335 KiB | 293,398 KiB |
+   | Backend onedir | 1,177,355,543 B | 271,848,522 B |
+   | Start to ready, new / existing workspace | 1.13 / 0.87 s | 1.12 / 0.87 s |
+
+   The packs, downloaded only with their modules (archive / unpacked): `voice` 128.5 / 444.0 MB,
+   `learnharness` 89.7 / 276.1 MB, `discovery` 71.5 / 205.0 MB, `herdr` 10.7 / 30.3 MB, `math`
+   6.4 / 29.6 MB, `brain` 0.45 / 1.6 MB. Start to ready does not change: a base start never
+   imported the pack libraries; the gain is the download and the disk. Next: PyMuPDF (the
+   largest base library) as a Documents pack once Workspace is split.
 4. **Modules, one by one.** Notes and blocks (loro is already Rust), calendar,
    study, flashcards (`fsrs` crate), goals, maps, opportunities, brain, search,
    devices, terminal, documents, mail, voice (whisper in Rust), math and
