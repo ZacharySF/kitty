@@ -1,7 +1,8 @@
 """Workspace module: block pages, history and Trash over HTTP.
 
-Block transactions travel over the core live channel (kitty.web_live): a window sends
-``txn`` messages there and every committed change is pushed to every window.
+Block transactions travel over the core live channel (rika-server, server/src/live/, which
+hands each one to kitty.web_live's internal route): a window sends ``txn`` messages there and
+every committed change is pushed to every window.
 
 Pages, history and Trash (kitty.core.blocks.history); a page is ``page=<block id>`` or
 ``type=page|document|quick_note&number=<n>``:

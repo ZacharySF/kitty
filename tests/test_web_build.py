@@ -8,10 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import terminal_support
 from kitty.settings import Settings
-from kitty.web_server import WebApplication
-from terminal_support import FrameReader, send_frame, site, websocket
+from terminal_support import FrameReader, front_site, send_frame, websocket
 
 SOCKET = "/api/live/socket"
 
@@ -64,7 +62,7 @@ def workspace(tmp_path: Path, modules: list[str], **extra) -> Settings:
 
 @pytest.fixture
 def running(tmp_path):
-    with site(workspace(tmp_path, ["workspace"])) as server:
+    with front_site(workspace(tmp_path, ["workspace"])) as server:
         yield server
 
 
@@ -228,7 +226,7 @@ def test_a_build_link_must_be_https(running):
 
 
 def test_block_transactions_need_the_workspace_module_but_the_build_is_live_without_it(tmp_path):
-    with site(workspace(tmp_path, [])) as running:
+    with front_site(workspace(tmp_path, [])) as running:
         window = Window(running)
         try:
             window.send({"type": "txn", "txn_id": "t1", "ops": []})
@@ -240,13 +238,8 @@ def test_block_transactions_need_the_workspace_module_but_the_build_is_live_with
             window.close()
 
 
-def test_safe_mode_is_announced_to_every_window(tmp_path, monkeypatch):
-    class Safe(WebApplication):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs, safe=True)
-
-    monkeypatch.setattr(terminal_support, "WebApplication", Safe)
-    with site(workspace(tmp_path, ["workspace"])) as running:
+def test_safe_mode_is_announced_to_every_window(tmp_path):
+    with front_site(workspace(tmp_path, ["workspace"]), args=("--safe",)) as running:
         window = Window(running)
         try:
             assert running.request("/api/build")[1]["safe"] is True
@@ -261,8 +254,12 @@ def test_the_tern_plugin_setting_gates_its_pairing(running):
     body = {"name": "kitty Tern plugin", "kind": "tern-plugin", "scopes": ["capture"]}
     assert running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})[0] == 202
     edit_file(running, lambda data: data.update(settings={"tern": {"plugin": False}}))
-    running.app.builds.refresh()  # the watcher would within a quarter second
-    status, answer = running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})
+    deadline = time.time() + 5  # the build watcher projects the edit within a quarter second
+    while True:
+        status, answer = running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})
+        if status != 202 or time.time() > deadline:
+            break
+        time.sleep(.1)
     assert status == 403 and "Tern plugin is turned off" in answer["error"]
 
 

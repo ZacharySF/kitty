@@ -1,38 +1,20 @@
-"""Core: live push to every window over one same-origin WebSocket per window.
+"""Core: the worker's side of the live channel.
 
-POST /api/live/session  {}  ->  {"token", "socket"}
-    Header-protected like every mutation, so only rika!'s own page gets a token.
-GET  /api/live/socket?token=<token>   (WebSocket upgrade)
-    Exact Host and Origin plus a single-use token, as for the terminal.
+rika-server owns every window's live socket (server/src/live/: ``POST /api/live/session``,
+``GET /api/live/socket``, the protocol, the ``op_log`` poller and resume). Behind it, this
+module serves the two routes only the front reaches (it refuses ``/api/internal/...`` to
+pages):
 
-The channel belongs to the always-on core: block changes need the workspace module, but
-the active build (Q8/Q9) is pushed to every window in every workspace.
-
-Every window receives ``{"type": "hello", "seq", "device_id", "build"}`` on connect
-(``build`` is the active build's revision, so a window that loaded an older one fetches
-``GET /api/build`` again), then, whoever wrote them:
-
-- one ``{"type": "change", "seq", "txn_id", "page_id", "at", "device_id", "actor", "root", "ops"}``
-  per committed op_log row: this socket, the Notes HTTP API, a background import or
-  another process (an agent's MCP or CLI writes too). ``actor`` is who made it
-  ({kind, name, session}; kitty.core.blocks.actor). ``root`` is ``{"type", "number"}``
-  of the page the change belongs to;
-- ``{"type": "build", ...}`` whenever the build file changes (kitty.web_build).
-
-A window sends (block messages need the workspace module; see kitty.web_blocks):
-
-- ``{"type": "txn", "txn_id"?, "ops": [...], "base"?: {page_id: revision}}``. The
-  server applies it (kitty.core.blocks.transact) and answers the sender with
-  ``{"type": "ack", "txn_id", "seq": {page_id: seq}, "revisions": {...}, "suggestions",
-  "tagged"?, "tags"?}`` or ``{"type": "reject", "txn_id", "status", "error"}``. Auto-tags
-  (Q13): ``suggestions`` maps each changed text block to ``{text, items: [{tag, name,
-  start, end}]}`` (UTF-16 offsets into that text); ``tagged`` lists the operations the
-  server added to the transaction ({page_id: [ops]}: *always attach* tags) and ``tags``
-  names the tags involved.
-- ``{"type": "resume", "after": seq}``: replays the changes it missed while away,
-  or ``{"type": "reset", "horizon"}`` when history before the horizon was compacted.
-- ``{"type": "subscribe", "pages": [page_id, ...] | null}``: limits live block changes
-  (build messages always arrive).
+GET  /api/internal/live/events   (WebSocket upgrade)
+    The front's subscription to this worker. A binary frame ``{"type": "nudge"}`` follows
+    every committed mutation (the front pushes it now instead of at its next poll); each
+    text frame is one message another extension sends to every window (``broadcast``:
+    the build, the page mirror's frames), forwarded as it is. The first binary frame is
+    ``{"type": "hello", "build"}``, the active build's revision every window's hello carries,
+    and each build message updates it.
+POST /api/internal/live/txn  {"type": "txn", "txn_id"?, "ops", "base"?}
+    One window's block transaction (kitty.core.blocks.transact as the person at this
+    device): ``{"type": "ack", ...}`` or ``{"type": "reject", "txn_id", "status", "error"}``.
 """
 from __future__ import annotations
 
@@ -49,21 +31,11 @@ from contextlib import closing
 from kitty.core import blocks
 from kitty.core.blocks import actor
 from kitty.db import connect
-from kitty.web_socket import (
-    Closed,
-    Reader,
-    Tokens,
-    accept,
-    close_code,
-    frame,
-    handshake_key,
-    send_close,
-)
+from kitty.web_socket import Closed, Reader, accept, close_code, frame, handshake_key, send_close
 
-SESSION_PATH = "/api/live/session"
-SOCKET_PATH = "/api/live/socket"
-POLL_SECONDS = 0.1
-BATCH = 200
+EVENTS_PATH = "/api/internal/live/events"
+TXN_PATH = "/api/internal/live/txn"
+NUDGE = json.dumps({"type": "nudge"}).encode()
 
 
 def _error(status: int, message: str):
@@ -71,33 +43,17 @@ def _error(status: int, message: str):
     return APIError(status, message)
 
 
-def changes(conn: sqlite3.Connection, after: int, upto: int | None = None, limit: int = BATCH) -> list[dict]:
-    """Committed op_log rows after `after` as push messages."""
-    rows = conn.execute(
-        "SELECT o.seq,o.txn_id,o.page_id,o.at,o.device_id,o.ops,o.actor,o.actor_name,o.actor_session,o.actor_via,"
-        "b.type,json_extract(b.properties,'$.number') AS number "
-        "FROM op_log o LEFT JOIN blocks b ON b.id=o.page_id AND b.parent_id IS NULL WHERE o.seq>? AND o.seq<=? ORDER BY o.seq LIMIT ?",
-        (after, upto if upto is not None else 2**63 - 1, limit))
-    return [{"type": "change", "seq": row["seq"], "txn_id": row["txn_id"], "page_id": row["page_id"], "at": row["at"],
-             "device_id": row["device_id"], "actor": actor.from_row(row).as_dict(),
-             "root": {"type": row["type"], "number": row["number"]} if row["type"] else None,
-             "ops": json.loads(row["ops"])["ops"]} for row in rows]
-
-
 class Subscriber:
-    def __init__(self, seq: int):
-        self.queue: queue.SimpleQueue[dict] = queue.SimpleQueue()
-        self.pages: set[str] | None = None
-        #: The last sequence this window had when it connected (its hello).
-        self.seq = seq
-        # A self-pipe wakes the window's socket thread as soon as a change is queued.
+    """One front's stream: frames queued for its socket thread, woken through a self-pipe."""
+
+    def __init__(self):
+        self.queue: queue.SimpleQueue[tuple[int, bytes]] = queue.SimpleQueue()
         self.wake_read, self.wake_write = os.pipe()
         os.set_blocking(self.wake_read, False)
         os.set_blocking(self.wake_write, False)
 
-    def put(self, messages: list[dict]) -> None:
-        for message in messages:
-            self.queue.put(message)
+    def put(self, opcode: int, payload: bytes) -> None:
+        self.queue.put((opcode, payload))
         try:
             os.write(self.wake_write, b"!")
         except BlockingIOError:
@@ -109,182 +65,102 @@ class Subscriber:
 
 
 class Live:
-    """Tokens for the socket and one thread fanning committed changes out to every window.
-
-    The thread starts with the first window, so a server nobody watches never polls.
-    """
+    """What the worker pushes through the front, and the block transactions it applies."""
 
     def __init__(self, app):
         self.app = app
-        self.tokens = Tokens()
         self._lock = threading.Lock()
-        self._wake = threading.Event()
-        self._subscribers: set[Subscriber] = set()
-        self._thread: threading.Thread | None = None
-        self.seq = 0
-        self.device_id = ""
+        self._fronts: set[Subscriber] = set()
+
+    def _put(self, opcode: int, payload: bytes) -> None:
+        with self._lock:
+            for front in self._fronts:
+                front.put(opcode, payload)
 
     def nudge(self) -> None:
-        self._wake.set()
+        """A mutation committed: the front pushes it now rather than at its next poll."""
+        self._put(2, NUDGE)
 
     def broadcast(self, message: dict) -> None:
         """Send one message (not a block change) to every open window now."""
-        with self._lock:
-            for subscriber in self._subscribers:
-                subscriber.put([message])
+        self._put(1, json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode())
+        if message.get("type") == "build":
+            self._put(2, json.dumps({"type": "build", "build": message.get("active_revision")}).encode())
 
     def subscribe(self) -> Subscriber:
+        subscriber = Subscriber()
         with self._lock:
-            if self._thread is None:
-                with closing(connect(self.app.settings.db_path)) as conn:
-                    self.seq = conn.execute("SELECT COALESCE(MAX(seq),0) FROM op_log").fetchone()[0]
-                    self.device_id = blocks.device_id(conn)
-                self._thread = threading.Thread(target=self._run, name="kitty-live", daemon=True)
-                self._thread.start()
-            subscriber = Subscriber(self.seq)
-            self._subscribers.add(subscriber)
+            self._fronts.add(subscriber)
         return subscriber
 
     def unsubscribe(self, subscriber: Subscriber) -> None:
         with self._lock:
-            self._subscribers.discard(subscriber)
+            self._fronts.discard(subscriber)
         subscriber.close()
 
-    def _run(self) -> None:
-        with closing(connect(self.app.settings.db_path)) as conn:
-            while not self.app.streams_closed.is_set():
-                self._wake.wait(POLL_SECONDS)
-                self._wake.clear()
-                try:
-                    batch = changes(conn, self.seq)
-                except sqlite3.OperationalError:
-                    continue
-                while batch:
-                    with self._lock:
-                        self.seq = batch[-1]["seq"]
-                        for subscriber in self._subscribers:
-                            subscriber.put(batch)
-                    batch = changes(conn, self.seq) if len(batch) == BATCH else []
-
-    def stop(self) -> None:
-        if self._thread is not None:
-            self.nudge()
-            self._thread.join(timeout=5)
-
-    def transact(self, message: dict) -> dict:
+    def transact(self, conn: sqlite3.Connection, message: dict) -> dict:
         txn_id = message.get("txn_id") or str(uuid.uuid4())
         if "workspace" not in self.app.modules:
             return {"type": "reject", "txn_id": txn_id, "status": 403, "error": "Block edits need the workspace module"}
         try:
             if set(message) - {"type", "txn_id", "ops", "base"}:
                 raise blocks.BlockError("Unexpected transaction fields")
-            with self.app.mutation_lock, closing(connect(self.app.settings.db_path)) as conn:
-                # A window's editor is the person at this device.
-                result = blocks.transact(conn, message.get("ops"), base=message.get("base"), txn_id=txn_id, suggest=True,
-                                         actor=actor.USER)
+            # A window's editor is the person at this device.
+            result = blocks.transact(conn, message.get("ops"), base=message.get("base"), txn_id=txn_id, suggest=True,
+                                     actor=actor.USER)
         except blocks.BlockError as exc:
             return {"type": "reject", "txn_id": txn_id, "status": exc.status, "error": str(exc)}
         except sqlite3.OperationalError:
             return {"type": "reject", "txn_id": txn_id, "status": 503, "error": "Local workspace is busy; send the transaction again"}
-        self.nudge()
         return {"type": "ack", **result}
-
-    def resume(self, subscriber: Subscriber, after) -> list[dict]:
-        if type(after) is not int or after < 0:
-            return [{"type": "error", "error": "Resume needs the last sequence number seen"}]
-        with closing(connect(self.app.settings.db_path)) as conn:
-            horizon = conn.execute("SELECT horizon_seq FROM block_history WHERE id=1").fetchone()[0]
-            if after < horizon:
-                return [{"type": "reset", "horizon": horizon}]
-            missed, cursor = [], after
-            while batch := changes(conn, cursor, subscriber.seq):
-                missed.extend(batch)
-                cursor = batch[-1]["seq"]
-        return missed
 
 
 def start(app) -> None:
     app.live = Live(app)
 
 
-def stop(app) -> None:
-    app.live.stop()
-
-
 def mutated(app) -> None:
-    """An HTTP mutation committed (a Notes save, say): push it now rather than at the next poll."""
+    """An HTTP mutation committed (a Notes save, say): the front pushes it now."""
     app.live.nudge()
 
 
 def get(app, conn, path, query):
-    if path == SOCKET_PATH:
-        raise _error(426, "Open the live channel with a WebSocket upgrade")
     return None
 
 
 def post(app, conn, path, body):
-    if path == SESSION_PATH:
-        if body:
-            raise _error(400, "A live session request expects an empty object")
-        return {"token": app.live.tokens.issue(), "socket": SOCKET_PATH}
+    if path == TXN_PATH:
+        # RequestHandler._dispatch holds the mutation lock and opened `conn` for this request.
+        return app.live.transact(conn, body)
     return None
 
 
 def upgrade(app, handler, path, query) -> bool:
-    if path != SOCKET_PATH:
+    if path != EVENTS_PATH:
         return False
-    if set(query) - {"token"}:
-        raise _error(400, "Unexpected live socket parameters")
+    if query:
+        raise _error(400, "Unexpected live event parameters")
     key = handshake_key(handler.headers)
     live = app.live
-    if not live.tokens.consume(query.get("token", "")):
-        raise _error(403, "Live token is missing, expired or already used")
     subscriber = live.subscribe()
     try:
         accept(handler, key)
-        _serve(handler.connection, live, subscriber, app.streams_closed)
+        _serve(handler.connection, app, subscriber)
     finally:
         live.unsubscribe(subscriber)
     return True
 
 
-def _send(connection, message: dict) -> None:
-    connection.sendall(frame(1, json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode()))
-
-
-def _handle(connection, live: Live, subscriber: Subscriber, payload: bytes) -> None:
-    try:
-        message = json.loads(payload)
-    except ValueError:
-        raise Closed(1007) from None
-    kind = message.get("type") if isinstance(message, dict) else None
-    if kind == "txn":
-        _send(connection, live.transact(message))
-    elif kind == "resume":
-        for change in live.resume(subscriber, message.get("after")):
-            _send(connection, change)
-    elif kind == "subscribe":
-        pages = message.get("pages")
-        if pages is not None and (not isinstance(pages, list) or len(pages) > 1000 or not all(isinstance(page, str) for page in pages)):
-            _send(connection, {"type": "error", "error": "Subscribe to a list of page IDs or null for all"})
-        else:
-            subscriber.pages = None if pages is None else set(pages)
-    else:
-        _send(connection, {"type": "error", "error": "Unknown message type"})
-
-
-def _serve(connection, live: Live, subscriber: Subscriber, closing_event: threading.Event) -> None:
-    """Relay pushes and handle messages until the window closes or the server shuts down."""
+def _serve(connection, app, subscriber: Subscriber) -> None:
+    """Relay events to the front until it closes the stream or this worker shuts down."""
     connection.settimeout(None)
-    # Acks and pushes are small and back to back; Nagle's algorithm would hold one behind the other.
     connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     reader = Reader()
     code = 1000
     try:
-        builds = getattr(live.app, "builds", None)
-        _send(connection, {"type": "hello", "seq": subscriber.seq, "device_id": live.device_id,
-                           "build": builds.active_revision if builds is not None else None})
-        while not closing_event.is_set():
+        builds = getattr(app, "builds", None)
+        connection.sendall(frame(2, json.dumps({"type": "hello", "build": builds.active_revision if builds else None}).encode()))
+        while not app.streams_closed.is_set():
             ready, _, _ = select.select([connection, subscriber.wake_read], [], [], 0.25)
             if subscriber.wake_read in ready:
                 while True:
@@ -294,24 +170,19 @@ def _serve(connection, live: Live, subscriber: Subscriber, closing_event: thread
                         break
             while True:
                 try:
-                    change = subscriber.queue.get_nowait()
+                    opcode, payload = subscriber.queue.get_nowait()
                 except queue.Empty:
                     break
-                if change["type"] != "change" or subscriber.pages is None or change["page_id"] in subscriber.pages:
-                    _send(connection, change)
+                connection.sendall(frame(opcode, payload))
             if connection in ready:
                 data = connection.recv(65536)
                 if not data:
                     return
                 for opcode, payload in reader.feed(data):
-                    if opcode == 1:
-                        _handle(connection, live, subscriber, payload)
-                    elif opcode == 9:
+                    if opcode == 9:
                         connection.sendall(frame(10, payload))
                     elif opcode == 8:
                         raise Closed(close_code(payload))
-                    elif opcode == 2:
-                        raise Closed(1003)
         else:
             code = 1001
     except Closed as closed:

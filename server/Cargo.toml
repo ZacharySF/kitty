@@ -30,6 +30,8 @@ rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
 # Python's dict order in answers the front builds itself.
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
+# The live channel's WebSocket handshake (crate::live).
+sha1 = "0.10.6"
 sha2 = "0.10.9"
 subtle = "2.6"
 tar = { version = "0.4.46", default-features = false }
