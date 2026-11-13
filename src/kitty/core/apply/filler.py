@@ -1268,13 +1268,13 @@ def fill_job(
                 report.status, report.note = "blocked", str(exc)
             elif isinstance(exc, OwnerTookOver) and OWNER_HINT not in (report.note or ""):
                 report.note = f"{report.note} {OWNER_HINT}" if report.note else str(exc)
-        # A request the network tripwire failed (the page tried to send what may
-        # be a submit) stops the fill, even one that failed after the last
-        # checkpoint; a navigation it failed is not a browser error. The tab stays
-        # for the owner. Only his own takeover keeps its note.
+        # A fatal network denial stops the fill even after its last checkpoint.
+        # Nonfatal reporting discards remain evidence, not failed applications.
+        # Only the owner's own takeover keeps its note.
         blocked = page.network_blocks
-        if blocked and not (report.note or "").startswith("owner:"):
-            report.status, report.note, report.error = "blocked", network_note(blocked[0]), None
+        network_stop = page.network_stop
+        if network_stop is not None and not (report.note or "").startswith("owner:"):
+            report.status, report.note, report.error = "blocked", network_note(network_stop), None
         with suppress(OSError):         # survey evidence never changes the outcome
             endpoints_core.record_fill(settings, ats, observed=page.network_observed, blocked=blocked)
         if foreground is not None:
@@ -1291,8 +1291,8 @@ def fill_job(
         # The connection broke before the network tripwire was removed: its
         # intercept is orphaned in Firefox and holds this tab's requests (the
         # owner's Submit too) until Firefox exits. A reload would not clear it.
-        # This tab is his too if he acted in it or it stopped on a blocked request.
-        mine = int(page.owner_active(OWNER_TYPED_SECONDS) or bool(page.network_blocks))
+        # This tab is his too if he acted in it or it stopped on a fatal denial.
+        mine = int(page.owner_active(OWNER_TYPED_SECONDS) or page.network_stop is not None)
         others = waiting() if waiting is not None else 0
         if restartable and waiting is not None and not others and not mine:
             report.restart = True
