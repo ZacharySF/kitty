@@ -164,7 +164,6 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_schema"), (None, "web_atlas"), ("brain", "web_brain"), ("workspace", "web_backlinks"),
     ("learnharness", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
     ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_agents"),
-    (None, "web_keys"),
     (None, "web_devices"), (None, "web_search"), (None, "web_effects"),
     (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
     ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
