@@ -1391,6 +1391,11 @@ cost before explicitly approving each request. Reviews are single-use, expire
 after ten minutes, and become invalid when settings change. Notes are not shared
 automatically; output remains a draft. Provider requests disallow data collection,
 and failed requests are not automatically retried. Paid calls are disabled in demo.
+The catalog lists text models whose cost the review can bound. Their listed prices
+are ceilings: the highest of the base, long-prompt, cache-write and reasoning
+token prices. Image and web-search fees never apply, because requests send only
+text and never turn on search. Models with a per-request fee, built-in search
+(Perplexity, `:online`), no fixed price (routers) or under 4096 context are left out.
 
 **Rika** is rika!'s own agent (design: `docs/rika-design.md`). You type to it in
 the Rika bar, and it does the work through the app's own functions.

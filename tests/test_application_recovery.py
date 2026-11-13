@@ -349,7 +349,7 @@ def test_real_function_tool_request_is_structural_and_validated(monkeypatch):
     assert json.loads(request["messages"][1]["content"]) == Observation("ignored", required_count=3, field_count=8).structural()
     assert request["provider"] == {
         "data_collection": "deny", "require_parameters": True, "allow_fallbacks": False,
-        "max_price": {"prompt": 2.0, "completion": 10.0, "request": 0, "image": 0}}
+        "max_price": {"prompt": 2.0, "completion": 10.0, "request": 0}}
     snapshot = ledger.snapshot()
     bound = len(json.dumps(request, ensure_ascii=False).encode("utf-8")) + 1024
     assert snapshot["input_tokens"] == bound
