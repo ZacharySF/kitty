@@ -662,14 +662,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._upgrade(path, query)
             elif path == "/api" or path.startswith("/api/"):
                 self._get_api(path, query)
+            elif path.startswith("/modules/"):
+                # An element view's script; `?retry=<n>` lets the page re-import it after a
+                # failed load (a browser remembers a failed module import per URL).
+                retry = query.get("retry", "0")
+                if set(query) - {"retry"} or not re.fullmatch(r"[0-9]{1,6}", retry):
+                    raise APIError(400, "This route does not accept query parameters")
+                self._module_asset(path)
             else:
                 # `?safe` opens one window in safe mode (Q9) and `?code` is the browser-mode
                 # one-time code (kitty.web_auth); the page reads both itself.
                 self.server.app._no_query({key: value for key, value in query.items() if key not in {"safe", "code"}})
-                if path.startswith("/modules/"):
-                    self._module_asset(path)
-                else:
-                    self._static(path)
+                self._static(path)
         except APIError as exc:
             self.close_connection = True
             self.response_headers.update(exc.headers)

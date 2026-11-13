@@ -137,6 +137,9 @@ def test_python_module_installs_then_routes_and_serves_its_view_after_restart(tm
         status, script, headers = request("/modules/rika-synth/0.1.0/ui/view.js", auth=False)
         assert status == 200 and script.startswith(b"customElements.define")
         assert headers["Content-Type"].startswith("text/javascript")
+        # The page re-imports a script after a failed load with ?retry=<n>; nothing else is accepted.
+        assert request("/modules/rika-synth/0.1.0/ui/view.js?retry=2", auth=False)[0] == 200
+        assert request("/modules/rika-synth/0.1.0/ui/view.js?url=https://example.invalid", auth=False)[0] == 400
         for hidden in ("/modules/rika-synth/0.1.0/rika_synth_web_a/__init__.py",
                        "/modules/rika-synth/0.1.0/rika-module.json",
                        "/modules/rika-synth/0.0.9/ui/view.js",
