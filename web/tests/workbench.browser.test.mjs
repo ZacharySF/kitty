@@ -202,9 +202,9 @@ async function assertAtlasFits(page, label) {
   await assertFits(page, ".atlas", label);
 }
 
-/** Every control inside `selector` can be focused and is then on screen and hit-testable. */
+/** Every control inside every element matching `selector` can be focused and is then on screen and hit-testable. */
 async function assertReachable(page, selector, label) {
-  const unreachable = await page.locator(selector).evaluate((root) => {
+  const unreachable = (await page.locator(selector).evaluateAll((roots) => roots.map((root) => {
     const missing = [];
     for (const control of root.querySelectorAll("a[href], button, input, textarea, summary")) {
       if (!control.getClientRects().length || control.disabled || control.closest("details:not([open]) > :not(summary)")) continue;
@@ -216,7 +216,7 @@ async function assertReachable(page, selector, label) {
         missing.push(control.getAttribute("aria-label") || control.textContent.trim().slice(0, 30));
     }
     return missing;
-  });
+  }))).flat();
   assert.deepEqual(unreachable, [], `${label}: controls cannot be reached`);
 }
 

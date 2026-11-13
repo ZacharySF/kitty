@@ -51,7 +51,6 @@
 >
   <header class="guide-heading">
     <div>
-      <p class="eyebrow">START HERE</p>
       <h2 id="guide-title">Three steps. One application at a time.</h2>
     </div>
     <span class="guide-reassurance"

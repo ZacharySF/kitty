@@ -166,7 +166,6 @@
 <section class="panel">
   <header class="panel-heading">
     <div>
-      <span class="eyebrow">THE NEXT SMALL STEP</span>
       <h2>Reminders & follow-ups</h2>
     </div>
     <button class="button" disabled={loading} onclick={() => load()}>Refresh</button>

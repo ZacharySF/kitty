@@ -54,9 +54,8 @@
 <section class="quick-notes" aria-labelledby="quick-notes-title">
   <header class="head">
     <div>
-      <p class="eyebrow">Study · scratchpad</p>
       <h1 id="quick-notes-title">Quick notes</h1>
-      <p class="lede">Jot it down — every note saves as you type. Pop one out to float it, see-through, over anything.</p>
+      <p class="lede">Notes save as you type. Pop one out to float it over other windows.</p>
     </div>
     <div class="actions">
       <label class="search">

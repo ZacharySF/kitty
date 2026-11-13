@@ -15,7 +15,6 @@
 >
   <header>
     <div>
-      <span class="eyebrow">KEEP YOUR HANDS ON THE KEYS</span>
       <h2 id="shortcuts-title">Keyboard shortcuts</h2>
     </div>
     <button
