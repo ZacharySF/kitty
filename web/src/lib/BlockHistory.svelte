@@ -208,7 +208,7 @@
 <dialog bind:this={dialog} class="workspace-dialog block-history" aria-labelledby="history-title" oncancel={onclose}>
   <header>
     <div>
-      <span class="eyebrow">VERSION HISTORY · 30 DAYS OF EVERY EDIT</span>
+      <span class="eyebrow">Every edit is kept for 30 days</span>
       <h2 id="history-title">History{title ? ` — ${title}` : ""}</h2>
     </div>
     <button class="icon-button" onclick={onclose} aria-label="Close history">×</button>

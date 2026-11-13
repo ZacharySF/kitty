@@ -86,7 +86,6 @@
 >
   <header>
     <div>
-      <p class="eyebrow">ADD TO YOUR WORKSPACE</p>
       <h2>Add an opportunity</h2>
     </div>
     <button

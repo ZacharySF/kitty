@@ -1118,7 +1118,7 @@
     {#if view === "decks"}
       {#if !overview.stats.total}
         <Panel>
-          <EmptyState eyebrow="Start with one question" title="Your first card is a question and an answer.">
+          <EmptyState title="Your first card is a question and an answer.">
             <p>{canAdd ? "Press N or New card to write a front and a back." : "Make a deck, then write a front and a back."}</p>
             {#snippet actions()}
               <Button intent={canAdd ? undefined : "primary"} variant={canAdd ? "ghost" : undefined} onclick={() => editDeck()}>New deck</Button>

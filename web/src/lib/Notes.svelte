@@ -2065,7 +2065,7 @@
           oncontextmenu={contextDeleteDrawing}
         ></canvas>
         {#if !pageId}<div class="canvas-empty">
-            <h3>A place for your next idea</h3>
+            <h3>No page open</h3>
             <p>Create a notebook and page to start drawing.</p>
           </div>{/if}
         <CanvasPill label="Drawing tools" id={`${pane.id}-drawing-tools`} storageKey="kitty.notes.canvas-tools" moreLabel="More canvas tools" menuLabel="Canvas options" stageHeight={height} disabled={!pageId}>

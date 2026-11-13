@@ -97,24 +97,27 @@ never provisions them automatically.
 
 ## Onboarding and tutorial
 
-The transparent Harness-style welcome uses the existing Kitty theme, controls
-and typography. After the optional connection step, **Show me around** starts a
-highlighted guide over the actual application:
+The welcome is one portrait card: a still of the 3D Brain (`web/public/art/brain-dark.webp`
+and `brain-light.webp`, rendered from the Brain pack so a base install without the pack
+still shows it), then **Continue with Google** and **Start locally**. A theme picker
+and **Skip** sit above the image. Without a Google client the Google button is disabled
+and links this document. After either choice, **Show me around** starts a highlighted
+guide over the actual application:
 
 1. Workspace tabs and focused panels.
-2. Modules in Settings, including restart-only activation and preserved data.
-3. Atlas map, section list and navigation/search shortcuts.
-4. Quick notes, or an explanation of how to enable their module.
-5. Study, or an explanation of how to enable its module.
-6. Terminal dock only when its module is active **and a visible dock surface is
-   present** (`[data-kitty-dock]` or `.terminal-dock`). This branch does not add
-   the separately developed dock or start Herdr, a shell, a study timer or AI.
+2. Modules in Settings (restart-only activation, preserved data, and the Brain
+   download while the Brain is off).
+3. AI providers: optional, your own key and budget, each paid request reviewed.
+4. Home.
+5. Quick notes, or an explanation of how to enable their module.
+6. Study, or an explanation of how to enable its module.
+7. Rika.
 
 Every step has Back/Next and a skip control. Escape skips the guide. Finishing
 or skipping records dismissal in the workspace database, so an ephemeral desktop
 port, browser reload or restart does not repeat onboarding. Closing mid-tour
 before dismissal starts the tour again next time. Reopen it at any time with
-**Settings → Welcome & account → Take the guided tour**. Reopening a completed
+**Settings → Account → Take the tour**. Reopening a completed
 tour does not reset its stored completion flag. Google is never required to
 finish, skip or reopen onboarding. No applicant profile facts are inferred from
 the Google identity or changed by this guide.
