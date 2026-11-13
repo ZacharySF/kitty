@@ -228,10 +228,9 @@ fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc:
     let front = sidecar(directory, "rika-server", staging.as_deref())
         .ok_or("The bundled rika-server is missing")?;
     let mut command = Command::new(front);
-    // The Terminal module runs only rika!'s pinned herdr, never one from the environment;
-    // rika-server passes its environment on to the backend.
+    // The Terminal module runs only rika!'s pinned herdr, never one from the environment:
+    // rika-server hands the worker the signed `herdr` pack's binary (server/src/packs.rs).
     command.env_remove("KITTY_HERDR");
-    if let Some(herdr) = sidecar(directory, "kitty-herdr", staging.as_deref()) { command.env("KITTY_HERDR", herdr); }
     command.args(front_arguments(&binary, root, safe));
     let child = command
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
@@ -590,14 +589,6 @@ mod tests {
         let (bundle, staging) = (folder.join("bundle/bin"), folder.join("binaries"));
         fs::create_dir_all(&bundle).unwrap();
         fs::create_dir_all(&staging).unwrap();
-        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), None);
-        let staged = staging.join(format!("kitty-herdr-{}", env!("KITTY_TARGET_TRIPLE")));
-        fs::write(&staged, b"staged").unwrap();
-        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), Some(staged));
-        assert_eq!(sidecar(&bundle, "kitty-herdr", None), None);
-        fs::write(bundle.join("kitty-herdr"), b"bundled").unwrap();
-        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), Some(bundle.join("kitty-herdr")));
-        // rika-server, which the shell starts in front of the backend, follows the same rule.
         assert_eq!(sidecar(&bundle, "rika-server", None), None);
         let staged = staging.join(format!("rika-server-{}", env!("KITTY_TARGET_TRIPLE")));
         fs::write(&staged, b"staged").unwrap();

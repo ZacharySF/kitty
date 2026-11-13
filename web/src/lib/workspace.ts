@@ -11,8 +11,8 @@ export const navigation = [
   { id: "tern", label: "Tern", icon: "terminal", module: "terminal" },
   { id: "agent-skills", label: "All agent skills", icon: "terminal", module: "terminal" },
   { id: "study", label: "Study", icon: "study", module: "workspace" },
-  { id: "math", label: "Math", icon: "math", module: "workspace" },
-  { id: "learnharness", label: "LearnHarness", icon: "study", module: "workspace" },
+  { id: "math", label: "Math", icon: "math", module: "math" },
+  { id: "learnharness", label: "LearnHarness", icon: "study", module: "learnharness" },
   { id: "flashcards", label: "Flashcards", icon: "flashcards", module: "workspace" },
   { id: "notes", label: "Notes & canvas", icon: "notes", module: "workspace" },
   { id: "quick-notes", label: "Quick notes", icon: "quick-notes", module: "workspace" },
@@ -46,6 +46,13 @@ export function moduleOf(view: View): ModuleId | null {
 export function viewEnabled(view: View, enabled: Enabled): boolean {
   const owner = moduleOf(view);
   return owner === null || enabled.includes(owner);
+}
+/** Views that run on a module's pack (kitty.packs): with the pack missing they show its download. */
+const viewPacks: Partial<Record<View, string>> = { math: "math", learnharness: "learnharness", herdr: "herdr" };
+/** The pack `view` needs that this process lacks (`modules.missing`), or null. */
+export function missingPack(view: View, missing: readonly string[]): string | null {
+  const pack = viewPacks[view];
+  return pack && missing.includes(pack) ? pack : null;
 }
 export function isView(value: string): value is View {
   return navigation.some(item => item.id === value);

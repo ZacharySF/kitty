@@ -1,30 +1,36 @@
 """Built-in feature modules: which of them a workspace has switched on.
 
-Four independent modules sit on top of an always-on core (shell, settings, AI
-provider and budget):
+Seven independent modules sit on top of an always-on core (shell, settings, AI
+provider and budget, Rika's text chat):
 
 * ``applyai``   - jobs, discovery, sources, companies, profile, resumes, questions,
   preparation, recovery, applications, follow-ups, mail and career reports;
 * ``workspace`` - notes, documents, canvas, schema, backlinks, flashcards, study,
   calendar, tasks and opportunities;
-* ``terminal``  - rika!'s own bundled herdr session (kitty.core.terminal), plus the
+* ``math``      - topics, lessons, sprints and answer checking (SymPy);
+* ``learnharness`` - the LearnHarness study app;
+* ``terminal``  - rika!'s own pinned herdr session (kitty.core.terminal), plus the
   user's installed Stencil Tern when present (kitty.core.tern). Off means no herdr
   or Tern process, socket or terminal route exists;
-* ``brain``     - the atlas home (3D brain and 2D map) and the 3D graph look. Its web
-  code is a download, the ``brain`` pack (docs/rust-core-design.md, milestone 3), so it
-  is off until that pack is installed.
+* ``voice``     - Rika's on-device speech to text (faster-whisper);
+* ``brain``     - the atlas home (3D brain and 2D map) and the 3D graph look.
 
-The registry itself, ids, labels, descriptions and the packs each module needs, is
-``modules.json`` beside this file; rika-server (server/src/modules.rs) compiles the same
-file in, so the two never drift.
+Every module but ``workspace`` needs a pack, a download (docs/rust-core-design.md,
+milestone 3): the Brain's web code, or the Python libraries and programs kitty.packs
+loads. A module can be on while its pack is missing (a workspace from before packs):
+its routes then answer 409 and its views say how to download it.
+
+The registry itself, ids, labels, descriptions, the packs each module needs and the
+default selection, is ``modules.json`` beside this file; rika-server
+(server/src/modules.rs) compiles the same file in, so the two never drift.
 
 The selection is the ``modules`` list of the workspace's build file,
 ``config/build.json`` (kitty.core.builds; docs/platform-design.md, Q8)::
 
     {"schema": 1, "modules": ["applyai", "workspace", "terminal"]}
 
-A build without the key keeps every module that needs no download (existing installs are
-unchanged); ``kitty init`` writes ``"modules": []``. Before builds the selection lived in
+A build without the key keeps every module rika! had before packs (existing installs are
+unchanged; the Brain, new with packs, is off); ``kitty init`` writes ``"modules": []``. Before builds the selection lived in
 ``config/modules.yaml``; a workspace that still has only that file is read from it
 until the first open writes the build file (kitty.core.builds.store.ensure). A
 process reads the selection once at start-up and treats it as frozen: edits are
@@ -49,8 +55,8 @@ REGISTRY: dict[str, Any] = json.loads((Path(__file__).with_name("modules.json"))
 MODULE_IDS: tuple[str, ...] = tuple(item["id"] for item in REGISTRY["modules"])
 #: The packs (large downloads) each module needs before it can be turned on.
 MODULE_PACKS: dict[str, tuple[str, ...]] = {item["id"]: tuple(item["packs"]) for item in REGISTRY["modules"]}
-#: A workspace without a selection: every module that needs no download.
-DEFAULT_MODULES: tuple[str, ...] = tuple(key for key in MODULE_IDS if not MODULE_PACKS[key])
+#: A workspace without a selection: every module rika! had before packs (the Brain is off).
+DEFAULT_MODULES: tuple[str, ...] = tuple(key for key in MODULE_IDS if key in REGISTRY["default"])
 #: Where the selection lives (inside the build) and where it lived before builds.
 BUILD_FILE = "build.json"
 LEGACY_MODULES_FILE = "modules.yaml"
@@ -210,8 +216,10 @@ def modules_state(active: Sequence[str], config_dir: Path) -> dict[str, Any]:
 
     ``enabled`` is this process's frozen snapshot; ``configured`` is what the build
     file selects now (applied on restart). An unreadable file never hides the core: the
-    pending selection falls back to the active one and ``error`` says why.
+    pending selection falls back to the active one and ``error`` says why. ``missing``
+    lists the packs active modules need that this process lacks (kitty.packs).
     """
+    from kitty import packs
     from kitty.config import ConfigError
 
     enabled = list(active)
@@ -223,4 +231,5 @@ def modules_state(active: Sequence[str], config_dir: Path) -> dict[str, Any]:
         state["error"] = str(exc)
     state["configured"] = configured
     state["restart_required"] = configured != enabled
+    state["missing"] = packs.missing(enabled)
     return state

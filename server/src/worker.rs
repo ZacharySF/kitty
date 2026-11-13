@@ -39,6 +39,8 @@ pub struct Worker {
     pub db_path: std::path::PathBuf,
     /// `config.apply`'s digest settings, while ApplyAI is active.
     pub digest: Option<crate::bootstrap::DigestSettings>,
+    /// The packs the worker has and lacks (`kitty.packs.readiness`).
+    pub packs: WorkerPacks,
     child: Child,
     /// Held open for the worker's lifetime; closing it tells the worker to stop. Shared with
     /// the desktop owner-pipe relay, which writes the shell's lines into it.
@@ -56,6 +58,18 @@ struct Readiness {
     modules: Vec<String>,
     version: String,
     digest: Option<crate::bootstrap::DigestSettings>,
+    #[serde(default)]
+    packs: WorkerPacks,
+}
+
+/// The readiness line's `packs`: those built into the worker program, and those its active
+/// modules need but it lacks.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct WorkerPacks {
+    #[serde(default)]
+    pub built_in: Vec<String>,
+    #[serde(default)]
+    pub missing: Vec<String>,
 }
 
 /// How to start the worker: a program and its arguments before rika!'s own flags.
@@ -83,7 +97,8 @@ fn loopback_port(origin: &str) -> Option<u16> {
 
 impl Worker {
     /// Start the worker for the front at `public_origin` and wait for its readiness line.
-    pub async fn start(launch: &Launch, public_origin: &str, flags: &[String]) -> Result<Self, WorkerError> {
+    /// `packs` is `$KITTY_PACKS`, the installed packs' folders (crate::packs `worker_env`).
+    pub async fn start(launch: &Launch, public_origin: &str, flags: &[String], packs: &str) -> Result<Self, WorkerError> {
         let front_secret = crate::auth::token_hex(32);
         let mut child = Command::new(&launch.program)
             .args(&launch.args)
@@ -91,6 +106,7 @@ impl Worker {
             .arg("--public-origin")
             .arg(public_origin)
             .args(flags)
+            .env("KITTY_PACKS", packs)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -127,9 +143,11 @@ impl Worker {
                 config_dir: ready.config_dir.into(),
                 active: ready.modules,
                 version: ready.version,
+                missing: ready.packs.missing.clone(),
             }),
             db_path: ready.db_path.into(),
             digest: ready.digest,
+            packs: ready.packs,
             child,
             stdin: Arc::new(Mutex::new(Some(stdin))),
             output: Some(stdout),

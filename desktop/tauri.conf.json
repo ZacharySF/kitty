@@ -20,12 +20,10 @@
     "category": "Productivity",
     "shortDescription": "Private local opportunities, learning and planning workspace",
     "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/kitty-herdr", "binaries/rika-server"],
+    "externalBin": ["binaries/rika-server"],
     "resources": {
-      "third_party/herdr/LICENSE": "licenses/herdr/LICENSE",
       "../third_party/grinstead-snell/LICENSE": "licenses/grinstead-snell/LICENSE",
-      "../third_party/grinstead-snell/SOURCE.txt": "licenses/grinstead-snell/SOURCE.txt",
-      ".build/learnharness-legal/": "licenses/learnharness/"
+      "../third_party/grinstead-snell/SOURCE.txt": "licenses/grinstead-snell/SOURCE.txt"
     },
     "linux": {
       "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "xdg-utils", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-pulseaudio", "pkexec"], "conflicts": ["kitty-workspace"], "replaces": ["kitty-workspace"], "files": { "/usr/libexec/kitty-workspace/kitty-web": "binaries/kitty-web" } },

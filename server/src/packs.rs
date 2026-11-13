@@ -18,13 +18,17 @@
 //! `installed.json` names it: one atomic rename under the packs lock. A failure before that
 //! leaves the previous install untouched, and leftovers are swept at the next start.
 //!
-//! A pack is tied to one build: its web chunks import the base's own hashed chunks, so only a
-//! pack of exactly this version counts. A build that still carries a pack's files (a source
-//! checkout's `web/dist`; `pack-files.json` lists them) has it built in.
+//! A pack is tied to one build: its web chunks import the base's own hashed chunks and its
+//! Python libraries are built for the worker's own interpreter, so only a pack of exactly this
+//! version counts. A build that still carries a pack's payload has it built in: the website's
+//! files (`pack-files.json` lists them; a source checkout's `web/dist`), or, for the worker's
+//! packs, what the worker reports in its readiness line (`kitty.packs`). The worker is told
+//! where the installed ones are as `$KITTY_PACKS` (`worker_env`).
 //!
 //! Under `$XDG_DATA_HOME/kitty/packs/`: `installed.json`, one `<id>-<version>-<random>/`
-//! directory per installed pack (`pack.json`, `web/...`), the verified index cache
-//! (`index.json`, `index.json.sig`), `.tmp-*` downloads in progress and `.lock`.
+//! directory per installed pack (`pack.json`, then `web/...`, `python/...`, `learnharness/...`
+//! or `bin/herdr`), the verified index cache (`index.json`, `index.json.sig`), `.tmp-*`
+//! downloads in progress and `.lock`.
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -140,6 +144,8 @@ pub struct Packs {
     key: Result<PublicKey, String>,
     /// `pack-files.json`: pack id → its files under the website.
     built_in_files: HashMap<String, Vec<String>>,
+    /// The worker's packs its own program carries (its readiness line).
+    worker_built_in: Vec<String>,
     installed: Mutex<HashMap<String, Installed>>,
     jobs: Mutex<HashMap<String, Job>>,
     index: tokio::sync::Mutex<Cached>,
@@ -212,7 +218,11 @@ pub fn unpack(archive: &Path, entry: &Entry, tree: &Path) -> Result<(), String> 
     for item in reader.entries().map_err(bad)? {
         let mut item = item.map_err(bad)?;
         let path = item.path().map_err(bad)?.into_owned();
-        let inside = path.components().all(|part| matches!(part, Component::Normal(name) if !name.to_string_lossy().starts_with('.')));
+        // Plain names only; a dotted name (`.next/`, `.libs`) only below the top level, where it
+        // cannot pose as the packs folder's own `.tmp-` or `.lock`.
+        let inside = path.components().enumerate().all(|(depth, part)| {
+            matches!(part, Component::Normal(name) if depth > 0 || !name.to_string_lossy().starts_with('.'))
+        });
         if !inside || path.as_os_str().is_empty() {
             return Err(BAD_PACK.into());
         }
@@ -228,7 +238,10 @@ pub fn unpack(archive: &Path, entry: &Entry, tree: &Path) -> Result<(), String> 
             if let Some(parent) = target.parent() {
                 fs::DirBuilder::new().recursive(true).mode(0o755).create(parent).map_err(bad)?;
             }
-            let mut output = OpenOptions::new().write(true).create_new(true).mode(0o644).open(&target).map_err(bad)?;
+            // Programs (herdr, Node.js) stay executable; nothing is ever setuid or writable by others.
+            let executable = item.header().mode().map_err(bad)? & 0o111 != 0;
+            let mut output = OpenOptions::new().write(true).create_new(true).mode(if executable { 0o755 } else { 0o644 })
+                .open(&target).map_err(bad)?;
             std::io::copy(&mut item, &mut output).map_err(bad)?;
         } else {
             return Err(BAD_PACK.into());
@@ -299,6 +312,7 @@ impl Packs {
             base_url,
             key,
             built_in_files,
+            worker_built_in: Vec::new(),
             jobs: Mutex::new(HashMap::new()),
             index: tokio::sync::Mutex::new(Cached { index: None, fetched: None, error: None }),
             client: OnceLock::new(),
@@ -365,8 +379,26 @@ impl Packs {
         }
     }
 
+    /// The worker's own payloads (its readiness line's `packs.built_in`).
+    pub fn with_worker(mut self, built_in: Vec<String>) -> Packs {
+        self.worker_built_in = built_in;
+        self
+    }
+
+    /// `$KITTY_PACKS` for the worker: `{"<id>": "<folder>"}` for each pack installed for this
+    /// version (kitty.packs puts their libraries and programs to use).
+    pub fn worker_env(&self) -> String {
+        let installed = self.installed.lock().unwrap();
+        let folders: serde_json::Map<String, Json> = installed.iter()
+            .filter(|(_, item)| item.version == self.version)
+            .map(|(id, item)| (id.clone(), json!(self.dir.join(&item.dir).display().to_string())))
+            .collect();
+        Json::Object(folders).to_string()
+    }
+
     fn built_in(&self, id: &str) -> bool {
-        self.built_in_files.get(id).is_some_and(|files| !files.is_empty() && files.iter().all(|file| self.static_dir.join(file).is_file()))
+        self.worker_built_in.iter().any(|pack| pack == id)
+            || self.built_in_files.get(id).is_some_and(|files| !files.is_empty() && files.iter().all(|file| self.static_dir.join(file).is_file()))
     }
 
     fn installed_now(&self, id: &str) -> Option<Installed> {
@@ -746,7 +778,7 @@ mod tests {
         for (name, members) in [
             ("escape", &[("pack.json", Some(MANIFEST)), ("../escaped.js", Some(b"x" as &[u8]))] as &[(&str, Option<&[u8]>)]),
             ("absolute", &[("pack.json", Some(MANIFEST)), ("/tmp/escaped.js", Some(b"x"))]),
-            ("hidden", &[("pack.json", Some(MANIFEST)), ("web/.hidden", Some(b"x"))]),
+            ("hidden", &[("pack.json", Some(MANIFEST)), (".lock", Some(b"x"))]),
             ("link", &[("pack.json", Some(MANIFEST)), ("web/link", None)]),
             ("manifest", &[("pack.json", Some(br#"{"id": "other", "version": "1.0.0"}"#)), ("web/a.js", Some(b"x"))]),
             ("duplicate", &[("pack.json", Some(MANIFEST)), ("web/a.js", Some(b"x")), ("web/a.js", Some(b"y"))]),
@@ -755,5 +787,29 @@ mod tests {
             assert_eq!(unpack(&archive(&dir, members), &sized(members), &dir.join("tree")).unwrap_err(), BAD_PACK, "{name}");
             assert!(!dir.join("escaped.js").exists() && !Path::new("/tmp/escaped.js").exists(), "{name}");
         }
+    }
+
+    #[test]
+    fn programs_stay_executable_and_dotted_folders_inside_a_pack_unpack() {
+        use std::os::unix::fs::PermissionsExt;
+        const MANIFEST: &[u8] = br#"{"id": "brain", "version": "1.0.0"}"#;
+        let dir = scratch("programs");
+        let path = dir.join("archive");
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(File::create(&path).unwrap(), flate2::Compression::fast()));
+        for (name, data, mode) in [("pack.json", MANIFEST, 0o644), ("learnharness/node", b"#!" as &[u8], 0o775),
+                                   ("learnharness/.next/BUILD_ID", b"x", 0o664)] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(mode);
+            header.set_entry_type(tar::EntryType::Regular);
+            builder.append_data(&mut header, name, data).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap();
+        let size = (MANIFEST.len() + 3) as u64;
+        unpack(&path, &Entry { installed_size: size, ..entry(0, "") }, &dir.join("tree")).unwrap();
+        let mode = |name: &str| fs::metadata(dir.join("tree").join(name)).unwrap().permissions().mode() & 0o7777;
+        // Only the executable bit survives: never writable by the group or others.
+        assert_eq!(mode("learnharness/node"), 0o755);
+        assert_eq!(mode("learnharness/.next/BUILD_ID"), 0o644);
     }
 }

@@ -228,7 +228,7 @@ class HerdrRuntime:
     def _session_folder(self) -> Path:
         """Where herdr keeps this session's sockets, once the runtime and name are valid."""
         if not self.binary or not os.access(self.binary, os.X_OK) or not Path(self.binary).is_file():
-            raise TerminalUnavailable("The bundled herdr runtime is missing; reinstall rika!")
+            raise TerminalUnavailable("herdr isn't installed: download it in Settings > Modules, then restart rika!")
         validate_session_name(self.session)
         return herdr_config_dir(self.environ) / "sessions" / self.session
 
@@ -439,9 +439,9 @@ class HerdrRuntime:
             skill_path = self.private_dir / "SKILL.md"
             skill = MEDIATION_NOTE if launch.full else self._agent_command("--skill", skill=True) + "\n\n" + MEDIATION_NOTE
             _write_private(skill_path, skill)
-            # The signed desktop binary is called kitty-herdr, while the skill uses
-            # `herdr`. Only this tab's PATH gets the private alias to the pinned binary,
-            # and the shims that start each coding agent through rika!'s launcher.
+            # The pinned binary ($KITTY_HERDR: the herdr pack's, kitty.packs) may have another
+            # name, while the skill uses `herdr`. Only this tab's PATH gets the private alias to
+            # it, and the shims that start each coding agent through rika!'s launcher.
             bin_dir = self.private_dir / "bin"
             _owner_only_directory(bin_dir)
             alias = bin_dir / "herdr"

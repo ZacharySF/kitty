@@ -1,7 +1,8 @@
-"""Stage rika!'s pinned herdr release binary as the desktop bundle's kitty-herdr sidecar.
+"""Stage rika!'s pinned herdr release binary for the Terminal module's `herdr` pack.
 
-herdr is Apache-2.0 (desktop/third_party/herdr/LICENSE ships in the bundle; the
-upstream release has no NOTICE file). Only a binary whose SHA-256 matches the pin
+The binary goes to desktop/.build/herdr/herdr, which scripts/build-packs.py packs as
+`bin/herdr` with its Apache-2.0 licence (desktop/third_party/herdr/LICENSE; the upstream
+release has no NOTICE file). Only a binary whose SHA-256 matches the pin
 below is staged; upgrading herdr means changing the version and both digests here.
 
     python desktop/fetch_herdr.py [--from <already downloaded herdr-linux-*>]
@@ -33,19 +34,19 @@ def download(url: str) -> bytes:
         return response.read()
 
 
-def install(triple: str, binaries: Path, fetch: Callable[[str], bytes] = download) -> Path:
-    """Stage ``kitty-herdr-<triple>`` in `binaries`, verified against the pin."""
+def install(triple: str, folder: Path, fetch: Callable[[str], bytes] = download) -> Path:
+    """Stage ``herdr`` in `folder`, verified against the pin."""
     if triple not in PINS:
         raise SystemExit(f"There is no pinned herdr {HERDR_VERSION} release for {triple}")
     asset, digest = PINS[triple]
-    target = binaries / f"kitty-herdr-{triple}"
+    target = folder / "herdr"
     if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == digest:
         return target
     data = fetch(RELEASE.format(version=HERDR_VERSION, asset=asset))
     if hashlib.sha256(data).hexdigest() != digest:
-        raise SystemExit(f"herdr {HERDR_VERSION} {asset} does not match its pinned SHA-256; refusing to bundle it")
-    binaries.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=binaries)
+        raise SystemExit(f"herdr {HERDR_VERSION} {asset} does not match its pinned SHA-256; refusing to pack it")
+    folder.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=folder)
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
@@ -64,8 +65,8 @@ def main() -> None:
     host = subprocess.check_output(["rustc", "-vV"], text=True)
     triple = next(line.removeprefix("host: ") for line in host.splitlines() if line.startswith("host: "))
     fetch = (lambda _url: args.source.read_bytes()) if args.source else download
-    target = install(triple, Path(__file__).resolve().parent / "binaries", fetch)
-    print(f"Staged pinned herdr {HERDR_VERSION}: {target.name}")
+    target = install(triple, Path(__file__).resolve().parent / ".build/herdr", fetch)
+    print(f"Staged pinned herdr {HERDR_VERSION}: {target}")
 
 
 if __name__ == "__main__":

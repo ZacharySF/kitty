@@ -56,13 +56,26 @@ def copy_careers(config_dir: Path) -> None:
 
 
 def test_registry_constants_and_metadata():
-    assert MODULE_IDS == ("applyai", "workspace", "terminal", "brain")
-    # The Brain's web code is a download: off until its pack is installed.
-    assert DEFAULT_MODULES == ("applyai", "workspace", "terminal")
-    assert MODULE_PACKS["brain"] == ("brain",) and [pack["id"] for pack in REGISTRY["packs"]] == ["brain"]
+    assert MODULE_IDS == ("applyai", "workspace", "math", "learnharness", "terminal", "voice", "brain")
+    # A workspace without a selection keeps every module rika! had before packs; the Brain is new.
+    assert DEFAULT_MODULES == ("applyai", "workspace", "math", "learnharness", "terminal", "voice")
+    assert {key: MODULE_PACKS[key] for key in MODULE_IDS} == {
+        "applyai": ("discovery",), "workspace": (), "math": ("math",), "learnharness": ("learnharness",),
+        "terminal": ("herdr",), "voice": ("voice",), "brain": ("brain",)}
+    assert [pack["id"] for pack in REGISTRY["packs"]] == ["discovery", "math", "learnharness", "herdr", "voice", "brain"]
+    assert all(pack["label"] and pack["description"] for pack in REGISTRY["packs"])
     assert [item["id"] for item in available_modules()] == list(MODULE_IDS)
     assert all(item["label"] and item["description"] for item in available_modules())
     assert available_modules()[-1]["packs"] == ["brain"]
+
+
+def test_every_pack_has_one_kind_of_payload():
+    """kitty.packs loads the Python and program packs; the Brain's web code is the front's."""
+    from kitty import packs
+
+    kinds = [set(packs.PYTHON), set(packs.PROGRAMS), set(packs.WEB)]
+    assert set().union(*kinds) == {pack["id"] for pack in REGISTRY["packs"]}
+    assert sum(len(kind) for kind in kinds) == len(REGISTRY["packs"])
 
 
 def test_every_copy_of_the_module_list_is_the_registry():
@@ -151,7 +164,7 @@ def test_require_module_raises_a_readable_error_when_disabled(tmp_path):
 
 
 def test_normalize_rejects_non_ids_and_duplicates():
-    assert normalize_modules(["terminal", "workspace", "applyai"]) == DEFAULT_MODULES
+    assert normalize_modules(["voice", "terminal", "learnharness", "math", "workspace", "applyai"]) == DEFAULT_MODULES
     assert normalize_modules(["brain", "applyai"]) == ("applyai", "brain")
     for bad in (["Workspace"], ["applyai", "applyai"], [None], [["applyai"]], ["applyai/../x"]):
         with pytest.raises(ValueError):
@@ -194,7 +207,7 @@ def test_modules_state_separates_active_from_pending(tmp_path):
     config_dir = tmp_path / "config"
     write(config_dir, ["workspace"])
     state = modules_state(DEFAULT_MODULES, config_dir)
-    assert state["enabled"] == ["applyai", "workspace", "terminal"]
+    assert state["enabled"] == list(DEFAULT_MODULES)
     assert state["configured"] == ["workspace"]
     assert state["restart_required"] is True
     assert [item["id"] for item in state["available"]] == list(MODULE_IDS)

@@ -90,7 +90,7 @@ export const DEFAULT_BUILD: Build = {
   name: "",
   author: "",
   description: "",
-  modules: ["applyai", "workspace", "terminal"],
+  modules: ["applyai", "workspace", "math", "learnharness", "terminal", "voice"],
   settings: {},
   theme: { base: "kitty", tokens: {}, css: "" },
   ui: {
