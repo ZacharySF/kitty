@@ -29,6 +29,15 @@ REPO = Path(__file__).resolve().parents[1]
 WORKER_PACKS = ["discovery", "math", "learnharness", "herdr", "voice"]
 
 
+def default_root(tmp_path: Path):
+    """A workspace with DEFAULT_MODULES on and ApplyAI's careers files from the public examples."""
+    from kitty.core.bootstrap import copy_examples
+
+    settings = make_root(tmp_path, DEFAULT_MODULES)
+    copy_examples(settings, DEFAULT_MODULES)
+    return settings
+
+
 @pytest.fixture(scope="module")
 def base_python(tmp_path_factory) -> list[str]:
     """The worker command of a base install: this Python with everything the packs carry hidden
@@ -94,7 +103,7 @@ def test_python_packs_carry_their_libraries_and_the_base_none_of_them():
 
 def test_the_base_worker_starts_without_any_pack_and_every_pack_route_says_so(tmp_path, base_python):
     """DEFAULT_MODULES on, no pack's payload: starts, lists the downloads, 409s their routes."""
-    settings = make_root(tmp_path, DEFAULT_MODULES)
+    settings = default_root(tmp_path)
     with front_site(settings, worker=base_python) as site:
         status, modules = site.request("/api/modules")
         assert status == 200 and modules["enabled"] == list(DEFAULT_MODULES)
@@ -109,7 +118,7 @@ def test_the_base_worker_starts_without_any_pack_and_every_pack_route_says_so(tm
             assert status == 409, (path, body)
             assert body["error"] == f"{pack} isn't installed: download it in Settings > Modules, then restart rika!"
         # Everything else runs: the base, ApplyAI without its aggregators, Workspace, Tern.
-        for path in ("/api/dashboard", "/api/notes", "/api/calendar/calendars", "/api/terminal/tern"):
+        for path in ("/api/dashboard", "/api/notes", "/api/calendar", "/api/terminal/tern"):
             status, body = site.request(path)
             assert status == 200, (path, body)
 
@@ -190,7 +199,7 @@ USES = {"math": "/api/math/topics", "voice": "/api/rika/voice", "learnharness": 
 def test_a_worker_pack_installs_verified_and_the_next_start_uses_it(tmp_path, release, base_python, pack):
     key = Key()
     entry = _publish(tmp_path, release, key, pack)
-    settings = make_root(tmp_path, DEFAULT_MODULES)
+    settings = default_root(tmp_path)
     env = {"KITTY_PACKS_URL": release.url, "KITTY_PACKS_KEY": key.public}
     folder = settings.root / "xdg-data/kitty/packs"
     with front_site(settings, env, worker=base_python) as site:
@@ -217,11 +226,11 @@ def test_a_worker_pack_installs_verified_and_the_next_start_uses_it(tmp_path, re
         if USES[pack]:
             status, body = site.request(USES[pack])
             assert status == 200 if pack != "herdr" else status != 409, (status, body)
-        # Turned off and saved, the download can go; the next start lists it again.
+        # Turned off and saved, the download can go; it is offered again from the index.
         selection = [module for module in DEFAULT_MODULES if pack not in MODULE_PACKS[module]]
         assert site.request("/api/modules", {"enabled": selection})[0] == 200
         status, body = site.request("/api/packs/uninstall", {"id": pack})
-        assert status == 200 and next(item for item in body["packs"] if item["id"] == pack)["state"] == "unavailable"
+        assert status == 200 and next(item for item in body["packs"] if item["id"] == pack)["state"] == "available"
     assert not tree.exists()
 
 
