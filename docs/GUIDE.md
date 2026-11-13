@@ -100,8 +100,27 @@ cross-module results appear only while both modules are enabled.
 Existing workspaces with no module selection retain every module; a pre-build
 `config/modules.yaml` is moved into `config/build.json` on the first open. Fresh CLI and
 desktop workspaces start core-only. The database still uses the existing global
-migrations; disabling does not drop tables or run down-migrations. These are
-built-in modules, not installable third-party extensions.
+migrations; disabling does not drop tables or run down-migrations.
+
+### External modules
+
+Add-on modules come from a GitHub repository's latest release
+([MODULES.md](MODULES.md) is the contract and how to publish one). In **Settings →
+Modules → Add-on modules**, type the repository as `owner/repo` and press **Add**: rika!
+downloads the release's `<id>-<version>.tar.gz`, refuses it unless its SHA-256 matches the
+checksum the release publishes, unpacks it safely into `data/modules/<id>/<version>/` and
+pins that version. As with the built-in modules, **restart rika!** to finish; the new view
+then appears in its header group (first, if the module asks). **Check for updates** shows
+`Update available 0.1.0 → 0.1.1` with an **Update** button; nothing updates by itself.
+**Remove** takes effect at the next start and keeps the module's data in
+`data/modules-data/<id>/`. Private repositories need a GitHub token (Settings → Keys →
+GitHub token). A module that fails to load is listed with its error and never stops
+rika! from starting.
+
+A `python` module runs inside rika! and answers `/api/modules/<id>/…`; its view is a
+script rika! serves from `/modules/<id>/<version>/`. A `process` module is a local web
+server rika! starts when its view opens, on a free loopback port that only this run's
+page and desktop window may frame (like LearnHarness's fixed `127.0.0.1:3210`).
 
 ### Builds
 
@@ -603,7 +622,8 @@ Network Access rules). Web page origins are always refused.
 ### Keys (API keys)
 
 rika! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:
-`OPENROUTER`, `ANTHROPIC`, `USAJOBS`, `BRAVE`, or your own (`A-Z`, `0-9`, `_`). A key
+`OPENROUTER`, `ANTHROPIC`, `USAJOBS`, `BRAVE`, `GITHUB` (a GitHub token, only for installing
+[external modules](#external-modules) from private repositories), or your own (`A-Z`, `0-9`, `_`). A key
 is read from, in order:
 
 1. the OS keyring through the freedesktop Secret Service (gnome-keyring, KeePassXC),
@@ -612,7 +632,7 @@ is read from, in order:
    before; `.private/keys/<NAME>` for the others). Files must be mode 600 and not
    symbolic links;
 3. the environment, so `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `USAJOBS_API_KEY`,
-   `BRAVE_SEARCH_API_KEY` (or a custom `NAME`) in `.env` keep working.
+   `BRAVE_SEARCH_API_KEY`, `GITHUB_TOKEN` (or a custom `NAME`) in `.env` keep working.
 
 New keys go to the keyring when there is one, otherwise to the owner-only file.
 **Settings → Keys** shows each key as set or unset and where it is stored, never its

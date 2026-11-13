@@ -3,7 +3,8 @@
   import Icon from "./Icon.svelte";
   import { api } from "./api";
   import { hitIcon, hitLabel, hitTarget, oneLine, plain, searchPath, type SearchHit, type SearchResult, type Segment } from "./searchHits";
-  import { navigationGroups, visibleNavigation, type View } from "./workspace";
+  import { groupOf, visibleNavigation, type AnyView } from "./workspace";
+  import { activeModules } from "./modules.svelte";
   import { buildStore } from "./build.svelte";
   import { morningBrief } from "./goals/brief.svelte";
   import { launchMath, type MathLaunch } from "./math/launch";
@@ -30,7 +31,7 @@
   }: {
     enabled: readonly string[];
     onclose: () => void;
-    onview: (view: View) => void;
+    onview: (view: AnyView) => void;
     onopenjob: (id: number) => void;
     onadd: () => void;
     onhelp: () => void;
@@ -89,9 +90,9 @@
     const text = query.trim().toLowerCase();
     if (!text) return [];
     const local: Choice[] = [
-      ...visibleNavigation(enabled).map((item) => ({
+      ...visibleNavigation(enabled, activeModules.views).map((item) => ({
         label: item.label,
-        meta: navigationGroups.find((group) => group.views.includes(item.id))?.label || "Section",
+        meta: groupOf(item.id, activeModules.views)?.label || "Section",
         icon: item.icon,
         run: () => onview(item.id),
       })),

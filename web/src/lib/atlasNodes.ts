@@ -1,27 +1,35 @@
 import type { GraphLink, GraphNode } from "./graph3d";
-import type { navigation as Navigation, View } from "./workspace";
+import { isExternalViewId, type AnyView, type NavItem, type View } from "./workspace.ts";
 
 /** Raised when the atlas's hidden sections (build `ui.atlas.hidden`, graphPreferences.ts) change. */
 export const ATLAS_NODES_EVENT = "kitty:atlas-nodes";
 /** dataTransfer type carried by a Sections row dragged onto the graph. */
 export const SECTION_DRAG_TYPE = "application/x-kitty-atlas-section";
 
-type Section = (typeof Navigation)[number];
-export type AtlasSection = { label: string; items: Section[] };
+export type AtlasSection = { label: string; items: NavItem[] };
+
+/**
+ * Add-on sections always show: the build's hidden list (`ui.atlas.hidden`) holds only
+ * built-in view ids.
+ */
+export function hideableSection(view: string): boolean {
+  return !isExternalViewId(view);
+}
 
 /**
  * The atlas Sections list: every enabled section, shown or hidden. Takes the
- * enabled groups (`visibleGroups`) and the `navigation` table.
+ * enabled groups (`visibleGroups`) and a view's label and icon (`navItem`).
+ * Job search shows only its hub on the atlas, plus any add-on sections.
  */
 export function atlasSections(
-  groups: readonly { label: string; views: readonly View[] }[],
-  navigation: readonly Section[],
+  groups: readonly { label: string; views: readonly AnyView[] }[],
+  lookup: (view: AnyView) => NavItem | undefined,
 ): AtlasSection[] {
   return groups.map((group) => ({
     label: group.label,
     items: group.views
-      .filter((id) => id !== "today" && (group.label !== "Job search" || id === "jobs"))
-      .map((id) => navigation.find((item) => item.id === id)!),
+      .filter((id) => id !== "today" && (group.label !== "Job search" || id === "jobs" || isExternalViewId(id)))
+      .flatMap((id) => lookup(id) ?? []),
   }));
 }
 
@@ -34,10 +42,11 @@ const ROOT_VIEWS: Partial<Record<string, View>> = { Study: "study", "Job search"
  */
 export function atlasGraph(
   sections: AtlasSection[],
-  hidden: ReadonlySet<string>,
+  storedHidden: ReadonlySet<string>,
   relations: readonly [View, View][],
-  counts: ReadonlyMap<View, number>,
+  counts: ReadonlyMap<AnyView, number>,
 ): { nodes: GraphNode[]; links: GraphLink[] } {
+  const hidden = { has: (view: string) => hideableSection(view) && storedHidden.has(view) };
   const nodes: GraphNode[] = [];
   const links: GraphLink[] = [];
   const hubs = new Map<string, string | null>();

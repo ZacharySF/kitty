@@ -35,10 +35,14 @@ pub enum Command {
     Quit,
     /// One agent skill's SKILL.md for the desktop opener (kitty.web_agent_skills).
     OpenSkill(PathBuf),
+    /// An external module's loopback server port the navigation guard keeps in a frame
+    /// (kitty.web_external_modules; sent by the sidecar right after readiness).
+    AllowFrame(u16),
 }
 
-/// Accept only the page's fixed command envelope. The one argument is `open-skill`'s
-/// path: absolute, no `.`/`..` components, and a file named exactly SKILL.md.
+/// Accept only the page's fixed command envelope. The arguments are `open-skill`'s
+/// path (absolute, no `.`/`..` components, a file named exactly SKILL.md) and
+/// `allow-frame`'s port (an unprivileged TCP port, 1024-65535).
 pub fn parse(line: &str) -> Option<Command> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     let object = value.as_object()?;
@@ -46,6 +50,11 @@ pub fn parse(line: &str) -> Option<Command> {
     if command == "open-skill" {
         if object.len() != 2 { return None; }
         return skill_file(object.get("path")?.as_str()?).map(Command::OpenSkill);
+    }
+    if command == "allow-frame" {
+        if object.len() != 2 { return None; }
+        let port = object.get("port")?.as_u64()?;
+        return (1024..=65535).contains(&port).then(|| Command::AllowFrame(port as u16));
     }
     if object.len() != 1 { return None; }
     match command {
@@ -107,6 +116,19 @@ mod tests {
     fn open_skill_carries_one_absolute_skill_file() {
         assert_eq!(parse(r#"{"command":"open-skill","path":"/home/me/.omp/agent/skills/lavish/SKILL.md"}"#),
                    Some(Command::OpenSkill(PathBuf::from("/home/me/.omp/agent/skills/lavish/SKILL.md"))));
+    }
+
+    #[test]
+    fn allow_frame_carries_exactly_one_unprivileged_port() {
+        assert_eq!(parse(r#"{"command":"allow-frame","port":43210}"#), Some(Command::AllowFrame(43210)));
+        assert_eq!(parse(r#"{"command": "allow-frame", "port": 1024}"#), Some(Command::AllowFrame(1024)));
+        for line in [r#"{"command":"allow-frame"}"#, r#"{"command":"allow-frame","port":80}"#,
+                     r#"{"command":"allow-frame","port":65536}"#, r#"{"command":"allow-frame","port":"43210"}"#,
+                     r#"{"command":"allow-frame","port":43210.5}"#, r#"{"command":"allow-frame","port":-1}"#,
+                     r#"{"command":"allow-frame","port":43210,"host":"example.invalid"}"#,
+                     r#"{"command":"quit","port":43210}"#] {
+            assert_eq!(parse(line), None, "{line}");
+        }
     }
 
     #[test]

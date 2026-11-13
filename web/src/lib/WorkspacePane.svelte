@@ -1,7 +1,7 @@
 <script lang="ts">
   import { provideWorkspaceContext, type SaveStatus, type WorkspaceTrail } from "./workspaceContext.svelte";
   import type { Bootstrap } from "./api";
-  import { viewEnabled, type View } from "./workspace";
+  import { externalViewFor, viewEnabled, type AnyView } from "./workspace";
   import { activeModules } from "./modules.svelte";
   import GraphNavigator from "./GraphNavigator.svelte";
 
@@ -11,7 +11,7 @@
 
   let { tabId, view, active, workspace, revision, epoch, initialJobId, onchange, onadd, onview, onopenjob, onguide }: {
     tabId: string;
-    view: View;
+    view: AnyView;
     active: boolean;
     workspace: Bootstrap | null;
     revision: number;
@@ -19,7 +19,7 @@
     initialJobId: number | null;
     onchange: () => Promise<void>;
     onadd: () => void;
-    onview: (next: View) => void;
+    onview: (next: AnyView) => void;
     onopenjob: (id: number) => void;
     onguide: () => void;
   } = $props();
@@ -92,8 +92,19 @@
 
 {#snippet pending()}<Loader kind="view" label="rika! is waking up…" />{/snippet}
 {#key `${view}:${epoch}:${initialJobId}`}
-  {#if !viewEnabled(view, activeModules.enabled)}
+  {#if !viewEnabled(view, activeModules.enabled, activeModules.views)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
+  {:else if externalViewFor(view, activeModules.views)}
+    {@const added = externalViewFor(view, activeModules.views)!}
+    {#if added.ui === "iframe"}
+      {#await import("./ModuleFrame.svelte")}{@render pending()}{:then { default: ModuleFrame }}
+        <ModuleFrame view={added} />
+      {/await}
+    {:else}
+      {#await import("./ModuleElement.svelte")}{@render pending()}{:then { default: ModuleElement }}
+        <ModuleElement view={added} />
+      {/await}
+    {/if}
   {:else if view === "today"}
     <GraphNavigator bind:this={atlas} {revision} {onview} />
   {:else if view === "goals"}

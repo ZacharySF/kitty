@@ -7,6 +7,8 @@ only public example configuration and are discarded when the process exits.
 Features belong to the ``applyai``, ``workspace`` and ``terminal`` modules
 (kitty.modules). The active set is frozen at start-up; routes of a disabled module
 answer 403 and none of its extensions, workers, processes or credentials are loaded.
+External modules installed from GitHub releases (kitty.web_external_modules,
+docs/MODULES.md) are likewise read once at start-up and own ``/api/modules/<id>``.
 """
 from __future__ import annotations
 
@@ -153,6 +155,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_devices"), (None, "web_search"), (None, "web_effects"),
     (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
     ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
+    (None, "web_external_modules"),
 )
 
 
@@ -236,8 +239,22 @@ class WebApplication:
         if module is not None:
             self.require_module(module)
 
-    def modules_state(self) -> dict[str, Any]:
-        return modules_state(self.modules, self.settings.config_dir)
+    def modules_state(self, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+        """Built-in selection (kitty.modules) plus external modules (kitty.web_external_modules)."""
+        state = modules_state(self.modules, self.settings.config_dir)
+        if conn is None:
+            with closing(connect(self.settings.db_path)) as own:
+                external, pending = self.external_modules.state(own)
+        else:
+            external, pending = self.external_modules.state(conn)
+        state["external"] = external
+        state["restart_required"] = state["restart_required"] or pending
+        return state
+
+    def frame_ports(self) -> tuple[int, ...]:
+        """Loopback ports of this process's framed module servers (beside LearnHarness's 3210)."""
+        external = getattr(self, "external_modules", None)
+        return external.frame_ports() if external is not None else ()
 
     def reload_config(self) -> None:
         """Refresh validated config after an explicit, serialized settings change.
@@ -273,7 +290,7 @@ class WebApplication:
                 return result
         if path == "/api/modules":
             self._no_query(query)
-            return self.modules_state()
+            return self.modules_state(conn)
         if path == "/api/bootstrap":
             self._no_query(query)
             return self._bootstrap(conn)
@@ -285,7 +302,7 @@ class WebApplication:
 
     def _bootstrap(self, conn: sqlite3.Connection) -> dict:
         """Core shell state; careers figures exist only while applyai is active."""
-        result: dict[str, Any] = {"demo": self.settings.demo, "modules": self.modules_state()}
+        result: dict[str, Any] = {"demo": self.settings.demo, "modules": self.modules_state(conn)}
         if "applyai" in self.modules:
             from kitty.core import jobs, today, tracks
 
@@ -586,7 +603,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:3210; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        # LearnHarness's fixed frame plus this process's framed module servers (kitty.web_external_modules).
+        frames = " ".join(f"http://127.0.0.1:{port}" for port in (3210, *self.server.app.frame_ports()))
+        self.send_header("Content-Security-Policy", f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src {frames}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         for key, value in self.response_headers.items():
             self.send_header(key, value)
         if download:
@@ -647,7 +666,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 # `?safe` opens one window in safe mode (Q9) and `?code` is the browser-mode
                 # one-time code (kitty.web_auth); the page reads both itself.
                 self.server.app._no_query({key: value for key, value in query.items() if key not in {"safe", "code"}})
-                self._static(path)
+                if path.startswith("/modules/"):
+                    self._module_asset(path)
+                else:
+                    self._static(path)
         except APIError as exc:
             self.close_connection = True
             self.response_headers.update(exc.headers)
@@ -755,6 +777,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not kind:
             raise APIError(404, "Not found")
         self._send(200, target.read_bytes(), kind)
+
+    def _module_asset(self, path: str) -> None:
+        """An active external module's element view file (kitty.web_external_modules)."""
+        found = self.server.app.external_modules.asset(path)
+        if found is None:
+            raise APIError(404, "Not found")
+        self._send(200, *found)
 
 
 def parse_target(raw: str) -> tuple[str, dict[str, str]]:

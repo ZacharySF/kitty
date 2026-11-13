@@ -101,6 +101,10 @@ def serve(root: Path, assets: Path, package: str, *, safe: bool = False) -> None
                 # The UI secret travels only on this private pipe: the shell injects it into
                 # rika!'s own windows (docs/platform-design.md, "UI secret").
                 send(json.dumps({"origin": server.origin, "secret": server.ui_auth.secret}))
+                # Framed external-module servers (kitty.web_external_modules): their ports are
+                # fixed at start-up, so the shell's navigation guard learns them before any page.
+                for port in app.frame_ports():
+                    owner.allow_frame(port)
                 server.serve_forever(poll_interval=0.1)
         finally:
             server.server_close()

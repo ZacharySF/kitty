@@ -312,6 +312,20 @@ Stage 1: done.
   Disabled modules have no UI entries, commands, MCP tools, routes, workers or
   processes, but their data and configuration remain. Existing global migrations
   stay in place.
+- External modules (`docs/MODULES.md`, api 1): Settings → Modules installs an add-on
+  from a GitHub repository's latest release (`owner/repo`; private repositories use the
+  `GITHUB` key, sent only to the GitHub API). The `<id>-<version>.tar.gz` asset is
+  refused unless its SHA-256 matches the release's published checksum (asset `digest`
+  and/or `.sha256` file; none is a refusal), unpacks only inside its folder, and its
+  `rika-module.json` must match the release. Installs pin `{id, repo, version, sha256,
+  installed_at}` in `external_modules` (migration 056) and, like built-in modules, apply
+  on the next start; updates are explicit, removal keeps module data. A `python` module is
+  imported from `data/modules/<id>/<version>/`, runs its own migrations in a per-module
+  namespace and owns `/api/modules/<id>`; its `element` view script is served same-origin.
+  A `process` module is started on demand with a clean environment on a loopback port
+  chosen at start-up, which joins CSP `frame-src` and the desktop navigation guard
+  (announced over the owner pipe) for that run only. A module that fails to load is
+  reported and never stops rika! starting. LearnHarness keeps its fixed 3210 frame.
 - Terminal dock (`docs/terminal-dock-design.md` Q1, Q3, Q8, Q10): a window-bottom
   dock shows herdr's real client (transparent, Harness colours) or herdr's own
   per-workspace agent states at a fixed S/M/L height the page ends above (no

@@ -66,6 +66,8 @@ KNOWN: dict[str, KeySpec] = {spec.name: spec for spec in (
     KeySpec("ANTHROPIC", "Anthropic API key", "ANTHROPIC_API_KEY"),
     KeySpec("USAJOBS", "USAJOBS API key", "USAJOBS_API_KEY"),
     KeySpec("BRAVE", "Brave Search API key", "BRAVE_SEARCH_API_KEY"),
+    # Only for installing modules from private repositories (kitty.core.external_modules).
+    KeySpec("GITHUB", "GitHub token", "GITHUB_TOKEN"),
 )}
 
 

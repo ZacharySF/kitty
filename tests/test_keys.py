@@ -238,7 +238,7 @@ def test_status_lists_known_and_custom_keys_without_values(root, clean_env):
     text = json.dumps(status)
     assert VALUE not in text and OTHER not in text
     rows = {row["name"]: row for row in status["keys"]}
-    assert list(rows) == ["OPENROUTER", "ANTHROPIC", "USAJOBS", "BRAVE", "DUMMY", "ZED_TOOL"]
+    assert list(rows) == ["OPENROUTER", "ANTHROPIC", "USAJOBS", "BRAVE", "GITHUB", "DUMMY", "ZED_TOOL"]
     assert rows["ANTHROPIC"]["backend"] == "env" and rows["DUMMY"]["backend"] == "file"
     assert rows["ZED_TOOL"]["backend"] == "keyring" and rows["OPENROUTER"]["set"] is False
     assert rows["DUMMY"]["in_file"] and rows["DUMMY"]["custom"]

@@ -1,4 +1,5 @@
-import type { ModuleId } from "./api";
+import type { ExternalView, ModuleId } from "./api";
+import { ICONS } from "./icons.ts";
 
 /** `module` is the owner; core views (null) are always available. */
 export const navigation = [
@@ -36,26 +37,74 @@ export const navigation = [
   { id: "questions", label: "Application questions", icon: "questions", module: "applyai" },
 ] as const satisfies readonly { id: string; label: string; icon: string; module: ModuleId | null }[];
 export type View = (typeof navigation)[number]["id"];
+/**
+ * Add-on module views (bootstrap `modules.external.views`), keyed `m/<module>/<view>`.
+ * Built-in ids never contain a slash, so the two can never collide. Active add-ons
+ * never change until rika! restarts.
+ */
+export type ExternalViewId = `m/${string}/${string}`;
+export type AnyView = View | ExternalViewId;
+export type Externals = readonly ExternalView[];
+/** One navigable page, built-in or add-on. */
+export type NavItem = { id: AnyView; label: string; icon: string };
+
+const SLUG = "[a-z][a-z0-9]*(?:-[a-z0-9]+)*";
+const EXTERNAL_ID = new RegExp(`^m/${SLUG}/${SLUG}$`);
+const EXTERNAL_HASH = new RegExp(`^(m/${SLUG}/${SLUG})(?:/|$)`);
+/** Drawn for an add-on whose icon name rika! does not know (the Modules settings icon). */
+export const GENERIC_ICON = "atlas";
+const GROUP_LABELS: Record<ExternalView["group"], string> = { plan: "Plan", study: "Study", jobs: "Job search", settings: "Settings" };
+
+export function externalViewId(view: Pick<ExternalView, "module" | "id">): ExternalViewId {
+  return `m/${view.module}/${view.id}`;
+}
+export function isExternalViewId(value: string): value is ExternalViewId {
+  return EXTERNAL_ID.test(value);
+}
+/** The active add-on view `view` names, if any. */
+export function externalViewFor(view: string, external: Externals): ExternalView | undefined {
+  return isExternalViewId(view) ? external.find(item => externalViewId(item) === view) : undefined;
+}
+function externalItem(view: ExternalView): NavItem {
+  return { id: externalViewId(view), label: view.label, icon: Object.hasOwn(ICONS, view.icon) ? view.icon : GENERIC_ICON };
+}
 
 type Enabled = readonly string[];
 export function moduleOf(view: View): ModuleId | null {
   return navigation.find(item => item.id === view)?.module ?? null;
 }
-/** True when the view is core or its owning module is active in this process. */
-export function viewEnabled(view: View, enabled: Enabled): boolean {
+/** True when the view is core, its owning module is active, or it is an active add-on's view. */
+export function viewEnabled(view: AnyView, enabled: Enabled, external: Externals = []): boolean {
+  if (isExternalViewId(view)) return !!externalViewFor(view, external);
   const owner = moduleOf(view);
   return owner === null || enabled.includes(owner);
 }
 export function isView(value: string): value is View {
   return navigation.some(item => item.id === value);
 }
+/**
+ * The view a route hash (without `#`) opens: `<view>/<detail>` for built-ins,
+ * `m/<module>/<view>/<detail>` for add-ons; null when it names neither.
+ */
+export function viewFromHash(hash: string): AnyView | null {
+  const external = EXTERNAL_HASH.exec(hash);
+  if (external) return external[1] as ExternalViewId;
+  const view = hash.split("/")[0];
+  return isView(view) ? view : null;
+}
 /** `#notes/<number>`: a link to one note page (the rika! Inbox block in Tern opens these). */
 export function notePageLink(hash: string): number | null {
   const match = /^notes\/([1-9][0-9]{0,15})$/.exec(hash);
   return match ? Number(match[1]) : null;
 }
-export function visibleNavigation(enabled: Enabled) {
-  return navigation.filter(item => viewEnabled(item.id, enabled));
+/** Label and icon of a built-in or active add-on view. */
+export function navItem(view: string, external: Externals = []): NavItem | undefined {
+  const added = externalViewFor(view, external);
+  return added ? externalItem(added) : navigation.find(item => item.id === view);
+}
+/** Every reachable page: enabled built-ins in table order, then the add-ons' views. */
+export function visibleNavigation(enabled: Enabled, external: Externals = []): NavItem[] {
+  return [...navigation.filter(item => viewEnabled(item.id, enabled)), ...external.map(externalItem)];
 }
 
 /** `tone` is the group's graph colour, used to mark its tabs. */
@@ -89,13 +138,31 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
   },
   { label: "Settings", shortcut: "Ctrl + V", tone: "var(--c6)", views: ["settings", "profile", "ai"] },
 ];
+/** The header group a view belongs to; an add-on view's `group` names it. */
+export function groupOf(view: string, external: Externals = []) {
+  const added = externalViewFor(view, external);
+  return navigationGroups.find(group => (added ? group.label === GROUP_LABELS[added.group] : group.views.includes(view as View)));
+}
 /**
- * Groups with their enabled views. A group that would only offer the atlas home
- * is dropped: with every module off the header shows Plan (Goals) and Settings.
+ * Groups with their enabled views. Add-on views join the group their `group` names:
+ * `first` ones lead it (after the atlas home, which stays Plan's entry point), the rest
+ * follow the built-ins. A group that would only offer the atlas home is dropped: with
+ * every module off the header shows Plan (Goals) and Settings.
  */
-export function visibleGroups(enabled: Enabled) {
+export function visibleGroups(enabled: Enabled, external: Externals = []) {
   return navigationGroups
-    .map(group => ({ ...group, views: group.views.filter(view => viewEnabled(view, enabled)) }))
+    .map(group => {
+      const added = external.filter(view => GROUP_LABELS[view.group] === group.label);
+      const builtIn = group.views.filter(view => viewEnabled(view, enabled));
+      const home = builtIn[0] === "today" ? 1 : 0;
+      const views: AnyView[] = [
+        ...builtIn.slice(0, home),
+        ...added.filter(view => view.first).map(externalViewId),
+        ...builtIn.slice(home),
+        ...added.filter(view => !view.first).map(externalViewId),
+      ];
+      return { ...group, views };
+    })
     .filter(group => group.views.some(view => view !== "today"));
 }
 /**
@@ -316,8 +383,8 @@ const shortNames: Partial<Record<View, string>> = {
   calendar: "Calendar", study: "Study", notes: "Notes", schema: "Mind maps", ai: "AI",
 };
 /** Shortcut help for the active modules; navigation lines list only reachable targets. */
-export function shortcutsFor(enabled: Enabled): ShortcutGroup[] {
-  const groups = visibleGroups(enabled);
+export function shortcutsFor(enabled: Enabled, external: Externals = []): ShortcutGroup[] {
+  const groups = visibleGroups(enabled, external);
   const searches = enabled.includes("applyai") ? "commands, sections, and jobs" : "commands and sections";
   const targets = (Object.keys(shortNames) as View[]).filter(view => viewEnabled(view, enabled)).map(view => shortNames[view]);
   return shortcutGroups

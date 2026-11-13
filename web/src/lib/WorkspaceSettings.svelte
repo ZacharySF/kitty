@@ -24,6 +24,7 @@
   import AccountSettings from "./AccountSettings.svelte";
   import ConnectedApps from "./ConnectedApps.svelte";
   import Keys from "./Keys.svelte";
+  import ExternalModules from "./ExternalModules.svelte";
   import ApplyAccounts from "./ApplyAccounts.svelte";
   import Devices from "./Devices.svelte";
   import TagSettings from "./TagSettings.svelte";
@@ -59,7 +60,7 @@
     ] },
     { label: "Workspace", items: [
       { page: "account", label: "Account", icon: "shield", keywords: "google sign-in connect welcome guided tour onboarding identity" },
-      { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal enable disable restart" },
+      { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal enable disable restart add-on addon plugin github repository install update remove" },
       { page: "graphs", label: "Graphs", icon: "schema", keywords: "schemas default layout tree clusters sphere force physics repulsion spring damping" },
       ...(activeModules.enabled.includes("workspace") ? [{ page: "tags", label: "Tags", icon: "favorites", keywords: "auto tags keywords suggest always attach" } as Entry] : []),
     ] },
@@ -152,6 +153,13 @@
   function adopt(next: ModulesState) {
     modules = next;
     selection = [...next.configured];
+  }
+  /** An add-on change saves at once; an unsaved built-in selection stays as the user left it. */
+  async function adoptExternal(next: ModulesState) {
+    const kept = modulesDirty ? [...selection] : null;
+    adopt(next);
+    if (kept) selection = kept;
+    await onchange();
   }
   // The build's modules can change from anywhere (an install, a rollback, an outside editor):
   // show the saved selection again unless the user is editing it here.
@@ -275,7 +283,7 @@
               {/each}
             </fieldset>
             {#if modules.error}<p class="set-note" role="alert">Saved selection unreadable ({modules.error}). Saving replaces it.</p>{/if}
-            {#if modules.restart_required}
+            {#if changes.start.length || changes.stop.length}
               <p class="set-note restart" role="status">Restart rika! to apply{#if changes.start.length} · on: {changes.start.join(", ")}{/if}{#if changes.stop.length} · off: {changes.stop.join(", ")}{/if}.</p>
             {/if}
             <div class="set-row foot">
@@ -288,6 +296,7 @@
           {:else if !moduleError}<p class="set-note" role="status">Loading modules…</p>{/if}
           {#if moduleError}<p class="set-note" role="alert">{moduleError}</p>{/if}
         </Panel>
+        {#if modules}<ExternalModules {modules} onstate={adoptExternal} onkeys={() => choose("keys")} />{/if}
       {:else if shown === "graphs"}
         <Panel title={title} aria-label={title}>
           <div class="rows">

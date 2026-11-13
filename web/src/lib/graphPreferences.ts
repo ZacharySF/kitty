@@ -4,7 +4,8 @@
 import { ATLAS_NODES_EVENT } from "./atlasNodes";
 import { buildStore, onBuildChange, setPreferences } from "./build.svelte";
 import type { GraphLayout, GraphLook, GraphPhysics } from "./graph3d";
-import type { View } from "./workspace";
+import type { AnyView } from "./workspace";
+import { hideableSection } from "./atlasNodes";
 
 export const GRAPH_SETTINGS_EVENT = "kitty:graph-settings";
 export const GRAPH_LAYOUTS: { id: GraphLayout; label: string }[] = [
@@ -61,12 +62,14 @@ export function setGraphSettings(layout: GraphLayout, physics: GraphPhysics): Pr
 /**
  * Sections the user removed from the atlas (Q13). Stored as hidden rather than shown so
  * sections added later appear by default. Ids for views whose module is off are kept:
- * turning the module back on must not resurrect them.
+ * turning the module back on must not resurrect them. Add-on sections cannot be hidden:
+ * the build's list holds only built-in view ids.
  */
 export function hiddenSections(): Set<string> {
   return new Set(buildStore.build.ui.atlas.hidden);
 }
-export function setSectionHidden(view: View, hidden: boolean): void {
+export function setSectionHidden(view: AnyView, hidden: boolean): void {
+  if (!hideableSection(view)) return;
   const current = hiddenSections();
   if (current.has(view) === hidden) return;
   if (hidden) current.add(view);
