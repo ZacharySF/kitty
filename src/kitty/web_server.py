@@ -43,7 +43,7 @@ from kitty.core.workspace import open_workspace
 from kitty.db import connect, migrate
 from kitty.db.connection import transaction
 from kitty.models import Job, Resume
-from kitty.modules import BUILD_FILE, MODULE_IDS, ModuleDisabledError, modules_state
+from kitty.modules import BUILD_FILE, MODULE_IDS, MODULE_PACKS, ModuleDisabledError, modules_state
 from kitty.settings import Settings, find_project_root
 from kitty.web_tasks import TaskRunner
 
@@ -142,11 +142,11 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     ("/api/math", "math"),
     ("/api/extensions/learnharness", "learnharness"),
     ("/api/terminal", "terminal"),
-    ("/api/rika/voice", "voice"),
     ("/api/brain", "brain"),
 ), key=lambda item: -len(item[0])))
 #: API route prefix -> the pack it runs on (kitty.packs); the longest matching prefix wins.
-#: With its module on but the pack missing, such a route answers 409 (download it first).
+#: Such a route needs the module that needs the pack (Rika's voice routes sit in the core's
+#: /api/rika), and with that module on but the pack missing it answers 409 (download it first).
 ROUTE_PACKS: tuple[tuple[str, str], ...] = (
     ("/api/terminal/agent-skills", ""), ("/api/terminal/tern", ""), ("/api/terminal", "herdr"),
     ("/api/math", "math"), ("/api/extensions/learnharness", "learnharness"), ("/api/rika/voice", "voice"),
@@ -260,8 +260,10 @@ class WebApplication:
         if module is not None:
             self.require_module(module)
         pack = route_pack(path)
-        if pack is not None and not packs.loaded(pack):
-            raise APIError(409, str(packs.PackMissing(pack)))
+        if pack is not None:
+            self.require_module(next(key for key, needed in MODULE_PACKS.items() if pack in needed))
+            if not packs.loaded(pack):
+                raise APIError(409, str(packs.PackMissing(pack)))
 
     def modules_state(self) -> dict[str, Any]:
         return modules_state(self.modules, self.settings.config_dir)

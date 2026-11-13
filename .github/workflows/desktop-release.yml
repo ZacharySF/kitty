@@ -133,6 +133,8 @@ jobs:
           cmp release-herdr/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
           dpkg-deb -x release-assets/*.deb release-deb
           test ! -e release-deb/usr/bin/kitty-herdr
+          # The base's own bundled licences sit in the productName folder.
+          cmp release-deb/usr/lib/rika!\ Workspace/licenses/grinstead-snell/LICENSE third_party/grinstead-snell/LICENSE
           # The backend ships unpacked (desktop/package_backend.py), where the shell looks for it
           # (desktop/src/main.rs BACKEND), and starts from there; the old onefile location is gone.
           backend=usr/libexec/kitty-workspace/kitty-web

@@ -27,7 +27,12 @@ ROUTES = tuple(sorted({prefix for prefix, _module in ROUTE_MODULES} | set(CORE_R
 
 
 @pytest.fixture(params=["python", "front"])
-def running(request, tmp_path):
+def running(request, tmp_path, monkeypatch):
+    # Terminal's routes need its herdr pack: a synthetic pinned herdr stands in (kitty.packs).
+    herdr = tmp_path / "synthetic-herdr"
+    herdr.write_text("#!/bin/sh\nexit 0\n")
+    herdr.chmod(0o755)
+    monkeypatch.setenv("KITTY_HERDR", str(herdr))
     serve = site if request.param == "python" else front_site
     with serve(make_root(tmp_path, ("workspace", "terminal"))) as server:
         yield server
