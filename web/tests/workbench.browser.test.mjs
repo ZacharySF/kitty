@@ -2644,13 +2644,20 @@ describe("pipeline swimlanes", () => {
 
 describe("Rika against the demo's scripted responder", () => {
   const field = (page) => page.getByRole("textbox", { name: "Ask Rika" });
-  /** Away from home Rika's field is in the drawer: Ctrl + J opens it first. */
+  const drawer = (page) => page.getByRole("dialog", { name: "Rika" });
+  /** Away from home Rika's field is in the drawer. Ctrl + J only works once the app has mounted,
+   *  so wait for it rather than pressing into a page that is still loading. */
+  const openDrawer = async (page) => {
+    await page.locator("#main-content").waitFor();
+    if (!(await drawer(page).count())) await page.keyboard.press("Control+j");
+    await drawer(page).waitFor();
+  };
   const ask = async (page, text) => {
-    if (!(await field(page).count())) await page.keyboard.press("Control+j");
+    await page.locator("#main-content").waitFor();
+    if (!(await field(page).count())) await openDrawer(page);
     await field(page).fill(text);
     await field(page).press("Enter");
   };
-  const drawer = (page) => page.getByRole("dialog", { name: "Rika" });
   const replies = (page) => page.getByRole("list", { name: "Rika replies" });
   /** The demo's modules plus voice (its own module, whose pack the demo stands in for). */
   const withVoice = (context) => context.route("**/api/bootstrap", async (route) => {
@@ -2683,9 +2690,11 @@ describe("Rika against the demo's scripted responder", () => {
     const { page, problems, context } = await open("settings");
     await ask(page, "start omp to tidy the fixtures");
     const history = drawer(page);
-    const card = history.getByRole("article").filter({ has: page.getByRole("button", { name: "Approve" }) });
-    await card.waitFor();
-    assert.match(await card.innerText(), /Needs you/);
+    const pending = history.getByRole("article").filter({ has: page.getByRole("button", { name: "Approve" }) });
+    await pending.waitFor();
+    assert.match(await pending.innerText(), /Needs you/);
+    // Once decided the Approve button is gone, so follow the card by its label, not the button.
+    const card = history.getByRole("article", { name: await pending.getAttribute("aria-label"), exact: true });
     await card.getByRole("button", { name: "Approve" }).click();
     await card.getByText("Approved").waitFor();
     assert.deepEqual(problems, []);
@@ -2694,7 +2703,7 @@ describe("Rika against the demo's scripted responder", () => {
 
   test("the demo's running agents are cards in the drawer's Agents section, which open their windows", async () => {
     const { page, problems, context } = await open("settings");
-    await page.keyboard.press("Control+j");
+    await openDrawer(page);
     await drawer(page).getByRole("group", { name: "Rika sections" }).getByRole("button", { name: /^Agents/ }).click();
     const section = drawer(page).getByRole("region", { name: "Agents" });
     await section.getByRole("article").first().waitFor();
@@ -2752,7 +2761,7 @@ describe("Rika against the demo's scripted responder", () => {
       },
     });
     const foreign = local(page);
-    await page.keyboard.press("Control+j");
+    await openDrawer(page);
     await field(page).focus();
     await page.keyboard.down(" ");
     await page.waitForFunction(() => document.querySelector('[aria-label="Ask Rika"]').placeholder.startsWith("Add a task"), null, { timeout: 15_000 });
