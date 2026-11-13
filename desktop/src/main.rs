@@ -9,7 +9,8 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, mpsc},
+    collections::HashSet,
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, mpsc, Arc},
     thread,
     time::Duration,
 };
@@ -51,6 +52,8 @@ struct Desktop {
     preferences: PathBuf,
     root: PathBuf,
     origin: Url,
+    /// Loopback ports of framed external-module servers the backend announced.
+    frames: Frames,
     /// Hands this launch's UI secret to every rika! window (`owner::window_script`).
     window_script: String,
     next_note: AtomicU64,
@@ -68,11 +71,23 @@ fn workspace() -> Result<PathBuf, String> {
 // The optional LearnHarness extension is a fixed loopback frame (see web_learnharness.py);
 // WebKitGTK reports subframe loads to the navigation handler too.
 const LEARNHARNESS_PORT: u16 = 3210;
+/// At most this many external-module frame ports are ever allowed (kitty.web_external_modules).
+const MAX_FRAMES: usize = 64;
 
-fn local_url(url: &Url, origin: &Url) -> bool {
+/// External `process` modules' loopback ports, announced by the backend's owner pipe
+/// (`{"command":"allow-frame","port":N}`) right after readiness, before any page loads.
+type Frames = Arc<Mutex<HashSet<u16>>>;
+
+fn allow_frame(frames: &Frames, port: u16) {
+    let mut ports = frames.lock();
+    if ports.len() < MAX_FRAMES { ports.insert(port); }
+}
+
+fn local_url(url: &Url, origin: &Url, frames: &HashSet<u16>) -> bool {
     let port = url.port_or_known_default();
     url.scheme() == "http" && url.host_str() == Some("127.0.0.1")
-        && (port == origin.port_or_known_default() || port == Some(LEARNHARNESS_PORT))
+        && (port == origin.port_or_known_default() || port == Some(LEARNHARNESS_PORT)
+            || port.is_some_and(|port| frames.contains(&port)))
         && url.username().is_empty() && url.password().is_none()
 }
 
@@ -137,6 +152,7 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
         url.set_fragment(Some(&fragment));
         let label = format!("quick-note-{}", state.next_note.fetch_add(1, Ordering::SeqCst));
         let origin = state.origin.clone();
+        let frames = state.frames.clone();
         let _ = WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
             .title("rika! quick note").inner_size(380.0, 460.0).min_inner_size(260.0, 220.0)
             .transparent(true).decorations(false).always_on_top(true)
@@ -145,7 +161,7 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
             .devtools(cfg!(debug_assertions))
             .data_directory(state.root.join(".private/webview"))
             .on_navigation(move |url| {
-                if local_url(url, &origin) { true } else { open_external(url); false }
+                if local_url(url, &origin, &frames.lock()) { true } else { open_external(url); false }
             })
             .on_new_window(|url, _features| {
                 open_external(&url);
@@ -164,7 +180,9 @@ fn sidecar(directory: &Path, name: &str, staging: Option<&Path>) -> Option<PathB
         .filter(|path| path.is_file())
 }
 
-fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc::Receiver<owner::Command>), Box<dyn std::error::Error>> {
+type Started = (Backend, Url, String, mpsc::Receiver<owner::Command>, Frames);
+
+fn start_backend(root: &Path, safe: bool) -> Result<Started, Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let directory = executable.parent().ok_or("Desktop executable has no directory")?;
     let staging = cfg!(debug_assertions).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
@@ -182,6 +200,8 @@ fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc:
     let output = backend.0.as_mut().unwrap().stdout.take().ok_or("Backend readiness pipe unavailable")?;
     let (send, receive) = mpsc::sync_channel(1);
     let (commands, receiver) = mpsc::channel();
+    let frames = Frames::default();
+    let announced = frames.clone();
     thread::spawn(move || {
         let mut output = BufReader::new(output);
         let mut line = String::new();
@@ -189,8 +209,11 @@ fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc:
         let _ = send.send(result);
         // stdout remains a private, fixed-command channel after readiness.
         for line in output.lines().map_while(Result::ok) {
-            if let Some(command) = owner::parse(&line) {
-                if commands.send(command).is_err() { break; }
+            match owner::parse(&line) {
+                // Applied here, in pipe order, so a frame port is allowed before any page can use it.
+                Some(owner::Command::AllowFrame(port)) => allow_frame(&announced, port),
+                Some(command) => if commands.send(command).is_err() { break; },
+                None => {}
             }
         }
     });
@@ -209,11 +232,11 @@ fn start_backend(root: &Path, safe: bool) -> Result<(Backend, Url, String, mpsc:
     // The readiness line also carries the UI secret; it is never logged or written anywhere.
     let (origin, secret) = owner::readiness(&line).ok_or("Invalid backend readiness message")?;
     let origin = Url::parse(&origin)?;
-    if !local_url(&origin, &origin) || origin.port().is_none() || origin.path() != "/"
+    if !local_url(&origin, &origin, &HashSet::new()) || origin.port().is_none() || origin.path() != "/"
         || origin.query().is_some() || origin.fragment().is_some() {
         return Err("Backend did not bind a private loopback origin".into());
     }
-    Ok((backend, origin, secret, receiver))
+    Ok((backend, origin, secret, receiver, frames))
 }
 
 fn show(app: &tauri::AppHandle) {
@@ -271,6 +294,8 @@ fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
         owner::Command::KeepRunning(enabled) => set_background(app, enabled),
         owner::Command::Quit => request_quit(app),
         owner::Command::OpenSkill(path) => open_skill(&path),
+        // Applied by the backend reader thread itself (start_backend); never queued here.
+        owner::Command::AllowFrame(_) => {}
     }
 }
 
@@ -315,7 +340,7 @@ fn main() {
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                 .and_then(|value| value["background"].as_bool()).unwrap_or(false);
             let safe = wants_safe_mode(&std::env::args().collect::<Vec<_>>());
-            let (backend, origin, secret, commands) = start_backend(&root, safe)?;
+            let (backend, origin, secret, commands, frames) = start_backend(&root, safe)?;
             let window_script = owner::window_script(&origin, &secret);
             let show_item = MenuItem::with_id(app, "show", "Show rika!", true, None::<&str>)?;
             let note_item = MenuItem::with_id(app, "quick-note", "New quick note", true, None::<&str>)?;
@@ -336,11 +361,12 @@ fn main() {
                 background_item, background_available,
                 update_item: update,
                 lifecycle: Mutex::new(update_lifecycle::Lifecycle::default()), preferences,
-                root: root.clone(), origin: origin.clone(), window_script: window_script.clone(),
+                root: root.clone(), origin: origin.clone(), frames: frames.clone(), window_script: window_script.clone(),
                 next_note: AtomicU64::new(1),
             });
             report_desktop(app.handle());
             let navigation_origin = origin.clone();
+            let navigation_frames = frames.clone();
             let note_origin = origin.clone();
             let note_app = app.handle().clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin))
@@ -351,7 +377,7 @@ fn main() {
                 .devtools(cfg!(debug_assertions))
                 .data_directory(root.join(".private/webview"))
                 .on_navigation(move |url| {
-                    if local_url(url, &navigation_origin) { true }
+                    if local_url(url, &navigation_origin, &navigation_frames.lock()) { true }
                     else { open_external(url); false }
                 })
                 // Rika's voice input (docs/rika-design.md Q5): WebKitGTK denies getUserMedia
@@ -435,18 +461,36 @@ mod tests {
     #[test]
     fn navigation_never_grants_remote_or_scheme_access() {
         let local = Url::parse("http://127.0.0.1:43721/").unwrap();
+        let none = HashSet::new();
         for bad in ["http://localhost:43721/", "http://127.0.0.1:43722/", "https://127.0.0.1:43721/", "file:///etc/passwd", "http://user@127.0.0.1:43721/", "https://example.com/"] {
-            assert!(!local_url(&Url::parse(bad).unwrap(), &local));
+            assert!(!local_url(&Url::parse(bad).unwrap(), &local, &none));
         }
-        assert!(local_url(&Url::parse("http://127.0.0.1:43721/api/jobs?q=cat").unwrap(), &local));
+        assert!(local_url(&Url::parse("http://127.0.0.1:43721/api/jobs?q=cat").unwrap(), &local, &none));
     }
     #[test]
     fn navigation_keeps_only_the_fixed_learnharness_frame_in_app() {
         let local = Url::parse("http://127.0.0.1:43721/").unwrap();
-        assert!(local_url(&Url::parse("http://127.0.0.1:3210/chat/new").unwrap(), &local));
+        let none = HashSet::new();
+        assert!(local_url(&Url::parse("http://127.0.0.1:3210/chat/new").unwrap(), &local, &none));
         for bad in ["http://localhost:3210/", "https://127.0.0.1:3210/", "http://127.0.0.1:3211/", "http://user@127.0.0.1:3210/"] {
-            assert!(!local_url(&Url::parse(bad).unwrap(), &local));
+            assert!(!local_url(&Url::parse(bad).unwrap(), &local, &none));
         }
+    }
+    #[test]
+    fn navigation_keeps_announced_module_frames_in_app_and_nothing_else() {
+        let local = Url::parse("http://127.0.0.1:43721/").unwrap();
+        let frames = Frames::default();
+        assert!(!local_url(&Url::parse("http://127.0.0.1:45001/").unwrap(), &local, &frames.lock()));
+        allow_frame(&frames, 45001);
+        assert!(local_url(&Url::parse("http://127.0.0.1:45001/learn?x=1").unwrap(), &local, &frames.lock()));
+        assert!(local_url(&Url::parse("http://127.0.0.1:3210/").unwrap(), &local, &frames.lock()));
+        for bad in ["http://localhost:45001/", "https://127.0.0.1:45001/", "http://127.0.0.1:45002/", "http://user@127.0.0.1:45001/", "http://[::1]:45001/"] {
+            assert!(!local_url(&Url::parse(bad).unwrap(), &local, &frames.lock()), "{bad}");
+        }
+        // A runaway backend cannot widen the guard without bound.
+        for port in 46000..46000 + 2 * MAX_FRAMES as u16 { allow_frame(&frames, port); }
+        assert_eq!(frames.lock().len(), MAX_FRAMES);
+        assert!(local_url(&Url::parse("http://127.0.0.1:45001/").unwrap(), &local, &frames.lock()));
     }
     #[test]
     fn external_opener_rejects_non_web_and_credentials() {

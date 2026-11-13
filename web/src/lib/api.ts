@@ -82,9 +82,54 @@ export interface ModulesState {
   /** Saved selection; applies on the next restart. */
   configured: ModuleId[];
   available: ModuleInfo[];
+  /** Also true while an add-on module install, update or removal waits for a restart. */
   restart_required: boolean;
   /** Present when the pending modules.yaml cannot be read; the running app is unaffected. */
   error?: string;
+  /** Add-on modules installed from GitHub releases. */
+  external: ExternalModules;
+}
+/** An add-on module installed from a GitHub repository's latest release. */
+export interface ExternalModule {
+  id: string;
+  name: string;
+  version: string;
+  /** `owner/repo` */
+  repo: string;
+  description: string;
+  license: string;
+  kind: "python" | "process";
+  installed_at: string | null;
+  sha256: string | null;
+  status: "active" | "restart-to-install" | "restart-to-update" | "restart-to-remove" | "failed";
+  /** The version running in this process; null when it is not loaded. */
+  active_version: string | null;
+  /** A plain sentence from the backend, e.g. "Restart rika! to finish installing." */
+  message: string;
+  /** Why loading failed, when `status` is "failed". */
+  error?: string;
+}
+/** A page an active add-on module adds to the navigation; fixed until rika! restarts. */
+export interface ExternalView {
+  module: string;
+  version: string;
+  id: string;
+  label: string;
+  /** A free icon name; unknown names draw a generic icon. */
+  icon: string;
+  group: "plan" | "study" | "jobs" | "settings";
+  /** Placed first in its group. */
+  first: boolean;
+  ui: "iframe" | "element";
+  /** Element views: the same-origin script that defines `tag`. */
+  script?: string;
+  tag?: string;
+}
+export interface ExternalModules {
+  installed: ExternalModule[];
+  /** Only modules active in this process. */
+  views: ExternalView[];
+  token: { configured: boolean };
 }
 export interface Bootstrap {
   demo: boolean;

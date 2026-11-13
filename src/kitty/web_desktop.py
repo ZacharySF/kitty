@@ -5,10 +5,13 @@ fixed set of commands to the shell that started it over the private owner pipe
 (stdout); the shell reports its keep-running preference back on stdin. A plain
 ``kitty-web`` website has no owner and answers ``{"available": false}``.
 
-One command carries an argument: ``{"command": "open-skill", "path"}`` opens one agent
-skill's SKILL.md with the desktop opener. Only kitty.web_agent_skills sends it, for a
-path it listed itself; the shell accepts only an absolute path to an existing file named
-SKILL.md.
+Two commands carry an argument and are sent only by the sidecar itself, never on the
+page's request: ``{"command": "open-skill", "path"}`` opens one agent skill's SKILL.md
+with the desktop opener (kitty.web_agent_skills sends it, for a path it listed itself; the
+shell accepts only an absolute path to an existing file named SKILL.md), and
+``{"command": "allow-frame", "port"}`` lets the shell's navigation guard keep one external
+module's loopback server in its frame (desktop/backend.py sends one per framed module right
+after the readiness line; kitty.web_external_modules).
 """
 from __future__ import annotations
 
@@ -72,6 +75,12 @@ class DesktopOwner:
     def open_file(self, path: str) -> None:
         """Ask the shell to open one listed SKILL.md (kitty.web_agent_skills checked it)."""
         self._send(json.dumps({"command": "open-skill", "path": path}))
+
+    def allow_frame(self, port: int) -> None:
+        """Tell the shell an external module's server on ``127.0.0.1:<port>`` may load in a frame."""
+        if type(port) is not int or not 1024 <= port <= 65535:
+            raise ValueError("a module frame port is an unprivileged TCP port")
+        self._send(json.dumps({"command": "allow-frame", "port": port}))
 
 
 def get(app, conn, path, query):

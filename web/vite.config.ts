@@ -56,6 +56,8 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
+        // Add-on module page scripts (`modules.external.views[].script`) are static files the backend serves.
+        "/modules": { target: backendOrigin, changeOrigin: true },
       },
     },
   };

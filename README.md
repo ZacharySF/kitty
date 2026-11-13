@@ -21,7 +21,9 @@ plug in as modules.
 | **Core** (always on) | A Brain home (every record and edit as a glowing point in a neural-network brain) or a 2D atlas, tabs, command palette, themes, settings, module selection |
 
 Modules can be turned on or off; disabled modules disappear from navigation,
-routes, workers and MCP tools while their data stays intact.
+routes, workers and MCP tools while their data stays intact. Add-on modules install
+from a GitHub release in Settings → Modules, checked against the release's SHA-256
+([docs/MODULES.md](docs/MODULES.md) explains how to publish one).
 
 ![The Brain home: every record and edit as a glowing point in a neural-network brain](docs/screenshots/kitty-brain/brain.png)
 
