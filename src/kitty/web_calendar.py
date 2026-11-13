@@ -9,7 +9,7 @@ import re
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
-from kitty import web_effects
+from kitty import web_auth
 from kitty.core import calendar, calendar_google as google, study
 from kitty.db import connect
 
@@ -99,7 +99,7 @@ def post(app, conn, path, body):
             calendar.fail('Confirm disconnecting the separate Calendar token')
         return google.disconnect(app.settings, body.get('revoke') is True)
     if path == '/api/calendar/google/preview':
-        return google.preview_sync(conn, body, actor=web_effects.user(app), applyai='applyai' in app.modules)
+        return google.preview_sync(conn, body, actor=web_auth.window_user(app), applyai='applyai' in app.modules)
     if path == '/api/calendar/google/unselect':
         return google.unselect(conn, body)
     if path == '/api/calendar/google/authorize':
@@ -115,7 +115,7 @@ def post(app, conn, path, body):
         # Each background operation owns its SQLite connection. Consent and network
         # IO never hold WebApplication.mutation_lock across browser authorization.
         applyai = 'applyai' in app.modules
-        actor = web_effects.user(app)
+        actor = web_auth.window_user(app)
 
         def work():
             with closing(connect(app.settings.db_path)) as owned:

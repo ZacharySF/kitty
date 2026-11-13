@@ -378,7 +378,7 @@ class Site:
         (static / "index.html").write_text("<!doctype html><title>Synthetic</title>")
         with open_workspace(settings) as workspace:
             config = workspace.config
-        self.app = WebApplication(settings, config, static)
+        self.app = WebApplication(settings, config, static, ui_session="ui-test")
         self.server = server_class(self.app, 0)
         self.port = self.server.server_address[1]
         self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)

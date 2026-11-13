@@ -2980,8 +2980,9 @@ approving and executing exist only behind the UI secret.
 would be submitted (posting, application URL, the resume that would be attached and
 the preparation state), and **Approve (I'll submit it myself)** only records your
 decision and tells you to submit it in your browser. Mark the job applied afterwards.
-Over HTTP (UI secret): `GET /api/effects`; `POST /api/effects/approve`, `/execute`
-(`submit_application` answers 400: it has no executor) and `/deny`.
+Over HTTP (UI secret; answered by rika-server): `GET /api/effects`; `POST
+/api/effects/approve`, `/execute` (`submit_application` answers 400: it has no executor)
+and `/deny`.
 
 In a rika! Agent tab (`KITTY_AGENT_TOKEN`) `propose_delete_block` and `get_effect`
 go through rika!'s mediator like the notes tools: `kitty mcp`, `kitty effects

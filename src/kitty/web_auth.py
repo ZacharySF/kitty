@@ -37,6 +37,8 @@ import threading
 import time
 from collections.abc import Callable
 
+from kitty.core.blocks.actor import Actor
+
 HEADER = "X-Kitty-Secret"
 #: The WebSocket subprotocol the server selects when the secret travels as a subprotocol.
 PROTOCOL = "kitty"
@@ -57,6 +59,12 @@ REFUSAL = "rika! did not recognise this window; open rika! or the link kitty-web
 FRONT_HEADER = "X-Kitty-Front"
 PEER_PORT_HEADER = "X-Kitty-Peer-Port"
 FRONT_PORT_HEADER = "X-Kitty-Front-Port"
+
+
+def window_user(app) -> Actor:
+    """The person at this rika! window session (`WebApplication.ui_session`, rika-server's):
+    the actor that approves effects (kitty.core.effects), here and in the front."""
+    return Actor("user", None, app.ui_session)
 
 
 class UiAuth:

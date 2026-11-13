@@ -22,7 +22,7 @@ def website(workspace, tmp_path):
     static.mkdir()
     (static / "index.html").write_text("<!doctype html><title>Synthetic website</title>")
     (static / "app.js").write_text("console.log('synthetic');")
-    app = WebApplication(workspace.settings, workspace.config, static)
+    app = WebApplication(workspace.settings, workspace.config, static, ui_session="ui-test")
     server = LocalHTTPServer(app, 0)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()

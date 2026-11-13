@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from types import SimpleNamespace
 
-from kitty import web_effects
+from kitty import web_auth
 from kitty.core import effects, form_questions, jobs, questions
 from kitty.config import AuthenticationSettings, _authentication_origin
 from kitty.core.apply import autofill, filler
@@ -517,7 +517,7 @@ def propose(app, conn, body: dict) -> dict:
     """Propose the plan for review: the public plan and its effect's id, digest and expiry."""
     ctx = Review(SimpleNamespace(config=copy.deepcopy(app.config), settings=app.settings), conn)
     try:
-        effect = effects.propose(conn, PREPARE_APPLICATIONS.name, body, actor=web_effects.user(app), ctx=ctx)
+        effect = effects.propose(conn, PREPARE_APPLICATIONS.name, body, actor=web_auth.window_user(app), ctx=ctx)
     except effects.EffectError as exc:
         raise _error(exc.status, str(exc)) from None
     plan = {key: value for key, value in ctx.plan.items() if not key.startswith("_")}
@@ -561,7 +561,7 @@ def approve(app, conn, body: dict) -> Approved:
     ctx = Review(SimpleNamespace(config=copy.deepcopy(app.config), settings=app.settings), conn)
     try:
         effect, result = effects.approve_and_execute(conn, stored.id, presented, kinds={PREPARE_APPLICATIONS.name},
-                                                     actor=web_effects.user(app), ctx=ctx, options=options)
+                                                     actor=web_auth.window_user(app), ctx=ctx, options=options)
     except effects.Refused as exc:
         from kitty.web_server import APIError
         raise APIError(409, filler.APPROVAL_CHANGED,

@@ -19,7 +19,7 @@ NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
 def app(workspace, tmp_path):
     # /api/brain is the brain module's (kitty.web_server.ROUTE_MODULES).
     config = dataclasses.replace(workspace.config, modules=(*workspace.config.modules, "brain"))
-    application = WebApplication(workspace.settings, config, tmp_path)
+    application = WebApplication(workspace.settings, config, tmp_path, ui_session="ui-test")
     yield application
     application.close()
 
@@ -161,13 +161,13 @@ def test_calendar_history_before_capture_began_is_kept_without_double_counting(a
 
 def test_disabled_modules_are_neither_listed_nor_returned(workspace, tmp_path):
     conn = workspace.conn
-    full = WebApplication(workspace.settings, workspace.config, tmp_path)
+    full = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     try:
         seed(full, conn)
     finally:
         full.close()
     config = dataclasses.replace(workspace.config, modules=("workspace", "brain"))
-    app = WebApplication(workspace.settings, config, tmp_path)
+    app = WebApplication(workspace.settings, config, tmp_path, ui_session="ui-test")
     try:
         result = brain(app, conn)
     finally:

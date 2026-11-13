@@ -14,6 +14,7 @@
 mod auth;
 mod bootstrap;
 mod builds;
+mod effects;
 mod front;
 mod keys;
 mod migrations;
@@ -158,6 +159,7 @@ async fn run(options: Options) -> Result<(), String> {
                                              database.demo.is_some(), worker.digest),
     });
     keys::start(database.paths.root.clone(), database.demo.is_some());
+    effects::start(database.paths.db_path.clone(), worker.ui_session.clone());
 
     if options.desktop {
         // The shell's readiness contract (desktop/src/owner.rs `readiness`): it injects this

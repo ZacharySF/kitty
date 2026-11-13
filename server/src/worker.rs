@@ -2,7 +2,8 @@
 //! `--worker`).
 //!
 //! The worker binds a port of the system's choice on 127.0.0.1, reads the front's private
-//! secret as the first line on stdin, and answers only requests that carry it
+//! secret and this launch's window session as the first two lines on stdin, and answers only
+//! requests that carry the secret
 //! (`web_server.RequestHandler._front`). Its readiness line, the first line on stdout, is
 //! `{"origin", "secret", "config_dir", "db_path", "modules", "version", "digest"}`
 //! (`web_server.readiness`): its own origin and UI secret, which only the front ever sees, and
@@ -32,6 +33,10 @@ pub struct Worker {
     pub secret: String,
     /// The secret the front sends on every request it forwards.
     pub front_secret: String,
+    /// This launch's window session (`"ui-" + token_hex(12)`), the worker's `app.ui_session`:
+    /// effect approvals made by the front (crate::effects) and by the worker's inline views
+    /// are bound to it.
+    pub ui_session: String,
     /// The workspace the worker opened (`Settings.config_dir`), its active modules and version;
     /// the front takes it once.
     pub workspace: Option<crate::modules::Workspace>,
@@ -100,6 +105,7 @@ impl Worker {
     /// `packs` is `$KITTY_PACKS`, the installed packs' folders (crate::packs `worker_env`).
     pub async fn start(launch: &Launch, public_origin: &str, flags: &[String], packs: &str) -> Result<Self, WorkerError> {
         let front_secret = crate::auth::token_hex(32);
+        let ui_session = format!("ui-{}", crate::auth::token_hex(12));
         let mut child = Command::new(&launch.program)
             .args(&launch.args)
             .arg("--worker")
@@ -115,7 +121,7 @@ impl Worker {
             .map_err(|error| WorkerError(format!("could not start the Python backend ({}): {error}", launch.program)))?;
         let mut stdin = child.stdin.take().expect("stdin is piped");
         stdin
-            .write_all(format!("{front_secret}\n").as_bytes())
+            .write_all(format!("{front_secret}\n{ui_session}\n").as_bytes())
             .await
             .map_err(|_| WorkerError("the Python backend closed its input before starting".into()))?;
         let mut stdout = BufReader::new(child.stdout.take().expect("stdout is piped"));
@@ -139,6 +145,7 @@ impl Worker {
             origin: ready.origin,
             secret: ready.secret,
             front_secret,
+            ui_session,
             workspace: Some(crate::modules::Workspace {
                 config_dir: ready.config_dir.into(),
                 active: ready.modules,

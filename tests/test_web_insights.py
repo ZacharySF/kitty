@@ -27,7 +27,7 @@ class DeferredTasks:
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    result = WebApplication(workspace.settings, workspace.config, tmp_path)
+    result = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     result.tasks = DeferredTasks()
     return result
 

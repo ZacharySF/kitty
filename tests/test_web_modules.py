@@ -76,7 +76,7 @@ def site(settings: Settings, modules: tuple[str, ...] | None = None):
     (static / "index.html").write_text("<!doctype html><title>Synthetic</title>")
     with open_workspace(settings, modules=modules) as workspace:
         config = workspace.config
-    app = WebApplication(settings, config, static)
+    app = WebApplication(settings, config, static, ui_session="ui-test")
     server = LocalHTTPServer(app, 0)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()

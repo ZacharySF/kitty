@@ -433,6 +433,7 @@ impl Front {
             return Ok(send_json(StatusCode::OK, &listing, method == Method::HEAD));
         }
         if let Some(response) = crate::keys::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
+        if let Some(response) = crate::effects::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if mutation {
             // Native desktop commands additionally require an explicit page origin.
             if target.path == "/api/desktop/command" && !request.headers().contains_key("origin") {

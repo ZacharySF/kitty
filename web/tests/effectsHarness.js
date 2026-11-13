@@ -1,6 +1,6 @@
 // Browser fixture for tests/effects.browser.test.mjs. Mounts the pending-approvals prompt
 // (EffectsPrompt.svelte) with a stand-in /api/effects that follows the route contract
-// (src/kitty/web_effects.py): approve, execute (409 with the changed preconditions when a
+// (server/src/effects/, rika-server): approve, execute (409 with the changed preconditions when a
 // target moved) and deny. Every effect is synthetic.
 import { mount } from "svelte";
 import "/src/styles.css";

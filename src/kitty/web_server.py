@@ -22,7 +22,6 @@ import importlib
 import json
 import os
 import re
-import secrets
 import shutil
 import signal
 import sqlite3
@@ -164,7 +163,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("workspace", "web_schema"), (None, "web_atlas"), ("brain", "web_brain"), ("workspace", "web_backlinks"),
     ("learnharness", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
     ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_agents"),
-    (None, "web_devices"), (None, "web_search"), (None, "web_effects"),
+    (None, "web_devices"), (None, "web_search"), (None, "web_effects_worker"),
     (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
     ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
 )
@@ -194,7 +193,8 @@ class WebApplication:
     selection saved through ``/api/modules`` (rika-server) takes effect in the next process.
     """
 
-    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None, safe: bool = False):
+    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, ui_session: str, desktop=None,
+                 safe: bool = False):
         self.settings = settings
         self.config = config
         self.modules: tuple[str, ...] = tuple(config.modules)
@@ -207,9 +207,11 @@ class WebApplication:
         self.origin: str | None = None
         self.static_dir = static_dir.resolve()
         self.mutation_lock = threading.Lock()
-        #: This launch's window session: approvals of effects (kitty.core.effects) are bound
-        #: to it, so an approval never outlives the rika! process whose window granted it.
-        self.ui_session = "ui-" + secrets.token_hex(12)
+        #: This launch's window session, made by rika-server and sent in its handshake
+        #: (`front_handshake`): approvals of effects (kitty.core.effects), the front's and the
+        #: inline views', are bound to it, so an approval never outlives the rika! launch whose
+        #: window granted it.
+        self.ui_session = ui_session
         self.discovery_lock = threading.Lock()
         self.discovery: dict[str, Any] = {"running": False, "error": None, "result": None}
         #: Set when the server closes: long-lived upgraded streams end themselves.
@@ -830,7 +832,8 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
                        "packs": {"built_in": packs.built_in(), "missing": packs.missing(modules)}})
 
 
-def _serve(settings: Settings, static_dir: Path, *, safe: bool, front_secret: str, public_origin: str) -> None:
+def _serve(settings: Settings, static_dir: Path, *, safe: bool, front: tuple[str, str, str]) -> None:
+    front_secret, public_origin, ui_session = front
     # A build file saved with an error starts the server on the last good build (Q9).
     # rika-server migrated the database before starting this worker (server/src/migrations.rs).
     with open_workspace(settings, modules=startup_modules(settings), auto_migrate=False) as workspace:
@@ -844,7 +847,7 @@ def _serve(settings: Settings, static_dir: Path, *, safe: bool, front_secret: st
 
             demo_seed.seed(workspace.conn)
             agent_demo.seed_demo(workspace.conn, settings.root)
-        app = WebApplication(settings, workspace.config, static_dir, safe=safe)
+        app = WebApplication(settings, workspace.config, static_dir, ui_session=ui_session, safe=safe)
     # A plain `kill` stops the worker like Ctrl+C: workers drain and the endpoint file goes.
     signal.signal(signal.SIGTERM, _interrupt)
     # Behind rika-server the port is the system's choice: only the front knows it.
@@ -872,14 +875,18 @@ def _stop_when_front_leaves() -> None:
     os.kill(os.getpid(), signal.SIGTERM)
 
 
-def front_handshake(public_origin: str | None) -> tuple[str, str]:
-    """The front's secret (first stdin line) and its origin, validated (kitty-web and the desktop backend)."""
+def front_handshake(public_origin: str | None) -> tuple[str, str, str]:
+    """The front's secret and window session (the first two stdin lines) and its origin,
+    validated (kitty-web and the desktop backend)."""
     secret = sys.stdin.readline().strip()
     if not re.fullmatch(r"[0-9a-f]{64}", secret):
         raise ValueError("rika-server must send its secret first")
+    session = sys.stdin.readline().strip()
+    if not re.fullmatch(r"ui-[0-9a-f]{24}", session):
+        raise ValueError("rika-server must send its window session second")
     if not public_origin or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", public_origin):
         raise ValueError("--public-origin must be rika-server's loopback origin")
-    return secret, public_origin
+    return secret, public_origin, session
 
 
 #: How to build the front kitty-web starts (docs/GUIDE.md, "The Rust front").
@@ -946,7 +953,7 @@ def main() -> None:
     packs.state()
     root = (args.root or find_project_root()).expanduser().resolve()
     try:
-        front_secret, public_origin = front_handshake(args.public_origin)
+        front = front_handshake(args.public_origin)
         if args.demo:
             if args.demo_workspace is None:
                 raise ValueError("--demo behind rika-server needs its --demo-workspace")
@@ -962,9 +969,9 @@ def main() -> None:
             # its pack, and without it the home says how to download it.
             (config_dir / BUILD_FILE).write_text(json.dumps({"schema": 1, "modules": list(MODULE_IDS)}), encoding="utf-8")
             settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
-            _serve(settings, static_dir, safe=args.safe, front_secret=front_secret, public_origin=public_origin)
+            _serve(settings, static_dir, safe=args.safe, front=front)
         else:
-            _serve(Settings.load(root=root), static_dir, safe=args.safe, front_secret=front_secret, public_origin=public_origin)
+            _serve(Settings.load(root=root), static_dir, safe=args.safe, front=front)
     except (ConfigError, OSError, ValueError):
         parser.exit(1, "Unable to open the local website. Check the port, workspace configuration and public example files with the CLI.\n")
 

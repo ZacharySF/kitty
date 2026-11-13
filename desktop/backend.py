@@ -35,7 +35,7 @@ def prepare_workspace(root: Path, examples: Path, package: str) -> None:
         (root / directory).mkdir(exist_ok=True, mode=0o700)
 
 
-def serve(root: Path, assets: Path, package: str, *, front: tuple[str, str], safe: bool = False) -> None:
+def serve(root: Path, assets: Path, package: str, *, front: tuple[str, str, str], safe: bool = False) -> None:
     server_module = importlib.import_module(f"{package}.web_server")
     settings_module = importlib.import_module(f"{package}.settings")
     workspace_module = importlib.import_module(f"{package}.core.workspace")
@@ -54,12 +54,15 @@ def serve(root: Path, assets: Path, package: str, *, front: tuple[str, str], saf
         owner_output.flush()
 
     owner = desktop_module.DesktopOwner(send)
+    # rika-server's secret, its origin and its window session (web_server.front_handshake).
+    front_secret, front_origin, front_session = front
     settings = settings_module.Settings.load(root=root)
     # A build saved with an error starts on the last good build, as kitty-web does. rika-server
     # migrated the database before starting this backend (server/src/startup.rs).
     with workspace_module.open_workspace(settings, modules=project_module.startup_modules(settings),
                                          auto_migrate=False) as workspace:
-        app = server_module.WebApplication(settings, workspace.config, assets, desktop=owner, safe=safe)
+        app = server_module.WebApplication(settings, workspace.config, assets, ui_session=front_session,
+                                           desktop=owner, safe=safe)
 
     class DesktopHTTPServer(server_module.LocalHTTPServer):
         # A quit must drain accepted HTTP mutations before closing SQLite workers.
@@ -74,7 +77,7 @@ def serve(root: Path, assets: Path, package: str, *, front: tuple[str, str], saf
         raise
     # Behind rika-server: only the front reaches this server, and pages and paired
     # programs are given the front's address (kitty.web_server.RequestHandler._front).
-    server.front_secret, app.origin = front
+    server.front_secret, app.origin = front_secret, front_origin
     with server:
         stop = threading.Event()
 

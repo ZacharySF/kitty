@@ -1155,8 +1155,10 @@ mediator and journal), `src/kitty/core/agent_policy.py` (purpose labels, policie
 
 The paper's §16: one approval protocol for every risky action, replacing four separate
 ones. Code: `src/kitty/core/effects.py` (the kernel), `src/kitty/core/effect_kinds.py`
-(`delete_block`, `submit_application`), `src/kitty/web_effects.py` (the pending-approvals
-routes), `web/src/lib/EffectsPrompt.svelte` + `web/src/lib/effects.ts`, migration
+(`delete_block`, `submit_application`), `server/src/effects/` (the pending-approvals
+routes, answered by rika-server) with `src/kitty/web_effects_worker.py` (their worker side:
+`submit_application`'s preconditions and the executor), `web/src/lib/EffectsPrompt.svelte` +
+`web/src/lib/effects.ts`, migration
 `053_effects.sql`; kinds owned by their modules in `web_ai.py`, `web_automation.py`,
 `core/calendar_google.py` and `core/apply/recovery.py`.
 
@@ -1167,9 +1169,12 @@ routes), `web/src/lib/EffectsPrompt.svelte` + `web/src/lib/effects.ts`, migratio
   them and recomputes the digest inside one `BEGIN IMMEDIATE` with the `executed` event, and
   any difference refuses the effect for good (409, the changed names listed). Approvals are
   single-use, short-lived (2 minutes by default) and bound to the approving rika! window
-  session (`ui-<random>` per launch); proposals expire (`Kind.lifetime`).
+  session (`ui-<random>` per launch, made by rika-server and handed to the worker as
+  `app.ui_session`, so the front and the inline views share it); proposals expire
+  (`Kind.lifetime`).
 - **Who decides.** Only a `user` actor with a session approves, executes or denies:
-  `web_effects.user(app)` behind the UI secret. Agents, clients, peers and the system can
+  the window session behind the UI secret (`web_auth.window_user(app)` in Python, rika-server's
+  session in the front). Agents, clients, peers and the system can
   propose (a kind lists who may) and never approve. Policy-approved kinds are approved in
   memory by a computed policy, never by a model.
 - **A route decides only its own kind.** `approve`, `execute`, `approve_and_execute` and

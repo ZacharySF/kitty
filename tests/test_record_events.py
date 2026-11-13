@@ -12,7 +12,7 @@ from kitty.web_server import ROUTE_MODULES, APIError, WebApplication
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    application = WebApplication(workspace.settings, workspace.config, tmp_path)
+    application = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     yield application
     application.close()
 

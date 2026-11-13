@@ -40,7 +40,7 @@ def serve(workspace, tmp_path, desktop):
     static = tmp_path / "dist"
     static.mkdir(exist_ok=True)
     (static / "index.html").write_text("<!doctype html><title>Synthetic website</title>")
-    app = WebApplication(workspace.settings, workspace.config, static, desktop=desktop)
+    app = WebApplication(workspace.settings, workspace.config, static, ui_session="ui-test", desktop=desktop)
     server = LocalHTTPServer(app, 0)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
