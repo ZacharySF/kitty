@@ -28,8 +28,8 @@
       "description": "Enabled feature modules. Applies the next time rika! starts.",
       "type": "array",
       "uniqueItems": true,
-      "items": {"enum": ["applyai", "workspace", "terminal", "brain"]},
-      "default": ["applyai", "workspace", "terminal"]
+      "items": {"enum": ["applyai", "workspace", "math", "learnharness", "terminal", "voice", "brain"]},
+      "default": ["applyai", "workspace", "math", "learnharness", "terminal", "voice"]
     },
     "settings": {
       "type": "object",

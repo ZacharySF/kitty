@@ -15,7 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kitty import cli
-from kitty.modules import load_modules, save_modules
+from kitty.modules import DEFAULT_MODULES, load_modules, save_modules
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CAREERS_COMMANDS = (
@@ -238,7 +238,7 @@ def test_first_time_applyai_activation_provisions_config_without_inventing_facts
 def test_changing_a_pre_module_workspace_starts_from_every_module(home):
     (home / "config").mkdir()
     assert run("modules", "disable", "applyai").exit_code == 0
-    assert load_modules(home / "config") == ("workspace", "terminal")
+    assert load_modules(home / "config") == tuple(module for module in DEFAULT_MODULES if module != "applyai")
 
 
 def test_changing_nothing_does_not_rewrite_the_file(home):

@@ -229,12 +229,12 @@ def test_default_or_invalid_session_name_never_launches_herdr(tmp_path, herdr, m
 
 
 def test_missing_bundled_runtime_is_reported(tmp_path, herdr, monkeypatch):
+    """Without a pinned herdr (its pack not installed) every herdr route says how to get it."""
     monkeypatch.delenv("KITTY_HERDR")
     settings = make_root(tmp_path, ("terminal",))
     with site(settings) as running:
-        status, _headers, connection, rest = running.connect(running.token())
-        connection.close()
-        assert status == 503 and b"herdr runtime" in rest
+        status, body = running.request("/api/terminal/session", {})
+        assert status == 409 and body["error"] == "herdr isn't installed: download it in Settings > Modules, then restart rika!"
     assert herdr.invocations() == []
 
 

@@ -70,7 +70,7 @@ export interface Discovery {
   error: string | null;
   result: string | null;
 }
-export type ModuleId = "applyai" | "workspace" | "terminal" | "brain";
+export type ModuleId = "applyai" | "workspace" | "math" | "learnharness" | "terminal" | "voice" | "brain";
 export interface ModuleInfo {
   id: ModuleId;
   label: string;
@@ -109,6 +109,8 @@ export interface ModulesState {
   restart_required: boolean;
   /** Present when the pending modules.yaml cannot be read; the running app is unaffected. */
   error?: string;
+  /** Packs the active modules need that this process lacks (a download, then a restart). */
+  missing: string[];
 }
 export interface Bootstrap {
   demo: boolean;

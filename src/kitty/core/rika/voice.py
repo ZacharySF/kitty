@@ -267,8 +267,10 @@ class Whisper:
     def __init__(self, folder: Path):
         try:
             from faster_whisper import WhisperModel
-        except ImportError as exc:  # a build without the optional native libraries
-            raise VoiceError("This build of rika! has no speech engine") from exc
+        except ImportError as exc:  # the voice pack is missing (kitty.packs)
+            from kitty.packs import PackMissing
+
+            raise VoiceError(str(PackMissing("voice"))) from exc
         threads = max(1, min(4, os.cpu_count() or 1))
         self.model = WhisperModel(str(folder), device="cpu", compute_type="int8", cpu_threads=threads)
 

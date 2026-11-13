@@ -1,7 +1,7 @@
 // Run with Node >=22.6: node --experimental-strip-types --test tests/workspaceModules.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {notePageLink,shortcutsFor,viewEnabled,visibleGroups,visibleNavigation,visibleRelations} from '../src/lib/workspace.ts';
+import {missingPack,notePageLink,shortcutsFor,viewEnabled,visibleGroups,visibleNavigation,visibleRelations} from '../src/lib/workspace.ts';
 
 const ids=(items)=>items.map(item=>item.id);
 const labels=(groups)=>groups.map(group=>group.label);
@@ -71,4 +71,15 @@ test('a #notes/<number> link names one note page and nothing else',()=>{
   assert.equal(notePageLink('notes/12'),12);
   assert.equal(notePageLink('notes'),null);
   for(const hash of ['notes/0','notes/-1','notes/1x','notes/12/','study/3','notes/12345678901234567']) assert.equal(notePageLink(hash),null,hash);
+});
+
+test('Math and LearnHarness are their own modules, and a view whose pack is missing names it',()=>{
+  assert.equal(viewEnabled('math',['workspace']),false);
+  assert.equal(viewEnabled('math',['math']),true);
+  assert.equal(viewEnabled('learnharness',['learnharness']),true);
+  assert.equal(missingPack('math',['math','herdr']),'math');
+  assert.equal(missingPack('herdr',['herdr']),'herdr');
+  assert.equal(missingPack('tern',['herdr']),null);
+  assert.equal(missingPack('math',[]),null);
+  assert.equal(missingPack('notes',['math']),null);
 });

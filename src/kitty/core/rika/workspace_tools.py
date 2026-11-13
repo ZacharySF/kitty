@@ -23,7 +23,7 @@ from kitty.core.rika.tools import Context, Result, Tool, ToolError, boolean, int
 #: Views Rika may open (web/src/lib/workspace.ts) and the module that owns each.
 VIEWS: dict[str, str | None] = {
     "today": None, "ai": None, "settings": None, "goals": None,
-    "calendar": "workspace", "opportunities": "workspace", "study": "workspace", "learnharness": "workspace",
+    "calendar": "workspace", "opportunities": "workspace", "study": "workspace", "learnharness": "learnharness",
     "flashcards": "workspace", "notes": "workspace", "quick-notes": "workspace", "documents": "workspace",
     "schema": "workspace",
     "herdr": "terminal", "tern": "terminal", "agent-skills": "terminal",

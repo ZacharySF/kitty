@@ -1,9 +1,9 @@
 """Fixed-origin external LearnHarness app, with an optional bundled runtime owner."""
 from __future__ import annotations
 
-import sys
 from http.client import HTTPConnection, HTTPException
-from pathlib import Path
+
+from kitty import packs
 
 URL = "http://127.0.0.1:3210"
 
@@ -11,8 +11,8 @@ URL = "http://127.0.0.1:3210"
 def start(app):
     from kitty.learnharness_runtime import LearnHarnessRuntime
 
-    bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2] / "desktop/.build"))
-    app.learnharness = LearnHarnessRuntime(bundle / "learnharness", app.settings.data_dir / "learnharness")
+    # This program's own payload, else the installed `learnharness` pack's (kitty.packs).
+    app.learnharness = LearnHarnessRuntime(packs.learnharness_dir(), app.settings.data_dir / "learnharness")
 
 
 def stop(app):

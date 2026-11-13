@@ -240,7 +240,7 @@
     try {
       const data = await api<Bootstrap>("/bootstrap");
       if (request !== bootstrapRequest) return;
-      setActiveModules(data.modules.enabled);
+      setActiveModules(data.modules.enabled, data.modules.missing);
       workspace = data;
       revision += 1;
     } catch (cause) {

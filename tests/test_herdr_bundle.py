@@ -1,4 +1,4 @@
-"""The desktop bundle's herdr binary is the pinned release, verified by SHA-256."""
+"""The herdr pack's binary is the pinned release, verified by SHA-256."""
 from __future__ import annotations
 
 import hashlib
@@ -27,7 +27,7 @@ def fetcher(monkeypatch):
 def test_verified_release_binary_is_installed_executable(fetcher, tmp_path):
     requested = []
     target = fetcher["install"]("test-linux-gnu", tmp_path, lambda url: requested.append(url) or b"pinned herdr")
-    assert target == tmp_path / "kitty-herdr-test-linux-gnu"
+    assert target == tmp_path / "herdr"
     assert target.read_bytes() == b"pinned herdr"
     assert stat.S_IMODE(target.stat().st_mode) == 0o755
     assert requested == ["https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-test"]
@@ -45,7 +45,7 @@ def test_checksum_mismatch_is_refused_without_leaving_a_binary(fetcher, tmp_path
 
 
 def test_a_modified_existing_binary_is_replaced_by_the_pinned_release(fetcher, tmp_path):
-    stale = tmp_path / "kitty-herdr-test-linux-gnu"
+    stale = tmp_path / "herdr"
     stale.write_bytes(b"locally modified")
     fetcher["install"]("test-linux-gnu", tmp_path, lambda url: b"pinned herdr")
     assert stale.read_bytes() == b"pinned herdr"

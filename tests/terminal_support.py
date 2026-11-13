@@ -450,7 +450,7 @@ class FrontSite(Site):
     announced one-time code; the secret never appears in the front's output.
     """
 
-    def __init__(self, settings: Settings, env: dict[str, str] | None = None):
+    def __init__(self, settings: Settings, env: dict[str, str] | None = None, worker: list[str] | None = None):
         import pytest
 
         if not RIKA_SERVER.is_file():
@@ -464,11 +464,12 @@ class FrontSite(Site):
         isolated = {"KITTY_DB": str(settings.db_path), "XDG_DATA_HOME": str(settings.root / "xdg-data"),
                     "KITTY_PACKS_URL": "http://127.0.0.1:9/"}
         # As the `kitty-web` console script runs it: `python -m kitty.web_server` would load the
-        # module twice (as __main__ too), with two APIError classes.
+        # module twice (as __main__ too), with two APIError classes. `worker` replaces it: the
+        # program and its arguments.
+        program, *arguments = worker or [sys.executable, "-c", "from kitty.web_server import main; main()"]
         self.process = subprocess.Popen(
             [str(RIKA_SERVER), "--port", "0", "--root", str(settings.root), "--static-dir", str(static),
-             "--worker-program", sys.executable, "--worker-arg", "-c",
-             "--worker-arg", "from kitty.web_server import main; main()"],
+             "--worker-program", program, *(item for argument in arguments for item in ("--worker-arg", argument))],
             stdout=subprocess.PIPE, text=True, env={**os.environ, **isolated, **(env or {})})
         self.lines: queue.Queue[str] = queue.Queue()
         threading.Thread(target=lambda: [self.lines.put(line) for line in self.process.stdout], daemon=True).start()
@@ -502,8 +503,8 @@ class FrontSite(Site):
 
 
 @contextmanager
-def front_site(settings: Settings, env: dict[str, str] | None = None):
-    running = FrontSite(settings, env)
+def front_site(settings: Settings, env: dict[str, str] | None = None, worker: list[str] | None = None):
+    running = FrontSite(settings, env, worker)
     try:
         yield running
     finally:

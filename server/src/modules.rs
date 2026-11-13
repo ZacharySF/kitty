@@ -47,6 +47,8 @@ pub struct PackInfo {
 #[derive(serde::Deserialize)]
 pub struct Registry {
     pub modules: Vec<ModuleInfo>,
+    /// `modules.DEFAULT_MODULES`: the selection of a workspace without one.
+    pub default: Vec<String>,
     pub packs: Vec<PackInfo>,
 }
 
@@ -88,6 +90,8 @@ pub struct Workspace {
     pub active: Vec<String>,
     /// `kitty.__version__`, written into a new build file.
     pub version: String,
+    /// The packs the active modules need that the worker lacks (`kitty.packs.missing`).
+    pub missing: Vec<String>,
 }
 
 /// An answer other than 200: `{"error"}`, as `RequestHandler._dispatch` sends it.
@@ -209,8 +213,8 @@ impl Workspace {
             if self.legacy_present() {
                 return Err(Ok(config_problem(&self.config_dir.join(LEGACY_MODULES_FILE), None, "", LEGACY_LATE, LEGACY_HINT)));
             }
-            // `modules.DEFAULT_MODULES`: every module that needs no download.
-            return Ok(registry().modules.iter().filter(|m| m.packs.is_empty()).map(|m| m.id.clone()).collect());
+            // `modules.DEFAULT_MODULES`, in canonical order.
+            return Ok(module_ids().filter(|id| registry().default.iter().any(|d| d == id)).map(str::to_owned).collect());
         };
         let checked = document::check(&source).map_err(|_| Err(()))?;
         let Some(build) = checked.build.as_ref() else {
@@ -249,6 +253,7 @@ impl Workspace {
         // Python's key order: enabled, available, error?, configured, restart_required.
         state.insert("configured".into(), json!(configured));
         state.insert("restart_required".into(), json!(configured != self.active));
+        state.insert("missing".into(), json!(self.missing));
         Ok(Json::Object(state))
     }
 
@@ -506,8 +511,8 @@ mod tests {
             _ => unreachable!(),
         };
         assert_eq!(normalize(&items("[\"terminal\", \"applyai\"]")), Ok(vec!["applyai".to_owned(), "terminal".to_owned()]));
-        assert_eq!(normalize(&items("[1]")).unwrap_err(), "unknown module 1; use ['applyai', 'workspace', 'terminal', 'brain']");
-        assert_eq!(normalize(&items("[true]")).unwrap_err(), "unknown module True; use ['applyai', 'workspace', 'terminal', 'brain']");
+        assert_eq!(normalize(&items("[1]")).unwrap_err(), "unknown module 1; use ['applyai', 'workspace', 'math', 'learnharness', 'terminal', 'voice', 'brain']");
+        assert_eq!(normalize(&items("[true]")).unwrap_err(), "unknown module True; use ['applyai', 'workspace', 'math', 'learnharness', 'terminal', 'voice', 'brain']");
         assert_eq!(normalize(&items("[\"applyai\", \"applyai\"]")).unwrap_err(), "duplicate module 'applyai'");
     }
 }

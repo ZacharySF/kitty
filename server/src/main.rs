@@ -130,7 +130,11 @@ async fn run(options: Options) -> Result<(), String> {
             flags.push("--safe".into());
         }
     }
-    let mut worker = Worker::start(&options.launch, &origin, &flags).await.map_err(|error| failed(&error))?;
+    // The installed packs' folders go to the worker (`$KITTY_PACKS`); it reports the ones its
+    // own program carries, which the listing then shows as built in.
+    let packs = packs::Packs::open(&static_dir);
+    let mut worker = Worker::start(&options.launch, &origin, &flags, &packs.worker_env()).await.map_err(|error| failed(&error))?;
+    let packs = packs.with_worker(std::mem::take(&mut worker.packs.built_in));
     if let Err(message) = database.opened_by_worker(&worker.db_path) {
         worker.stop(WORKER_GRACE).await;
         return Err(failed(&message));
@@ -140,7 +144,7 @@ async fn run(options: Options) -> Result<(), String> {
         origin: origin.clone(),
         port,
         auth: auth::UiAuth::new(),
-        packs: Arc::new(packs::Packs::open(&static_dir)),
+        packs: Arc::new(packs),
         static_dir,
         backend: Backend {
             authority: worker.authority.clone(),

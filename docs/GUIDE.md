@@ -72,11 +72,14 @@ source .venv/bin/activate    # then just `kitty ...`
 
 | Module | Features |
 | --- | --- |
-| ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports |
+| ApplyAI (`applyai`) | Jobs, discovery, companies, sources, profile, resumes, screening questions, preparation/recovery, applications, career reminders, mail and reports. Its JobSpy aggregators (python-jobspy, pandas) are a download |
 | Workspace (`workspace`) | Notes, documents/PDFs, canvas, mind maps, backlinks, flashcards, study, calendar, tasks and projects/opportunities |
-| Terminal (`terminal`) | rika!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window; your installed [Stencil Tern](https://stencil.so/tern), if any, opened on a session of rika!'s own |
+| Math (`math`) | Topics, lessons, sprints and answer checking. A download (SymPy) |
+| LearnHarness (`learnharness`) | The LearnHarness study app (below). A download (the app and its Node.js runtime) |
+| Terminal (`terminal`) | rika!'s own [herdr](https://github.com/herdrdev/herdr) session (workspaces, tabs, splits, agents) streamed into the window; your installed [Stencil Tern](https://stencil.so/tern), if any, opened on a session of rika!'s own. herdr is a download |
+| Voice (`voice`) | Talking to Rika: on-device speech to text. A download (the faster-whisper engine; the Whisper model still downloads on first use) |
 | Brain (`brain`) | The Brain view: your workspace as a 3D brain or a 2D map, and the 3D look of section and schema graphs. A download (its pack), off until installed |
-| Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls and local storage infrastructure |
+| Always-on core | Home, tabs, settings, module selection, shared AI-provider/budget controls, Rika's text chat and local storage infrastructure |
 
 Use **Settings → Modules**, the terminal UI's Modules screen (`M` from the job
 tracker), or `kitty modules enable/disable <id>`. The selection is the `modules`
@@ -99,21 +102,27 @@ start. Their data, attachments and configuration are retained for re-enabling.
 ApplyAI reminders work without Workspace; career calendar contributions and
 cross-module results appear only while both modules are enabled.
 
-Existing workspaces with no module selection retain every module that needs no download; a pre-build
-`config/modules.yaml` is moved into `config/build.json` on the first open. Fresh CLI and
-desktop workspaces start core-only. The database still uses the existing global
+Existing workspaces with no module selection keep every module rika! had before packs
+(all but the Brain); a pre-build `config/modules.yaml` is moved into `config/build.json` on
+the first open. Math and LearnHarness used to be part of Workspace and Voice part of the
+core: a saved selection from before keeps Workspace but has them off until you turn them
+on. Fresh CLI and desktop workspaces start core-only. The database still uses the existing global
 migrations; disabling does not drop tables or run down-migrations. These are
 built-in modules, not installable third-party extensions.
 
 ### Module packs
 
-A module whose code is large ships as a **pack**, downloaded when you ask for it rather
-than carried by every install. Today that is the Brain (its views and the three.js 3D
-engine). Settings → Modules shows each pack's size and state on its module's row:
+The desktop installer carries only the base: the window, rika-server and the Python
+worker that serves the core and Workspace. Every other module's large payload ships as a
+**pack**, downloaded when you ask for it: the Brain (its views and the three.js 3D engine),
+ApplyAI's job aggregators, the Math engine, LearnHarness, herdr and the Speech engine.
+Settings → Modules shows each pack's size and state on its module's row:
 **Download** fetches it with a progress bar, **Installed** shows its size with
-**Remove**, and **Included** means this build carries it already (a source checkout's
-website). A module that needs a pack can be turned on only once the pack is installed,
-and a pack can be removed only after its module is turned off and saved.
+**Remove**, and **Included** means this build carries it already (a source checkout has
+the Python packs, LearnHarness once `desktop/package_learnharness.py` has built it, and
+herdr when `$KITTY_HERDR` names one). A module that needs a pack can be turned on only once the pack is installed,
+and a pack can be removed only after its module is turned off and saved. The Brain's pack
+works at once; the others are loaded when rika! starts, so restart after downloading.
 
 Packs are published with each desktop release on GitHub (`ZacharySF/rika`): one archive
 per pack plus an index, `packs.json`, signed with the same key as the app's updates.
@@ -122,9 +131,13 @@ built into the app, then the archive's size and SHA-256 against that index, and 
 it in one atomic step under `$XDG_DATA_HOME/kitty/packs/` (`~/.local/share/kitty/packs/`);
 a download that fails or does not match changes nothing. After an app update the old
 pack shows **Download** again: a pack is tied to the build it came with. Without the
-Brain module there is no Brain entry in the header and nothing else changes. `kitty modules
-enable brain` writes the selection without checking for the pack; the Brain view then
-shows a "Brain isn't installed" card leading to the download.
+Brain module there is no Brain entry in the header and nothing else changes. A module that
+is on without its pack (a workspace from before packs, or `kitty modules enable`, which does
+not check) degrades the same way everywhere: the Brain view shows a "Brain isn't installed"
+card leading to the download; the Math, LearnHarness and herdr views show "… isn't
+installed · Download", their routes answer 409 with the same advice, the JobSpy source
+reports an error instead of finding nothing, and voice input says the Speech engine is
+missing. Every other view works as before.
 
 ### Builds
 
@@ -1903,12 +1916,13 @@ automatically. Custom launchers are not silently rewritten.
 ### Build and install a local launcher (including NixOS)
 
 For development/build machines, the existing packaging script builds the locked
-website and freezes the locked Python backend into a relocatable `kitty-web`
-directory (`desktop/binaries/kitty-web/`, a PyInstaller onedir), stages the pinned
-herdr release as the `kitty-herdr` sidecar
+website, builds LearnHarness and stages the pinned herdr release
 (`desktop/fetch_herdr.py` downloads it and refuses any binary whose SHA-256 differs
 from its pin; `--from <downloaded asset>` verifies an already downloaded file
-instead), builds the Rust front (`server/`) as the `rika-server` sidecar, then
+instead), turns every module pack into an archive with `scripts/build-packs.py`
+(`desktop/.build/packs/`), freezes the rest of the locked Python backend into a
+relocatable `kitty-web` directory (`desktop/binaries/kitty-web/`, a PyInstaller onedir,
+without the packs' libraries), builds the Rust front (`server/`) as the `rika-server` sidecar, then
 builds the Tauri app. It requires Python 3.12, uv, Node/npm, Rust,
 GTK3/WebKitGTK 4.1 development libraries, tray/media libraries and packaging tools.
 The frontend CLI comes from `web/package-lock.json`; no global CLI is needed.
@@ -1917,7 +1931,7 @@ The backend ships unpacked, so each launch starts it in place instead of
 extracting ~400 MB to a temporary folder first (about 10 s before). The `.deb`
 and the AppImage install it at `/usr/libexec/kitty-workspace/kitty-web/`
 (`files` in `desktop/tauri.conf.json`); its bundled data (website, examples,
-LearnHarness, textbook, Tern plugin) is in its `_internal/` folder. The desktop
+textbook, Tern plugin) is in its `_internal/` folder. The desktop
 binary never starts the backend directly: it starts the `rika-server` beside itself
 (`/usr/bin/rika-server`) with `--desktop`, which serves the bundled website, prints the
 shell's readiness line with its own origin and UI secret, starts the backend at

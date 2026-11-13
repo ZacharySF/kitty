@@ -29,7 +29,8 @@ def no_network(monkeypatch):
 
 @pytest.fixture
 def demo(tmp_path, no_network):
-    settings = dataclasses.replace(make_root(tmp_path, ("workspace", "terminal")), demo=True)
+    # Voice is its own module now (its engine is a pack the checkout carries).
+    settings = dataclasses.replace(make_root(tmp_path, ("workspace", "terminal", "voice")), demo=True)
     with site(settings) as running:
         yield running
     assert no_network == []

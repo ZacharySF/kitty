@@ -48,6 +48,7 @@ import queue
 import re
 import select
 
+from kitty import packs
 from kitty.core.rika import speech, store
 from kitty.core.rika.agents import AgentError
 from kitty.core.rika.loop import Rika, RikaError
@@ -203,6 +204,12 @@ class _Listening:
                 and isinstance(message["session"], str) and _SESSION.fullmatch(message["session"]) \
                 and message["mode"] in MODES:
             self.close()
+            # Voice is a module with a pack (kitty.packs): off, or without its engine, it says so.
+            refusal = ("Voice is turned off in Settings > Modules" if "voice" not in self.app.modules
+                       else None if packs.loaded("voice") else str(packs.PackMissing("voice")))
+            if refusal:
+                self.emit({"type": "voice.error", "session": message["session"], "mode": message["mode"], "message": refusal})
+                return
             self.session = self.app.rika.voice.session(message["session"], message["mode"], self.emit)
         elif kind == "voice.mode" and set(message) == {"type", "mode"} and message["mode"] in MODES:
             if self.session is not None:

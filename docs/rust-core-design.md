@@ -301,8 +301,73 @@ selection: base only.
    dominated by the backend, 1.15 GiB, until the next packs). rika-server grew from 1.91 to
    4.68 MB (the HTTPS client, rustls with ring, gzip and tar).
 
-   Next packs: LearnHarness, the speech engine, the discovery worker and herdr, each once its
-   module owns its routes.
+   *Built (second step): the base download.* The Python packs, LearnHarness and herdr are now
+   packs too, on the same signed index, verification and atomic install. Measured: the
+   backend onedir of the 0.3.36 build (`425506f`, `du -b` of `_internal/`; libraries assigned
+   to a pack by name, so shared FFmpeg/X11 libraries count with speech):
+
+   | Payload in the 1.10 GiB (1,177,355,543 B) onedir | Size | Now |
+   | --- | --- | --- |
+   | Speech: ctranslate2, av (FFmpeg), onnxruntime, tokenizers, hf_xet, faster-whisper | 344.9 MB | pack `voice` (module `voice`) |
+   | LearnHarness: the Next.js app and its Node.js binary | 270.0 MB | pack `learnharness` (module `learnharness`) |
+   | Job aggregators: tls_client, pandas, numpy and OpenBLAS, python-jobspy | 168.5 MB | pack `discovery` (ApplyAI) |
+   | Math: sympy, mpmath, lark, antlr4 | 29.6 MB | pack `math` (module `math`) |
+   | PyMuPDF (61.6 + 36.2 + 3.1 MB), ICU 41 MB, libpython 32.5 MB, zstandard 23.9 MB, libvips 18.7 MB, cryptography 14.4 MB, loro 11.2 MB, website 10.3 MB, the rest | 318.0 MB | base |
+
+   herdr (29 MB) was a separate sidecar in the installers; it is pack `herdr` (Terminal).
+   Modules: `math` and `learnharness` left Workspace and `voice` left the core, each needing its
+   pack; ApplyAI needs `discovery` and Terminal `herdr`. `DEFAULT_MODULES` (a workspace without
+   a selection) is now the registry's explicit `default`, every module but the Brain, so
+   pre-module workspaces and test fixtures are unchanged; a saved selection from before keeps
+   Workspace but has Math, LearnHarness and Voice off.
+
+   How it works: `kitty.packs.PYTHON` names each Python pack's distributions;
+   `scripts/build-packs.py` copies them and everything they need that the base does not
+   (closure over the locked environment's metadata; numpy goes into both `discovery` and
+   `voice` so each stands alone) into `python/`, and `desktop/package_backend.py` excludes the
+   packs' own modules and their large libraries (`backend_excludes`) from the freeze. Archives
+   keep only the executable bit and use GNU tar names (Next.js paths exceed ustar);
+   `server/src/packs.rs` now keeps executables 0755 and accepts dotted names below a pack's
+   top level (`learnharness/.next/`). The front passes the installed packs' folders to the
+   worker as `$KITTY_PACKS`; `kitty.packs.state()` first probes what the program carries
+   itself, then appends each Python pack's `python/` to `sys.path` (after the bundle) and sets
+   `$KITTY_HERDR` to the herdr pack's binary. The readiness line reports `packs.built_in`
+   (shown as Included) and `packs.missing`, which `/api/modules` and `/api/bootstrap` carry as
+   `modules.missing`. A module on without its pack degrades like the Brain: its routes
+   (`/api/math`, `/api/extensions/learnharness`, `/api/rika/voice`, `/api/terminal` but Tern
+   and agent skills) answer 409 "<pack> isn't installed: download it in Settings > Modules,
+   then restart rika!", its views show the "… isn't installed · Download" card
+   (`PackMissing.svelte`), voice input answers `voice.error`, and the JobSpy source reports an
+   error instead of an empty result. Worker packs are loaded at start, so a download needs a
+   restart. The desktop shell no longer bundles herdr, and LearnHarness's licences and
+   corresponding source travel in its pack.
+
+   Tests: `tests/test_base_packs.py`: a base worker (this Python with every pack library
+   hidden, no LearnHarness, no herdr) starts with `DEFAULT_MODULES`, lists the five downloads
+   and 409s each pack route while the rest serve; each worker pack (the three Python ones
+   built from the real locked libraries) is built, published signed, installed through the
+   front, used after a restart and removed; program packs keep layout, modes and reproducible
+   bytes; `$KITTY_PACKS` is validated; JobSpy without its pack is an error. Rust unit tests
+   cover the new unpack rules; `web/tests/workspaceModules.test.mjs` the view gating.
+
+   Measured on the built `.deb`s (0.3.36, this machine; both builds stop afterwards at updater
+   signing without the release key, after the `.deb` is written). Start to ready is rika-server
+   `--desktop` with the installed backend behind it until its readiness line, median of five,
+   on a new workspace (base only) and on the same workspace again:
+
+   | | Before (`425506f`) | After (this change) |
+   | --- | --- | --- |
+   | `.deb` download | 466,391,472 B (445 MiB) | 137,661,216 B (131 MiB), −70.5 % |
+   | Installed (`data/`) | 1,240,559,554 B | 298,879,634 B, −75.9 % |
+   | `Installed-Size` | 1,217,335 KiB | 293,398 KiB |
+   | Backend onedir | 1,177,355,543 B | 271,848,522 B |
+   | Start to ready, new / existing workspace | 1.13 / 0.87 s | 1.12 / 0.87 s |
+
+   The packs, downloaded only with their modules (archive / unpacked): `voice` 128.5 / 444.0 MB,
+   `learnharness` 89.7 / 276.1 MB, `discovery` 71.5 / 205.0 MB, `herdr` 10.7 / 30.3 MB, `math`
+   6.4 / 29.6 MB, `brain` 0.45 / 1.6 MB. Start to ready does not change: a base start never
+   imported the pack libraries; the gain is the download and the disk. Next: PyMuPDF (the
+   largest base library) as a Documents pack once Workspace is split.
 4. **Modules, one by one.** Notes and blocks (loro is already Rust), calendar,
    study, flashcards (`fsrs` crate), goals, maps, opportunities, brain, search,
    devices, terminal, documents, mail, voice (whisper in Rust), math and

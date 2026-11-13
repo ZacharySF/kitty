@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import shutil
 import stat
 import threading
@@ -110,9 +111,24 @@ def site(settings: Settings, modules: tuple[str, ...] | None = None):
 
 @contextmanager
 def front(settings: Settings):
-    """rika-server with `kitty-web --worker` behind it: one process, as `kitty-web` runs."""
-    with front_site(settings) as running:
-        yield running.request
+    """rika-server with `kitty-web --worker` behind it: one process, as `kitty-web` runs.
+
+    A synthetic $KITTY_HERDR makes Terminal's herdr pack present (kitty.packs), as the other
+    packs are in a checkout, so turning Terminal on is not refused for a missing download; the
+    Python reference answers computed here see the same variable."""
+    herdr = settings.root / "synthetic-herdr"
+    herdr.write_text("#!/bin/sh\nexit 0\n")
+    herdr.chmod(0o755)
+    previous = os.environ.get("KITTY_HERDR")
+    os.environ["KITTY_HERDR"] = str(herdr)
+    try:
+        with front_site(settings) as running:
+            yield running.request
+    finally:
+        if previous is None:
+            os.environ.pop("KITTY_HERDR", None)
+        else:
+            os.environ["KITTY_HERDR"] = previous
 
 
 @pytest.mark.parametrize("modules", COMBINATIONS)

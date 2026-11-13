@@ -17,6 +17,7 @@ from kitty.core.blocks import history, tags
 from kitty.core.builds import css, document, project, share, store
 from kitty.core.workspace import open_workspace
 from kitty.db import connect, migrate
+from kitty.modules import DEFAULT_MODULES
 from kitty.settings import Settings
 
 
@@ -53,7 +54,7 @@ def test_the_published_schema_is_valid_and_an_empty_build_means_every_default():
     checked = document.check('{"schema": 1}')
     assert checked.ok and checked.problems == []
     assert checked.build == document.defaults()
-    assert checked.build["modules"] == ["applyai", "workspace", "terminal"]
+    assert checked.build["modules"] == list(DEFAULT_MODULES)
     assert checked.build["settings"]["history"]["retention_days"] == 30
     assert checked.build["settings"]["tags"]["mode"] == "suggest"
 
@@ -474,5 +475,5 @@ def test_fetching_a_build_link_follows_only_https_and_caps_its_size():
 def test_a_new_workspace_gets_an_owner_only_build_with_every_module(tmp_path):
     text = store.ensure(tmp_path)
     assert set(json.loads(text)) == {"schema", "kitty_version"}
-    assert document.require(text)["modules"] == ["applyai", "workspace", "terminal"]
+    assert document.require(text)["modules"] == list(DEFAULT_MODULES)
     assert stat.S_IMODE((tmp_path / "config" / "build.json").stat().st_mode) == 0o600

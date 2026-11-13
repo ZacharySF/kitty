@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from kitty import web_auth, web_clients
+from kitty import packs, web_auth, web_clients
 from kitty.config import Config, ConfigError
 from kitty.core import endpoint, record_events
 from kitty.core.builds.project import startup_modules
@@ -43,7 +43,7 @@ from kitty.core.workspace import open_workspace
 from kitty.db import connect, migrate
 from kitty.db.connection import transaction
 from kitty.models import Job, Resume
-from kitty.modules import BUILD_FILE, MODULE_IDS, ModuleDisabledError, modules_state
+from kitty.modules import BUILD_FILE, MODULE_IDS, MODULE_PACKS, ModuleDisabledError, modules_state
 from kitty.settings import Settings, find_project_root
 from kitty.web_tasks import TaskRunner
 
@@ -137,11 +137,20 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "workspace") for prefix in (
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
         "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
-        "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness",
-        "/api/blocks", "/api/tags", "/api/mirror", "/api/math")),
+        "/api/ai/run", "/api/atlas/sections", "/api/quick-notes",
+        "/api/blocks", "/api/tags", "/api/mirror")),
+    ("/api/math", "math"),
+    ("/api/extensions/learnharness", "learnharness"),
     ("/api/terminal", "terminal"),
     ("/api/brain", "brain"),
 ), key=lambda item: -len(item[0])))
+#: API route prefix -> the pack it runs on (kitty.packs); the longest matching prefix wins.
+#: Such a route needs the module that needs the pack (Rika's voice routes sit in the core's
+#: /api/rika), and with that module on but the pack missing it answers 409 (download it first).
+ROUTE_PACKS: tuple[tuple[str, str], ...] = (
+    ("/api/terminal/agent-skills", ""), ("/api/terminal/tern", ""), ("/api/terminal", "herdr"),
+    ("/api/math", "math"), ("/api/extensions/learnharness", "learnharness"), ("/api/rika/voice", "voice"),
+)
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
 #: The live channel starts first and the build second: other extensions read both.
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
@@ -150,10 +159,10 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("applyai", "web_profile"), ("applyai", "web_insights"), ("applyai", "web_apply_accounts"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
     ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
-    ("workspace", "web_math"),
+    ("math", "web_math"),
     (None, "web_ai"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("brain", "web_brain"), ("workspace", "web_backlinks"),
-    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
+    ("learnharness", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
     ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_agents"),
     (None, "web_keys"),
     (None, "web_devices"), (None, "web_search"), (None, "web_effects"),
@@ -167,6 +176,14 @@ def route_module(path: str) -> str | None:
     for prefix, module in ROUTE_MODULES:
         if path == prefix or path.startswith(prefix + "/"):
             return module
+    return None
+
+
+def route_pack(path: str) -> str | None:
+    """The pack an API path runs on, or None."""
+    for prefix, pack in ROUTE_PACKS:
+        if path == prefix or path.startswith(prefix + "/"):
+            return pack or None
     return None
 
 
@@ -237,10 +254,16 @@ class WebApplication:
             raise APIError(403, str(ModuleDisabledError(module)))
 
     def guard(self, path: str) -> None:
-        """Reject a request for a disabled module before any handler or worker runs."""
+        """Reject a request for a disabled module, or one whose pack is missing, before any
+        handler or worker runs."""
         module = route_module(path)
         if module is not None:
             self.require_module(module)
+        pack = route_pack(path)
+        if pack is not None:
+            self.require_module(next(key for key, needed in MODULE_PACKS.items() if pack in needed))
+            if not packs.loaded(pack):
+                raise APIError(409, str(packs.PackMissing(pack)))
 
     def modules_state(self) -> dict[str, Any]:
         return modules_state(self.modules, self.settings.config_dir)
@@ -793,8 +816,9 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
 
     It holds this backend's UI secret, so it goes only to the front (or the desktop shell),
     plus the workspace the front answers its own routes from: the config directory and the
-    database, this process's frozen module snapshot, the version a new build file records
-    and, with ApplyAI, the digest settings its config validated (server/src/bootstrap.rs).
+    database, this process's frozen module snapshot, the version a new build file records,
+    with ApplyAI the digest settings its config validated (server/src/bootstrap.rs), and the
+    packs it has and lacks (kitty.packs; server/src/packs.rs lists a built-in one as such).
     """
     from kitty import __version__
 
@@ -803,7 +827,8 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
                        "config_dir": str(settings.config_dir), "db_path": str(settings.db_path),
                        "modules": list(modules), "version": __version__,
                        "digest": {"deadline_window_days": apply.deadline_window_days,
-                                  "archive_after_days": apply.archive_after_days} if apply else None})
+                                  "archive_after_days": apply.archive_after_days} if apply else None,
+                       "packs": {"built_in": packs.built_in(), "missing": packs.missing(modules)}})
 
 
 def _serve(settings: Settings, static_dir: Path, *, safe: bool, front_secret: str, public_origin: str) -> None:
@@ -917,6 +942,9 @@ def main() -> None:
     if not args.worker:
         _launch_front(args, static_dir)
         return
+    # The packs rika-server installed join this process before anything reads $KITTY_HERDR
+    # or imports a pack's library.
+    packs.state()
     root = (args.root or find_project_root()).expanduser().resolve()
     try:
         front_secret, public_origin = front_handshake(args.public_origin)

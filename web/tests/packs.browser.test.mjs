@@ -63,8 +63,9 @@ before(async () => {
   cpSync(join(web, "dist"), dist, { recursive: true });
   listed = JSON.parse(readFileSync(join(dist, "pack-files.json"), "utf8")).brain;
   const out = join(work, "release");
-  // The release's own build step: the Brain leaves this base website and becomes the pack.
-  execFileSync("uv", ["run", "--project", repo, "python", join(repo, "scripts/build-packs.py"), "--dist", dist, "--out", out], { stdio: "pipe" });
+  // The release's own build step: the Brain leaves this base website and becomes the pack (the
+  // worker packs are tests/test_base_packs.py's).
+  execFileSync("uv", ["run", "--project", repo, "python", join(repo, "scripts/build-packs.py"), "--dist", dist, "--out", out, "--web-only"], { stdio: "pipe" });
   index = JSON.parse(readFileSync(join(out, "packs.json"), "utf8"));
   key = minisignKey();
   writeFileSync(join(out, "packs.json.sig"), key.sign(readFileSync(join(out, "packs.json"))));

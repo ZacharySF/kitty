@@ -4,7 +4,7 @@
       "id": "applyai",
       "label": "ApplyAI",
       "description": "Job discovery, sources, companies, resumes, preparation, applications, follow-ups, mail and career reports.",
-      "packs": []
+      "packs": ["discovery"]
     },
     {
       "id": "workspace",
@@ -13,10 +13,28 @@
       "packs": []
     },
     {
+      "id": "math",
+      "label": "Math",
+      "description": "Topics, lessons, sprints and answer checking.",
+      "packs": ["math"]
+    },
+    {
+      "id": "learnharness",
+      "label": "LearnHarness",
+      "description": "The LearnHarness study app, run on this machine.",
+      "packs": ["learnharness"]
+    },
+    {
       "id": "terminal",
       "label": "Terminal",
       "description": "rika!'s own herdr terminal session: workspaces, tabs, splits and agents, streamed into the window; plus your installed Stencil Tern, if any.",
-      "packs": []
+      "packs": ["herdr"]
+    },
+    {
+      "id": "voice",
+      "label": "Voice",
+      "description": "Talk to Rika: on-device speech to text.",
+      "packs": ["voice"]
     },
     {
       "id": "brain",
@@ -25,7 +43,33 @@
       "packs": ["brain"]
     }
   ],
+  "default": ["applyai", "workspace", "math", "learnharness", "terminal", "voice"],
   "packs": [
+    {
+      "id": "discovery",
+      "label": "Job aggregators",
+      "description": "JobSpy's search of Indeed, Google Jobs, ZipRecruiter and Glassdoor (python-jobspy, pandas)."
+    },
+    {
+      "id": "math",
+      "label": "Math engine",
+      "description": "SymPy, which reads and checks typed answers."
+    },
+    {
+      "id": "learnharness",
+      "label": "LearnHarness",
+      "description": "The LearnHarness app and the Node.js runtime it runs on."
+    },
+    {
+      "id": "herdr",
+      "label": "herdr",
+      "description": "The pinned herdr terminal multiplexer."
+    },
+    {
+      "id": "voice",
+      "label": "Speech engine",
+      "description": "faster-whisper and its native libraries; the Whisper model itself downloads on first use."
+    },
     {
       "id": "brain",
       "label": "Brain",

@@ -19,15 +19,17 @@ fi
 # is explicit and temporary so the application dependency set stays unchanged.
 npm --prefix web ci
 npm --prefix web run build
-# Module packs (docs/rust-core-design.md, milestone 3): the Brain's web code leaves the website
-# the installers carry and becomes an archive plus the index the release signs and publishes.
+# Module packs' payloads (docs/rust-core-design.md, milestone 3): LearnHarness (no source
+# checkout, Git, npm or system Node is required by installed Study) and the Terminal module's
+# pinned herdr release, checksum-verified.
+uv run --locked python desktop/package_learnharness.py
+uv run --locked python desktop/fetch_herdr.py
+# Every pack becomes an archive plus the index the release signs and publishes: the Brain's
+# web code leaves the website the installers carry, the Python packs' libraries and the two
+# programs leave the backend below.
 rm -rf desktop/.build/packs
 uv run --locked python scripts/build-packs.py --dist web/dist --out desktop/.build/packs
-# No source checkout, Git, npm or system Node is required by installed Study.
-uv run --locked python desktop/package_learnharness.py
 uv run --locked --with pyinstaller==6.16.0 python desktop/package_backend.py
-# The Terminal module's runtime: the pinned herdr release, checksum-verified.
-uv run --locked python desktop/fetch_herdr.py
 # The Rust front the desktop shell starts (server/); it starts the backend above behind itself.
 cargo build --release --locked --manifest-path server/Cargo.toml
 triple="$(rustc -vV | sed -n 's/^host: //p')"

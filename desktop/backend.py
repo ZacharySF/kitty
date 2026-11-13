@@ -144,6 +144,9 @@ def main() -> None:
     root = args.workspace.expanduser().resolve()
     if not args.worker:
         parser.exit(1, "The desktop backend runs only behind rika-server (--worker).\n")
+    # The packs rika-server installed ($KITTY_PACKS): their libraries join sys.path and
+    # herdr's path $KITTY_HERDR before the workspace opens (kitty.packs).
+    importlib.import_module(f"{package}.packs").state()
     # Read before the owner channel starts: stdin is the owner pipe from then on.
     try:
         front = importlib.import_module(f"{package}.web_server").front_handshake(args.public_origin)

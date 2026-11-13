@@ -1,10 +1,11 @@
 <script lang="ts">
   import { provideWorkspaceContext, type SaveStatus, type WorkspaceTrail } from "./workspaceContext.svelte";
   import type { Bootstrap } from "./api";
-  import { viewEnabled, type View } from "./workspace";
+  import { missingPack, navigation, viewEnabled, type View } from "./workspace";
   import { activeModules } from "./modules.svelte";
   import Home from "./Home.svelte";
   import GraphNavigator from "./GraphNavigator.svelte";
+  import PackMissing from "./PackMissing.svelte";
 
   import WorkspaceSettings from "./WorkspaceSettings.svelte";
   import AI from "./AI.svelte";
@@ -101,6 +102,9 @@
 {#key `${view}:${epoch}:${initialJobId}`}
   {#if !viewEnabled(view, activeModules.enabled)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
+  {:else if missingPack(view, activeModules.missing)}
+    <!-- The module is on but its pack is not loaded: its routes answer 409; say how to get it. -->
+    <PackMissing id={view} label={navigation.find(item => item.id === view)?.label ?? view} {onview} />
   {:else if view === "today"}
     <Home bind:this={home} {revision} {onview} />
   {:else if view === "brain"}
