@@ -434,6 +434,13 @@ impl Front {
         }
         if let Some(response) = crate::keys::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if let Some(response) = crate::effects::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
+        // The module routes ported to Rust over the workspace database (crate::ported).
+        if !upgrade && crate::ported::owns(&target.path, mutation) {
+            let target = parse_target(&forward_target)?;
+            let body = if mutation { crate::ported::no_query(&target)?; let length = content_length(request.headers())?; Some(json_object(&read_body(request.into_body(), length).await?)?) } else { None };
+            let answer = tokio::task::block_in_place(|| crate::ported::answer(&self.workspace, &self.bootstrap, &target, body))?;
+            return Ok(send_json(StatusCode::OK, &answer, method == Method::HEAD));
+        }
         if mutation {
             // Native desktop commands additionally require an explicit page origin.
             if target.path == "/api/desktop/command" && !request.headers().contains_key("origin") {

@@ -17,6 +17,9 @@ http-body-util = "0.1.5"
 libc = "0.2.191"
 hyper = { version = "1.12", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
+# IANA time zones for the ported calendar and goals (crate::ported::time), the database
+# compiled in as Python's `tzdata` ships it, so every platform resolves the same zones.
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-fat", "tzdb-bundle-always"] }
 minisign-verify = "0.2.5"
 percent-encoding = "2.3"
 # `kitty.core.sources.safe_error`'s redaction patterns (crate::bootstrap).

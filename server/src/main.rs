@@ -14,12 +14,14 @@
 mod auth;
 mod bootstrap;
 mod builds;
+mod calendar;
 mod effects;
 mod front;
 mod keys;
 mod migrations;
 mod modules;
 mod packs;
+mod ported;
 mod private;
 mod settings;
 mod startup;
