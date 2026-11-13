@@ -233,10 +233,43 @@ export const THEMES: readonly ThemeTokens[] = [
     backdrop: "plain",
   },
   {
-    // Q10 A+B+C: frosted pink glass over a blossom backdrop (kitty/), a pastel palette
-    // with real roles: sakura accent apart from dusty structure, six distinct data hues.
+    // The default (design-lab Round 1): Apple's product-page black. No accent: `signal` is the ink, so the
+    // primary is inverted (white on black). Greys step one value at a time; the six data colours are a
+    // lightness ramp, so groups never need a hue. Red stays for danger only. Flat, with a frosted top bar (kitty/).
     id: "kitty",
     label: "Kitty",
+    scheme: "dark",
+    roles: {
+      void: "#000000",
+      panel: "#161617",
+      inset: "#0b0b0c",
+      raised: "#1d1d1f",
+      line: "#2c2c2e",
+      lineHot: "#f5f5f7",
+      ink: "#f5f5f7",
+      mute: "#a1a1a6",
+      dim: "#86868b",
+      structure: "#d2d2d7",
+      signal: "#f5f5f7",
+      go: "#d2d2d7",
+      reference: "#d2d2d7",
+      caution: "#d2d2d7",
+      alternate: "#a1a1a6",
+      danger: "#ff6961",
+    },
+    graph: ["#f5f5f7", "#d2d2d7", "#a1a1a6", "#86868b", "#6e6e73", "#48484a"],
+    shadow: "#000000",
+    surface: { style: "flat", alpha: OPAQUE, radius: 12 },
+    focus: "ring",
+    selection: "pill",
+    motion: "calm",
+    backdrop: "plain",
+  },
+  {
+    // Q10 A+B+C, the former default: frosted pink glass over a blossom backdrop (blossom/), a pastel
+    // palette with real roles: sakura accent apart from dusty structure, six distinct data hues.
+    id: "blossom",
+    label: "Blossom",
     scheme: "dark",
     roles: {
       void: "#1a1319",

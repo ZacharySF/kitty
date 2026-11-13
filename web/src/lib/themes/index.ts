@@ -22,6 +22,7 @@ export const BUILD_CSS_ID = "kitty-build-css";
  */
 const MODULES: Partial<Record<ThemeId, () => Promise<{ default: ThemeModule }>>> = {
   kitty: () => import("./kitty"),
+  blossom: () => import("./blossom"),
   "liquid-glass": () => import("./liquid-glass"),
   scythe: () => import("./scythe"),
   speed: () => import("./speed"),

@@ -4,7 +4,7 @@
 // pixel, that the theme's surface style really applies, and the focus ornament; then that
 // Reduce motion (setting and OS) stops theme motion and that switching themes swaps the
 // motif layer without a reload. Last, every theme's frame rate and scrolling stay within
-// Kitty's budget measured in the same run, and SPEED's painted art renders in WebKit (the
+// Blossom's budget (the former default) measured in the same run, and SPEED's painted art renders in WebKit (the
 // desktop app's engine; skipped when Playwright has no WebKit).
 // Run from web/ with Node >=22 and a matching Playwright Chromium (and WebKit):
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
@@ -19,7 +19,7 @@ import { THEMES } from "../src/lib/themes/catalog.ts";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const VIEWPORT = { width: 1100, height: 760 };
 /** Themes that ship a motif module (lib/themes/<id>/). */
-const MODULES = ["kitty", "liquid-glass", "scythe", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"];
+const MODULES = ["kitty", "blossom", "liquid-glass", "scythe", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"];
 let server;
 let browser;
 let base;
@@ -254,7 +254,8 @@ describe("theme motion yields to Reduce motion", () => {
     });
   }
 
-  for (const id of MODULES.filter((id) => THEMES.some((theme) => theme.id === id))) {
+  // Kitty (the default) has a module but no motif art, so nothing ambient to stop.
+  for (const id of MODULES.filter((id) => id !== "kitty" && THEMES.some((theme) => theme.id === id))) {
     test(`${id}: ambient and transition motion stop under the setting and the OS preference`, async () => {
       const theme = THEMES.find((entry) => entry.id === id);
       const expected = { calm: "320ms", fluid: "240ms", snappy: "120ms" }[theme.motion];
@@ -282,8 +283,8 @@ describe("theme motion yields to Reduce motion", () => {
 });
 
 describe("switching themes swaps the motif layer without a reload", () => {
-  test("Kitty → Liquid Glass → Harness → Kitty", async () => {
-    const { page, problems, context } = await harness("kitty");
+  test("Blossom → Liquid Glass → Harness → Blossom", async () => {
+    const { page, problems, context } = await harness("blossom");
     await page.evaluate(() => (window.__sameDocument = true));
     const motif = () =>
       page.evaluate(() => {
@@ -300,12 +301,12 @@ describe("switching themes swaps the motif layer without a reload", () => {
       });
 
     const kitty = await motif();
-    assert.equal(kitty.art, "kitty", "blossom backdrop");
-    assert.equal(kitty.motif, "kitty");
+    assert.equal(kitty.art, "blossom", "blossom backdrop");
+    assert.equal(kitty.motif, "blossom");
     assert.match(kitty.divider, /url\(/, "petal divider");
     assert.match(kitty.tick, /url\(/, "blossom tick");
-    assert.equal(kitty.empty, "kitty");
-    assert.equal(kitty.loader, "kitty");
+    assert.equal(kitty.empty, "blossom");
+    assert.equal(kitty.loader, "blossom");
 
     await switchTheme(page, "liquid-glass");
     const glass = await motif();
@@ -319,19 +320,19 @@ describe("switching themes swaps the motif layer without a reload", () => {
     assert.deepEqual([plain.art, plain.motif, plain.empty, plain.loader], [null, null, "default", "default"], "Harness has no motif module");
     assert.doesNotMatch(plain.divider, /url\(/);
 
-    await switchTheme(page, "kitty");
+    await switchTheme(page, "blossom");
     const back = await motif();
-    assert.equal(back.art, "kitty");
+    assert.equal(back.art, "blossom");
     assert.match(back.divider, /url\(/);
-    assert.equal(back.empty, "kitty");
+    assert.equal(back.empty, "blossom");
 
     assert.equal(await page.evaluate(() => window.__sameDocument), true, "the page did not reload");
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("Appearance → Theme motif off hides Kitty's marks but keeps its glass", async () => {
-    const { page, problems, context } = await harness("kitty", { appearance: { motif: false } });
+  test("Appearance → Theme motif off hides Blossom's marks but keeps its glass", async () => {
+    const { page, problems, context } = await harness("blossom", { appearance: { motif: false } });
     const state = await page.evaluate(() => ({
       divider: getComputedStyle(document.querySelector("hr.rule"), "::before").content,
       tick: getComputedStyle(document.querySelector("[data-tick]")).backgroundImage,
@@ -449,7 +450,7 @@ describe("pretti, BloodLuxe and half blood own their motif layers", () => {
       };
     });
 
-  test("pretti → BloodLuxe → half blood → Kitty swaps art, frame, bullets, dividers, loader and empty art", async () => {
+  test("pretti → BloodLuxe → half blood → Blossom swaps art, frame, bullets, dividers, loader and empty art", async () => {
     const { page, problems, context } = await harness("pretti");
     await page.evaluate(() => (window.__sameDocument = true));
 
@@ -480,9 +481,9 @@ describe("pretti, BloodLuxe and half blood own their motif layers", () => {
     assert.equal(half.loader, "halfblood");
     assert.ok(await page.locator('[data-theme-art="halfblood"] :is(.sun, .moon)').count() >= 2, "sun-eye and crescent-moon ornaments");
 
-    await switchTheme(page, "kitty");
+    await switchTheme(page, "blossom");
     const back = await layers(page);
-    assert.deepEqual([back.art, back.frame, back.empty], ["kitty", null, "kitty"]);
+    assert.deepEqual([back.art, back.frame, back.empty], ["blossom", null, "blossom"]);
 
     assert.equal(await page.evaluate(() => window.__sameDocument), true, "the page did not reload");
     assert.deepEqual(problems, []);
@@ -507,7 +508,7 @@ describe("pretti, BloodLuxe and half blood own their motif layers", () => {
   }
 });
 
-describe("every theme paints within Kitty's budget, measured in the same run", () => {
+describe("every theme paints within Blossom's budget, measured in the same run", () => {
   /** Frames per second over `span` ms of animation-frame callbacks. */
   const frameRate = (page, span) =>
     page.evaluate(
@@ -554,27 +555,27 @@ describe("every theme paints within Kitty's budget, measured in the same run", (
     await context.close();
     return { idle, scroll, longest, scrolled, problems };
   }
-  // Relative budgets: a theme may cost up to 1.5× Kitty's frame time; a long task fails past
-  // 100 ms, or past 1.5× Kitty's own when the machine is slow enough that Kitty has them too.
+  // Relative budgets: a theme may cost up to 1.5× Blossom's frame time; a long task fails past
+  // 100 ms, or past 1.5× Blossom's own when the machine is slow enough that Blossom has them too.
   const within = (theme, kitty) =>
     theme.idle >= kitty.idle / 1.5 && theme.scroll >= kitty.scroll / 1.5 && theme.longest <= Math.max(100, kitty.longest * 1.5);
   const show = (run) => `idle ${run.idle.toFixed(0)} fps, scrolling ${run.scroll.toFixed(0)} fps, longest task ${run.longest.toFixed(0)} ms`;
 
   let kitty;
   before(async () => {
-    kitty = await measure("kitty");
+    kitty = await measure("blossom");
   });
 
-  for (const theme of THEMES.filter((entry) => entry.id !== "kitty")) {
-    test(`${theme.label}: idle and scrolling frame rates within 1.5× Kitty's frame time, no long task while a list scrolls`, async () => {
+  for (const theme of THEMES.filter((entry) => entry.id !== "blossom")) {
+    test(`${theme.label}: idle and scrolling frame rates within 1.5× Blossom's frame time, no long task while a list scrolls`, async () => {
       let run = await measure(theme.id);
       // One retry against a fresh baseline, so a load spike on a shared machine is not a failure.
       if (!within(run, kitty)) {
-        kitty = await measure("kitty");
+        kitty = await measure("blossom");
         run = await measure(theme.id);
       }
       assert.ok(kitty.scrolled > 0 && run.scrolled > 0, "the wheel scrolled the long list");
-      assert.ok(within(run, kitty), `${theme.label}: ${show(run)}; Kitty: ${show(kitty)}`);
+      assert.ok(within(run, kitty), `${theme.label}: ${show(run)}; Blossom: ${show(kitty)}`);
       assert.deepEqual(run.problems, []);
     });
   }

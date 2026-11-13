@@ -102,7 +102,7 @@ test("an outside editor's save restyles both windows, drops removed tokens and f
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".workbench")).outlineColor === "rgb(0, 255, 0)");
     assert.equal(await property(page, "--probe"), "");
     // Back on the default Kitty theme's own ink.
-    assert.equal(await property(page, "--br-ink"), "#f5e8ee");
+    assert.equal(await property(page, "--br-ink"), "#f5f5f7");
     assert.equal(await scopedCss(page), `@scope (#app) {\n${css}\n}`);
   }
   // The open editor had no unsaved edits, so it shows the file as written.

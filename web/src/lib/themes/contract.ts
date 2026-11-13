@@ -58,6 +58,7 @@ export type ThemeId =
   | "gruvbox"
   | "one-dark"
   | "kitty"
+  | "blossom"
   | "scythe"
   | "liquid-glass"
   | "speed"

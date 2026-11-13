@@ -98,7 +98,7 @@ export const DEFAULT_BUILD: Build = {
     atlas: { hidden: [] },
     notes: { pen_only: false },
     terminal: { coding_agent: "omp" },
-    appearance: { title_font: "fraunces", density: "compact", motion: "full", motif: true, background: "nebula" },
+    appearance: { title_font: "plain", density: "compact", motion: "full", motif: true, background: "nebula" },
     home: { look: "brain" },
     brain: {
       layout: "anatomy", group_by: "section", labels: "hover", turning: true, speed: 1, lines: false,
@@ -201,7 +201,7 @@ export function collectLegacy(storage: Reader): { patch: { ui?: Record<string, u
   const appearance = parse(read("kitty.appearance"));
   if (isObject(appearance)) {
     ui.appearance = {
-      title_font: oneOf(appearance.titleFont, ["fraunces", "plain"] as const, "fraunces"),
+      title_font: oneOf(appearance.titleFont, ["fraunces", "plain"] as const, "plain"),
       density: oneOf(appearance.density, ["compact", "comfortable"] as const, "compact"),
       motion: oneOf(appearance.motion, ["full", "reduced"] as const, "full"),
       motif: typeof appearance.motif === "boolean" ? appearance.motif : true,

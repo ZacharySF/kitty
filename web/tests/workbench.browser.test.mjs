@@ -2148,7 +2148,7 @@ describe("notes canvas background", () => {
       return node?.width > 0 && Math.abs(node.getBoundingClientRect().width - node.closest(".canvas-stage").clientWidth) < 1;
     });
     const kitty = await sample();
-    assert.equal(kitty.void, "#1a1319", "the default theme is not Kitty");
+    assert.equal(kitty.void, "#000000", "the default theme is not Kitty");
     assert.deepEqual(kitty.colours, [kitty.void], "the empty canvas is not one flat void colour (grid, dots or nebula showed)");
     await page.evaluate(async () => (await import("/src/lib/build.svelte.ts")).setTheme("harness"));
     await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim() === "#141414");

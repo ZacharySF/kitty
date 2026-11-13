@@ -24,7 +24,8 @@ export type Appearance = {
 /** Dispatched on `window` after the appearance changes; `detail` is the Appearance. */
 export const APPEARANCE_EVENT = "kitty:appearance";
 export const DEFAULT_APPEARANCE: Appearance = {
-  titleFont: "fraunces",
+  // Design labs (Type): titles in the text face; Fraunces stays an option and in Cozy.
+  titleFont: "plain",
   density: "compact",
   motion: "full",
   motif: true,
@@ -37,7 +38,7 @@ export const PRESETS: readonly Preset[] = [
     id: "cozy",
     name: "Cozy",
     blurb: "Blossoms and drifting petals, Fraunces titles, roomier text, 3D section graphs.",
-    theme: "kitty",
+    theme: "blossom",
     look: "3d",
     appearance: { titleFont: "fraunces", density: "comfortable", motion: "full", motif: true, background: "petals" },
   },
@@ -47,7 +48,7 @@ export const PRESETS: readonly Preset[] = [
     blurb: "Dense text, reduced motion, flat 2D section graphs and no decoration.",
     theme: "kitty",
     look: "2d",
-    appearance: { titleFont: "fraunces", density: "compact", motion: "reduced", motif: false, background: "nebula" },
+    appearance: { titleFont: "plain", density: "compact", motion: "reduced", motif: false, background: "nebula" },
   },
   {
     id: "minimal",

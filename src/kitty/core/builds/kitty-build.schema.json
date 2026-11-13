@@ -105,7 +105,7 @@
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
           "description": "A built-in theme. An unknown name (say, from a newer rika!) is a warning and falls back to the default.",
-          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "scythe", "liquid-glass", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"],
+          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "blossom", "scythe", "liquid-glass", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"],
           "default": "kitty"
         },
         "tokens": {
@@ -174,7 +174,7 @@
           "additionalProperties": false,
           "description": "Settings → Appearance: the look choices besides the theme.",
           "properties": {
-            "title_font": {"enum": ["fraunces", "plain"], "default": "fraunces"},
+            "title_font": {"enum": ["fraunces", "plain"], "default": "plain"},
             "density": {"enum": ["compact", "comfortable"], "default": "compact"},
             "motion": {"enum": ["full", "reduced"], "default": "full"},
             "motif": {"type": "boolean", "description": "The theme's motif layer (bullets, ticks, dividers, ornaments).", "default": true},
