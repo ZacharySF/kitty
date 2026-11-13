@@ -212,6 +212,7 @@ def test_the_model_loop_streams_calls_tools_and_escalates_on_a_validation_failur
     assert headers["authorization"] == "Bearer synthetic-openrouter-test-key"
     assert first["stream"] is True and first["provider"]["allow_fallbacks"] is False
     assert first["provider"]["data_collection"] == "deny" and first["provider"]["max_price"]["prompt"] == pytest.approx(1.0)
+    assert first["provider"]["max_price"]["request"] == 0 and "image" not in first["provider"]["max_price"]
     assert {tool["function"]["name"] for tool in first["tools"]} >= {"add_card", "create_event", "search", "open_view"}
     assert "start_worker" not in {tool["function"]["name"] for tool in first["tools"]}  # terminal module is off
     rejected = json.loads(openrouter.requests[1][1]["messages"][-1]["content"])
