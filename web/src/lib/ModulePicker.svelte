@@ -120,11 +120,11 @@
         </div>
       {/each}
       {#if !question || showAll || themes.length}
-        <div class="row" data-module="themes">
+        <div class="row" data-themes>
           <button type="button" class="switch" role="switch" id={`${uid}-themes`} aria-checked={themes.length > 0} aria-label="Themes"
             aria-describedby={`${uid}-themes-about`} onclick={() => keepThemes(themes.length ? [] : STARTER_THEMES)}><i></i></button>
           <label class="name" for={`${uid}-themes`}>Themes</label>
-          <span class="about" id={`${uid}-themes-about`}>Other looks for the whole app.</span>
+          <span class="about" id={`${uid}-themes-about`}>Other looks for the whole app</span>
           <span class="end">{#if themes.length}<span class="quiet">{themes.length} of {EXTRA_THEMES.length}</span>{/if}</span>
         </div>
         {#if themes.length}

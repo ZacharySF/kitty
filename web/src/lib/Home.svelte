@@ -14,7 +14,7 @@
   import type { Bootstrap } from "./api";
   import { buildStore, setPreferences } from "./build.svelte";
   import { HOME_WIDGETS, MAX_COLUMNS, RIKA_LIMITS, WIDTH_LIMITS, columnShares, placeWidget, resolveHome, rikaShare, savedHome, spareWidgets, splitWidths, type HomeWidgetId } from "./home/layout";
-  import { homeEditor } from "./home/templatePicker.svelte";
+  import { homeEditor, templatePicker } from "./home/templatePicker.svelte";
   import TemplateSuggestion from "./home/TemplateSuggestion.svelte";
   import { activeModules } from "./modules.svelte";
   import RikaPanel from "./rika/RikaPanel.svelte";
@@ -51,6 +51,9 @@
   let draftRika = $state<number | null>(null);
   const shares = $derived(columnShares(draftWidths ?? buildStore.build.ui.home.widths, columns.length));
   const rikaWidth = $derived(draftRika ?? buildStore.build.ui.home.rika);
+  /** Rika's panel can leave home too: "rika" among the build's hidden widgets. The drawer still opens with Ctrl + J. */
+  let draftPanel = $state<boolean | null>(null);
+  const panel = $derived(draftPanel ?? !buildStore.build.ui.home.hidden.includes("rika"));
   let board = $state<HTMLElement>();
   let home = $state<HTMLElement>();
   /** Which splitter the pointer holds. */
@@ -97,13 +100,15 @@
     // Plain copies: the draft and the build are reactive proxies, which the save cannot clone.
     const next = savedHome($state.snapshot(draft) ?? [], $state.snapshot(buildStore.build.ui.home), enabled);
     const sized = { widths: draftWidths ? $state.snapshot(draftWidths) : $state.snapshot(buildStore.build.ui.home.widths), rika: draftRika ?? buildStore.build.ui.home.rika };
-    if (!(await setPreferences({ ui: { home: { ...next, ...sized } } }))) {
+    const hidden = [...next.hidden.filter((id) => id !== "rika"), ...(panel ? [] : ["rika"])];
+    if (!(await setPreferences({ ui: { home: { ...next, hidden, ...sized } } }))) {
       failure = "Could not save the arrangement.";
       return;
     }
     draft = null;
     draftWidths = null;
     draftRika = null;
+    draftPanel = null;
     homeEditor.on = false;
   }
   function place(id: HomeWidgetId, column: number, before?: HomeWidgetId) {
@@ -154,7 +159,7 @@
   }
 </script>
 
-<div class="home" data-tutorial="home" bind:this={home} style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null}>
+<div class="home" class:solo={!editing && !panel && !templatePicker.open} data-tutorial="home" bind:this={home} style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null}>
   <div class="board" class:editing class:sized={columns.length === 2} bind:this={board} role="region" aria-label="Home widgets"
     style:--board-columns={columns.length === 2 ? `minmax(0, ${shares[0]}fr) minmax(0, ${shares[1]}fr)` : null}>
     {#each columns as column, index (index)}
@@ -223,9 +228,13 @@
           {/each}
         </ul>
       {:else}<p class="quiet">Every widget is on home.</p>{/if}
+      <ul>
+        <li><span>Rika's panel</span><button type="button" class="text-button" onclick={() => (draftPanel = !panel)}>{panel ? "Remove" : "Add"}</button></li>
+      </ul>
       {#if failure}<p class="quiet" role="alert">{failure}</p>{/if}
     </aside>
-  {:else}
+  {:else if panel || templatePicker.open}
+    <!-- With the panel off home, the template offer (the palette's Templates) still shows in it. -->
     <RikaPanel id={`${homeId}-rika`} active={pane.active}>
       {#snippet lead()}<TemplateSuggestion {counts} />{/snippet}
     </RikaPanel>
@@ -248,6 +257,9 @@
     grid-template-columns: minmax(0, 1fr) var(--rika-column);
     grid-template-rows: minmax(0, 1fr);
     gap: 48px;
+  }
+  .home.solo {
+    grid-template-columns: minmax(0, 1fr);
   }
   .board {
     min-width: 0;

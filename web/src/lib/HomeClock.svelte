@@ -25,6 +25,7 @@
 <style>
   p {
     margin: 0;
+    color: var(--ink);
     font: 300 56px/1.1 var(--font-ui);
     letter-spacing: -0.03em;
     font-variant-numeric: tabular-nums;
