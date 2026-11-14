@@ -6,7 +6,7 @@
  * Pure, so Node tests can import it.
  */
 import type { ModuleId } from "../api";
-import { HOME_WIDGETS, type HomeLayout, type HomeWidgetId } from "./layout";
+import { HOME_WIDGETS, type HomeLayout, type HomeWidgetId } from "./layout.ts";
 
 export type TemplateId = "student" | "job-search" | "builder" | "minimal";
 export interface Template {

@@ -163,6 +163,11 @@
     gap: 8px;
     margin-bottom: 14px;
   }
+  /* An answer not chosen is still a control: a hairline outline, no fill. */
+  :global(:root body) .uses .pill {
+    border: 1px solid var(--border);
+    background: transparent;
+  }
   :global(:root body) .uses .pill[aria-pressed="true"] {
     border-color: var(--ink);
     background: var(--ink);
@@ -198,14 +203,11 @@
     font-weight: 500;
     cursor: pointer;
   }
-  /* One line; the whole of it is in the tooltip. */
+  /* Wraps to a second line rather than cutting a sentence short. */
   .about {
     min-width: 0;
-    overflow: hidden;
     color: var(--muted);
     line-height: 1.45;
-    white-space: nowrap;
-    text-overflow: ellipsis;
   }
   .end {
     display: inline-flex;

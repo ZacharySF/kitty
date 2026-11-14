@@ -291,7 +291,7 @@
   .welcome-tools { display: flex; justify-content: flex-end; gap: 4px; padding: 10px 10px 0; }
   .brain { display: block; width: calc(100% - 40px); height: auto; aspect-ratio: 760 / 652; margin: 4px auto 20px; }
   .welcome-body { display: grid; gap: 10px; padding: 0 28px 28px; }
-  h1 { font: 600 var(--fs-title)/1.15 var(--font-ui); margin: 0 0 8px; text-align: center; min-width: 0; overflow-wrap: break-word; }
+  h1 { font: 400 var(--fs-title)/1.15 var(--font-ui); margin: 0 0 8px; text-align: center; min-width: 0; overflow-wrap: break-word; }
   .note { margin: 0; color: var(--muted); font-size: var(--fs-label); line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
   .google-g { flex: none; }
   :global(.br-btn:disabled) .google-g { filter: grayscale(1); opacity: .6; }

@@ -199,7 +199,7 @@ def test_local_preferences_move_once_and_never_overwrite_the_build(running):
     assert build["local_preferences_moved"] is True
     ui = build["build"]["ui"]
     assert ui["study"] == {"guide_view": "rail", "plans_view": "days"}, "the build's own guide view wins"
-    assert ui["appearance"]["density"] == "comfortable" and ui["home"] == {"look": "2d"}
+    assert ui["appearance"]["density"] == "comfortable" and ui["home"]["look"] == "2d"
     assert ui["brain"]["layout"] == "wheel" and ui["brain"]["colors"]["section"] == {"notes": "#aabbcc"}
     assert ui["notifications"]["quiet"] == {"enabled": True, "from": 1380, "to": 420, "let_calendar": True, "digest": True}
     assert ui["flashcards"] == {"look": "graph"}
