@@ -313,7 +313,7 @@ def serve(settings, config, tmp_path):
     static = tmp_path / "dist"
     static.mkdir(exist_ok=True)
     (static / "index.html").write_text("<!doctype html><title>Synthetic website</title>")
-    app = WebApplication(settings, config, static)
+    app = WebApplication(settings, config, static, ui_session="ui-test")
     server = LocalHTTPServer(app, 0)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
