@@ -4,6 +4,7 @@
  */
 import type { AgentNow } from "../agentSkills";
 import type { Guarantee } from "../agents/agents";
+import type { SessionUsage } from "../usage/usage";
 
 export type Id = number | string;
 export type Tier = "fast" | "standard" | "deep";
@@ -61,6 +62,8 @@ export type RikaAgent = {
   now?: AgentNow | null;
   /** The mediation guarantee of its pane's newest launch (Settings → Agents); absent from older servers. */
   guarantee?: Guarantee;
+  /** Its session's usage (Settings → AI → Usage); null while usage is off for its kind. */
+  usage?: SessionUsage | null;
 };
 
 /** Q7 A: the six areas a brain dump's plan is grouped by, in order. */

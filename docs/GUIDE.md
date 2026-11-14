@@ -306,6 +306,44 @@ shell accepts only an absolute path to a file named `SKILL.md` that rika! listed
   same list as `skills_off`, and its approval card names the skills switched off.
   Your own agent configuration files are never edited.
 
+### Agent usage
+
+**Settings → AI → Usage** shows what was spent over the last 30 days: the total
+cost, new tokens and cache reads, one stacked bar a day (point at a bar, or use the
+arrow keys, to read the day), a table of models, and the sessions used last. Rika's
+replies and reviewed AI requests are always there, read from rika!'s own records.
+
+- **Coding agents are off until you turn them on, per agent.** The three switches
+  (omp, Claude Code, Codex) are saved owner-only in `.private/agents/usage.json`.
+  While a kind is on, rika! reads that agent's own session logs on this computer
+  (`~/.omp/agent/sessions`, `~/.claude/projects` or `$CLAUDE_CONFIG_DIR`,
+  `~/.codex/sessions` or `$CODEX_HOME`; logs untouched for 90 days are left alone),
+  including sessions you started outside rika!. Turning a kind off deletes what was
+  read from its logs.
+- **Numbers only.** Kept per session: tokens (new input, cache reads, cache writes,
+  output) per five minutes and model, how full the context was at the last request,
+  tool calls, the count of files its edit tools named (the paths are kept only as
+  hashes), the model ids, the session id and the working directory. No prompt,
+  reply, title or tool argument is stored, and the page gets a session only as an
+  opaque key and its folder's name.
+- **Cost.** omp's logs carry its own cost. Claude Code and Codex are estimated at
+  list price from a table shipped with rika! (`src/kitty/core/agent_prices.json`)
+  and marked **≈**; a model the table does not know shows no cost. On a
+  subscription plan the estimate is not what you pay.
+- **When it reads.** Only while a page asks (`GET /api/usage`,
+  `GET /api/usage/session`), from where it stopped last time and at most every five
+  seconds; a long history is read in steps while the page says "Reading agent logs…".
+  A log line rika! cannot read is skipped and counted. Log formats change between
+  agent releases; Codex's was written from its published protocol, not from a log.
+- **On agent cards.** With a kind on, each running agent's card in home's **Agents**
+  widget and in Rika's Agents section adds one line: context used, new tokens, cache
+  reads, tool calls, files changed and cost.
+- **On home.** The **Agent session** widget shows one session: its context in large
+  type, a line of its new tokens over time, and the rest on one line. It follows the
+  session used last; **Pin** beside a session in Settings → AI → Usage keeps it on
+  that one, and **Follow latest** on the widget lets go. The widget shows only once a
+  session has been read.
+
 
 ## Try it on fake data first
 
@@ -1445,7 +1483,8 @@ to Settings → Modules. Ctrl Space also finds every section.
 **Focus** is the study timer on one line: the phase, the time left and one button
 (Start, Pause, or Resume and Stop) over a rule that drains as the phase runs. It is
 the same timer as Study's and the top bar's, so starting it in one place starts it in
-all.
+all. **Agent session** shows one coding-agent session's usage (see Agent usage under
+the Terminal module); it appears once usage is on for an agent.
 
 **Edit** under the widgets (or **Edit home** in Ctrl Space) unlocks home: drag a
 widget by its handle to another place or column (or focus the handle and use the

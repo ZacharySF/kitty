@@ -3,6 +3,7 @@
   import HomeAgents from "./HomeAgents.svelte";
   import HomeFocus from "./HomeFocus.svelte";
   import HomeQuickNote from "./HomeQuickNote.svelte";
+  import HomeSession from "./HomeSession.svelte";
   import HomeUpNext from "./HomeUpNext.svelte";
   import TodayAgenda from "./TodayAgenda.svelte";
   import type { Bootstrap } from "./api";
@@ -173,6 +174,7 @@
               {:else if widget === "note"}<HomeQuickNote id={`${homeId}-note`} {onview} />
               {:else if widget === "next"}<HomeUpNext id={`${homeId}-next`} {revision} {onview} />
               {:else if widget === "focus"}<HomeFocus id={`${homeId}-focus`} />
+              {:else if widget === "session"}<HomeSession id={`${homeId}-session`} placeholder={editing} />
               {:else}<HomeAgents id={`${homeId}-agents`} {onview} placeholder={editing} />{/if}
             </div>
           </div>

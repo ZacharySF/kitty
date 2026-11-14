@@ -6,6 +6,7 @@
   import { agentSkills } from "../agentSkills.svelte";
   import NowChip from "../NowChip.svelte";
   import GuaranteeBadge from "../agents/GuaranteeBadge.svelte";
+  import { usageLine } from "../usage/usage";
   import { rika } from "./session.svelte";
 
   /**
@@ -79,6 +80,7 @@
         </header>
         {#if agent.now}<div class="now-row"><NowChip now={agent.now} /></div>{/if}
         <p class="task">{agent.task || "No task yet"}</p>
+        {#if agent.usage}<p class="usage">{usageLine(agent.usage)}</p>{/if}
         <footer>
           <code title={agent.line}>{agent.line || "No output yet"}</code>
           {#if agent.status === "done"}<span class="off" aria-hidden="true">—</span>{:else}<time aria-label={`${agent.status} for ${clock(now - agent.since)}`}>{clock(now - agent.since)}</time>{/if}
@@ -147,6 +149,13 @@
     margin: 0;
     font-size: 12.5px;
     line-height: 1.35;
+  }
+  .usage {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
   }
   footer {
     display: flex;

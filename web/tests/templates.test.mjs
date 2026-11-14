@@ -45,11 +45,11 @@ test('the build schema accepts every template\'s arrangement and defaults to tod
     assert.ok(item.home.columns.length <= home.columns.maxItems);
     assert.ok(item.home.hidden.length <= home.hidden.maxItems);
   }
-  assert.deepEqual(resolveHome(DEFAULT_BUILD.ui.home, ['workspace', 'terminal']), [['agenda', 'note', 'focus'], ['next', 'agents']]);
+  assert.deepEqual(resolveHome(DEFAULT_BUILD.ui.home, ['workspace', 'terminal']), [['agenda', 'note', 'focus'], ['next', 'agents', 'session']]);
 });
 
 test('home draws only widgets whose module is on, keeps the saved order and adds what the file does not place', () => {
-  const saved = { columns: [['next', 'note'], ['agenda']], hidden: ['agents', 'focus'] };
+  const saved = { columns: [['next', 'note'], ['agenda']], hidden: ['agents', 'focus', 'session'] };
   assert.deepEqual(resolveHome(saved, ['workspace', 'terminal']), [['next', 'note'], ['agenda']]);
   // Up next also lists job reminders: ApplyAI alone still draws it; the notes widgets go.
   assert.deepEqual(resolveHome(saved, ['applyai']), [['next']]);
@@ -57,8 +57,10 @@ test('home draws only widgets whose module is on, keeps the saved order and adds
   // An id from a newer rika! stays in the file and is not drawn.
   assert.deepEqual(resolveHome({ columns: [['whiteboard', 'agenda']], hidden: [] }, ['workspace']), [['agenda', 'note', 'focus'], ['next']]);
   // A widget neither placed nor hidden joins its usual column.
-  assert.deepEqual(resolveHome({ columns: [['note']], hidden: [] }, ['workspace', 'terminal']), [['note', 'agenda', 'focus'], ['next', 'agents']]);
-  assert.deepEqual(resolveHome({ columns: [['note'], ['agenda']], hidden: ['next', 'agents', 'focus'] }, ['workspace', 'terminal']), [['note'], ['agenda']]);
+  assert.deepEqual(resolveHome({ columns: [['note']], hidden: [] }, ['workspace', 'terminal']), [['note', 'agenda', 'focus'], ['next', 'agents', 'session']]);
+  assert.deepEqual(resolveHome({ columns: [['note'], ['agenda']], hidden: ['next', 'agents', 'focus', 'session'] }, ['workspace', 'terminal']), [['note'], ['agenda']]);
+  // An arrangement saved before the Agent session widget existed gets it in its usual column.
+  assert.deepEqual(resolveHome({ columns: [['note'], ['agenda']], hidden: ['next', 'agents', 'focus'] }, ['workspace', 'terminal']), [['note'], ['agenda', 'session']]);
   // Hidden wins over a stale placement.
   assert.deepEqual(resolveHome({ columns: [['agenda', 'note', 'next']], hidden: ['next', 'agents', 'focus'] }, ['workspace']), [['agenda', 'note']]);
 });
@@ -74,7 +76,7 @@ test('edit mode moves a widget within and across columns, and Done saves what is
   // Dropping a widget on itself leaves it where it is; a new widget is simply added.
   assert.deepEqual(placeWidget(start, 'note', 0, 'note'), start);
   assert.deepEqual(placeWidget(start, 'focus', 1), [['agenda', 'note'], ['next', 'focus']]);
-  assert.deepEqual(spareWidgets(start, ['workspace', 'terminal']).map((widget) => widget.id), ['focus', 'agents']);
+  assert.deepEqual(spareWidgets(start, ['workspace', 'terminal']).map((widget) => widget.id), ['focus', 'agents', 'session']);
   assert.deepEqual(spareWidgets(start, ['workspace']).map((widget) => widget.id), ['focus']);
   // Emptied columns go; a drawable widget left off is hidden; one whose module is off is neither,
   // so it shows when its module comes on. What was hidden and is now placed is no longer hidden.
