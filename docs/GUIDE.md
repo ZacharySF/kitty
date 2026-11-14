@@ -662,6 +662,50 @@ extensions. Make these calls from the extension's side panel, popup or backgroun
 page; content scripts run in the web page and are not supported (Chrome's Local
 Network Access rules). Web page origins are always refused.
 
+### Phone (iPhone, Siri Shortcuts)
+
+An iPhone can add to rika! and ask Rika without an app, through Apple's Shortcuts.
+rika! opens a second, separate listener for phones, off until you turn it on in
+**Settings → Connected apps → Phone**:
+
+- **Off**, **This Wi-Fi** (this computer's address on your network) or **Tailscale**
+  (its tailnet address, which also works away from home). It listens on port 8771;
+  allow that port in the firewall (on NixOS:
+  `networking.firewall.allowedTCPPorts = [ 8771 ];`). On plain Wi-Fi a phone's token
+  travels unencrypted, so prefer Tailscale.
+- **Add a phone**: name it and choose what it may do: add to the Inbox; also ask Rika;
+  also show today. rika! shows a short address (for five minutes) to open in Safari on
+  the phone. That page shows the phone's address and token once, to copy into the
+  shortcut. **Remove** ends a phone's token at once.
+
+The listener answers only these, to a phone's own token (`Authorization: Bearer …`),
+and 404 for everything else; web pages are refused:
+
+| Route | Needs | Does |
+| --- | --- | --- |
+| `POST /phone/v1/capture` `{text}` or `{url, title?}` | Add to the Inbox | A line in the Inbox page; answers `{"say": "Added to your Inbox"}` |
+| `POST /phone/v1/rika` `{text}` | Ask Rika | One Rika request; `say` is Rika's reply, or "Rika is on it" after 8 seconds (the reply is then in rika!) |
+| `GET /phone/v1/today` | Show today | The next events and open tasks, for a widget |
+
+Each phone may make 30 requests a minute; five wrong tokens from one address make it
+wait a minute. Tokens and bodies are never logged.
+
+**The "Add to Rika" shortcut** (build it once in the Shortcuts app):
+
+1. *Dictate Text* (or *Ask for Input*); to use it from the Share Sheet too, turn on
+   **Show in Share Sheet** and use *Shortcut Input* when there is one.
+2. *Get Contents of URL*: URL `http://<address>:8771/phone/v1/capture` (or
+   `/phone/v1/rika` to ask Rika), Method **POST**, Headers `Authorization` =
+   `Bearer <token>`, Request Body **JSON** with `text` = the dictated text.
+3. *Get Dictionary Value* `say`, then *Speak Text*.
+
+Name it "Add to Rika" and say "Hey Siri, add to Rika". The shortcut also runs from
+the Home Screen, the Lock Screen, Control Center and the Action button.
+
+**A "today" widget** with the free Scriptable app: a script that requests
+`/phone/v1/today` with the same header and lists `events` and `tasks` shows the day
+on the Home Screen (the phone needs the "also show today" choice).
+
 ### Keys (API keys)
 
 rika! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:

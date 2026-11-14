@@ -23,6 +23,7 @@
   import QuietHours from "./QuietHours.svelte";
   import AccountSettings from "./AccountSettings.svelte";
   import ConnectedApps from "./ConnectedApps.svelte";
+  import PhoneSettings from "./PhoneSettings.svelte";
   import Keys from "./Keys.svelte";
   import ApplyAccounts from "./ApplyAccounts.svelte";
   import Devices from "./Devices.svelte";
@@ -249,6 +250,7 @@
         <TagSettings />
       {:else if shown === "connected-apps"}
         <ConnectedApps />
+        <PhoneSettings />
       {:else if shown === "agents"}
         <AgentSettings />
       {:else if shown === "keys"}
