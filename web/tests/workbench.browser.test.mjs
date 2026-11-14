@@ -362,7 +362,7 @@ describe("selected job views stay readable", () => {
 });
 
 describe("type system", () => {
-  test("the page title is Fraunces; headings and labels are Inter, never italic; the wordmark is Fredoka", async () => {
+  test("the title, headings and labels share the text face at 16px, never italic; the wordmark is Fredoka", async () => {
     const { page, problems, context } = await open("settings");
     await page.locator("h1").first().waitFor();
     const type = await page.evaluate(async () => {
@@ -388,14 +388,11 @@ describe("type system", () => {
         loadedFamilies: [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family.replace(/["']/g, "")),
       };
     });
-    assert.equal(type.body, "13px");
-    assert.equal(type.title?.family, "Fraunces Variable");
-    assert.equal(type.heading?.family, "Inter Variable");
-    assert.equal(type.panel?.family, "Inter Variable");
-    assert.equal(type.label?.family, "Inter Variable");
+    assert.equal(type.body, "16px");
+    for (const part of ["title", "heading", "panel", "label"]) assert.equal(type[part]?.family, "TeX Gyre Heros", part);
     assert.equal(type.label?.style, "normal");
     assert.equal(type.wordmark?.family, "Fredoka Variable");
-    for (const family of ["Fraunces Variable", "Fredoka Variable", "Inter Variable"])
+    for (const family of ["TeX Gyre Heros", "Fredoka Variable"])
       assert.ok(type.loadedFamilies.includes(family), `${family} was not downloaded and applied (loaded: ${type.loadedFamilies.join(", ")})`);
     for (const family of ["Space Grotesk Variable", "Newsreader Variable"])
       assert.ok(!type.loadedFamilies.includes(family), `${family} is still bundled`);
