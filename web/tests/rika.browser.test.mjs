@@ -358,6 +358,29 @@ test("an approval opens the drawer by itself without taking focus; Approve conti
   await context.close();
 });
 
+test("a check-in waits in the conversation without opening the drawer; a date question opens it", async () => {
+  const { page, rika, problems, context } = await harness();
+  await page.waitForFunction(() => true);
+  const question = (id, kind, text, choices) => ({
+    id, plan_kind: kind, status: "pending", decided_at: null, duration: 0, note: null, message_id: id + 100, request_id: id + 200, created_at: new Date().toISOString(),
+    items: [{ id: "q1", area: "tasks", title: text, detail: "", source: "", outward: false, count: null, picked: true, choice: 0, question: { text, choices }, result: null }],
+  });
+  // Rika's own question: nothing opens by itself.
+  rika.send({ type: "plan", plan: question(81, "checkin", "Did you finish “Email the lab report”?", ["Done", "Tomorrow", "Another day", "Drop"]) });
+  await page.waitForTimeout(400);
+  assert.equal(await drawer(page).count(), 0, "a check-in opened the drawer by itself");
+  // The answer to something just asked: the drawer opens, and the check-in is there too.
+  rika.send({ type: "plan", plan: question(82, "confirm", "Is “Lab report” on Fri 20 Nov or Fri 27 Nov?", ["Fri 20 Nov", "Fri 27 Nov"]) });
+  const history = drawer(page);
+  await history.getByRole("article", { name: "Date question" }).waitFor();
+  await history.getByRole("article", { name: "Check-in" }).getByRole("button", { name: "Tomorrow" }).waitFor();
+  // Once the date question is settled, the check-in alone does not hold the drawer open.
+  rika.send({ type: "plan", plan: { ...question(82, "confirm", "Is “Lab report” on Fri 20 Nov or Fri 27 Nov?", ["Fri 20 Nov", "Fri 27 Nov"]), status: "applied", decided_at: new Date().toISOString() } });
+  await history.waitFor({ state: "detached" });
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
 test("a drawer you opened yourself stays open after Reject, which the turn reports", async () => {
   const { page, rika, problems, context } = await harness();
   await ask(page, "Start an agent");

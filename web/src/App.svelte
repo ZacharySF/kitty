@@ -3,22 +3,19 @@
   import { api, type Bootstrap } from "./lib/api";
   import { navigation, navigationGroups, isView, notePageLink, viewEnabled, visibleGroups, type View } from "./lib/workspace";
   import { setActiveModules } from "./lib/modules.svelte";
-  import { Badge, Button } from "@nunera/bracket";
   import Icon from "./lib/Icon.svelte";
   import BrandMark from "./lib/BrandMark.svelte";
   import GettingStarted from "./lib/GettingStarted.svelte";
   import AddJob from "./lib/AddJob.svelte";
   import CommandPalette from "./lib/CommandPalette.svelte";
   import KeyboardHelp from "./lib/KeyboardHelp.svelte";
-  import NotificationBell from "./lib/NotificationBell.svelte";
+  import TabSwitcher from "./lib/TabSwitcher.svelte";
   import NotificationCenter from "./lib/NotificationCenter.svelte";
   import NotificationToasts from "./lib/NotificationToasts.svelte";
   import { notifier } from "./lib/notifications.svelte";
   import type { Notice } from "./lib/notify";
   import StudyFocusBar from "./lib/StudyFocusBar.svelte";
-  import ThemePicker from "./lib/ThemePicker.svelte";
   import WorkspacePane from "./lib/WorkspacePane.svelte";
-  import WorkspaceTabs from "./lib/WorkspaceTabs.svelte";
   import type { SaveStatus, WorkspaceTrail } from "./lib/workspaceContext.svelte";
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
   import { isCloseTabShortcut } from "./lib/tabShortcut";
@@ -41,7 +38,7 @@
     hasUnsavedChanges: () => boolean;
     focusGroup: (label: string) => void;
     focusSearch: () => void;
-    createCanvasTab: () => Promise<boolean>;
+    createCanvasPage: () => Promise<boolean>;
     handleKey: (event: KeyboardEvent) => Promise<boolean>;
   };
   type WorkspaceTab = {
@@ -50,10 +47,15 @@
     epoch: number;
     initialJobId: number | null;
     scrollY: number;
+    /** One tab system: a Notes tab shows one page, and is named after it. */
+    page: { id: number; title: string } | null;
     pane?: PaneHandle;
   };
   let nextTab = 1;
-  let tabs = $state<WorkspaceTab[]>([{ id: "workspace-1", view: "today", epoch: 0, initialJobId: null, scrollY: 0 }]);
+  function makeTab(id = `workspace-${++nextTab}`, view: View = "today", page: WorkspaceTab["page"] = null): WorkspaceTab {
+    return { id, view, epoch: 0, initialJobId: null, scrollY: 0, page };
+  }
+  let tabs = $state<WorkspaceTab[]>([makeTab("workspace-1")]);
   let activeId = $state("workspace-1");
   const activeTab = $derived(tabs.find(tab => tab.id === activeId) ?? tabs[0]);
   const view = $derived(activeTab.view);
@@ -77,15 +79,22 @@
   let quickCard = $state<{ deck: number | null } | null>(null);
   let revision = $state(0);
   let guideDialog = $state<HTMLDialogElement>();
-  let tabBar: { openMenu: (event: MouseEvent) => void; closeMenu: (restore?: boolean) => void } | undefined = $state();
+  let tabBar: { close: (restoreFocus?: boolean) => void } | undefined = $state();
   const title = $derived(navigation.find(item => item.id === view)?.label || "Workspace");
   const tabLabels = $derived(tabs.map(tab => ({
     id: tab.id,
-    label: tab.view === "today" ? "rika!" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
+    label: tab.view === "today" ? "Home" : tab.view === "notes" && tab.page ? tab.page.title || "Untitled"
+      : navigation.find(item => item.id === tab.view)?.label || "Workspace",
     icon: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.icon || "atlas",
-    tone: navigationGroups.find(group => group.views.includes(tab.view))?.tone ?? "var(--c1)",
     status: tab.pane?.saveStatus() ?? null,
   })));
+  /** The bar carries only the groups you move between; Settings is reached from search and the tab menu. */
+  const barGroups = $derived(groups.filter(group => group.label !== "Settings"));
+  const menuExtras = $derived([
+    { label: "Settings", run: () => openSettings() },
+    ...(workspace ? [{ label: "Notifications", detail: notifier.unread ? `${notifier.unread} unread` : "", run: () => (notifier.drawer = true) }] : []),
+    { label: "Keyboard shortcuts", detail: "?", run: () => (help = true) },
+  ]);
   const schemaLabel = $derived(
     ({ jobs: "Jobs", notes: "Notes", flashcards: "Flashcards", opportunities: "Opportunities", schema: "Mind maps" } as Partial<Record<View, string>>)[view] || title,
   );
@@ -117,13 +126,20 @@
       window.scrollTo(0, target.scrollY);
     } catch (cause) { error = (cause as Error).message; }
   }
-  async function newTab() {
-    tabBar?.closeMenu(false);
+  /** A page already open in another tab: that tab comes forward (true) instead of a second copy. */
+  function focusNotePage(from: string, page: number) {
+    const showing = tabs.find(tab => tab.id !== from && tab.view === "notes" && tab.page?.id === page);
+    if (!showing) return false;
+    void selectTab(showing.id);
+    return true;
+  }
+  async function newTab(view: View = "today", page: WorkspaceTab["page"] = null) {
+    tabBar?.close(false);
     panelFullscreen?.exit();
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       activeTab.scrollY = window.scrollY;
-      const tab: WorkspaceTab = { id: `workspace-${++nextTab}`, view: "today", epoch: 0, initialJobId: null, scrollY: 0 };
+      const tab = makeTab(undefined, view, page);
       tabs = [...tabs, tab];
       activeId = tab.id;
       route(tab);
@@ -139,14 +155,14 @@
     const wasActive = id === activeId;
     tabs = tabs.filter(tab => tab.id !== id);
     if (!tabs.length) {
-      const tab: WorkspaceTab = { id: `workspace-${++nextTab}`, view: "today", epoch: 0, initialJobId: null, scrollY: 0 };
+      const tab = makeTab();
       tabs = [tab];
       activeId = tab.id;
     } else if (wasActive) activeId = tabs[Math.min(index, tabs.length - 1)].id;
     if (wasActive) {
       route(activeTab, true);
       void tick().then(() => {
-        document.getElementById(`workspace-tab-${activeId}`)?.focus();
+        document.getElementById("main-content")?.focus({ preventScroll: true });
         window.scrollTo(0, activeTab.scrollY);
       });
     }
@@ -165,6 +181,7 @@
     moduleNotice = "";
     activeTab.view = next;
     activeTab.initialJobId = null;
+    activeTab.page = null;
     activeTab.epoch += 1;
     activeTab.scrollY = 0;
     route(activeTab);
@@ -175,25 +192,24 @@
     });
     return true;
   }
-  /** Module notices open Settings on its Modules page (`#settings/modules`). */
-  function openModuleSettings() {
-    if (navigate("settings")) window.history.replaceState(window.history.state, "", "#settings/modules");
+  /** Settings on one of its pages (`#settings/<page>`, e.g. `modules`, `appearance`). */
+  function openSettings(page = "") {
+    if (navigate("settings") && page) window.history.replaceState(window.history.state, "", `#settings/${page}`);
+  }
+  function openModuleSettings() { openSettings("modules"); }
+  /** Where a group opens: its first page other than home (the brand mark is home). */
+  function groupLanding(group: { views: View[] }) {
+    return group.views.find(item => item !== "today") ?? group.views[0];
   }
   /** A group's shortcut opens it as its header button does; on the Brain it finds the group on the map. */
   function focusGroup(label: string) {
     if (view === "brain") { activeTab.pane?.focusGroup(label); return; }
     const group = groups.find(item => item.label === label);
-    if (group && group.views[0] !== view) navigate(group.views[0]);
+    if (group && groupLanding(group) !== view) navigate(groupLanding(group));
   }
   function schemaRoot() {
     if (ownsTrail && trail.root) trail.root();
     else { activeTab.initialJobId = null; activeTab.epoch += 1; }
-  }
-  function schemaBack() {
-    if (!schemaNodes.length) { navigate("today"); return; }
-    const parent = schemaNodes.slice(0, -1).reverse().find(crumb => crumb.onclick);
-    if (parent?.onclick) parent.onclick();
-    else schemaRoot();
   }
   function openJob(id: number) { if (applyai && navigate("jobs")) activeTab.initialJobId = id; }
   /** Q1 C: terminals open as Tern windows; without a usable Tern, the Tern view says why. */
@@ -201,9 +217,14 @@
     try { await api("/terminal/tern/open", {}); } catch { navigate("tern"); }
   }
   function openNotice(notice: Notice) {
-    if (notice.target.kind === "rika") window.location.hash = goalHash(notice.target.goal_id);
-    else if (notice.target.kind === "calendar") navigate("calendar");
-    else if (notice.target.job_id !== null && applyai) openJob(notice.target.job_id);
+    const { target } = notice;
+    if (target.kind === "rika") {
+      // A Rika alert without a goal is a problem with the GitHub backup.
+      if (target.goal_id === null) openSettings("devices");
+      else window.location.hash = goalHash(target.goal_id);
+    }
+    else if (target.kind === "calendar") navigate("calendar");
+    else if (target.job_id !== null && applyai) openJob(target.job_id);
     else navigate("reminders");
   }
   // Reminder sources the active modules provide, plus Rika's urgent goal matches (always on);
@@ -212,7 +233,10 @@
   $effect(() => {
     if (!notifySources) return;
     const [calendar, job] = notifySources.split(":").map(value => value === "true");
-    return untrack(() => notifier.start({ calendar, job, rika: true }));
+    return untrack(() => {
+      notifier.onopen = openNotice;
+      return notifier.start({ calendar, job, rika: true });
+    });
   });
   function studyText(event: Event) {
     if (!studyTools) return;
@@ -263,8 +287,11 @@
     // A link to one page opens Notes on it, the way rika!'s own links between views do.
     const linkedPage = notePageLink(hash);
     if (linkedPage !== null) {
-      try { sessionStorage.setItem("kitty.notes.open-page", String(linkedPage)); } catch { /* The event still opens it. */ }
       window.history.replaceState(window.history.state, "", "#notes");
+      // A page already open in a tab: that tab comes forward instead of a second copy.
+      const showing = tabs.find(tab => tab.view === "notes" && tab.page?.id === linkedPage);
+      if (showing) { activeId = showing.id; route(showing, true); return; }
+      try { sessionStorage.setItem("kitty.notes.open-page", String(linkedPage)); } catch { /* The event still opens it. */ }
       window.dispatchEvent(new CustomEvent("kitty-open-note", { detail: { page_id: linkedPage } }));
     }
     const view = hash.split("/")[0];
@@ -282,6 +309,7 @@
       if (!mayLeaveEditor(target)) { route(activeTab, true); return; }
       target.view = next;
       target.initialJobId = null;
+      target.page = null;
       target.epoch += 1;
       target.scrollY = 0;
     }
@@ -338,7 +366,7 @@
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat) return;
-    tabBar?.closeMenu(false);
+    tabBar?.close(false);
     closeTab(activeId);
   }
   let planChord = false;
@@ -350,6 +378,20 @@
       void focusGroup("Plan");
     }
   }
+  /** Ctrl + Space opens search. Capture phase: element handlers that act on a bare Space never see the chord.
+   *  Ctrl + K stays, since input methods such as fcitx5 take Ctrl + Space inside text fields. */
+  function paletteChord(event: KeyboardEvent) {
+    if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.code !== "Space") return;
+    if (focusContext(event.target as HTMLElement | null) === "terminal") return;
+    if (document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) palette = true;
+  }
+  $effect(() => {
+    window.addEventListener("keydown", paletteChord, { capture: true });
+    return () => window.removeEventListener("keydown", paletteChord, { capture: true });
+  });
   async function keyboard(event: KeyboardEvent) {
     planChord = false;
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
@@ -360,9 +402,10 @@
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "t") {
       event.preventDefault();
       if (event.repeat) return;
-      tabBar?.closeMenu(false);
+      tabBar?.close(false);
       try {
-        if (!await activeTab.pane?.createCanvasTab()) await newTab();
+        // In a fullscreen canvas (no top bar), Ctrl T starts a new page there instead of a tab.
+        if (!await activeTab.pane?.createCanvasPage()) await newTab();
       } catch (cause) { error = (cause as Error).message; }
       return;
     }
@@ -378,11 +421,7 @@
     planChord = !typing && !event.repeat && !event.metaKey && !event.shiftKey && event.ctrlKey && event.altKey &&
       ["Alt", "Control"].includes(event.key) && !window.getSelection()?.toString() && !event.getModifierState("AltGraph");
     if (planChord) return;
-    if (!typing && !event.repeat && !event.metaKey && !event.shiftKey &&
-        !window.getSelection()?.toString() && !event.getModifierState("AltGraph")) {
-      const group = event.ctrlKey && !event.altKey ? ({ x: "Study", c: "Job search", v: "Settings" } as Record<string, string>)[event.key.toLowerCase()] : null;
-      if (group && groups.some(item => item.label === group)) { event.preventDefault(); await focusGroup(group); return; }
-    }
+    // Ctrl + X / C / V belong to the clipboard everywhere; groups are in the bar and in search.
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault(); palette = true; return;
     }
@@ -414,62 +453,52 @@
 <a href="#main-content" class="skip-link">Skip to content</a>
 <div class="workbench" class:atlas-home={fills}>
   <div class="workbench-top" bind:this={topBar}>
-  <header class="system-bar" role="group" aria-label="Workspace controls" oncontextmenu={(event) => tabBar?.openMenu(event)}>
-    {#if view !== "today"}<button class="schema-back" onclick={schemaBack} aria-label={schemaNodes.length ? "Back to parent schema" : "Back to rika! schema"} title="Back to parent schema">←</button>{/if}
-    <a class="wordmark" class:current-schema={view === "today"} href="#today" aria-label="rika! home" aria-current={view === "today" ? "page" : undefined} title="Main rika! schema" onclick={(event) => { event.preventDefault(); navigate("today"); }}>
-      <span class="brand-mark" aria-hidden="true"><BrandMark size={26} /></span>
-      <span class="word">rika<span class="brand-dot">!</span></span>
-    </a>
-    <nav class="breadcrumb" aria-label="Schema tabs">
-      {#if view !== "today"}
+  <header class="system-bar" role="group" aria-label="Workspace controls">
+    <div class="bar-start">
+      <a class="wordmark" class:current-schema={view === "today"} href="#today" aria-label="rika! home" aria-current={view === "today" ? "page" : undefined} title="Home" onclick={(event) => { event.preventDefault(); navigate("today"); }}>
+        <span class="brand-mark" aria-hidden="true"><BrandMark size={26} /></span>
+        <span class="word">rika<span class="brand-dot">!</span></span>
+      </a>
+      <!-- Breadcrumb only inside a nested schema (a notebook, a map, a job): the bar names where you are, no more. -->
+      {#if schemaNodes.length}<nav class="breadcrumb" aria-label="Schema path">
         <span class="separator" aria-hidden="true">›</span>
-        <button class="schema-tab" class:current-schema={!schemaNodes.length} aria-current={!schemaNodes.length ? "page" : undefined} onclick={schemaRoot} title={`Back to ${schemaLabel} schema`}>{schemaLabel}</button>
+        <button class="schema-tab" onclick={schemaRoot} title={`Back to ${schemaLabel}`}>{schemaLabel}</button>
         {#each schemaNodes as crumb, index}
           <span class="separator" aria-hidden="true">›</span>
-          {#if crumb.onclick}
-            <button class="schema-tab" class:current-schema={index === schemaNodes.length - 1} aria-current={index === schemaNodes.length - 1 ? "page" : undefined} onclick={crumb.onclick} title={crumb.label}>{crumb.label}</button>
+          {#if crumb.onclick && index < schemaNodes.length - 1}
+            <button class="schema-tab" onclick={crumb.onclick} title={crumb.label}>{crumb.label}</button>
           {:else}
             <span class="schema-tab current-schema" aria-current="page" title={crumb.label}>{crumb.label}</span>
           {/if}
         {/each}
-      {/if}
-    </nav>
+      </nav>{/if}
+    </div>
     <nav class="workspace-groups" aria-label="Workspace groups">
       {#if brainView}<button data-tutorial="brain" aria-current={view === "brain" ? "page" : undefined}
         onclick={() => navigate("brain")}>Brain</button>{/if}
-      {#each groups as group}<button aria-current={sectionGroup === group.label && view !== "brain" ? "page" : undefined}
-        title={`${group.label} (${group.shortcut})`}
-        onclick={() => navigate(group.views[0])}>{group.label}</button>{/each}
+      {#each barGroups as group}<button aria-current={sectionGroup === group.label && view !== "brain" && view !== "today" ? "page" : undefined}
+        title={group.shortcut ? `${group.label} (${group.shortcut})` : group.label}
+        onclick={() => navigate(groupLanding(group))}>{group.label}</button>{/each}
     </nav>
-    {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
-    {#if notifySources}<NotificationBell />{/if}
-    <ThemePicker />
-    <button
-      class="system-command"
-      onclick={() => (palette = true)}
-      aria-label={applyai ? "Search pages, jobs and commands" : "Search pages and commands"}
-      ><Icon name="jobs" size={15} /><span>Search anything</span><kbd
-        >Ctrl K</kbd
-      ></button
-    >
-    <Button
-      variant="ghost"
-      size="sm"
-      aria-label="Refresh workspace and configuration"
-      title="Reload configuration and refresh"
-      disabled={loading}
-      onclick={reload}><Icon name="refresh" size={17} /></Button
-    >
+    <div class="bar-end">
+      {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}
+      <TabSwitcher bind:this={tabBar} tabs={tabLabels} {activeId} extras={menuExtras} onselect={selectTab} onclose={closeTab} onnew={newTab} />
+      <button
+        class="system-command"
+        data-notification-anchor
+        onclick={() => (palette = true)}
+        aria-label={applyai ? "Search pages, jobs and commands" : "Search pages and commands"}
+        title="Search · Ctrl Space"
+        ><Icon name="jobs" size={18} /></button>
+    </div>
   </header>
-  <WorkspaceTabs bind:this={tabBar} tabs={tabLabels} {activeId} onselect={selectTab} onclose={closeTab} onnew={newTab} />
   </div>
   <main id="main-content" tabindex="-1" class:atlas-main={fills}>
     {#if workspace && view !== "settings"}<PairingPrompt onsettings={() => navigate("settings")} />{/if}
     {#if workspace}<EffectsPrompt />{/if}
     {#if workspace?.demo && !demoHidden}<div class="demo-notice">
-        <Badge label="DEMO" intent="warning" size="sm" />Synthetic workspace.
-        Local changes work; external actions are disabled.
-        <button class="icon-button" aria-label="Dismiss demo notice" onclick={() => (demoHidden = true)}>×</button>
+        <span>Demo workspace: local changes work, external actions are off.</span>
+        <button class="text-button" aria-label="Dismiss demo notice" onclick={() => (demoHidden = true)}>Dismiss</button>
       </div>{/if}
     {#if workspace?.modules.restart_required && view !== "settings"}<div class="demo-notice" role="status">
         Module changes are saved but not active yet. Restart rika! to apply them.
@@ -486,8 +515,8 @@
       </div>{/if}
     {#each tabs as tab (tab.id)}
       <div
-        id={`workspace-pane-${tab.id}`} role="tabpanel"
-        aria-labelledby={`workspace-tab-${tab.id}`}
+        id={`workspace-pane-${tab.id}`} role="region"
+        aria-label={tabLabels.find(label => label.id === tab.id)?.label}
         tabindex="0"
         data-kitty-panel="view"
         hidden={tab.id !== activeId} inert={tab.id !== activeId}
@@ -496,12 +525,15 @@
         <WorkspacePane
           bind:this={tab.pane} tabId={tab.id} view={tab.view}
           active={tab.id === activeId} {workspace} {revision}
-          epoch={tab.epoch} initialJobId={tab.initialJobId}
+          epoch={tab.epoch} initialJobId={tab.initialJobId} notePage={tab.page?.id ?? null}
           onchange={refresh}
           onview={next => { if (tab.id === activeId) navigate(next); }}
           onopenjob={id => { if (tab.id === activeId) openJob(id); }}
           onadd={() => { if (tab.id === activeId && applyai) addJob = true; }}
           onguide={() => { if (tab.id === activeId) showGuide(); }}
+          onnotepage={(id, title) => { tab.page = id ? { id, title } : null; }}
+          onfocusnotepage={id => focusNotePage(tab.id, id)}
+          onnotepagetab={id => void newTab("notes", { id, title: "" })}
         />
         {/if}
       </div>
@@ -546,6 +578,8 @@
     onreload={() => void reload()}
     onterminal={terminal ? () => void openTerminal() : undefined}
     onrika={() => rika.showDrawer()}
+    onsettings={openSettings}
+    onnotifications={notifySources ? () => (notifier.drawer = true) : undefined}
   />{/if}
 {#if help}<KeyboardHelp {enabled} onclose={() => (help = false)} />{/if}
 {#if quickCard && studyTools}<QuickCard deck={quickCard.deck} onclose={() => (quickCard = null)} />{/if}

@@ -1,61 +1,26 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { Button, Popover } from "@nunera/bracket";
-  import { api } from "./api";
   import TimerRing from "./TimerRing.svelte";
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
-  type Timer = {
-    revision: number;
-    status: "idle" | "running" | "paused";
-    phase: "priming" | "focus" | "short_break";
-    phase_id: string | null;
-    session_id: string | null;
-    completed_at: string | null;
-    completed_phase_id: string | null;
-    completed_phase: "priming" | "focus" | "short_break" | null;
-    deadline_at: string | null;
-    remaining_seconds: number;
-    duration_seconds?: number;
-    cycle?: number;
-    notes?: string;
-  };
-  type Result = {
-    timer: Timer;
-    server_now: string;
-    settings?: { sound: boolean; notifications: boolean };
-  };
-  let timerState = $state<Result | null>(null);
-  let now = $state(Date.now());
-  let offset = $state(0);
-  let busy = $state(false);
-  let offline = $state(false);
-  let error = $state("");
+  import { studyTimer, type TimerResult as Result } from "./studyTimer.svelte";
+  import { sendSystem } from "./systemNotify";
+  /** The top bar's timer: the shared study timer (studyTimer.svelte.ts), its sound and phase alerts. */
+  const timerState = $derived(studyTimer.result);
+  const remaining = $derived(studyTimer.remaining);
+  const clock = $derived(studyTimer.clock);
+  const phase = $derived(studyTimer.phase);
+  const busy = $derived(studyTimer.busy);
+  const offline = $derived(studyTimer.offline);
+  const error = $derived(studyTimer.error);
+  const act = (action: string) => studyTimer.act(action);
   let alert = $state("");
   let soundReady = $state(false);
   let soundError = $state("");
   let open = $state(false);
-  let mounted = false;
-  let loading = false;
   let audio: AudioContext | null = null;
   let alerted = "";
-  const cacheKey = "kitty-study-focus-bar";
-  const remaining = $derived(
-    timerState?.timer.status === "running" && timerState.timer.deadline_at
-      ? Math.max(
-          0,
-          Math.ceil(
-            (Date.parse(timerState.timer.deadline_at) - now - offset) / 1000,
-          ),
-        )
-      : Math.ceil(timerState?.timer.remaining_seconds || 0),
-  );
-  const clock = $derived(
-    `${Math.floor(remaining / 60)
-      .toString()
-      .padStart(2, "0")}:${(remaining % 60).toString().padStart(2, "0")}`,
-  );
-  const phase = $derived(timerState?.timer.phase === "priming" ? "Priming" : timerState?.timer.phase === "focus" ? "Focus" : "Break");
   const attention = $derived(Boolean(alert || error || soundError));
 
   // Background pointer/key gestures retry silently; only an explicit Start,
@@ -132,115 +97,38 @@
           soundError = "Phase complete. Sound is not enabled in this tab. Enable sound for the next phase; visual alerts remain active.";
         }
       }
-      if (!notified && result.settings?.notifications && "Notification" in window && Notification.permission === "granted") {
-        try {
-          new Notification("rika! study", { body: alert, tag: "kitty-study-phase" });
-          try { localStorage.setItem("kitty-study-last-notification", key); } catch { /* Optional storage. */ }
-        } catch {
-          error = "Desktop notifications are unavailable. Visual phase alerts remain active.";
-        }
+      if (!notified && result.settings?.notifications) {
+        // Claimed before sending, so two tabs never both notify.
+        try { localStorage.setItem("kitty-study-last-notification", key); } catch { /* Optional storage. */ }
+        void sendSystem({ key: "kitty-study-phase", title: "Study", body: alert, actions: false });
       }
     };
     // The shared lock makes check/play/claim atomic across tabs in supporting browsers.
     if (navigator.locks) await navigator.locks.request("kitty-study-phase-alert", notify);
     else notify();
   }
-  async function load() {
-    if (loading) return;
-    loading = true;
-    try {
-      const result = await api<Result>("/study/timer");
-      timerState = result;
-      offset = Date.parse(result.server_now) - Date.now();
-      offline = false;
-      void announce(result);
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(result));
-      } catch {
-        /* Server remains authoritative. */
-      }
-    } catch (cause) {
-      offline = true;
-      error = (cause as Error).message;
-    } finally {
-      loading = false;
-    }
-  }
-  async function act(action: string) {
-    if (!timerState || busy || offline) return;
-    if (
-      action === "stop" &&
-      !confirm(
-        "Discard unfinished focus time? Completed sessions remain saved.",
-      )
-    )
-      return;
-    unlockSound();
-    busy = true;
-    error = "";
-    try {
-      await api("/study/timer", {
-        action,
-        revision: timerState.timer.revision,
-        request_id: crypto.randomUUID(),
-      });
-      await load();
-      window.dispatchEvent(new CustomEvent("kitty-study-changed"));
-    } catch (cause) {
-      error = (cause as Error).message;
-      await load();
-    } finally {
-      busy = false;
-    }
-  }
   onMount(() => {
-    mounted = true;
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        timerState = JSON.parse(cached);
-        offline = true;
-      }
-    } catch {
-      /* Ignore malformed cache. */
-    }
-    void load();
-    const tick = window.setInterval(() => {
-      now = Date.now();
-      if (timerState?.timer.status === "running" && remaining === 0)
-        void load();
-    }, 250);
-    const refresh = window.setInterval(() => {
-      if (!busy) void load();
-    }, 2000);
-    const wake = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    const changed = () => void load();
+    const release = studyTimer.use();
     document.addEventListener("pointerdown", unlockSound);
     document.addEventListener("keydown", unlockSound);
     window.addEventListener("kitty-study-unlock-sound", unlockSound);
-    document.addEventListener("visibilitychange", wake);
-    window.addEventListener("focus", changed);
-    window.addEventListener("online", changed);
-    window.addEventListener("kitty-study-changed", changed);
     return () => {
-      mounted = false;
-      window.clearInterval(tick);
-      window.clearInterval(refresh);
+      release();
       document.removeEventListener("pointerdown", unlockSound);
       document.removeEventListener("keydown", unlockSound);
       window.removeEventListener("kitty-study-unlock-sound", unlockSound);
-      document.removeEventListener("visibilitychange", wake);
-      window.removeEventListener("focus", changed);
-      window.removeEventListener("online", changed);
-      window.removeEventListener("kitty-study-changed", changed);
       void audio?.close();
     };
   });
+  // Each fresh answer may carry a phase that just ended.
   $effect(() => {
-    revision;
-    if (mounted) void load();
+    if (studyTimer.loads) untrack(() => { if (studyTimer.result) void announce(studyTimer.result); });
+  });
+  let seenRevision = revision;
+  $effect(() => {
+    if (revision === seenRevision) return;
+    seenRevision = revision;
+    void studyTimer.load();
   });
 </script>
 
@@ -277,7 +165,7 @@
         {/if}
         {#if alert}<p role="status">{alert} <Button size="sm" onclick={() => (alert = "")}>Dismiss</Button></p>{/if}
         {#if soundError}<p class="sound-warning" role="alert">{soundError}</p>{/if}
-        {#if error}<p class="error" role="status">{error} <Button size="sm" onclick={() => { error = ""; void load(); }}>Reconnect</Button></p>{/if}
+        {#if error}<p class="error" role="status">{error} <Button size="sm" onclick={() => { studyTimer.error = ""; void studyTimer.load(); }}>Reconnect</Button></p>{/if}
       </div>
     </Popover>
   </div>

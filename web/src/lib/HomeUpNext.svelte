@@ -142,7 +142,7 @@
             <span class="check" style:--tone={row.tone} aria-hidden="true"></span>
             <span class="what">
               <strong>{row.title}</strong>
-              <small><span class="kind">{row.kind}</span>{row.when}</small>
+              <small><span class="kind">{row.kind}</span><span aria-hidden="true">·</span>{row.when}</small>
             </span>
             {#if chip}<span class="soon" class:late={row.overdue}>{chip}</span>{/if}
           </button>
@@ -168,7 +168,7 @@
     align-items: center;
     gap: 10px;
     width: 100%;
-    min-height: 44px;
+    min-height: 56px;
     padding: 4px 4px 4px 2px;
     border: 0;
     background: transparent;
@@ -194,30 +194,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: 500 12.5px/1.3 var(--font-ui);
+    font: 400 17px/1.3 var(--font-ui);
   }
   small {
     display: flex;
     gap: 8px;
     overflow: hidden;
     color: var(--muted);
-    font-size: 11px;
+    font-size: 14px;
     white-space: nowrap;
   }
   .kind {
-    color: var(--subtle);
-    font: 500 9.5px/1.6 var(--font-mono);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .soon {
-    padding: 2px 7px;
-    border: 1px solid var(--hairline);
-    border-radius: 999px;
     color: var(--muted);
-    font: 500 9.5px/1.2 var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+  }
+  /* "Soon" / "Late" in plain words, no pill or tracked caps. */
+  .soon {
+    color: var(--muted);
+    font-size: 14px;
     white-space: nowrap;
   }
   .soon.late {
@@ -227,6 +220,6 @@
   .note {
     margin: 0 0 6px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 16px;
   }
 </style>

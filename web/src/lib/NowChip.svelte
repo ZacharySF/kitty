@@ -25,7 +25,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--violet) 12%, transparent);
     color: var(--ink);
-    font: 500 10px/1.7 var(--font-mono);
+    font: 500 10px/1.7 var(--font-ui);
     letter-spacing: 0.02em;
     text-overflow: ellipsis;
     white-space: pre;

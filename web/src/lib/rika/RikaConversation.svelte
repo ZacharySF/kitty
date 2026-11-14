@@ -3,6 +3,7 @@
   import BriefChip from "../goals/BriefChip.svelte";
   import Select from "../ui/Select.svelte";
   import RikaAgents from "./RikaAgents.svelte";
+  import RikaConfirm from "./RikaConfirm.svelte";
   import RikaPlan from "./RikaPlan.svelte";
   import RikaMark from "./RikaMark.svelte";
   import { activeModules } from "../modules.svelte";
@@ -13,7 +14,8 @@
    * Q2 D, Q7 A, Q13, Q16 B, Q19 A, Q20 A: what the home panel and the drawer show.
    * Conversation holds every request and reply (with its tokens and cost readout) and the
    * actions they ran (Undo), the approvals they wait on (Approve / Reject, with what will
-   * happen and what it may cost), brain-dump plans and every reply email Rika drafted or
+   * happen and what it may cost), brain-dump plans, the questions Rika asks about a date
+   * and its check-ins on tasks whose day passed, and every reply email Rika drafted or
    * sent (a held send counts down with Undo send); Agents holds the live worker cards. A
    * brain dump's live transcript runs at the end until Make plan. `brief` shows the morning
    * brief's chip (only on the copy in view, so Ctrl K opens one popover).
@@ -28,6 +30,15 @@
     const date = new Date(value ?? "");
     return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
+  /** The reply whose text was just copied (its Copy reads "Copied" for a moment). */
+  let copied = $state("");
+  async function copy(key: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = key;
+      setTimeout(() => { if (copied === key) copied = ""; }, 1600);
+    } catch { /* clipboard refused: the text can still be selected */ }
+  }
   // New entries scroll into view, so an approval or plan that arrived is in sight, and a
   // brain dump's transcript follows what is being said.
   $effect(() => {
@@ -89,6 +100,7 @@
                     {#if costLabel(entry.cost_usd)}<span>{costLabel(entry.cost_usd)}</span>{/if}
                   {/if}
                   {#if entry.status === "failed"}<span class="failed">Failed</span>{/if}
+                  {#if entry.text}<button type="button" class="text-button" onclick={() => copy(entryKey(entry), entry.text)}>{copied === entryKey(entry) ? "Copied" : "Copy"}</button>{/if}
                 </span>
               </div>
             </div>
@@ -98,6 +110,8 @@
               <p>{entry.summary}</p>
               {#if entry.reversible && entry.status === "done"}<div class="decide"><button class="pill" onclick={() => rika.undo(entry.id)}>Undo</button></div>{/if}
             </article>
+          {:else if entry.kind === "plan" && (entry.plan_kind === "confirm" || entry.plan_kind === "checkin")}
+            <RikaConfirm plan={entry} />
           {:else if entry.kind === "plan"}
             <RikaPlan plan={entry} />
           {:else if entry.kind === "mail"}
@@ -219,6 +233,11 @@
     padding: 7px 11px;
     border-radius: 12px 12px 4px 12px;
     background: color-mix(in srgb, var(--ink) 9%, transparent);
+  }
+  /* Replies and requests keep the line breaks they were written with. */
+  .you p,
+  .said p {
+    white-space: pre-wrap;
   }
   .said {
     display: grid;

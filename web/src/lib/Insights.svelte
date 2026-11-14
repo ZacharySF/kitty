@@ -339,7 +339,7 @@
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
     <TaskStatus {task} oncomplete={complete} />
-    {#if loading}<Loader label="Loading…" />{/if}
+    {#if loading}<Loader label="Loading insights…" />{/if}
 
     {#if section === "finder"}
       <p class="muted">

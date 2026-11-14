@@ -87,7 +87,7 @@
   dt { color: var(--subtle); }
   dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   .handoff { margin: 0; }
-  .mono { font-family: var(--font-mono, monospace); font-size: 11px; }
+  .mono { font-family: var(--font-ui); font-size: 11px; }
   pre { max-height: 220px; overflow: auto; margin: 6px 0 0; }
   .actions { display: flex; gap: 8px; }
 </style>

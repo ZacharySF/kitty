@@ -145,9 +145,9 @@
   }
   .named button:hover, .named button[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
   .named .dot { width: 24px; height: 24px; cursor: inherit; }
-  .named small { font: 9.5px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+  .named small { font: 9.5px var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
   .hex { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
-  .hex input { width: 96px; padding: 4px 7px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--solid-inset); color: var(--ink); font: 12px var(--font-mono); }
+  .hex input { width: 96px; padding: 4px 7px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--solid-inset); color: var(--ink); font: 12px var(--font-ui); }
   @media (prefers-reduced-motion: reduce) {
     .dot { transition: none; }
     button.dot:hover { transform: none; }

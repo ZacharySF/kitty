@@ -6,7 +6,8 @@
     <title>Brain harness</title>
     <style>
       html, body { margin: 0; }
-      #host { display: flex; flex-direction: column; width: 1200px; height: 760px; }
+      /* As wide as the window, up to the default 1200px: the Brain view fills the room it is given. */
+      #host { display: flex; flex-direction: column; width: min(1200px, 100vw); height: 760px; }
     </style>
   </head>
   <body>

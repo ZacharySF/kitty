@@ -4,16 +4,17 @@
   import HomeWidget from "./HomeWidget.svelte";
   import type { AgentState, TerminalActivity } from "./terminal";
   import type { View } from "./workspace";
+  import { usageLine } from "./usage/usage";
 
   /**
    * Q20: what each herdr workspace agent is doing now, how long it has been in
    * that state (since this widget first saw it) and Approve for a blocked one,
    * which opens the herdr session where the prompt waits. Reading never starts herdr.
    */
-  let { id, onview }: { id: string; onview: (view: View) => unknown } = $props();
+  /** `placeholder`: home's edit mode, where the widget shows its title even with no session running. */
+  let { id, onview, placeholder = false }: { id: string; onview: (view: View) => unknown; placeholder?: boolean } = $props();
   const POLL_MS = 3000;
   let activity = $state<TerminalActivity | null>(null);
-  let error = $state("");
   let now = $state(Date.now());
   /** When each workspace was first seen in its current state. */
   let since = $state(new Map<string, { status: AgentState; at: number }>());
@@ -34,9 +35,8 @@
       );
       activity = next;
       now = at;
-      error = "";
-    } catch (cause) {
-      error = (cause as Error).message;
+    } catch {
+      /* Quiet on home: the widget stays hidden until herdr answers; the herdr view says why. */
     }
   }
   function elapsed(spaceId: string) {
@@ -54,17 +54,8 @@
   });
 </script>
 
-<HomeWidget {id} title="Agents" eyebrow={spaces.length ? `${working} working · ${blocked} ${blocked === 1 ? "needs" : "need"} you` : ""}>
-  {#if error}
-    <p class="note" role="alert">{error}</p>
-  {:else if !activity}
-    <p class="note" role="status">Reading herdr's agent states…</p>
-  {:else if !activity.running}
-    <p class="note">rika!'s herdr session is not running.</p>
-    <button class="text-button" onclick={() => onview("herdr")}>Open herdr</button>
-  {:else if !spaces.length}
-    <p class="note">No herdr workspaces yet.</p>
-  {:else}
+<!-- Design review: no status chatter on home. The widget shows only while herdr has workspaces. -->
+{#if spaces.length}<HomeWidget {id} title="Agents" eyebrow={`${working} working · ${blocked} ${blocked === 1 ? "needs" : "need"} you`}>
     <ul>
       {#each spaces as space (space.id)}
         <li data-state={space.status} class:focused={space.focused}>
@@ -72,6 +63,9 @@
           <span class="what">
             <strong>{space.label}</strong>
             <small>{doing(space)}</small>
+            {#each space.agents as agent (agent.pane)}
+              {#if agent.usage}<small class="usage">{space.agents.length > 1 ? `${agent.name} · ` : ""}{usageLine(agent.usage)}</small>{/if}
+            {/each}
           </span>
           {#if space.status === "blocked"}
             <button class="pill primary" aria-label={`Approve ${space.label} in herdr`} onclick={() => onview("herdr")}>Approve</button>
@@ -81,8 +75,7 @@
         </li>
       {/each}
     </ul>
-  {/if}
-</HomeWidget>
+</HomeWidget>{:else if placeholder}<HomeWidget {id} title="Agents" eyebrow="Shows while a session runs" />{/if}
 
 <style>
   ul {
@@ -139,8 +132,7 @@
     min-width: 0;
   }
   strong {
-    font: 500 11px var(--font-mono);
-    letter-spacing: 0.04em;
+    font: 400 17px/1.3 var(--font-ui);
   }
   .focused strong {
     color: var(--violet);
@@ -150,21 +142,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--muted);
-    font-size: 11.5px;
+    font-size: 14px;
   }
   .time {
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font-size: 14px;
     font-variant-numeric: tabular-nums;
-  }
-  .pill {
-    min-height: 24px;
-    padding: 2px 10px;
-    font-size: 10px;
-  }
-  .note {
-    margin: 0 0 6px;
-    color: var(--muted);
-    font-size: 12px;
   }
 </style>

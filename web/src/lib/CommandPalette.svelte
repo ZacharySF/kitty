@@ -8,6 +8,7 @@
   import { morningBrief } from "./goals/brief.svelte";
   import { launchMath, type MathLaunch } from "./math/launch";
   import { rika } from "./rika/session.svelte";
+  import { homeEditor, templatePicker } from "./home/templatePicker.svelte";
 
   /**
    * Spotlight-style palette (Ctrl K): one large field, nothing else until you type,
@@ -27,6 +28,8 @@
     onreload,
     onterminal,
     onrika,
+    onsettings,
+    onnotifications,
   }: {
     enabled: readonly string[];
     onclose: () => void;
@@ -41,6 +44,10 @@
     onterminal?: () => void;
     /** Opens Rika's history drawer. */
     onrika: () => void;
+    /** Opens Settings on a page (`appearance`, `modules`, …). */
+    onsettings: (page: string) => void;
+    /** Opens the notification centre; absent when no module sends reminders. */
+    onnotifications?: () => void;
   } = $props();
 
   const LIMIT = 6;
@@ -80,6 +87,12 @@
       { label: "Mental math sprint", meta: "Math", icon: "math", run: () => openMath("sprint") },
       { label: "Next math lesson", meta: "Math", icon: "math", run: () => openMath("lesson") },
     ] : []),
+    // The top bar carries no theme or bell: both live here (and in the tab menu).
+    { label: "Theme", meta: "Settings · Appearance", icon: "settings", run: () => onsettings("appearance") },
+    // Rika offers one template once; the four stay here.
+    { label: "Home templates", meta: "Home", icon: "today", run: () => { templatePicker.open = true; onview("today"); } },
+    { label: "Edit home", meta: "Home · move, add or remove widgets", icon: "today", run: () => { homeEditor.on = true; onview("today"); } },
+    ...(onnotifications ? [{ label: "Notifications", meta: "Action", icon: "today", run: () => onnotifications() }] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
     { label: "Edit build", meta: "Action", icon: "settings", run: () => { buildStore.editorOpen = true; } },

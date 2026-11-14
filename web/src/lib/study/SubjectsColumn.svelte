@@ -136,7 +136,7 @@
   .count {
     margin-left: 4px;
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   .add:hover {
     border-color: var(--border);
@@ -198,7 +198,7 @@
   }
   .minutes {
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   .meter {
     grid-column: 2 / 4;

@@ -170,12 +170,3 @@
 :root[data-theme="speed"]:not([data-motif="off"]) body main h1:not(.sr-only, :is(.sheet, .authored-preview, [contenteditable]) h1) {
   background: linear-gradient(176deg, transparent 58%, color-mix(in srgb, var(--spd-crimson) 30%, transparent) 58% 86%, transparent 86%) left bottom / min(100%, 4.2em) 100% no-repeat;
 }
-
-/* The current workspace tab: a skewed crimson mark with a teal offset. */
-:root[data-theme="speed"]:not([data-motif="off"]) .workspace-tabbar .tab.active::after {
-  height: 3px;
-  border-radius: 0;
-  background: var(--spd-crimson);
-  box-shadow: 3px 2px 0 -1px var(--spd-teal);
-  transform: skewX(-20deg);
-}

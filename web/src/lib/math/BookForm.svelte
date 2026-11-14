@@ -196,7 +196,7 @@
   }
   kbd {
     color: var(--subtle);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
   }
   .error {
     margin: 0;

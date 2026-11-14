@@ -24,7 +24,9 @@
   type Choice = { [K in keyof Appearance]: Appearance[K] extends boolean ? never : K }[keyof Appearance];
   const CHOICES: { key: Choice; label: string; options: [string, string][] }[] = [
     { key: "titleFont", label: "Titles", options: [["fraunces", "Fraunces"], ["plain", "Plain"]] },
-    { key: "density", label: "Density", options: [["compact", "Compact · 13px"], ["comfortable", "Comfortable · 14px"]] },
+    // Design labs (Type): the density switch is now text size, Standard or one step Larger
+    // (stored under the build's existing `density` values, compact / comfortable).
+    { key: "density", label: "Text size", options: [["compact", "Standard"], ["comfortable", "Larger"]] },
     { key: "motion", label: "Motion", options: [["full", "Full"], ["reduced", "Reduced"]] },
     { key: "background", label: "Background", options: [["nebula", "Nebula"], ["petals", "Petal drift"]] },
   ];

@@ -197,7 +197,7 @@
   }
   .mono,
   code {
-    font: 11px var(--font-mono);
+    font: 11px var(--font-code);
   }
   h3 {
     margin: 6px -16px 0;
@@ -247,7 +247,7 @@
   }
   .journal time {
     color: var(--muted);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   .what {

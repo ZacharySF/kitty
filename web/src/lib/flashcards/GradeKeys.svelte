@@ -83,7 +83,7 @@
     border: 0;
     background: none;
     color: var(--ink);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
@@ -102,7 +102,7 @@
     border-radius: 8px;
     background: linear-gradient(to bottom, var(--solid-raised), var(--solid-panel));
     color: var(--ink);
-    font: 13px var(--font-mono);
+    font: 13px var(--font-ui);
     transition: transform 0.08s ease, border-bottom-width 0.08s ease;
   }
   .key.wide kbd {

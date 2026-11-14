@@ -728,7 +728,7 @@
       </div>
     {/if}
     <div bind:this={results} class="job-list" class:dense={view !== "today"} role="region" aria-label="Job results" aria-busy={loading}>
-      {#if loading}<Loader label="Loading opportunities…" rows={4} />{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
+      {#if loading}<Loader label="Loading opportunities…" />{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
           <p>Change your filters, add a posting, or discover new jobs from Job sources.</p>
           {#snippet actions()}<button class="button" onclick={() => onview("sources")}>Open Job sources</button>{/snippet}
         </EmptyState>{:else}
@@ -860,7 +860,7 @@
   .total {
     margin-top: 4px;
     color: var(--muted);
-    font: 500 var(--fs-chrome, 10.5px) / 1 var(--font-mono);
+    font: 500 var(--fs-chrome, 10.5px) / 1 var(--font-ui);
     letter-spacing: 0.06em;
   }
   .tools {
@@ -972,7 +972,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--ink) 12%, transparent);
     color: var(--ink);
-    font: 600 10px/1 var(--font-mono);
+    font: 600 10px/1 var(--font-ui);
   }
   /* The filters popover: label column + control column, then the checkboxes. */
   :global(.kitty-popover.job-filters) {

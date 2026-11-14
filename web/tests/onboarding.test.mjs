@@ -21,9 +21,10 @@ test('enabled study tools point at real views; the Rika step ends every tour and
   assert.match(steps.at(-1).tip, /Ctrl \+ J/);
 });
 
-test('the modules step points at the Brain download only while the Brain is off', () => {
-  assert.match(tutorialSteps([]).find(step => step.id === 'modules').text, /Brain/);
-  assert.doesNotMatch(tutorialSteps(['brain']).find(step => step.id === 'modules').text, /Brain/);
+test('the modules step is one line, the same whatever is on', () => {
+  const text = (enabled) => tutorialSteps(enabled).find(step => step.id === 'modules').text;
+  assert.equal(text([]), 'Change what you use here any time.');
+  assert.equal(text(['brain']), text([]));
 });
 
 test('the Rika step targets markup Rika actually renders', async () => {

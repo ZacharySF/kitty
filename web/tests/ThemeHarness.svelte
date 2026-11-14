@@ -14,10 +14,13 @@
 
 <ThemeLayer />
 <div class="harness" id="specimen">
-  <nav class="workspace-groups" aria-label="Groups">
-    <button type="button" aria-current="page" data-sample="current group">Plan</button>
-    <button type="button" data-sample="group">Study</button>
-  </nav>
+  <!-- The groups only ever sit in the app's top bar, whose own tint is part of what they are read against. -->
+  <div class="workbench-top bar">
+    <nav class="workspace-groups" aria-label="Groups">
+      <button type="button" aria-current="page" data-sample="current group">Plan</button>
+      <button type="button" data-sample="group">Study</button>
+    </nav>
+  </div>
   <section class="panel" data-surface-sample>
     <h1 data-sample="title">Pipelines &amp; hazards</h1>
     <p data-sample="body">Re-read the hazard chapter before Thursday.</p>
@@ -88,6 +91,8 @@
   [role="tab"], [role="option"] { padding: 5px 10px; border: 0; border-radius: 8px; color: var(--ink); }
   [role="tab"][aria-selected="false"] { background: transparent; }
   .listbox { display: grid; gap: 2px; margin-top: 8px; padding: 4px; border: 1px solid var(--hairline); border-radius: 12px; }
+  /* Only the bar's tint matters here: it neither sticks nor stretches over the specimen. */
+  .harness > .bar { position: static; align-self: start; margin: 0; }
   .long-list { grid-column: 1 / -1; display: block; height: 320px; overflow: auto; }
   .long-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
 </style>

@@ -243,12 +243,12 @@
   }
   .clock {
     color: var(--muted);
-    font: 500 15px var(--font-mono);
+    font: 500 15px var(--font-ui);
     letter-spacing: 0.08em;
   }
   .prompt {
     color: var(--ink);
-    font: 600 46px/1.05 var(--font-mono);
+    font: 600 46px/1.05 var(--font-ui);
     letter-spacing: -0.02em;
     white-space: nowrap;
   }
@@ -263,7 +263,7 @@
     border-radius: 0;
     background: transparent;
     color: var(--ink);
-    font: 600 34px var(--font-mono);
+    font: 600 34px var(--font-ui);
     text-align: center;
     outline: none;
   }
@@ -276,7 +276,7 @@
   }
   .hint {
     color: var(--subtle);
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-ui);
   }
   .choices {
     display: grid;
@@ -293,7 +293,7 @@
     border-radius: 12px;
     background: color-mix(in srgb, var(--solid-panel, var(--surface)) 80%, transparent);
     color: var(--ink);
-    font: 600 21px var(--font-mono);
+    font: 600 21px var(--font-ui);
     cursor: pointer;
   }
   .choice:hover {
@@ -302,12 +302,12 @@
   .choice kbd,
   .row :global(kbd) {
     color: var(--subtle);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
   }
   .score {
     margin: 0;
     color: var(--muted);
-    font: 500 14px var(--font-mono);
+    font: 500 14px var(--font-ui);
   }
   .score b {
     color: var(--ink);
@@ -327,7 +327,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
     cursor: pointer;
   }
   .end {
@@ -337,13 +337,13 @@
   }
   .eyebrow {
     color: var(--subtle);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
   .final {
     color: var(--ink);
-    font: 600 104px/1 var(--font-mono);
+    font: 600 104px/1 var(--font-ui);
   }
   .sub {
     color: var(--muted);

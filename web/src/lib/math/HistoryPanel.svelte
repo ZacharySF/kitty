@@ -61,7 +61,7 @@
   }
   .streak strong {
     color: var(--accent);
-    font: 600 40px/1 var(--font-mono);
+    font: 600 40px/1 var(--font-ui);
   }
   .streak span {
     display: grid;
@@ -82,7 +82,7 @@
   }
   .eyebrow {
     color: var(--subtle);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -118,7 +118,7 @@
   }
   .score {
     color: var(--ink);
-    font: 600 14px var(--font-mono);
+    font: 600 14px var(--font-ui);
   }
   .score small {
     color: var(--muted);

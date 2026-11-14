@@ -16,7 +16,7 @@
 //! the chain (crate::startup).
 
 use std::collections::BTreeSet;
-use std::os::unix::fs::DirBuilderExt;
+use crate::private::Mode;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

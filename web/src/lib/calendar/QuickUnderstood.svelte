@@ -51,7 +51,7 @@
   .ribbon {
     display: flex;
     flex-wrap: wrap;
-    font: 500 0.72rem var(--font-mono);
+    font: 500 0.72rem var(--font-ui);
     white-space: pre;
   }
   .seg {
@@ -83,7 +83,7 @@
     font-size: 0.9rem;
   }
   .when {
-    font: 500 0.75rem var(--font-mono);
+    font: 500 0.75rem var(--font-ui);
   }
   .facts {
     display: flex;

@@ -227,7 +227,7 @@
   }
   .hint {
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -244,7 +244,7 @@
     padding: 2px 10px;
     border: 1.5px solid currentColor;
     border-radius: 999px;
-    font: 600 11px var(--font-mono);
+    font: 600 11px var(--font-ui);
     letter-spacing: 0.14em;
     text-transform: uppercase;
     transform: translateX(-50%) rotate(-6deg);

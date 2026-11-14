@@ -44,5 +44,5 @@
 {#if error}<div class="error-banner" role="alert">{error}<button class="icon-button" aria-label="Dismiss connection message" onclick={() => (error = "")}>×</button></div>{/if}
 
 <style>
-  .pairing .code { font-family: var(--font-mono, monospace); letter-spacing: .08em; }
+  .pairing .code { font-family: var(--font-ui); letter-spacing: .08em; }
 </style>

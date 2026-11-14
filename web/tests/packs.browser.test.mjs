@@ -1,12 +1,13 @@
 // Module packs end to end (docs/rust-core-design.md, milestone 3): the real built website served
 // by rika-server without the Brain's files, as a base install ships it; a loopback stand-in for
 // the GitHub release with the pack built by scripts/build-packs.py and its index signed by a
-// throwaway key; Settings → Modules downloads it with progress, the Brain turns on, and after a
-// restart the home draws it from the pack. Synthetic workspace only.
+// throwaway key; the first run's picker and Settings → Modules (one component) download it with
+// progress when the Brain is chosen and saved, and after a restart the home draws it from the
+// pack. Synthetic workspace only.
 // Run from web/ after `npm run build`, with Node >=22, uv and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
 // PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/packs.browser.test.mjs
-// KITTY_SHOTS_DIR=<folder> also saves screenshots of Settings → Modules there.
+// KITTY_SHOTS_DIR=<folder> also saves 1440x900 @2x screenshots of the picker there.
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -22,7 +23,7 @@ import { startKitty } from "./kittyServer.js";
 const web = fileURLToPath(new URL("..", import.meta.url));
 const repo = fileURLToPath(new URL("../..", import.meta.url));
 const shots = process.env.KITTY_SHOTS_DIR;
-const VIEWPORT = { width: 1280, height: 850 };
+const VIEWPORT = shots ? { width: 1440, height: 900 } : { width: 1280, height: 850 };
 
 /** A throwaway minisign key, in tauri.conf.json's form, and `tauri signer sign`'s signature. */
 function minisignKey() {
@@ -48,9 +49,14 @@ let listed;
 let index;
 let release;
 let releaseUrl;
-/** Resolved to let the held download finish. */
-let letGo;
-const held = new Promise((resolve) => { letGo = resolve; });
+/** The download being held half way: `gate.open()` lets it finish; `hold()` arms the next. */
+let gate;
+function hold() {
+  let open;
+  const promise = new Promise((resolve) => { open = resolve; });
+  gate = { promise, open };
+}
+hold();
 let key;
 let root;
 let kitty;
@@ -78,7 +84,7 @@ before(async () => {
     response.writeHead(200, { "Content-Length": data.length });
     if (!name.endsWith(".tar.gz")) { response.end(data); return; }
     response.write(data.subarray(0, data.length >> 1));
-    void held.then(() => response.end(data.subarray(data.length >> 1)));
+    void gate.promise.then(() => response.end(data.subarray(data.length >> 1)));
   });
   await new Promise((resolve) => release.listen(0, "127.0.0.1", resolve));
   releaseUrl = `http://127.0.0.1:${release.address().port}/`;
@@ -91,7 +97,7 @@ before(async () => {
 });
 
 after(async () => {
-  letGo();
+  gate.open();
   await browser?.close();
   await kitty?.stop();
   await new Promise((resolve) => release ? release.close(resolve) : resolve());
@@ -106,11 +112,14 @@ function start() {
   });
 }
 
-/** rika! as the desktop window opens it: rika-server's own origin, the secret handed in. */
-async function open(hash = "") {
-  const context = await browser.newContext({ viewport: VIEWPORT });
+/**
+ * rika! as the desktop window opens it: rika-server's own origin, the secret handed in.
+ * `firstRun` leaves the workspace's own account state, so the welcome opens.
+ */
+async function open(hash = "", { firstRun = false } = {}) {
+  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: shots ? 2 : 1 });
   await kitty.authorize(context);
-  await context.route("**/api/account", (route) =>
+  if (!firstRun) await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
@@ -126,9 +135,13 @@ const modulesRegion = (page) => page.getByRole("region", { name: "Modules", exac
 const brainRow = (page) => modulesRegion(page).locator('[data-module="brain"]');
 const asset = (page, name) => page.evaluate(async (path) => (await fetch(path)).status, `/${name}`);
 const megabytes = (bytes) => `${Math.max(0.1, bytes / 1e6).toFixed(1)} MB`;
+const progress = (page) => page.evaluate(() => Number(document.querySelector('[data-module="brain"] [role="progressbar"]')?.getAttribute("aria-valuenow")));
+const moving = (page) => page.waitForFunction(() => Number(document.querySelector('[data-module="brain"] [role="progressbar"]')?.getAttribute("aria-valuenow")) > 0);
 
 async function shot(page, name) {
-  if (shots) await modulesRegion(page).screenshot({ path: join(shots, `${name}.png`) });
+  if (!shots) return;
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: join(shots, `${name}.png`), timeout: 300_000 });
 }
 
 describe("module packs", () => {
@@ -140,44 +153,87 @@ describe("module packs", () => {
     if (shots) await page.screenshot({ path: join(shots, "home-brain-not-installed.png") });
     for (const name of listed) assert.equal(await asset(page, name), 404, `${name} is still served`);
     await page.goto(`${kitty.origin}/#settings/modules`);
-    await brainRow(page).getByText(`Download · ${megabytes(index.packs[0].size)}`).waitFor();
+    await brainRow(page).getByText(megabytes(index.packs[0].size), { exact: true }).waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("Settings → Modules downloads the Brain with progress, installs it and lets it be turned on", async () => {
+  test("first run: an answer chooses the Brain; Continue downloads it with progress, saves, and the website says to restart", async () => {
+    const { page, context, problems } = await open("", { firstRun: true });
+    const card = page.locator("dialog.onboarding");
+    await card.getByRole("button", { name: "Start locally" }).click();
+    await card.getByRole("heading", { name: "What will you use rika! for?" }).waitFor();
+    assert.equal(await card.locator('[data-module="brain"]').count(), 0, "a download is on before anything was touched");
+    await card.getByRole("button", { name: "Building with agents", exact: true }).click();
+    const row = card.locator('[data-module="brain"]');
+    const size = megabytes(index.packs[0].size);
+    await row.getByText(size, { exact: true }).waitFor();
+    assert.equal(await row.getByRole("switch", { name: "Brain" }).getAttribute("aria-checked"), "true");
+    assert.match((await card.locator(".total").innerText()).trim(), new RegExp(` on, ${size.replace(".", "\\.")} to download$`));
+    await shot(page, "first-run-brain-chosen");
+
+    await card.getByRole("button", { name: "Continue", exact: true }).click();
+    await row.getByRole("progressbar", { name: "Brain download" }).waitFor();
+    await moving(page);
+    const done = await progress(page);
+    assert.ok(done > 0 && done < 100, `progress ${done}%`);
+    await card.locator(".total").filter({ hasText: `Downloading` }).waitFor();
+    assert.deepEqual((await kitty.request("/modules")).configured.includes("brain"), false, "the Brain was saved before its download arrived");
+    await shot(page, "first-run-downloading");
+
+    gate.open();
+    await card.getByRole("heading", { name: "Restart rika! to finish" }).waitFor();
+    const saved = (await kitty.request("/modules")).configured;
+    assert.ok(saved.includes("workspace") && saved.includes("brain"), `saved ${saved}`);
+    for (const name of listed) assert.equal(await asset(page, name), 200, `${name} is not served from the pack`);
+    await shot(page, "first-run-restart-by-hand");
+    await card.getByRole("button", { name: "Continue", exact: true }).click();
+    await card.getByRole("heading", { name: "Take a quick tour?" }).waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+    // Back to the base install for the tests below.
+    await kitty.request("/modules", { enabled: ["workspace"] });
+    await kitty.request("/packs/uninstall", { id: "brain" });
+    hold();
+  });
+
+  test("Settings → Modules: the Brain is switched on, Save downloads it with progress and then saves", async () => {
     const { page, context, problems } = await open("#settings/modules");
+    const modules = modulesRegion(page);
     const row = brainRow(page);
     const size = megabytes(index.packs[0].size);
-    await row.getByText(`Download · ${size}`).waitFor();
+    await row.getByText(size, { exact: true }).waitFor();
     const toggle = row.getByRole("switch", { name: "Brain" });
-    assert.equal(await toggle.isDisabled(), true, "Brain turns on only once its pack is here");
-    assert.equal(await toggle.getAttribute("title"), "Download Brain first");
+    const save = modules.getByRole("button", { name: "Save", exact: true });
+    const total = modules.locator(".total");
+    assert.equal(await toggle.getAttribute("aria-checked"), "false");
+    assert.equal(await save.isDisabled(), true);
+    assert.match((await total.innerText()).trim(), / on, nothing to download$/);
+    assert.equal(await row.getByRole("button").count(), 0, "the row has its own download button again");
     await shot(page, "modules-available");
 
-    await row.getByRole("button", { name: "Download Brain" }).click();
+    await toggle.click();
+    assert.match((await total.innerText()).trim(), new RegExp(` on, ${size.replace(".", "\\.")} to download$`));
+    await shot(page, "modules-brain-chosen");
+    await save.click();
     const bar = row.getByRole("progressbar", { name: "Brain download" });
     await bar.waitFor();
-    await page.waitForFunction(() => Number(document.querySelector('[data-module="brain"] [role="progressbar"]')?.getAttribute("aria-valuenow")) > 0);
-    const done = Number(await bar.getAttribute("aria-valuenow"));
+    await moving(page);
+    const done = await progress(page);
     assert.ok(done > 0 && done < 100, `progress ${done}%`);
     assert.match(await row.innerText(), new RegExp(`${done}%`));
+    assert.deepEqual((await kitty.request("/modules")).configured, ["workspace"], "the Brain was saved before its download arrived");
     await shot(page, "modules-downloading");
 
-    letGo();
-    await row.getByText(`Installed · ${megabytes(index.packs[0].installed_size)}`).waitFor();
+    gate.open();
+    await row.getByText("Restart", { exact: true }).waitFor();
+    assert.deepEqual((await kitty.request("/modules")).configured, ["workspace", "brain"]);
     const remove = row.getByRole("button", { name: "Remove Brain download" });
-    assert.equal(await remove.isDisabled(), false);
-    assert.equal(await toggle.isDisabled(), false);
-    for (const name of listed) assert.equal(await asset(page, name), 200, `${name} is not served from the pack`);
-    await shot(page, "modules-installed");
-
-    await toggle.click();
-    await modulesRegion(page).getByRole("button", { name: "Save modules" }).click();
-    await row.getByText("Restart").waitFor();
     assert.equal(await remove.isDisabled(), true, "an enabled module's pack stays");
     assert.equal(await remove.getAttribute("title"), "Turn Brain off and save before removing it");
-    assert.deepEqual((await kitty.request("/modules")).configured, ["workspace", "brain"]);
+    await modules.getByRole("status").filter({ hasText: "Restart rika! to finish" }).waitFor();
+    assert.equal(await modules.getByRole("button", { name: "Restart now" }).count(), 0, "a plain website offers a restart it cannot do");
+    for (const name of listed) assert.equal(await asset(page, name), 200, `${name} is not served from the pack`);
     await shot(page, "modules-brain-on");
     assert.deepEqual(problems, []);
     await context.close();
@@ -205,7 +261,7 @@ describe("module packs", () => {
     const { page, context, problems } = await open("#settings/modules");
     const row = brainRow(page);
     await row.getByRole("button", { name: "Remove Brain download" }).click();
-    await row.getByText(`Download · ${megabytes(index.packs[0].size)}`).waitFor();
+    await row.getByText(megabytes(index.packs[0].size), { exact: true }).waitFor();
     for (const name of listed) assert.equal(await asset(page, name), 404);
     const packs = await kitty.request("/packs");
     assert.equal(packs.packs.find((pack) => pack.id === "brain").state, "available");

@@ -101,7 +101,7 @@
   .request { border-color: var(--warning); }
   .who { display: grid; gap: .15rem; flex: 1; min-width: 0; }
   .who small { color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
-  .code { font-family: var(--font-mono, monospace); font-size: 1.05rem; letter-spacing: .08em; font-variant-numeric: tabular-nums; }
+  .code { font-family: var(--font-ui); font-size: 1.05rem; letter-spacing: .08em; font-variant-numeric: tabular-nums; }
   .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
   :global(.explain) p { margin: 0; max-width: 36rem; font-size: 12px; line-height: 1.7; color: var(--muted); }
   code { overflow-wrap: anywhere; font-size: 11px; }

@@ -57,6 +57,11 @@ The private checkpoint records progress, not new authorization.
   Settings → Rika → Email); a reply is sent only after a Send tap or for a kind
   whose auto-send the user confirmed on, held locally first for Undo-send.
   CSV exports escape formula-leading cells.
+- Microsoft (Outlook) and Slack connections (`core/connect/`) are read-only public
+  clients of the user's own app: PKCE on a loopback redirect, a client ID and never a
+  client secret, tokens only in owner-only `.private/{microsoft,slack}_token.json`.
+  Outlook calendars (`calendar_remote`) refuse local edits; Outlook mail is stored
+  with `provider='outlook'` and never drafted or sent; Slack only reads reactions.
 - Tests must use isolated public examples and synthetic data, never the user's
   runtime YAML, saved jobs, mail or resumes. Do not report checks that were not run.
 - Before committing, run the full pytest suite and resolve failures. Record only

@@ -1,4 +1,6 @@
 mod appimage_update;
+mod autostart;
+mod notifications;
 mod owner;
 mod update_lifecycle;
 mod updates;
@@ -71,6 +73,9 @@ struct Desktop {
     background: AtomicBool,
     background_item: CheckMenuItem<tauri::Wry>,
     background_available: bool,
+    /// Start at login (autostart.rs): the user's systemd unit folder, when it can be set here.
+    autostart_dir: Option<PathBuf>,
+    autostart: AtomicBool,
     update_item: MenuItem<tauri::Wry>,
     lifecycle: Mutex<update_lifecycle::Lifecycle>,
     preferences: PathBuf,
@@ -137,6 +142,24 @@ fn quick_note_target(url: &Url, origin: &Url) -> Option<String> {
     (id_ok && same_origin && url.path() == "/" && url.query().is_none()).then(|| fragment.to_string())
 }
 
+/// Start at login on or off; the switch then shows what is really on disk.
+fn set_autostart(app: &tauri::AppHandle, enabled: bool) {
+    let state = app.state::<Desktop>();
+    if let Some(dir) = &state.autostart_dir {
+        if let Some(program) = autostart::program(std::env::var_os("APPIMAGE"), std::env::current_exe()) {
+            let _ = autostart::set(dir, &program, enabled);
+        }
+        state.autostart.store(autostart::enabled(dir), Ordering::SeqCst);
+    }
+    // A login that opens rika! hidden is for reminders: closing the window must then keep it running.
+    if enabled && state.autostart.load(Ordering::SeqCst) { set_background(app, true); } else { report_desktop(app); }
+}
+
+/// `--background` (the start-at-login unit): open with the window hidden in the tray.
+fn wants_background(args: &[String]) -> bool {
+    args.iter().skip(1).any(|arg| arg == "--background")
+}
+
 fn wants_quick_note(args: &[String]) -> bool {
     args.iter().skip(1).any(|arg| arg == "--quick-note")
 }
@@ -183,19 +206,29 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
 /// directory (`/usr/bin` in the .deb, `usr/bin` inside the AppImage): an unpacked
 /// PyInstaller directory (tauri.conf.json `files`), started in place on every launch.
 /// Outside `usr/lib`, so linuxdeploy never rewrites its libraries.
+#[cfg(not(windows))]
 const BACKEND: &str = "libexec/kitty-workspace/kitty-web/kitty-web";
 
 /// The backend executable from this binary's bundle. Tauri dev and cargo smoke binaries
 /// use the staging folder's `kitty-web/` directory; installed bundles always use their
 /// own copy, never a checkout or PATH.
+#[cfg(not(windows))]
 fn backend(directory: &Path, staging: Option<&Path>) -> Option<PathBuf> {
     bundled(directory.parent()?.join(BACKEND), staging.map(|folder| folder.join("kitty-web/kitty-web")))
+}
+
+/// On Windows the installer puts the same unpacked PyInstaller directory beside the
+/// desktop executable, as `kitty-web\kitty-web.exe`.
+#[cfg(windows)]
+fn backend(directory: &Path, staging: Option<&Path>) -> Option<PathBuf> {
+    bundled(directory.join("kitty-web").join("kitty-web.exe"), staging.map(|folder| folder.join("kitty-web").join("kitty-web.exe")))
 }
 
 /// A bundled sidecar executable beside the desktop binary (Tauri `externalBin`), or the
 /// target-suffixed staging copy.
 fn sidecar(directory: &Path, name: &str, staging: Option<&Path>) -> Option<PathBuf> {
-    bundled(directory.join(name), staging.map(|folder| folder.join(format!("{name}-{}", env!("KITTY_TARGET_TRIPLE")))))
+    let suffix = std::env::consts::EXE_SUFFIX;
+    bundled(directory.join(format!("{name}{suffix}")), staging.map(|folder| folder.join(format!("{name}-{}{suffix}", env!("KITTY_TARGET_TRIPLE")))))
 }
 
 fn bundled(packaged: PathBuf, staged: Option<PathBuf>) -> Option<PathBuf> {
@@ -327,6 +360,11 @@ fn show(app: &tauri::AppHandle) {
 }
 
 fn request_quit(app: &tauri::AppHandle) {
+    request_stop(app, false);
+}
+
+/// Save and stop the backend, then leave; `restart` reopens rika! (a module change applies).
+fn request_stop(app: &tauri::AppHandle, restart: bool) {
     let state = app.state::<Desktop>();
     match state.lifecycle.lock().begin_quit() {
         update_lifecycle::QuitDecision::Stop => {},
@@ -340,13 +378,14 @@ fn request_quit(app: &tauri::AppHandle) {
     thread::spawn(move || {
         app.state::<Desktop>().backend.lock().stop();
         app.state::<Desktop>().lifecycle.lock().stopped();
-        app.exit(0);
+        if restart { updates::relaunch(&app); } else { app.exit(0); }
     });
 }
 
 fn report_desktop(app: &tauri::AppHandle) {
     let state = app.state::<Desktop>();
-    let line = owner::state_line(state.background.load(Ordering::SeqCst), state.background_available);
+    let line = owner::state_line(state.background.load(Ordering::SeqCst), state.background_available,
+                                 state.autostart.load(Ordering::SeqCst), state.autostart_dir.is_some());
     if let Some(input) = state.backend.lock().0.as_mut().and_then(|child| child.stdin.as_mut()) {
         let _ = input.write_all(line.as_bytes());
         let _ = input.flush();
@@ -366,22 +405,57 @@ fn set_background(app: &tauri::AppHandle, enabled: bool) {
     report_desktop(app);
 }
 
-fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
+/// The desktop entry rika! is installed under (scripts/install-desktop.py): names the app
+/// and its icon to the notification server.
+pub const DESKTOP_ENTRY: &str = "com.zacharysf.kitty";
+
+/// A click on a system notification: raise the window (with the server's activation token,
+/// which Wayland needs) and hand the notice to the page, which opens, snoozes or clears it.
+fn notice_invoked(app: &tauri::AppHandle, key: String, action: String, token: Option<String>) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else { return };
+        if action == "default" {
+            // The token is the notification server's (D-Bus): only Linux has one to give.
+            #[cfg(target_os = "linux")]
+            if let (Some(token), Ok(gtk_window)) = (&token, window.gtk_window()) {
+                use gtk::prelude::GtkWindowExt;
+                gtk_window.set_startup_id(token);
+            }
+            let _ = &token;
+            show(&handle);
+        }
+        let detail = serde_json::json!({ "key": key, "action": action });
+        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('kitty:notice', {{ detail: {detail} }}))"));
+    });
+}
+
+fn desktop_command(app: &tauri::AppHandle, notices: Option<&notifications::Notices>, command: owner::Command) {
     match command {
+        owner::Command::Notify { key, title, body, actions } => {
+            if let Some(notices) = notices { notices.notify(&key, &title, &body, actions); }
+        }
+        owner::Command::CloseNotices(keys) => {
+            if let Some(notices) = notices { notices.close(&keys); }
+        }
         owner::Command::CheckUpdates => updates::check(app),
         owner::Command::NewQuickNote => open_quick_note(app, "quick-note".into()),
         owner::Command::KeepRunning(enabled) => set_background(app, enabled),
+        owner::Command::Autostart(enabled) => set_autostart(app, enabled),
         owner::Command::Quit => request_quit(app),
+        owner::Command::Restart => request_stop(app, true),
         owner::Command::OpenSkill(path) => open_skill(&path),
     }
 }
 
 /// GTK's DPI setting when it has none: 96 DPI in GTK's 1/1024 units.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const NEUTRAL_XFT_DPI: i32 = 96 * 1024;
 
 /// The DPI to set, if any. On Wayland GTK has no XSETTINGS, so `gtk-xft-dpi` stays -1 and
 /// WebKitGTK derives a negative device-pixel ratio from it (a blank, compressed page on
 /// fractional-scale outputs). A real value is left alone.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn dpi_override(current: i32) -> Option<i32> {
     (current <= 0).then_some(NEUTRAL_XFT_DPI)
 }
@@ -398,7 +472,9 @@ fn neutral_xft_dpi() {
 }
 
 fn main() {
-    // Applies to new private files only; never changes selected existing files.
+    // Applies to new private files only; never changes selected existing files. (Windows has
+    // no umask: files under the user's profile are already the user's alone.)
+    #[cfg(unix)]
     unsafe { libc::umask(0o077); }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -438,10 +514,16 @@ fn main() {
                 background_item.set_checked(false)?;
                 background_item.set_enabled(false)?;
             }
+            // Start at login needs the tray too: a hidden window with no tray could not be shown again.
+            let autostart_dir = autostart::unit_dir(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
+                .filter(|dir| background_available && autostart::available(Some(dir)));
+            let autostart_on = autostart_dir.as_deref().is_some_and(autostart::enabled);
+            let hidden = background_available && wants_background(&std::env::args().collect::<Vec<_>>());
             app.manage(Desktop {
                 backend: Mutex::new(backend),
                 background: AtomicBool::new(background && background_available),
                 background_item, background_available,
+                autostart_dir, autostart: AtomicBool::new(autostart_on),
                 update_item: update,
                 lifecycle: Mutex::new(update_lifecycle::Lifecycle::default()), preferences,
                 root: root.clone(), origin: origin.clone(), window_script: window_script.clone(),
@@ -453,6 +535,7 @@ fn main() {
             let note_app = app.handle().clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin))
                 .title("rika!").inner_size(1280.0, 850.0).min_inner_size(760.0, 500.0)
+                .visible(!hidden)
                 .transparent(true)
                 .initialization_script(TRANSPARENT_MARKER)
                 .initialization_script(window_script)
@@ -503,8 +586,10 @@ fn main() {
             });
             let handle = app.handle().clone();
             thread::spawn(move || {
+                let clicked = handle.clone();
+                let notices = notifications::Notices::connect(Arc::new(move |key, action, token| notice_invoked(&clicked, key, action, token)));
                 for command in commands {
-                    desktop_command(&handle, command);
+                    desktop_command(&handle, notices.as_ref(), command);
                 }
             });
             if wants_quick_note(&std::env::args().collect::<Vec<_>>()) {

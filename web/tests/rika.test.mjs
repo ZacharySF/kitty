@@ -207,3 +207,36 @@ test('routing memory numbers: compact tokens and a 14-day trend line', () => {
   assert.deepEqual(trendRange([{ day: 'a', requests: 0, avg_cost_usd: 0 }, ...trend]), { from: 0.006, to: 0.002 });
   assert.equal(trendRange([]), null);
 });
+
+import { askedAt, otherDate, radioStep } from '../src/lib/rika/rika.ts';
+
+test('another date answers a date question only once it is a whole date, with its time when it has one', () => {
+  assert.deepEqual(otherDate('2026-11-20'), { date: '2026-11-20', time: null });
+  assert.deepEqual(otherDate('2026-11-20T16:30'), { date: '2026-11-20', time: '16:30' });
+  assert.equal(otherDate(''), null);
+  assert.equal(otherDate('2026-11'), null);
+  assert.equal(otherDate('2026-13-40'), null);
+  assert.equal(otherDate('20/11/2026'), null);
+});
+
+test('arrow keys walk the date chips and wrap; other keys are left alone', () => {
+  assert.equal(radioStep(0, 3, 'ArrowRight'), 1);
+  assert.equal(radioStep(2, 3, 'ArrowDown'), 0);
+  assert.equal(radioStep(0, 3, 'ArrowLeft'), 2);
+  assert.equal(radioStep(1, 3, 'ArrowUp'), 0);
+  assert.equal(radioStep(1, 3, 'Home'), 0);
+  assert.equal(radioStep(1, 3, 'End'), 2);
+  assert.equal(radioStep(1, 3, 'Tab'), null);
+  assert.equal(radioStep(0, 0, 'ArrowRight'), null);
+});
+
+test('a question sits under the reply that asks it, even when the page stamped that reply late', () => {
+  const plan = { id: 'p', plan_kind: 'confirm', created_at: '2026-11-14T10:00:00.100000+00:00' };
+  assert.equal(askedAt(plan, { created_at: '2026-11-14T10:00:00.250Z' }), '2026-11-14T10:00:00.251Z');
+  assert.equal(askedAt(plan, { created_at: '2026-11-14T10:00:00.050000+00:00' }), plan.created_at);
+  assert.equal(askedAt(plan, undefined), plan.created_at);
+  assert.equal(askedAt({ ...plan, plan_kind: 'dump' }, { created_at: '2026-11-14T10:00:00.250Z' }), plan.created_at);
+  const reply = { kind: 'message', id: 'm', role: 'rika', text: 'Which day?', created_at: '2026-11-14T10:00:00.250Z' };
+  const merged = mergeEntries([reply], [{ kind: 'plan', ...plan, created_at: askedAt(plan, reply) }]);
+  assert.deepEqual(merged.map(entryKey), ['message:m', 'plan:p']);
+});

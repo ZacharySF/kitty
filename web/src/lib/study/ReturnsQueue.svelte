@@ -81,7 +81,7 @@
   }
   .count {
     color: var(--muted);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
   }
   .card {
     display: grid;
@@ -141,7 +141,7 @@
   .ladder small {
     margin-left: auto;
     color: var(--muted);
-    font: 500 9.5px var(--font-mono);
+    font: 500 9.5px var(--font-ui);
   }
   .actions {
     display: flex;

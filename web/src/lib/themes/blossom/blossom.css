@@ -137,18 +137,7 @@
   top: 0;
 }
 
-/* Cat ears: the active workspace tab's underline and the current group pill grow two ears. */
-:root[data-theme="blossom"]:not([data-motif="off"]) .workspace-tabbar .tab.active::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: 1px;
-  width: 14px;
-  height: 5px;
-  transform: translateX(-50%);
-  background: var(--tone, var(--br-signal));
-  clip-path: polygon(0 100%, 18% 0, 40% 100%, 60% 100%, 82% 0, 100% 100%);
-}
+/* Cat ears: the current group pill grows two ears. */
 :root[data-theme="blossom"]:not([data-motif="off"]) body .workspace-groups button[aria-current="page"] {
   position: relative;
   overflow: visible;

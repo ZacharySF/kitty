@@ -7,12 +7,12 @@
 export type Source = "calendar" | "job" | "rika";
 export type CalendarReminder = { event_id: string; occurrence: string; minutes: number; title: string; due: string };
 export type JobReminder = { id: number; kind: string; due_at: string; note: string | null; job_id: number | null; label: string };
-/** An urgent (strong and time-sensitive) goal match from `GET /api/rika/alerts` (docs/rika-design.md Q15 A). */
-export type RikaAlert = { id: number | string; key: string; title: string; body: string; due_at: string | null; goal_id: number | string; view: string | null; created_at: string };
+/** An urgent (strong and time-sensitive) goal match from `GET /api/rika/alerts` (docs/rika-design.md Q15 A), or, with no goal, a problem with the GitHub backup. */
+export type RikaAlert = { id: number | string; key: string; title: string; body: string; due_at: string | null; goal_id: number | string | null; view: string | null; created_at: string };
 export type Target =
   | { kind: "calendar"; event_id: string; occurrence: string; minutes: number }
   | { kind: "job"; id: number; job_id: number | null }
-  | { kind: "rika"; id: number | string; goal_id: number | string; view: string | null };
+  | { kind: "rika"; id: number | string; goal_id: number | string | null; view: string | null };
 export type Notice = { key: string; source: Source; title: string; body: string; due: string; target: Target };
 
 /** Quiet hours as minutes of the local day; `from === to` is an empty window. */
