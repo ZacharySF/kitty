@@ -413,6 +413,52 @@ READY_PAGE = """<form id="application" method="post" action="/trap/submit">
   <button type="submit">Submit application</button></form>"""
 
 
+def test_background_reporting_does_not_override_a_successful_fill(space, tab, trap, monkeypatch):  # noqa: F811
+    # Substitute only the reporting service's origin with a local receiver:
+    # the real policy, Firefox interception, form filler and evidence writer run.
+    monkeypatch.setattr(guard, "_CSP_REPORT_ORIGIN", trap.origin, raising=False)
+    monkeypatch.setattr(filler, "detect_ats", lambda url: "workday")
+    body = READY_PAGE + """<script>
+        window.reportDone = fetch('/cdn-cgi/script_monitor/report', {
+            method: 'POST', body: 'synthetic-report'
+        }).then(() => 'sent', () => 'blocked');
+    </script>"""
+    job = _job(space, trap, body)
+    report = fill_job(tab, space.conn, space.settings, space.config, job)
+    assert report.status == "ready", report.note
+    assert _page(tab.main, "() => window.reportDone") == "blocked"
+    assert _page(tab.main, "() => document.querySelector('[name=first_name]').value") == "Pat"
+    assert _page(tab.main, "() => document.querySelector('[name=resume]').files[0].name") == "resume.pdf"
+    assert trap.writes() == []
+    assert report.guard_released and tab.network_released
+    assert jobs_core.get_job(space.conn, job.id).fill_state == "ready"
+    assert space.conn.execute("SELECT outcome FROM apply_attempts WHERE id = ?",
+                              (report.attempt_id,)).fetchone()[0] == "ready"
+    assert [(row["path"], row["decision"]) for row in endpoints.read(space.settings, endpoints.OBSERVED)] == [
+        ("/cdn-cgi/script_monitor/report", "fail")]
+
+
+@pytest.mark.parametrize("review", [False, True])
+def test_reporting_drops_preserve_input_and_cannot_hide_a_later_submit(tab, trap, monkeypatch, review):
+    monkeypatch.setattr(guard, "_CSP_REPORT_ORIGIN", trap.origin, raising=False)
+    frame = _serve(trap, tab, '<label>First name <input name="first"></label>', family="workday")
+    tab.observe_review(review)
+    assert _page(frame, FETCH_ALL, [["POST", "/cdn-cgi/script_monitor/report"]]) == ["failed"]
+    first = _node(frame, '[name="first"]')
+    frame.call("() => document.querySelector('input').focus()")
+    frame.type("Pat", into=first)
+    assert _page(frame, "() => document.querySelector('input').value") == "Pat"
+    assert _page(frame, FETCH_ALL, [["POST", "/wday/cxs/acme/External/job/x/submit"]]) == ["failed"]
+    # Diagnostic history is bounded. Background traffic must not evict the
+    # safety stop and let automation resume after a denied submission.
+    assert _page(frame, FETCH_ALL, [["POST", "/cdn-cgi/script_monitor/report"]] * 205) == ["failed"] * 205
+    assert trap.writes() == []
+    with pytest.raises(guard.SubmitBlockedNetwork, match="workday.submit"):
+        tab.check_network()
+    with pytest.raises(guard.SubmitBlockedNetwork):
+        frame.type("Unsafe continuation", into=first)
+
+
 def _crash_mid_fill(monkeypatch, crash_path: str, ports: list[int]):
     """The BiDi WebSocket dies mid-fill of `crash_path`, after its page scheduled a POST.
 

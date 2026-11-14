@@ -33,7 +33,8 @@ applies it. Three layers share one set of action intents:
   `failRequest`. `policy()` is that answer; kitty.core.apply.bidi arms it per
   tab for the whole fill (`Tab.arm`) and releases it before the tab is handed
   over. A failed request stops the fill (`SubmitBlockedNetwork`, cause
-  `submit_blocked_network`) and the tab stays open for the owner.
+  `submit_blocked_network`), except verified external CSP reports: those are
+  discarded without ending preparation, including on Workday Review.
 
 It reads only the request's method, URL origin and path (plus query parameter
 *names*, and the value of Ashby's GraphQL `op` parameter), whether it is a
@@ -51,10 +52,10 @@ Rules (N3 §4.4), first match wins:
    profile whose Next navigates by POST, covers the same origin, and the URL is
    not on the deny list.
 4. Other non-GET requests (fetch, XHR, beacons) are decided by the family
-   profile (N3 §4.5): deny rules first (always enforced), then
-   credential-only endpoints, the allowlist, the generic submit pattern, a
-   same-origin CREDENTIAL/PROFILE_GATE token, and finally the profile's
-   verdict for unlisted requests.
+   profile (N3 §4.5): deny rules first (always enforced), then the exact external
+   CSP-report discard, the review lock, credential-only endpoints, the allowlist,
+   the generic submit pattern, a same-origin CREDENTIAL/PROFILE_GATE token, and
+   finally the profile's verdict for unlisted requests.
 
 The generic submit pattern backs up every profile, not only the custom and
 Oracle rows of the §4.5 table: an unlisted request that looks like a submit
@@ -182,6 +183,7 @@ class Decision:
     method: str
     path: str
     observed: bool = False        # an unlisted request let through in observe mode
+    stop_fill: bool = True        # whether a failed request terminates preparation
 
     def log_entry(self) -> dict[str, str]:
         """Method, path (no query), endpoint id and decision: nothing else is recorded."""
@@ -244,6 +246,11 @@ _SMARTRECRUITERS_HOSTS = ("smartrecruiters.com",)
 _ASHBY_HOSTS = ("ashbyhq.com",)
 _ORACLE_HOSTS = ("oraclecloud.com",)
 _POST = frozenset({"POST"})
+
+# Cloudflare's dedicated reporting service is not an employer mutation endpoint.
+# Never allow its payload through; only make this exact background denial nonfatal.
+# https://developers.cloudflare.com/client-side-security/reference/settings/
+_CSP_REPORT_ORIGIN = "https://csp-reporting.cloudflare.com"
 
 PROFILES: dict[str, Profile] = {
     # workday.md:16-18, 24, 56, 67. The submit path is expected, not observed.
@@ -337,7 +344,7 @@ def policy(event: Mapping | Request, family: str | Profile, tokens: Iterable[Tok
     tokens = tuple(tokens)
 
     def decided(verdict: Verdict, rule: str, *, observed: bool = False) -> Decision:
-        return Decision(verdict, rule, request.method, request.path, observed)
+        return Decision(verdict, rule, request.method, request.path, observed, stop_fill=verdict == FAIL)
 
     def first(rules: Iterable[Rule]) -> Rule | None:
         return next((rule for rule in rules if rule.matches(request)), None)
@@ -352,9 +359,13 @@ def policy(event: Mapping | Request, family: str | Profile, tokens: Iterable[Tok
 
     if denied is not None:
         return decided(FAIL, denied.id)
+    looks_like_submit = _GENERIC.matches(request)
+    if (request.method == "POST" and not request.navigation
+            and request.origin == _CSP_REPORT_ORIGIN
+            and request.path == "/cdn-cgi/script_monitor/report" and not looks_like_submit):
+        return Decision(FAIL, "cloudflare.csp_report", request.method, request.path, stop_fill=False)
     if profile.deny_non_get_on_review and review:
         return decided(FAIL, f"{profile.family}.review")
-    looks_like_submit = _GENERIC.matches(request)
 
     if request.navigation:
         if looks_like_submit:

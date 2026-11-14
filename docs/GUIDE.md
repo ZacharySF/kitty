@@ -2254,8 +2254,23 @@ The guard also holds every request the tab sends while rika! fills it and lets
 through only what the form provider's profile allows (deny lists of submit
 endpoints always; Greenhouse, Lever and SmartRecruiters unknown requests are only
 recorded during the survey, method and path only, in `data/apply-endpoints/`). A
-blocked request stops the fill (`network:` note, cause `submit_blocked_network`)
-and keeps the tab for me to review. If the connection to rika!'s Firefox breaks
+blocked request normally stops the fill (`network:` note, cause
+`submit_blocked_network`) and keeps the tab for me to review. The exact background
+`POST https://csp-reporting.cloudflare.com/cdn-cgi/script_monitor/report` is an
+exception: rika! discards it without stopping preparation, including on Workday
+Review. Its payload is never sent, and the denial is recorded as
+`cloudflare.csp_report`. Employer-hosted lookalikes, other origins or ports,
+navigation requests, unknown mutations and submission endpoints are not exempt.
+A fatal denial remains latched until the tab is rearmed, even if later reporting
+traffic evicts it from the bounded diagnostic history.
+
+The pure request policy decides both whether to send a request and whether a
+denial must stop preparation; browser transport and final readiness consume that
+same decision. Keep these semantics and the behavioral regression cases when
+porting the backend to Rust; this change adds no service, dependency or database
+migration.
+
+If the connection to rika!'s Firefox breaks
 mid-fill, rika! restarts that Firefox itself and fills the job again only when no
 tab is waiting for me; otherwise the job shows one `restart_firefox:` item: finish
 or discard the waiting tabs, then press Restart Firefox in Apply (or run

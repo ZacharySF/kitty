@@ -27,8 +27,9 @@ sandbox (L1) cancels anything that could submit without the one-shot token the
 inspection set, and every sandbox script kitty runs there renews its lease; a
 network intercept scoped to the tab (L2) holds each of its requests until the
 reader answers it with `guard.policy()` for the tab's ATS family. A failed
-request stops the fill (`guard.SubmitBlockedNetwork`). `Tab.release` disarms
-both before the tab is handed to me; kitty never acts in a released tab again.
+request stops the fill (`guard.SubmitBlockedNetwork`) unless the policy identifies
+a nonfatal reporting discard. `Tab.release` disarms both before the tab is handed
+to me; kitty never acts in a released tab again.
 Request events are used for that one decision only: kitty keeps method, path
 (no query), rule id and verdict, never headers, cookies or bodies.
 """
@@ -154,7 +155,7 @@ class _TabGuard:
 
     __slots__ = ("allowlist", "armed", "arming", "blocked", "decisions", "entries", "family", "intercept",
                  "network", "observed", "owner_at", "preload", "reported", "review", "stop", "subscription",
-                 "thread", "tokens")
+                 "thread", "tokens", "failure")
 
     def __init__(self, family: str | Profile = "custom", allowlist: AllowlistMode = "enforce") -> None:
         self.armed = False
@@ -176,6 +177,7 @@ class _TabGuard:
         self.tokens: list[list] = []        # [guard.Token, expiry: monotonic, inf while its action runs]
         self.decisions: list[Decision] = []  # every non-GET and every failed request
         self.blocked: list[Decision] = []
+        self.failure: Decision | None = None  # first fatal denial; survives bounded log eviction
         self.observed: list[Decision] = []  # unlisted non-GETs an observe-only allowlist let through
 
     def note(self, decision: Decision, *, logged: bool) -> None:
@@ -183,6 +185,8 @@ class _TabGuard:
         kept = [self.decisions] if logged else []
         if decision.verdict == FAIL:
             kept.append(self.blocked)
+            if decision.stop_fill and self.failure is None:
+                self.failure = decision
         elif decision.observed:
             kept.append(self.observed)
         for log in kept:
@@ -287,7 +291,7 @@ class Bidi:
     def _armed(self, tab: str) -> bool:
         """Whether input goes to an armed application tab; never to a released one.
 
-        Raises once L2 failed a request in the tab: the fill must stop.
+        Raises once L2 failed a potentially state-changing request in the tab.
         """
         guard = self._guard(tab)
         if guard is None:
@@ -298,12 +302,12 @@ class Bidi:
         return True
 
     def _check_network(self, tab: str) -> None:
-        """Raise SubmitBlockedNetwork once L2 failed a request in this armed tab."""
+        """Raise SubmitBlockedNetwork for a fatal denial in this armed tab."""
         guard = self._guard(tab)
         if guard is None or not guard.armed:
             return
         with self._lock:
-            blocked = guard.blocked[0] if guard.blocked else None
+            blocked = guard.failure
         if blocked is not None:
             raise SubmitBlockedNetwork(network_note(blocked))
 
@@ -958,7 +962,7 @@ class Tab:
                 guard.review = bool(review)
 
     def check_network(self) -> None:
-        """Raise guard.SubmitBlockedNetwork if L2 failed a request of this armed tab."""
+        """Raise guard.SubmitBlockedNetwork for a fatal denial in this armed tab."""
         self.bidi._check_network(self.context)
 
     def _heartbeat(self, guard: _TabGuard) -> None:
@@ -1063,6 +1067,15 @@ class Tab:
             return []
         with self.bidi._lock:
             return list(guard.blocked)
+
+    @property
+    def network_stop(self) -> Decision | None:
+        """First fatal denial since arming; retained after release and log eviction."""
+        guard = self.bidi._guard(self.context)
+        if guard is None:
+            return None
+        with self.bidi._lock:
+            return guard.failure
 
     @property
     def network_observed(self) -> list[Decision]:
