@@ -133,8 +133,8 @@ fn dict(entries: Vec<(&str, Value)>) -> Value {
 
 /// `settings_from_rows`: the build's `settings` as the SQLite rows hold them now.
 pub fn settings_from_rows(conn: &Connection) -> Result<Value, Failure> {
-    let ai = row(conn, "SELECT model, routing, max_output_tokens, daily_budget_usd, rika_fast_model, rika_standard_model,"
-        " rika_deep_model FROM ai_settings WHERE id=1")?;
+    let ai = row(conn, concat!("SELECT model, routing, max_output_tokens, daily_budget_usd, rika_fast_model, rika_standard_model,",
+        " rika_deep_model FROM ai_settings WHERE id=1"))?;
     let notes = row(conn, "SELECT allow_ai, retention_days FROM note_preferences WHERE id=1")?;
     let study = row(conn, "SELECT focus_seconds, short_break_seconds, sound, notifications FROM study_settings WHERE id=1")?;
     let monitoring = row(conn, "SELECT enabled, interval_hours FROM opportunity_settings WHERE id=1")?;
