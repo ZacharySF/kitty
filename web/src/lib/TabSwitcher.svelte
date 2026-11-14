@@ -103,6 +103,7 @@
     box-shadow: var(--overlay-shadow); backdrop-filter: none; -webkit-backdrop-filter: none;
     font-size: 15px; line-height: 1.3;
   }
+  .tab-list { list-style: none; margin: 0; padding: 0; }
   .tab-row { display: flex; align-items: center; border-radius: var(--r-item); color: var(--muted); }
   .tab-row[aria-current] { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
   .tab-row:hover { color: var(--ink); }
