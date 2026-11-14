@@ -527,7 +527,7 @@ describe("empty states", () => {
 });
 
 describe("loaders", () => {
-  test("lists load behind shimmering skeleton rows; whole views behind the theme's loader (Kitty: the blinking cat in a petal spinner)", async () => {
+  test("lists and whole views load behind the point-cloud brain and a caption that names them", async () => {
     const { page, problems, context } = await open("today");
     await page.locator(".wordmark").waitFor();
     let release;
@@ -536,19 +536,22 @@ describe("loaders", () => {
     await page.evaluate(() => (location.hash = "inbox"));
     const rows = page.locator('[role="status"].kitty-loader[data-kind="rows"]');
     await rows.waitFor();
-    assert.ok((await rows.locator(".skeleton-row").count()) >= 3, "too few skeleton rows");
-    assert.match(await rows.getAttribute("aria-label"), /loading/i);
-    assert.notEqual(await rows.locator(".skeleton-row span").first().evaluate((node) => getComputedStyle(node).animationName), "none");
+    assert.equal(await rows.locator(".skeleton-row").count(), 0, "skeleton rows are back");
+    assert.match(await rows.innerText(), /Loading opportunities/);
+    // The brain is drawn: some of its canvas is inked.
+    const inked = (scope) => scope.locator("canvas.brain-cloud").evaluate((node) =>
+      node.getContext("2d").getImageData(0, 0, node.width, node.height).data.some((value, index) => index % 4 === 3 && value > 0));
+    assert.ok(await inked(rows), "the list loader's brain is blank");
     release();
     await rows.waitFor({ state: "detached" });
     let releaseBrain;
     const brainHeld = new Promise((resolve) => (releaseBrain = resolve));
     await page.route((url) => url.pathname === "/api/brain", async (route) => { await brainHeld; await route.continue(); });
-    await page.keyboard.press("Control+t");
+    // The Brain is its own view (home is a dashboard).
+    await page.evaluate(() => (location.hash = "brain"));
     const eyes = page.locator('[role="status"].kitty-loader[data-kind="view"]').filter({ hasText: "Waking the brain…" });
     await eyes.waitFor();
-    assert.equal(await eyes.locator(".eye").count(), 2);
-    assert.notEqual(await eyes.locator(".eye").first().evaluate((node) => getComputedStyle(node).animationName), "none", "eyes do not blink");
+    assert.ok(await inked(eyes), "the view loader's brain is blank");
     releaseBrain();
     await eyes.waitFor({ state: "detached" });
     assert.deepEqual(problems, []);
@@ -1095,7 +1098,7 @@ describe("home dashboard", () => {
       // Design review: fewer, larger widgets. The brief is Rika's chip, sections are in search,
       // agents show only while a session runs (the demo has none).
       const titles = await board.locator(".home-widget > header h3").allInnerTexts();
-      assert.deepEqual(titles, ["Today", "Quick note", "Up next"]);
+      assert.deepEqual(titles, ["Today", "Quick note", "Focus", "Up next"]);
       // Two columns of widgets when there is room, one when there is not.
       const lefts = new Set(await board.locator(".column").evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().left))));
       assert.equal(lefts.size, viewport.width >= 1200 ? 2 : 1, `${lefts.size} widget columns at ${viewport.width}px`);

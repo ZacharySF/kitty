@@ -1306,15 +1306,21 @@ conflicts list the differing name, timezone and colour.
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
 weeks, 30 days or a custom date picker; no date-syntax memorization is required.
 
-**Notifications.** Due calendar reminders, job-search reminders and Rika's urgent
-goal matches (**Rika · strong match**, see **Rika** below) arrive as one
-stack of glass toasts in the bottom-right corner. Hovering (or tabbing into) the
-stack fans it out and pauses every countdown. **Snooze** brings a calendar
-reminder back in ten minutes and moves a job-search reminder a day; **Open**
-jumps to the calendar, the job or Reminders. A toast that times out is not lost:
-the bell in the top bar counts unread notifications and opens the notification
-center, with All/Unread tabs, a source filter, **Mark all read**, and
-**Dismiss**/**Done** on each item. Its footer switches system alerts on or off.
+**Notifications.** Due calendar reminders, job-search reminders, Rika's urgent
+goal matches (**Rika · strong match**, see **Rika** below) and the end of a study
+phase arrive as Linux notifications in the desktop app: the shell sends them to
+your desktop's own notification server, so they look and behave like every other
+app's, your desktop's Do Not Disturb holds them, and nothing is ever marked
+critical. Clicking one raises rika! and opens the calendar, the job or Reminders;
+its **Snooze** button brings a calendar reminder back in ten minutes and moves a
+job-search reminder a day. In a browser tab, or with **System alerts** switched
+off, the same notices arrive as a stack of toasts in the bottom-right corner
+instead (hovering or tabbing into the stack fans it out and pauses every
+countdown). Either way nothing is lost: **Notifications** in Ctrl Space or the tab
+menu opens the notification center, with All/Unread tabs, a source filter,
+**Mark all read**, and **Dismiss**/**Done** on each item. Its footer switches
+system alerts on or off (on by default in the desktop app; a browser asks its
+permission first).
 **Settings → Quiet hours** sets a window on a 24-hour dial (drag either end, or
 use the arrow keys for 15-minute steps). Inside it nothing toasts; reminders are
 held (shown as Held in the center), calendar events can be let through, and when
@@ -1376,6 +1382,22 @@ doing; **Approve** opens herdr on a blocked one) and **Sections**, every page th
 active modules provide, by group. With every module off, one line says so and leads
 to Settings → Modules. Ctrl Space also finds every section.
 
+**Focus** is the study timer on one line: the phase, the time left and one button
+(Start, Pause, or Resume and Stop) over a rule that drains as the phase runs. It is
+the same timer as Study's and the top bar's, so starting it in one place starts it in
+all.
+
+**Edit** under the widgets (or **Edit home** in Ctrl Space) unlocks home: drag a
+widget by its handle to another place or column (or focus the handle and use the
+arrow keys), **Remove** it, or **Add** one from the **Widgets** list that takes
+Rika's place while you edit. **Done** saves the arrangement to the build
+(`ui.home`).
+
+Loading shows a small turning brain made of points with a line that names what is
+loading; there are no placeholder rows. The Brain itself stays still while you work
+and starts to turn slowly after 30 seconds untouched (View → **Turning** turns that
+off, **Speed** sets it).
+
 The **Brain** is its own view (the **Brain** entry in the header, or Sections), there
 when the Brain module is on: every record and edit in the workspace as a point in a
 brain, or the 2D **atlas** of workspace sections; the **Brain | 2D** switch in the
@@ -1388,6 +1410,11 @@ section, shows it on the map, or hides it from (or shows it on) the 2D atlas;
 hidden rows stay listed, dimmed. On the 2D atlas, drop a node on **Sections** to
 hide it and drag a dimmed row onto the graph to show it again. On the Brain view
 Ctrl+Alt finds Plan on the map; elsewhere it opens Plan.
+The 2D look is a constellation: every node is a point sized by how many links it
+has, a node with four or more links carries a four-point spike, and each group is one
+lightness step of a single hue. Lines join nodes inside a group; lines across groups
+and names appear only for the node under the pointer (or the selected one) and its
+neighbours, while the rest dims.
 The full job-search brief (reminders, deadlines and weekly goals) lives in **Find
 jobs**. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
 Appearance); every schema starts in Tree, and an explicit layout preference can

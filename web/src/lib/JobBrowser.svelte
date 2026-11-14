@@ -728,7 +728,7 @@
       </div>
     {/if}
     <div bind:this={results} class="job-list" class:dense={view !== "today"} role="region" aria-label="Job results" aria-busy={loading}>
-      {#if loading}<Loader label="Loading opportunities…" rows={4} />{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
+      {#if loading}<Loader label="Loading opportunities…" />{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
           <p>Change your filters, add a posting, or discover new jobs from Job sources.</p>
           {#snippet actions()}<button class="button" onclick={() => onview("sources")}>Open Job sources</button>{/snippet}
         </EmptyState>{:else}

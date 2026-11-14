@@ -10,7 +10,8 @@
    * that state (since this widget first saw it) and Approve for a blocked one,
    * which opens the herdr session where the prompt waits. Reading never starts herdr.
    */
-  let { id, onview }: { id: string; onview: (view: View) => unknown } = $props();
+  /** `placeholder`: home's edit mode, where the widget shows its title even with no session running. */
+  let { id, onview, placeholder = false }: { id: string; onview: (view: View) => unknown; placeholder?: boolean } = $props();
   const POLL_MS = 3000;
   let activity = $state<TerminalActivity | null>(null);
   let now = $state(Date.now());
@@ -70,7 +71,7 @@
         </li>
       {/each}
     </ul>
-</HomeWidget>{/if}
+</HomeWidget>{:else if placeholder}<HomeWidget {id} title="Agents" eyebrow="Shows while a session runs" />{/if}
 
 <style>
   ul {
