@@ -14,6 +14,7 @@ export const HOME_WIDGETS = [
 export type HomeWidgetId = (typeof HOME_WIDGETS)[number]["id"];
 export type HomeLayout = { columns: string[][]; hidden: string[] };
 
+
 /**
  * The columns to draw. A saved id this build does not know, or whose modules are all off,
  * keeps its place in the file and is skipped; a widget the file neither places nor hides
@@ -64,4 +65,34 @@ export function savedHome(columns: HomeWidgetId[][], previous: HomeLayout, enabl
   const placed = new Set<string>(columns.flat());
   const hidden = new Set([...previous.hidden, ...spareWidgets(columns, enabled).map((widget) => widget.id)]);
   return { columns: columns.filter((column) => column.length), hidden: [...hidden].filter((id) => !placed.has(id)) };
+}
+
+/** A column's share of the board: between these, in steps of 0.05 (1 is an even share). */
+export const WIDTH_LIMITS = { min: 0.6, max: 1.4, step: 0.05 };
+/** Rika's share of home's width when it is set by hand; 0 keeps the usual width. */
+export const RIKA_LIMITS = { min: 0.2, max: 0.45, step: 0.01 };
+
+const snap = (value: number, { min, max, step }: { min: number; max: number; step: number }) =>
+  Math.round(Math.min(max, Math.max(min, value)) / step) * step;
+
+/**
+ * Two columns' shares from where the splitter between them sits (`fraction` of the board's
+ * width, 0 to 1): they always add up to 2, so an even split is [1, 1].
+ */
+export function splitWidths(fraction: number): [number, number] {
+  const first = Number(snap(fraction * 2, WIDTH_LIMITS).toFixed(2));
+  return [first, Number((2 - first).toFixed(2))];
+}
+
+/** The saved shares as one per drawn column: a missing, extra or out-of-range entry is an even share. */
+export function columnShares(saved: readonly number[], count: number): number[] {
+  return Array.from({ length: count }, (_, index) => {
+    const value = saved[index];
+    return typeof value === "number" && value >= 0.5 && value <= 1.5 ? value : 1;
+  });
+}
+
+/** Rika's share from where its splitter sits (`fraction` of home's width taken by Rika). */
+export function rikaShare(fraction: number): number {
+  return Number(snap(fraction, RIKA_LIMITS).toFixed(2));
 }

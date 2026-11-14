@@ -106,11 +106,20 @@ class StudyTimer {
       }
     } catch { /* Ignore a malformed cache. */ }
     void this.load();
+    // The clock only moves while a phase runs; an idle timer is asked for far less often
+    // (starting it anywhere raises `kitty-study-changed`, and focus refreshes it too).
     const tick = window.setInterval(() => {
+      if (this.result?.timer.status !== "running") return;
       this.now = Date.now();
-      if (this.result?.timer.status === "running" && this.remaining === 0) void this.load();
+      if (this.remaining === 0) void this.load();
     }, 250);
-    const refresh = window.setInterval(() => { if (!this.busy) void this.load(); }, 2000);
+    let quiet = 0;
+    const refresh = window.setInterval(() => {
+      if (this.busy || document.hidden) return;
+      const idle = this.result?.timer.status === "idle";
+      quiet = idle ? quiet + 1 : 0;
+      if (!idle || quiet % 10 === 0) void this.load();
+    }, 2000);
     const wake = () => { if (document.visibilityState === "visible") void this.load(); };
     const changed = () => void this.load();
     document.addEventListener("visibilitychange", wake);

@@ -7,7 +7,7 @@
   import TodayAgenda from "./TodayAgenda.svelte";
   import type { Bootstrap } from "./api";
   import { buildStore, setPreferences } from "./build.svelte";
-  import { HOME_WIDGETS, MAX_COLUMNS, placeWidget, resolveHome, savedHome, spareWidgets, type HomeWidgetId } from "./home/layout";
+  import { HOME_WIDGETS, MAX_COLUMNS, RIKA_LIMITS, WIDTH_LIMITS, columnShares, placeWidget, resolveHome, rikaShare, savedHome, spareWidgets, splitWidths, type HomeWidgetId } from "./home/layout";
   import { homeEditor } from "./home/templatePicker.svelte";
   import TemplateSuggestion from "./home/TemplateSuggestion.svelte";
   import { activeModules } from "./modules.svelte";
@@ -24,7 +24,9 @@
    * (home/layout.ts); a template (home/templates.ts) rearranges it from Rika's panel.
    * Edit (under the widgets, or "Edit home" in search) unlocks them: drag one by its
    * handle (or move it with the arrow keys), Remove it, or add one from the library that
-   * takes Rika's place until Done, which saves the arrangement.
+   * takes Rika's place until Done, which saves the arrangement. In edit mode a splitter
+   * between the two columns, and one before Rika's column, sets how the width is shared
+   * (drag, arrow keys, double-click to reset).
    */
   let { revision, counts, onview }: { revision: number; counts?: Bootstrap["counts"]; onview: (view: View) => unknown } = $props();
   const pane = useWorkspaceContext();
@@ -38,6 +40,46 @@
   const columns = $derived(draft ?? saved);
   const spare = $derived(draft ? spareWidgets(draft, enabled) : []);
   let dragged = $state<HomeWidgetId | null>(null);
+  /** The shares while editing (the build's `ui.home.widths` and `ui.home.rika` otherwise). */
+  let draftWidths = $state<number[] | null>(null);
+  let draftRika = $state<number | null>(null);
+  const shares = $derived(columnShares(draftWidths ?? buildStore.build.ui.home.widths, columns.length));
+  const rikaWidth = $derived(draftRika ?? buildStore.build.ui.home.rika);
+  let board = $state<HTMLElement>();
+  let home = $state<HTMLElement>();
+  /** Which splitter the pointer holds. */
+  let sizing: "columns" | "rika" | null = null;
+
+  function size(event: PointerEvent) {
+    if (sizing === "columns" && board) {
+      const box = board.getBoundingClientRect();
+      draftWidths = splitWidths((event.clientX - box.left) / box.width);
+    } else if (sizing === "rika" && home) {
+      const box = home.getBoundingClientRect();
+      draftRika = rikaShare((box.right - event.clientX) / box.width);
+    }
+  }
+  function grab(event: PointerEvent, which: "columns" | "rika") {
+    sizing = which;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+  /** Arrow keys move a splitter one step; Home and End go to its ends. */
+  function step(event: KeyboardEvent, which: "columns" | "rika") {
+    const direction = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+    if (which === "columns") {
+      const now = shares[0];
+      const next = event.key === "Home" ? WIDTH_LIMITS.min : event.key === "End" ? WIDTH_LIMITS.max : direction ? now + direction * WIDTH_LIMITS.step : null;
+      if (next === null) return;
+      draftWidths = splitWidths(next / 2);
+    } else {
+      const now = rikaWidth || 0.3;
+      // Rika's column grows to the left.
+      const next = event.key === "Home" ? RIKA_LIMITS.max : event.key === "End" ? RIKA_LIMITS.min : direction ? now - direction * 0.02 : null;
+      if (next === null) return;
+      draftRika = rikaShare(next);
+    }
+    event.preventDefault();
+  }
   let failure = $state("");
   const titleOf = (id: HomeWidgetId) => HOME_WIDGETS.find((widget) => widget.id === id)!.title;
 
@@ -48,11 +90,14 @@
     failure = "";
     // Plain copies: the draft and the build are reactive proxies, which the save cannot clone.
     const next = savedHome($state.snapshot(draft) ?? [], $state.snapshot(buildStore.build.ui.home), enabled);
-    if (!(await setPreferences({ ui: { home: next } }))) {
+    const sized = { widths: draftWidths ? $state.snapshot(draftWidths) : $state.snapshot(buildStore.build.ui.home.widths), rika: draftRika ?? buildStore.build.ui.home.rika };
+    if (!(await setPreferences({ ui: { home: { ...next, ...sized } } }))) {
       failure = "Could not save the arrangement.";
       return;
     }
     draft = null;
+    draftWidths = null;
+    draftRika = null;
     homeEditor.on = false;
   }
   function place(id: HomeWidgetId, column: number, before?: HomeWidgetId) {
@@ -103,8 +148,9 @@
   }
 </script>
 
-<div class="home" data-tutorial="home">
-  <div class="board" class:editing role="region" aria-label="Home widgets">
+<div class="home" data-tutorial="home" bind:this={home} style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null}>
+  <div class="board" class:editing class:sized={columns.length === 2} bind:this={board} role="region" aria-label="Home widgets"
+    style:--board-columns={columns.length === 2 ? `minmax(0, ${shares[0]}fr) minmax(0, ${shares[1]}fr)` : null}>
     {#each columns as column, index (index)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="column" ondragover={(event) => { if (dragged) { event.preventDefault(); place(dragged, index); } }}>
@@ -131,6 +177,13 @@
             </div>
           </div>
         {/each}
+        {#if editing && index === 0 && columns.length === 2}
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+          <div class="splitter" role="separator" aria-orientation="vertical" aria-label="Width of the two widget columns" tabindex="0"
+            aria-valuemin={WIDTH_LIMITS.min * 50} aria-valuemax={WIDTH_LIMITS.max * 50} aria-valuenow={Math.round(shares[0] * 50)}
+            onpointerdown={(event) => grab(event, "columns")} onpointermove={size} onpointerup={() => (sizing = null)} onpointercancel={() => (sizing = null)}
+            onkeydown={(event) => step(event, "columns")} ondblclick={() => (draftWidths = [1, 1])}></div>
+        {/if}
       </div>
     {/each}
     {#if editing && columns.length < MAX_COLUMNS}
@@ -144,6 +197,11 @@
     {/if}
   </div>
   {#if editing}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+    <div class="splitter rika" role="separator" aria-orientation="vertical" aria-label="Width of Rika's column" tabindex="0"
+      aria-valuemin={RIKA_LIMITS.min * 100} aria-valuemax={RIKA_LIMITS.max * 100} aria-valuenow={Math.round((rikaWidth || 0.3) * 100)}
+      onpointerdown={(event) => grab(event, "rika")} onpointermove={size} onpointerup={() => (sizing = null)} onpointercancel={() => (sizing = null)}
+      onkeydown={(event) => step(event, "rika")} ondblclick={() => (draftRika = 0)}></div>
     <aside class="library" aria-label="Widget library">
       <header><h3>Widgets</h3><button type="button" class="pill primary" onclick={done}>Done</button></header>
       {#if spare.length}
@@ -197,6 +255,47 @@
     display: flex;
     flex-direction: column;
     gap: 28px;
+  }
+  /* Two columns share the room as the build says (even unless resized), once both fit side by side. */
+  @media (min-width: 1200px) {
+    .board.sized {
+      grid-template-columns: var(--board-columns);
+    }
+  }
+  /* A splitter: a hairline down the gap with a short grip, wide enough to catch. */
+  .home {
+    position: relative;
+  }
+  .board.editing .column {
+    position: relative;
+  }
+  .splitter {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: -29px;
+    width: 11px;
+    cursor: col-resize;
+    touch-action: none;
+    background:
+      linear-gradient(var(--muted), var(--muted)) center / 3px 44px no-repeat,
+      linear-gradient(var(--hairline), var(--hairline)) center / 1px 100% no-repeat;
+  }
+  .splitter.rika {
+    top: 12px;
+    right: calc(26px + var(--rika-column) + 19px);
+  }
+  .splitter:hover,
+  .splitter:focus-visible {
+    outline: none;
+    background:
+      linear-gradient(var(--ink), var(--ink)) center / 3px 44px no-repeat,
+      linear-gradient(var(--muted), var(--muted)) center / 1px 100% no-repeat;
+  }
+  @media (max-width: 1199.98px) {
+    .board .splitter {
+      display: none;
+    }
   }
   /* Edit mode: each widget gains a handle row and stops taking clicks; a dashed rule marks a free column. */
   .board.editing .column {

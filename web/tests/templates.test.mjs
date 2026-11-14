@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DEFAULT_BUILD, deepMerge } from '../src/lib/buildCore.ts';
-import { HOME_WIDGETS, placeWidget, resolveHome, savedHome, spareWidgets } from '../src/lib/home/layout.ts';
+import { HOME_WIDGETS, columnShares, placeWidget, resolveHome, rikaShare, savedHome, spareWidgets, splitWidths } from '../src/lib/home/layout.ts';
 import {
   TEMPLATES, arrangement, missingLine, missingModules, suggestTemplate, suggestionLine, wantedModules,
 } from '../src/lib/home/templates.ts';
@@ -130,4 +130,19 @@ test('each module a template lacks is offered by name', () => {
   assert.equal(missingLine(['Math']), 'It also uses Math, which is off.');
   assert.equal(missingLine(['Terminal', 'Brain']), 'It also uses Terminal and Brain, which are off.');
   assert.equal(missingLine(['ApplyAI', 'Terminal', 'Brain']), 'It also uses ApplyAI, Terminal and Brain, which are off.');
+});
+
+test('a splitter shares the room in steps, within limits, and bad saved shares fall back to even', () => {
+  assert.deepEqual(splitWidths(0.5), [1, 1]);
+  assert.deepEqual(splitWidths(0.62), [1.25, 0.75]);
+  // The ends: no column goes under 0.6 of an even share.
+  assert.deepEqual(splitWidths(0.05), [0.6, 1.4]);
+  assert.deepEqual(splitWidths(0.99), [1.4, 0.6]);
+  assert.deepEqual(columnShares([1.25, 0.75], 2), [1.25, 0.75]);
+  assert.deepEqual(columnShares([1.25], 2), [1.25, 1]);
+  assert.deepEqual(columnShares([9, -1, 'wide'], 3), [1, 1, 1]);
+  assert.equal(rikaShare(0.337), 0.34);
+  assert.equal(rikaShare(0.05), 0.2);
+  assert.equal(rikaShare(0.9), 0.45);
+  assert.deepEqual([home.widths.default, home.rika.default], [DEFAULT_BUILD.ui.home.widths, DEFAULT_BUILD.ui.home.rika]);
 });

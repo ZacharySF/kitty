@@ -1390,8 +1390,10 @@ all.
 **Edit** under the widgets (or **Edit home** in Ctrl Space) unlocks home: drag a
 widget by its handle to another place or column (or focus the handle and use the
 arrow keys), **Remove** it, or **Add** one from the **Widgets** list that takes
-Rika's place while you edit. **Done** saves the arrangement to the build
-(`ui.home`).
+Rika's place while you edit. Two thin splitters set the widths: one between the
+two widget columns and one before Rika's column (drag them, or focus one and use
+the arrow keys; a double-click resets it). **Done** saves the arrangement and the
+widths to the build (`ui.home`).
 
 Loading shows a small turning brain made of points with a line that names what is
 loading; there are no placeholder rows. The Brain itself stays still while you work
