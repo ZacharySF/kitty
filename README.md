@@ -1,33 +1,146 @@
-# rika!
+<p align="center">
+  <img src="docs/assets/rika-hero.svg" width="846" alt="rika! — a home for your beautifully tangled mind. A local-first workspace for connected ideas.">
+</p>
 
-A local-first desktop workspace. Notes, documents, study tools and planning live
-in one SQLite database on your machine and are connected in a navigable
-knowledge atlas. A bundled terminal and an optional job-application assistant
-plug in as modules.
+<p align="center">
+  Notes become connections. Connections become something you can build.<br>
+  A local-first desktop workspace for your notes, documents, study and plans.
+</p>
 
-![rika! demo: the atlas home, writing a note and finding it again](docs/media/demo.gif)
+<p align="center">
+  <b><a href="https://github.com/ZacharySF/kitty-releases/releases/latest">Download for Linux ↗</a></b>
+  &nbsp; / &nbsp; <a href="#quick-start">Take it for a spin</a>
+  &nbsp; / &nbsp; <a href="docs/GUIDE.md">Read the field guide</a><br>
+  <sub>AppImage + .deb · Signed updates · MIT licensed</sub>
+</p>
 
-**[Download for Linux](https://github.com/ZacharySF/kitty-releases/releases/latest)**
-(signed AppImage and .deb with in-app updates) ·
-**[Full guide](docs/GUIDE.md)** · **[Behaviour spec](docs/SPEC.md)**
+<p align="center">
+  <a href="#your-workspace">Your workspace</a> ·
+  <a href="#modules">Modules</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#reference">Reference</a>
+</p>
 
-## What it does
+<br>
 
-| Module | What you get |
+<p align="center"><b>A little less scattered. A lot more connected.</b></p>
+
+<p align="center">
+  <img src="docs/screenshots/readme/home.jpg" width="100%" alt="The rika! home dashboard: a morning brief, today and a quick note on the left; up next, agents and every section in the middle; and the Rika panel on the right with drafted email replies and an Ask Rika box">
+</p>
+<p align="center"><sub>Home: what's next, everything you've got, and Rika on the right with your replies already drafted.</sub></p>
+
+<br>
+
+## Your workspace
+
+### Your mind isn't a filing cabinet.
+
+A paragraph can belong to a project, a question and next Tuesday's study session.
+rika! gives those connections somewhere to live: one SQLite database on your
+machine, with an atlas instead of another pile of tabs.
+
+### 01 &nbsp; Catch the thought
+
+Write in blocks. Link a page with `[[wiki]]` links or refer to the exact passage
+with `((block))` references. Follow backlinks, spread an idea across a canvas,
+or turn it into a mind map.
+
+Documents, PDFs and floating quick notes stay in the same workspace.
+You don't have to know where an idea belongs before you write it down.
+
+### 02 &nbsp; Give it somewhere to go
+
+Keep flashcards and study beside the material you're learning. Put the next
+step on your calendar or task list. Switch themes, open another tab, or use
+the command palette to move without losing your place.
+
+
+### 03 &nbsp; Follow the thread
+
+Every record and every edit becomes a glowing point in the **Brain**: a
+neural-network map of everything you've written, studied and planned. Prefer
+flat ground? Switch to the **2D** map. Same records, different ways to find
+your bearings.
+
+<img src="docs/screenshots/readme/brain.jpg" width="100%" alt="The Brain view: a glowing neural-network brain threaded in red, orange, green and blue, above a legend counting applications, jobs, reminders, notes, calendar events and flashcards">
+<p align="center"><sub>The Brain as its own view. Demo workspace, synthetic data.</sub></p>
+
+<br>
+
+## Modules
+
+### A workspace, not a fixed collection of tools.
+
+Keep the parts you use. Turn off the parts you don't.
+Add a terminal when you're building, enable ApplyAI when you're looking for work,
+or download the Brain when you want to see it all at once.
+
+<img src="docs/screenshots/readme/modules.jpg" width="100%" alt="Settings › Modules: toggles for ApplyAI, Workspace, Terminal and Brain, with the Brain module marked Installed · 1.6 MB and a Remove button">
+
+| Module | What it brings |
 | --- | --- |
-| **Workspace** | Block-based notes with stable block IDs, `((block))` references and `[[wiki]]` links, backlinks, canvas, mind maps, documents and PDFs, flashcards, study, calendar, tasks, quick notes in floating windows |
-| **Terminal** | A pinned [herdr](https://github.com/herdrdev/herdr) session in a resizable dock, streamed into the window over a same-origin WebSocket; open omp, Claude or Codex coding agents in labelled tabs with live activity; optionally drive a separately installed [Stencil Tern](https://stencil.so/tern) on rika!'s own Tern session: pane list with live and exited state in the dock, run a command line, focus a pane, capture a pane to a quick note |
-| **ApplyAI** (optional) | Job discovery from public boards, triage, application preparation, a tracker and reports. It fills forms but **never submits an application** and never invents facts about the applicant |
-| **Core** (always on) | A Brain home (every record and edit as a glowing point in a neural-network brain) or a 2D atlas, tabs, command palette, themes, settings, module selection |
+| **Workspace** | Notes and block references, documents and PDFs, canvas, mind maps, flashcards, study, calendar, tasks and floating quick notes. |
+| **Terminal** | A pinned [herdr](https://github.com/herdrdev/herdr) session in a resizable dock. Open omp, Claude or Codex in labelled agent tabs with live activity. |
+| **ApplyAI** · optional | Public-board job discovery, triage, application preparation, tracking and reports. It fills forms but **never submits an application** and never invents facts about the applicant. |
+| **Brain** · download | The atlas home: your workspace as a 3D brain or a 2D map. Installs from **Settings → Modules** and opens as its own view. |
+| **Core** · always on | Tabs, command palette, themes, settings and module selection. |
 
-Modules can be turned on or off; disabled modules disappear from navigation,
-routes, workers and MCP tools while their data stays intact. Add-on modules install
-from a GitHub release in Settings → Modules, checked against the release's SHA-256
-([docs/MODULES.md](docs/MODULES.md) explains how to publish one).
+### From a thought to a terminal
 
-![The Brain home: every record and edit as a glowing point in a neural-network brain](docs/screenshots/kitty-brain/brain.png)
+The Terminal module streams herdr into the window over a same-origin WebSocket.
+Keep a session in the dock or open the full herdr view, with coding agents in
+their own tabs.
 
-![The 2D knowledge atlas](docs/screenshots/kitty-graph-2d/atlas-2d.png)
+If you separately install [Stencil Tern](https://stencil.so/tern), rika! can
+also drive its own Tern session: list live and exited panes, run a command,
+focus a pane, or capture one to a quick note.
+
+### Leave the clutter. Keep the data.
+
+Disabled modules disappear from navigation, routes, workers and MCP tools;
+**their data stays intact**. Install add-ons from a GitHub release in
+**Settings → Modules**, checked against the release's SHA-256.
+The [module guide](docs/MODULES.md) explains the format and how to publish one.
+
+<br>
+
+## Quick start
+
+**Just want the desktop app?** [Download the latest Linux release](https://github.com/ZacharySF/kitty-releases/releases/latest).
+Choose the AppImage or .deb; signed updates are built in.
+
+<p align="center">
+  <img src="docs/screenshots/readme/welcome.jpg" width="62%" alt="The rika! welcome card: a glowing neural-network brain above the words 'Welcome to rika!', with Continue with Google and Start locally buttons">
+</p>
+<p align="center"><sub>First launch: one button to start locally. No account needed.</sub></p>
+
+### Run from source
+
+Requirements: Git, Python 3.12 with [uv](https://docs.astral.sh/uv/), and Node 22+.
+
+```bash
+git clone https://github.com/ZacharySF/kitty.git
+cd kitty
+uv sync
+npm --prefix web ci
+npm --prefix web run build
+uv run kitty-web --demo
+```
+
+The demo uses a **disposable workspace with synthetic data**. Open the printed
+`http://127.0.0.1:…` address, not `localhost`: the server checks the exact Host.
+
+For a real workspace:
+
+```bash
+uv run kitty init
+uv run kitty-web
+```
+
+The [full guide](docs/GUIDE.md) covers modules, the desktop build, configuration
+and every command. The repository and CLI still use the `kitty` name.
 
 ## Architecture
 
@@ -80,30 +193,24 @@ same functions against the same database.
   own WebDriver BiDi client and stops at every human boundary: sign-in
   challenges, consent, unknown answers and the final submit.
 
-## Run it
-
-Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22+.
-
-```bash
-uv sync
-npm --prefix web ci && npm --prefix web run build
-uv run kitty-web --demo        # disposable workspace with synthetic data
-```
-
-Open the printed `http://127.0.0.1:…` address (not `localhost`: the server
-checks the exact Host). To use a real workspace, run `uv run kitty init` and
-`uv run kitty-web`. The [guide](docs/GUIDE.md) covers modules, the desktop
-build, configuration and every command.
-
 ## Develop
 
 ```bash
-uv run pytest -n auto          # Python core, web adapter, TUI and browser tests (~6 min)
+uv run pytest -n auto          # Python core, web adapter, TUI and browser tests
 npm --prefix web run check     # svelte-check / TypeScript
 cargo test --manifest-path desktop/Cargo.toml
 ```
 
 CI runs the Python tests, the frontend check and the web unit tests on every pull request.
+
+## Reference
+
+| Looking for… | Start here |
+| --- | --- |
+| Setup, configuration and everyday use | [Full guide](docs/GUIDE.md) |
+| Exact behaviour and contracts | [Behaviour spec](docs/SPEC.md) |
+| Building and publishing an add-on | [Module guide](docs/MODULES.md) |
+| Linux installers and release notes | [Desktop releases](https://github.com/ZacharySF/kitty-releases/releases/latest) |
 
 ## Built on
 
@@ -122,6 +229,9 @@ their features belongs to their authors.
 - [Tauri](https://tauri.app), [Svelte](https://svelte.dev),
   [Textual](https://textual.textualize.io) and
   [3d-force-graph](https://github.com/vasturiano/3d-force-graph).
+
+The README wordmark uses [Fraunces](https://fraunces.undercase.xyz), by Undercase
+Type, with a subset embedded under the [SIL Open Font License](docs/assets/OFL-Fraunces.txt).
 
 ## License
 
