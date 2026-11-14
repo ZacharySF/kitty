@@ -181,7 +181,9 @@
   .beat {
     transform-box: fill-box;
     transform-origin: center;
-    animation: beat 2.4s ease-in-out infinite;
+    /* Three beats show the motion setting, then it rests: an endless animation kept the whole
+       Settings page repainting (17% of a core in the desktop's web engine). */
+    animation: beat 2.4s ease-in-out 3;
   }
   .preview[data-motion="reduced"] .beat {
     animation: none;
