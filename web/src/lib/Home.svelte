@@ -1,7 +1,12 @@
 <script lang="ts">
   import { tick } from "svelte";
   import HomeAgents from "./HomeAgents.svelte";
+  import HomeCards from "./HomeCards.svelte";
+  import HomeClock from "./HomeClock.svelte";
   import HomeFocus from "./HomeFocus.svelte";
+  import HomeGoals from "./HomeGoals.svelte";
+  import HomePipeline from "./HomePipeline.svelte";
+  import HomeWeek from "./HomeWeek.svelte";
   import HomeQuickNote from "./HomeQuickNote.svelte";
   import HomeSession from "./HomeSession.svelte";
   import HomeUpNext from "./HomeUpNext.svelte";
@@ -174,6 +179,11 @@
               {:else if widget === "note"}<HomeQuickNote id={`${homeId}-note`} {onview} />
               {:else if widget === "next"}<HomeUpNext id={`${homeId}-next`} {revision} {onview} />
               {:else if widget === "focus"}<HomeFocus id={`${homeId}-focus`} />
+              {:else if widget === "goals"}<HomeGoals id={`${homeId}-goals`} {revision} {onview} />
+              {:else if widget === "week"}<HomeWeek id={`${homeId}-week`} {revision} {onview} />
+              {:else if widget === "cards"}<HomeCards id={`${homeId}-cards`} {revision} {onview} />
+              {:else if widget === "pipeline"}<HomePipeline id={`${homeId}-pipeline`} {revision} {onview} />
+              {:else if widget === "clock"}<HomeClock id={`${homeId}-clock`} />
               {:else if widget === "session"}<HomeSession id={`${homeId}-session`} placeholder={editing} />
               {:else}<HomeAgents id={`${homeId}-agents`} {onview} placeholder={editing} />{/if}
             </div>

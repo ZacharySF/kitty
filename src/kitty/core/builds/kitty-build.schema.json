@@ -252,6 +252,21 @@
             "guide_view": {"enum": ["columns", "rail"], "default": "columns"},
             "plans_view": {"enum": ["timeline", "days"], "default": "timeline"}
           }
+        },
+        "themes": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Themes module: the extra themes kept in Settings → Appearance, besides the default and the one in use.",
+          "properties": {
+            "installed": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"},
+              "description": "Theme names. Empty: the module is off. An unknown name (say, from a newer rika!) is kept and not shown.",
+              "default": []
+            }
+          }
         }
       }
     }

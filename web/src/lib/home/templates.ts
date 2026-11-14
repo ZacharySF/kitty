@@ -1,33 +1,56 @@
 /**
- * Templates: Student, Job search, Builder and Minimal. Each names the modules it uses and
- * a home arrangement of home's own widgets. The first-run question's answers are the same
- * four (`use`), so an answer preselects its template's modules. Applying a template only
+ * Templates: a named home arrangement and the modules it uses. The first four are also the
+ * answers to the first-run question (`use`), so an answer preselects its template's
+ * modules; the rest are the library behind "Other templates". Applying a template only
  * arranges home (`ui.home` in the build); the modules it lacks are offered one by one.
  * Pure, so Node tests can import it.
  */
 import type { ModuleId } from "../api";
 import { HOME_WIDGETS, type HomeLayout, type HomeWidgetId } from "./layout.ts";
 
-export type TemplateId = "student" | "job-search" | "builder" | "minimal";
+export type TemplateId =
+  | "student" | "job-search" | "builder" | "minimal"
+  | "exam-week" | "stem" | "memorise" | "interview" | "internship" | "agent-ops" | "founder"
+  | "planner" | "deep-work" | "writer" | "researcher" | "goals-first" | "calm" | "everything";
 export interface Template {
   id: TemplateId;
   name: string;
-  /** The answer to "What will you use rika! for?" that picks it. */
-  use: string;
+  /** The answer to "What will you use rika! for?" that picks it; none for a library-only template. */
+  use?: string;
   modules: ModuleId[];
   home: { columns: HomeWidgetId[][]; hidden: HomeWidgetId[] };
 }
 
+/** Hidden is every widget that would otherwise join home by itself and is not placed. */
+function template(id: TemplateId, name: string, modules: ModuleId[], columns: HomeWidgetId[][], use?: string): Template {
+  const placed = new Set<string>(columns.flat());
+  const hidden = HOME_WIDGETS.filter((widget) => !("library" in widget) && !placed.has(widget.id)).map((widget) => widget.id);
+  return { id, name, ...(use ? { use } : {}), modules, home: { columns, hidden } };
+}
+
 export const TEMPLATES: Template[] = [
-  { id: "student", name: "Student", use: "Studying", modules: ["workspace", "math"],
-    home: { columns: [["next", "focus", "note"], ["agenda"]], hidden: ["agents", "session"] } },
-  { id: "job-search", name: "Job search", use: "Finding a job", modules: ["applyai", "workspace"],
-    home: { columns: [["agenda", "next"], ["note"]], hidden: ["agents", "focus", "session"] } },
-  { id: "builder", name: "Builder", use: "Building with agents", modules: ["terminal", "workspace", "brain"],
-    home: { columns: [["agents", "session", "note"], ["agenda", "next"]], hidden: ["focus"] } },
-  { id: "minimal", name: "Minimal", use: "Notes and a calendar", modules: ["workspace"],
-    home: { columns: [["agenda", "note"]], hidden: ["next", "agents", "focus", "session"] } },
+  template("student", "Student", ["workspace", "math"], [["next", "focus", "note"], ["agenda"]], "Studying"),
+  template("job-search", "Job search", ["applyai", "workspace"], [["agenda", "next"], ["note"]], "Finding a job"),
+  template("builder", "Builder", ["terminal", "workspace", "brain"], [["agents", "session", "note"], ["agenda", "next"]], "Building with agents"),
+  template("minimal", "Minimal", ["workspace"], [["agenda", "note"]], "Notes and a calendar"),
+  template("exam-week", "Exam week", ["workspace"], [["week", "cards", "focus"], ["next", "goals"]]),
+  template("stem", "Math and science", ["workspace", "math"], [["next", "focus", "cards"], ["agenda", "goals"]]),
+  template("memorise", "Memorising", ["workspace"], [["cards", "focus"], ["agenda", "note"]]),
+  template("interview", "Interview prep", ["applyai", "workspace"], [["pipeline", "next"], ["agenda", "cards", "note"]]),
+  template("internship", "Internship hunt", ["applyai", "workspace"], [["pipeline", "goals"], ["next", "week"]]),
+  template("agent-ops", "Agent ops", ["terminal"], [["agents", "session"], ["goals", "clock"]]),
+  template("founder", "Founder", ["terminal", "workspace"], [["goals", "agents", "note"], ["week", "next"]]),
+  template("planner", "Planner", ["workspace"], [["week", "agenda"], ["next", "goals"]]),
+  template("deep-work", "Deep work", ["workspace"], [["focus", "goals"], ["agenda"]]),
+  template("writer", "Writer", ["workspace"], [["note", "focus"], ["goals", "week"]]),
+  template("researcher", "Researcher", ["workspace", "brain"], [["note", "goals"], ["agenda", "cards"]]),
+  template("goals-first", "Goal setter", ["workspace"], [["goals", "clock"], ["next", "note"]]),
+  template("calm", "Calm", ["workspace"], [["clock", "agenda"]]),
+  template("everything", "Everything", ["workspace", "applyai", "terminal"],
+    [["agenda", "week", "note", "focus", "cards"], ["next", "goals", "pipeline", "agents", "session"]]),
 ];
+/** The first-run question's answers. */
+export const USES = TEMPLATES.filter((item) => item.use);
 
 /** The modules the pressed answers want, each once. */
 export function wantedModules(answers: readonly string[]): ModuleId[] {
@@ -45,7 +68,8 @@ export function suggestTemplate({ enabled, counts }: Signals): Template {
   const score = (template: Template) =>
     template.modules.reduce((sum, id) => sum + (enabled.includes(id) ? 1 : -1), 0)
     + (template.id === "job-search" && enabled.includes("applyai") && records ? 1 : 0);
-  return TEMPLATES.reduce((best, template) => (score(template) > score(best) ? template : best));
+  // Rika offers one of the four plain answers; the rest of the library is for browsing.
+  return USES.reduce((best, template) => (score(template) > score(best) ? template : best));
 }
 
 const list = (words: string[]) => (words.length < 3 ? words.join(" and ") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`);
