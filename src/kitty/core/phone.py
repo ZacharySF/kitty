@@ -25,7 +25,6 @@ recommended network.
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import html
 import hmac
@@ -159,7 +158,11 @@ def set_network(conn: sqlite3.Connection, value: Any) -> str:
 
 
 def _interface_addresses() -> list[str]:
-    """Every interface's IPv4 address (Linux ioctl; no dependency)."""
+    """Every interface's IPv4 address (Linux ioctl; no dependency). Empty where there is no ioctl."""
+    try:
+        import fcntl
+    except ImportError:
+        return []
     found = []
     with closing(socket.socket(socket.AF_INET, socket.SOCK_DGRAM)) as probe:
         for _, name in socket.if_nameindex():

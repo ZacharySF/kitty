@@ -15,7 +15,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use crate::private::{self, Mode};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value as Json};
@@ -178,10 +178,10 @@ impl Workspace {
 
     /// `store.read_text`: never follows a symbolic link; invalid UTF-8 is replaced.
     fn read_text(&self) -> Result<Option<Text>, StoreError> {
-        let file = match OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(self.build_path()) {
+        let file = match private::no_follow(OpenOptions::new().read(true)).open(self.build_path()) {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            Err(error) if private::is_link_refusal(&error) => {
                 return Err(StoreError::Refused(format!("config/{BUILD_FILE} is a symbolic link; replace it with a regular file")));
             }
             Err(error) => return Err(error.into()),
@@ -300,7 +300,7 @@ impl Workspace {
                 Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error),
             };
-            output.set_permissions(fs::Permissions::from_mode(0o600))?;
+            private::set_mode(&target, 0o600)?;
             output.write_all(template.as_bytes())?;
         }
         Ok(())
@@ -310,7 +310,12 @@ impl Workspace {
     fn lock(&self) -> Result<File, StoreError> {
         let folder = self.folder();
         fs::DirBuilder::new().recursive(true).mode(0o700).create(&folder)?;
+        // Unix locks the folder itself (as the Python store does); Windows cannot open a
+        // folder as a file, so both sides lock `.lock` inside it there.
+        #[cfg(unix)]
         let handle = File::open(&folder)?;
+        #[cfg(not(unix))]
+        let handle = OpenOptions::new().create(true).truncate(false).write(true).open(folder.join(".lock"))?;
         handle.lock()?;
         Ok(handle)
     }
@@ -387,14 +392,14 @@ impl Workspace {
             if !meta.is_file() {
                 return Err(StoreError::Refused(format!("{BUILD_FILE} is not a regular file")));
             }
-            mode = meta.permissions().mode() & 0o7777;
+            mode = private::mode_of(&meta);
         }
         let temporary = folder.join(format!(".{BUILD_FILE}.{}", crate::auth::token_hex(6)));
         let written = (|| -> std::io::Result<()> {
             let mut handle = OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temporary)?;
             handle.write_all(content.as_bytes())?;
             handle.sync_all()?;
-            fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+            private::set_mode(&temporary, mode)?;
             fs::rename(&temporary, &target)
         })();
         if let Err(error) = written {

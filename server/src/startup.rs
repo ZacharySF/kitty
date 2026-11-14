@@ -24,7 +24,7 @@ pub struct DemoFolder(PathBuf);
 
 impl DemoFolder {
     fn create() -> Result<Self, String> {
-        use std::os::unix::fs::DirBuilderExt;
+        use crate::private::Mode;
         let base = std::env::temp_dir();
         for _ in 0..16 {
             let folder = base.join(format!("kitty-web-demo-{}", crate::auth::token_hex(4)));
@@ -71,8 +71,7 @@ impl Prepared {
 /// creates every file and folder owner-only, as the desktop backend does (`os.umask(0o077)`).
 pub async fn prepare(root: Option<PathBuf>, demo: bool, owner_only: bool, launch: &Launch) -> Result<Prepared, String> {
     if owner_only {
-        // SAFETY: umask only swaps the process's file-creation mask; nothing else is running yet.
-        unsafe { libc::umask(0o077) };
+        crate::private::owner_only_from_now();
     }
     let (paths, demo) = if demo {
         let folder = DemoFolder::create()?;
