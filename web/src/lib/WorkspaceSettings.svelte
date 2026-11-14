@@ -22,6 +22,7 @@
   import DesktopSettings from "./DesktopSettings.svelte";
   import QuietHours from "./QuietHours.svelte";
   import AccountSettings from "./AccountSettings.svelte";
+  import ConnectionSettings from "./ConnectionSettings.svelte";
   import ConnectedApps from "./ConnectedApps.svelte";
   import PhoneSettings from "./PhoneSettings.svelte";
   import Keys from "./Keys.svelte";
@@ -61,7 +62,7 @@
       { page: "build", label: "Build", icon: "download", keywords: "build file export import share install rollback history custom css tokens safe mode editor" },
     ] },
     { label: "Workspace", items: [
-      { page: "account", label: "Account", icon: "shield", keywords: "google sign-in connect welcome guided tour onboarding identity" },
+      { page: "account", label: "Account", icon: "shield", keywords: "google sign-in connect welcome guided tour onboarding identity microsoft outlook slack calendar mail reaction" },
       { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal brain atlas enable disable restart download pack" },
       { page: "graphs", label: "Graphs", icon: "schema", keywords: "schemas default layout tree clusters sphere force physics repulsion spring damping" },
       ...(activeModules.enabled.includes("workspace") ? [{ page: "tags", label: "Tags", icon: "favorites", keywords: "auto tags keywords suggest always attach" } as Entry] : []),
@@ -209,6 +210,7 @@
         <QuietHours />
       {:else if shown === "account"}
         <AccountSettings />
+        <ConnectionSettings />
       {:else if shown === "rika-routing"}
         <RoutingMemory />
       {:else if shown === "rika-email"}

@@ -799,6 +799,79 @@ while changes wait. Rika never connects a repository and never turns the backup 
 Routes (`src/kitty/web_reposync.py`): `GET /api/reposync`, `POST /api/reposync/repo`
 `{repo}`, `/now`, `/pause` `{paused}`, `/disconnect`.
 
+### Microsoft (Outlook) and Slack
+
+**Settings → Account** has a **Microsoft** and a **Slack** section under Google.
+Both are read-only: rika! sends no mail, changes no calendar and posts nothing to
+Slack. Each uses an app that you create yourself, as a public client: rika! needs
+the app's **client ID** and never a client secret. Sign-in opens in your browser
+and finishes on a listener on this computer (authorization code with PKCE). The
+tokens are kept in owner-only files, `.private/microsoft_token.json` and
+`.private/slack_token.json`, like the Google Calendar token; **Disconnect** deletes
+them. Connections are off in the demo. A connected account syncs when it connects,
+on **Sync now**, and every five minutes while rika! runs.
+
+**Microsoft: what you get.** Every Outlook calendar appears in Calendar as
+"<name> (Outlook)" with the events from 30 days back to 180 days ahead (repeating
+events as their single occurrences). These calendars are read-only: an edit is
+refused, and each sync adds, updates and removes events to match Outlook. Inbox
+mail of the last three days joins Rika's mail (the brief, "what needs a reply",
+Rika's memory search). Rika does not draft replies to Outlook mail yet.
+Disconnecting removes the Outlook calendars from rika!; mail Rika already read stays.
+
+**Create the Microsoft app registration** (once, free, any Microsoft account):
+
+1. Open <https://entra.microsoft.com> → **Applications → App registrations → New
+   registration** (a personal account without a directory can use
+   <https://portal.azure.com> → **App registrations**).
+2. Name it (for example "rika"). Under **Supported account types** choose
+   **Accounts in any organizational directory and personal Microsoft accounts**.
+3. Under **Redirect URI** choose the platform **Public client/native (mobile &
+   desktop)** and enter `http://localhost`. Press **Register**.
+4. Open **Authentication** and set **Allow public client flows** to **Yes**; save.
+5. Open **API permissions → Add a permission → Microsoft Graph → Delegated
+   permissions** and add `Calendars.Read`, `Mail.Read`, `offline_access` and
+   `User.Read`. None needs admin consent. Do not create a client secret.
+6. On **Overview**, copy **Application (client) ID**, paste it into **Settings →
+   Account → Microsoft → Client ID**, press **Save**, then **Connect** and **Open
+   Microsoft sign-in**.
+
+A work or school tenant can forbid its users from consenting to apps; then an
+administrator has to approve the app, or you register it inside that tenant. If
+rika! was closed for about 90 days the sign-in expires and the section asks you to
+connect again.
+
+**Slack: what you get.** Add the chosen reaction (📌 `pushpin` unless you change
+**Reaction**) to any message, and at the next sync it becomes a task in Calendar →
+Tasks: the title is the message's first line, the description is the link back to
+the message, the tag is `slack`. Each message makes one task, once. rika! keeps
+only the link and the first 200 characters, and asks Slack for one permission,
+`reactions:read` (your own reactions). Reactions that were already there when you
+connected, or when you changed the reaction, make no task.
+
+**Create the Slack app** (once per Slack workspace; you need permission to install
+apps there):
+
+1. In **Settings → Account → Slack** press **Copy manifest**.
+2. Open <https://api.slack.com/apps> → **Create New App → From a manifest**, pick
+   your workspace, choose the JSON tab, paste the manifest and press **Create**.
+   The manifest turns on PKCE and token rotation, asks for the user scope
+   `reactions:read`, adds no bot, and registers the redirect
+   `http://localhost:47813/slack/callback`.
+3. On the app's **Basic Information** page copy **Client ID** (not the client
+   secret), paste it into **Settings → Account → Slack → Client ID** and **Save**.
+4. Press **Connect**, then **Open Slack sign-in**, and allow the app. Slack sends
+   the browser back to port 47813 on this computer, so that port must be free
+   while you sign in.
+
+Because the app is your workspace's own, it keeps Slack's normal rate limits. A
+workspace that requires approved apps needs its admin to approve it first. If
+rika! was closed for 30 days the Slack sign-in expires; connect again.
+
+Routes: `GET /api/connect`, and `POST /api/connect/{microsoft|slack}/{config,
+start, poll, cancel, sync, disconnect}` (`src/kitty/web_connect.py`; the clients
+are in `src/kitty/core/connect/`).
+
 ### Keys (API keys)
 
 rika! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:
