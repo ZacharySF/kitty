@@ -1,5 +1,6 @@
 <script lang="ts">
   import Popover from "./ui/Popover.svelte";
+  import RepoSync from "./RepoSync.svelte";
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import {
@@ -104,7 +105,7 @@
 
 <Panel title="Devices" aria-label="Devices">
     <div class="devices">
-      <p class="muted">Sync your notes between your own devices. Pair each device once with a short code; after that they find each other on the same network, or at an address you set (for example over Tailscale), and sync directly, end-to-end encrypted. Nothing goes through a server.</p>
+      <p class="muted">Sync your notes between your own devices. Pair each device once with a short code; after that they find each other on the same network, or at an address you set (for example over Tailscale), and sync directly, end-to-end encrypted. Device sync never goes through a server.</p>
       <p class="muted">In this version only notes sync. Jobs, applications and the calendar stay on each device.</p>
       {#if devices}
         {@const device = devices.device}
@@ -216,6 +217,7 @@
       </Popover>
       {#if notice}<p role="status">{notice}</p>{/if}
       {#if error}<p role="alert">{error}</p>{/if}
+      <RepoSync />
     </div>
 </Panel>
 

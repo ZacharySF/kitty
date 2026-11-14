@@ -217,9 +217,14 @@
     try { await api("/terminal/tern/open", {}); } catch { navigate("tern"); }
   }
   function openNotice(notice: Notice) {
-    if (notice.target.kind === "rika") window.location.hash = goalHash(notice.target.goal_id);
-    else if (notice.target.kind === "calendar") navigate("calendar");
-    else if (notice.target.job_id !== null && applyai) openJob(notice.target.job_id);
+    const { target } = notice;
+    if (target.kind === "rika") {
+      // A Rika alert without a goal is a problem with the GitHub backup.
+      if (target.goal_id === null) openSettings("devices");
+      else window.location.hash = goalHash(target.goal_id);
+    }
+    else if (target.kind === "calendar") navigate("calendar");
+    else if (target.job_id !== null && applyai) openJob(target.job_id);
     else navigate("reminders");
   }
   // Reminder sources the active modules provide, plus Rika's urgent goal matches (always on);
