@@ -219,6 +219,28 @@ def test_availability_conflicts_and_free_events(api):
     assert snapshot["busy"] == result["busy"] and snapshot["free"] == result["free"]
 
 
+def test_availability_answers_what_the_python_function_answered(api):
+    """The answer `kitty.core.calendar.availability` gave for these events before it moved: a
+    conflict's `with` names its whole busy block, a block ends in the zone of the event that
+    ends it, an event that starts as a block ends joins it without a conflict, and of two
+    equal instants the first one's zone is shown."""
+    first = api.event()["id"]
+    second = api.event(title="Overlapping", start="2026-10-26T09:30:00-05:00", end="2026-10-26T10:30:00-05:00")["id"]
+    third = api.event(title="Call", start="2026-10-26T15:15:00+00:00", end="2026-10-26T15:30:00+00:00", timezone="UTC")["id"]
+    fourth = api.event(title="Next", start="2026-10-26T10:30:00-05:00", end="2026-10-26T11:00:00-05:00")["id"]
+    api.event(title="Free note", start="2026-10-26T11:00:00-05:00", end="2026-10-26T12:00:00-05:00", busy=False)
+    block = [first, second, third, fourth]
+    assert api.post("/api/calendar/availability", {"start": "2026-10-26T13:00:00Z", "end": "2026-10-26T18:00:00Z"}) == {
+        "busy": [{"start": "2026-10-26T09:00:00-05:00", "end": "2026-10-26T11:00:00-05:00", "events": block}],
+        "free": [{"start": "2026-10-26T13:00:00+00:00", "end": "2026-10-26T09:00:00-05:00"},
+                 {"start": "2026-10-26T11:00:00-05:00", "end": "2026-10-26T18:00:00+00:00"}],
+        "conflicts": [
+            {"event_id": second, "with": block, "start": "2026-10-26T09:30:00-05:00", "end": "2026-10-26T10:00:00-05:00"},
+            {"event_id": third, "with": block, "start": "2026-10-26T15:15:00+00:00", "end": "2026-10-26T15:30:00+00:00"},
+        ],
+    }
+
+
 def test_reminders_dismissal_is_occurrence_specific(api):
     api.start("2026-10-26T08:55:00-05:00")
     item = api.event(rrule="FREQ=DAILY;COUNT=2", reminders=[10])

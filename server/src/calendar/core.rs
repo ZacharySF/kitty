@@ -1230,14 +1230,17 @@ pub fn availability(events: &[Obj], start: &Value, end: &Value, exclude_id: &Val
     }
     busy.sort_by_key(|item| item.0);
     let mut merged: Vec<(Dt, Dt, Vec<Value>)> = Vec::new();
-    let mut conflicts = Vec::new();
+    // A conflict's `with` is the block's own list in Python, so it ends up naming every
+    // event of the block, the conflicting one and later ones included.
+    let mut conflicts: Vec<(Value, usize, String, String)> = Vec::new();
     for (_, a, b, ident) in busy {
         if b.le(&a) {
             continue;
         }
+        let block = merged.len().wrapping_sub(1);
         if let Some(last) = merged.last_mut() {
             if utc(&a)?.wall < utc(&last.1)?.wall {
-                conflicts.push(json!({"event_id": ident, "with": last.2, "start": a.isoformat(), "end": last.1.clone().min(b.clone()).isoformat()}));
+                conflicts.push((ident.clone(), block, a.isoformat(), b.clone().min(last.1.clone()).isoformat()));
             }
             if utc(&a)?.wall <= utc(&last.1)?.wall {
                 last.1 = b.max(last.1.clone());
@@ -1247,6 +1250,8 @@ pub fn availability(events: &[Obj], start: &Value, end: &Value, exclude_id: &Val
         }
         merged.push((a, b, vec![ident]));
     }
+    let conflicts: Vec<Value> = conflicts.into_iter()
+        .map(|(ident, block, start, end)| json!({"event_id": ident, "with": merged[block].2, "start": start, "end": end})).collect();
     let mut free = Vec::new();
     let mut cursor = lower;
     for (a, b, _) in &merged {
