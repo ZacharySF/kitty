@@ -42,7 +42,7 @@
 
   onMount(() => {
     const timer = setInterval(() => {
-      if (paused || document.hidden) return;
+      if (paused || document.hidden || !items.length) return;
       for (const item of items) if (!hold?.(item)) item.left -= TICK;
       for (const item of items.filter((item) => item.left <= 0)) ondismiss(item);
     }, TICK);

@@ -396,13 +396,31 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
 
   const continuous = () =>
     !reduced || (morphStart !== null) || (!birthDone && birthStart !== null);
+  /** Something is moving that needs every frame: a morph, the birth, the idle turn, or a hand on it. */
+  const moving = () =>
+    morphStart !== null || (!birthDone && birthStart !== null) || performance.now() - touched < 1500
+    || (turning && performance.now() - touched >= IDLE_MS);
+  /** While only the points twinkle, a third of the frames is plenty. */
+  const AMBIENT_MS = 50;
+  let ambient = 0;
   function invalidate() {
     invalidated = true;
     schedule();
   }
   function schedule() {
+    if (ambient) {
+      window.clearTimeout(ambient);
+      ambient = 0;
+    }
     if (raf || destroyed || !active || !intersecting || document.hidden) return;
     raf = requestAnimationFrame(render);
+  }
+  function scheduleAmbient() {
+    if (ambient || raf || destroyed) return;
+    ambient = window.setTimeout(() => {
+      ambient = 0;
+      schedule();
+    }, AMBIENT_MS);
   }
 
   function setAttribute(name: string, array: Float32Array, size: number) {
@@ -454,7 +472,8 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
       pick();
     }
     opts.onFrame();
-    if (continuous() || invalidated) schedule();
+    if (invalidated || (continuous() && moving())) schedule();
+    else if (continuous()) scheduleAmbient();
   }
 
   /** Screen-space nearest drawn point within PICK_RADIUS of the pointer. */
@@ -807,8 +826,10 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
       active = next;
       last = 0;
       if (active) invalidate();
-      else if (raf) {
-        cancelAnimationFrame(raf);
+      else {
+        window.clearTimeout(ambient);
+        ambient = 0;
+        if (raf) cancelAnimationFrame(raf);
         raf = 0;
       }
     },
@@ -837,6 +858,7 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
     destroy() {
       destroyed = true;
       if (raf) cancelAnimationFrame(raf);
+      window.clearTimeout(ambient);
       resizeObserver.disconnect();
       visibility.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
