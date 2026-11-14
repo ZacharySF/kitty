@@ -116,7 +116,7 @@
   }
   .weekday {
     color: var(--subtle);
-    font: 500 8.5px var(--font-mono);
+    font: 500 8.5px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -143,7 +143,7 @@
   }
   .warning {
     color: var(--warning);
-    font: 600 8.5px/1.2 var(--font-mono);
+    font: 600 8.5px/1.2 var(--font-ui);
     text-transform: uppercase;
   }
   .exam {
@@ -152,7 +152,7 @@
     border-radius: 6px;
     background: var(--tone);
     color: var(--solid-void);
-    font: 600 9px/1.2 var(--font-mono);
+    font: 600 9px/1.2 var(--font-ui);
     letter-spacing: 0.04em;
     text-overflow: ellipsis;
     text-transform: uppercase;
@@ -193,7 +193,7 @@
   }
   .block small {
     color: var(--muted);
-    font: 500 8.5px var(--font-mono);
+    font: 500 8.5px var(--font-ui);
   }
   .return {
     padding: 2px 5px;
@@ -201,7 +201,7 @@
     border: 1px dashed var(--tone);
     border-radius: 5px;
     color: var(--muted);
-    font: 500 9px var(--font-mono);
+    font: 500 9px var(--font-ui);
     text-overflow: ellipsis;
     white-space: nowrap;
   }

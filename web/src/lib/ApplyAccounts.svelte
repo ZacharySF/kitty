@@ -95,7 +95,7 @@
     font: 600 var(--fs-label) / 1.3 var(--font-ui);
   }
   .patterns {
-    font-family: var(--font-mono, ui-monospace, monospace);
+    font-family: var(--font-ui);
     font-size: 11px;
     overflow-wrap: anywhere;
   }

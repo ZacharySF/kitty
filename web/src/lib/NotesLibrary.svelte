@@ -11,11 +11,13 @@
   import Select from "./ui/Select.svelte";
   import Popover from "./ui/Popover.svelte";
   import { BLOCK_DRAG_TYPE } from "./BlockEditor.svelte";
-  let { folders, notebooks, pages, notebookId, pageId, search, folderFocus = null, busy = false, onsearch, onrefresh, onopenpage, onselectnotebook, onnewpage, onbeforeswitch, onerror, ondeletepage, onblocksdrop }: {
+  let { folders, notebooks, pages, notebookId, pageId, search, folderFocus = null, busy = false, onsearch, onrefresh, onopenpage, onopentab, onselectnotebook, onnewpage, onbeforeswitch, onerror, ondeletepage, onblocksdrop }: {
     folders: Folder[]; notebooks: Notebook[]; pages: PageSummary[];
     notebookId: number; pageId: number; search: string; folderFocus?: number | null; busy?: boolean;
     onsearch: (value: string) => void; onrefresh: () => Promise<void>;
     onopenpage: (id: number) => Promise<void>; onselectnotebook: (id: number) => Promise<void>;
+    /** Opens the page in a new app tab (Ctrl click, middle click or the page menu). */
+    onopentab: (id: number) => void;
     onnewpage: () => Promise<void>; onbeforeswitch: () => Promise<boolean>; onerror: (error: string) => void;
     ondeletepage: (id:number)=>Promise<void>;
     /** Blocks dragged from the editor onto a page: true when the drop carried blocks. */
@@ -161,7 +163,9 @@
             <button class="tree-item page-item" class:block-target={blockTarget === page.id} draggable="true" ondragstart={()=>dragged={kind:"pages",id:page.id}}
               ondragover={event=>{event.preventDefault();if(event.dataTransfer?.types.includes(BLOCK_DRAG_TYPE))blockTarget=page.id;}} ondragleave={()=>{if(blockTarget===page.id)blockTarget=0;}}
               ondrop={event=>{blockTarget=0;if(onblocksdrop?.(page.id,event)){event.preventDefault();dragged=null;return;}void drop(event,"pages",page.id);}}
-              oncontextmenu={event=>{event.preventDefault();pageMenu={id:page.id,x:event.clientX,y:event.clientY};}} class:current={pageId === page.id} aria-current={pageId === page.id ? "page" : undefined} onclick={() => void onopenpage(page.id)} disabled={busy || saving}>
+              oncontextmenu={event=>{event.preventDefault();pageMenu={id:page.id,x:event.clientX,y:event.clientY};}} class:current={pageId === page.id} aria-current={pageId === page.id ? "page" : undefined}
+              onclick={event => { if (event.ctrlKey || event.metaKey) onopentab(page.id); else void onopenpage(page.id); }}
+              onauxclick={event => { if (event.button === 1) { event.preventDefault(); onopentab(page.id); } }} disabled={busy || saving}>
               {@render glyph("page")}<span class="item-title">{page.title}</span>
             </button>
           {:else}<span class="empty-branch">{search ? "No matching pages" : "No pages yet"}</span>{/each}
@@ -208,7 +212,7 @@
   {/if}
   {#if activeNotebook}<div class="library-context"><span>Current notebook</span><strong>{activeNotebook.title}</strong>{#if activeNotebook.subject || activeNotebook.project}<small>{[activeNotebook.subject, activeNotebook.project].filter(Boolean).join(" · ")}</small>{/if}</div>{/if}
 </div>
-{#if pageMenu}<div class="page-context" role="menu" style:left={`${Math.min(pageMenu.x,window.innerWidth-180)}px`} style:top={`${Math.min(pageMenu.y,window.innerHeight-70)}px`}><button role="menuitem" onclick={()=>{if(pageMenu)void ondeletepage(pageMenu.id);pageMenu=null;}}>Delete page…</button><button role="menuitem" onclick={()=>pageMenu=null}>Cancel</button></div>{/if}
+{#if pageMenu}<div class="page-context" role="menu" style:left={`${Math.min(pageMenu.x,window.innerWidth-180)}px`} style:top={`${Math.min(pageMenu.y,window.innerHeight-70)}px`}><button role="menuitem" onclick={()=>{if(pageMenu)onopentab(pageMenu.id);pageMenu=null;}}>Open in new tab</button><button role="menuitem" onclick={()=>{if(pageMenu)void ondeletepage(pageMenu.id);pageMenu=null;}}>Delete page…</button><button role="menuitem" onclick={()=>pageMenu=null}>Cancel</button></div>{/if}
 
 <style>
   .page-context{position:fixed;z-index:90;padding:8px;background:var(--surface);border:1px solid var(--border);box-shadow:0 8px 20px #0003;display:flex;gap:8px}

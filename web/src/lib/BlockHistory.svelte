@@ -386,14 +386,14 @@
   .preview-title { font-family: var(--heading); font-size: 20px; margin: 0 0 10px; }
   .row { display: flex; gap: 8px; padding-left: calc(var(--depth) * 22px); font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
   .row .mark { color: var(--muted); flex-shrink: 0; }
-  .row :global(code) { font-family: var(--font-mono); font-size: .9em; }
+  .row :global(code) { font-family: var(--font-code); font-size: .9em; }
   .row :global(a) { color: var(--accent); }
   .row hr { flex: 1; border: 0; border-top: 1px solid var(--border); }
   .type-heading_1 .text { font-size: 22px; font-weight: 700; }
   .type-heading_2 .text { font-size: 18px; font-weight: 650; }
   .type-heading_3 .text { font-size: 16px; font-weight: 650; }
   .type-quote .text { border-left: 3px solid var(--ink); padding-left: 10px; }
-  .type-code .text { font-family: var(--font-mono); font-size: 12px; }
+  .type-code .text { font-family: var(--font-code); font-size: 12px; }
   footer { display: flex; align-items: center; gap: 12px; }
   .problem { color: var(--error); }
   .done { color: var(--success); }

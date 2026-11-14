@@ -31,7 +31,7 @@
     border-radius: 10px;
     background: color-mix(in srgb, var(--solid-inset, var(--surface)) 70%, transparent);
     color: var(--ink);
-    font: 13px/1.5 var(--font-mono);
+    font: 13px/1.5 var(--font-ui);
     text-align: left;
     white-space: pre;
   }

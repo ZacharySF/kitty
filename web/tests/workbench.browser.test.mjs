@@ -468,29 +468,43 @@ describe("command palette", () => {
   });
 });
 
-describe("workspace tabs", () => {
-  test("underline tabs: icon per tab, the active tab underlined in its group colour, close shown on hover", async () => {
+describe("top bar", () => {
+  test("one row: brand left, groups centred without Settings, a tab switcher and a search icon; no tab strip, bell, theme or refresh", async () => {
     const { page, problems, context } = await open("calendar");
-    const bar = page.getByRole("navigation", { name: "Workspace tabs" });
-    await bar.waitFor();
+    const bar = page.locator(".system-bar");
+    const groups = page.getByRole("navigation", { name: "Workspace groups" });
+    await groups.waitFor();
+    assert.deepEqual(await groups.getByRole("button").allTextContents(), ["Brain", "Plan", "Study", "Job search"]);
+    assert.equal(await bar.getByRole("button", { name: /Theme|Refresh|^Notifications/ }).count(), 0, "the bar still carries theme, refresh or the bell");
+    assert.ok(!/Search anything/.test(await bar.innerText()), "the search button still has words");
+    assert.equal(await page.locator('.workbench-top [role="tab"], .workbench-top [role="tablist"]').count(), 0, "a tab strip is still drawn");
+    const boxes = await page.evaluate(() => [".wordmark", ".workspace-groups", ".tab-trigger", ".system-command"]
+      .map((selector) => document.querySelector(selector).getBoundingClientRect().toJSON()));
+    const middles = boxes.map((box) => box.top + box.height / 2);
+    assert.ok(Math.max(...middles) - Math.min(...middles) <= 2, `the bar is not one row: ${middles}`);
+    const centre = boxes[1].left + boxes[1].width / 2;
+    assert.ok(Math.abs(centre - DEFAULT.width / 2) <= 24, `the groups are not centred (${centre})`);
+    const trigger = page.getByRole("button", { name: "1 open tab" });
     await page.keyboard.press("Control+t");
-    await page.waitForFunction(() => document.querySelectorAll('[role="tab"]').length === 2);
-    const tabs = bar.locator(".tab");
-    const [first, second] = [tabs.nth(0), tabs.nth(1)];
-    assert.equal(await second.getAttribute("class").then((c) => c.includes("active")), true, "new tab is not active");
-    for (const tab of [first, second]) assert.equal(await tab.locator("svg").count(), 1, "tab has no icon");
-    const underline = (tab) => tab.evaluate((node) => {
-      const after = getComputedStyle(node, "::after");
-      return { height: after.height, color: after.backgroundColor, tone: getComputedStyle(node).getPropertyValue("--tone").trim() };
-    });
-    const active = await underline(second);
-    assert.equal(active.height, "2px", "active tab has no underline");
-    assert.notEqual(active.tone, "", "active tab has no group tone");
-    assert.notEqual((await underline(first)).height, "2px", "inactive tab is underlined");
-    const close = first.locator(".close-tab");
-    assert.equal(await close.evaluate((node) => getComputedStyle(node).visibility), "hidden", "inactive close button shows at rest");
-    await first.hover();
-    assert.equal(await close.evaluate((node) => getComputedStyle(node).visibility), "visible", "close button does not show on hover");
+    await page.getByRole("button", { name: "2 open tabs" }).click();
+    const list = page.getByRole("dialog", { name: "Open tabs" });
+    await list.waitFor();
+    assert.deepEqual((await list.locator(".tab-name").allTextContents()), ["Calendar", "Home"]);
+    assert.equal(await list.locator('.tab-row[aria-current="page"] .tab-name').textContent(), "Home");
+    await list.locator(".tab-pick").first().click();
+    await page.waitForFunction(() => location.hash === "#calendar");
+    await page.getByRole("button", { name: "2 open tabs" }).click();
+    await list.getByRole("button", { name: "Close Home tab" }).click();
+    // The list stays open after a close, so more tabs can go in one visit.
+    await trigger.waitFor();
+    assert.equal(await list.locator(".tab-row").count(), 1);
+    await list.getByRole("button", { name: /^Settings/ }).click();
+    await page.waitForFunction(() => location.hash.startsWith("#settings"));
+    await page.keyboard.press("Control+k");
+    await page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox").fill("theme");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Theme"));
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash === "#settings/appearance");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1074,13 +1088,17 @@ describe("home dashboard", () => {
       const board = page.getByRole("region", { name: "Home widgets" });
       const panel = page.locator(".home").getByRole("region", { name: "Rika" });
       await Promise.all([board.waitFor(), panel.waitFor()]);
-      await board.getByRole("region", { name: "Morning brief" }).waitFor();
+      await board.getByRole("region", { name: "Up next" }).waitFor();
       const [b, r, home] = await Promise.all([rect(board), rect(panel), rect(page.locator(".home"))]);
+      // Home keeps the page's side margins (its padding); Rika fills the right-hand column inside them.
+      const pad = await page.locator(".home").evaluate((node) => { const s = getComputedStyle(node); return { right: parseFloat(s.paddingRight), top: parseFloat(s.paddingTop) }; });
       assert.ok(b.right <= r.left, `the widgets and Rika overlap: ${b.left}-${b.right} | ${r.left}-${r.right}`);
-      assert.ok(Math.abs(r.right - home.right) <= 1 && Math.abs(r.top - home.top) <= 1 && Math.abs(r.bottom - home.bottom) <= 1, "Rika does not fill the right-hand column");
+      assert.ok(Math.abs(r.right - (home.right - pad.right)) <= 1 && Math.abs(r.top - (home.top + pad.top)) <= 1 && Math.abs(r.bottom - home.bottom) <= 1, "Rika does not fill the right-hand column");
       assert.ok(r.width >= 300, `the Rika panel is only ${r.width}px wide`);
+      // Design review: fewer, larger widgets. The brief is Rika's chip, sections are in search,
+      // agents show only while a session runs (the demo has none).
       const titles = await board.locator(".home-widget > header h3").allInnerTexts();
-      assert.deepEqual(titles, ["Morning brief", "Today", "Quick note", "Up next", "Agents", "Sections"]);
+      assert.deepEqual(titles, ["Today", "Quick note", "Up next"]);
       // Two columns of widgets when there is room, one when there is not.
       const lefts = new Set(await board.locator(".column").evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().left))));
       assert.equal(lefts.size, viewport.width >= 1200 ? 2 : 1, `${lefts.size} widget columns at ${viewport.width}px`);
@@ -1096,13 +1114,10 @@ describe("home dashboard", () => {
     });
   }
 
-  test("Sections lists every page the modules provide and opens them; Ctrl K still finds them", async () => {
+  test("home has no Sections link wall; Ctrl K finds every section", async () => {
     const { page, problems, context } = await open("today");
-    const sections = page.getByRole("navigation", { name: "Workspace sections" });
-    await sections.getByRole("link", { name: "Calendar" }).click();
-    await page.waitForFunction(() => location.hash === "#calendar");
-    await page.goto(new URL("#today", page.url()).href);
-    assert.ok(await sections.getByRole("link", { name: "Brain" }).isVisible(), "the Brain is not listed");
+    await page.getByRole("region", { name: "Home widgets" }).waitFor();
+    assert.equal(await page.getByRole("navigation", { name: "Workspace sections" }).count(), 0, "home still lists every section");
     await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog", { name: "Search rika!" });
     await palette.getByRole("combobox").fill("Flash");
@@ -1136,7 +1151,9 @@ describe("home dashboard", () => {
     await page.keyboard.press("Control+j");
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Ask Rika");
     assert.equal(await page.getByRole("dialog", { name: "Rika" }).count(), 0, "Ctrl + J opened the drawer over the panel");
-    await page.getByRole("navigation", { name: "Workspace sections" }).getByRole("link", { name: "Calendar" }).click();
+    await page.getByRole("navigation", { name: "Workspace groups" }).getByRole("button", { name: "Plan" }).click();
+    await page.waitForFunction(() => location.hash === "#goals");
+    await page.evaluate(() => (location.hash = "calendar"));
     await page.waitForFunction(() => location.hash === "#calendar");
     await page.keyboard.press("Control+j");
     const drawer = page.getByRole("dialog", { name: "Rika" });
@@ -1182,7 +1199,7 @@ describe("home widgets", () => {
     const agents = left.getByRole("region", { name: "Agents" });
     await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
 
-    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, any tag on the right.
+    // Q19 hairline minimal: no fill or box, a rule above, a large title in the text face (design review), any tag on the right.
     for (const widget of [agenda, note, agents]) {
       const frame = await widget.evaluate((node) => {
         const style = getComputedStyle(node);
@@ -1197,8 +1214,8 @@ describe("home widgets", () => {
       assert.equal(frame.fill, "rgba(0, 0, 0, 0)", "widget has a fill");
       assert.equal(frame.top, "1px");
       assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
-      assert.match(frame.font, /Inter/);
-      assert.ok(frame.size <= 14, `title is ${frame.size}px`);
+      assert.doesNotMatch(frame.font, /Mono|Fraunces/);
+      assert.ok(frame.size >= 20, `title is only ${frame.size}px`);
       if (frame.eyebrow) assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
     }
     // Q9 purpose check: the shortcut is the Save button's tooltip, not a tag; the agents' state is the tag.
@@ -1345,20 +1362,20 @@ describe("appearance settings", () => {
     const titleFont = () => page.getByRole("heading", { level: 1, name: "Settings" }).evaluate((node) => getComputedStyle(node).fontFamily);
     const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
 
-    // Defaults: Kitty, Fraunces titles, compact 13px, full motion, a Brain home, 2D section graphs, blossoms, nebula.
-    for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
+    // Defaults: Kitty, titles in the text face, Standard text size (16px in Kitty), full motion, a Brain home, 2D section graphs, nebula.
+    for (const name of ["Kitty", "Plain", "Standard", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
     assert.equal(await panel.getByRole("group", { name: "Home" }).getByRole("radio").count(), 2, "home offers Brain and 2D only");
     await radio("2D map").check();
     await prefIs(() => prefs.ui?.home?.look, "2d", "home look not saved to the build");
     await radio("Brain").check();
     await prefIs(() => prefs.ui?.home?.look, "brain", "home look not saved to the build");
     assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), true);
-    assert.match(await titleFont(), /Fraunces/);
-    assert.equal(await bodySize(), "13px");
+    assert.doesNotMatch(await titleFont(), /Fraunces/);
+    assert.equal(await bodySize(), "16px");
 
     // A preset sets every control at once, the app and the preview follow.
     await panel.getByRole("button", { name: /^Minimal/ }).click();
-    for (const name of ["Harness", "Plain", "Compact · 13px", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
+    for (const name of ["Harness", "Plain", "Standard", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
     assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), false);
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "true");
     assert.equal(await root("theme"), "harness");
@@ -1369,7 +1386,7 @@ describe("appearance settings", () => {
     assert.equal(prefs.theme?.base, "harness");
 
     // Any single setting still changes afterwards; the preset no longer matches.
-    await radio("Comfortable · 14px").check();
+    await radio("Larger").check();
     assert.equal(await bodySize(), "14px");
     assert.equal(await preview.getAttribute("data-density"), "comfortable");
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "false");
@@ -1778,14 +1795,18 @@ describe("calendar redesign", () => {
   });
 });
 
-describe("notes tabs and floating outline", () => {
-  test("browser-style page tabs, the library slides over the page, and 'On this page' jumps to blocks", async () => {
+describe("notes pages as app tabs and floating outline", () => {
+  test("each open page is an app tab (no strip inside Notes), the library slides over the page, and 'On this page' jumps to blocks", async () => {
     const { page, problems, context } = await open("notes");
     const title = page.getByRole("textbox", { name: "Page title" });
     await title.waitFor();
-    const tabs = page.getByRole("navigation", { name: "Open note pages" });
-    assert.equal(await tabs.locator('[aria-current="page"]').count(), 1, "the open page is not the current tab");
-    assert.equal(await tabs.getByRole("button", { name: "New page" }).count(), 1, "tab strip has no + new page");
+    assert.equal(await page.locator(".notes-workspace .note-tabs").count(), 0, "Notes still draws its own tab strip");
+    assert.equal(await page.locator(".notes-heading").getByRole("button", { name: "New page", exact: true }).count(), 1, "the header has no new page");
+    const switcher = page.getByRole("dialog", { name: "Open tabs" });
+    const current = await title.inputValue();
+    await page.locator(".tab-trigger").click();
+    assert.deepEqual(await switcher.locator(".tab-name").allTextContents(), [current || "Untitled"], "the tab is not named after its page");
+    await page.keyboard.press("Escape");
     // The library is a drawer: hidden at rest, sliding over the page without moving it.
     const library = page.getByRole("navigation", { name: "Folders, notebooks and pages" });
     assert.equal(await library.isVisible(), false, "the library is open at rest");
@@ -1798,6 +1819,27 @@ describe("notes tabs and floating outline", () => {
     assert.deepEqual(await rect(title), before, "opening the library moved the page");
     await page.keyboard.press("Escape");
     await library.waitFor({ state: "hidden" });
+    // A new page replaces this tab's page; Ctrl click opens the first page in a new app tab, and
+    // opening it again from the first tab brings that tab forward instead of a second copy.
+    const shows = (name) => page.waitForFunction((name) => [...document.querySelectorAll('[aria-label="Page title"]')].some((node) => node.offsetParent && node.value === name), name);
+    await page.locator(".notes-heading").getByRole("button", { name: "New page", exact: true }).click();
+    await page.waitForFunction((name) => [...document.querySelectorAll('[aria-label="Page title"]')].some((node) => node.offsetParent && node.value !== name), current);
+    await title.fill("Second page");
+    await page.keyboard.press("Control+s");
+    await toggle.click();
+    await library.locator(".page-item", { hasText: current }).first().click({ modifiers: ["Control"] });
+    await page.getByRole("button", { name: "2 open tabs" }).waitFor();
+    await shows(current);
+    await page.keyboard.press("Control+Tab");
+    await shows("Second page");
+    await toggle.click();
+    await library.locator(".page-item", { hasText: current }).first().click();
+    await shows(current);
+    assert.equal(await page.getByRole("button", { name: "2 open tabs" }).count(), 1, "opening an open page made a second copy");
+    await page.locator(".tab-trigger").click();
+    assert.deepEqual(await switcher.locator(".tab-name").allTextContents(), ["Second page", current]);
+    assert.equal(await switcher.locator('.tab-row[aria-current="page"] .tab-name').textContent(), current);
+    await page.keyboard.press("Escape");
     // Write three blocks; the floating outline lists them and jumps to one. The block editor
     // offers "Start writing…" on a page without blocks, else its first block takes the caret.
     const first = page.getByRole("button", { name: /^Start writing/ }).or(page.getByRole("textbox", { name: "Block 1", exact: true })).first();
@@ -2575,7 +2617,7 @@ describe("one mind-map editor", () => {
     await create.click();
     const root = schema.locator("svg.stage [data-node].root");
     await root.waitFor();
-    const tab = (await page.getByRole("navigation", { name: "Open note pages" }).locator('[aria-current="page"]').textContent()).trim();
+    const tab = await page.getByRole("textbox", { name: "Page title", includeHidden: true }).inputValue();
     assert.equal((await root.locator("text.label").textContent()).replace(/^▤ /, ""), tab, "the map is not the page's");
     // The same editor (its pill and topic bar), but the page keeps its own header: no second top bar.
     await schema.getByRole("toolbar", { name: "Map tools" }).waitFor();
@@ -3322,14 +3364,14 @@ describe("notifications", () => {
     await context.close();
   });
 
-  test("the bell counts unread notifications and opens a center with All/Unread, sources and mark all read", async () => {
+  test("the tab menu counts unread notifications and opens a center with All/Unread, sources and mark all read", async () => {
     const { page, problems, context } = await open("settings", {
       setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
     });
-    const bell = page.getByRole("button", { name: "Notifications, 2 unread" });
-    await bell.waitFor();
-    assert.equal((await bell.textContent()).trim(), "2");
-    await bell.click();
+    await page.getByRole("button", { name: "1 open tab" }).click();
+    const entry = page.getByRole("dialog", { name: "Open tabs" }).getByRole("button", { name: "Notifications 2 unread" });
+    await entry.waitFor();
+    await entry.click();
     const center = page.getByRole("dialog", { name: "Notification center" });
     await center.waitFor();
     const items = center.getByRole("listitem");
@@ -3343,13 +3385,19 @@ describe("notifications", () => {
     await center.getByRole("tab", { name: /Unread/ }).click();
     assert.equal(await items.count(), 2);
     await center.getByRole("button", { name: "Mark all read" }).click();
-    await page.getByRole("button", { name: "Notifications, 0 unread" }).waitFor();
     await center.getByText("You're all caught up.").waitFor();
     await center.getByRole("tab", { name: "All" }).click();
     assert.equal(await items.count(), 2);
-    // Read state survives a reload.
+    // Read state survives a reload; search opens the center too.
     await page.reload();
-    await page.getByRole("button", { name: "Notifications, 0 unread" }).waitFor();
+    await page.locator(".wordmark").waitFor();
+    await page.keyboard.press("Control+k");
+    await page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox").fill("notif");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Notifications"));
+    await page.keyboard.press("Enter");
+    await center.waitFor();
+    await center.getByRole("tab", { name: /Unread/ }).click();
+    await center.getByText("You're all caught up.").waitFor();
     await page.keyboard.press("Escape");
     assert.deepEqual(problems, []);
     await context.close();
@@ -3374,7 +3422,9 @@ describe("notifications", () => {
     assert.match(await until.getAttribute("aria-valuetext"), /^\d\d:\d\d$/);
     assert.match(await from.getAttribute("aria-valuetext"), /^\d\d:\d\d$/);
     // Held: nothing toasts, yet the center lists both as held and unread.
-    await page.getByRole("button", { name: "Notifications, 2 unread" }).waitFor();
+    await page.getByRole("button", { name: "1 open tab" }).click();
+    await page.getByRole("dialog", { name: "Open tabs" }).getByRole("button", { name: "Notifications 2 unread" }).waitFor();
+    await page.keyboard.press("Escape");
     assert.equal(await page.locator('[aria-label="New notifications"] > li').count(), 0, "a reminder toasted during quiet hours");
     await panel.getByText("Held now: 1 calendar · 1 job search").waitFor();
     // Pull the end of the window back past now: the held reminders arrive together as the digest.

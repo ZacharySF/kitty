@@ -21,6 +21,14 @@ export type WorkspaceContext = {
   readonly status: SaveStatus | null;
   /** Reports the view's save state to its tab; `null` when it has nothing to save. */
   setStatus: (status: SaveStatus | null) => void;
+  /** One tab system: a Notes tab shows one page. The page this tab was opened on, if any. */
+  readonly notePage: number | null;
+  /** Notes reports the page it shows (and its title, which names the tab). */
+  setNotePage: (id: number | null, title: string) => void;
+  /** Another tab already showing page `id` takes focus; true when one did. */
+  focusNotePage: (id: number) => boolean;
+  /** Opens page `id` in a new app tab. */
+  openNotePageTab: (id: number) => void;
 };
 
 const workspaceKey = Symbol("kitty.workspace-tab");

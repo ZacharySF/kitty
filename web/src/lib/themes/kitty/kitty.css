@@ -20,6 +20,39 @@
   --font-ui: "TeX Gyre Heros", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --br-font-ui: var(--font-ui);
   --br-font-display: var(--font-ui);
+  /* Design labs (Type): bigger, more readable sizes; controls keep their 28px line. */
+  --br-text-xs: 12px;
+  --br-text-sm: 14px;
+  --fs-title: 32px;
+  --fs-heading: 19px;
+  --fs-subheading: 16px;
+  --fs-label: 13.5px;
+  --fs-control: 14px;
+  --fs-chrome: 12px;
+}
+:root[data-theme="kitty"] body {
+  font-size: 16px;
+  line-height: 1.45;
+}
+/* Text size: Larger is one step up from Standard. */
+:root[data-theme="kitty"][data-density="comfortable"] {
+  --br-text-xs: 13px;
+  --br-text-sm: 15px;
+  --fs-title: 36px;
+  --fs-heading: 21px;
+  --fs-subheading: 17.5px;
+  --fs-label: 15px;
+  --fs-control: 15px;
+  --fs-chrome: 13px;
+}
+:root[data-theme="kitty"][data-density="comfortable"] body {
+  font-size: 18px;
+}
+/* Taste (design labs): no tracked-caps labels ("CALENDAR / JOB / SOON"). Words keep their own case
+   and normal spacing; the terminal and code keep theirs. */
+:root[data-theme="kitty"] body :where(*:not(code, pre, samp, .xterm, .xterm *)) {
+  text-transform: none !important;
+  letter-spacing: normal !important;
 }
 
 /* The one frosted surface: the top bar, over whatever scrolls beneath it. */
@@ -33,4 +66,20 @@
 /* The welcome card's Brain still was rendered in Blossom's colours; here it is shown in greys. */
 :root[data-theme="kitty"] body img.brain {
   filter: grayscale(1) contrast(1.08);
+}
+
+/* Views are part of the app (design review): a view's own root region, and a Settings page, is the page,
+   not a card floating on it. No fill, frame or radius; content keeps main's page margins. Side rails,
+   drawers and widgets inside keep their surfaces. Glass themes keep their panels. */
+:root[data-theme="kitty"] body :is([data-kitty-panel="view"], [data-settings-page]) > :is(.surface, .panel, .br-panel) {
+  --surface-fill: transparent;
+  --surface-border: transparent;
+  --surface-blur: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding-inline: 0;
 }

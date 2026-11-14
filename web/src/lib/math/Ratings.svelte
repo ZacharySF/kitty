@@ -77,6 +77,6 @@
   }
   kbd {
     color: var(--subtle);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
 </style>

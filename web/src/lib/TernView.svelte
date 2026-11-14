@@ -189,11 +189,11 @@
   .error { color: var(--br-danger, var(--danger, #e5484d)); margin: 0; }
   .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .6rem; margin: 0; }
   .facts div { padding: .6rem .75rem; border: 1px solid var(--border-fine, var(--border)); border-radius: 8px; min-width: 0; }
-  dt { color: var(--muted); font: 11px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  dt { color: var(--muted); font: 11px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
   dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
   .sessions { display: grid; gap: .4rem; margin: 0; padding: 0; list-style: none; }
   .sessions li { display: grid; grid-template-columns: minmax(110px, auto) minmax(120px, 1fr) minmax(0, 2fr) auto auto; align-items: center;
-    gap: .75rem; padding: .5rem .75rem; border: 1px solid var(--hairline, var(--border)); border-radius: 8px; font: 12px var(--font-mono); }
+    gap: .75rem; padding: .5rem .75rem; border: 1px solid var(--hairline, var(--border)); border-radius: 8px; font: 12px var(--font-ui); }
   .sessions li.focused { border-color: color-mix(in srgb, var(--ink) 30%, transparent); }
   .where, .size, .cwd { color: var(--muted); }
   .cwd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -205,6 +205,6 @@
   details { padding: .8rem; border: 1px solid var(--border); border-radius: .5rem; display: grid; gap: .6rem; }
   summary { cursor: pointer; }
   .path { display: grid; gap: .35rem; font-size: .85rem; }
-  .path input { font: 13px var(--font-mono); padding: .45rem .6rem; }
+  .path input { font: 13px var(--font-ui); padding: .45rem .6rem; }
   code { overflow-wrap: anywhere; }
 </style>

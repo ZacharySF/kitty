@@ -72,7 +72,7 @@
   }
   .zs text {
     fill: var(--c2);
-    font: 600 11px var(--font-mono);
+    font: 600 11px var(--font-ui);
     animation: kitty-z calc(var(--motion-ms) * 11) ease-in-out infinite;
   }
   .zs .z2 {

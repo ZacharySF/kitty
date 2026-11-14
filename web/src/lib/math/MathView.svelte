@@ -475,7 +475,7 @@
     border: 1px solid var(--hairline);
     border-radius: 999px;
     color: var(--muted);
-    font: 500 11.5px var(--font-mono);
+    font: 500 11.5px var(--font-ui);
   }
   .focus-tag.math {
     border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline));
@@ -535,7 +535,7 @@
   }
   .eyebrow {
     color: var(--subtle);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -566,7 +566,7 @@
     gap: 10px;
     margin: 0;
     color: var(--muted);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
   }
   .progress [data-mixed-progress] {
     color: var(--ink);
@@ -631,7 +631,7 @@
   }
   .edge .count {
     color: var(--warning);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   .left-open .edge.left {
     left: var(--left-w);

@@ -54,7 +54,7 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
   let intersecting = true;
   let destroyed = false;
   let frame = 0;
-  let ink = "", chrome = "", muted = "", font = "", mono = "", raised = "", shadow = "";
+  let ink = "", chrome = "", muted = "", font = "", raised = "", shadow = "";
   let palette: string[] = [];
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const simulation = forceSimulation<Node>().stop().alphaDecay(0.035);
@@ -69,8 +69,7 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
     ink = style.getPropertyValue("--ink").trim() || "#e7dfef";
     chrome = style.getPropertyValue("--chrome").trim() || "#0e0c14";
     muted = style.getPropertyValue("--muted").trim() || "#8f86a0";
-    font = style.getPropertyValue("--br-font-ui").trim() || "ui-monospace, monospace";
-    mono = style.getPropertyValue("--font-mono").trim() || "ui-monospace, monospace";
+    font = style.getPropertyValue("--br-font-ui").trim() || "sans-serif";
     raised = style.getPropertyValue("--solid-raised").trim() || chrome;
     shadow = style.getPropertyValue("--shadow-tint").trim() || "#000000";
     for (const [name, group] of groups) {
@@ -247,7 +246,7 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       ctx.globalAlpha = alpha;
       if (withText) {
         ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-        ctx.font = `600 ${7.5 * scale}px ${mono}`; ctx.letterSpacing = `${0.9 * scale}px`;
+        ctx.font = `600 ${7.5 * scale}px ${font}`; ctx.letterSpacing = `${0.9 * scale}px`;
         ctx.fillStyle = node.color;
         // Eyebrow: the entity kind, or a hub's link count; an unlinked hub has none and centres its title.
         const count = degree.get(node.id) ?? 0;
@@ -263,8 +262,8 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       }
     }
     ctx.restore(); ctx.globalAlpha = 1;
-    // Group names: tracked mono capitals with a short underline above each cluster; no regions.
-    ctx.font = `650 10px ${mono}`; ctx.letterSpacing = "1.6px"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    // Group names in the text face with a short underline above each cluster; no regions.
+    ctx.font = `650 11px ${font}`; ctx.letterSpacing = "0.4px"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
     const focusGroup = focus ? byId.get(focus)?.data.group : undefined;
     const cardBoxes: Box[] = nodes.map(node => {
       const [cx, cy] = transform.apply([node.x!, node.y!]), w = node.w * scaleOf(node) * k, h = node.h * scaleOf(node) * k;

@@ -162,6 +162,9 @@ const shortcutGroups: ShortcutGroup[] = [
       ["rika!", "Go home"],
       ["Ctrl + Alt / Ctrl + X / Ctrl + C / Ctrl + V", "Plan / Study / Job search / Settings (outside text editing)"],
       ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
+      ["Ctrl + Tab / Ctrl + Shift + Tab", "Next / previous tab (the tab switcher in the top bar lists them all)"],
+      ["Ctrl + T / Ctrl + W", "New tab / close tab"],
+      ["Settings, Theme, Notifications", "Ctrl / ⌘ + K, or the tab switcher's menu"],
       [
         "Calendar / Study / Notes / Mind maps / AI",
         "Sections on home, or Ctrl / ⌘ + K",

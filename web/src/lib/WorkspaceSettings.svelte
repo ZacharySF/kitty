@@ -656,7 +656,7 @@
   }
   output {
     color: var(--muted);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
     font-variant-numeric: tabular-nums;
     text-align: right;
   }

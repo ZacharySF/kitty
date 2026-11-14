@@ -26,8 +26,8 @@
 <style>
   .home-widget {
     min-width: 0;
-    border-top: 1px solid color-mix(in srgb, var(--ink) 34%, transparent);
-    padding: 2px 0 6px;
+    border-top: 1px solid var(--hairline);
+    padding: 4px 0 12px;
     color: var(--ink);
     container-type: inline-size;
   }
@@ -43,21 +43,25 @@
     display: flex;
     align-items: baseline;
     gap: 10px;
-    padding: 8px 0 10px;
+    padding: 14px 0 12px;
   }
+  /* Design labs (Type): widget titles in the text face, large enough to read across the room. */
   h3 {
     margin: 0;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: 600 13.5px var(--font-ui);
-    letter-spacing: 0.01em;
+    font: 600 22px/1.2 var(--font-ui);
+    letter-spacing: -0.01em;
   }
+  /* The short tag on the right (a count, a date) is quiet secondary text. */
   .eyebrow {
     margin-left: auto;
     flex: none;
-    font-size: 12px;
+    color: var(--muted);
+    font-size: 15px;
+    font-weight: 400;
     line-height: 1;
   }
 </style>

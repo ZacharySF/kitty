@@ -246,8 +246,8 @@ describe("settings pages", () => {
     await toggle.click();
     assert.notEqual(await toggle.getAttribute("aria-checked"), before);
     assert.equal(await save.isDisabled(), false);
-    // Unsaved state is the tab's dot, not a sentence.
-    await page.getByRole("tab", { selected: true }).getByRole("img", { name: /Unsaved/ }).waitFor();
+    // Unsaved state is a dot beside the tab switcher, not a sentence.
+    await page.locator(".tab-switcher").getByRole("img", { name: /Unsaved/ }).waitFor();
     assert.equal(await modules.getByText("Unsaved selection.").count(), 0);
     await discard.click();
     assert.equal(await toggle.getAttribute("aria-checked"), before);

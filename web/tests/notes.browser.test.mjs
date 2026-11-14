@@ -53,7 +53,9 @@ async function until(check, what) {
 }
 const titleIs = (page, value) => until(async () => (await title(page).inputValue()) === value, `the page title is ${value}`);
 const workspace = (page) => page.getByRole("region", { name: "Notes workspace" });
-const openTab = (page, name) => page.getByRole("navigation", { name: "Open note pages" }).getByRole("button", { name, exact: true });
+// One tab system: pages open from the library; the app's tab switcher (not the view) holds the open pages.
+const openPage = async (page, name) =>
+  (await library(page)).getByRole("button", { name: new RegExp(`^\\W*${name.replace(/[()]/g, "\\$&")}$`) }).click();
 // Canvas and Map hide the Write page (and its H1 title) but keep it mounted.
 const title = (page) => page.getByRole("textbox", { name: "Page title", includeHidden: true });
 const block = (page, n) => page.getByRole("textbox", { name: `Block ${n}`, exact: true });
@@ -85,15 +87,15 @@ async function pressedModes(page) {
 const natives = (page) => page.evaluate(() => ({ select: document.querySelectorAll("select").length, summary: document.querySelectorAll("summary:not(.references > summary)").length }));
 
 for (const [label, viewport] of [["default", DEFAULT], ["minimum", MINIMUM]]) {
-  test(`one header row holds the library, page tabs, Page mode, Find and ⋯ last, with the page under it at the ${label} native size`, async () => {
+  test(`one header row holds the library, New page, Page mode, Find and ⋯ last, with the page under it at the ${label} native size`, async () => {
     const { page, problems, context } = await notes(viewport);
     await assert.doesNotReject(block(page, 1).waitFor());
     await until(async () => (await block(page, 1).textContent()) === "A hash ring maps each key to the next node clockwise.", "the first block shows");
-    // Q17: ☰, the tabs, the Write/Canvas/Map switch, Find and ⋯ share one row.
+    // Q17: ☰, New page, the Write/Canvas/Map switch, Find and ⋯ share one row; no page tabs inside the view.
     const header = page.locator(".notes-heading");
     const controls = {
       library: page.getByRole("button", { name: "Open library" }),
-      tabs: page.getByRole("navigation", { name: "Open note pages" }),
+      newPage: header.getByRole("button", { name: "New page", exact: true }),
       modes: modes(page),
       find: page.getByRole("button", { name: "Find in page", exact: true }),
       more: more(page),
@@ -107,22 +109,23 @@ for (const [label, viewport] of [["default", DEFAULT], ["minimum", MINIMUM]]) {
       assert.ok(Math.abs(middle - (boxes.more.y + boxes.more.height / 2)) <= 4, `${name} is off the row's centre line`);
     }
     assert.ok(row.height <= 52, `the header is ${row.height}px tall: more than one row`);
-    assert.ok(boxes.library.x < boxes.tabs.x && boxes.tabs.x < boxes.modes.x && boxes.modes.x < boxes.find.x && boxes.find.x < boxes.more.x, "header controls are out of order");
+    assert.ok(boxes.library.x < boxes.newPage.x && boxes.newPage.x < boxes.modes.x && boxes.modes.x < boxes.find.x && boxes.find.x < boxes.more.x, "header controls are out of order");
     const last = await header.evaluate((node) => [...node.querySelectorAll("button, input, a[href]")].filter((item) => item.offsetParent).at(-1)?.getAttribute("aria-label"));
     assert.equal(last, "More page actions", "⋯ is not the last control in the header");
     // Q1: every header control (the segmented switch as one control) is 28px tall.
-    for (const [name, control] of Object.entries(boxes)) if (name !== "tabs") assert.equal(Math.round(control.height), 28, `${name} is not 28px tall`);
-    for (const tab of await controls.tabs.locator(".note-tab").all()) assert.equal(Math.round((await box(tab)).height), 28, "a page tab is not 28px tall");
+    for (const [name, control] of Object.entries(boxes)) assert.equal(Math.round(control.height), 28, `${name} is not 28px tall`);
+    assert.equal(await page.locator(".note-tabs").count(), 0, "the view still draws its own page tabs");
+    await until(async () => (await page.evaluate(() => window.notesHarness.notePage?.title)) === "Consistent hashing", "the page names its app tab");
     assert.deepEqual(await pressedModes(page), ["Write"]);
     // Nothing else stays in the bar: no "Notes" heading, status text, Save button or Views fold-out.
     assert.equal(await header.getByRole("heading").count(), 0, "the header still has a heading");
     assert.equal(await page.getByRole("button", { name: /^Save/ }).count(), 0, "a Save button is still shown");
     assert.equal(await page.getByText("Saved locally").count(), 0, "save status is still text");
-    // Q5/Q17: the title is the page's Fraunces H1, borderless, with a meta line above it.
+    // Design labs (Type) / Q17: the title is the page's H1 in the text face, borderless, with a meta line above it.
     const heading = page.getByRole("heading", { level: 1 });
     assert.equal(await heading.getByRole("textbox", { name: "Page title" }).count(), 1, "the title is not the page's H1");
     const look = await title(page).evaluate((node) => { const style = getComputedStyle(node); return { font: style.fontFamily, border: style.borderTopWidth, placeholder: node.placeholder }; });
-    assert.match(look.font, /Fraunces/, "the title is not set in Fraunces");
+    assert.doesNotMatch(look.font, /Fraunces|Mono/, "the title is not set in the text face");
     assert.equal(look.border, "0px", "the title is still a boxed field");
     assert.equal(look.placeholder, "Untitled");
     assert.match(await page.locator(".page-meta").textContent(), /^Systems design · edited /);
@@ -175,11 +178,11 @@ test("rare page actions sit in the ⋯ menu, which follows the page mode", async
   await context.close();
 });
 
-test("Library overview and Today's page are one ⋯ away and the open tab returns to the editor", async () => {
+test("Library overview and Today's page are one ⋯ away and the library returns to the editor", async () => {
   const { page, problems, context } = await notes();
   await choose(page, "Library overview");
   await until(async () => !(await title(page).isVisible()), "the overview replaced the page");
-  await openTab(page, "Consistent hashing").click();
+  await openPage(page, "Consistent hashing");
   await assert.doesNotReject(title(page).waitFor());
   assert.equal(await block(page, 1).isVisible(), true);
   await choose(page, "Today's page");
@@ -343,7 +346,7 @@ test("Ctrl+S saves title and writing, and the page reopens with them", async () 
   assert.equal(await page.evaluate(() => window.notesHarness.saved(1).blocks[0].text), "Each key belongs to the next node clockwise on the ring.");
   await (await library(page)).getByRole("button", { name: "Raft notes" }).click();
   await titleIs(page, "Raft notes");
-  await openTab(page, "Consistent hashing (revised)").click();
+  await openPage(page, "Consistent hashing (revised)");
   await titleIs(page, "Consistent hashing (revised)");
   await until(async () => (await block(page, 1).textContent()) === "Each key belongs to the next node clockwise on the ring.", "the saved block reopens");
   assert.deepEqual(problems, []);

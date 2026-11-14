@@ -253,13 +253,14 @@
 </div>
 
 <style>
-  .documents-view { display: flex; flex-direction: column; overflow: hidden; color: var(--ink); border: 1px solid var(--hairline); border-radius: 14px; background: color-mix(in srgb, var(--solid-panel) 55%, transparent); }
+  /* Views are part of the app: the editor sits on the page ground under its bar's hairline. */
+  .documents-view { display: flex; flex-direction: column; overflow: hidden; color: var(--ink); }
   button { font: inherit; color: inherit; cursor: pointer; }
   button:disabled { cursor: default; }
   .grow { flex: 1; }
 
   /* Compact bar: document switcher, save state, mode, actions. */
-  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--hairline); background: color-mix(in srgb, var(--solid-void) 50%, transparent); }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
   .bar .pill { min-height: 30px; padding: 3px 12px; }
   .bar .pill:disabled { opacity: 0.55; }
   .icon-pill { width: 30px; justify-content: center; padding: 0 !important; }
@@ -267,7 +268,7 @@
   .doc-pill:focus-within { border-color: color-mix(in srgb, var(--violet) 55%, var(--hairline)); }
   /* Outrank the global glass field fill: the title and source sit flush in their chrome. */
   .documents-view .bar .doc-title { width: clamp(140px, 22vw, 300px); min-width: 0; padding: 4px 0; border: 0; background: none; color: var(--ink); font: 600 13px var(--font-ui); outline: none; text-overflow: ellipsis; }
-  .fmt { flex: none; padding: 0 5px; border-radius: 4px; background: var(--wash); color: var(--violet); font: 500 9px/16px var(--font-mono); letter-spacing: 0.08em; }
+  .fmt { flex: none; padding: 0 5px; border-radius: 4px; background: var(--wash); color: var(--violet); font: 500 9px/16px var(--font-ui); letter-spacing: 0.08em; }
   .switch { display: inline-flex; }
   .chev { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); }
   .chev:hover, .chev[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
@@ -277,7 +278,7 @@
   .menu button { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: 8px; background: none; font-size: 13px; text-align: left; }
   .menu button:hover:not(:disabled), .menu button.on { background: var(--wash); }
   .menu .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .menu small { margin-left: auto; flex: none; color: var(--subtle); font: 9.5px var(--font-mono); }
+  .menu small { margin-left: auto; flex: none; color: var(--subtle); font: 9.5px var(--font-ui); }
   .menu .empty { margin: 0; padding: 7px 8px; color: var(--muted); font-size: 12px; }
   .menu .new { margin-top: 2px; color: var(--muted); border-top: 1px solid var(--hairline) !important; border-radius: 0 0 8px 8px !important; }
   .status { display: flex; align-items: center; gap: 6px; color: var(--subtle); white-space: nowrap; }
@@ -297,9 +298,9 @@
   /* Resizable split: numbered source | divider | preview. */
   .panes { height: clamp(360px, calc(100dvh - 290px), 1400px); display: grid; grid-template-columns: var(--split) 9px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .src { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; background: color-mix(in srgb, var(--solid-void) 45%, transparent); }
-  .gutter { flex: none; display: flex; flex-direction: column; padding: 14px 8px 0 12px; color: var(--subtle); font: 12.5px/1.75 var(--font-mono); text-align: right; user-select: none; overflow: hidden; }
+  .gutter { flex: none; display: flex; flex-direction: column; padding: 14px 8px 0 12px; color: var(--subtle); font: 12.5px/1.75 var(--font-code); text-align: right; user-select: none; overflow: hidden; }
   .gutter .pad { flex: 0 0 40px; }
-  .documents-view .panes .src > textarea { flex: 1; min-width: 0; margin: 0; padding: 14px 14px 14px 4px; border: 0; border-radius: 0; resize: none; background: transparent; color: var(--ink); font: 12.5px/1.75 var(--font-mono); outline: none; scrollbar-width: thin; }
+  .documents-view .panes .src > textarea { flex: 1; min-width: 0; margin: 0; padding: 14px 14px 14px 4px; border: 0; border-radius: 0; resize: none; background: transparent; color: var(--ink); font: 12.5px/1.75 var(--font-code); outline: none; scrollbar-width: thin; }
   .src textarea::placeholder { color: var(--subtle); }
   .rich-pane { flex: 1; min-width: 0; overflow: auto; scrollbar-width: thin; }
   .rich-pane :global(.rich-document) { border: 0; border-radius: 0; }
@@ -317,10 +318,10 @@
   .authored-preview :global(:is(ul, ol)) { padding-left: 24px; }
   .authored-preview :global(blockquote) { margin: 0 0 9px; padding-left: 12px; border-left: 3px solid var(--accent); color: var(--muted); }
   .authored-preview :global(pre) { padding: 10px; border-radius: 8px; background: var(--surface); white-space: pre-wrap; }
-  .authored-preview :global(code) { font-family: var(--font-mono); }
-  .foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 6px 14px; border-top: 1px solid var(--hairline); color: var(--subtle); font: 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+  .authored-preview :global(code) { font-family: var(--font-code); }
+  .foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 6px 14px; border-top: 1px solid var(--hairline); color: var(--subtle); font: 10px var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; }
   .topics { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-  .chip { padding: 0 8px; border: 1px solid var(--hairline); border-radius: 999px; background: none; color: var(--violet); font: 10px/17px var(--font-mono); text-transform: none; letter-spacing: 0; }
+  .chip { padding: 0 8px; border: 1px solid var(--hairline); border-radius: 999px; background: none; color: var(--violet); font: 10px/17px var(--font-ui); text-transform: none; letter-spacing: 0; }
   .chip small { color: var(--subtle); }
 
   /* Topic matching and imports stay one click below the editor. */

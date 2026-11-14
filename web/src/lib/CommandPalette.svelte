@@ -27,6 +27,8 @@
     onreload,
     onterminal,
     onrika,
+    onsettings,
+    onnotifications,
   }: {
     enabled: readonly string[];
     onclose: () => void;
@@ -41,6 +43,10 @@
     onterminal?: () => void;
     /** Opens Rika's history drawer. */
     onrika: () => void;
+    /** Opens Settings on a page (`appearance`, `modules`, …). */
+    onsettings: (page: string) => void;
+    /** Opens the notification centre; absent when no module sends reminders. */
+    onnotifications?: () => void;
   } = $props();
 
   const LIMIT = 6;
@@ -80,6 +86,9 @@
       { label: "Mental math sprint", meta: "Math", icon: "math", run: () => openMath("sprint") },
       { label: "Next math lesson", meta: "Math", icon: "math", run: () => openMath("lesson") },
     ] : []),
+    // The top bar carries no theme or bell: both live here (and in the tab menu).
+    { label: "Theme", meta: "Settings · Appearance", icon: "settings", run: () => onsettings("appearance") },
+    ...(onnotifications ? [{ label: "Notifications", meta: "Action", icon: "today", run: () => onnotifications() }] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
     { label: "Edit build", meta: "Action", icon: "settings", run: () => { buildStore.editorOpen = true; } },

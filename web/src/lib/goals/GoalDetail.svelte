@@ -250,7 +250,7 @@
   }
   .name small {
     color: var(--subtle);
-    font: 500 9.5px/1.5 var(--font-mono);
+    font: 500 9.5px/1.5 var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -273,7 +273,7 @@
     justify-content: flex-end;
     gap: 6px;
     min-width: 80px;
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-ui);
     white-space: nowrap;
   }
   .num input {
@@ -330,7 +330,7 @@
     flex: none;
     width: 52px;
     color: var(--subtle);
-    font: 500 9.5px/1.6 var(--font-mono);
+    font: 500 9.5px/1.6 var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -380,7 +380,7 @@
   }
   .pct {
     color: var(--ink);
-    font: 600 20px var(--font-mono);
+    font: 600 20px var(--font-ui);
   }
   .match {
     display: grid;

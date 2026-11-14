@@ -42,7 +42,7 @@
   }
   label {
     color: var(--muted);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -50,7 +50,7 @@
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
-    font: 14px/1.5 var(--font-mono);
+    font: 14px/1.5 var(--font-ui);
   }
   .note {
     margin: 0;

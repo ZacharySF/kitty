@@ -1556,7 +1556,7 @@
   }
   header .demo {
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     text-transform: uppercase;
   }
   header .primary-actions {
@@ -1575,7 +1575,7 @@
     border: 1px solid var(--hairline);
     border-radius: 4px;
     color: var(--muted);
-    font: 500 10px/14px var(--font-mono);
+    font: 500 10px/14px var(--font-ui);
   }
   .primary-actions,
   .editor-actions {
@@ -1588,7 +1588,7 @@
     gap: 8px;
     color: var(--muted);
   }
-  .media-list { margin: 0; padding: 8px 12px; list-style: none; font: 12px var(--font-mono); }
+  .media-list { margin: 0; padding: 8px 12px; list-style: none; font: 12px var(--font-ui); }
   .media-button { padding: 0 10px; height: var(--control-h); }
   .look {
     display: inline-flex;
@@ -1603,7 +1603,7 @@
     border-radius: 999px;
     background: none;
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -1612,7 +1612,7 @@
     color: var(--ink);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--violet) 35%, var(--border));
   }
-  .review-options .count { color: var(--muted); font: 12px var(--font-mono); }
+  .review-options .count { color: var(--muted); font: 12px var(--font-ui); }
   .editor-actions { padding-top: 0.8rem; border-top: 1px solid var(--border); }
   header h1 {
     margin: 0;
@@ -1704,7 +1704,7 @@
     border-radius: 999px;
     background: none;
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -1775,7 +1775,7 @@
     max-width: none;
     margin: 0;
     color: var(--subtle);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
   }
   .add-note.problem { color: var(--error); }
   .add-note.warning { color: var(--warning); }
@@ -1841,7 +1841,7 @@
   .card-list .meta {
     grid-column: 2;
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
   }
   .pager {
     display: flex;
@@ -1850,7 +1850,7 @@
     gap: 6px;
     padding-top: 8px;
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
   }
   .pager button {
     padding: 3px 10px;
