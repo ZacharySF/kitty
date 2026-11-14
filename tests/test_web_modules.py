@@ -37,9 +37,10 @@ APPLYAI_GETS = ("/api/dashboard", "/api/jobs", "/api/resumes", "/api/profile", "
                 "/api/reminders", "/api/pipeline", "/api/mail", "/api/triage", "/api/automation/status")
 APPLYAI_POSTS = ("/api/jobs/add", "/api/automation/start", "/api/resumes/register",
                  "/api/profile/basics", "/api/reminders")
-WORKSPACE_GETS = ("/api/calendar", "/api/notes", "/api/schema", "/api/study", "/api/flashcards",
+# The calendar's local routes are rika-server's (tests/test_calendar.py); these two are Python's.
+WORKSPACE_GETS = ("/api/calendar/google/status", "/api/notes", "/api/schema", "/api/study", "/api/flashcards",
                   "/api/opportunities", "/api/documents", "/api/atlas/sections/notes")
-WORKSPACE_POSTS = ("/api/notes/pages", "/api/calendar/events", "/api/schema/create",
+WORKSPACE_POSTS = ("/api/notes/pages", "/api/calendar/import/preview", "/api/schema/create",
                    "/api/ai/preview", "/api/ai/mind-map/preview", "/api/ai/run",
                    "/api/opportunities", "/api/documents/prepare")
 

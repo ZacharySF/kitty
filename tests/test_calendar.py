@@ -8,6 +8,7 @@ dates.
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
@@ -591,24 +592,39 @@ def test_routes_refuse_like_the_python_handlers(api):
 
 
 def test_mutations_are_recorded_as_record_events(api, workspace):
+    """The rows `WebApplication.mutate` appended for the same requests (kitty.core.record_events)."""
     created = api.event()
-    api.edit(created["id"], {"revision": created["revision"], "changes": {"title": "Renamed"}})
+    edited = api.edit(created["id"], {"revision": created["revision"], "changes": {"title": "Renamed"}})
     api.post("/api/calendar/availability", {"start": "2026-10-26T13:00:00Z", "end": "2026-10-26T18:00:00Z"})
+    api.post("/api/calendar/time", {"value": "2030-01-01T09:00", "timezone": "UTC"})
+    api.refused("/api/calendar/events", {"title": ""}, status=400)
     task = api.task({"title": "Recorded"})
-    api.undo(task["undo_id"])
-    rows = [tuple(row) for row in workspace.conn.execute("SELECT section, entity, entity_id, action, route FROM record_events ORDER BY id")]
+    renamed = api.task({"id": task["id"], "revision": task["revision"], "title": "Recorded twice"})
+    api.undo(renamed["undo_id"])
+    api.undo(edited["undo_id"])
+    cal = api.save_calendar({"name": "Short-lived"})
+    api.post("/api/calendar/calendars/delete", {"id": cal["id"], "revision": cal["revision"]})
+    api.post("/api/calendar/import-jobs", {})
+    rows = [tuple(row) for row in workspace.conn.execute("SELECT section, entity, entity_id, action, route FROM record_events ORDER BY seq")]
     assert rows == [
-        ("calendar", "event", None, "create", "/api/calendar/events"),
+        ("calendar", "event", created["id"], "create", "/api/calendar/events"),
         ("calendar", "event", created["id"], "save", f"/api/calendar/events/{created['id']}"),
+        ("calendar", "task", task["id"], "create", "/api/calendar/tasks"),
         ("calendar", "task", task["id"], "save", "/api/calendar/tasks"),
         ("calendar", "task", task["id"], "undo", "/api/calendar/undo"),
+        ("calendar", "event", created["id"], "undo", "/api/calendar/undo"),
+        ("calendar", "calendar", cal["id"], "create", "/api/calendar/calendars"),
+        ("calendar", "calendar", cal["id"], "delete", "/api/calendar/calendars/delete"),
+        ("calendar", "event", None, "import", "/api/calendar/import-jobs"),
     ]
+    stamps = [row[0] for row in workspace.conn.execute("SELECT at FROM record_events")]
+    assert all(datetime.fromisoformat(at).isoformat(timespec="milliseconds") == at for at in stamps)
 
 
 def test_calendar_routes_need_the_workspace_module(workspace):
     from kitty.core.builds import store
 
-    store.edit(workspace.settings.config_dir, lambda build: build.update(modules=["applyai"]))
+    store.edit(workspace.settings.root, lambda build: build.update(modules=["applyai"]))
     with front_site(workspace.settings) as running:
         status, body = running.request("/api/calendar")
         assert status == 403 and "'workspace' module is disabled" in body["error"]
@@ -665,14 +681,20 @@ def test_expansion_and_normalization_match_the_python_reference(api, workspace, 
     assert _strip(made) == _strip(expected)
     stored = workspace.conn.execute("SELECT data FROM calendar_events WHERE id=?", (made["id"],)).fetchone()[0]
     assert stored == reference.execute("SELECT data FROM calendar_events").fetchone()[0], "the same json.dumps text"
-    for lower, upper in (("2026-01-01T00:00:00Z", "2027-06-01T00:00:00Z"), ("2027-02-01T00:00:00Z", "2028-03-01T00:00:00Z")):
+    windows = (("2026-01-01T00:00:00Z", "2027-06-01T00:00:00Z"), ("2027-02-01T00:00:00Z", "2028-03-01T00:00:00Z"))
+    seen = []
+    for lower, upper in windows:
         front = api.occurrences(lower, upper)
-        python = calendar.occurrences(workspace.conn, lower, upper)
-        assert json.loads(json.dumps(front)) == json.loads(json.dumps(python))
-    exdate = api.occurrences("2026-01-01T00:00:00Z", "2027-06-01T00:00:00Z")[1]["occurrence"]
+        assert front == plain(calendar.occurrences(workspace.conn, lower, upper))
+        seen += front
+    assert seen, "the rule has occurrences in the compared range"
+    exdate = seen[min(1, len(seen) - 1)]["occurrence"]
     edited = api.edit(made["id"], {"revision": made["revision"], "changes": {"exdates": [exdate]}})
     assert exdate in edited["exdates"]
-    assert api.occurrences("2026-01-01T00:00:00Z", "2027-06-01T00:00:00Z") == calendar.occurrences(workspace.conn, "2026-01-01T00:00:00Z", "2027-06-01T00:00:00Z")
+    for lower, upper in windows:
+        front = api.occurrences(lower, upper)
+        assert front == plain(calendar.occurrences(workspace.conn, lower, upper))
+        assert exdate not in [event["occurrence"] for event in front]
 
 
 @pytest.mark.parametrize("value", [
@@ -700,3 +722,303 @@ def test_wall_time_resolution_matches_python_datetime(api, value, fold):
             return
         expected = local.isoformat()
     assert api.post("/api/calendar/time", {"value": value, "timezone": "America/Chicago", "fold": fold})["value"] == expected
+
+
+# ------------------------------------------------------------------------------ parity with the Python core
+
+def plain(value):
+    """A Python answer as the front sends it."""
+    return json.loads(json.dumps(value))
+
+
+def reference(conn, tmp_path):
+    """A copy of the workspace database for the Python functions: the same rows and ids."""
+    import sqlite3
+
+    from kitty.db import connect
+
+    path = tmp_path / "reference.db"
+    path.unlink(missing_ok=True)
+    with closing(sqlite3.connect(path)) as copy:
+        conn.backup(copy)
+    return connect(path)
+
+
+def masked(value):
+    """An answer or a stored snapshot without what differs between two runs: clock values, and
+    the random id of a series a split makes."""
+    if isinstance(value, dict):
+        return {key: "*" if key in {"updated_at", "created_at"} or (key in {"id", "event_id"} and item in masked.ids) else masked(item)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [masked(item) for item in value]
+    if isinstance(value, str) and value[:1] in "{[":
+        try:
+            return masked(json.loads(value))
+        except ValueError:
+            return value
+    return value
+
+
+masked.ids = set()
+
+
+def stored(conn):
+    """Every calendar row, in an order both sides share."""
+    tables = {
+        "calendar_events": "SELECT * FROM calendar_events ORDER BY start, title, revision",
+        "calendar_exceptions": "SELECT * FROM calendar_exceptions ORDER BY occurrence, data",
+        "calendar_history": "SELECT entity, before_json, after_json, undone FROM calendar_history ORDER BY id",
+        "calendar_tasks": "SELECT * FROM calendar_tasks ORDER BY json_extract(data, '$.due'), json_extract(data, '$.status')",
+        "calendar_calendars": "SELECT * FROM calendar_calendars ORDER BY name",
+    }
+    return {table: masked([dict(row) for row in conn.execute(sql)]) for table, sql in tables.items()}
+
+
+def both(api, python, path, body, call):
+    """One mutation sent to the front and run by the Python function on the reference copy:
+    the same answer, or the same refusal."""
+    from kitty.web_server import APIError
+
+    status, answer = api.call(path, body)
+    try:
+        expected = plain(call(python))
+    except APIError as refusal:
+        assert (status, answer) == (refusal.status, {"error": str(refusal)}), (path, body)
+        return None
+    assert status == 200, (path, body, answer)
+    for made, wanted in ((answer, expected), (answer.get("future_event"), expected.get("future_event")),
+                         (answer.get("next_task"), expected.get("next_task"))):
+        if isinstance(made, dict) and isinstance(wanted, dict) and made.get("id") != wanted.get("id"):
+            masked.ids |= {made["id"], wanted["id"]}
+    assert masked(answer) == masked(expected), (path, body)
+    return answer
+
+
+WINDOW = ("2026-10-01T00:00:00Z", "2027-02-01T00:00:00Z")
+
+#: Edits applied one after another to a weekly series with an exclusion: answered or refused
+#: exactly as `kitty.core.calendar.edit_event` answers or refuses them.
+EDITS = [
+    {"scope": "this", "occurrence": "2026-11-16T09:00:00-06:00",
+     "changes": {"title": "Special", "start": "2026-11-17T11:00:00-06:00", "end": "2026-11-17T12:30:00-06:00"}},
+    {"scope": "this", "occurrence": "2026-11-09T09:00:00-06:00", "changes": {"title": "Excluded"}},
+    {"scope": "this", "occurrence": "2026-11-23T09:00:00-06:00", "changes": {"rrule": "FREQ=DAILY"}},
+    {"scope": "all", "changes": {"start": "2026-10-26T10:00:00-05:00", "end": "2026-10-26T11:15:00-05:00", "location": "Room 2"}},
+    {"scope": "this", "occurrence": "2026-11-02T10:00:00-06:00", "delete": True},
+    {"scope": "everything"},
+    {"scope": "all", "changes": {"source_key": "other"}},
+    {"scope": "all", "changes": {"rrule": "FREQ=WEEKLY;COUNT=2"}},
+    {"scope": "future", "occurrence": "2026-11-23T10:00:00-06:00", "changes": {"description": "New plan", "reminders": [5]}},
+    {"scope": "future", "occurrence": "2026-10-26T10:00:00-05:00", "changes": {"timezone": "America/New_York"}},
+    {"scope": "all", "changes": {"all_day": True, "start": "2026-10-26", "end": "2026-10-27"}},
+    {"scope": "future", "occurrence": "2026-11-09", "delete": True},
+    {"scope": "all", "delete": True},
+]
+
+
+def test_edit_sequences_and_their_undo_match_the_python_reference(api, workspace, tmp_path):
+    from kitty.core import calendar
+
+    masked.ids = set()
+    base = api.event(rrule="FREQ=WEEKLY;COUNT=8", exdates=["2026-11-09T09:00:00-06:00"], reminders=[15],
+                     attendees=[{"email": "guest@example.invalid", "name": " Guest "}], description="Séance ☕")
+    python = reference(workspace.conn, tmp_path)
+    ident, undo_ids = base["id"], []
+    for step in EDITS:
+        revision = api.get(f"/api/calendar/events/{ident}")["revision"]
+        for body in ({"revision": revision - 1, **step}, {"revision": revision, **step}):
+            answer = both(api, python, f"/api/calendar/events/{ident}", body, lambda conn: calendar.edit_event(conn, ident, body))
+            if answer is not None:
+                undo_ids.append(answer["undo_id"])
+            assert stored(workspace.conn) == stored(python), step
+            assert masked(api.occurrences(*WINDOW)) == masked(plain(calendar.occurrences(python, *WINDOW))), step
+    assert len(undo_ids) >= 6
+    for undo_id in reversed(undo_ids):
+        both(api, python, "/api/calendar/undo", {"id": undo_id}, lambda conn: calendar.undo(conn, undo_id))
+        assert stored(workspace.conn) == stored(python), undo_id
+    both(api, python, "/api/calendar/undo", {"id": undo_ids[0]}, lambda conn: calendar.undo(conn, undo_ids[0]))
+    assert masked(api.occurrences(*WINDOW)) == masked(plain(calendar.occurrences(python, *WINDOW)))
+
+
+def test_task_and_calendar_saves_match_the_python_reference(api, workspace, tmp_path, monkeypatch):
+    from kitty.core import calendar
+
+    masked.ids = set()
+    clock = "2026-10-14T17:00:00+00:00"
+    monkeypatch.setattr(calendar, "now", lambda: clock)
+    api.start(clock)
+    physics = study_subject(workspace.conn)
+    python = reference(workspace.conn, tmp_path)
+    task = lambda body: both(api, python, "/api/calendar/tasks", body, lambda conn: calendar.save_task(conn, body))
+    made = task({"title": " Review ", "due": "2026-08-31", "timezone": "America/Chicago", "repeat_frequency": "MONTHLY",
+                 "repeat_interval": 2, "tags": ["a", "", "a", " b "], "priority": "urgent", "subject_id": physics})
+    # A new task's id is random on each side: the two rows are told apart by what they hold.
+    twin = python.execute("SELECT id FROM calendar_tasks").fetchone()[0]
+    masked.ids |= {made["id"], twin}
+    python.execute("UPDATE calendar_tasks SET id=?, task_series_id=? WHERE id=?", (made["id"], made["id"], twin))
+    python.execute("UPDATE calendar_history SET entity_id=?, after_json=replace(after_json, ?, ?)", (made["id"], twin, made["id"]))
+    done = task({"id": made["id"], "revision": made["revision"], "status": "done"})
+    assert done["next_task"]["due"] == "2026-10-31"
+    for body in ({"id": made["id"], "revision": done["revision"], "status": "todo"},
+                 {"id": made["id"], "revision": done["revision"], "repeat_interval": 3},
+                 {"id": made["id"], "revision": 1, "title": "Stale"},
+                 {"id": "missing", "revision": 1}, {"title": "x", "extra": 1}, {"title": "x", "delete": 1},
+                 {"title": "x", "due": "2026-10-14T09:00:00"}, {"title": "x", "tags": "a"}, {"title": "x", "calendar_id": "nowhere"},
+                 {"title": "x" * 501}, {"title": "x", "priority": "soon"}, {"title": "x", "repeat_frequency": "DAILY"},
+                 {"id": made["id"], "revision": done["revision"], "title": "Reviewed", "delete": True}):
+        task(body)
+        assert stored(workspace.conn) == stored(python), body
+    saved = lambda body: both(api, python, "/api/calendar/calendars", body, lambda conn: calendar.save_calendar(conn, body))
+    for body in ({"id": "personal", "revision": 1, "name": " Mine ", "color": "c4", "timezone": "Europe/Paris", "visible": False, "subject_id": physics},
+                 {"id": "personal", "revision": 1, "name": "Stale"}, {"id": "personal", "revision": 2, "name": ""},
+                 {"id": "personal", "revision": 2, "visible": 1}, {"id": "personal", "revision": 2, "timezone": "Paris"},
+                 {"id": "personal", "revision": 2, "color": "blue"}, {"id": "nowhere", "revision": 1}, {"name": "x" * 201},
+                 {"id": "personal", "revision": 2.0, "visible": True}):
+        saved(body)
+        assert stored(workspace.conn) == stored(python), body
+
+
+def python_snapshot(conn, start, end, tz="UTC", *, search="", calendar_id=None, hidden=False, applyai=True):
+    """What the Python handler of `GET /api/calendar` composed, but for the availability keys."""
+    from kitty.core import calendar, study
+
+    events = calendar.occurrences(conn, start, end, search=search, calendar_id=calendar_id, include_hidden=hidden, applyai=applyai)
+    cals = [{k: v for k, v in c.items() if k not in {"sync_token", "google_etag"}} for c in calendar.calendars(conn)]
+    return plain({"calendars": cals, "events": events, "tasks": calendar.tasks(conn, search), "subjects": study.subject_colors(conn),
+                  "activity": calendar.activity(conn, start, end, tz, applyai=applyai)})
+
+
+def seed_careers(conn):
+    """Synthetic ApplyAI rows with every date the calendar copies, and an opportunity deadline."""
+    from kitty.core import applications, opportunities, reminders
+
+    job, _ = jobs.upsert_job(conn, company="Synthetic Co", title="Role", url="https://example.invalid/r",
+                             source="manual", source_job_id="cal-1", deadline_at="2026-11-09")
+    other, _ = jobs.upsert_job(conn, company="Other Co", title="Ünïcode role", url="https://example.invalid/o",
+                               source="manual", source_job_id="cal-2", deadline_at="2026-11-12T17:00:00-05:00")
+    application = applications.record_application(conn, job.id, applied_at="2026-10-20T12:00:00+00:00")
+    conn.execute("UPDATE applications SET next_action_at=?, next_action_note=? WHERE id=?", ("2026-10-27", "Send thanks", application.id))
+    applications.set_status(conn, application.id, "interview", occurred_at="2026-10-22T15:30:00+00:00")
+    reminders.create_reminder(conn, kind="followup", due_at="2026-10-29", note=None, job_id=other.id)
+    reminders.create_reminder(conn, kind="custom", due_at="not a date", note="Unreadable date")
+    opportunities.create(conn, {"title": "Hackathon", "deadline": "2026-11-20", "timezone": "America/Chicago",
+                                "url": "https://example.invalid/hack", "description": "Bring a laptop"})
+    return job
+
+
+SOURCE_ROWS = ("SELECT title,start,end,timezone,all_day,data,source_key,source_fingerprint,source_overridden,deleted,revision"
+               " FROM calendar_events ORDER BY source_key, title")
+
+
+@pytest.mark.parametrize("modules", [("applyai", "workspace"), ("workspace",)])
+def test_snapshot_reminders_and_source_dates_match_the_python_reference(api, workspace, tmp_path, modules):
+    from kitty.core import calendar
+    from kitty.core.builds import store
+
+    conn = workspace.conn
+    applyai = "applyai" in modules
+    clock = "2026-10-26T14:05:00+00:00"
+    store.edit(workspace.settings.root, lambda build: build.update(modules=list(modules)))
+    api.start(clock)
+    job = seed_careers(conn)
+    physics = study_subject(conn)
+    school = api.save_calendar({"name": "School", "subject_id": physics})
+    hidden = api.save_calendar({"name": "Hidden", "visible": False})
+    api.event(rrule="FREQ=DAILY;COUNT=5", reminders=[10, 60], calendar_id=school["id"], location="Graph theory room")
+    api.event(title="All day", start="2026-10-27", end="2026-10-29", all_day=True, busy=False, reminders=[0, 1440])
+    api.event(title="Out of sight", calendar_id=hidden["id"], start="2026-10-26T09:30:00-05:00", end="2026-10-26T11:00:00-05:00")
+    done = api.task({"title": "Graph homework", "due": "2026-10-25", "tags": ["graph"]})
+    api.task({"id": done["id"], "revision": done["revision"], "status": "done"})
+    api.task({"title": "Later", "project": "Graph project"})
+    # A copy from ApplyAI data that predates turning the module off.
+    copied = calendar.create_event(conn, {"title": "Deadline · Kept", "start": "2026-10-26T08:50:00-05:00", "end": "2026-10-26T09:50:00-05:00",
+                                          "timezone": "America/Chicago", "source_key": "job:7:deadline", "reminders": [15]})
+
+    python = reference(conn, tmp_path)
+    for attempt in range(3):
+        if attempt == 1:
+            conn.execute("UPDATE jobs SET deadline_at='2026-11-10' WHERE id=?", (job.id,))
+            python.execute("UPDATE jobs SET deadline_at='2026-11-10' WHERE id=?", (job.id,))
+        if attempt == 2:
+            for side in (conn, python):
+                side.execute("UPDATE jobs SET deadline_at=NULL WHERE id=?", (job.id,))
+                side.execute("UPDATE opportunities SET deadline=NULL")
+        assert api.post("/api/calendar/import-jobs", {}) == plain(calendar.import_jobs(python, applyai=applyai)), attempt
+        assert [tuple(row) for row in conn.execute(SOURCE_ROWS)] == [tuple(row) for row in python.execute(SOURCE_ROWS)], attempt
+
+    for query in ({}, {"start": "2026-10-20T00:00:00Z", "end": "2026-11-25T00:00:00Z", "timezone": "America/Chicago"},
+                  {"search": "GRAPH"}, {"calendar_id": school["id"]}, {"hidden": "1", "timezone": "Asia/Kolkata"},
+                  {"calendar_id": hidden["id"], "hidden": "1"}, {"calendar_id": ""}):
+        at = datetime.fromisoformat(clock)
+        start = query.get("start", (at - timedelta(days=7)).isoformat())
+        end = query.get("end", (at + timedelta(days=35)).isoformat())
+        answer = api.get("/api/calendar", **query)
+        expected = python_snapshot(conn, start, end, query.get("timezone", "UTC"), search=query.get("search", ""),
+                                   calendar_id=query.get("calendar_id"), hidden=query.get("hidden") == "1", applyai=applyai)
+        assert {key: answer[key] for key in expected} == expected, query
+        assert set(answer) == set(expected) | {"busy", "free", "conflicts"}
+        assert all("sync_token" not in cal and "google_etag" not in cal for cal in answer["calendars"])
+    assert ("Deadline · Kept" in {event["title"] for event in api.occurrences(*WINDOW)}) == applyai
+
+    due = plain(calendar.due_reminders(conn, at=datetime.fromisoformat(clock), applyai=applyai))
+    assert api.reminders() == due and len(due) >= 2
+    assert any(item["event_id"] == copied["id"] for item in due) == applyai
+    first = due[0]
+    api.post("/api/calendar/reminders/dismiss", {key: first[key] for key in ("event_id", "occurrence", "minutes")})
+    assert api.reminders() == plain(calendar.due_reminders(conn, at=datetime.fromisoformat(clock), applyai=applyai)) == due[1:]
+
+    # A copy of ApplyAI data is not found while that module is off, as `calendar.get_event` refuses it.
+    status, answer = api.call(f"/api/calendar/events/{copied['id']}")
+    if applyai:
+        assert (status, answer) == (200, plain(calendar.get_event(conn, copied["id"])))
+    else:
+        with pytest.raises(Exception) as hidden_copy:
+            calendar.get_event(conn, copied["id"], applyai=False)
+        assert (status, answer) == (hidden_copy.value.status, {"error": str(hidden_copy.value)}) == (404, {"error": "Event not found"})
+        api.refused(f"/api/calendar/events/{copied['id']}", {"revision": copied["revision"], "changes": {"title": "Mine"}}, status=404)
+        api.refused("/api/calendar/reminders/dismiss", {"event_id": copied["id"], "occurrence": copied["start"], "minutes": 15}, status=404)
+        assert calendar.get_event(conn, copied["id"])["title"] == "Deadline · Kept", "kept, only hidden"
+
+
+def test_outlook_calendars_are_read_only_with_pythons_refusals(api, workspace):
+    """`calendar_remote` (kitty.core.connect.microsoft): no create, edit, delete, move or import."""
+    from kitty.core import calendar
+    from kitty.web_server import APIError
+
+    masked.ids = set()
+    conn = workspace.conn
+    outlook = api.save_calendar({"name": "Calendar (Outlook)"})
+    mine = api.event()
+    theirs = api.event(calendar_id=outlook["id"], title="Design review", rrule="FREQ=DAILY;COUNT=3")
+    conn.execute("INSERT INTO calendar_remote(calendar_id,provider,remote_id) VALUES(?,?,?)", (outlook["id"], "microsoft", "remote-1"))
+    new = {"title": "Local", "start": theirs["start"], "end": theirs["end"], "calendar_id": outlook["id"]}
+    edits = [(theirs, {"changes": {"title": "Mine"}}), (theirs, {"delete": True}),
+             (theirs, {"scope": "this", "occurrence": theirs["start"], "changes": {"title": "Once"}}),
+             (theirs, {"changes": {"calendar_id": "personal"}}), (mine, {"changes": {"calendar_id": outlook["id"]}})]
+    before = stored(conn)
+    with pytest.raises(APIError) as refused:
+        calendar.create_event(conn, new)
+    read_only = (409, {"error": str(refused.value)})
+    assert refused.value.status == 409 and "read-only" in str(refused.value)
+    assert api.call("/api/calendar/events", new) == read_only
+    for event, change in edits:
+        body = {"revision": event["revision"], **change}
+        with pytest.raises(APIError) as refused:
+            calendar.edit_event(conn, event["id"], body)
+        assert api.call(f"/api/calendar/events/{event['id']}", body) == (refused.value.status, {"error": str(refused.value)}) == read_only
+    assert api.call("/api/calendar/calendars/delete", {"id": outlook["id"], "revision": outlook["revision"]}) == read_only
+    assert api.call("/api/calendar/import", {"confirmed": True, "items": [{"event": {**new, "timezone": "UTC"}}]}) == read_only
+    assert api.call("/api/calendar/import", {"confirmed": True, "items": [
+        {"event": {"title": "Fine", "start": "2026-11-02", "end": "2026-11-03", "all_day": True, "timezone": "UTC"}},
+        {"event": {**new, "timezone": "UTC"}}]}) == read_only, "nothing of a refused import is written"
+    assert stored(conn) == before
+    # Reading is unchanged, and a stale revision is refused before anything else, as in Python.
+    assert [event["title"] for event in api.occurrences(calendar_id=outlook["id"])] == ["Design review"] * 3
+    assert api.get(f"/api/calendar/events/{theirs['id']}")["title"] == "Design review"
+    api.refused(f"/api/calendar/events/{theirs['id']}", {"revision": 99, "changes": {"title": "Stale"}}, status=409, match="Event changed")
+    # The calendar row itself is rika!'s: hiding it is allowed, as `save_calendar` allows it.
+    assert api.save_calendar({"id": outlook["id"], "revision": outlook["revision"], "visible": False})["visible"] == 0
+    # Once the account is disconnected the calendar is an ordinary one again.
+    conn.execute("DELETE FROM calendar_remote")
+    assert api.edit(theirs["id"], {"revision": theirs["revision"], "changes": {"title": "Mine"}})["title"] == "Mine"
