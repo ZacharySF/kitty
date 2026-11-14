@@ -35,7 +35,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from kitty.core import goals
-from kitty.core.rika import llm, router, store
+from kitty.core.rika import followups, llm, router, store
 from kitty.dates import parse as parse_instant
 from kitty.db import connect
 from kitty.db.connection import transaction
@@ -448,7 +448,8 @@ def sweep(app, conn, now: datetime | None = None, *, lock=None) -> dict[str, Any
 # The scheduler ----------------------------------------------------------------
 
 class Scheduler:
-    """Runs the sweep at launch and every few minutes, once a local day from 05:00."""
+    """Runs the sweep at launch and every few minutes, once a local day from 05:00; every
+    run also asks the check-ins that came due (kitty.core.rika.followups)."""
 
     def __init__(self, app, *, interval: float = INTERVAL, clock=None):
         self.app = app
@@ -471,9 +472,14 @@ class Scheduler:
                 or (not self.app.settings.demo and mail.connected(self.app)))
 
     def tick(self) -> dict[str, Any] | None:
-        """Sweep once when due; the brief written, or None."""
+        """Ask the check-ins that are due (every tick), then sweep once when due; the brief written, or None."""
         with closing(connect(self.app.settings.db_path)) as conn:
             at = self.clock()
+            if "workspace" in self.app.modules:
+                try:
+                    followups.sweep(self.app, conn, at, lock=self.app.mutation_lock)
+                except Exception:
+                    log.exception("Rika's check-ins failed")
             if not self.due(conn, at):
                 return None
             return sweep(self.app, conn, at, lock=self.app.mutation_lock)

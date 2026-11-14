@@ -516,6 +516,89 @@ def _undo_study(ctx: Context, undo: dict) -> None:
         raise ToolError("That study item changed since, so it was kept") from None
 
 
+# Task follow-ups ---------------------------------------------------------------
+
+def _study_task(ctx: Context, ident: str):
+    row = ctx.conn.execute("SELECT * FROM study_tasks WHERE id=?", (int(ident),)).fetchone() if ident.isdigit() else None
+    if row is None:
+        raise ToolError("No study task has that id")
+    return row
+
+
+def _calendar_task(ctx: Context, ident: str):
+    row = ctx.conn.execute("SELECT revision,data FROM calendar_tasks WHERE id=? AND deleted=0", (ident,)).fetchone()
+    if row is None:
+        raise ToolError("No task has that id")
+    return row["revision"], json.loads(row["data"])
+
+
+def _change_task(ctx: Context, args: dict, summary: str, *, task: dict, study_task: dict) -> Result:
+    """Save `task` fields on a calendar task, or `study_task` fields on a study task, keeping how to put them back."""
+    ident, kind = args["task_id"], args.get("kind", "task")
+    data = {"kind": kind, "task_id": ident}
+    if kind == "task":
+        revision, before = _calendar_task(ctx, ident)
+        try:
+            saved = calendar.save_task(ctx.conn, {"id": ident, "revision": revision, **task})
+        except Exception as exc:  # calendar.fail raises the web layer's APIError
+            raise ToolError(str(exc)) from None
+        return Result(summary.format(before["title"]), data, undo={"undo_id": saved["undo_id"]})
+    row = _study_task(ctx, ident)
+    item = study.save_entity(ctx.conn, "tasks", {"id": row["id"], "revision": row["revision"], **study_task})["item"]
+    return Result(summary.format(row["title"]), data,
+                  undo={"id": row["id"], "revision": item["revision"],
+                        "restore": {"done": bool(row["done"]), "due_date": row["due_date"]}})
+
+
+def _complete_task(ctx: Context, args: dict) -> Result:
+    return _change_task(ctx, args, "Marked {} done", task={"status": "done"}, study_task={"done": True})
+
+
+def _due(ctx: Context, value: str) -> str:
+    """A due date: today or tomorrow in the calendar's zone, a date, or an ISO time."""
+    if value in ("today", "tomorrow"):
+        day = datetime.now(ZoneInfo(_calendar_zone(ctx.conn))).date() + timedelta(days=value == "tomorrow")
+        return day.isoformat()
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ToolError("Use a date such as 2026-11-20, or today or tomorrow") from None
+    return value
+
+
+def _reschedule_task(ctx: Context, args: dict) -> Result:
+    due = _due(ctx, args["due"])
+    stamp = due if len(due) == 10 else _local(due, _calendar_zone(ctx.conn))
+    when_text = datetime.fromisoformat(due[:10]).strftime("%a %-d %b")
+    result = _change_task(ctx, args, "Moved {} to " + when_text, task={"due": stamp, "status": "todo"},
+                          study_task={"due_date": due[:10], "done": False})
+    result.data["due"] = due
+    return result
+
+
+def _drop_task(ctx: Context, args: dict) -> Result:
+    if args.get("kind", "task") == "task":
+        return _change_task(ctx, args, "Dropped {}", task={"status": "cancelled"}, study_task={})
+    # Study has no cancelled state: the task is deleted, and Undo adds it again.
+    row = _study_task(ctx, args["task_id"])
+    kept = {key: row[key] for key in ("title", "subject_id", "project_id", "priority", "due_date")}
+    kept.update(done=bool(row["done"]), checklist=json.loads(row["checklist_json"]))
+    study.save_entity(ctx.conn, "tasks", {"action": "delete", "id": row["id"], "revision": row["revision"]})
+    return Result(f"Dropped {row['title']}", {"kind": "study_task", "task_id": args["task_id"]}, undo={"recreate": kept})
+
+
+def _undo_task_change(ctx: Context, undo: dict) -> None:
+    if "undo_id" in undo:
+        _undo_calendar(ctx, undo)
+    elif "recreate" in undo:
+        study.save_entity(ctx.conn, "tasks", undo["recreate"])
+    else:
+        row = ctx.conn.execute("SELECT revision FROM study_tasks WHERE id=?", (undo["id"],)).fetchone()
+        if row is None or row["revision"] != undo["revision"]:
+            raise ToolError("That study task changed since, so it was kept")
+        study.save_entity(ctx.conn, "tasks", {"id": undo["id"], "revision": undo["revision"], **undo["restore"]})
+
+
 # Navigation and search --------------------------------------------------------
 
 def view_for(name: str) -> str | None:
@@ -585,6 +668,10 @@ _PAGE = {"page_id": integer("Note page id"), "page": string("Note page title, wh
 _MAP = {"map_id": integer("Mind map id; defaults to the most recent map"),
         "map": string("Mind map title, when the id is unknown", maximum=200)}
 _DATE = r"YYYY-MM-DD"
+#: The user's own words for a date, which decide whether Rika asks before adding (kitty.core.rika.slots).
+_SAID = string("The user's exact words for the date or time, e.g. next Friday at 4", maximum=200)
+_TASK = {"task_id": string("Task id, as search returns it", maximum=64),
+         "kind": string("A calendar task (the default) or a study task", enum=("task", "study_task"))}
 
 TOOLS = (
     Tool("search", "Search the whole workspace: note pages and blocks, calendar events and tasks, flashcards, "
@@ -638,19 +725,28 @@ TOOLS = (
              start=string(f"ISO start, e.g. 2026-11-03T15:00, or {_DATE} when all_day", maximum=100),
              end=string("ISO end; defaults to one hour (or one day) later", maximum=100),
              all_day=boolean("An all-day event"), timezone=string("IANA zone", maximum=100),
-             location=string("Location", minimum=0, maximum=500), description=string("Notes", minimum=0, maximum=5000)),
+             location=string("Location", minimum=0, maximum=500), description=string("Notes", minimum=0, maximum=5000),
+             said=_SAID),
          "change", _create_event, _undo_calendar, module="workspace"),
     Tool("create_task", "Add a calendar task.",
          obj(("title",), title=string("Title", maximum=500), due=string(f"Due {_DATE} or ISO time", maximum=100),
              priority=string("Priority", enum=("low", "normal", "high", "urgent")),
-             description=string("Notes", minimum=0, maximum=5000)),
+             description=string("Notes", minimum=0, maximum=5000), said=_SAID),
          "change", _create_task, _undo_calendar, module="workspace"),
+    Tool("complete_task", "Mark a task or study task done.", obj(("task_id",), **_TASK),
+         "change", _complete_task, _undo_task_change, module="workspace"),
+    Tool("reschedule_task", "Move a task or study task to another due date; it is open again.",
+         obj(("task_id", "due"), due=string(f"Due {_DATE} or ISO time, or today or tomorrow", maximum=100), **_TASK),
+         "change", _reschedule_task, _undo_task_change, module="workspace"),
+    Tool("drop_task", "Drop a task the user will not do: a calendar task is cancelled, a study task removed.",
+         obj(("task_id",), **_TASK), "change", _drop_task, _undo_task_change, module="workspace"),
     Tool("create_subject", "Add a study subject.",
          obj(("name",), name=string("Subject name", maximum=250), color=string("#RRGGBB colour", maximum=7)),
          "change", _create_subject, _undo_study, module="workspace"),
     Tool("create_study_task", "Add a study task, optionally for a subject.",
          obj(("title",), title=string("Title", maximum=500), subject=string("Subject name", maximum=250),
-             due_date=string(f"Due {_DATE}", maximum=10), priority=string("Priority", enum=("low", "normal", "high"))),
+             due_date=string(f"Due {_DATE}", maximum=10), priority=string("Priority", enum=("low", "normal", "high")),
+             said=_SAID),
          "change", _create_study_task, _undo_study, module="workspace"),
     Tool("open_view", "Open a view of the app for the user.",
          obj(("view",), view=string("View id", enum=tuple(VIEWS))), "change", _open_view),

@@ -10,6 +10,10 @@ POST /api/rika/dumps {transcript, segments: [{start, end, text}], duration, conv
 POST /api/rika/plans/<id> {decision: approve, items: [item ids], choices?: {item id: index}}
     or {decision: dismiss}  ->  {plan}
     Approving runs the ticked items on Rika's worker and links them into the dump note.
+    A plan is also how Rika asks about a date before adding a dated item (``plan_kind``
+    ``confirm``) and checks in on a task whose day passed (``checkin``): there a choice
+    may be another date, ``{item id: {date: "YYYY-MM-DD", time?: "HH:MM"}}``, and
+    dismissing is "Not now" (kitty.core.rika.slots, kitty.core.rika.followups).
 GET  /api/rika/history[?before=<created_at>]  ->  {items, has_more, next_before}
     Messages, actions, approvals and plans, oldest first (shapes in kitty.core.rika.store).
 POST /api/rika/approvals/<id> {decision: approve|reject}  ->  {approval}

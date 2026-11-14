@@ -3,7 +3,7 @@ import { activeModules } from "../modules.svelte";
 import { notifier } from "../notifications.svelte";
 import { NOTICE_EVENT, sendSystem } from "../systemNotify";
 import { Mic, MicError } from "./mic";
-import { mergeEntries, rikaSocketUrl, voiceEnabled, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
+import { askedAt, mergeEntries, rikaSocketUrl, voiceEnabled, type Entry, type History, type Id, type PlanChoice, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
 
 /** How long a finished reply's toast stays before it leaves for the drawer. */
 export const RIKA_TOAST_MS = 9000;
@@ -367,8 +367,8 @@ export class RikaSession {
     }
   }
 
-  /** Approve the ticked items of a plan (with the chosen answer to its question) or dismiss it. */
-  async decidePlan(id: Id, decision: "approve" | "dismiss", items: string[] = [], choices: Record<string, number> = {}) {
+  /** Approve the ticked items of a plan (with the chosen answer to each question) or dismiss it. */
+  async decidePlan(id: Id, decision: "approve" | "dismiss", items: string[] = [], choices: Record<string, PlanChoice> = {}) {
     try {
       const body = decision === "approve" ? { decision, items, choices } : { decision };
       const { plan } = await api<{ plan: RikaPlan }>(`/rika/plans/${encodeURIComponent(String(id))}`, body);
@@ -476,7 +476,7 @@ export class RikaSession {
 
   /** Q20 A: a brain dump's plan opens the drawer by itself too, and deciding it closes what that opened. */
   private plan(plan: RikaPlan) {
-    this.upsert({ kind: "plan", ...plan });
+    this.upsert({ kind: "plan", ...plan, created_at: askedAt(plan, this.message(plan.message_id)) });
     if (plan.status === "pending") this.openAuto();
     else this.releaseAuto();
   }

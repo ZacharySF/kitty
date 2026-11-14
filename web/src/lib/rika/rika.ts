@@ -82,9 +82,15 @@ export type PlanItem = {
   choice: number | null;
   picked?: boolean | null;
   result: { status: "done" | "failed" | "skipped"; summary: string; links: string[] } | null;
+  /** The question is about a date, so another date may answer it; `time` when it may carry a time. */
+  date?: { time: boolean } | null;
 };
+/** The answer to an item's question: one of its choices, or another date. */
+export type PlanChoice = number | { date: string; time: string | null };
 export type RikaPlan = {
   id: Id;
+  /** A brain dump's plan, a question about a date before a dated item is added, or a check-in on a task whose day passed. */
+  plan_kind?: "dump" | "confirm" | "checkin";
   /** The rika reply that carries it. */
   message_id: Id;
   /** The brain dump it plans. */
@@ -134,6 +140,34 @@ export type StreamEvent =
 /** Plan items by area, in the areas' order; empty areas are left out. */
 export function planGroups(items: PlanItem[]): { area: PlanArea; items: PlanItem[] }[] {
   return PLAN_AREAS.map((area) => ({ area, items: items.filter((item) => item.area === area) })).filter((group) => group.items.length);
+}
+
+/**
+ * When a question or check-in is placed in the conversation: just after the reply that asks it. A live
+ * reply is stamped by this page's clock when its first event lands, which can be after the server made
+ * the plan; history already has them in order.
+ */
+export function askedAt(plan: RikaPlan, reply: { created_at: string } | undefined): string {
+  if (!reply || !plan.plan_kind || plan.plan_kind === "dump") return plan.created_at;
+  const asked = Date.parse(reply.created_at);
+  return asked >= Date.parse(plan.created_at) ? new Date(asked + 1).toISOString() : plan.created_at;
+}
+
+/** A picked date (`YYYY-MM-DD`, with `THH:MM` when timed) as the answer "another date"; null until it is one. */
+export function otherDate(value: string): { date: string; time: string | null } | null {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}))?$/);
+  if (!match || Number.isNaN(new Date(`${match[1]}T${match[2] ?? "00:00"}`).getTime())) return null;
+  return { date: match[1], time: match[2] ?? null };
+}
+
+/** Where a key moves the selection in a radio group of `count` chips (WAI-ARIA radio group); null for other keys. */
+export function radioStep(index: number, count: number, key: string): number | null {
+  if (count < 1) return null;
+  if (key === "ArrowRight" || key === "ArrowDown") return (index + 1) % count;
+  if (key === "ArrowLeft" || key === "ArrowUp") return (index - 1 + count) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  return null;
 }
 
 /** The plan's approve button: all of it, or only the ticked items. */

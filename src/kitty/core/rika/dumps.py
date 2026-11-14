@@ -26,7 +26,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from kitty.core import note_blocks, notes
-from kitty.core.rika import commands, tools as toolset
+from kitty.core.rika import commands, slots, tools as toolset
 
 AREAS = ("notes", "tasks", "calendar", "cards", "jobs", "agents")
 #: The tools a plan item of each area may call; nothing outward beyond starting a worker.
@@ -43,7 +43,8 @@ _TOOL_AREA = {"create_page": "notes", "append_block": "notes", "add_canvas_node"
               "start_worker": "agents"}
 #: The views links in the dump note open, by tool.
 _VIEW = {"add_map_topic": "schema", "create_event": "calendar", "create_task": "calendar",
-         "create_study_task": "study", "add_card": "flashcards", "start_worker": "herdr"}
+         "create_study_task": "study", "add_card": "flashcards", "start_worker": "herdr",
+         "complete_task": "calendar", "reschedule_task": "calendar", "drop_task": "calendar"}
 MAX_ITEMS = 40
 MAX_CALLS = 40
 TRANSCRIPT_MAX = 60_000
@@ -194,8 +195,9 @@ def clock(seconds: float) -> str:
 
 # Decisions ----------------------------------------------------------------------
 
-def choose(items: list[dict], picked: Any, choices: Any) -> list[dict]:
-    """The items with what the user ticked (`picked` ids) and the choice of each question."""
+def choose(items: list[dict], picked: Any, choices: Any, *, tools: dict | None = None, today: date | None = None) -> list[dict]:
+    """The items with what the user ticked (`picked` ids) and the choice of each question: its index, or for
+    an item that asks about a date (:mod:`~kitty.core.rika.slots`) another date ``{date, time}``."""
     ids = {entry["id"] for entry in items}
     if not isinstance(picked, list) or not picked or not all(isinstance(ident, str) for ident in picked) \
             or set(picked) - ids:
@@ -208,9 +210,15 @@ def choose(items: list[dict], picked: Any, choices: Any) -> list[dict]:
         entry = dict(entry, picked=entry["id"] in picked)
         if entry["question"] is not None and entry["id"] in choices:
             index = choices[entry["id"]]
-            if type(index) is not int or not 0 <= index < len(entry["question"]["choices"]):
+            if isinstance(index, dict) and tools is not None:
+                try:
+                    entry = slots.override(entry, index, tools, today or date.today())
+                except ValueError as exc:
+                    raise PlanError(str(exc)) from None
+            elif type(index) is not int or not 0 <= index < len(entry["question"]["choices"]):
                 raise PlanError("Pick one of the question's choices")
-            entry["choice"] = index
+            else:
+                entry["choice"] = index
         chosen.append(entry)
     return chosen
 
@@ -234,7 +242,7 @@ def link(call: dict, outcome: dict) -> str:
     if name == "start_worker" and isinstance(data.get("agent"), dict):
         label = f"{data['agent'].get('name', 'agent')}: {args['task'][:80]}"
     label = label.replace("[", "(").replace("]", ")")
-    return f"[{label}](#{_VIEW[name]})"
+    return f"[{label}](#{'study' if args.get('kind') == 'study_task' else _VIEW[name]})"
 
 
 def _when(start: str) -> str:
@@ -421,5 +429,7 @@ def public_items(items: list[dict], tools: dict | None = None) -> list[dict]:
                       "outward": any(registry[call["tool"]].effect == "outward" for call in calls if call["tool"] in registry),
                       "question": None if entry["question"] is None else {
                           "text": entry["question"]["text"], "choices": [choice["label"] for choice in entry["question"]["choices"]]},
-                      "choice": entry["choice"], "picked": entry.get("picked"), "result": entry["result"]})
+                      "choice": entry["choice"], "picked": entry.get("picked"), "result": entry["result"],
+                      # An item that asks about a date takes another one; `time` when it may carry a time.
+                      "date": {"time": entry["slot"]["time"]} if entry.get("slot") else None})
     return shown
