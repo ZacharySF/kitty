@@ -55,7 +55,11 @@ pub fn set(dir: &Path, program: &Path, on: bool) -> io::Result<()> {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
+        #[cfg(unix)]
         std::os::unix::fs::symlink(&unit, &link)?;
+        // Never reached off Linux: `available` finds no systemd there.
+        #[cfg(not(unix))]
+        return Err(io::Error::other("Start at login needs systemd"));
     } else {
         for path in [&link, &unit] {
             match fs::remove_file(path) {

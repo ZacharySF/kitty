@@ -39,11 +39,23 @@ pub fn check(app: &AppHandle) {
     });
 }
 
+/// The AppImage this copy runs from, when it is one (Linux only).
+fn appimage(app: &AppHandle) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    return app.env().appimage.map(std::path::PathBuf::from);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 async fn run(app: &AppHandle) -> Result<(), String> {
-    let appimage = app.env().appimage.map(std::path::PathBuf::from);
+    let appimage = appimage(app);
+    // The packages that can replace themselves: the .deb and the AppImage on Linux, the installer on Windows.
     if appimage.is_none() && !matches!(tauri::utils::platform::bundle_type(),
-        Some(tauri::utils::config::BundleType::Deb)) {
-        let open = app.dialog().message("This copy was not installed from a supported Linux .deb or AppImage package, so it cannot replace itself safely. Download the current desktop installer from the public releases page; your existing workspace stays in place.")
+        Some(tauri::utils::config::BundleType::Deb | tauri::utils::config::BundleType::Nsis)) {
+        let open = app.dialog().message("This copy was not installed from a supported package (the Linux .deb or AppImage, or the Windows installer), so it cannot replace itself safely. Download the current desktop installer from the public releases page; your existing workspace stays in place.")
             .title("rika! desktop installers")
             .buttons(MessageDialogButtons::OkCancelCustom("Open downloads".into(), "Cancel".into()))
             .blocking_show();
@@ -119,7 +131,7 @@ async fn run(app: &AppHandle) -> Result<(), String> {
 
 /// Reopen rika! once its backend has stopped (after an update, or the page's Restart now).
 pub fn relaunch(app: &AppHandle) {
-    if app.env().appimage.is_some() && std::env::var_os("KITTY_DESKTOP_LAUNCHER").is_some() {
+    if appimage(app).is_some() && std::env::var_os("KITTY_DESKTOP_LAUNCHER").is_some() {
         // The launcher waits outside appimage-run/bubblewrap. Relaunch there,
         // not inside the old extracted AppImage with its inherited library paths.
         app.exit(42);

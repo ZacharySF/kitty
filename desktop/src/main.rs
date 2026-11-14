@@ -206,19 +206,29 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
 /// directory (`/usr/bin` in the .deb, `usr/bin` inside the AppImage): an unpacked
 /// PyInstaller directory (tauri.conf.json `files`), started in place on every launch.
 /// Outside `usr/lib`, so linuxdeploy never rewrites its libraries.
+#[cfg(not(windows))]
 const BACKEND: &str = "libexec/kitty-workspace/kitty-web/kitty-web";
 
 /// The backend executable from this binary's bundle. Tauri dev and cargo smoke binaries
 /// use the staging folder's `kitty-web/` directory; installed bundles always use their
 /// own copy, never a checkout or PATH.
+#[cfg(not(windows))]
 fn backend(directory: &Path, staging: Option<&Path>) -> Option<PathBuf> {
     bundled(directory.parent()?.join(BACKEND), staging.map(|folder| folder.join("kitty-web/kitty-web")))
+}
+
+/// On Windows the installer puts the same unpacked PyInstaller directory beside the
+/// desktop executable, as `kitty-web\kitty-web.exe`.
+#[cfg(windows)]
+fn backend(directory: &Path, staging: Option<&Path>) -> Option<PathBuf> {
+    bundled(directory.join("kitty-web").join("kitty-web.exe"), staging.map(|folder| folder.join("kitty-web").join("kitty-web.exe")))
 }
 
 /// A bundled sidecar executable beside the desktop binary (Tauri `externalBin`), or the
 /// target-suffixed staging copy.
 fn sidecar(directory: &Path, name: &str, staging: Option<&Path>) -> Option<PathBuf> {
-    bundled(directory.join(name), staging.map(|folder| folder.join(format!("{name}-{}", env!("KITTY_TARGET_TRIPLE")))))
+    let suffix = std::env::consts::EXE_SUFFIX;
+    bundled(directory.join(format!("{name}{suffix}")), staging.map(|folder| folder.join(format!("{name}-{}{suffix}", env!("KITTY_TARGET_TRIPLE")))))
 }
 
 fn bundled(packaged: PathBuf, staged: Option<PathBuf>) -> Option<PathBuf> {
@@ -406,10 +416,13 @@ fn notice_invoked(app: &tauri::AppHandle, key: String, action: String, token: Op
     let _ = app.run_on_main_thread(move || {
         let Some(window) = handle.get_webview_window("main") else { return };
         if action == "default" {
-            if let (Some(token), Ok(gtk_window)) = (token, window.gtk_window()) {
+            // The token is the notification server's (D-Bus): only Linux has one to give.
+            #[cfg(target_os = "linux")]
+            if let (Some(token), Ok(gtk_window)) = (&token, window.gtk_window()) {
                 use gtk::prelude::GtkWindowExt;
-                gtk_window.set_startup_id(&token);
+                gtk_window.set_startup_id(token);
             }
+            let _ = &token;
             show(&handle);
         }
         let detail = serde_json::json!({ "key": key, "action": action });
@@ -436,11 +449,13 @@ fn desktop_command(app: &tauri::AppHandle, notices: Option<&notifications::Notic
 }
 
 /// GTK's DPI setting when it has none: 96 DPI in GTK's 1/1024 units.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const NEUTRAL_XFT_DPI: i32 = 96 * 1024;
 
 /// The DPI to set, if any. On Wayland GTK has no XSETTINGS, so `gtk-xft-dpi` stays -1 and
 /// WebKitGTK derives a negative device-pixel ratio from it (a blank, compressed page on
 /// fractional-scale outputs). A real value is left alone.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn dpi_override(current: i32) -> Option<i32> {
     (current <= 0).then_some(NEUTRAL_XFT_DPI)
 }
@@ -457,7 +472,9 @@ fn neutral_xft_dpi() {
 }
 
 fn main() {
-    // Applies to new private files only; never changes selected existing files.
+    // Applies to new private files only; never changes selected existing files. (Windows has
+    // no umask: files under the user's profile are already the user's alone.)
+    #[cfg(unix)]
     unsafe { libc::umask(0o077); }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {

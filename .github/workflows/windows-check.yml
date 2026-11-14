@@ -39,13 +39,23 @@ jobs:
   shell:
     name: Desktop shell compiles
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop
+          workspaces: |
+            server
+            desktop
+      - name: Build rika-server (the shell's bundled sidecar)
+        working-directory: server
+        run: cargo build --release
+      - name: Stage the sidecar where the bundle expects it
+        shell: bash
+        run: |
+          mkdir -p desktop/binaries
+          cp server/target/release/rika-server.exe desktop/binaries/rika-server-x86_64-pc-windows-msvc.exe
+      # Its unit tests still assume Linux paths; compiling is what this job proves.
       - name: Check
         working-directory: desktop
         run: cargo check

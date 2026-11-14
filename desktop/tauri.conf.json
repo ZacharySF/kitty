@@ -19,7 +19,7 @@
     "createUpdaterArtifacts": true,
     "category": "Productivity",
     "shortDescription": "Private local opportunities, learning and planning workspace",
-    "icon": ["icons/icon.png"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
     "externalBin": ["binaries/rika-server"],
     "resources": {
       "../third_party/grinstead-snell/LICENSE": "licenses/grinstead-snell/LICENSE",

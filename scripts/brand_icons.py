@@ -113,8 +113,10 @@ def hairline(g=G):
 
 
 def main():
-    """Write every icon source and raster. Needs rsvg-convert on PATH (nix shell nixpkgs#librsvg)."""
+    """Write every icon source and raster. Needs rsvg-convert and magick on PATH
+    (nix shell nixpkgs#librsvg nixpkgs#imagemagick)."""
     import subprocess
+    import tempfile
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent
     sources = {root / "desktop/icons/icon.svg": icon(), root / "desktop/icons/symbolic.svg": glyph(),
@@ -126,6 +128,14 @@ def main():
     for path, size in rasters:
         subprocess.run(["rsvg-convert", "-w", str(size), "-h", str(size), str(root / "desktop/icons/icon.svg"),
                         "-o", str(path)], check=True)
+    # Windows wants one .ico holding every size its shell draws (tauri-build embeds it in the executable).
+    with tempfile.TemporaryDirectory() as folder:
+        sizes = []
+        for size in (16, 24, 32, 48, 64, 256):
+            sizes.append(str(Path(folder) / f"{size}.png"))
+            subprocess.run(["rsvg-convert", "-w", str(size), "-h", str(size), str(root / "desktop/icons/icon.svg"),
+                            "-o", sizes[-1]], check=True)
+        subprocess.run(["magick", *sizes, str(root / "desktop/icons/icon.ico")], check=True)
     print("kitty icon path for web/src/lib/icons.ts:\n" + hairline())
 
 
