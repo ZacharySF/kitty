@@ -4,6 +4,7 @@
   import { navigation, navigationGroups, isView, notePageLink, viewEnabled, visibleGroups, type View } from "./lib/workspace";
   import { setActiveModules } from "./lib/modules.svelte";
   import Icon from "./lib/Icon.svelte";
+  import { ICONS } from "./lib/icons";
   import BrandMark from "./lib/BrandMark.svelte";
   import GettingStarted from "./lib/GettingStarted.svelte";
   import AddJob from "./lib/AddJob.svelte";
@@ -89,6 +90,12 @@
   })));
   /** The bar carries only the groups you move between; Settings is reached from search and the tab menu. */
   const barGroups = $derived(groups.filter(group => group.label !== "Settings"));
+  /** The Icons module: a page's title carries its view's icon, drawn by CSS as a mask (styles.css). */
+  function viewIcon(view: View): string {
+    const path = ICONS[navigation.find(item => item.id === view)?.icon ?? "atlas"]?.path ?? "";
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='${path}'/></svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+  }
   /** The Icons module: one icon per top-bar group. */
   const GROUP_ICONS: Record<string, string> = { Plan: "calendar", Study: "study", "Job search": "jobs", Rika: "actor-rika" };
   const menuExtras = $derived([
@@ -515,7 +522,7 @@
         id={`workspace-pane-${tab.id}`} role="region"
         aria-label={tabLabels.find(label => label.id === tab.id)?.label}
         tabindex="0"
-        data-kitty-panel="view"
+        data-kitty-panel="view" style:--view-icon={viewIcon(tab.view)}
         hidden={tab.id !== activeId} inert={tab.id !== activeId}
       >
         {#if (workspace && viewEnabled(tab.view, enabled)) || tab.view === "settings" || tab.view === "ai"}
