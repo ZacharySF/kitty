@@ -310,12 +310,7 @@ impl Workspace {
     fn lock(&self) -> Result<File, StoreError> {
         let folder = self.folder();
         fs::DirBuilder::new().recursive(true).mode(0o700).create(&folder)?;
-        // Unix locks the folder itself (as the Python store does); Windows cannot open a
-        // folder as a file, so both sides lock `.lock` inside it there.
-        #[cfg(unix)]
-        let handle = File::open(&folder)?;
-        #[cfg(not(unix))]
-        let handle = OpenOptions::new().create(true).truncate(false).write(true).open(folder.join(".lock"))?;
+        let handle = private::open_for_lock(&folder)?;
         handle.lock()?;
         Ok(handle)
     }

@@ -262,12 +262,12 @@ def test_the_tern_plugin_setting_gates_its_pairing(running):
     body = {"name": "kitty Tern plugin", "kind": "tern-plugin", "scopes": ["capture"]}
     assert running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})[0] == 202
     edit_file(running, lambda data: data.update(settings={"tern": {"plugin": False}}))
-    deadline = time.time() + 5  # the build watcher projects the edit within a quarter second
-    while True:
-        status, answer = running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})
-        if status != 202 or time.time() > deadline:
-            break
-        time.sleep(.1)
+    # The build watcher projects the edit within a quarter second. Waiting on the active build,
+    # not on more pairing requests: only three may wait at once, so polling them would be refused first.
+    deadline = time.time() + 5
+    while running.request("/api/build")[1]["build"]["settings"]["tern"]["plugin"] and time.time() < deadline:
+        time.sleep(.05)
+    status, answer = running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})
     assert status == 403 and "Tern plugin is turned off" in answer["error"]
 
 
@@ -349,7 +349,7 @@ def test_the_front_projects_builds_with_python_s_writes(tmp_path):
         same("start")
         # replace: the build editor's save (budget rounding, the idle timer, monitoring's next run)
         saved = json.dumps({"schema": 1, "modules": ["workspace"], "name": "Desk \u00e9\U0001F600",
-                            "settings": {"ai": {"model": "synthetic/model", "daily_budget_usd": 2.675, "routing": "quality"},
+                            "settings": {"ai": {"model": "synthetic/model", "daily_budget_usd": 2.675, "routing": "latency"},
                                          "study": {"focus_seconds": 1800, "sound": False},
                                          "opportunities": {"monitoring": True, "interval_hours": 12},
                                          "tags": {"mode": "always"}, "history": {"retention_days": 7},
@@ -359,7 +359,8 @@ def test_the_front_projects_builds_with_python_s_writes(tmp_path):
         project.replace(conn, twin.root, saved)
         same("save")
         # editing: a Settings screen's preferences
-        patch = {"ui": {"graph": {"look": "3d"}}, "theme": {"base": "nord"}, "author": "Someone"}
+        # In the route's own order (name, author, description, then ui and theme): new keys land in that order.
+        patch = {"author": "Someone", "ui": {"graph": {"look": "3d"}}, "theme": {"base": "nord"}}
         assert running.request("/api/build/preferences", patch) == (200, {"ok": True})
         with project.editing(conn, twin.root) as build:
             merge(build, patch)

@@ -61,6 +61,52 @@ pub fn mode_of(meta: &fs::Metadata) -> u32 {
     }
 }
 
+/// No one but the owner may read or write the file (Unix mode bits). True on Windows,
+/// where the user's profile already keeps other accounts out.
+pub fn owner_only(meta: &fs::Metadata) -> bool {
+    mode_of(meta) & 0o077 == 0
+}
+
+/// The file belongs to the user this process runs as (Unix uid). True on Windows.
+pub fn owned_by_me(meta: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: getuid has no preconditions and cannot fail.
+        return meta.uid() == unsafe { libc::getuid() };
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
+}
+
+/// What tells one saved version of a file from the next without reading it: when it was
+/// written (nanoseconds), its size and, on Unix, which file it is (a replaced file is a new
+/// inode; Windows has no stable equivalent in std, so 0 there).
+pub fn signature(meta: &fs::Metadata) -> (i128, u64, u64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return (i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec()), meta.size(), meta.ino());
+    }
+    #[cfg(not(unix))]
+    {
+        let written = meta.modified().ok().and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |since| since.as_nanos() as i128);
+        (written, meta.len(), 0)
+    }
+}
+
+/// A folder to lock for exclusive use: Unix locks the folder itself (as the Python stores
+/// do); Windows cannot open a folder as a file, so `.lock` inside it is locked there.
+pub fn open_for_lock(folder: &Path) -> io::Result<fs::File> {
+    #[cfg(unix)]
+    return fs::File::open(folder);
+    #[cfg(not(unix))]
+    return fs::OpenOptions::new().create(true).truncate(false).write(true).open(folder.join(".lock"));
+}
+
 /// Open without following a symbolic link at the last component (Unix `O_NOFOLLOW`). On
 /// Windows the caller's own `symlink_metadata` check is what refuses a link.
 pub fn no_follow(options: &mut fs::OpenOptions) -> &mut fs::OpenOptions {

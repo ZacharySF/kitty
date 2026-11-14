@@ -4,6 +4,13 @@
 use super::document::{Problem, Raised};
 use super::value::lossy;
 
+/// Debug prints the status and message; tests unwrap results that carry it.
+impl std::fmt::Debug for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failure({}, {:?})", self.status, self.message)
+    }
+}
+
 pub struct Failure {
     pub status: u16,
     pub message: String,

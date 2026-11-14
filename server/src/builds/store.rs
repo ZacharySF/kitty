@@ -8,7 +8,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use crate::private::{self, Mode};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -76,24 +76,24 @@ impl Store {
     /// `(st_mtime_ns, st_size, st_ino)` of the build file, not following a link.
     pub fn signature(&self) -> Option<(i128, u64, u64)> {
         let meta = fs::symlink_metadata(self.build_path()).ok()?;
-        Some((i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec()), meta.size(), meta.ino()))
+        Some(private::signature(&meta))
     }
 
     /// `locked`.
     pub fn lock(&self) -> Result<Locked, Failure> {
         let folder = self.folder();
         fs::DirBuilder::new().recursive(true).mode(0o700).create(&folder)?;
-        let handle = File::open(&folder)?;
+        let handle = private::open_for_lock(&folder)?;
         handle.lock()?;
         Ok(Locked(handle))
     }
 
     /// `read_text`: the file's text or None; never follows a symbolic link; bad UTF-8 replaced.
     pub fn read_text(&self) -> Result<Option<Text>, Failure> {
-        let file = match OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(self.build_path()) {
+        let file = match private::no_follow(OpenOptions::new().read(true)).open(self.build_path()) {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            Err(error) if private::is_link_refusal(&error) => {
                 return Err(Failure::new(409, format!("config/{BUILD_FILE} is a symbolic link; replace it with a regular file")));
             }
             Err(error) => return Err(error.into()),
@@ -282,14 +282,14 @@ fn atomic_write(target: &Path, content: &[u32]) -> Result<(), Failure> {
         if !meta.is_file() {
             return Err(Failure::new(409, format!("{name} is not a regular file")));
         }
-        mode = meta.permissions().mode() & 0o7777;
+        mode = private::mode_of(&meta);
     }
     let temporary = folder.join(format!(".{name}.{}", crate::auth::token_hex(6)));
     let written = (|| -> std::io::Result<()> {
         let mut handle = OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temporary)?;
         handle.write_all(content.as_bytes())?;
         handle.sync_all()?;
-        fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+        private::set_mode(&temporary, mode)?;
         fs::rename(&temporary, target)
     })();
     if let Err(error) = written {
@@ -350,8 +350,10 @@ pub fn section<'a>(data: &'a mut Dict, path: &[&str]) -> &'a mut Dict {
     node
 }
 
-#[cfg(test)]
+// The tests read Unix modes.
+#[cfg(all(test, unix))]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
     use super::*;
 
     fn store() -> (Store, PathBuf) {
