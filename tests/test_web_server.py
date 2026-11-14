@@ -296,8 +296,14 @@ def test_discovery_rejects_demo_empty_sources_and_custom_inputs(website):
     assert website.request("/api/sources/run", {"confirm": True})[0] == 403
 
 
+@pytest.fixture
+def learnharness_pack(monkeypatch):
+    """This process has the LearnHarness pack, whether or not the checkout's desktop build does."""
+    monkeypatch.setattr("kitty.packs.loaded", lambda pack: True)
+
+
 @pytest.mark.parametrize("upstream_status,available", [(200, True), (302, False), (500, False)])
-def test_learnharness_boundary_is_fixed_loopback_not_a_proxy(website, monkeypatch, upstream_status, available):
+def test_learnharness_boundary_is_fixed_loopback_not_a_proxy(website, learnharness_pack, monkeypatch, upstream_status, available):
     calls = []
 
     class Probe:
@@ -327,7 +333,7 @@ def test_learnharness_boundary_is_fixed_loopback_not_a_proxy(website, monkeypatc
     assert website.request("/api/extensions/learnharness/api/keys")[0] == 404
 
 
-def test_learnharness_unavailable_is_not_a_kitty_failure(website, monkeypatch):
+def test_learnharness_unavailable_is_not_a_kitty_failure(website, learnharness_pack, monkeypatch):
     class Offline:
         def __init__(self, *args, **kwargs):
             pass
@@ -345,7 +351,7 @@ def test_learnharness_unavailable_is_not_a_kitty_failure(website, monkeypatch):
     assert website.request("/api/ai/status")[0] == 200
 
 
-def test_study_start_reports_missing_packaged_runtime_not_unknown_route(website):
+def test_study_start_reports_missing_packaged_runtime_not_unknown_route(website, learnharness_pack):
     website.app.learnharness.bundle = website.static / "missing-runtime"
     website.app.learnharness.port = 1
     status, data, _ = website.request("/api/extensions/learnharness/start", {})

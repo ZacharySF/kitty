@@ -137,7 +137,7 @@ selection: base only.
    | Build and settings `/api/build/*` | `web_build.py`, `core/builds/{store,project,share}` | build file, `data/build-history/`, settings rows projected into SQLite | `test_web_build.py`, `test_builds.py`, browser `settings`/`build` suites | the watcher's live push goes out over `web_live`'s WebSocket (Python), and `project.sync` writes SQLite; `fetch` needs an HTTPS client |
    | Themes | no route: the theme list and `theme.base` live in the build (`document.theme_ids`, already in Rust) | build file | as build | moves with the build routes |
    | Keys `/api/keys/*` | ~~`web_keys.py`~~, `core/keys.py` | OS keyring (Secret Service over D-Bus) or owner-only file | `test_keys.py` | **Ported** (below); Python's AI providers keep reading the same store until they move |
-   | Effects `/api/effects/*` | `web_effects.py`, `core/effects.py`, `effect_kinds` | effect tables in SQLite | `test_effects.py` | executors call into Python modules (blocks, applications); approvals are bound to the worker's `ui_session`, which would have to move to the front |
+   | Effects `/api/effects/*` | ~~`web_effects.py`~~, `web_effects_worker.py`, `core/effects.py`, `effect_kinds` | effect tables in SQLite | `test_effects.py` | **Ported** (below); executors and `submit_application`'s preconditions stay on the worker's internal routes |
    | Rika text chat `/api/rika/*` | `web_rika.py`, `core/rika/*` | conversations, plans, memory in SQLite; AI provider calls | `test_web_rika*.py`, `test_rika_*.py` | AI client and streaming WebSocket; Rika's tools reach every module's Python core |
    | Migration runner | `kitty.db.migrations` (kept for the CLI, TUI, MCP, demo reset and tests) | the SQLite schema (55 SQL files) | `test_migration_parity.py`, `test_front_migrations.py`, `test_migrations.py`, `test_migration_numbers.py` | **Ported** (below) |
 
@@ -245,6 +245,25 @@ selection: base only.
    while a still-forwarded route (`/api/account`) stayed at 7.4-8.1 ms; start to announcement
    unchanged (2.1-2.2 s before, 2.0-2.2 s after); the release binary grew from 8.74 to
    10.61 MB (zbus).
+
+   *Built (fifth slice): effects.* The front makes this launch's window session
+   (`ui-<hex24>`) and hands it to the worker as the second line of its handshake, so effect
+   approvals made by the front and by Python's inline views are bound to the same session.
+   `GET /api/effects` and `POST /api/effects/{approve,execute,deny}` are answered by rika-server
+   (`server/src/effects/`): the kernel protocol of `kitty.core.effects` over the effect tables
+   (canonical digest, one immediate claim transaction re-checking every precondition, the
+   single-use two-minute approval, append-only events) with `delete_block`'s preconditions in
+   SQL. Two parts need Python and run on the worker's internal routes, which pages cannot reach
+   (`kitty.web_effects_worker`): `submit_application`'s preconditions (`choose_resume` with the
+   config) and executing, where the final re-check, the `executed` event and the block store's
+   delete share one transaction. `web_effects.py` is gone; `web_auth.window_user` replaces its
+   `user`. `tests/test_effects.py` drives the routes through the front with Python's kernel as
+   the reference, including a parity test that every approval recomputes Python's digest and
+   every refusal names what `effects.changed_names` names. Measured (median of 300
+   fresh-connection GETs, two alternating runs): `GET /api/effects` went from 7.3 / 8.6 ms to
+   0.73 / 0.77 ms, a still-forwarded route stayed at 7.0-9.2 ms; start to announcement
+   unchanged within the noise (1.4-2.1 s before, 1.8-2.0 s after); the binary grew from 10.61
+   to 10.81 MB.
 
    Next: the build routes once the live channel can be driven from Rust.
 3. **Packs.** Signed pack builds and index in the release pipeline; download,

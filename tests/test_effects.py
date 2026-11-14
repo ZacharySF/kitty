@@ -472,7 +472,7 @@ def test_the_front_reads_delete_preconditions_and_digests_as_python_does(workspa
     other = ids[-1]
     changes = {
         "text": (lambda: block_api.update_block(conn, top, text="plain, edited"), top),
-        "type": (lambda: block_api.update_block(conn, nested, kind="todo"), nested),
+        "type": (lambda: block_api.update_block(conn, nested, kind="to_do"), nested),
         "grandchild": (lambda: block_api.update_block(conn, grandchild, text="edited deep"), top),
         "child added": (lambda: block_api.append_blocks(conn, page, ["new"], parent=nested), nested),
         "moved": (lambda: block_api.move_block(conn, ids[5], parent=other), ids[5]),
