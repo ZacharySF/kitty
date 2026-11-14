@@ -14,8 +14,8 @@
   type State = { demo: boolean; microsoft: Account & { redirect: string }; slack: Account & { reaction: string; manifest: string; redirect: string } };
   const LABEL: Record<Provider, string> = { microsoft: "Microsoft", slack: "Slack" };
   const READS: Record<Provider, string> = {
-    microsoft: "Reads your Outlook calendar and inbox. Nothing is sent or changed.",
-    slack: "Reads your reactions. A message you react to becomes a task. Nothing is posted.",
+    microsoft: "Shows your Outlook calendar and inbox here. Read-only.",
+    slack: "React to a Slack message and it becomes a task. Read-only.",
   };
   // Bracket's Button types only button attributes; with `href` it renders an <a> that takes these too.
   const newTab = { target: "_blank", rel: "noopener noreferrer" };
@@ -26,6 +26,8 @@
   let busy = $state("");
   let clientId = $state<Record<Provider, string>>({ microsoft: "", slack: "" });
   let reaction = $state("");
+  /** Whether each provider's one-time setup is unfolded. */
+  let setup = $state<Record<Provider, boolean>>({ microsoft: false, slack: false });
   let pending = $state<{ provider: Provider; ticket: string; url: string } | null>(null);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let mounted = true;
@@ -97,9 +99,7 @@
       <div class="rows">
         <div class="set-row">
           <span class="set-label">Account</span>
-          {#if connections.demo}
-            <span class="set-desc">Off in the demo workspace.</span>
-          {:else if item.connected}
+          {#if item.connected}
             <span class="set-desc"><span class="dot" aria-hidden="true"></span>Connected as <strong>{item.account}</strong> · {when(item.last_sync)}</span>
           {:else if pending?.provider === provider}
             <span class="set-desc" role="status">Finish signing in in your browser.</span>
@@ -114,37 +114,41 @@
               <Button size="sm" disabled={!!busy} onclick={() => run(provider, "sync", {}, "Synced.")}>{busy === `${provider}:sync` ? "Syncing…" : "Sync now"}</Button>
               <Button size="sm" variant="ghost" disabled={!!busy} onclick={() => disconnect(provider)}>Disconnect</Button>
             {:else}
-              <Button size="sm" intent="primary" disabled={connections.demo || !!busy || !!pending || !item.client_id} onclick={() => connect(provider)}
-                title={item.client_id ? undefined : "Save your app's client ID first"}>Connect</Button>
+              {#if item.client_id}<Button size="sm" intent="primary" disabled={connections.demo || !!busy || !!pending} onclick={() => connect(provider)}>Connect</Button>{/if}
+              <Button size="sm" intent={item.client_id ? undefined : "primary"} variant={item.client_id ? "ghost" : undefined} aria-expanded={setup[provider]}
+                onclick={() => (setup[provider] = !setup[provider])}>{setup[provider] ? "Close" : "Set up"}</Button>
             {/if}
           </span>
         </div>
-        {#if provider === "slack"}
-          <div class="set-row">
-            <span class="set-label">App</span>
-            <span class="set-desc">Create your own Slack app: api.slack.com/apps → Create New App → From a manifest, then paste this.</span>
-            <span class="set-end"><Button size="sm" onclick={copyManifest}>Copy manifest</Button></span>
-          </div>
-        {/if}
-        <form class="set-row" onsubmit={(event) => { event.preventDefault(); void run(provider, "config", { client_id: clientId[provider] }, "Saved."); }}>
-          <label class="set-label" for={`connect-${provider}-client`}>Client ID</label>
-          <input id={`connect-${provider}-client`} type="text" autocomplete="off" spellcheck="false" bind:value={clientId[provider]} disabled={item.connected || connections.demo}
-            placeholder={provider === "microsoft" ? "00000000-0000-0000-0000-000000000000" : "1234567890.1234567890"} />
-          <span class="set-end"><Button size="sm" type="submit" disabled={item.connected || connections.demo || !!busy || clientId[provider].trim() === item.client_id}>Save</Button></span>
-        </form>
-        {#if provider === "slack"}
+        {#if provider === "slack" && item.connected}
           <form class="set-row" onsubmit={(event) => { event.preventDefault(); void run("slack", "config", { reaction }, "Saved."); }}>
-            <label class="set-label" for="connect-slack-reaction">Reaction</label>
-            <input id="connect-slack-reaction" class="short" type="text" autocomplete="off" spellcheck="false" bind:value={reaction} disabled={connections.demo} />
-            <span class="set-desc">The emoji name that makes a task.</span>
-            <span class="set-end"><Button size="sm" type="submit" disabled={connections.demo || !!busy || reaction.trim() === connections.slack.reaction}>Save</Button></span>
+            <label class="set-label" for="connect-slack-reaction">Emoji</label>
+            <input id="connect-slack-reaction" class="short" type="text" autocomplete="off" spellcheck="false" bind:value={reaction} />
+            <span class="set-desc">React with it and the message becomes a task.</span>
+            <span class="set-end"><Button size="sm" type="submit" disabled={!!busy || reaction.trim() === connections.slack.reaction}>Save</Button></span>
           </form>
         {/if}
       </div>
-      {#if provider === "microsoft"}
-        <p class="set-note">Create the app at entra.microsoft.com → App registrations → New registration, with the redirect <code>{connections.microsoft.redirect}</code> under “Mobile and desktop applications”. The steps are in the guide under Microsoft.</p>
-      {:else}
-        <p class="set-note">The app's client ID is on its Basic Information page. rika! listens on <code>{connections.slack.redirect}</code> while you sign in.</p>
+      {#if !item.connected && setup[provider]}
+        <div class="setup">
+          <ol>
+            {#if provider === "microsoft"}
+              <li>Open <strong>entra.microsoft.com</strong> → App registrations → New registration.</li>
+              <li>Under “Mobile and desktop applications”, add the redirect <code>{connections.microsoft.redirect}</code>.</li>
+              <li>Paste the app's client ID below.</li>
+            {:else}
+              <li><Button size="sm" onclick={copyManifest}>Copy manifest</Button></li>
+              <li>Open <strong>api.slack.com/apps</strong> → Create New App → From a manifest, and paste it.</li>
+              <li>Paste the app's client ID (on its Basic Information page) below.</li>
+            {/if}
+          </ol>
+          <form class="client" onsubmit={(event) => { event.preventDefault(); void run(provider, "config", { client_id: clientId[provider] }, "Saved. Now connect."); }}>
+            <label for={`connect-${provider}-client`}>Client ID</label>
+            <input id={`connect-${provider}-client`} type="text" autocomplete="off" spellcheck="false" bind:value={clientId[provider]} disabled={connections.demo}
+              placeholder={provider === "microsoft" ? "00000000-0000-0000-0000-000000000000" : "1234567890.1234567890"} />
+            <Button size="sm" type="submit" disabled={connections.demo || !!busy || clientId[provider].trim() === item.client_id}>Save</Button>
+          </form>
+        </div>
       {/if}
       {#if !item.connected && item.error && !error[provider]}<p class="set-note" role="status">{item.error}</p>{/if}
       {#if item.connected && item.error && !error[provider]}<p class="set-note" role="status">Last sync: {item.error}</p>{/if}
@@ -184,5 +188,27 @@
   }
   code {
     overflow-wrap: anywhere;
+  }
+  /* Setup opens from its button: three short steps and one field, out of the way once done. */
+  .setup {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  .setup ol {
+    margin: 10px 0 12px;
+    padding-left: 1.3em;
+    display: grid;
+    gap: 6px;
+    line-height: 1.5;
+  }
+  .client {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .client label {
+    color: var(--ink);
   }
 </style>

@@ -110,7 +110,7 @@
   const titles = {
     finder: "Company finder",
     reports: "Response reports",
-    mail: "Read-only Gmail",
+    mail: "Gmail",
     triage: "Job triage",
   };
 
@@ -324,18 +324,13 @@
 <section class="panel insights" aria-labelledby="insights-title">
   <header class="panel-heading">
     <div>
-      <p class="eyebrow">Workspace insights</p>
       <h2 id="insights-title">{titles[section]}</h2>
     </div>
     <button class="button" onclick={load} disabled={loading || running}
-      >Refresh status</button
+      >Refresh</button
     >
   </header>
   <div class="body">
-    {#if demo}<p class="muted">
-        Demo data only. Network, Gmail authorization and paid operations are
-        disabled.
-      </p>{/if}
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
     <TaskStatus {task} oncomplete={complete} />
@@ -520,40 +515,26 @@
       </div>
     {:else if section === "mail"}
       <p class="muted">
-        Gmail uses only <strong>gmail.readonly</strong>: no sending, deleting or
-        labeling. Reading recruiting mail proposes status changes. Only your
-        confirmation moves an application.
+        Reads recruiting email and suggests updates to your applications.
+        rika! can only read Gmail, and nothing changes until you confirm.
       </p>
       {#if mail}
-        <div class="badges">
-          <span class="badge"
-            >OAuth client: {mail.client_present ? "Present" : "Missing"}</span
-          ><span class="badge"
-            >Token: {mail.token_present
-              ? "Present (not validated)"
-              : "Not authorized"}</span
-          >
-        </div>
-        {#if !mail.client_present}<details open>
-            <summary>Set up a read-only Gmail OAuth client</summary>
+        {#if mail.client_present}<p>
+            <strong>{mail.token_present ? "Connected" : "Ready to connect"}</strong>
+          </p>{/if}
+        {#if !mail.client_present}<details>
+            <summary>Set up Gmail (one time)</summary>
             <ol>
-              <li>Create a Google Cloud project and enable Gmail API.</li>
+              <li>In Google Cloud, make a project and turn on the Gmail API.</li>
+              <li>On the consent screen, add yourself as a test user.</li>
               <li>
-                Configure the OAuth consent screen and add your account as a
-                test user.
+                Make a “Desktop app” client and save its file as
+                <code>config/gmail_client.json</code>.
               </li>
-              <li>
-                Create a Desktop app OAuth client; download its JSON to the
-                local workspace's <code>config/gmail_client.json</code>.
-              </li>
-              <li>
-                Choose Authorize below and complete Google's browser consent. No
-                credentials are displayed here.
-              </li>
+              <li>Come back and choose Connect Gmail.</li>
             </ol>
-            <p>
-              Testing-mode tokens can expire after seven days; authorize again
-              when needed.
+            <p class="muted">
+              Google signs test apps out after seven days; connect again then.
             </p>
           </details>{/if}
         <div class="controls">
@@ -565,7 +546,7 @@
                 "Authorize read-only Gmail access?",
                 "Open Google's consent page in your local browser. You must choose your account and grant read-only access yourself; the token is stored locally and never displayed.",
                 () => request("/mail/auth", { confirm: true }),
-              )}>Authorize / reconnect</button
+              )}>{mail.token_present ? "Reconnect Gmail" : "Connect Gmail"}</button
           >
         </div>
         <form
@@ -580,7 +561,7 @@
           }}
         >
           <label
-            >Look back (days)<input
+            >Days to look back<input
               type="number"
               min="1"
               max="3650"
@@ -634,13 +615,12 @@
       {/if}
     {:else}
       <p class="muted">
-        Free rules and saved answers are reused. Paid triage sends
-        contact-redacted resume context and job descriptions to the configured
-        provider only after a fresh estimate and your explicit approval. It
-        never submits applications.
+        Sorts your jobs into worth applying and not. The free rules run on
+        this computer. The AI step costs money, so you see the price and
+        approve it first. It never submits applications.
       </p>
       <p>
-        Model: <strong>{model || "Loading…"}</strong> · Configured hard cap:
+        Model <strong>{model || "Loading…"}</strong> · Spending limit
         <strong>${configuredCap.toFixed(2)}</strong>
       </p>
       <form
@@ -659,7 +639,7 @@
           ></label
         >
         <label
-          >Maximum paid jobs<input
+          >Jobs to send to AI<input
             type="number"
             min="1"
             max="1000"
@@ -669,19 +649,15 @@
           /></label
         >
         <button class="button primary" disabled={running}
-          >Estimate (no paid call)</button
+          >See the price</button
         >
         <button
           class="button"
           type="button"
           disabled={running}
-          onclick={() => runTriage("rules")}>Apply free rules only</button
+          onclick={() => runTriage("rules")}>Sort with free rules</button
         >
       </form>
-      <p class="muted">
-        The paid-job limit and track apply to model requests; free rules tiers
-        cover the full workspace.
-      </p>
       {#if estimate}<article class="estimate">
           <h3>Review estimate</h3>
           <p>

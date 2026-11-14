@@ -68,7 +68,7 @@
   <legend>Rika's voice</legend>
   {#if voice}
     {#if voice.engine === "demo"}
-      <p class="muted">The demo hears a canned transcript: no microphone audio is transcribed and no model is downloaded.</p>
+      <p class="muted">Voice uses a sample transcript here.</p>
     {:else}
       <label>Speech-to-text model (on this computer)
         <select value={voice.model} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>

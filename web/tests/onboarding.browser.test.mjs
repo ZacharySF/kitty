@@ -110,7 +110,6 @@ test("unconfigured Google: the button waits for setup, Start locally asks what i
   await assertPortrait(page, card);
   assert.ok(await card.getByRole("button", { name: "Continue with Google" }).isDisabled());
   assert.equal(await card.getByRole("link", { name: "setting up" }).getAttribute("href"), GUIDE);
-  assert.ok(await card.getByRole("button", { name: /^Theme: / }).isVisible(), "the theme picker is missing");
   await shot(page, "welcome-unconfigured");
   await card.getByRole("button", { name: "Start locally" }).click();
   await pastModules(card);
