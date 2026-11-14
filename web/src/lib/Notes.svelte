@@ -2299,12 +2299,10 @@
 {/if}
 
 <style>
-  /* Q2: the workspace is one surface; header, page and stage are split by hairlines only. */
+  /* Views are part of the app: Notes sits on the page ground; the header's hairline is its only line. */
   .notes-workspace {
-    background: var(--surface);
+    background: transparent;
     color: var(--ink);
-    border: 1px solid var(--hairline);
-    border-radius: var(--r-panel);
     /* clip, not hidden: hidden would make this the sticky outline's scroll container. */
     overflow: clip;
     display: flex;
@@ -2316,7 +2314,7 @@
     align-items: center;
     gap: 6px;
     height: 44px;
-    padding: 0 10px 0 8px;
+    padding: 0;
     box-sizing: border-box;
     border-bottom: 1px solid var(--hairline);
   }

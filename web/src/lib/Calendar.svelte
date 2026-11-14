@@ -953,23 +953,6 @@
     notice = `Added to ${map.title}.`;
   }
   $effect(() => {
-    if (!isActive) return;
-    const labels: Record<string, string> = {
-      tasks: "Task list",
-      activity: "Activity",
-      availability: "Availability",
-      integrations: "Imports & Google",
-    };
-    pane.setTrail("calendar", [
-      ...(section === "calendar" ? [] : [{ label: labels[section], onclick: () => (section = "calendar") }]),
-      { label: dateTitle(selectedDate, { month: "short", day: "numeric", year: "numeric" }) },
-    ], () => {
-      section = "calendar";
-      view = "week";
-      chooseDate(parts(new Date().toISOString()).date);
-    });
-  });
-  $effect(() => {
     if (!isActive) {
       rangeStart = null;
       rangeEnd = null;
@@ -987,7 +970,6 @@
       window.removeEventListener(THEME_EVENT, syncTheme);
       clearInterval(clockTimer);
       clearTimeout(flashTimer);
-      pane.clearTrail("calendar");
     };
   });
 </script>
@@ -1023,8 +1005,14 @@
 />
 
 <section class="calendar-workspace" class:drawer-open={!!editor} aria-label="Calendar workspace">
+  <!-- One row, like the rest of the app: the title, the sections, then search; the grid sits on the page under a hairline. -->
   <header class="toolbar">
     <h1 title={`Times in ${tz}`}>Calendar</h1>
+    <nav class="tabs" aria-label="Calendar sections">
+      {#each [["calendar", "Calendar"], ["tasks", "Tasks"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
+        <button class="section-tab" aria-pressed={section === key} onclick={() => (section = key)}>{title}</button>
+      {/each}
+    </nav>
     <div class="header-actions">
       {#if undoId}<Button size="sm" disabled={pending > 0}
         onclick={() =>
@@ -1033,26 +1021,16 @@
             undoId = null;
             await load();
           })}>Undo last change</Button>{/if}
+      <label class="calendar-search"><span class="sr-only">Search</span><input type="search" bind:value={search}
+        aria-label="Search" placeholder="Search events, tasks or tags" /></label>
     </div>
   </header>
-  <nav class="tabs" aria-label="Calendar sections">
-    {#each [["calendar", "Calendar"], ["tasks", "Tasks"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
-      <Button size="sm" intent={section === key ? "primary" : "neutral"}
-        aria-pressed={section === key}
-        onclick={() => (section = key)}>{title}</Button>
-    {/each}
-  </nav>
   {#if error}<div role="alert" class="error">
       {error}<button aria-label="Dismiss error" onclick={() => (error = "")}
         >×</button
       >
     </div>{/if}
   {#if notice}<p role="status" class="notice">{notice}</p>{/if}
-  <div class="search-toolbar">
-    <label class="calendar-search"><span>Search</span><input type="search" bind:value={search}
-      placeholder="Search events, tasks or tags" /></label>
-    <Button size="sm" onclick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</Button>
-  </div>
   {#if dragMessage}<p class="drop-status" role="status">{dragMessage}</p>{/if}
   <details class="display-options">
     <summary>Calendars & display settings</summary>
@@ -1839,19 +1817,39 @@
     gap: 0.55rem;
     flex-wrap: wrap;
   }
+  .toolbar {
+    flex-wrap: nowrap;
+    gap: 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--hairline, var(--border));
+  }
   .toolbar h1 {
-    margin-right: auto;
+    margin: 0;
   }
   .hint {
     color: var(--muted);
     font-size: 0.85rem;
   }
+  /* The sections read as quiet words; the current one is a soft fill, like the top bar's groups. */
   .tabs {
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.6rem;
+    gap: 2px;
   }
-  .header-actions,
-  .search-toolbar {
+  .section-tab {
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    padding: 6px 12px;
+    font-size: 15px;
+  }
+  .section-tab:hover:not(:disabled) {
+    color: var(--ink);
+  }
+  .section-tab[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--ink) 12%, transparent);
+    color: var(--ink);
+  }
+  .header-actions {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -1872,9 +1870,8 @@
   }
   .display-options {
     margin: 0;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.75rem;
-    font-size: 0.85rem;
+    color: var(--muted);
+    font-size: 14px;
   }
   .display-options > .controls,
   .display-options > .calendars {
@@ -1890,9 +1887,9 @@
   .selected-plan {
     min-width: 0;
   }
+  /* The grid sits on the page: no frame around it, the header's hairline above. */
   .calendar-main {
-    border-radius: 0.7rem;
-    border: 1px solid var(--border);
+    border: 0;
   }
   .plan-event {
     display: flex;
@@ -2104,7 +2101,7 @@
     display: grid;
     grid-template-columns: var(--time-columns);
     min-width: calc(var(--days) * 110px + 64px);
-    background: var(--surface);
+    background: var(--canvas);
   }
   .time-header {
     display: grid;
@@ -2113,7 +2110,7 @@
     position: sticky;
     top: 0;
     z-index: 4;
-    background: var(--surface);
+    background: var(--canvas);
     border-bottom: 1px solid var(--border);
     box-shadow: 0 2px 4px color-mix(in srgb, var(--ink) 8%, transparent);
   }

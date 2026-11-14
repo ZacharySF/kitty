@@ -1392,7 +1392,11 @@ main > :is(.panel, .br-panel, .br-card) {
   border-bottom: 1px solid var(--hairline);
   border-radius: 0;
   background: transparent;
-  padding: 0 4px;
+  /* The same side margins as main's content, so the bar and the page share one left edge. */
+  padding: 0 max(26px, calc((100% - 1508px) / 2));
+}
+@media (max-width: 760px) {
+  :root body .system-bar { padding: 0 6px; }
 }
 /* Wordmark: rounded lowercase beside the cat in a filled pastel squircle. */
 :root body .wordmark {
@@ -1454,6 +1458,10 @@ main > :is(.panel, .br-panel, .br-card) {
   border-radius: var(--r-panel);
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
+}
+/* Home and the Brain fill main edge to edge; the notice strips keep the page's side margin. */
+:root body main.atlas-main > :is(.demo-notice, .error-banner) {
+  margin-inline: 26px;
 }
 /* Inside a region, groups are sections split by a full-width hairline and a label,
    never another bordered box: a surface nested in a surface drops its box. */

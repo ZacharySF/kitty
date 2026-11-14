@@ -34,3 +34,19 @@
 :root[data-theme="kitty"] body img.brain {
   filter: grayscale(1) contrast(1.08);
 }
+
+/* Views are part of the app (design review): a view's own root region, and a Settings page, is the page,
+   not a card floating on it. No fill, frame or radius; content keeps main's page margins. Side rails,
+   drawers and widgets inside keep their surfaces. Glass themes keep their panels. */
+:root[data-theme="kitty"] body :is([data-kitty-panel="view"], [data-settings-page]) > :is(.surface, .panel, .br-panel) {
+  --surface-fill: transparent;
+  --surface-border: transparent;
+  --surface-blur: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding-inline: 0;
+}

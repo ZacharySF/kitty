@@ -253,13 +253,14 @@
 </div>
 
 <style>
-  .documents-view { display: flex; flex-direction: column; overflow: hidden; color: var(--ink); border: 1px solid var(--hairline); border-radius: 14px; background: color-mix(in srgb, var(--solid-panel) 55%, transparent); }
+  /* Views are part of the app: the editor sits on the page ground under its bar's hairline. */
+  .documents-view { display: flex; flex-direction: column; overflow: hidden; color: var(--ink); }
   button { font: inherit; color: inherit; cursor: pointer; }
   button:disabled { cursor: default; }
   .grow { flex: 1; }
 
   /* Compact bar: document switcher, save state, mode, actions. */
-  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--hairline); background: color-mix(in srgb, var(--solid-void) 50%, transparent); }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
   .bar .pill { min-height: 30px; padding: 3px 12px; }
   .bar .pill:disabled { opacity: 0.55; }
   .icon-pill { width: 30px; justify-content: center; padding: 0 !important; }
