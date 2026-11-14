@@ -4,6 +4,9 @@
  * (docs/rika-design.md Q15 A), and runs `step` over what is due.
  * It lives in the page, so it only checks while kitty is open: in the desktop app,
  * **Keep running on close** keeps the hidden window (and this notifier) running.
+ * With **System alerts** on (the default in the desktop app) a notice goes to the
+ * desktop's own notifications (systemNotify.ts) instead of a toast in the page; the
+ * notification center keeps the list either way.
  */
 import { api } from "./api";
 import { buildStore, onBuildChange } from "./build.svelte";
@@ -11,6 +14,7 @@ import {
   DEFAULT_QUIET, QUIET_EVENT, SYSTEM_KEY, calendarNotice, digestLine, emptyLedger, jobNotice, readLedger, quietOf, rikaNotice, step,
   writeLedger, type CalendarReminder, type JobReminder, type Ledger, type Notice, type QuietHours, type RikaAlert,
 } from "./notify";
+import { NOTICE_EVENT, closeSystem, inDesktopApp, sendSystem, systemReady } from "./systemNotify";
 
 export type Toast = { id: number; notice: Notice | null; digest: Notice[] | null; left: number };
 /** How long a toast stays before it leaves for the notification center. */
@@ -29,6 +33,8 @@ class Notifier {
   drawer = $state(false);
   readonly unread = $derived(this.visible.filter(n => !this.ledger.read.includes(n.key)).length);
   readonly heldNotices = $derived(this.visible.filter(n => this.ledger.held.includes(n.key)));
+  /** Opens a notice's page (App.svelte sets it); a click on a system notification calls it. */
+  onopen: ((notice: Notice) => void) | null = null;
   private sources = { calendar: false, job: false, rika: false };
   private nextToast = 1;
   private busy = false;
@@ -39,8 +45,22 @@ class Notifier {
     this.ledger = readLedger(localStorage);
     this.quiet = quietOf(buildStore.build.ui.notifications.quiet);
     // Before notifications covered every source the switch was calendar-only.
-    this.system = (localStorage.getItem(SYSTEM_KEY) ?? localStorage.getItem("kitty-calendar-notifications")) === "true" && "Notification" in window && Notification.permission === "granted";
-    void this.refresh();
+    const stored = localStorage.getItem(SYSTEM_KEY) ?? localStorage.getItem("kitty-calendar-notifications");
+    // The desktop app needs no permission, so system alerts are on there until switched off.
+    const ready = Promise.all([inDesktopApp(), systemReady()]).then(([desktop, able]) => {
+      this.system = able && (stored === null ? desktop : stored === "true");
+    });
+    void ready.then(() => this.refresh());
+    // A click on a system notification: its body opens the notice, its buttons snooze or clear it.
+    const clicked = (event: Event) => {
+      const { key, action } = (event as CustomEvent<{ key: string; action: string }>).detail ?? {};
+      const notice = this.visible.find(item => item.key === key);
+      if (!notice) return;
+      if (action === "snooze") void this.snooze(notice);
+      else if (action === "done") void this.clear(notice);
+      else this.onopen?.(notice);
+    };
+    window.addEventListener(NOTICE_EVENT, clicked);
     const timer = setInterval(() => void this.refresh(), POLL_MS);
     const wake = () => void this.refresh();
     // Quiet hours are a build preference: Settings' dial while it moves, then every build change.
@@ -58,6 +78,7 @@ class Notifier {
       clearInterval(timer);
       window.removeEventListener("focus", wake);
       window.removeEventListener(QUIET_EVENT, quiet);
+      window.removeEventListener(NOTICE_EVENT, clicked);
       stopBuild();
     };
   }
@@ -75,8 +96,8 @@ class Notifier {
       const result = step(this.ledger, notices, this.quiet, new Date());
       this.visible = result.visible;
       this.save(result.ledger);
-      for (const notice of result.toasts) this.toast({ notice, digest: null });
-      if (result.digest) this.toast({ notice: null, digest: result.digest });
+      for (const notice of result.toasts) void this.toast({ notice, digest: null });
+      if (result.digest) void this.toast({ notice: null, digest: result.digest });
       this.error = "";
     } catch (cause) {
       this.error = (cause as Error).message;
@@ -90,16 +111,18 @@ class Notifier {
     try { writeLedger(localStorage, ledger); } catch { /* private mode: state lasts for this page */ }
   }
 
-  private toast(toast: Omit<Toast, "id" | "left">) {
-    this.toasts = [...this.toasts, { ...toast, id: this.nextToast++, left: TOAST_MS }].slice(-MAX_TOASTS);
-    if (!this.system) return;
-    const title = toast.notice ? toast.notice.title : "Morning digest";
-    const body = toast.notice ? toast.notice.body : `Held during quiet hours: ${digestLine(toast.digest ?? [])}`;
-    try {
-      new Notification(`rika! · ${title}`, { body, tag: toast.notice?.key ?? "kitty-digest" });
-    } catch {
-      this.error = "System notifications are unavailable here.";
-    }
+  /** A notice goes to the system when System alerts is on, and to a toast in the page when it is off or the system refused. */
+  private async toast(toast: Omit<Toast, "id" | "left">) {
+    const inPage = () => { this.toasts = [...this.toasts, { ...toast, id: this.nextToast++, left: TOAST_MS }].slice(-MAX_TOASTS); };
+    // Job-search reminders stay in the page (design labs, Notifications: the events that reach Linux).
+    if (!this.system || toast.notice?.source === "job") return inPage();
+    const sent = await sendSystem({
+      key: toast.notice?.key ?? "kitty-digest",
+      title: toast.notice ? toast.notice.title : "Morning digest",
+      body: toast.notice ? toast.notice.body : `Held during quiet hours: ${digestLine(toast.digest ?? [])}`,
+      actions: toast.notice !== null,
+    });
+    if (!sent) inPage();
   }
 
   dismiss(id: number) {
@@ -108,6 +131,7 @@ class Notifier {
 
   read(...keys: string[]) {
     this.save({ ...this.ledger, read: [...new Set([...this.ledger.read, ...keys])] });
+    void closeSystem(keys);
   }
 
   markAllRead() {
@@ -135,6 +159,7 @@ class Notifier {
       else if (target.kind === "rika") await api(`/goals/matches/${encodeURIComponent(String(target.id))}`, { decision: "dismiss" });
       else await api("/calendar/reminders/dismiss", { event_id: target.event_id, occurrence: target.occurrence, minutes: target.minutes });
       this.toasts = this.toasts.filter(toast => toast.notice?.key !== notice.key);
+      void closeSystem([notice.key]);
       await this.refresh();
     } catch (cause) {
       this.error = (cause as Error).message;
@@ -145,6 +170,11 @@ class Notifier {
     if (this.system) {
       this.system = false;
       localStorage.setItem(SYSTEM_KEY, "false");
+      return;
+    }
+    if (await inDesktopApp()) {
+      this.system = true;
+      localStorage.setItem(SYSTEM_KEY, "true");
       return;
     }
     if (!("Notification" in window)) {

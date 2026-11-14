@@ -228,7 +228,10 @@
   $effect(() => {
     if (!notifySources) return;
     const [calendar, job] = notifySources.split(":").map(value => value === "true");
-    return untrack(() => notifier.start({ calendar, job, rika: true }));
+    return untrack(() => {
+      notifier.onopen = openNotice;
+      return notifier.start({ calendar, job, rika: true });
+    });
   });
   function studyText(event: Event) {
     if (!studyTools) return;

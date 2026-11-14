@@ -1,4 +1,5 @@
 mod appimage_update;
+mod notifications;
 mod owner;
 mod update_lifecycle;
 mod updates;
@@ -371,8 +372,36 @@ fn set_background(app: &tauri::AppHandle, enabled: bool) {
     report_desktop(app);
 }
 
-fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
+/// The desktop entry rika! is installed under (scripts/install-desktop.py): names the app
+/// and its icon to the notification server.
+pub const DESKTOP_ENTRY: &str = "com.zacharysf.kitty";
+
+/// A click on a system notification: raise the window (with the server's activation token,
+/// which Wayland needs) and hand the notice to the page, which opens, snoozes or clears it.
+fn notice_invoked(app: &tauri::AppHandle, key: String, action: String, token: Option<String>) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else { return };
+        if action == "default" {
+            if let (Some(token), Ok(gtk_window)) = (token, window.gtk_window()) {
+                use gtk::prelude::GtkWindowExt;
+                gtk_window.set_startup_id(&token);
+            }
+            show(&handle);
+        }
+        let detail = serde_json::json!({ "key": key, "action": action });
+        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('kitty:notice', {{ detail: {detail} }}))"));
+    });
+}
+
+fn desktop_command(app: &tauri::AppHandle, notices: Option<&notifications::Notices>, command: owner::Command) {
     match command {
+        owner::Command::Notify { key, title, body, actions } => {
+            if let Some(notices) = notices { notices.notify(&key, &title, &body, actions); }
+        }
+        owner::Command::CloseNotices(keys) => {
+            if let Some(notices) = notices { notices.close(&keys); }
+        }
         owner::Command::CheckUpdates => updates::check(app),
         owner::Command::NewQuickNote => open_quick_note(app, "quick-note".into()),
         owner::Command::KeepRunning(enabled) => set_background(app, enabled),
@@ -509,8 +538,10 @@ fn main() {
             });
             let handle = app.handle().clone();
             thread::spawn(move || {
+                let clicked = handle.clone();
+                let notices = notifications::Notices::connect(Arc::new(move |key, action, token| notice_invoked(&clicked, key, action, token)));
                 for command in commands {
-                    desktop_command(&handle, command);
+                    desktop_command(&handle, notices.as_ref(), command);
                 }
             });
             if wants_quick_note(&std::env::args().collect::<Vec<_>>()) {

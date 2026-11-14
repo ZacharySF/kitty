@@ -1,4 +1,5 @@
-"""Settings → Desktop: GET /api/desktop, POST /api/desktop/command.
+"""Settings → Desktop: GET /api/desktop, POST /api/desktop/command, and system
+notifications: POST /api/desktop/notify and /api/desktop/notify/close.
 
 The page never gains native permissions. The desktop sidecar forwards one of a
 fixed set of commands to the shell that started it over the private owner pipe
@@ -7,6 +8,12 @@ fixed set of commands to the shell that started it over the private owner pipe
 
 ``restart`` saves, stops the backend and reopens rika!, so a saved module selection
 applies (Settings → Modules' Restart now; the first run does it by itself).
+
+``notify`` asks the shell to show one system notification (``actions`` adds Snooze and
+Done buttons) (it sends it to the desktop's
+notification server over D-Bus) and ``notify/close`` to take some down. A click comes
+back to the page as a ``kitty:notice`` event; the page never gains a notification
+permission of its own.
 
 One command carries an argument: ``{"command": "open-skill", "path"}`` opens one agent
 skill's SKILL.md with the desktop opener. Only kitty.web_agent_skills sends it, for a
@@ -23,6 +30,17 @@ from collections.abc import Callable
 COMMANDS = ("check-updates", "new-quick-note", "keep-running-on", "keep-running-off", "quit", "restart")
 KEEP_RUNNING = {"keep-running-on": True, "keep-running-off": False}
 STATE_KEYS = frozenset({"keep_running", "keep_running_available"})
+NOTICE_KEYS = frozenset({"key", "title", "body", "actions"})
+MAX_CLOSED = 50
+
+
+def _notice_key(value) -> bool:
+    return isinstance(value, str) and 1 <= len(value) <= 200 and value.isprintable()
+
+
+def _plain(value, limit: int) -> bool:
+    """Text of at most ``limit`` characters with no control character but a line break."""
+    return isinstance(value, str) and len(value) <= limit and all(char == "\n" or char.isprintable() for char in value)
 
 
 class DesktopOwner:
@@ -72,6 +90,25 @@ class DesktopOwner:
                 raise APIError(409, "The desktop app could not save this preference")
             return {"available": True, **self._state}
 
+    def notify(self, notice: dict) -> dict:
+        """Show one system notification; a notice with the same ``key`` replaces the last."""
+        from kitty.web_server import APIError
+
+        title, body = notice.get("title"), notice.get("body")
+        if (set(notice) != NOTICE_KEYS or not _notice_key(notice["key"]) or type(notice["actions"]) is not bool
+                or not _plain(title, 120) or not title.strip() or "\n" in title or not _plain(body, 400)):
+            raise APIError(400, "Expected {key, title, body, actions}: a title of up to 120 characters and a body of up to 400")
+        self._send(json.dumps({"command": "notify", "key": notice["key"], "title": title, "body": body, "actions": notice["actions"]}))
+        return {"ok": True}
+
+    def close_notices(self, keys) -> dict:
+        from kitty.web_server import APIError
+
+        if not isinstance(keys, list) or not 1 <= len(keys) <= MAX_CLOSED or not all(_notice_key(key) for key in keys):
+            raise APIError(400, f"Expected {{keys}}: 1 to {MAX_CLOSED} notification keys")
+        self._send(json.dumps({"command": "notify-close", "keys": keys}))
+        return {"ok": True}
+
     def open_file(self, path: str) -> None:
         """Ask the shell to open one listed SKILL.md (kitty.web_agent_skills checked it)."""
         self._send(json.dumps({"command": "open-skill", "path": path}))
@@ -87,8 +124,16 @@ def get(app, conn, path, query):
 def post(app, conn, path, body):
     from kitty.web_server import APIError
 
-    if path != "/api/desktop/command":
+    if path not in {"/api/desktop/command", "/api/desktop/notify", "/api/desktop/notify/close"}:
         return None
+    if path != "/api/desktop/command":
+        if app.desktop is None:
+            raise APIError(409, "System notifications from rika! are only available in the desktop app")
+        if path == "/api/desktop/notify":
+            return app.desktop.notify(body)
+        if set(body) != {"keys"}:
+            raise APIError(400, "Expected {keys}")
+        return app.desktop.close_notices(body["keys"])
     if set(body) != {"command"} or not isinstance(body["command"], str):
         raise APIError(400, "Expected {\"command\": one of the desktop commands}")
     if app.desktop is None:

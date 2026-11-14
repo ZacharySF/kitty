@@ -37,6 +37,16 @@ pub enum Command {
     Restart,
     /// One agent skill's SKILL.md for the desktop opener (kitty.web_agent_skills).
     OpenSkill(PathBuf),
+    /// A system notification (kitty.web_desktop `/api/desktop/notify`); `actions` adds its
+    /// Snooze and Done buttons.
+    Notify { key: String, title: String, body: String, actions: bool },
+    /// Take down the notifications under these keys.
+    CloseNotices(Vec<String>),
+}
+
+/// A notice's key: 1 to 200 characters, none of them control characters.
+fn notice_key(text: &str) -> bool {
+    (1..=200).contains(&text.chars().count()) && !text.chars().any(char::is_control)
 }
 
 /// Accept only the page's fixed command envelope. The one argument is `open-skill`'s
@@ -48,6 +58,23 @@ pub fn parse(line: &str) -> Option<Command> {
     if command == "open-skill" {
         if object.len() != 2 { return None; }
         return skill_file(object.get("path")?.as_str()?).map(Command::OpenSkill);
+    }
+    if command == "notify" {
+        if object.len() != 5 { return None; }
+        let key = object.get("key")?.as_str()?;
+        let title = object.get("title")?.as_str()?;
+        let body = object.get("body")?.as_str()?;
+        let actions = object.get("actions")?.as_bool()?;
+        let sound = notice_key(key) && (1..=120).contains(&title.chars().count()) && !title.chars().any(char::is_control)
+            && body.chars().count() <= 400 && !body.chars().any(|c| c.is_control() && c != '\n');
+        return sound.then(|| Command::Notify { key: key.into(), title: title.into(), body: body.into(), actions });
+    }
+    if command == "notify-close" {
+        if object.len() != 2 { return None; }
+        let keys = object.get("keys")?.as_array()?;
+        if keys.is_empty() || keys.len() > 50 { return None; }
+        let keys: Option<Vec<String>> = keys.iter().map(|key| key.as_str().filter(|key| notice_key(key)).map(String::from)).collect();
+        return keys.map(Command::CloseNotices);
     }
     if object.len() != 1 { return None; }
     match command {
@@ -111,6 +138,28 @@ mod tests {
     fn open_skill_carries_one_absolute_skill_file() {
         assert_eq!(parse(r#"{"command":"open-skill","path":"/home/me/.omp/agent/skills/lavish/SKILL.md"}"#),
                    Some(Command::OpenSkill(PathBuf::from("/home/me/.omp/agent/skills/lavish/SKILL.md"))));
+    }
+
+    #[test]
+    fn a_notice_carries_a_key_a_title_a_body_and_whether_it_has_buttons() {
+        assert_eq!(parse(r#"{"command":"notify","key":"calendar:12","title":"Standup in 10 minutes","body":"Room 4\nBring notes","actions":true}"#),
+                   Some(Command::Notify { key: "calendar:12".into(), title: "Standup in 10 minutes".into(), body: "Room 4\nBring notes".into(), actions: true }));
+        assert_eq!(parse(r#"{"command":"notify-close","keys":["calendar:12","rika:7"]}"#),
+                   Some(Command::CloseNotices(vec!["calendar:12".into(), "rika:7".into()])));
+        let long_title = format!(r#"{{"command":"notify","key":"a","title":"{}","body":"","actions":false}}"#, "t".repeat(121));
+        let long_body = format!(r#"{{"command":"notify","key":"a","title":"t","body":"{}","actions":false}}"#, "b".repeat(401));
+        for line in [r#"{"command":"notify","key":"a","title":"t","body":""}"#,
+                     r#"{"command":"notify","key":"","title":"t","body":"","actions":false}"#,
+                     r#"{"command":"notify","key":"a","title":"","body":"","actions":false}"#,
+                     r#"{"command":"notify","key":"a","title":"two\nlines","body":"","actions":false}"#,
+                     r#"{"command":"notify","key":"a","title":"t","body":"bell\u0007","actions":false}"#,
+                     r#"{"command":"notify","key":"a","title":"t","body":"","actions":"yes"}"#,
+                     r#"{"command":"notify","key":"a","title":"t","body":"","actions":false,"icon":"/tmp/x.png"}"#,
+                     long_title.as_str(), long_body.as_str(),
+                     r#"{"command":"notify-close"}"#, r#"{"command":"notify-close","keys":[]}"#,
+                     r#"{"command":"notify-close","keys":["a",7]}"#, r#"{"command":"notify-close","keys":"a"}"#] {
+            assert_eq!(parse(line), None, "{line}");
+        }
     }
 
     #[test]

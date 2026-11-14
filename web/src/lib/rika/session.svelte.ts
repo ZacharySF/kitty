@@ -1,5 +1,7 @@
 import { api, socketProtocols } from "../api";
 import { activeModules } from "../modules.svelte";
+import { notifier } from "../notifications.svelte";
+import { NOTICE_EVENT, sendSystem } from "../systemNotify";
 import { Mic, MicError } from "./mic";
 import { mergeEntries, rikaSocketUrl, voiceEnabled, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
 
@@ -82,7 +84,27 @@ export class RikaSession {
     void this.connect();
     void this.loadHistory();
     void this.loadAgents();
-    return () => this.stop();
+    // A click on an agent's system notification opens that agent.
+    const clicked = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key ?? "";
+      const agent = key.startsWith("agent:") ? this.agents.find((item) => `agent:${item.id}` === key) : undefined;
+      if (agent) void this.open(agent);
+    };
+    window.addEventListener(NOTICE_EVENT, clicked);
+    return () => {
+      window.removeEventListener(NOTICE_EVENT, clicked);
+      this.stop();
+    };
+  }
+
+  /** An agent that starts waiting for you is the one agent event that reaches the system's notifications. */
+  private watchAgents(next: RikaAgent[]) {
+    for (const agent of next) {
+      const before = this.agents.find((item) => item.id === agent.id);
+      if (agent.status === "blocked" && before && before.status !== "blocked" && notifier.system)
+        void sendSystem({ key: `agent:${agent.id}`, title: `${agent.name} is waiting for you`, body: agent.line || agent.task, actions: false });
+    }
+    this.agents = next;
   }
 
   stop() {
@@ -176,7 +198,7 @@ export class RikaSession {
         this.approval(event.approval);
         break;
       case "agents":
-        this.agents = event.agents;
+        this.watchAgents(event.agents);
         break;
       case "navigate":
         this.onnavigate(event.view);

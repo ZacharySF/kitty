@@ -186,3 +186,36 @@ def test_malformed_shell_reports_are_ignored(line):
     owner = DesktopOwner(lambda _line: None)
     assert owner.report(line) is False
     assert owner.state() == {"available": True, "keep_running": None, "keep_running_available": False}
+
+
+def test_a_notice_reaches_the_shell_as_one_fixed_line(desktop):
+    notice = {"key": "calendar:12:2026-11-14T09:00", "title": "Standup in 10 minutes", "body": "Room 4\nBring notes", "actions": True}
+    assert desktop.request("/api/desktop/notify", notice) == (200, {"ok": True})
+    assert desktop.request("/api/desktop/notify/close", {"keys": [notice["key"], "rika:7"]}) == (200, {"ok": True})
+    assert [json.loads(line) for line in desktop.shell.lines] == [
+        {"command": "notify", **notice}, {"command": "notify-close", "keys": [notice["key"], "rika:7"]}]
+
+
+@pytest.mark.parametrize("change", [
+    {"key": ""}, {"key": "k" * 201}, {"key": "line\nbreak"}, {"key": 7},
+    {"title": ""}, {"title": "  "}, {"title": "t" * 121}, {"title": "two\nlines"}, {"title": None},
+    {"body": "b" * 401}, {"body": "nul\x00"}, {"body": 3},
+    {"actions": "yes"}, {"actions": 1}, {"extra": True},
+])
+def test_a_malformed_notice_never_reaches_the_shell(desktop, change):
+    notice = {"key": "rika:1", "title": "A match for your goal", "body": "", "actions": False, **change}
+    status, data = desktop.request("/api/desktop/notify", notice)
+    assert status == 400 and "title" in data["error"]
+    assert desktop.shell.lines == []
+
+
+@pytest.mark.parametrize("body", [{}, {"keys": []}, {"keys": "rika:1"}, {"keys": ["ok", ""]}, {"keys": ["k"] * 51}, {"keys": ["a"], "all": True}])
+def test_closing_takes_only_a_short_list_of_keys(desktop, body):
+    assert desktop.request("/api/desktop/notify/close", body)[0] == 400
+    assert desktop.shell.lines == []
+
+
+def test_a_plain_website_sends_no_system_notices_through_rika(website):
+    for path, body in [("/api/desktop/notify", {"key": "a", "title": "b", "body": "", "actions": False}), ("/api/desktop/notify/close", {"keys": ["a"]})]:
+        status, data = website(path, body)
+        assert status == 409 and "desktop app" in data["error"]
