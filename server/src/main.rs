@@ -23,6 +23,7 @@ mod modules;
 mod packs;
 mod ported;
 mod private;
+mod search;
 mod settings;
 mod startup;
 mod target;
@@ -215,6 +216,12 @@ async fn main() {
     // Hidden and test-only: the bootstrap digest on one database, for tests/test_web_bootstrap.py.
     if std::env::args().nth(1).as_deref() == Some("bootstrap-digest") {
         std::process::exit(bootstrap::digest_command(&std::env::args().skip(2).collect::<Vec<_>>()));
+    }
+    // Hidden and test-only: the search index on one database, for tests/test_search_parity.py.
+    match std::env::args().nth(1).as_deref() {
+        Some("search") => std::process::exit(search::search_command(&std::env::args().skip(2).collect::<Vec<_>>())),
+        Some("search-sync") => std::process::exit(search::sync_command(&std::env::args().skip(2).collect::<Vec<_>>())),
+        _ => {}
     }
     let options = match options() {
         Ok(options) => options,

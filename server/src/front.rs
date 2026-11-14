@@ -434,6 +434,9 @@ impl Front {
         }
         if let Some(response) = crate::keys::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if let Some(response) = crate::effects::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
+        if !mutation && !upgrade && crate::search::owns(&target.path) {
+            return Ok(send_json(StatusCode::OK, &crate::search::answer(self.bootstrap.db_path(), &self.workspace, &forward_target).await?, method == Method::HEAD));
+        }
         // The module routes ported to Rust over the workspace database (crate::ported).
         if !upgrade && crate::ported::owns(&target.path, mutation) {
             let target = parse_target(&forward_target)?;
