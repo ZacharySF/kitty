@@ -70,7 +70,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Today" eyebrow={new Date(today).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}>
+<HomeWidget {id} title="Today" icon="today" eyebrow={new Date(today).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}>
   {#if error}
     <p class="note" role="alert">{error}</p>
   {:else if !events}

@@ -32,7 +32,7 @@
   });
 </script>
 
-<HomeWidget {id} title="This week">
+<HomeWidget {id} title="This week" icon="week">
   {#snippet tail()}<button type="button" class="text-button" onclick={() => onview("calendar")}>Calendar</button>{/snippet}
   {#if error}<p class="note" role="alert">{error}</p>
   {:else if days}

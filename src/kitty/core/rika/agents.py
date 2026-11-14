@@ -50,6 +50,15 @@ def brief(task: str, cwd: Path) -> str:
             "summarise what you changed and anything left undone.")[:BRIEF_MAX]
 
 
+def skill_line(kind: str, name: str, path: Path) -> str:
+    """What to type into a running agent so it loads a saved skill, in that agent's own terms."""
+    if kind == "omp":
+        return f"Load the {name} skill (read skill://{name}) and use it for the rest of this session."
+    if kind == "claude":
+        return f"Use the {name} skill for the rest of this session."
+    return f"Read {path} and follow it as a skill for the rest of this session."
+
+
 def _demo_roster() -> list[dict[str, Any]]:
     start = _now_ms()
     rows = [
@@ -254,6 +263,39 @@ class Agents:
         except (TerminalUnavailable, TernUnavailable) as exc:
             raise AgentError(str(exc)) from None
         raise LookupError("That agent is no longer running")
+
+    def use_skill(self, ident: str, path: str) -> dict[str, Any]:
+        """Hand one of the agent's saved skills to its running session: a line asking it to load it.
+
+        The skill must be one listed for the agent's kind (LookupError otherwise); the line
+        goes through herdr the way a task brief does, so it needs an agent that is ready
+        for input. Nothing is written to the agent's own configuration.
+        """
+        from kitty.core.terminal import TerminalUnavailable
+
+        agent = next((item for item in self.list() if item["id"] == ident), None)
+        if agent is None:
+            raise LookupError("That agent is no longer running")
+        skills = self._skills
+        if skills is None:
+            raise AgentError("Agent skills need the Terminal module")
+        target = skills.skill_path(agent["kind"], path)
+        name = next(skill["name"] for skill in skills.installed(agent["kind"])["skills"] if skill["path"] == path)
+        line = skill_line(agent["kind"], name, target)
+        if self.app.settings.demo:
+            with self._lock:
+                for item in self._demo:
+                    if item["id"] == ident:
+                        item["line"] = f"Loading the {name} skill"
+            return {"ok": True, "skill": name, "sent": line}
+        pane = agent["where"].get("herdr_pane")
+        if pane is None or self._herdr is None:
+            raise AgentError("Open this agent's window and ask it there: rika! can only type into herdr sessions")
+        try:
+            self._herdr.prompt(pane, line)
+        except TerminalUnavailable as exc:
+            raise AgentError(str(exc)) from None
+        return {"ok": True, "skill": name, "sent": line}
 
     def open_terminal(self) -> None:
         """A Tern window on rika!'s session (the bar's "open a terminal")."""

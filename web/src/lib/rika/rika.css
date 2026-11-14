@@ -55,3 +55,8 @@
 :is(.rika-chip, .rika-agent)[data-state="idle"] {
   --tone: var(--muted);
 }
+
+/* Rika's page → Customise → Text size: the whole conversation a step larger. */
+:root[data-rika-text="large"] .conversation {
+  zoom: 1.2;
+}

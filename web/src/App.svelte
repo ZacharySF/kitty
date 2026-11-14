@@ -89,6 +89,8 @@
   })));
   /** The bar carries only the groups you move between; Settings is reached from search and the tab menu. */
   const barGroups = $derived(groups.filter(group => group.label !== "Settings"));
+  /** The Icons module: one icon per top-bar group. */
+  const GROUP_ICONS: Record<string, string> = { Plan: "calendar", Study: "study", "Job search": "jobs", Rika: "actor-rika" };
   const menuExtras = $derived([
     { label: "Settings", run: () => openSettings() },
     ...(workspace ? [{ label: "Notifications", detail: notifier.unread ? `${notifier.unread} unread` : "", run: () => (notifier.drawer = true) }] : []),
@@ -474,10 +476,10 @@
     </div>
     <nav class="workspace-groups" aria-label="Workspace groups">
       {#if brainView}<button data-tutorial="brain" aria-current={view === "brain" ? "page" : undefined}
-        onclick={() => navigate("brain")}>Brain</button>{/if}
+        onclick={() => navigate("brain")}><span class="module-icon"><Icon name="atlas" size={17} /></span>Brain</button>{/if}
       {#each barGroups as group}<button aria-current={sectionGroup === group.label && view !== "brain" && view !== "today" ? "page" : undefined}
         title={group.shortcut ? `${group.label} (${group.shortcut})` : group.label}
-        onclick={() => navigate(groupLanding(group))}>{group.label}</button>{/each}
+        onclick={() => navigate(groupLanding(group))}><span class="module-icon"><Icon name={GROUP_ICONS[group.label] ?? "atlas"} size={17} /></span>{group.label}</button>{/each}
     </nav>
     <div class="bar-end">
       {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}

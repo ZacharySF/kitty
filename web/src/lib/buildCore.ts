@@ -51,6 +51,10 @@ export type BuildUi = {
   study: { guide_view: "columns" | "rail"; plans_view: "timeline" | "days" };
   /** The Themes module: the extra themes kept in the picker (themes/installed.ts). */
   themes: { installed: string[] };
+  /** The Icons module: icons beside names (`<html data-icons>`, shown by `.module-icon`). */
+  icons: { on: boolean };
+  /** Rika's conversation text size (`<html data-rika-text>`, rika.css). */
+  rika: { text: "normal" | "large" };
 };
 export type Build = {
   schema: number;
@@ -111,6 +115,8 @@ export const DEFAULT_BUILD: Build = {
     flashcards: { look: "tiles" },
     study: { guide_view: "columns", plans_view: "timeline" },
     themes: { installed: [] },
+    icons: { on: false },
+    rika: { text: "normal" },
   },
 };
 

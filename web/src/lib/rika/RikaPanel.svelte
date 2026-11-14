@@ -29,7 +29,7 @@
 </script>
 
 <div class="rika-panel" data-tutorial="rika">
-  <HomeWidget {id} title="Rika" eyebrow={waiting ? `${waiting} waiting` : ""} fill>
+  <HomeWidget {id} title="Rika" icon="actor-rika" eyebrow={waiting ? `${waiting} waiting` : ""} fill>
     <!-- Home's line stays in view; only the conversation scrolls beneath it. -->
     {#if lead}<div class="lead">{@render lead()}</div>{/if}
     <div class="scroll">

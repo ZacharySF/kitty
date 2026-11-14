@@ -15,7 +15,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Flashcards">
+<HomeWidget {id} title="Flashcards" icon="flashcards">
   {#snippet tail()}{#if due}<button type="button" class="text-button" onclick={() => onview("flashcards")}>Review</button>{/if}{/snippet}
   {#if error}<p class="note" role="alert">{error}</p>
   {:else if due !== null}

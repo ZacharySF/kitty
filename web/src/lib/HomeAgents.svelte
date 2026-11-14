@@ -55,7 +55,7 @@
 </script>
 
 <!-- Design review: no status chatter on home. The widget shows only while herdr has workspaces. -->
-{#if spaces.length}<HomeWidget {id} title="Agents" eyebrow={`${working} working · ${blocked} ${blocked === 1 ? "needs" : "need"} you`}>
+{#if spaces.length}<HomeWidget {id} title="Agents" icon="terminal" eyebrow={`${working} working · ${blocked} ${blocked === 1 ? "needs" : "need"} you`}>
     <ul>
       {#each spaces as space (space.id)}
         <li data-state={space.status} class:focused={space.focused}>
@@ -75,7 +75,7 @@
         </li>
       {/each}
     </ul>
-</HomeWidget>{:else if placeholder}<HomeWidget {id} title="Agents" eyebrow="Shows while a session runs" />{/if}
+</HomeWidget>{:else if placeholder}<HomeWidget {id} title="Agents" icon="terminal" eyebrow="Shows while a session runs" />{/if}
 
 <style>
   ul {

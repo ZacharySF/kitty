@@ -58,6 +58,8 @@ let appliedLook = "";
 let lookReady: Promise<void> = Promise.resolve();
 function applyLook() {
   applyAppearance(appearanceOf(buildStore.build.ui.appearance));
+  document.documentElement.dataset.icons = buildStore.build.ui.icons.on ? "on" : "off";
+  document.documentElement.dataset.rikaText = buildStore.build.ui.rika.text;
   const look = buildStore.preview ?? buildStore.build.theme;
   const key = JSON.stringify([look, buildStore.safe]);
   if (key === appliedLook) return;

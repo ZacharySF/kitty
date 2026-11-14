@@ -51,7 +51,7 @@
 </script>
 
 {#if session}
-  <HomeWidget {id} title="Agent session" eyebrow={[session.label, session.cwd_name].filter(Boolean).join(" · ")}>
+  <HomeWidget {id} title="Agent session" icon="pulse" eyebrow={[session.label, session.cwd_name].filter(Boolean).join(" · ")}>
     {#snippet tail()}{#if pinned}<button type="button" class="text-button" onclick={unpin}>Follow latest</button>{/if}{/snippet}
     <div class="row">
       <p class="big">
@@ -62,7 +62,7 @@
     </div>
     <p class="rest">{rest}</p>
   </HomeWidget>
-{:else if placeholder}<HomeWidget {id} title="Agent session" eyebrow="Shows once usage is on" />{/if}
+{:else if placeholder}<HomeWidget {id} title="Agent session" icon="pulse" eyebrow="Shows once usage is on" />{/if}
 
 <style>
   .row {

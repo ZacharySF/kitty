@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import Icon from "./Icon.svelte";
 
   /**
    * Q19: one home widget, framed "hairline minimal": no fill or box, only a
@@ -11,14 +12,16 @@
     id,
     title,
     eyebrow = "",
+    icon = "",
     fill = false,
     tail,
     children,
-  }: { id: string; title: string; eyebrow?: string; fill?: boolean; tail?: Snippet; children?: Snippet } = $props();
+  }: { id: string; title: string; eyebrow?: string; /** Shown only while the Icons module is on. */ icon?: string; fill?: boolean; tail?: Snippet; children?: Snippet } = $props();
 </script>
 
 <section class="home-widget" class:fill aria-labelledby={id}>
   <header>
+    {#if icon}<span class="module-icon"><Icon name={icon} size={19} /></span>{/if}
     <h3 {id}>{title}</h3>
     {#if eyebrow}<span class="eyebrow">{eyebrow}</span>{/if}
     {#if tail}<span class="tail">{@render tail()}</span>{/if}

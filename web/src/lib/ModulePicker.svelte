@@ -3,6 +3,7 @@
   import { Button } from "@nunera/bracket";
   import type { ModuleId, ModulesState } from "./api";
   import { buildStore, setPreferences } from "./build.svelte";
+  import Icon from "./Icon.svelte";
   import { USES, wantedModules } from "./home/templates";
   import { megabytes, moduleObtainable, packsOf, percent, preselect, sameSelection, totalLine, totals, withoutDownload } from "./modulePicker";
   import { moduleStore as store } from "./modulePicker.svelte";
@@ -30,6 +31,8 @@
   let failure = $state("");
   // Themes are a module without a download or a restart: its picks save as they are made.
   const themes = $derived(buildStore.build.ui.themes.installed);
+  const icons = $derived(buildStore.build.ui.icons.on);
+  const MODULE_ICONS: Record<string, string> = { applyai: "jobs", workspace: "notes", math: "math", learnharness: "study", terminal: "terminal", voice: "actor-rika", brain: "atlas" };
   const keepThemes = (installed: string[]) => void setPreferences({ ui: { themes: { installed } } });
   const available = $derived(store.modules?.available ?? []);
   const configured = $derived(store.modules?.configured ?? []);
@@ -93,7 +96,7 @@
             aria-describedby={`${uid}-${item.id}-about`} disabled={locked}
             title={locked ? (store.packs?.index.error ?? `${item.label}'s download is not available`) : undefined}
             onclick={() => (overrides = { ...overrides, [item.id]: !on })}><i></i></button>
-          <label class="name" for={`${uid}-${item.id}`}>{item.label}</label>
+          <label class="name" for={`${uid}-${item.id}`}><span class="module-icon"><Icon name={MODULE_ICONS[item.id] ?? "atlas"} size={17} /></span>{item.label}</label>
           <span class="about" id={`${uid}-${item.id}-about`} title={item.description}>{item.description}</span>
           <span class="end">
             {#if !question && saved !== store.modules.enabled.includes(item.id)}
@@ -133,6 +136,12 @@
               onpick={(id) => keepThemes(toggleTheme(themes, id))} />
           </div>
         {/if}
+        <div class="row" data-icons-row>
+          <button type="button" class="switch" role="switch" id={`${uid}-icons`} aria-checked={icons} aria-label="Icons"
+            aria-describedby={`${uid}-icons-about`} onclick={() => void setPreferences({ ui: { icons: { on: !icons } } })}><i></i></button>
+          <label class="name" for={`${uid}-icons`}>Icons</label>
+          <span class="about" id={`${uid}-icons-about`}>An icon beside every name</span>
+        </div>
       {/if}
     </fieldset>
     {#if question}

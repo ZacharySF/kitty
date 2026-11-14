@@ -7,7 +7,14 @@
    * a "now" tag on the ones running agents use, and Open file / Copy path per row. Open
    * file uses the desktop app's opener; a plain website offers Copy path only.
    */
-  let { kind, skills, used = [], canOpen }: { kind: AgentKind; skills: AgentSkill[]; used?: string[]; canOpen: boolean } = $props();
+  let { kind, skills, used = [], canOpen, onuse }: {
+    kind: AgentKind;
+    skills: AgentSkill[];
+    used?: string[];
+    canOpen: boolean;
+    /** Given for a running agent: "Use" hands the skill to it (the keyboard's way to do the drag). */
+    onuse?: (skill: AgentSkill) => void;
+  } = $props();
 </script>
 
 {#if skills.length}
@@ -17,6 +24,7 @@
         <span class="name">{skill.name}{#if used.includes(skill.name)}<em>now</em>{/if}</span>
         <span class="desc" title={skill.description}>{skill.description || "No description"}</span>
         <span class="end">
+          {#if onuse}<button type="button" class="row-button" aria-label={`Use ${skill.name} in this session`} onclick={() => onuse(skill)}>Use</button>{/if}
           {#if canOpen}<button type="button" class="row-button" aria-label={`Open ${skill.name}'s SKILL.md`} onclick={() => agentSkills.open(kind, skill.path)}>Open file</button>{/if}
           <button type="button" class="row-button" aria-label={`Copy the path of ${skill.name}'s SKILL.md`} title={skill.path} onclick={() => agentSkills.copy(skill.path)}>Copy path</button>
         </span>

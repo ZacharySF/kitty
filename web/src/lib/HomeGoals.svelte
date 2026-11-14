@@ -17,7 +17,7 @@
   const left = (goal: Goal) => (goal.days_left === null ? "" : goal.days_left < 0 ? "past due" : goal.days_left === 0 ? "today" : `${goal.days_left}d left`);
 </script>
 
-<HomeWidget {id} title="Goals">
+<HomeWidget {id} title="Goals" icon="goals">
   {#if error}<p class="note" role="alert">{error}</p>
   {:else if goals && !goals.length}<p class="note">No goals yet. <button type="button" class="text-button" onclick={() => onview("goals")}>Add one</button></p>
   {:else if goals}

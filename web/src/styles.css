@@ -1198,6 +1198,10 @@ main > :is(.panel, .br-panel, .br-card) {
 }
 
 .workspace-groups { display: flex; gap: 4px; }
+/* The Icons module (ui.icons.on): an icon beside a name, drawn only while the module is on. */
+.module-icon { display: none; }
+:root[data-icons="on"] .module-icon { display: inline-flex; align-items: center; align-self: center; flex: none; margin-right: 7px; color: var(--muted); vertical-align: -3px; }
+:root[data-icons="on"] [aria-current="page"] > .module-icon { color: inherit; }
 .workspace-groups button { border: 0; border-radius: 999px; background: transparent; color: var(--muted); padding: 6px 14px; font: 400 15px var(--font-ui); white-space: nowrap; }
 .workspace-groups button[aria-current="page"] { color: var(--ink); background: var(--wash); }
 .workspace-groups button:hover { color: var(--ink); }

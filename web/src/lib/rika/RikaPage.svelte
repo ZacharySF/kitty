@@ -2,12 +2,14 @@
   import { untrack } from "svelte";
   import "../settingsRows.css";
   import { api } from "../api";
+  import Icon from "../Icon.svelte";
   import Select from "../ui/Select.svelte";
   import UsageSection from "../usage/UsageSection.svelte";
   import { useWorkspaceContext } from "../workspaceContext.svelte";
   import type { View } from "../workspace";
   import RikaAgents from "./RikaAgents.svelte";
   import RikaConversation from "./RikaConversation.svelte";
+  import RikaCustomise from "./RikaCustomise.svelte";
   import RikaInput from "./RikaInput.svelte";
   import RikaVoiceSettings from "./RikaVoiceSettings.svelte";
   import EmailSettings from "./settings/EmailSettings.svelte";
@@ -21,7 +23,7 @@
    * holds the conversation the way home's panel does, so the drawer and reply toasts stay
    * away here and Ctrl + J focuses the field; everywhere else the drawer is unchanged.
    */
-  type Tab = "chat" | "agents" | "memory" | "email" | "routing" | "voice" | "usage";
+  type Tab = "chat" | "agents" | "customise" | "memory" | "email" | "routing" | "voice" | "usage";
   let { onview }: { onview: (next: View) => void } = $props();
   const pane = useWorkspaceContext();
   let tab = $state<Tab>("chat");
@@ -55,13 +57,14 @@
 
 <section class="rika-page" aria-labelledby={`${pane.id}-rika-title`}>
   <header>
-    <h2 id={`${pane.id}-rika-title`}>Rika</h2>
+    <h2 id={`${pane.id}-rika-title`}><span class="module-icon"><Icon name="actor-rika" size={24} /></span>Rika</h2>
     {#if waiting}<span class="waiting">{waiting} waiting</span>{/if}
     <div class="tabs">
       <Select label="Rika's page" kind="segments" value={tab} onchange={(next) => (tab = next as Tab)}
         options={[
           { value: "chat", label: "Chat" },
           { value: "agents", label: "Agents", count: rika.agents.length },
+          { value: "customise", label: "Customise" },
           { value: "memory", label: "Memory" },
           { value: "email", label: "Email" },
           { value: "routing", label: "Routing" },
@@ -93,7 +96,8 @@
   {:else}
     <!-- data-settings-page: themes draw a Settings page's panels flat, as part of the page. -->
     <div class="column settings-rows" data-settings-page="rika">
-      {#if tab === "memory"}<MemorySettings />
+      {#if tab === "customise"}<RikaCustomise />
+      {:else if tab === "memory"}<MemorySettings />
       {:else if tab === "email"}<EmailSettings />
       {:else if tab === "routing"}<RoutingMemory />
       {:else if tab === "voice"}<RikaVoiceSettings />

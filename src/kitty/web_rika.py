@@ -156,6 +156,17 @@ def post(app, conn, path, body):
     if match:
         _keys(body, set())
         return {"action": _call(app.rika.undo, conn, match[1])}
+    match = re.fullmatch(PREFIX + "/agents/" + _AGENT + "/skill", path)
+    if match:
+        _keys(body, {"path"}, {"path"})
+        if not isinstance(body["path"], str):
+            raise _error(400, "Expected {path} of a skill listed for this agent")
+        try:
+            return app.rika.agents.use_skill(match[1], body["path"])
+        except LookupError as exc:
+            raise _error(404, str(exc)) from None
+        except AgentError as exc:
+            raise _error(409, str(exc)) from None
     match = re.fullmatch(PREFIX + "/agents/" + _AGENT + "/open", path)
     if match:
         _keys(body, set())

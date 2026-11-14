@@ -267,6 +267,22 @@
               "default": []
             }
           }
+        },
+        "icons": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Icons module: an icon beside the names across the app (the top bar, home's widgets, Rika's page).",
+          "properties": {
+            "on": {"type": "boolean", "default": false}
+          }
+        },
+        "rika": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How Rika's conversation is drawn.",
+          "properties": {
+            "text": {"enum": ["normal", "large"], "default": "normal"}
+          }
         }
       }
     }

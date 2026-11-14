@@ -47,7 +47,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Quick note">
+<HomeWidget {id} title="Quick note" icon="quick-notes">
   <form onsubmit={(event) => { event.preventDefault(); void save(); }}>
     <textarea
       bind:value={text}

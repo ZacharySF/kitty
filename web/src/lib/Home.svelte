@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import HomeAgents from "./HomeAgents.svelte";
   import HomeCards from "./HomeCards.svelte";
+  import Icon from "./Icon.svelte";
   import HomeClock from "./HomeClock.svelte";
   import HomeFocus from "./HomeFocus.svelte";
   import HomeGoals from "./HomeGoals.svelte";
@@ -53,6 +54,8 @@
   const rikaWidth = $derived(draftRika ?? buildStore.build.ui.home.rika);
   /** Rika's panel can leave home too: "rika" among the build's hidden widgets. The drawer still opens with Ctrl + J. */
   let draftPanel = $state<boolean | null>(null);
+  const WIDGET_ICONS: Record<HomeWidgetId, string> = { agenda: "today", note: "quick-notes", focus: "timer", next: "next", agents: "terminal", session: "pulse",
+    goals: "goals", week: "week", cards: "flashcards", pipeline: "applications", clock: "clock" };
   const panel = $derived(draftPanel ?? !buildStore.build.ui.home.hidden.includes("rika"));
   let board = $state<HTMLElement>();
   let home = $state<HTMLElement>();
@@ -224,7 +227,7 @@
       {#if spare.length}
         <ul>
           {#each spare as widget (widget.id)}
-            <li><span>{widget.title}</span><button type="button" class="text-button" onclick={() => add(widget.id)}>Add</button></li>
+            <li><span><span class="module-icon"><Icon name={WIDGET_ICONS[widget.id]} size={17} /></span>{widget.title}</span><button type="button" class="text-button" onclick={() => add(widget.id)}>Add</button></li>
           {/each}
         </ul>
       {:else}<p class="quiet">Every widget is on home.</p>{/if}

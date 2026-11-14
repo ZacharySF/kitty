@@ -18,7 +18,7 @@
   const blocked = $derived(!timer || studyTimer.busy || studyTimer.offline);
 </script>
 
-<HomeWidget {id} title="Focus" eyebrow={idle ? "" : paused ? "Paused" : studyTimer.phase === "Focus" ? "" : studyTimer.phase}>
+<HomeWidget {id} title="Focus" icon="timer" eyebrow={idle ? "" : paused ? "Paused" : studyTimer.phase === "Focus" ? "" : studyTimer.phase}>
   {#snippet tail()}
     {#if !idle}<span class="clock" class:paused role="timer" aria-label={`${studyTimer.phase}, ${studyTimer.clock} left`}>{studyTimer.clock}</span>{/if}
     {#if idle}<button type="button" class="text-button" disabled={blocked} onclick={() => studyTimer.act("start")}>Start</button>

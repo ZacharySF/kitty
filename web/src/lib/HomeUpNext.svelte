@@ -126,7 +126,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Up next" eyebrow={rows?.length ? String(rows.length) : ""}>
+<HomeWidget {id} title="Up next" icon="next" eyebrow={rows?.length ? String(rows.length) : ""}>
   {#if error}
     <p class="note" role="alert">{error}</p>
   {:else if !rows}

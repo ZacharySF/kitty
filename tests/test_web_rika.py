@@ -102,6 +102,38 @@ def test_open_view_is_a_navigate_event(demo, stream):
     assert kinds(events, "action")[0]["action"]["reversible"] is False
 
 
+def test_a_saved_skill_is_handed_to_a_running_agent_of_its_kind_only(demo):
+    # Skills are listed per kind once the kind is switched on.
+    assert demo.request("/api/terminal/agent-skills/settings", {"kind": "omp", "enabled": True})[0] == 200
+    assert demo.request("/api/terminal/agent-skills/settings", {"kind": "claude", "enabled": True})[0] == 200
+    catalog = {entry["kind"]: entry for entry in demo.request("/api/terminal/agent-skills")[1]["kinds"]}
+    lavish = next(skill for skill in catalog["omp"]["skills"] if skill["name"] == "lavish")
+    docx = next(skill for skill in catalog["claude"]["skills"] if skill["name"] == "docx")
+    agents = demo.request("/api/rika/agents")[1]["agents"]
+    omp = next(agent for agent in agents if agent["kind"] == "omp" and agent["status"] != "done")
+
+    status, sent = demo.request(f"/api/rika/agents/{omp['id']}/skill", {"path": lavish["path"]})
+    assert status == 200 and sent["skill"] == "lavish" and "skill://lavish" in sent["sent"]
+    after = next(agent for agent in demo.request("/api/rika/agents")[1]["agents"] if agent["id"] == omp["id"])
+    assert after["line"] == "Loading the lavish skill"
+    # Another kind's skill, an unlisted path and an agent that is gone are refused.
+    assert demo.request(f"/api/rika/agents/{omp['id']}/skill", {"path": docx["path"]})[0] == 404
+    assert demo.request(f"/api/rika/agents/{omp['id']}/skill", {"path": "/etc/passwd"})[0] == 404
+    assert demo.request("/api/rika/agents/herdr:nope/skill", {"path": lavish["path"]})[0] == 404
+    assert demo.request(f"/api/rika/agents/{omp['id']}/skill", {"path": 7})[0] == 400
+
+
+def test_each_agent_kind_is_asked_for_a_skill_in_its_own_terms():
+    from pathlib import Path
+
+    from kitty.core.rika.agents import skill_line
+
+    path = Path("/home/me/.codex/skills/lavish/SKILL.md")
+    assert "skill://lavish" in skill_line("omp", "lavish", path)
+    assert skill_line("claude", "lavish", path) == "Use the lavish skill for the rest of this session."
+    assert str(path) in skill_line("codex", "lavish", path)
+
+
 def test_starting_an_agent_waits_for_approval_then_joins_the_scripted_roster(demo, stream):
     status, roster = demo.request("/api/rika/agents")
     assert status == 200 and len(roster["agents"]) == 5

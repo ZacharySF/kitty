@@ -414,6 +414,12 @@ export class RikaSession {
   }
 
   /** Focuses the agent's Tern window; without Tern, the server names a view to show it in. */
+  /** Hands a saved agent skill to a running agent (a drop on its card, or Use in its skill list). */
+  async giveSkill(agent: RikaAgent, path: string): Promise<string> {
+    const result = await api<{ skill: string }>(`/rika/agents/${encodeURIComponent(agent.id)}/skill`, { path });
+    return result.skill;
+  }
+
   async open(agent: RikaAgent) {
     try {
       const opened = await api<{ ok: boolean; view?: string | null }>(`/rika/agents/${encodeURIComponent(agent.id)}/open`, {});

@@ -2,11 +2,12 @@
   import { onMount } from "svelte";
   import AgentSkillList from "../AgentSkillList.svelte";
   import AgentSkillsSwitch from "../AgentSkillsSwitch.svelte";
-  import type { AgentKind } from "../agentSkills";
+  import type { AgentKind, AgentSkill } from "../agentSkills";
   import { agentSkills } from "../agentSkills.svelte";
   import NowChip from "../NowChip.svelte";
   import GuaranteeBadge from "../agents/GuaranteeBadge.svelte";
   import { usageLine } from "../usage/usage";
+  import type { RikaAgent } from "./rika";
   import { rika } from "./session.svelte";
 
   /**
@@ -34,6 +35,28 @@
   $effect(() => {
     if (rika.agents.length) void agentSkills.load();
   });
+  // Saved skills can be dragged onto a running agent of the same kind (or given with Use in its list).
+  let dragging = $state<{ kind: string; skill: AgentSkill } | null>(null);
+  let over = $state<string | null>(null);
+  let given = $state("");
+  const shelf = $derived((agentSkills.catalog?.kinds ?? []).filter((entry) => entry.enabled && entry.skills.length && rika.agents.some((agent) => agent.kind === entry.kind)));
+  const takes = (agent: RikaAgent) => dragging !== null && dragging.kind === agent.kind && agent.status !== "done";
+  async function give(agent: RikaAgent, skill: AgentSkill) {
+    given = "";
+    try {
+      given = `${await rika.giveSkill(agent, skill.path)} → ${agent.name}`;
+    } catch (cause) {
+      given = (cause as Error).message;
+    }
+  }
+  function drop(event: DragEvent, agent: RikaAgent) {
+    over = null;
+    if (!dragging || !takes(agent)) return;
+    event.preventDefault();
+    void give(agent, dragging.skill);
+    dragging = null;
+  }
+
   function allSkills(kind: string) {
     agentSkills.focus = (["omp", "claude", "codex"].includes(kind) ? kind : "omp") as AgentKind;
     showing = null;
@@ -55,7 +78,9 @@
       {#if agentSkills.error}<p class="note" role="alert">{agentSkills.error}</p>{/if}
       {#if entry}
         {#if entry.enabled}
-          <AgentSkillList kind={entry.kind} skills={entry.skills} used={chosen.now?.skill ? [chosen.now.skill] : []} canOpen={agentSkills.catalog?.can_open ?? false} />
+          <AgentSkillList kind={entry.kind} skills={entry.skills} used={chosen.now?.skill ? [chosen.now.skill] : []} canOpen={agentSkills.catalog?.can_open ?? false}
+            onuse={chosen.status === "done" ? undefined : (skill) => give(chosen, skill)} />
+          {#if given}<p class="note" role="status">{given}</p>{/if}
           {#if agentSkills.status}<p class="note" role="status">{agentSkills.status}</p>{/if}
         {:else}
           <AgentSkillsSwitch {entry} />
@@ -69,9 +94,27 @@
     <p class="note" role="status">No worker agents are running. Ask Rika to start one.</p>
   {:else}
     <div class="top"><button class="pill" onclick={() => allSkills(rika.agents[0].kind)}>All agent skills →</button></div>
+    {#if shelf.length}
+      <div class="shelf" aria-label="Saved skills">
+        {#each shelf as entry (entry.kind)}
+          <div class="shelf-row">
+            <span class="shelf-kind">{entry.label}</span>
+            {#each entry.skills as skill (skill.name)}
+              <span class="skill-chip" draggable="true" role="listitem" title={skill.description || skill.name}
+                ondragstart={(event) => { dragging = { kind: entry.kind, skill }; event.dataTransfer?.setData("text/plain", skill.name); if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy"; }}
+                ondragend={() => { dragging = null; over = null; }}>{skill.name}</span>
+            {/each}
+          </div>
+        {/each}
+        <p class="note" role="status">{given || "Drag a skill onto an agent to use it there."}</p>
+      </div>
+    {/if}
     {#each rika.agents as agent (agent.id)}
       {@const entry = agentSkills.kind(agent.kind)}
-      <article class="rika-agent" data-state={agent.status} aria-label={`${agent.name} · ${agent.status}`}>
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <article class="rika-agent" class:takes={takes(agent)} class:over={over === agent.id && takes(agent)} data-state={agent.status} aria-label={`${agent.name} · ${agent.status}`}
+        ondragover={(event) => { if (takes(agent)) { event.preventDefault(); over = agent.id; } }}
+        ondragleave={() => { if (over === agent.id) over = null; }} ondrop={(event) => drop(event, agent)}>
         <header>
           <strong>{agent.name}</strong>
           <span class="sub"><span class="where">{agent.where.tern_pane ? `tern · ${agent.where.tern_pane}` : agent.where.herdr_pane ? `herdr · ${agent.where.herdr_pane}` : agent.kind}</span
@@ -203,6 +246,44 @@
   .top {
     display: flex;
     justify-content: end;
+  }
+  /* Saved skills: a shelf of chips to drag onto an agent of the same kind. */
+  .shelf {
+    display: grid;
+    gap: 8px;
+    padding-bottom: 4px;
+  }
+  .shelf-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .shelf-kind {
+    flex: 0 0 100%;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .skill-chip {
+    padding: 4px 11px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    color: var(--ink);
+    font-size: 13.5px;
+    cursor: grab;
+    user-select: none;
+  }
+  .skill-chip:active {
+    cursor: grabbing;
+  }
+  .rika-agent.takes {
+    border-style: dashed;
+    border-color: color-mix(in srgb, var(--ink) 40%, transparent);
+  }
+  .rika-agent.over {
+    border-style: solid;
+    border-color: var(--ink);
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
   }
   .skills {
     display: grid;

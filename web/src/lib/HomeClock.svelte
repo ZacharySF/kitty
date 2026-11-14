@@ -18,7 +18,7 @@
   const date = $derived(now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }));
 </script>
 
-<HomeWidget {id} title={date}>
+<HomeWidget {id} title={date} icon="clock">
   <p><time datetime={now.toISOString()}>{time}</time></p>
 </HomeWidget>
 

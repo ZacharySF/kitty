@@ -16,7 +16,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Applications">
+<HomeWidget {id} title="Applications" icon="applications">
   {#snippet tail()}<button type="button" class="text-button" onclick={() => onview("pipeline")}>Open</button>{/snippet}
   {#if error}<p class="note" role="alert">{error}</p>
   {:else if counts}
