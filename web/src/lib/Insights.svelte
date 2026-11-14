@@ -337,10 +337,6 @@
     {#if loading}<Loader label="Loading insights…" />{/if}
 
     {#if section === "finder"}
-      <p class="muted">
-        Discover niche companies from public sources. Review evidence before
-        adding a company to your watchlist; nothing is approved automatically.
-      </p>
       <form
         class="controls"
         onsubmit={(event) => {
@@ -514,10 +510,6 @@
       {/each}
       </div>
     {:else if section === "mail"}
-      <p class="muted">
-        Reads recruiting email and suggests updates to your applications.
-        rika! can only read Gmail, and nothing changes until you confirm.
-      </p>
       {#if mail}
         {#if mail.client_present}<p>
             <strong>{mail.token_present ? "Connected" : "Ready to connect"}</strong>
@@ -614,11 +606,6 @@
         </div>
       {/if}
     {:else}
-      <p class="muted">
-        Sorts your jobs into worth applying and not. The free rules run on
-        this computer. The AI step costs money, so you see the price and
-        approve it first. It never submits applications.
-      </p>
       <p>
         Model <strong>{model || "Loading…"}</strong> · Spending limit
         <strong>${configuredCap.toFixed(2)}</strong>

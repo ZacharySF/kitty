@@ -117,7 +117,6 @@
 <div class="ai-layout">
   <section class="ai-panel" aria-labelledby="ai-title">
     <h2 id="ai-title">AI</h2>
-    <p class="muted">Your own OpenRouter key. rika! asks before every request.</p>
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if message}<p role="status">{message}</p>{/if}
     {#if status}

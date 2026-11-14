@@ -408,9 +408,6 @@
   <header class="panel-heading">
     <div>
       <h2 id={`${pane.id}-profile-title`}>My profile</h2>
-      <p class="muted">
-        Copied into application forms. You always review and submit yourself.
-      </p>
     </div>
     <button class="button" onclick={refresh} disabled={busy}
       >Refresh <kbd>r</kbd></button
@@ -465,9 +462,6 @@
       </section>
       <section class="subpanel" aria-labelledby={`${pane.id}-preferences-title`}>
         <h3 id={`${pane.id}-preferences-title`}>Resume</h3>
-        <p class="muted">
-          Add a PDF, then pick it when you prepare an application.
-        </p>
         {#if onresume}<button class="button primary" onclick={openResumes}
             >Upload resume PDF <kbd>n</kbd></button
           >{/if}
