@@ -1098,7 +1098,8 @@ describe("home dashboard", () => {
       // Design review: fewer, larger widgets. The brief is Rika's chip, sections are in search,
       // agents show only while a session runs (the demo has none).
       const titles = await board.locator(".home-widget > header h3").allInnerTexts();
-      assert.deepEqual(titles, ["Today", "Quick note", "Focus", "Up next"]);
+      // The demo has an agent session to show; a real workspace shows it once usage is switched on.
+      assert.deepEqual(titles, ["Today", "Quick note", "Focus", "Up next", "Agent session"]);
       // Two columns of widgets when there is room, one when there is not.
       const lefts = new Set(await board.locator(".column").evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().left))));
       assert.equal(lefts.size, viewport.width >= 1200 ? 2 : 1, `${lefts.size} widget columns at ${viewport.width}px`);

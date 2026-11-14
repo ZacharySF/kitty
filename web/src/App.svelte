@@ -477,7 +477,7 @@
       {#if brainView}<button data-tutorial="brain" aria-current={view === "brain" ? "page" : undefined}
         onclick={() => navigate("brain")}>Brain</button>{/if}
       {#each barGroups as group}<button aria-current={sectionGroup === group.label && view !== "brain" && view !== "today" ? "page" : undefined}
-        title={`${group.label} (${group.shortcut})`}
+        title={group.shortcut ? `${group.label} (${group.shortcut})` : group.label}
         onclick={() => navigate(groupLanding(group))}>{group.label}</button>{/each}
     </nav>
     <div class="bar-end">

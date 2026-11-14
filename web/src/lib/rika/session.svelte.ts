@@ -477,7 +477,9 @@ export class RikaSession {
   /** Q20 A: a brain dump's plan opens the drawer by itself too, and deciding it closes what that opened. */
   private plan(plan: RikaPlan) {
     this.upsert({ kind: "plan", ...plan, created_at: askedAt(plan, this.message(plan.message_id)) });
-    if (plan.status === "pending") this.openAuto();
+    // A plan or a date question answers something you just asked: it opens the drawer. A
+    // check-in is Rika's own question; it waits in the conversation and never opens anything.
+    if (plan.status === "pending" && plan.plan_kind !== "checkin") this.openAuto();
     else this.releaseAuto();
   }
 
@@ -489,7 +491,8 @@ export class RikaSession {
   /** Closes a drawer that opened by itself once nothing in it waits for the user. */
   private releaseAuto() {
     const dumping = this.listening && this.voice.mode === "dump";
-    if (this.drawer.open && this.drawer.auto && !this.pending.length && !this.pendingPlans.length && !dumping) this.closeDrawer();
+    const asked = this.pendingPlans.some((plan) => plan.plan_kind !== "checkin");
+    if (this.drawer.open && this.drawer.auto && !this.pending.length && !asked && !dumping) this.closeDrawer();
   }
 
   /** Q6 C: a reply to something said aloud is spoken back as a short summary, when a local engine can. */

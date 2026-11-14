@@ -434,7 +434,7 @@ test("Memory builds an index that was never built when first opened, so the coun
 });
 
 for (const theme of ["kitty", "liquid-glass"]) {
-  test(`the three Rika pages draw in the ${theme} theme: one surface, readable text, no nested boxes`, async () => {
+  test(`the three Rika pages draw in the ${theme} theme: at most one surface, readable text, no nested boxes`, async () => {
     const { page, problems, context } = await open("settings/rika-routing", { theme });
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
     for (const [link, name] of [["Routing memory", "Routing memory"], ["Email", "Email"], ["Memory", "Memory"]]) {
@@ -454,7 +454,9 @@ for (const theme of ["kitty", "liquid-glass"]) {
         });
         return { border: parseFloat(style.borderTopWidth), color: text.color, boxes: boxes.map((child) => child.className) };
       });
-      assert.ok(look.border > 0, `${name} is not drawn as a surface`);
+      // Kitty's Settings pages are card-free (text on the page); the other themes draw one surface.
+      if (theme === "kitty") assert.equal(look.border, 0, `${name} is framed in Kitty`);
+      else assert.ok(look.border > 0, `${name} is not drawn as a surface`);
       assert.notEqual(look.color, "rgba(0, 0, 0, 0)");
       assert.deepEqual(look.boxes, [], `${name} nests boxes inside its surface`);
     }

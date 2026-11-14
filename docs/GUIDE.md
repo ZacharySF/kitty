@@ -531,7 +531,9 @@ due day (or at the due time, if later): "Did you finish “X”?". **Done** mark
 **Tomorrow** and **Another day** move it and book the next check-in, **Drop** cancels
 it (a study task is removed); each applies at once with Undo. **Not now** leaves the
 task alone. Rika asks once per due date, never about a task that is already done,
-dropped or deleted, and follows a task you moved yourself.
+dropped or deleted, and follows a task you moved yourself. A check-in waits in the
+conversation (home's Rika panel counts it as waiting); unlike a date question, it never
+opens the drawer by itself.
 
 When today's morning brief exists, a **Morning brief · N** chip sits beside the
 Conversation and Agents switch; its popover lists the day's finds and **Open Goals**,
