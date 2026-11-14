@@ -2,10 +2,12 @@
   import { untrack } from "svelte";
   import { Button } from "@nunera/bracket";
   import type { ModuleId, ModulesState } from "./api";
-  import { buildStore } from "./build.svelte";
-  import { TEMPLATES, wantedModules } from "./home/templates";
+  import { buildStore, setPreferences } from "./build.svelte";
+  import { USES, wantedModules } from "./home/templates";
   import { megabytes, moduleObtainable, packsOf, percent, preselect, sameSelection, totalLine, totals, withoutDownload } from "./modulePicker";
   import { moduleStore as store } from "./modulePicker.svelte";
+  import { EXTRA_THEMES, STARTER_THEMES, toggleTheme } from "./themes/installed";
+  import ThemeTiles from "./themes/ThemeTiles.svelte";
 
   /**
    * The one module picker: a switch, a name and what you do with it per module, the size on
@@ -26,6 +28,9 @@
   let answers = $state<string[]>([]);
   let showAll = $state(false);
   let failure = $state("");
+  // Themes are a module without a download or a restart: its picks save as they are made.
+  const themes = $derived(buildStore.build.ui.themes.installed);
+  const keepThemes = (installed: string[]) => void setPreferences({ ui: { themes: { installed } } });
   const available = $derived(store.modules?.available ?? []);
   const configured = $derived(store.modules?.configured ?? []);
   const base = $derived(fresh ? withoutDownload(available, store.packs) : configured);
@@ -50,7 +55,7 @@
   });
 
   function answer(id: string) {
-    const template = TEMPLATES.find((item) => item.id === id)!;
+    const template = USES.find((item) => item.id === id)!;
     answers = answers.includes(id) ? answers.filter((item) => item !== id) : [...answers, id];
     // An answer speaks for its modules again, whatever their switches said.
     overrides = Object.fromEntries(Object.entries(overrides).filter(([module]) => !template.modules.includes(module as ModuleId)));
@@ -71,7 +76,7 @@
 <div class="module-picker">
   {#if question}
     <div class="uses" role="group" aria-label="What will you use rika! for?">
-      {#each TEMPLATES as template (template.id)}
+      {#each USES as template (template.id)}
         <button type="button" class="pill" aria-pressed={answers.includes(template.id)} disabled={store.busy} onclick={() => answer(template.id)}>{template.use}</button>
       {/each}
     </div>
@@ -114,6 +119,21 @@
           </span>
         </div>
       {/each}
+      {#if !question || showAll || themes.length}
+        <div class="row" data-module="themes">
+          <button type="button" class="switch" role="switch" id={`${uid}-themes`} aria-checked={themes.length > 0} aria-label="Themes"
+            aria-describedby={`${uid}-themes-about`} onclick={() => keepThemes(themes.length ? [] : STARTER_THEMES)}><i></i></button>
+          <label class="name" for={`${uid}-themes`}>Themes</label>
+          <span class="about" id={`${uid}-themes-about`}>Other looks for the whole app.</span>
+          <span class="end">{#if themes.length}<span class="quiet">{themes.length} of {EXTRA_THEMES.length}</span>{/if}</span>
+        </div>
+        {#if themes.length}
+          <div class="theme-picks">
+            <ThemeTiles themes={EXTRA_THEMES} selected={themes} kind="checkbox" name={`${uid}-theme`} label="Themes to keep"
+              onpick={(id) => keepThemes(toggleTheme(themes, id))} />
+          </div>
+        {/if}
+      {/if}
     </fieldset>
     {#if question}
       <button type="button" class="text-button more" aria-expanded={showAll} onclick={() => (showAll = !showAll)}>{showAll ? "Show only chosen" : `Show all ${available.length} modules`}</button>
@@ -204,6 +224,9 @@
     cursor: pointer;
   }
   /* Wraps to a second line rather than cutting a sentence short. */
+  .theme-picks {
+    padding: 2px 0 12px;
+  }
   .about {
     min-width: 0;
     color: var(--muted);

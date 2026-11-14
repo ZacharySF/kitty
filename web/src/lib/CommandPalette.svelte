@@ -254,11 +254,15 @@
     padding: 0;
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
-    border-radius: 18px;
+    border-radius: 22px;
     color: var(--ink);
     background: color-mix(in srgb, var(--solid-panel, var(--br-panel)) 80%, transparent);
     backdrop-filter: blur(36px) saturate(170%);
     box-shadow: var(--overlay-shadow);
+  }
+  /* The shared overlay rule (styles.css) sets 12px for every dialog; search is a field, so rounder. */
+  :global(:root body) dialog.spotlight {
+    border-radius: 22px;
   }
   .spotlight::backdrop {
     background: color-mix(in srgb, var(--shadow-tint) 28%, transparent);

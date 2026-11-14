@@ -302,13 +302,7 @@
 >
   <header class="panel-heading">
     <div>
-      <p class="eyebrow">Setup / Step 2</p>
       <h2 id={`${pane.id}-library-title`}>My resumes</h2>
-      <p class="muted">
-        Upload a PDF you have checked, then choose it for a job in Prepare
-        applications. Your resume stays local; uploading never submits an
-        application.
-      </p>
     </div>
     <button class="button" disabled={loading || busy} onclick={load}
       >Refresh</button

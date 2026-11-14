@@ -20,7 +20,9 @@
    * brain dump's live transcript runs at the end until Make plan. `brief` shows the morning
    * brief's chip (only on the copy in view, so Ctrl K opens one popover).
    */
-  let { brief = false }: { brief?: boolean } = $props();
+  /** `sections`: the Conversation / Agents switch; Rika's page has its own tabs and turns it off. */
+  let { brief = false, sections = true }: { brief?: boolean; sections?: boolean } = $props();
+  const showingAgents = $derived(sections && rika.drawer.section === "agents");
   const STATUS = { done: "Done", undone: "Undone", failed: "Failed", approved: "Approved", rejected: "Rejected", expired: "Expired", pending: "Needs you" } as const;
   let list = $state<HTMLElement>();
   let transcript = $state<HTMLElement>();
@@ -45,7 +47,7 @@
     void rika.entries.length;
     void rika.voice.segments.length;
     void rika.voice.partial;
-    if (rika.drawer.section !== "conversation") return;
+    if (showingAgents) return;
     void tick().then(() => (transcript ?? list?.lastElementChild)?.scrollIntoView({ block: "end" }));
   });
   // Q16: a held send counts down while it can still be undone.
@@ -62,14 +64,14 @@
   });
 </script>
 
-<div class="top">
-  <Select label="Rika sections" kind="segments" value={rika.drawer.section}
+{#if sections || brief}<div class="top">
+  {#if sections}<Select label="Rika sections" kind="segments" value={rika.drawer.section}
     options={[{ value: "conversation", label: "Conversation" }, { value: "agents", label: "Agents", count: rika.agents.length }]}
-    onchange={(section) => rika.showDrawer(section as DrawerSection)} />
+    onchange={(section) => rika.showDrawer(section as DrawerSection)} />{/if}
   {#if brief}<BriefChip />{/if}
-</div>
+</div>{/if}
 {#if rika.error}<p class="error" role="alert">{rika.error}</p>{/if}
-{#if rika.drawer.section === "agents"}
+{#if showingAgents}
   <RikaAgents />
 {:else}
   <section class="conversation" aria-label="Conversation">

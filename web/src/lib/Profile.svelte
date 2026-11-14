@@ -407,41 +407,27 @@
 >
   <header class="panel-heading">
     <div>
-      <p class="eyebrow">Setup / Step 1</p>
       <h2 id={`${pane.id}-profile-title`}>My profile</h2>
-      <p class="muted">
-        Add the details you want copied into application forms. Leave anything
-        you do not know blank. You always review and submit applications
-        yourself.
-      </p>
     </div>
     <button class="button" onclick={refresh} disabled={busy}
       >Refresh <kbd>r</kbd></button
     >
   </header>
-  {#if demo}<p class="muted">
-      Demo edits stay in the temporary local workspace. External notifications
-      are disabled.
-    </p>{/if}
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   {#if notice}<p class="success-note" role="status">{notice}</p>{/if}
   {#if busy}<p class="muted" role="status">Working…</p>{/if}
 
   {#if data}
-    <div class="profile-grid setup-layout">
+    <div class="setup-layout">
       <section class="subpanel" aria-labelledby={`${pane.id}-facts-title`}>
-        <h3 id={`${pane.id}-facts-title`}>Your basic details</h3>
-        <p class="muted">
-          Use your own verified information. Nothing here determines your
-          eligibility for a job.
-        </p>
+        <h3 id={`${pane.id}-facts-title`}>Details</h3>
         <form
           onsubmit={(event) => {
             event.preventDefault();
             saveBasics();
           }}
         >
-          <div class="profile-grid">
+          <div class="fields">
             {#each basicFields as field}
               <label for={`${pane.id}-profile-${field.key}`}
                 >{field.label}
@@ -468,20 +454,14 @@
               disabled={busy ||
                 !basicsDirty ||
                 (section === "profile" && yamlDirty)}
-              >Review & save my details</button
+              >Save</button
             >
-            <span class="muted"
-              >{basicsDirty ? "Unsaved details" : "Details up to date"}</span
-            >
+            {#if basicsDirty}<span class="muted">Unsaved</span>{/if}
           </div>
         </form>
       </section>
       <section class="subpanel" aria-labelledby={`${pane.id}-preferences-title`}>
-        <h3 id={`${pane.id}-preferences-title`}>Next: upload your resume</h3>
-        <p class="muted">
-          Add a PDF in My resumes, then choose it when preparing an application.
-          Uploading does not change a resume already selected for a job.
-        </p>
+        <h3 id={`${pane.id}-preferences-title`}>Resume</h3>
         {#if onresume}<button class="button primary" onclick={openResumes}
             >Upload resume PDF <kbd>n</kbd></button
           >{/if}
@@ -859,19 +839,38 @@
     gap: 1rem;
     align-items: start;
   }
+  /* One calm column like Settings: no boxes, a hairline between sections. */
+  .profile-page {
+    max-width: 820px;
+    margin-inline: auto;
+  }
   .setup-layout {
-    grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+    margin: 0 1rem;
+  }
+  .setup-layout > .subpanel {
+    margin: 0;
+  }
+  .fields label {
+    display: grid;
+    grid-template-columns: 11rem minmax(0, 1fr);
+    align-items: center;
+    gap: 1rem;
+    margin: 0;
+    padding: 9px 0;
+    border-top: 1px solid var(--border);
+    font-size: 15px;
+  }
+  .fields label:first-child {
+    border-top: 0;
   }
   .profile-grid > .subpanel,
   .subpanel .profile-grid {
     margin: 0;
   }
   .subpanel {
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1.15rem;
+    border-top: 1px solid var(--border);
+    padding: 1.15rem 0;
     min-width: 0;
-    background: var(--surface);
   }
   summary {
     cursor: pointer;
@@ -909,11 +908,7 @@
   textarea {
     width: 100%;
     box-sizing: border-box;
-    padding: 0.65rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
     color: var(--ink);
-    background: var(--surface-raised);
     font: inherit;
   }
   textarea {

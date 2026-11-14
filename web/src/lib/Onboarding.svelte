@@ -8,7 +8,6 @@
   import type { View } from "./workspace";
   import { currentTheme, THEME_EVENT } from "./themes";
   import { getTheme } from "./themes/catalog";
-  import ThemePicker from "./ThemePicker.svelte";
 
   const GUIDE = "https://github.com/ZacharySF/kitty/blob/main/docs/GOOGLE_ONBOARDING.md";
   // Bracket's Button types only button attributes; with `href` it renders an <a> that takes these too.
@@ -235,7 +234,7 @@
     </section>
   {:else if mode}
     <div class="welcome">
-      <div class="welcome-tools"><ThemePicker /><Button size="sm" variant="ghost" disabled={busy || moduleStore.busy} onclick={finish} aria-label="Skip onboarding">Skip</Button></div>
+      <div class="welcome-tools"><Button size="sm" variant="ghost" disabled={busy || moduleStore.busy} onclick={finish} aria-label="Skip onboarding">Skip</Button></div>
       {#if mode === "finish" || welcomeStep !== "modules"}<img class="brain" src={`/art/brain-${scheme}.webp`} alt="" width="760" height="652" />{/if}
       <div class="welcome-body">
         {#if mode === "finish"}

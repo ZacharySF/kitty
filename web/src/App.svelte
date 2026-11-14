@@ -72,7 +72,6 @@
   let loading = $state(true);
   let palette = $state(false);
   let help = $state(false);
-  let demoHidden = $state(false);
   let guide = $state(false);
   let addJob = $state(false);
   /** The quick-add card popover (Q66), opened by N on Flashcards or Ctrl K "New card". */
@@ -496,10 +495,6 @@
   <main id="main-content" tabindex="-1" class:atlas-main={fills}>
     {#if workspace && view !== "settings"}<PairingPrompt onsettings={() => navigate("settings")} />{/if}
     {#if workspace}<EffectsPrompt />{/if}
-    {#if workspace?.demo && !demoHidden}<div class="demo-notice">
-        <span>Demo workspace: local changes work, external actions are off.</span>
-        <button class="text-button" aria-label="Dismiss demo notice" onclick={() => (demoHidden = true)}>Dismiss</button>
-      </div>{/if}
     {#if workspace?.modules.restart_required && view !== "settings"}<div class="demo-notice" role="status">
         Module changes are saved but not active yet. Restart rika! to apply them.
         <button class="text-button" onclick={openModuleSettings}>Review in Settings</button>

@@ -115,8 +115,7 @@
 
 <section class="ai-review" aria-label="Reviewed AI assistance">
   <p class="muted">
-    Only the selection you review is sent. AI output is an uncertain draft; verify
-    its claims and apply any changes yourself. Nothing is edited automatically.
+    Only this text is sent. Treat the answer as a draft; nothing is changed for you.
   </p>
   <button
     class="button"
@@ -125,9 +124,6 @@
       (mindMap && (!mindMap.question.trim() || !mindMap.graph.nodes.length))}
     >{busy ? "Working…" : previewLabel}</button
   >
-  {#if demo}<p class="muted">
-      External AI requests are disabled in the disposable demo.
-    </p>{/if}
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   {#if review}
     <div class="review-box">

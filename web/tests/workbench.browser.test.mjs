@@ -471,7 +471,7 @@ describe("top bar", () => {
     const bar = page.locator(".system-bar");
     const groups = page.getByRole("navigation", { name: "Workspace groups" });
     await groups.waitFor();
-    assert.deepEqual(await groups.getByRole("button").allTextContents(), ["Brain", "Plan", "Study", "Job search"]);
+    assert.deepEqual(await groups.getByRole("button").allTextContents(), ["Brain", "Plan", "Study", "Job search", "Rika"]);
     assert.equal(await bar.getByRole("button", { name: /Theme|Refresh|^Notifications/ }).count(), 0, "the bar still carries theme, refresh or the bell");
     assert.ok(!/Search anything/.test(await bar.innerText()), "the search button still has words");
     assert.equal(await page.locator('.workbench-top [role="tab"], .workbench-top [role="tablist"]').count(), 0, "a tab strip is still drawn");

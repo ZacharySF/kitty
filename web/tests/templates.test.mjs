@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { DEFAULT_BUILD, deepMerge } from '../src/lib/buildCore.ts';
 import { HOME_WIDGETS, columnShares, placeWidget, resolveHome, rikaShare, savedHome, spareWidgets, splitWidths } from '../src/lib/home/layout.ts';
 import {
-  TEMPLATES, arrangement, missingLine, missingModules, suggestTemplate, suggestionLine, wantedModules,
+  TEMPLATES, USES, arrangement, missingLine, missingModules, suggestTemplate, suggestionLine, wantedModules,
 } from '../src/lib/home/templates.ts';
 
 const registry = JSON.parse(readFileSync(new URL('../../src/kitty/modules.json', import.meta.url), 'utf8'));
@@ -16,15 +16,34 @@ const home = schema.properties.ui.properties.home.properties;
 const template = (id) => TEMPLATES.find((item) => item.id === id);
 const widgets = HOME_WIDGETS.map((widget) => widget.id);
 
-test('the four templates ship, each with a name, an answer, known modules and known widgets', () => {
-  assert.deepEqual(TEMPLATES.map((item) => item.name), ['Student', 'Job search', 'Builder', 'Minimal']);
-  assert.deepEqual(TEMPLATES.map((item) => item.use), ['Studying', 'Finding a job', 'Building with agents', 'Notes and a calendar']);
+test('templates ship with unique names, known modules and known widgets; the first four answer the first-run question', () => {
+  assert.deepEqual(USES.map((item) => item.name), ['Student', 'Job search', 'Builder', 'Minimal']);
+  assert.deepEqual(USES.map((item) => item.use), ['Studying', 'Finding a job', 'Building with agents', 'Notes and a calendar']);
+  assert.deepEqual(TEMPLATES.slice(0, 4), USES, 'the answers are the first four templates');
+  assert.equal(new Set(TEMPLATES.map((item) => item.id)).size, TEMPLATES.length);
+  assert.equal(new Set(TEMPLATES.map((item) => item.name)).size, TEMPLATES.length);
   const modules = registry.modules.map((item) => item.id);
+  const joins = HOME_WIDGETS.filter((widget) => !('library' in widget)).map((widget) => widget.id);
   for (const item of TEMPLATES) {
     assert.ok(item.modules.length && item.modules.every((id) => modules.includes(id)), `${item.id} names an unknown module`);
-    const placed = [...item.home.columns.flat(), ...item.home.hidden];
-    assert.deepEqual([...placed].sort(), [...widgets].sort(), `${item.id} must place or hide every home widget exactly once`);
+    const placed = item.home.columns.flat();
+    assert.equal(new Set(placed).size, placed.length, `${item.id} places a widget twice`);
+    assert.ok(placed.every((id) => widgets.includes(id)), `${item.id} places an unknown widget`);
+    // Every widget that would join home by itself is placed or hidden, so the arrangement is exactly the template's.
+    assert.deepEqual([...placed.filter((id) => joins.includes(id)), ...item.home.hidden].sort(), [...joins].sort(), `${item.id} must place or hide every self-joining widget once`);
+    // Each placed widget can be drawn with the template's own modules on.
+    for (const id of placed) {
+      const needs = HOME_WIDGETS.find((widget) => widget.id === id).modules;
+      assert.ok(!needs.length || needs.some((module) => item.modules.includes(module)), `${item.id} places ${id} without its module`);
+    }
   }
+});
+
+test('library widgets wait until they are added: they never join home by themselves, and are not written as hidden', () => {
+  assert.deepEqual(resolveHome({ columns: [['note']], hidden: [] }, ['workspace', 'applyai', 'terminal']).flat().filter((id) => ['goals', 'week', 'cards', 'pipeline', 'clock'].includes(id)), []);
+  assert.deepEqual(resolveHome({ columns: [['goals', 'clock'], ['pipeline']], hidden: [] }, []), [['goals', 'clock']], 'core widgets draw with every module off; Applications needs ApplyAI');
+  assert.deepEqual(spareWidgets([['agenda']], []).map((widget) => widget.id), ['goals', 'clock']);
+  assert.deepEqual(savedHome([['agenda', 'goals']], { columns: [], hidden: [] }, ['workspace']).hidden, ['note', 'focus', 'next']);
 });
 
 test('the question\'s answers preselect their templates\' modules, each once', () => {
@@ -76,8 +95,8 @@ test('edit mode moves a widget within and across columns, and Done saves what is
   // Dropping a widget on itself leaves it where it is; a new widget is simply added.
   assert.deepEqual(placeWidget(start, 'note', 0, 'note'), start);
   assert.deepEqual(placeWidget(start, 'focus', 1), [['agenda', 'note'], ['next', 'focus']]);
-  assert.deepEqual(spareWidgets(start, ['workspace', 'terminal']).map((widget) => widget.id), ['focus', 'agents', 'session']);
-  assert.deepEqual(spareWidgets(start, ['workspace']).map((widget) => widget.id), ['focus']);
+  assert.deepEqual(spareWidgets(start, ['workspace', 'terminal']).map((widget) => widget.id), ['focus', 'agents', 'session', 'goals', 'week', 'cards', 'clock']);
+  assert.deepEqual(spareWidgets(start, ['workspace']).map((widget) => widget.id), ['focus', 'goals', 'week', 'cards', 'clock']);
   // Emptied columns go; a drawable widget left off is hidden; one whose module is off is neither,
   // so it shows when its module comes on. What was hidden and is now placed is no longer hidden.
   assert.deepEqual(savedHome([[], ['next', 'focus'], ['agenda']], { columns: [], hidden: ['focus', 'old'] }, ['workspace']),

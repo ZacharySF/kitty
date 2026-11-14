@@ -31,6 +31,7 @@
   import TagSettings from "./TagSettings.svelte";
   import BuildSettings from "./BuildSettings.svelte";
   import { buildStore, setPreferences } from "./build.svelte";
+  import "./settingsRows.css";
   import RoutingMemory from "./rika/settings/RoutingMemory.svelte";
   import EmailSettings from "./rika/settings/EmailSettings.svelte";
   import MemorySettings from "./rika/settings/MemorySettings.svelte";
@@ -201,7 +202,7 @@
       </nav>
     </div>
 
-    <div class="page" data-settings-page={shown}>
+    <div class="page settings-rows" data-settings-page={shown}>
       {#if shown === "appearance"}
         <AppearanceSettings />
       {:else if shown === "desktop"}
@@ -360,91 +361,6 @@
     margin: 8px 10px;
     color: var(--muted);
     font-size: var(--fs-control);
-  }
-  /* One page, one surface: rows inside are split by full-width hairlines. */
-  .page :global(.rows) {
-    display: grid;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
-  .page :global(.set-row) {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-    min-height: 44px;
-    margin: 0 calc(-1 * var(--br-panel-p));
-    padding: 6px var(--br-panel-p);
-    border-top: 1px solid var(--hairline);
-    font-size: 13px;
-  }
-  .page :global(.rows > .set-row:first-of-type) {
-    border-top: 0;
-  }
-  .page :global(.set-label) {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    flex-shrink: 0;
-    min-width: 130px;
-    color: var(--ink);
-    font-weight: 500;
-  }
-  .page :global(.set-desc) {
-    min-width: 0;
-    color: var(--muted);
-    line-height: 1.45;
-  }
-  .page :global(.set-end) {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    margin-left: auto;
-    white-space: nowrap;
-  }
-  .page :global(.set-note) {
-    margin: 8px 0 0;
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .page :global(.set-switch) {
-    position: relative;
-    flex-shrink: 0;
-    width: 32px;
-    height: 18px;
-    padding: 0;
-    border: 1px solid var(--hairline);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--ink) 8%, transparent);
-    cursor: pointer;
-    transition: background-color 160ms;
-  }
-  .page :global(.set-switch i) {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 12px;
-    height: 12px;
-    border-radius: 999px;
-    background: var(--muted);
-    transition: transform 160ms, background-color 160ms;
-  }
-  .page :global(.set-switch[aria-checked="true"]) {
-    background: color-mix(in srgb, var(--accent) 45%, transparent);
-  }
-  .page :global(.set-switch[aria-checked="true"] i) {
-    transform: translateX(14px);
-    background: var(--ink);
-  }
-  .page :global(.set-switch:focus-visible) {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .page :global(.set-switch:disabled) {
-    opacity: 0.55;
-    cursor: default;
   }
   .set-row.slider {
     display: grid;

@@ -1088,7 +1088,6 @@
 <section class="flashcards" aria-label="Flashcards workspace">
   <header>
     <h1>Flashcards</h1>
-    {#if demo}<span class="demo">Demo</span>{/if}
     {#if overview && !editorView}<span class="deck-chip"><Select kind="search" label="Deck scope" options={scopeOptions} value={String(deckId)}
       onchange={(next) => setScope(Number(next))} oncreate={(name) => editDeck(null, name)} createAlways
       createLabel={(name) => (name ? `New deck “${name}”` : "New deck")} /></span>{/if}
@@ -1553,11 +1552,6 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-  }
-  header .demo {
-    color: var(--muted);
-    font: 500 10.5px var(--font-ui);
-    text-transform: uppercase;
   }
   header .primary-actions {
     margin: 0 0 0 auto;

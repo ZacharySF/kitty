@@ -11,7 +11,19 @@ export const HOME_WIDGETS = [
   { id: "next", title: "Up next", modules: ["workspace", "applyai"], column: 1 },
   { id: "agents", title: "Agents", modules: ["terminal"], column: 1 },
   { id: "session", title: "Agent session", modules: ["terminal"], column: 1 },
-] as const satisfies readonly { id: string; title: string; modules: readonly ModuleId[]; column: number }[];
+  { id: "goals", title: "Goals", modules: [], column: 1, library: true },
+  { id: "week", title: "This week", modules: ["workspace"], column: 0, library: true },
+  { id: "cards", title: "Flashcards", modules: ["workspace"], column: 0, library: true },
+  { id: "pipeline", title: "Applications", modules: ["applyai"], column: 1, library: true },
+  { id: "clock", title: "Clock", modules: [], column: 0, library: true },
+] as const satisfies readonly Widget[];
+/**
+ * `modules`: the widget draws when any of them is on (none: always). `library`: it waits
+ * in edit mode's library until it is added or a template places it, so home stays as it
+ * was for everyone who has not asked for it.
+ */
+type Widget = { id: string; title: string; modules: readonly ModuleId[]; column: number; library?: boolean };
+const drawable = (widget: Widget, enabled: readonly string[]) => !widget.modules.length || widget.modules.some((module) => enabled.includes(module));
 export type HomeWidgetId = (typeof HOME_WIDGETS)[number]["id"];
 export type HomeLayout = { columns: string[][]; hidden: string[] };
 
@@ -22,11 +34,11 @@ export type HomeLayout = { columns: string[][]; hidden: string[] };
  * joins its usual column, so a new widget shows for people with a saved arrangement.
  */
 export function resolveHome(saved: HomeLayout, enabled: readonly string[]): HomeWidgetId[][] {
-  const drawn = (id: string) => HOME_WIDGETS.find((widget) => widget.id === id && widget.modules.some((module) => enabled.includes(module)))?.id;
+  const drawn = (id: string) => HOME_WIDGETS.find((widget) => widget.id === id && drawable(widget, enabled))?.id;
   const columns = saved.columns.map((column) => column.flatMap((id) => (saved.hidden.includes(id) ? [] : drawn(id) ?? [])));
   const placed = new Set<string>([...saved.columns.flat(), ...saved.hidden]);
   for (const widget of HOME_WIDGETS) {
-    if (placed.has(widget.id) || !drawn(widget.id)) continue;
+    if (placed.has(widget.id) || "library" in widget || !drawn(widget.id)) continue;
     while (columns.length <= widget.column) columns.push([]);
     columns[widget.column].push(widget.id);
   }
@@ -54,7 +66,7 @@ export function placeWidget(columns: HomeWidgetId[][], id: HomeWidgetId, column:
 /** The widgets that can be drawn and are not on home: edit mode's library. */
 export function spareWidgets(columns: HomeWidgetId[][], enabled: readonly string[]) {
   const placed = new Set<string>(columns.flat());
-  return HOME_WIDGETS.filter((widget) => !placed.has(widget.id) && widget.modules.some((module) => enabled.includes(module)));
+  return HOME_WIDGETS.filter((widget) => !placed.has(widget.id) && drawable(widget, enabled));
 }
 
 /**
@@ -64,7 +76,8 @@ export function spareWidgets(columns: HomeWidgetId[][], enabled: readonly string
  */
 export function savedHome(columns: HomeWidgetId[][], previous: HomeLayout, enabled: readonly string[]): HomeLayout {
   const placed = new Set<string>(columns.flat());
-  const hidden = new Set([...previous.hidden, ...spareWidgets(columns, enabled).map((widget) => widget.id)]);
+  // A library widget left off needs no entry: it never joins home by itself.
+  const hidden = new Set([...previous.hidden, ...spareWidgets(columns, enabled).filter((widget) => !("library" in widget)).map((widget) => widget.id)]);
   return { columns: columns.filter((column) => column.length), hidden: [...hidden].filter((id) => !placed.has(id)) };
 }
 

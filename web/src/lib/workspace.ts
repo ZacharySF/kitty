@@ -5,6 +5,7 @@ export const navigation = [
   { id: "today", label: "Home", icon: "today", module: null },
   { id: "brain", label: "Brain", icon: "atlas", module: "brain" },
   { id: "goals", label: "Goals", icon: "goals", module: null },
+  { id: "rika", label: "Rika", icon: "ai", module: null },
   { id: "calendar", label: "Calendar", icon: "calendar", module: "workspace" },
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
   { id: "herdr", label: "herdr", icon: "terminal", module: "terminal" },
@@ -95,6 +96,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
       "reports",
     ],
   },
+  { label: "Rika", shortcut: "", tone: "var(--c5)", views: ["rika"] },
   { label: "Settings", shortcut: "", tone: "var(--c6)", views: ["settings", "profile", "ai"] },
 ];
 /**

@@ -2164,8 +2164,8 @@
     color: var(--surface);
   }
   .time-heading.selected .time-date {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
   }
   .all-day-cell {
     display: flex;
@@ -2177,7 +2177,7 @@
     gap: 0.2rem;
   }
   .all-day-cell.selected {
-    background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
   }
   .all-day-add {
     padding: 0.15rem;
@@ -2246,8 +2246,9 @@
   .time-cell.hour-start {
     border-top: 1px solid var(--border);
   }
+  /* A tint of the page, not a filled column: the grid lines stay visible through it. */
   .time-day.today {
-    background: color-mix(in srgb, var(--accent) 3%, var(--surface));
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
   }
   .slot-button {
     position: absolute;

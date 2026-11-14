@@ -246,11 +246,7 @@
 <section class="panel sources" aria-labelledby="sources-title">
   <header class="panel-heading">
     <div>
-      <p class="eyebrow">Discovery / source health</p>
       <h2 id="sources-title">Sources</h2>
-      <p class="muted">
-        Inspect evidence and choose when to look for opportunities.
-      </p>
     </div>
     <div class="controls">
       <button class="button" onclick={refresh} disabled={loading || busy}

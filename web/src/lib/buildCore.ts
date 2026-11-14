@@ -49,6 +49,8 @@ export type BuildUi = {
   notifications: { quiet: QuietPreference };
   flashcards: { look: "tiles" | "graph" };
   study: { guide_view: "columns" | "rail"; plans_view: "timeline" | "days" };
+  /** The Themes module: the extra themes kept in the picker (themes/installed.ts). */
+  themes: { installed: string[] };
 };
 export type Build = {
   schema: number;
@@ -108,6 +110,7 @@ export const DEFAULT_BUILD: Build = {
     notifications: { quiet: { enabled: false, from: 1320, to: 450, let_calendar: true, digest: true } },
     flashcards: { look: "tiles" },
     study: { guide_view: "columns", plans_view: "timeline" },
+    themes: { installed: [] },
   },
 };
 
