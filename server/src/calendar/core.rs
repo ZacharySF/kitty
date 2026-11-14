@@ -12,7 +12,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::rrule::{Invalid, Rule, DAILY};
-use crate::ported::db::{self, bind, exists, row, rows, transaction};
+use crate::ported::db::{bind, exists, row, rows, transaction};
 use crate::ported::py;
 use crate::ported::time::{now_iso, Date, Dt, Zone, DAY, MINUTE, SECOND};
 use crate::ported::{fail, internal, Done};
@@ -251,11 +251,21 @@ pub fn save_calendar(conn: &Connection, body: &Obj) -> Done<Obj> {
     calendar(conn, &ident)
 }
 
+/// `require_writable`: a calendar imported from an outside account (`calendar_remote`) is
+/// read-only here.
+fn require_writable(conn: &Connection, calendar_id: &Value) -> Done<()> {
+    if exists(conn, "SELECT 1 FROM calendar_remote WHERE calendar_id=?", [bind(calendar_id)?])? {
+        return Err(fail(409, "This calendar comes from Outlook and is read-only in rika!; change it in Outlook"));
+    }
+    Ok(())
+}
+
 pub fn delete_calendar(conn: &Connection, body: &Obj) -> Done<Value> {
     let cal = calendar(conn, body.get("id").unwrap_or(&Value::Null))?;
     if cal["id"] == "personal" {
         return Err(bad("Personal is the default calendar and cannot be deleted"));
     }
+    require_writable(conn, &cal["id"])?;
     if !py::eq(body.get("revision").unwrap_or(&Value::Null), &cal["revision"]) {
         return Err(fail(409, "Calendar changed; reload before deleting"));
     }
@@ -506,6 +516,7 @@ fn with(base: &Obj, changes: &[(&str, Value)]) -> Obj {
 
 pub fn create_event(conn: &Connection, body: &Obj) -> Done<Obj> {
     let data = normalize_event(conn, body)?;
+    require_writable(conn, &data["calendar_id"])?;
     let created = transaction(conn, false, || {
         if !data["source_key"].is_null() {
             if let Some(found) = row(conn, "SELECT id FROM calendar_events WHERE source_key=?", [bind(&data["source_key"])?])? {
@@ -771,6 +782,8 @@ pub fn edit_event(conn: &Connection, ident: &Value, body: &Obj) -> Done<Obj> {
         Value::Object(map) if map.keys().all(|key| EVENT_FIELDS.contains(&key.as_str())) => map.clone(),
         _ => return Err(bad("Invalid event changes")),
     };
+    require_writable(conn, &current["calendar_id"])?;
+    require_writable(conn, changes.get("calendar_id").unwrap_or(&current["calendar_id"]))?;
     if let Some(key) = changes.get("source_key") {
         if !py::eq(key, current.get("source_key").unwrap_or(&Value::Null)) {
             return Err(bad("Stable source linkage cannot be edited"));
@@ -1460,6 +1473,7 @@ pub fn import_reviewed(conn: &Connection, items: &Value) -> Done<Value> {
             };
             exceptions.push((key, replacement));
         }
+        require_writable(conn, &data["calendar_id"])?;
         normalized.push((data, exceptions));
     }
     let (mut created, mut duplicates, mut undo_ids) = (Vec::new(), Vec::new(), Vec::new());
@@ -1483,8 +1497,4 @@ pub fn import_reviewed(conn: &Connection, items: &Value) -> Done<Value> {
         Ok(())
     })?;
     Ok(json!({"created": created, "duplicates": duplicates, "undo_ids": undo_ids}))
-}
-
-pub(crate) fn db_row(conn: &Connection, sql: &str, value: &Value) -> Done<Option<Obj>> {
-    db::row(conn, sql, [bind(value)?])
 }

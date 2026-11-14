@@ -326,7 +326,7 @@ impl Info {
                 };
                 let numweeks = wyearlen / 7 + (wyearlen % 7) / 4;
                 let wday = |i: i64| self.wdaymask.get(i as usize).copied().map(i64::from);
-                let mut fill = |mask: &mut Vec<bool>, mut i: i64| {
+                let fill = |mask: &mut Vec<bool>, mut i: i64| {
                     for _ in 0..7 {
                         mark(mask, i);
                         i += 1;

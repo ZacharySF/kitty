@@ -181,7 +181,9 @@ impl Zone {
             Zone::Utc => Some((utc, false)),
             Zone::Fixed(offset) => Some((utc + offset, false)),
             Zone::Iana(_, zone) => {
-                let stamp = Timestamp::from_microsecond(utc).ok()?;
+                // jiff's instants end a day before Python's last (9999-12-31T23:59:59.999999):
+                // the offset there is the one at jiff's limit.
+                let stamp = Timestamp::from_microsecond(utc).unwrap_or(if utc > 0 { Timestamp::MAX } else { Timestamp::MIN });
                 let offset = i64::from(zone.to_offset(stamp).seconds()) * SECOND;
                 let wall = utc + offset;
                 Some((wall, self.fold_of(wall, offset)))
