@@ -28,6 +28,15 @@
     const date = new Date(value ?? "");
     return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
+  /** The reply whose text was just copied (its Copy reads "Copied" for a moment). */
+  let copied = $state("");
+  async function copy(key: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = key;
+      setTimeout(() => { if (copied === key) copied = ""; }, 1600);
+    } catch { /* clipboard refused: the text can still be selected */ }
+  }
   // New entries scroll into view, so an approval or plan that arrived is in sight, and a
   // brain dump's transcript follows what is being said.
   $effect(() => {
@@ -89,6 +98,7 @@
                     {#if costLabel(entry.cost_usd)}<span>{costLabel(entry.cost_usd)}</span>{/if}
                   {/if}
                   {#if entry.status === "failed"}<span class="failed">Failed</span>{/if}
+                  {#if entry.text}<button type="button" class="text-button" onclick={() => copy(entryKey(entry), entry.text)}>{copied === entryKey(entry) ? "Copied" : "Copy"}</button>{/if}
                 </span>
               </div>
             </div>
@@ -219,6 +229,11 @@
     padding: 7px 11px;
     border-radius: 12px 12px 4px 12px;
     background: color-mix(in srgb, var(--ink) 9%, transparent);
+  }
+  /* Replies and requests keep the line breaks they were written with. */
+  .you p,
+  .said p {
+    white-space: pre-wrap;
   }
   .said {
     display: grid;

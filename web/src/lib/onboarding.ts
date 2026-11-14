@@ -35,7 +35,7 @@ export function tutorialSteps(enabled: ModuleId[]): TutorialStep[] {
       view: "ai", selector: ".ai-panel" },
     { id: "home", title: "Home",
       text: "Open any section from here.",
-      tip: "Ctrl + K jumps anywhere.",
+      tip: "Ctrl + Space jumps anywhere.",
       view: "today", selector: '[data-tutorial="home"], [data-kitty-panel="view"]:not([hidden])' },
     { id: "quick-notes", title: "Quick notes",
       text: workspace ? "Somewhere to put a thought before it's gone. In the desktop app, open one from the tray."

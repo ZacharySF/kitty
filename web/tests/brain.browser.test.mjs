@@ -297,7 +297,7 @@ describe("brain stage", () => {
     const reset = await stored(page);
     assert.deepEqual(
       { ...reset, panel: undefined },
-      { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 1, lines: false, scaffold: true, pointSize: 1, background: "transparent", panel: undefined },
+      { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 0.5, lines: false, scaffold: true, pointSize: 1, background: "transparent", panel: undefined },
     );
     assert.equal(await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Brain" }).getAttribute("aria-pressed"), "true");
     assert.equal(await page.getByRole("switch", { name: "Lines" }).getAttribute("aria-checked"), "false");

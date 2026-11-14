@@ -74,10 +74,10 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
     tone: "var(--c1)",
     views: ["today", "goals", "brain", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
   },
-  { label: "Study", shortcut: "Ctrl + X", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
+  { label: "Study", shortcut: "", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
     label: "Job search",
-    shortcut: "Ctrl + C",
+    shortcut: "",
     tone: "var(--c4)",
     views: [
       "jobs",
@@ -95,7 +95,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
       "reports",
     ],
   },
-  { label: "Settings", shortcut: "Ctrl + V", tone: "var(--c6)", views: ["settings", "profile", "ai"] },
+  { label: "Settings", shortcut: "", tone: "var(--c6)", views: ["settings", "profile", "ai"] },
 ];
 /**
  * Groups with their enabled views. A group that would only offer the atlas home
@@ -160,14 +160,14 @@ const shortcutGroups: ShortcutGroup[] = [
     title: "Navigate",
     shortcuts: [
       ["rika!", "Go home"],
-      ["Ctrl + Alt / Ctrl + X / Ctrl + C / Ctrl + V", "Plan / Study / Job search / Settings (outside text editing)"],
-      ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
+      ["Ctrl + Alt", "Plan (outside text editing)"],
+      ["Ctrl + Space · Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
       ["Ctrl + Tab / Ctrl + Shift + Tab", "Next / previous tab (the tab switcher in the top bar lists them all)"],
       ["Ctrl + T / Ctrl + W", "New tab / close tab"],
-      ["Settings, Theme, Notifications", "Ctrl / ⌘ + K, or the tab switcher's menu"],
+      ["Settings, Theme, Notifications", "Search, or the tab switcher's menu"],
       [
         "Calendar / Study / Notes / Mind maps / AI",
-        "Sections on home, or Ctrl / ⌘ + K",
+        "Sections on home, or search",
       ],
       ["?", "Show keyboard help"],
       ["/ on home", "Ask Rika"],
@@ -193,7 +193,7 @@ const shortcutGroups: ShortcutGroup[] = [
     shortcuts: [
       ["/", "Open Sections and find a section"],
       ["Enter in section search", "Show the first match on the map; Enter again opens it"],
-      ["Ctrl + Alt / Ctrl + X / Ctrl + C", "Find Plan / Study / Job search on the map"],
+      ["Ctrl + Alt", "Find Plan on the map"],
       ["Drag / scroll", "Turn / zoom the Brain, or pan / zoom the 2D map"],
       ["Click a Brain group", "Open that group on its own; Escape returns to all"],
       ["Ctrl + ← / →", "Rotate the visible 3D schema left / right (outside editors and dialogs)"],
@@ -219,14 +219,14 @@ const shortcutGroups: ShortcutGroup[] = [
       ["1–4", "Pick a choice in a multiple-choice sprint or problem"],
       ["Enter", "Check the answer; again for the next problem"],
       ["R", "Restart a finished sprint"],
-      ["Ctrl / ⌘ + K", "Mental math sprint · Next math lesson, from any page"],
+      ["Ctrl + Space", "Mental math sprint · Next math lesson, from any page"],
     ],
   },
   {
     title: "Flashcards",
     module: "workspace",
     shortcuts: [
-      ["n", "Quick-add a card to the deck in view; Ctrl / ⌘ + K → New card does it from any page"],
+      ["n", "Quick-add a card to the deck in view; Ctrl + Space → New card does it from any page"],
       ["Tab / Enter in the add row", "Move to the back / save and start the next card"],
       ["Enter / Ctrl + Enter · Esc", "Save the quick-add card · close it"],
     ],
@@ -347,11 +347,8 @@ export function shortcutsFor(enabled: Enabled): ShortcutGroup[] {
       return {
         ...group,
         shortcuts: group.shortcuts.flatMap(row => {
-          if (row[0].startsWith("Ctrl + Alt /"))
-            return groups.length
-              ? [[groups.map(item => item.shortcut).join(" / "), `${groups.map(item => item.label).join(" / ")} (outside text editing)`]]
-              : [];
-          if (row[0].startsWith("Ctrl / ⌘ + K")) return [[row[0], `Search ${searches}`]];
+          if (row[0] === "Ctrl + Alt" && row[1].startsWith("Plan")) return groups.some(item => item.label === "Plan") ? [row] : [];
+          if (row[0].startsWith("Ctrl + Space")) return [[row[0], `Search ${searches}`]];
           if (row[0].startsWith("Calendar /"))
             return [[targets.join(" / "), row[1]]];
           return [row];

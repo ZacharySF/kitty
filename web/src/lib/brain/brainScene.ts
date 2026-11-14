@@ -324,6 +324,9 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
   let hoverGroup = -1;
   let backdrop: BrainBackdrop = { cover: 0, ink: [0.62, 0.62, 0.62] };
   let turning = false;
+  /** The Brain turns only once it has been left alone this long (design labs, Loader). */
+  const IDLE_MS = 30_000;
+  let touched = performance.now();
   let speed = 1;
   let spin = 0;
   let spinAxis: "y" | "z" = "y";
@@ -426,7 +429,7 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
       const e = ease(t);
       material.uniforms.uMorph.value = e;
       if (relayout) spin = morphSpin * (1 - e);
-      else if (turning && !reduced) spin += dt * 0.22 * speed;
+      else if (turning && !reduced && now - touched >= IDLE_MS) spin += dt * 0.22 * speed;
       if (cameraFrom) camera.position.lerpVectors(cameraFrom, cameraTo, e);
       if (t >= 1) {
         morphStart = null;
@@ -436,7 +439,7 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
           spin = 0;
         }
       }
-    } else if (turning && !reduced) spin += dt * 0.22 * speed;
+    } else if (turning && !reduced && now - touched >= IDLE_MS) spin += dt * 0.22 * speed;
     pivot.rotation.set(0, 0, 0);
     pivot.rotation[spinAxis] = spin;
     if (lines) lines.material.opacity = (birthDone ? frame.lineAlpha * (1 + 2 * backdrop.cover) : 0) * (focus >= 0 || hoverGroup >= 0 ? 0.35 : 1);
@@ -563,6 +566,8 @@ export function createBrainScene(host: HTMLElement, opts: BrainSceneOptions): Br
   canvas.addEventListener("pointerleave", onPointerLeave);
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointerup", onPointerUp);
+  const onTouch = () => { touched = performance.now(); };
+  for (const type of ["pointermove", "pointerdown", "wheel"]) canvas.addEventListener(type, onTouch, { passive: true });
   controls.addEventListener("change", invalidate);
   const onContextLost = (event: Event) => event.preventDefault();
   canvas.addEventListener("webglcontextlost", onContextLost);

@@ -88,10 +88,10 @@
     icon: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.icon || "atlas",
     status: tab.pane?.saveStatus() ?? null,
   })));
-  /** The bar carries only the groups you move between; Settings is reached from search, Ctrl V and the tab menu. */
+  /** The bar carries only the groups you move between; Settings is reached from search and the tab menu. */
   const barGroups = $derived(groups.filter(group => group.label !== "Settings"));
   const menuExtras = $derived([
-    { label: "Settings", detail: "Ctrl V", run: () => openSettings() },
+    { label: "Settings", run: () => openSettings() },
     ...(workspace ? [{ label: "Notifications", detail: notifier.unread ? `${notifier.unread} unread` : "", run: () => (notifier.drawer = true) }] : []),
     { label: "Keyboard shortcuts", detail: "?", run: () => (help = true) },
   ]);
@@ -370,6 +370,20 @@
       void focusGroup("Plan");
     }
   }
+  /** Ctrl + Space opens search. Capture phase: element handlers that act on a bare Space never see the chord.
+   *  Ctrl + K stays, since input methods such as fcitx5 take Ctrl + Space inside text fields. */
+  function paletteChord(event: KeyboardEvent) {
+    if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.code !== "Space") return;
+    if (focusContext(event.target as HTMLElement | null) === "terminal") return;
+    if (document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) palette = true;
+  }
+  $effect(() => {
+    window.addEventListener("keydown", paletteChord, { capture: true });
+    return () => window.removeEventListener("keydown", paletteChord, { capture: true });
+  });
   async function keyboard(event: KeyboardEvent) {
     planChord = false;
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
@@ -399,11 +413,7 @@
     planChord = !typing && !event.repeat && !event.metaKey && !event.shiftKey && event.ctrlKey && event.altKey &&
       ["Alt", "Control"].includes(event.key) && !window.getSelection()?.toString() && !event.getModifierState("AltGraph");
     if (planChord) return;
-    if (!typing && !event.repeat && !event.metaKey && !event.shiftKey &&
-        !window.getSelection()?.toString() && !event.getModifierState("AltGraph")) {
-      const group = event.ctrlKey && !event.altKey ? ({ x: "Study", c: "Job search", v: "Settings" } as Record<string, string>)[event.key.toLowerCase()] : null;
-      if (group && groups.some(item => item.label === group)) { event.preventDefault(); await focusGroup(group); return; }
-    }
+    // Ctrl + X / C / V belong to the clipboard everywhere; groups are in the bar and in search.
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault(); palette = true; return;
     }
@@ -470,7 +480,7 @@
         data-notification-anchor
         onclick={() => (palette = true)}
         aria-label={applyai ? "Search pages, jobs and commands" : "Search pages and commands"}
-        title="Search · Ctrl K"
+        title="Search · Ctrl Space"
         ><Icon name="jobs" size={18} /></button>
     </div>
   </header>

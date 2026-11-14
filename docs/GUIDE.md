@@ -152,7 +152,7 @@ Settings → Build edits the build's name, author and description, exports it as
 `kitty-build.json`, imports one from a file or an `https` link with a diff of what changes
 (module changes are marked as needing a restart; privacy and cost changes apply only when
 you tick *Also apply privacy and cost changes*), and lists earlier builds with one-click
-rollback. *Open build editor* (or *Edit build* in Ctrl+K) docks the file at the right of
+rollback. *Open build editor* (or *Edit build* in Ctrl Space) docks the file at the right of
 the window: problems are marked at their lines, theme tokens and CSS show in that window
 as you type, and valid text saves itself (Ctrl+S saves at once).
 
@@ -185,7 +185,7 @@ seconds and is issued only by the header- and secret-protected `POST
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
 **Terminals.** There is no terminal dock. Terminals open as native Tern windows: **Open terminal** in
-Ctrl K, or ask Rika ("open a terminal"). Without a usable Tern, Open terminal
+Ctrl Space, or ask Rika ("open a terminal"). Without a usable Tern, Open terminal
 shows the **Tern** view, which says why. **herdr** under Plan (Sections on home)
 opens the whole herdr session in the workspace tab, in a transparent terminal drawn
 in the Harness colours. In a terminal, bare keys (including `f`) go to the shell;
@@ -258,7 +258,7 @@ These act only on rika!'s own daemon and its `kitty` session
 drawer (**Agents**) shows a **now: skill · tool** chip, what the agent is using right
 now (for example "now: lavish · read"; "now: —" until something answers), and a
 **Skills (N)** button that lists that agent's skills in the drawer.
-**All agent skills**, under Plan beside Tern (also in Ctrl K, or ask Rika to open
+**All agent skills**, under Plan beside Tern (also in Ctrl Space, or ask Rika to open
 "agent skills"), catalogues every agent kind's **Agent skills**, **Tools (MCP)** and
 **Plugins**, even with no agent running, with the running agents and their now
 chips in a strip above. Each skill row has **Copy path** and, in the desktop app,
@@ -460,7 +460,7 @@ under **Rika** in the AI settings section below. On home it fills the right-hand
 column: the conversation above, **Ask Rika…** at its foot; type a request and press
 Enter. While Rika writes its reply its mark turns and the field's edge takes the
 theme's accent (under Reduce motion the mark stays still). Elsewhere **Ctrl+J** (from
-anywhere but a terminal) or **Rika** in Ctrl K opens the same conversation in a drawer
+anywhere but a terminal) or **Rika** in Ctrl Space opens the same conversation in a drawer
 on the right, with the field focused; on home Ctrl+J and `/` focus the panel's field.
 Away from home each reply also lands as a toast in the reminder toasts' look, with the
 reply, its tier chip (**Fast**, **Standard** or **Deep**: the model size Rika chose) and
@@ -494,7 +494,7 @@ first lead the spoken request). While it listens the mark turns and the field sh
 the words as they are heard; **Escape** drops them and nothing is sent. No Space
 keycap or hint is drawn. Keep holding
 for 8 s and it becomes a **brain dump**, which keeps listening after you let go;
-press Space again to finish. **Brain dump** beside Rika's field or in Ctrl K starts
+press Space again to finish. **Brain dump** beside Rika's field or in Ctrl Space starts
 one directly. A dump's transcript grows live in the conversation (away from home the
 drawer opens by itself); **Make plan** ends it (Cancel drops it). Rika then puts **one
 plan** in the conversation, grouped by area (notes, tasks, calendar, cards, jobs, agents), every item
@@ -750,7 +750,7 @@ seeded generator (`src/kitty/core/math/templates/`) whose exact answer key is
 cross-checked by enumeration, exact algebra (SymPy) or Monte Carlo over 240 seeds
 in the test suite. Topics and generators are original and MIT-licensed. Two book
 sources sit beside them: Grinstead & Snell's *Introduction to Probability* and
-problems from your own books. The view itself (drawers, Ctrl K, Up next) is
+problems from your own books. The view itself (drawers, Ctrl Space, Up next) is
 described under **Math** in *Start here*; this section covers how it grades and
 schedules.
 
@@ -852,7 +852,7 @@ newest edits fill the rest (`truncated: true`; `total` counts everything).
 
 ### Search and the search index
 
-**Ctrl K** searches sections and commands by name and, from the full-text index, every
+**Ctrl Space** (or Ctrl K: input methods such as fcitx5 take Ctrl Space inside text fields) searches sections and commands by name and, from the full-text index, every
 note page, document, quick note, tag (name, keywords, aliases), study subject, project
 and task, calendar event and task, flashcard deck and card, and (with ApplyAI) job:
 titles and contents, with the matched words marked. Each word you type matches the
@@ -1075,7 +1075,7 @@ Suspend, Bury, Edit, Archive and Delete. Its top row adds cards inline: type the
 front, Tab, the back, and Enter saves it into the deck in scope (with All decks in
 scope the row has its own deck picker) and leaves the front ready for the next card.
 **Quick add** works from any page: press N on Flashcards (outside a text field) or
-choose **New card** in Ctrl K to open a small front/back popover over the current
+choose **New card** in Ctrl Space to open a small front/back popover over the current
 page with the deck in view, or the last one you used, preselected. Enter or
 Ctrl+Enter saves and readies the next card; Esc closes it. Both refuse an empty
 front or back and flag a front already in that deck; Enter again adds it anyway.
@@ -1165,13 +1165,13 @@ third miss. After a wrong answer, **Explain my mistake** takes your working and
 sends it through the reviewed AI flow: you see the model, the maximum cost and the
 exact text, approve, and the explanation appears as a bubble. It points at the
 first faulty step and never gives the answer; the checker still grades.
-Launchers: Ctrl K **Mental math sprint** and **Next math lesson**, and the home **Up
+Launchers: Ctrl Space **Mental math sprint** and **Next math lesson**, and the home **Up
 next** rows **Math: next lesson** (or **Math: review due**) and, on a day without a
 sprint yet, the sprint-streak nudge. While a Study cycle runs, the Math header shows
 its phase, subject and time ("Focus · Math · 18:02").
 
 **Mind maps** have one editor, reached from Notes → **Map** (the page's own map),
-Study → **Mind map** and the **Mind maps** view; Ctrl K finds any map by its title and
+Study → **Mind map** and the **Mind maps** view; Ctrl Space finds any map by its title and
 offers **New mind map**. Its slim top bar holds the map switcher (**Maps ▾**, with
 **All maps, merged** for the network of every map), **+** for a new map, the title
 (edit it in place), the linked subject, **Layout ▾** (tree, radial, force), the
@@ -1374,7 +1374,7 @@ already copied to the calendar shows once; a row opens its page; at most six row
 show, with the total beside the title), **Agents** (what each herdr workspace agent is
 doing; **Approve** opens herdr on a blocked one) and **Sections**, every page the
 active modules provide, by group. With every module off, one line says so and leads
-to Settings → Modules. Ctrl K also finds every section.
+to Settings → Modules. Ctrl Space also finds every section.
 
 The **Brain** is its own view (the **Brain** entry in the header, or Sections), there
 when the Brain module is on: every record and edit in the workspace as a point in a
@@ -1387,8 +1387,7 @@ map, Enter again opens it) and the grouped section list. Each row's ⋯ opens th
 section, shows it on the map, or hides it from (or shows it on) the 2D atlas;
 hidden rows stay listed, dimmed. On the 2D atlas, drop a node on **Sections** to
 hide it and drag a dimmed row onto the graph to show it again. On the Brain view
-the group shortcuts (Ctrl+Alt, Ctrl+X, Ctrl+C) find their group on the map; elsewhere
-they open the group.
+Ctrl+Alt finds Plan on the map; elsewhere it opens Plan.
 The full job-search brief (reminders, deadlines and weekly goals) lives in **Find
 jobs**. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
 Appearance); every schema starts in Tree, and an explicit layout preference can
@@ -1724,10 +1723,9 @@ re-import a deleted source posting. Selection is limited to 10,000 results.
 Notes pages/blocks, flashcard notes, map nodes and calendar items also have
 confirmed right-click deletion; removing a map node does not delete its source.
 
-**Keyboard:** Ctrl+Alt opens Plan, Ctrl+X Study, Ctrl+C Job search and Ctrl+V
-Settings outside editors, selections and dialogs. Native cut/copy/paste remains
-unchanged while editing. F1–F10 navigation is removed. Ctrl/⌘K opens command and
-job search; Ctrl+J opens or closes Rika's history; `?` shows contextual shortcuts. Arrow keys navigate
+**Keyboard:** Ctrl+Alt opens Plan outside editors, selections and dialogs. Ctrl+X,
+Ctrl+C and Ctrl+V are always cut, copy and paste. F1–F10 navigation is removed.
+Ctrl+Space (or Ctrl/⌘K) opens command and job search; Ctrl+J opens or closes Rika's history; `?` shows contextual shortcuts. Arrow keys navigate
 jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `k` queue state, `R` resume, `e` notes, `s` status, `u` undo, `d` deadline,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,
@@ -2892,7 +2890,7 @@ The same server reads and writes my notes as blocks (`kitty.core.block_api`):
 |---|---|
 | `list_pages(query?, kind?, limit?)` | note pages, documents and quick notes, newest edit first |
 | `get_page(page)` | one page as a block tree: `id`, `type`, `text`, `props`, `tags`, `order`, `children`, `cite` |
-| `search_blocks(query, limit?)` | full-text index (as Ctrl K), one hit per block, matches in `**bold**` |
+| `search_blocks(query, limit?)` | full-text index (as Ctrl Space), one hit per block, matches in `**bold**` |
 | `get_backlinks(target)` | `((references))`, `[[links]]`, unlinked title mentions, tagged blocks |
 | `list_tags()` | every tag with its keywords, aliases and count |
 | `create_page(title, notebook?, blocks?)` | a note page, optionally with blocks |

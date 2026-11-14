@@ -102,7 +102,7 @@ export const DEFAULT_BUILD: Build = {
     appearance: { title_font: "plain", density: "compact", motion: "full", motif: true, background: "nebula" },
     home: { look: "brain", columns: [["agenda", "note"], ["next", "agents"]], hidden: [], template_offered: false },
     brain: {
-      layout: "anatomy", group_by: "section", labels: "hover", turning: true, speed: 1, lines: false,
+      layout: "anatomy", group_by: "section", labels: "hover", turning: true, speed: 0.5, lines: false,
       scaffold: true, point_size: 1, background: "transparent", colors: { section: {}, group: {}, type: {} },
     },
     notifications: { quiet: { enabled: false, from: 1320, to: 450, let_calendar: true, digest: true } },

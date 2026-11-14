@@ -200,7 +200,7 @@
             "group_by": {"enum": ["section", "group", "type"], "default": "section"},
             "labels": {"enum": ["off", "sections", "hover"], "default": "hover"},
             "turning": {"type": "boolean", "default": true},
-            "speed": {"type": "number", "minimum": 0, "maximum": 3, "default": 1},
+            "speed": {"type": "number", "minimum": 0, "maximum": 3, "default": 0.5},
             "lines": {"type": "boolean", "default": false},
             "scaffold": {"type": "boolean", "default": true},
             "point_size": {"type": "number", "minimum": 0.25, "maximum": 3, "default": 1},

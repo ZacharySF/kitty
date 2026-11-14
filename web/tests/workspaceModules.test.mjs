@@ -62,9 +62,11 @@ test('keyboard help lists only reachable shortcuts',()=>{
   assert.ok(titles(['applyai']).includes('Job decisions'));
   assert.ok(!titles(['applyai']).includes('Study'));
   const navigate=(enabled)=>shortcutsFor(enabled).find(group=>group.title==='Navigate').shortcuts;
-  assert.ok(navigate([]).some(([keys])=>keys==='Ctrl + Alt / Ctrl + V'));
-  assert.ok(!navigate([]).some(([keys])=>keys.includes('Ctrl + X')||keys.includes('Ctrl + C')));
-  assert.ok(navigate(['applyai']).some(([keys])=>keys.includes('Ctrl + C')));
+  // Ctrl + X / C / V are the clipboard's; search opens on Ctrl + Space as well as Ctrl + K.
+  for (const enabled of [[], ['applyai'], ['workspace']])
+    assert.ok(!navigate(enabled).some(([keys])=>/Ctrl \+ [XCV]\b/.test(keys)), 'a clipboard chord is listed as navigation');
+  assert.ok(navigate([]).some(([keys])=>keys.startsWith('Ctrl + Space')));
+  assert.ok(navigate([]).some(([keys])=>keys==='Ctrl + Alt'));
 });
 
 test('a #notes/<number> link names one note page and nothing else',()=>{
