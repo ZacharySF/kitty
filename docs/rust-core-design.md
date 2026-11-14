@@ -136,7 +136,7 @@ selection: base only.
    | Bootstrap `GET /api/bootstrap` | ~~`WebApplication._bootstrap`~~ | modules state; with applyai, jobs, tracks and today's digest in SQLite | `test_web_bootstrap.py`, `test_web_modules.py` | **Ported** (below) |
    | Build and settings `/api/build/*` | `web_build.py`, `core/builds/{store,project,share}` | build file, `data/build-history/`, settings rows projected into SQLite | `test_web_build.py`, `test_builds.py`, browser `settings`/`build` suites | the watcher's live push goes out over `web_live`'s WebSocket (Python), and `project.sync` writes SQLite; `fetch` needs an HTTPS client |
    | Themes | no route: the theme list and `theme.base` live in the build (`document.theme_ids`, already in Rust) | build file | as build | moves with the build routes |
-   | Keys `/api/keys/*` | `web_keys.py`, `core/keys.py` | OS keyring (Secret Service over D-Bus) or owner-only file | `test_keys.py` | a Secret Service client in Rust; Python's AI providers keep reading the same store until they move |
+   | Keys `/api/keys/*` | ~~`web_keys.py`~~, `core/keys.py` | OS keyring (Secret Service over D-Bus) or owner-only file | `test_keys.py` | **Ported** (below); Python's AI providers keep reading the same store until they move |
    | Effects `/api/effects/*` | `web_effects.py`, `core/effects.py`, `effect_kinds` | effect tables in SQLite | `test_effects.py` | executors call into Python modules (blocks, applications); approvals are bound to the worker's `ui_session`, which would have to move to the front |
    | Rika text chat `/api/rika/*` | `web_rika.py`, `core/rika/*` | conversations, plans, memory in SQLite; AI provider calls | `test_web_rika*.py`, `test_rika_*.py` | AI client and streaming WebSocket; Rika's tools reach every module's Python core |
    | Migration runner | `kitty.db.migrations` (kept for the CLI, TUI, MCP, demo reset and tests) | the SQLite schema (55 SQL files) | `test_migration_parity.py`, `test_front_migrations.py`, `test_migrations.py`, `test_migration_numbers.py` | **Ported** (below) |
@@ -231,6 +231,20 @@ selection: base only.
    (`/api/dashboard`) stayed at 7.3-14.8 ms. A cold answer is most of its time in SQLite
    parsing the schema, so the front keeps its database connection open between answers. The
    release binary grew from 1.91 to 5.96 MB (SQLite bundled, `regex`).
+
+   *Built (fourth slice): keys.* `GET /api/keys` and `POST /api/keys/{set,remove,move}` are
+   answered by rika-server (`server/src/keys/`) with `kitty.core.keys`' rows, order, checks and
+   refusals: a zbus Secret Service client reads and writes the items Python's keyring stack
+   makes (label, `service`/`username`/`application` attributes, `text/plain`), and the
+   owner-only files are opened as Python opens them (`O_NOFOLLOW`, 600/700, links refused).
+   `web_keys.py` is deleted; `kitty.core.keys` stays for the AI providers, `kitty keys` and
+   `kitty doctor`. `tests/test_keys.py` drives the routes through the front, and its interop
+   test runs a private gnome-keyring on its own session bus where Python and the front write
+   and read each other's items. Measured (median of 300 fresh-connection GETs, two alternating
+   runs, file store): `GET /api/keys` went from 8.7 / 8.8 ms (forwarded) to 1.03 / 1.00 ms,
+   while a still-forwarded route (`/api/account`) stayed at 7.4-8.1 ms; start to announcement
+   unchanged (2.1-2.2 s before, 2.0-2.2 s after); the release binary grew from 8.74 to
+   10.61 MB (zbus).
 
    Next: the build routes once the live channel can be driven from Rust.
 3. **Packs.** Signed pack builds and index in the release pipeline; download,

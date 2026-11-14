@@ -572,7 +572,7 @@ def secret_service(tmp_path):
         '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"'
         ' "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">'
         f"<busconfig><type>session</type><listen>unix:path={socket}</listen><auth>EXTERNAL</auth>"
-        '<policy context="default"><allow send_destination="*"/><allow own="*"/></policy></busconfig>')
+        '<policy context="default"><allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
     address = f"unix:path={socket}"
     env = {**os.environ, **{name: str(path) for name, path in folders.items()}, "DBUS_SESSION_BUS_ADDRESS": address}
     bus = subprocess.Popen([daemon, "--config-file", str(config), "--nofork"], env=env)
@@ -602,8 +602,8 @@ def secret_service(tmp_path):
 
 def python_keys(settings, env, code):
     """Run `code` against `kitty.core.keys` in a process on the private bus; its JSON result."""
-    script = ("import json, sys\nfrom kitty.core import keys\nfrom kitty.settings import Settings\n"
-              f"store = keys.for_settings(Settings.load(root={str(settings.root)!r}, db_path={str(settings.db_path)!r}))\n"
+    script = ("import json, sys\nfrom pathlib import Path\nfrom kitty.core import keys\nfrom kitty.settings import Settings\n"
+              f"store = keys.for_settings(Settings.load(root=Path({str(settings.root)!r}), db_path=Path({str(settings.db_path)!r})))\n"
               "assert store.store is not None, 'no keyring'\n" + code)
     result = subprocess.run([sys.executable, "-c", script], env={**os.environ, **env}, capture_output=True,
                             text=True, timeout=60, check=False)
