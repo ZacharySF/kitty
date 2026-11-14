@@ -38,9 +38,9 @@ export function moduleObtainable(item: ModuleInfo, packs: PacksState | null): bo
   });
 }
 
-/** The packs a module would download, in order. */
+/** The packs a module would download, in order: missing ones this release's list offers. */
 export function downloadsOf(item: ModuleInfo, packs: PacksState | null): PackInfo[] {
-  return packsOf(item, packs).filter((pack) => !packReady(pack));
+  return packsOf(item, packs).filter((pack) => ["available", "outdated", "downloading"].includes(pack.state));
 }
 
 /**
