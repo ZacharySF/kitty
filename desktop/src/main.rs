@@ -1,4 +1,5 @@
 mod appimage_update;
+mod autostart;
 mod notifications;
 mod owner;
 mod update_lifecycle;
@@ -72,6 +73,9 @@ struct Desktop {
     background: AtomicBool,
     background_item: CheckMenuItem<tauri::Wry>,
     background_available: bool,
+    /// Start at login (autostart.rs): the user's systemd unit folder, when it can be set here.
+    autostart_dir: Option<PathBuf>,
+    autostart: AtomicBool,
     update_item: MenuItem<tauri::Wry>,
     lifecycle: Mutex<update_lifecycle::Lifecycle>,
     preferences: PathBuf,
@@ -136,6 +140,24 @@ fn quick_note_target(url: &Url, origin: &Url) -> Option<String> {
         && url.port_or_known_default() == origin.port_or_known_default()
         && url.username().is_empty() && url.password().is_none();
     (id_ok && same_origin && url.path() == "/" && url.query().is_none()).then(|| fragment.to_string())
+}
+
+/// Start at login on or off; the switch then shows what is really on disk.
+fn set_autostart(app: &tauri::AppHandle, enabled: bool) {
+    let state = app.state::<Desktop>();
+    if let Some(dir) = &state.autostart_dir {
+        if let Some(program) = autostart::program(std::env::var_os("APPIMAGE"), std::env::current_exe()) {
+            let _ = autostart::set(dir, &program, enabled);
+        }
+        state.autostart.store(autostart::enabled(dir), Ordering::SeqCst);
+    }
+    // A login that opens rika! hidden is for reminders: closing the window must then keep it running.
+    if enabled && state.autostart.load(Ordering::SeqCst) { set_background(app, true); } else { report_desktop(app); }
+}
+
+/// `--background` (the start-at-login unit): open with the window hidden in the tray.
+fn wants_background(args: &[String]) -> bool {
+    args.iter().skip(1).any(|arg| arg == "--background")
 }
 
 fn wants_quick_note(args: &[String]) -> bool {
@@ -352,7 +374,8 @@ fn request_stop(app: &tauri::AppHandle, restart: bool) {
 
 fn report_desktop(app: &tauri::AppHandle) {
     let state = app.state::<Desktop>();
-    let line = owner::state_line(state.background.load(Ordering::SeqCst), state.background_available);
+    let line = owner::state_line(state.background.load(Ordering::SeqCst), state.background_available,
+                                 state.autostart.load(Ordering::SeqCst), state.autostart_dir.is_some());
     if let Some(input) = state.backend.lock().0.as_mut().and_then(|child| child.stdin.as_mut()) {
         let _ = input.write_all(line.as_bytes());
         let _ = input.flush();
@@ -405,6 +428,7 @@ fn desktop_command(app: &tauri::AppHandle, notices: Option<&notifications::Notic
         owner::Command::CheckUpdates => updates::check(app),
         owner::Command::NewQuickNote => open_quick_note(app, "quick-note".into()),
         owner::Command::KeepRunning(enabled) => set_background(app, enabled),
+        owner::Command::Autostart(enabled) => set_autostart(app, enabled),
         owner::Command::Quit => request_quit(app),
         owner::Command::Restart => request_stop(app, true),
         owner::Command::OpenSkill(path) => open_skill(&path),
@@ -473,10 +497,16 @@ fn main() {
                 background_item.set_checked(false)?;
                 background_item.set_enabled(false)?;
             }
+            // Start at login needs the tray too: a hidden window with no tray could not be shown again.
+            let autostart_dir = autostart::unit_dir(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
+                .filter(|dir| background_available && autostart::available(Some(dir)));
+            let autostart_on = autostart_dir.as_deref().is_some_and(autostart::enabled);
+            let hidden = background_available && wants_background(&std::env::args().collect::<Vec<_>>());
             app.manage(Desktop {
                 backend: Mutex::new(backend),
                 background: AtomicBool::new(background && background_available),
                 background_item, background_available,
+                autostart_dir, autostart: AtomicBool::new(autostart_on),
                 update_item: update,
                 lifecycle: Mutex::new(update_lifecycle::Lifecycle::default()), preferences,
                 root: root.clone(), origin: origin.clone(), window_script: window_script.clone(),
@@ -488,6 +518,7 @@ fn main() {
             let note_app = app.handle().clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin))
                 .title("rika!").inner_size(1280.0, 850.0).min_inner_size(760.0, 500.0)
+                .visible(!hidden)
                 .transparent(true)
                 .initialization_script(TRANSPARENT_MARKER)
                 .initialization_script(window_script)

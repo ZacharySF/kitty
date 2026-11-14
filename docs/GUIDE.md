@@ -2119,10 +2119,15 @@ window. Wayland gives GTK no DPI setting, and WebKitGTK turns that into a negati
 device-pixel ratio (a blank, compressed page), so the app sets a neutral 96 DPI when
 none is present; a DPI you set yourself is kept. An explicit `GDK_BACKEND` is respected.
 The window has no native menu strip. **Settings → Desktop** provides **Check for
-updates**, **Keep running on close**, **New quick note** and **Quit rika!** (which
-saves and stops workers). All remain in the system-tray menu,
-along with **Show rika!**. Without a system tray, keeping the app running on close
-is unavailable. A browser-only website explains that desktop controls are unavailable.
+updates**, **Keep running on close**, **Start at login**, **New quick note** and
+**Quit rika!** (which saves and stops workers). All but Start at login remain in the
+system-tray menu, along with **Show rika!**. Without a system tray, keeping the app
+running on close is unavailable. **Start at login** writes a systemd user unit
+(`~/.config/systemd/user/rika.service`, wanted by `graphical-session.target`) that
+opens rika! with its window hidden in the tray (`--background`), and turns Keep
+running on close on, so reminders and notifications arrive with the window closed;
+switching it off removes the unit. It needs a system tray and a systemd session.
+A browser-only website explains that desktop controls are unavailable.
 The page uses the protected backend API and a fixed command allowlist over the
 shell's private owner pipe; it receives no Tauri IPC permissions.
 

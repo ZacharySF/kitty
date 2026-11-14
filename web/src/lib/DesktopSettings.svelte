@@ -3,8 +3,8 @@
   import { Button, Panel } from "@nunera/bracket";
   import { api } from "./api";
 
-  type DesktopState = { available: boolean; keep_running?: boolean | null; keep_running_available?: boolean };
-  type DesktopCommand = "check-updates" | "new-quick-note" | "keep-running-on" | "keep-running-off" | "quit";
+  type DesktopState = { available: boolean; keep_running?: boolean | null; keep_running_available?: boolean; autostart?: boolean | null; autostart_available?: boolean };
+  type DesktopCommand = "check-updates" | "new-quick-note" | "keep-running-on" | "keep-running-off" | "autostart-on" | "autostart-off" | "quit";
   let desktop = $state<DesktopState | null>(null);
   let pending = $state(false);
   let error = $state("");
@@ -44,6 +44,9 @@
     : desktop.keep_running
       ? "Closing the window keeps rika! running in the system tray for monitoring and reminders"
       : "Closing the window quits rika! and stops workers");
+  const autostartHint = $derived(!desktop?.autostart_available
+    ? "Needs a system tray and a systemd session on this desktop"
+    : "rika! starts hidden in the system tray when you log in, so reminders arrive with the window closed");
 </script>
 
 <Panel title="Desktop" aria-label="Desktop">
@@ -62,6 +65,14 @@
           <input id={`${uid}-keep`} type="checkbox" role="switch" class="keep" checked={desktop.keep_running === true} title={keepRunningHint}
             disabled={pending || !desktop.keep_running_available || desktop.keep_running === null}
             onchange={(event) => { const checked = event.currentTarget.checked; event.currentTarget.checked = desktop?.keep_running === true; void command(checked ? "keep-running-on" : "keep-running-off"); }} />
+        </span>
+      </div>
+      <div class="set-row">
+        <label class="set-label" for={`${uid}-login`} title={autostartHint}>Start at login</label>
+        <span class="set-end">
+          <input id={`${uid}-login`} type="checkbox" role="switch" class="keep" checked={desktop.autostart === true} title={autostartHint}
+            disabled={pending || !desktop.autostart_available || desktop.autostart == null}
+            onchange={(event) => { const checked = event.currentTarget.checked; event.currentTarget.checked = desktop?.autostart === true; void command(checked ? "autostart-on" : "autostart-off"); }} />
         </span>
       </div>
       <div class="set-row">

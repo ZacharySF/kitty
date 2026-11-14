@@ -6,6 +6,9 @@ fixed set of commands to the shell that started it over the private owner pipe
 (stdout); the shell reports its keep-running preference back on stdin. A plain
 ``kitty-web`` website has no owner and answers ``{"available": false}``.
 
+``autostart-on``/``autostart-off`` set **Start at login**: a systemd user unit that opens
+rika! hidden in the tray, so reminders arrive with the window closed.
+
 ``restart`` saves, stops the backend and reopens rika!, so a saved module selection
 applies (Settings → Modules' Restart now; the first run does it by itself).
 
@@ -27,9 +30,13 @@ import threading
 from collections.abc import Callable
 
 #: The only lines that ever reach the desktop shell, each as ``{"command": name}``.
-COMMANDS = ("check-updates", "new-quick-note", "keep-running-on", "keep-running-off", "quit", "restart")
-KEEP_RUNNING = {"keep-running-on": True, "keep-running-off": False}
-STATE_KEYS = frozenset({"keep_running", "keep_running_available"})
+COMMANDS = ("check-updates", "new-quick-note", "keep-running-on", "keep-running-off", "autostart-on", "autostart-off", "quit", "restart")
+#: The commands that flip a preference the shell keeps: the state field and the value each asks for.
+SWITCHES = {"keep-running-on": ("keep_running", True), "keep-running-off": ("keep_running", False),
+            "autostart-on": ("autostart", True), "autostart-off": ("autostart", False)}
+UNAVAILABLE = {"keep_running": "Keep running on close needs a system tray on this desktop",
+               "autostart": "Start at login needs a system tray and a systemd session on this desktop"}
+STATE_KEYS = frozenset({"keep_running", "keep_running_available", "autostart", "autostart_available"})
 NOTICE_KEYS = frozenset({"key", "title", "body", "actions"})
 MAX_CLOSED = 50
 
@@ -50,11 +57,12 @@ class DesktopOwner:
         self._send = send
         self._timeout = timeout
         self._condition = threading.Condition()
-        self._state: dict[str, bool | None] = {"keep_running": None, "keep_running_available": False}
+        self._state: dict[str, bool | None] = {"keep_running": None, "keep_running_available": False,
+                                               "autostart": None, "autostart_available": False}
         self._reports = 0
 
     def report(self, line: str) -> bool:
-        """Adopt a ``{"keep_running", "keep_running_available"}`` report; ignore anything else."""
+        """Adopt the shell's report of its four preference fields (`STATE_KEYS`); ignore anything else."""
         try:
             data = json.loads(line)
         except ValueError:
@@ -77,16 +85,16 @@ class DesktopOwner:
         if command not in COMMANDS:
             raise APIError(400, "Unknown desktop command")
         with self._condition:
-            wanted = KEEP_RUNNING.get(command)
-            if wanted is not None and not self._state["keep_running_available"]:
-                raise APIError(409, "Keep running on close needs a system tray on this desktop")
+            field, wanted = SWITCHES.get(command, (None, None))
+            if field is not None and not self._state[f"{field}_available"]:
+                raise APIError(409, UNAVAILABLE[field])
             seen = self._reports
             self._send(json.dumps({"command": command}))
-            if wanted is None:
+            if field is None:
                 return {"ok": True}
             if not self._condition.wait_for(lambda: self._reports > seen, self._timeout):
                 raise APIError(504, "The desktop app did not confirm the change; try again")
-            if self._state["keep_running"] is not wanted:
+            if self._state[field] is not wanted:
                 raise APIError(409, "The desktop app could not save this preference")
             return {"available": True, **self._state}
 

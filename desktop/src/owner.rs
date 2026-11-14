@@ -32,6 +32,8 @@ pub enum Command {
     CheckUpdates,
     NewQuickNote,
     KeepRunning(bool),
+    /// Start at login, hidden in the tray (autostart.rs).
+    Autostart(bool),
     Quit,
     /// Save, stop the backend and reopen: a module change applies (Settings → Modules, first run).
     Restart,
@@ -82,6 +84,8 @@ pub fn parse(line: &str) -> Option<Command> {
         "new-quick-note" => Some(Command::NewQuickNote),
         "keep-running-on" => Some(Command::KeepRunning(true)),
         "keep-running-off" => Some(Command::KeepRunning(false)),
+        "autostart-on" => Some(Command::Autostart(true)),
+        "autostart-off" => Some(Command::Autostart(false)),
         "quit" => Some(Command::Quit),
         "restart" => Some(Command::Restart),
         _ => None,
@@ -94,10 +98,12 @@ fn skill_file(text: &str) -> Option<PathBuf> {
     (path.is_absolute() && plain && !text.contains('\0') && path.file_name()? == "SKILL.md").then(|| path.to_path_buf())
 }
 
-pub fn state_line(keep_running: bool, keep_running_available: bool) -> String {
+pub fn state_line(keep_running: bool, keep_running_available: bool, autostart: bool, autostart_available: bool) -> String {
     let mut line = serde_json::json!({
         "keep_running": keep_running,
         "keep_running_available": keep_running_available,
+        "autostart": autostart,
+        "autostart_available": autostart_available,
     }).to_string();
     line.push('\n');
     line
@@ -113,6 +119,8 @@ mod tests {
         assert_eq!(parse(r#"{"command": "new-quick-note"}"#), Some(Command::NewQuickNote));
         assert_eq!(parse(r#"{"command":"keep-running-on"}"#), Some(Command::KeepRunning(true)));
         assert_eq!(parse(r#"{"command":"keep-running-off"}"#), Some(Command::KeepRunning(false)));
+        assert_eq!(parse(r#"{"command":"autostart-on"}"#), Some(Command::Autostart(true)));
+        assert_eq!(parse(r#"{"command":"autostart-off"}"#), Some(Command::Autostart(false)));
         assert_eq!(parse("{\"command\":\"quit\"}\n"), Some(Command::Quit));
         assert_eq!(parse(r#"{"command":"restart"}"#), Some(Command::Restart));
     }
@@ -164,10 +172,10 @@ mod tests {
 
     #[test]
     fn state_report_is_one_exact_json_line() {
-        let line = state_line(true, false);
+        let line = state_line(true, false, false, true);
         assert!(line.ends_with('\n') && !line[..line.len() - 1].contains('\n'));
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(value, serde_json::json!({"keep_running": true, "keep_running_available": false}));
+        assert_eq!(value, serde_json::json!({"keep_running": true, "keep_running_available": false, "autostart": false, "autostart_available": true}));
     }
 
     const SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

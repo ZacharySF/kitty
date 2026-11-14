@@ -20,20 +20,25 @@ class FakeShell:
         self.lines: list[str] = []
         self.tray = tray
         self.keep_running = keep_running
+        self.autostart = False
+        self.systemd = True
         self.answers = answers
         self.owner: DesktopOwner | None = None
 
     def send(self, line: str) -> None:
         self.lines.append(line)
         command = json.loads(line)["command"]
-        if self.answers and command in {"keep-running-on", "keep-running-off"}:
-            if self.tray:
+        if self.answers and command in {"keep-running-on", "keep-running-off", "autostart-on", "autostart-off"}:
+            if self.tray and command.startswith("keep-running"):
                 self.keep_running = command == "keep-running-on"
+            if self.tray and self.systemd and command.startswith("autostart"):
+                self.autostart = command == "autostart-on"
             # The real shell answers from its own reader thread.
             threading.Thread(target=self.report).start()
 
     def report(self) -> None:
-        self.owner.report(json.dumps({"keep_running": self.keep_running, "keep_running_available": self.tray}))
+        self.owner.report(json.dumps({"keep_running": self.keep_running, "keep_running_available": self.tray,
+                                      "autostart": self.autostart, "autostart_available": self.tray and self.systemd}))
 
 
 def serve(workspace, tmp_path, desktop):
@@ -103,7 +108,7 @@ def test_plain_website_has_no_desktop_controls(website):
 
 def test_state_reflects_the_shells_last_report(desktop):
     assert desktop.request("/api/desktop") == (200, {
-        "available": True, "keep_running": False, "keep_running_available": True})
+        "available": True, "keep_running": False, "keep_running_available": True, "autostart": False, "autostart_available": True})
     desktop.shell.keep_running = True
     desktop.shell.report()
     assert desktop.request("/api/desktop")[1]["keep_running"] is True
@@ -117,7 +122,7 @@ def test_fixed_commands_reach_the_owner_pipe_verbatim(desktop, command):
 
 def test_keep_running_waits_for_the_shell_to_confirm(desktop):
     status, data = desktop.request("/api/desktop/command", {"command": "keep-running-on"})
-    assert status == 200 and data == {"available": True, "keep_running": True, "keep_running_available": True}
+    assert status == 200 and data == {"available": True, "keep_running": True, "keep_running_available": True, "autostart": False, "autostart_available": True}
     status, data = desktop.request("/api/desktop/command", {"command": "keep-running-off"})
     assert status == 200 and data["keep_running"] is False
     assert [json.loads(line)["command"] for line in desktop.shell.lines] == ["keep-running-on", "keep-running-off"]
@@ -179,13 +184,14 @@ def test_query_parameters_are_rejected(desktop):
 
 
 @pytest.mark.parametrize("line", [
-    "", "not json", "[]", '{"keep_running": true}', '{"keep_running": 1, "keep_running_available": true}',
-    '{"keep_running": true, "keep_running_available": true, "extra": 1}', '{"command": "quit"}',
+    "", "not json", "[]", '{"keep_running": true}', '{"keep_running": true, "keep_running_available": true}',
+    '{"keep_running": 1, "keep_running_available": true, "autostart": false, "autostart_available": true}',
+    '{"keep_running": true, "keep_running_available": true, "autostart": false, "autostart_available": true, "extra": 1}', '{"command": "quit"}',
 ])
 def test_malformed_shell_reports_are_ignored(line):
     owner = DesktopOwner(lambda _line: None)
     assert owner.report(line) is False
-    assert owner.state() == {"available": True, "keep_running": None, "keep_running_available": False}
+    assert owner.state() == {"available": True, "keep_running": None, "keep_running_available": False, "autostart": None, "autostart_available": False}
 
 
 def test_a_notice_reaches_the_shell_as_one_fixed_line(desktop):
@@ -219,3 +225,14 @@ def test_a_plain_website_sends_no_system_notices_through_rika(website):
     for path, body in [("/api/desktop/notify", {"key": "a", "title": "b", "body": "", "actions": False}), ("/api/desktop/notify/close", {"keys": ["a"]})]:
         status, data = website(path, body)
         assert status == 409 and "desktop app" in data["error"]
+
+
+def test_start_at_login_waits_for_the_shell_and_needs_a_systemd_session(desktop):
+    status, data = desktop.request("/api/desktop/command", {"command": "autostart-on"})
+    assert status == 200 and data["autostart"] is True and data["keep_running"] is False
+    assert desktop.request("/api/desktop/command", {"command": "autostart-off"})[1]["autostart"] is False
+    desktop.shell.systemd = False
+    desktop.shell.report()
+    status, data = desktop.request("/api/desktop/command", {"command": "autostart-on"})
+    assert status == 409 and "systemd" in data["error"]
+    assert [json.loads(line)["command"] for line in desktop.shell.lines] == ["autostart-on", "autostart-off"]
