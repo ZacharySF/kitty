@@ -3,26 +3,29 @@
   import HomeQuickNote from "./HomeQuickNote.svelte";
   import HomeUpNext from "./HomeUpNext.svelte";
   import TodayAgenda from "./TodayAgenda.svelte";
+  import type { Bootstrap } from "./api";
+  import { buildStore } from "./build.svelte";
+  import { resolveHome } from "./home/layout";
+  import TemplateSuggestion from "./home/TemplateSuggestion.svelte";
   import { activeModules } from "./modules.svelte";
   import RikaPanel from "./rika/RikaPanel.svelte";
   import { rika } from "./rika/session.svelte";
-  import { viewEnabled, type View } from "./workspace";
+  import type { View } from "./workspace";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
   /**
    * Home (design review): less going on. Today and a quick note on the left, what is up next
    * beside them, Rika filling the right-hand column. The morning brief lives in Rika's panel,
    * sections in search (Ctrl K); agents show only while a session runs. With every module off,
-   * one quiet line says so.
+   * one quiet line says so. Which widgets show, and where, is the build's `ui.home`
+   * (home/layout.ts); a template (home/templates.ts) rearranges it from Rika's panel.
    */
-  let { revision, onview }: { revision: number; onview: (view: View) => unknown } = $props();
+  let { revision, counts, onview }: { revision: number; counts?: Bootstrap["counts"]; onview: (view: View) => unknown } = $props();
   const pane = useWorkspaceContext();
   const homeId = `home-${pane.id}`;
 
   const enabled = $derived(activeModules.enabled);
-  const workspaceTools = $derived(enabled.includes("workspace"));
-  const terminal = $derived(enabled.includes("terminal"));
-  const upNext = $derived((["calendar", "flashcards", "reminders"] as View[]).some((view) => viewEnabled(view, enabled)));
+  const columns = $derived(resolveHome(buildStore.build.ui.home, enabled));
 
   /** "/" asks Rika. */
   export function focusSearch() {
@@ -37,23 +40,23 @@
 
 <div class="home" data-tutorial="home">
   <div class="board" role="region" aria-label="Home widgets">
-    {#if workspaceTools}
+    {#each columns as column, index (index)}
       <div class="column">
-        <TodayAgenda id={`${homeId}-agenda`} {revision} {onview} />
-        <HomeQuickNote id={`${homeId}-note`} {onview} />
+        {#each column as widget (widget)}
+          {#if widget === "agenda"}<TodayAgenda id={`${homeId}-agenda`} {revision} {onview} />
+          {:else if widget === "note"}<HomeQuickNote id={`${homeId}-note`} {onview} />
+          {:else if widget === "next"}<HomeUpNext id={`${homeId}-next`} {revision} {onview} />
+          {:else}<HomeAgents id={`${homeId}-agents`} {onview} />{/if}
+        {/each}
       </div>
-    {/if}
-    {#if upNext || terminal}
-      <div class="column">
-        {#if upNext}<HomeUpNext id={`${homeId}-next`} {revision} {onview} />{/if}
-        {#if terminal}<HomeAgents id={`${homeId}-agents`} {onview} />{/if}
-      </div>
-    {/if}
+    {/each}
     {#if !enabled.length}
       <p class="quiet">Modules are off. <button type="button" class="text-button" onclick={openModuleSettings}>Turn some on</button></p>
     {/if}
   </div>
-  <RikaPanel id={`${homeId}-rika`} active={pane.active} />
+  <RikaPanel id={`${homeId}-rika`} active={pane.active}>
+    {#snippet lead()}<TemplateSuggestion {counts} />{/snippet}
+  </RikaPanel>
 </div>
 
 <style>

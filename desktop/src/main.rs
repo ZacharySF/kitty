@@ -327,6 +327,11 @@ fn show(app: &tauri::AppHandle) {
 }
 
 fn request_quit(app: &tauri::AppHandle) {
+    request_stop(app, false);
+}
+
+/// Save and stop the backend, then leave; `restart` reopens rika! (a module change applies).
+fn request_stop(app: &tauri::AppHandle, restart: bool) {
     let state = app.state::<Desktop>();
     match state.lifecycle.lock().begin_quit() {
         update_lifecycle::QuitDecision::Stop => {},
@@ -340,7 +345,7 @@ fn request_quit(app: &tauri::AppHandle) {
     thread::spawn(move || {
         app.state::<Desktop>().backend.lock().stop();
         app.state::<Desktop>().lifecycle.lock().stopped();
-        app.exit(0);
+        if restart { updates::relaunch(&app); } else { app.exit(0); }
     });
 }
 
@@ -372,6 +377,7 @@ fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
         owner::Command::NewQuickNote => open_quick_note(app, "quick-note".into()),
         owner::Command::KeepRunning(enabled) => set_background(app, enabled),
         owner::Command::Quit => request_quit(app),
+        owner::Command::Restart => request_stop(app, true),
         owner::Command::OpenSkill(path) => open_skill(&path),
     }
 }

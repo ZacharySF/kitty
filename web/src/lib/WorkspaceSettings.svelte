@@ -17,7 +17,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
-  import { api, type ModuleId, type ModuleInfo, type ModulesState, type PacksState } from "./api";
+  import type { ModuleId } from "./api";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import DesktopSettings from "./DesktopSettings.svelte";
   import QuietHours from "./QuietHours.svelte";
@@ -39,6 +39,8 @@
   import { GRAPH_LAYOUTS, setGraphSettings } from "./graphPreferences";
   import type { View } from "./workspace";
   import { activeModules } from "./modules.svelte";
+  import ModulePicker from "./ModulePicker.svelte";
+  import { moduleStore } from "./modulePicker.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   let { onview, onchange }: { onview: (view: View) => void; onchange: () => Promise<void> } = $props();
   const pane = useWorkspaceContext();
@@ -128,105 +130,17 @@
   const physics = $derived(draft ?? buildStore.build.ui.graph.physics);
   let physicsTimer: ReturnType<typeof setTimeout> | undefined;
   let error = $state("");
-  let modules = $state<ModulesState | null>(null);
-  let selection = $state<ModuleId[]>([]);
-  let savingModules = $state(false);
-  let moduleError = $state("");
+  // The module picker's switches, kept here so they survive a visit to another page.
+  let moduleOverrides = $state<Partial<Record<ModuleId, boolean>>>({});
   const modulesDirty = $derived(
-    !!modules && (selection.length !== modules.configured.length || selection.some(id => !modules!.configured.includes(id))),
+    Object.entries(moduleOverrides).some(([id, on]) => !!moduleStore.modules && moduleStore.modules.configured.includes(id as ModuleId) !== on),
   );
-  const changes = $derived.by(() => {
-    if (!modules) return { start: [] as string[], stop: [] as string[] };
-    const label = (id: ModuleId) => modules!.available.find(item => item.id === id)?.label ?? id;
-    return {
-      start: modules.configured.filter(id => !modules!.enabled.includes(id)).map(label),
-      stop: modules.enabled.filter(id => !modules!.configured.includes(id)).map(label),
-    };
-  });
   export function hasUnsavedChanges() { return modulesDirty; }
   // Q3: an unsaved module selection is the tab's dot; every other setting saves at once.
   $effect(() => {
     pane.setStatus(modulesDirty ? { state: "unsaved", detail: "Unsaved module selection" } : null);
     return () => pane.setStatus(null);
   });
-  function adopt(next: ModulesState) {
-    modules = next;
-    selection = [...next.configured];
-  }
-  // The build's modules can change from anywhere (an install, a rollback, an outside editor):
-  // show the saved selection again unless the user is editing it here.
-  const buildModules = $derived(buildStore.build.modules.join(","));
-  $effect(() => {
-    void buildModules;
-    if (untrack(() => modulesDirty || savingModules)) return;
-    let cancelled = false;
-    api<ModulesState>("/modules")
-      .then(next => { if (!cancelled) adopt(next); })
-      .catch(cause => { if (!cancelled) moduleError = (cause as Error).message; });
-    return () => { cancelled = true; };
-  });
-  function toggleModule(id: ModuleId, on: boolean) {
-    if (!modules) return;
-    selection = modules.available.map(item => item.id).filter(item => (item === id ? on : selection.includes(item)));
-  }
-  // Packs: a module's download (rika-server's /api/packs). Listed when the page opens; while a
-  // download runs the list is read again for its progress.
-  let packs = $state<PacksState | null>(null);
-  let packsError = $state("");
-  let packBusy = $state("");
-  const packFor = (item: ModuleInfo) => item.packs.map(id => packs?.packs.find(pack => pack.id === id)).filter(pack => !!pack);
-  /** A module needing a pack turns on only once that pack is here (built in or installed). */
-  const packReady = (item: ModuleInfo) => item.packs.every(id => ["built-in", "installed"].includes(packs?.packs.find(pack => pack.id === id)?.state ?? ""));
-  const downloading = $derived(!!packs?.packs.some(pack => pack.state === "downloading"));
-  const needsPacks = $derived(!!modules?.available.some(item => item.packs.length));
-  async function loadPacks() {
-    try {
-      packs = await api<PacksState>("/packs");
-      packsError = "";
-    } catch (cause) {
-      packsError = (cause as Error).message;
-    }
-  }
-  $effect(() => {
-    if (shown !== "modules" || !needsPacks) return;
-    untrack(() => void loadPacks());
-  });
-  $effect(() => {
-    if (!downloading) return;
-    const timer = setInterval(() => void loadPacks(), 500);
-    return () => clearInterval(timer);
-  });
-  async function changePack(id: string, action: "install" | "uninstall") {
-    if (packBusy) return;
-    packBusy = id;
-    packsError = "";
-    try {
-      packs = await api<PacksState>(`/packs/${action}`, { id });
-    } catch (cause) {
-      packsError = (cause as Error).message;
-    } finally {
-      packBusy = "";
-    }
-  }
-  function megabytes(bytes: number | null) {
-    if (bytes === null) return "";
-    return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(0.1, bytes / 1e6).toFixed(1)} MB`;
-  }
-  const percent = (progress: { received: number; total: number }) =>
-    progress.total ? Math.min(100, Math.round((progress.received / progress.total) * 100)) : 0;
-  async function saveModules() {
-    if (!modules || savingModules) return;
-    savingModules = true;
-    moduleError = "";
-    try {
-      adopt(await api<ModulesState>("/modules", { enabled: selection }));
-      await onchange();
-    } catch (cause) {
-      moduleError = `Could not save modules: ${(cause as Error).message}`;
-    } finally {
-      savingModules = false;
-    }
-  }
   const labels: Record<keyof GraphPhysics, string> = { repulsion: "Repulsion", spring: "Spring", damping: "Damping" };
   const explanations: Record<keyof GraphPhysics, string> = {
     repulsion: "How strongly nodes push apart. Increase to give crowded branches more room.",
@@ -302,72 +216,7 @@
         <MemorySettings />
       {:else if shown === "modules"}
         <Panel title={title} aria-label={title}>
-          {#if modules}
-            <fieldset class="rows" disabled={savingModules}>
-              <legend class="sr-only">Modules</legend>
-              {#each modules.available as item (item.id)}
-                {@const on = selection.includes(item.id)}
-                {@const configured = modules.configured.includes(item.id)}
-                {@const pending = configured !== modules.enabled.includes(item.id)}
-                {@const locked = !on && !configured && !packReady(item)}
-                <div class="set-row" data-module={item.id}>
-                  <button type="button" class="set-switch" role="switch" id={`${uid}-module-${item.id}`} aria-checked={on} aria-label={item.label}
-                    aria-describedby={`${uid}-module-${item.id}-about`} disabled={locked}
-                    title={locked ? `Download ${item.label} first` : undefined} onclick={() => toggleModule(item.id, !on)}><i></i></button>
-                  <label class="set-label" for={`${uid}-module-${item.id}`}>{item.label}</label>
-                  <span class="set-desc one-line" id={`${uid}-module-${item.id}-about`} title={item.description}>{item.description}</span>
-                  {#if pending || item.packs.length}
-                    <span class="set-end">
-                      {#if pending}
-                        <span class="pending" title={configured ? "Starts after rika! restarts" : "Stops after rika! restarts"}>Restart</span>
-                      {/if}
-                      {#if item.packs.length && !packs}
-                        <span class="set-desc">{packsError ? "Downloads unavailable" : "Checking…"}</span>
-                      {/if}
-                      {#each packFor(item) as pack (pack.id)}
-                        {#if pack.state === "downloading" && pack.progress}
-                          {@const done = percent(pack.progress)}
-                          <span class="bar" role="progressbar" aria-label={`${pack.label} download`} aria-valuemin={0} aria-valuemax={100}
-                            aria-valuenow={done} aria-valuetext={`${megabytes(pack.progress.received)} of ${megabytes(pack.progress.total)}`}><span style:width={`${done}%`}></span></span>
-                          <output>{done}%</output>
-                        {:else if pack.state === "built-in"}
-                          <span class="set-desc" title="This build carries it">Included</span>
-                        {:else if pack.state === "installed"}
-                          <span class="set-desc">Installed · {megabytes(pack.installed_size)}</span>
-                          <Button size="sm" variant="ghost" disabled={!!packBusy || configured} title={configured ? `Turn ${item.label} off and save before removing it` : undefined}
-                            aria-label={`Remove ${pack.label} download`} onclick={() => changePack(pack.id, "uninstall")}>Remove</Button>
-                        {:else if pack.state === "available" || pack.state === "outdated"}
-                          <span class="set-desc">{pack.state === "outdated" ? "Update" : "Download"} · {megabytes(pack.size)}</span>
-                          <Button size="sm" disabled={!!packBusy} aria-label={`Download ${pack.label}`} onclick={() => changePack(pack.id, "install")}>{packBusy === pack.id ? "Starting…" : "Download"}</Button>
-                        {:else}
-                          <span class="set-desc" title={packs?.index.error}>Not available</span>
-                        {/if}
-                      {/each}
-                    </span>
-                  {/if}
-                </div>
-              {/each}
-            </fieldset>
-            {#each packs?.packs.filter(pack => pack.error) ?? [] as pack (pack.id)}
-              <p class="set-note" role="alert">{pack.label}: {pack.error}</p>
-            {/each}
-            {#if packsError}<p class="set-note" role="alert">{packsError}</p>
-            {:else if packs?.index.error && packs.packs.some(pack => pack.state === "unavailable")}
-              <p class="set-note" role="status">Downloads: {packs.index.error}.</p>
-            {/if}
-            {#if modules.error}<p class="set-note" role="alert">Saved selection unreadable ({modules.error}). Saving replaces it.</p>{/if}
-            {#if modules.restart_required}
-              <p class="set-note restart" role="status">Restart rika! to apply{#if changes.start.length} · on: {changes.start.join(", ")}{/if}{#if changes.stop.length} · off: {changes.stop.join(", ")}{/if}.</p>
-            {/if}
-            <div class="set-row foot">
-              {#if modulesDirty}<span class="set-desc">Applies after restart; your data is kept.</span>{/if}
-              <span class="set-end">
-                <Button size="sm" variant="ghost" disabled={!modulesDirty || savingModules} onclick={() => { if (modules) selection = [...modules.configured]; }}>Discard</Button>
-                <Button intent="primary" size="sm" disabled={!modulesDirty || savingModules} onclick={saveModules}>{savingModules ? "Saving…" : "Save modules"}</Button>
-              </span>
-            </div>
-          {:else if !moduleError}<p class="set-note" role="status">Loading modules…</p>{/if}
-          {#if moduleError}<p class="set-note" role="alert">{moduleError}</p>{/if}
+          <ModulePicker bind:overrides={moduleOverrides} onsaved={onchange} />
         </Panel>
       {:else if shown === "graphs"}
         <Panel title={title} aria-label={title}>
@@ -544,12 +393,6 @@
     color: var(--muted);
     line-height: 1.45;
   }
-  /* Module rows stay one line; the whole description is in the tooltip. */
-  .set-desc.one-line {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
   .page :global(.set-end) {
     display: inline-flex;
     align-items: center;
@@ -561,21 +404,6 @@
     margin: 8px 0 0;
     color: var(--muted);
     font-size: 12px;
-  }
-  /* A pack's download progress: the goals' measure bar. */
-  .bar {
-    width: 96px;
-    height: 5px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--ink) 10%, transparent);
-  }
-  .bar span {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent);
-    transition: width var(--motion-ms, 200ms) ease-out;
   }
   .page :global(.set-switch) {
     position: relative;
@@ -613,27 +441,6 @@
   .page :global(.set-switch:disabled) {
     opacity: 0.55;
     cursor: default;
-  }
-  .set-row .set-label[for] {
-    cursor: pointer;
-  }
-  .pending {
-    color: var(--warning);
-    font-size: 12px;
-    cursor: help;
-  }
-  .restart {
-    color: var(--ink);
-  }
-  .restart::before {
-    content: "";
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin-right: 7px;
-    border-radius: 999px;
-    background: var(--warning);
-    vertical-align: 1px;
   }
   .set-row.slider {
     display: grid;

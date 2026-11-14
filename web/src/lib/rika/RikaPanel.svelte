@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import HomeWidget from "../HomeWidget.svelte";
   import RikaConversation from "./RikaConversation.svelte";
   import RikaInput from "./RikaInput.svelte";
@@ -9,9 +9,10 @@
    * Rika on home: the whole right-hand column, the conversation above and the field at its
    * foot. While it is on screen (`active`: its tab is the one shown) it stands in for the
    * drawer and the reply toasts: Ctrl + J, Ctrl K and anything that would open the drawer
-   * focus its field or switch its section instead.
+   * focus its field or switch its section instead. `lead` is home's own line above the
+   * conversation (the template offer).
    */
-  let { id, active }: { id: string; active: boolean } = $props();
+  let { id, active, lead }: { id: string; active: boolean; lead?: Snippet } = $props();
   let field = $state<RikaInput>();
   const waiting = $derived(rika.pending.length + rika.pendingPlans.length);
 
@@ -30,6 +31,7 @@
 <div class="rika-panel" data-tutorial="rika">
   <HomeWidget {id} title="Rika" eyebrow={waiting ? `${waiting} waiting` : ""} fill>
     <div class="scroll">
+      {@render lead?.()}
       <RikaConversation brief={active} />
     </div>
     <div class="foot"><RikaInput bind:this={field} /></div>

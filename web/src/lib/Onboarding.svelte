@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { Button } from "@nunera/bracket";
-  import { api, type Bootstrap } from "./api";
+  import { api, type Bootstrap, type ModulesState } from "./api";
+  import ModulePicker from "./ModulePicker.svelte";
+  import { moduleStore } from "./modulePicker.svelte";
   import { tutorialSteps, type AccountState } from "./onboarding";
   import type { View } from "./workspace";
   import { currentTheme, THEME_EVENT } from "./themes";
@@ -15,7 +17,10 @@
   let { workspace, onview }: { workspace: Bootstrap | null; onview: (view: View) => void } = $props();
   let account = $state<AccountState | null>(null);
   let mode = $state<"welcome" | "tour" | "finish" | null>(null);
-  let welcomeStep = $state(0);
+  // The welcome card's steps: account, the module picker, its restart, then the tour offer.
+  let welcomeStep = $state<"account" | "modules" | "restart" | "tour">("account");
+  /** The desktop app could not be asked to restart (a plain browser): the card says to. */
+  let restartByHand = $state(false);
   let stepIndex = $state(0);
   const steps = $derived(tutorialSteps(workspace?.modules.enabled ?? []));
   const step = $derived(steps[Math.min(stepIndex, steps.length - 1)]);
@@ -99,7 +104,8 @@
     try {
       account = await api<AccountState>("/account");
       if (!account.onboarding.welcome_completed) mode = "welcome";
-      else if (!account.onboarding.tutorial_completed) startTour();
+      // The first run's restart lands here: the welcome is done, the tour is still on offer.
+      else if (!account.onboarding.tutorial_completed) { welcomeStep = "tour"; mode = "welcome"; }
     } catch (cause) { error = `Could not load the welcome guide: ${(cause as Error).message}`; }
   }
   onMount(() => {
@@ -109,7 +115,7 @@
       error = "";
       const detail = (event as CustomEvent).detail;
       if (detail === "tutorial") startTour();
-      else { welcomeStep = 0; mode = "welcome"; void api<AccountState>("/account").then(value => account = value).catch(cause => error = cause.message); }
+      else { welcomeStep = "account"; mode = "welcome"; void api<AccountState>("/account").then(value => account = value).catch(cause => error = cause.message); }
     };
     window.addEventListener("kitty-onboarding", reopen);
     const syncScheme = () => { scheme = getTheme(currentTheme()).scheme; };
@@ -166,7 +172,18 @@
   }
   async function continueWelcome() {
     await cancelConnection();
-    welcomeStep = 1; error = "";
+    welcomeStep = "modules"; error = "";
+  }
+  /** The picker saved: a changed selection restarts rika! by itself, else on to the tour offer. */
+  async function afterModules(state: ModulesState) {
+    error = "";
+    if (!state.restart_required) { welcomeStep = "tour"; return; }
+    try {
+      await save({ welcome_completed: true });
+      restartByHand = false;
+      welcomeStep = "restart";
+      restartByHand = !(await moduleStore.restart());
+    } catch (cause) { error = (cause as Error).message; }
   }
   function startTour() {
     originalView = (window.location.hash.slice(1).split("/")[0] || "today") as View;
@@ -196,8 +213,8 @@
 </script>
 
 {#if error && !mode}<button class="guide-retry" onclick={() => { error = ""; void load(); }}>{error} Retry the welcome guide.</button>{/if}
-<dialog bind:this={dialog} class:tour={mode === "tour"} class="onboarding" aria-labelledby="onboarding-title"
-  oncancel={(event) => { event.preventDefault(); void finish(); }}>
+<dialog bind:this={dialog} class:tour={mode === "tour"} class:wide={mode === "welcome" && welcomeStep === "modules"} class="onboarding" aria-labelledby="onboarding-title"
+  oncancel={(event) => { event.preventDefault(); if (!moduleStore.busy) void finish(); }}>
   {#if mode === "tour"}
     {#if rect}<div class="spotlight" aria-hidden="true" style={`left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`}></div>{:else}<div class="tour-shade"></div>{/if}
     <section class="tour-card" class:raised={rect !== null && rect.top + rect.height / 2 > window.innerHeight / 2 && rect.width > window.innerWidth / 2} aria-live="polite">
@@ -218,14 +235,14 @@
     </section>
   {:else if mode}
     <div class="welcome">
-      <div class="welcome-tools"><ThemePicker /><Button size="sm" variant="ghost" disabled={busy} onclick={finish} aria-label="Skip onboarding">Skip</Button></div>
-      <img class="brain" src={`/art/brain-${scheme}.webp`} alt="" width="760" height="652" />
+      <div class="welcome-tools"><ThemePicker /><Button size="sm" variant="ghost" disabled={busy || moduleStore.busy} onclick={finish} aria-label="Skip onboarding">Skip</Button></div>
+      {#if mode === "finish" || welcomeStep !== "modules"}<img class="brain" src={`/art/brain-${scheme}.webp`} alt="" width="760" height="652" />{/if}
       <div class="welcome-body">
         {#if mode === "finish"}
           <h1 id="onboarding-title">You're set</h1>
           <p class="note">The tour is in Settings, Account.</p>
           <Button variant="solid" intent="primary" size="lg" full disabled={busy} onclick={finish}>{busy ? "Saving…" : "Done"}</Button>
-        {:else if welcomeStep === 0}
+        {:else if welcomeStep === "account"}
           <h1 id="onboarding-title">Welcome to rika!</h1>
           {#if account?.identity}
             <p class="note">Signed in as {account.identity.email}</p>
@@ -242,6 +259,17 @@
             <Button variant="solid" intent="primary" size="lg" full onclick={continueWelcome}>Start locally</Button>
             {#if account && !account.configured}<p class="note">Google sign-in needs <a href={GUIDE} target="_blank" rel="noopener noreferrer">setting up</a> first.</p>{/if}
           {/if}
+        {:else if welcomeStep === "modules"}
+          <h1 id="onboarding-title">What will you use rika! for?</h1>
+          <p class="note">Pick any. You can change this later.</p>
+          <ModulePicker question fresh={!account?.onboarding.welcome_completed} onsaved={afterModules} />
+        {:else if welcomeStep === "restart"}
+          {#if restartByHand}
+            <h1 id="onboarding-title">Restart rika! to finish</h1>
+            <Button variant="solid" intent="primary" size="lg" full onclick={() => (welcomeStep = "tour")}>Continue</Button>
+          {:else}
+            <h1 id="onboarding-title" role="status">Restarting rika!…</h1>
+          {/if}
         {:else}
           <h1 id="onboarding-title">Take a quick tour?</h1>
           <Button variant="solid" intent="primary" size="lg" full disabled={busy} onclick={beginTour}>Show me around</Button>
@@ -255,11 +283,15 @@
 
 <style>
   :global(:root body) .onboarding { color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 0; width: min(420px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); overflow: auto; box-shadow: var(--overlay-shadow); }
+  :global(:root body) .onboarding.wide { width: min(560px, calc(100vw - 24px)); }
+  .wide .welcome-body { padding-top: 8px; }
+  .wide h1, .wide .note { text-align: left; }
+  .wide .note { margin-bottom: 6px; }
   :global(:root body) .onboarding::backdrop { background: color-mix(in srgb, var(--canvas) 82%, transparent); }
   .welcome-tools { display: flex; justify-content: flex-end; gap: 4px; padding: 10px 10px 0; }
   .brain { display: block; width: calc(100% - 40px); height: auto; aspect-ratio: 760 / 652; margin: 4px auto 20px; }
   .welcome-body { display: grid; gap: 10px; padding: 0 28px 28px; }
-  h1 { font: 600 var(--fs-title)/1.15 var(--font-ui); margin: 0 0 8px; text-align: center; min-width: 0; overflow-wrap: break-word; }
+  h1 { font: 400 var(--fs-title)/1.15 var(--font-ui); margin: 0 0 8px; text-align: center; min-width: 0; overflow-wrap: break-word; }
   .note { margin: 0; color: var(--muted); font-size: var(--fs-label); line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
   .google-g { flex: none; }
   :global(.br-btn:disabled) .google-g { filter: grayscale(1); opacity: .6; }

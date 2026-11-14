@@ -20,15 +20,13 @@ export const RIKA_SELECTOR = '[data-tutorial="rika"]';
 
 export function tutorialSteps(enabled: ModuleId[]): TutorialStep[] {
   const workspace = enabled.includes("workspace");
-  const brain = enabled.includes("brain");
   return [
     { id: "workspace", title: "Tabs and panels",
       text: "Keep several areas open in tabs and give the panel you need more room.",
       tip: "Ctrl + T opens a tab. F expands the focused panel, Esc restores it.",
       view: "today", selector: ".workbench-top" },
     { id: "modules", title: "Modules",
-      text: brain ? "Turn on only the tools you want. Changes apply after a restart."
-        : "Turn on only the tools you want. The Brain, a map of your workspace, downloads from here. Changes apply after a restart.",
+      text: "Change what you use here any time.",
       tip: "Turning a module off keeps its data.",
       view: "settings", selector: '[data-tutorial="modules"]' },
     { id: "providers", title: "AI is optional",

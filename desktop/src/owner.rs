@@ -33,6 +33,8 @@ pub enum Command {
     NewQuickNote,
     KeepRunning(bool),
     Quit,
+    /// Save, stop the backend and reopen: a module change applies (Settings → Modules, first run).
+    Restart,
     /// One agent skill's SKILL.md for the desktop opener (kitty.web_agent_skills).
     OpenSkill(PathBuf),
 }
@@ -54,6 +56,7 @@ pub fn parse(line: &str) -> Option<Command> {
         "keep-running-on" => Some(Command::KeepRunning(true)),
         "keep-running-off" => Some(Command::KeepRunning(false)),
         "quit" => Some(Command::Quit),
+        "restart" => Some(Command::Restart),
         _ => None,
     }
 }
@@ -84,13 +87,14 @@ mod tests {
         assert_eq!(parse(r#"{"command":"keep-running-on"}"#), Some(Command::KeepRunning(true)));
         assert_eq!(parse(r#"{"command":"keep-running-off"}"#), Some(Command::KeepRunning(false)));
         assert_eq!(parse("{\"command\":\"quit\"}\n"), Some(Command::Quit));
+        assert_eq!(parse(r#"{"command":"restart"}"#), Some(Command::Restart));
     }
 
     #[test]
     fn anything_outside_the_fixed_allowlist_is_ignored() {
         for line in ["", "quit", "\"quit\"", "[\"quit\"]", r#"{"origin":"http://127.0.0.1:1"}"#,
                      r#"{"origin":"http://127.0.0.1:1","secret":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}"#,
-                     r#"{"command":"open-url"}"#, r#"{"command":"QUIT"}"#, r#"{"command":" quit"}"#,
+                     r#"{"command":"open-url"}"#, r#"{"command":"QUIT"}"#, r#"{"command":"restart","now":true}"#, r#"{"command":" quit"}"#,
                      r#"{"command":"quit","url":"https://example.invalid"}"#, r#"{"command":["quit"]}"#,
                      r#"{"command":null}"#, "Traceback (most recent call last):",
                      r#"{"command":"open-skill"}"#, r#"{"command":"open-skill","path":"SKILL.md"}"#,

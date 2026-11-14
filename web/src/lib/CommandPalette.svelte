@@ -8,6 +8,7 @@
   import { morningBrief } from "./goals/brief.svelte";
   import { launchMath, type MathLaunch } from "./math/launch";
   import { rika } from "./rika/session.svelte";
+  import { templatePicker } from "./home/templatePicker.svelte";
 
   /**
    * Spotlight-style palette (Ctrl K): one large field, nothing else until you type,
@@ -88,6 +89,8 @@
     ] : []),
     // The top bar carries no theme or bell: both live here (and in the tab menu).
     { label: "Theme", meta: "Settings · Appearance", icon: "settings", run: () => onsettings("appearance") },
+    // Rika offers one template once; the four stay here.
+    { label: "Home templates", meta: "Home", icon: "today", run: () => { templatePicker.open = true; onview("today"); } },
     ...(onnotifications ? [{ label: "Notifications", meta: "Action", icon: "today", run: () => onnotifications() }] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
