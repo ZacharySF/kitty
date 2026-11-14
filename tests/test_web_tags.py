@@ -5,13 +5,14 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from terminal_support import make_root, site
+from terminal_support import front_site, make_root, site
 from test_web_blocks import Client, page_ops
 
 
 @pytest.fixture
 def running(tmp_path):
-    with site(make_root(tmp_path, ("workspace",))) as server:
+    # The front owns the windows' live sockets (server/src/live/).
+    with front_site(make_root(tmp_path, ("workspace",))) as server:
         yield server
 
 

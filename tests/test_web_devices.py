@@ -14,18 +14,18 @@ import pytest
 
 from kitty.core import blocks
 from kitty.db.connection import connect
-from terminal_support import make_root, site
+from terminal_support import front_site, make_root, site
 from test_web_blocks import Client, page_ops
 
 
 @pytest.fixture
 def pair_of_sites(tmp_path, monkeypatch):
-    monkeypatch.setenv("KITTY_SYNC", "on")
-    monkeypatch.setenv("KITTY_SYNC_PORT", "0")
-    monkeypatch.setenv("KITTY_SYNC_DISCOVERY", "off")
-    with site(make_root(tmp_path / "a", ("workspace",))) as a, site(make_root(tmp_path / "b", ("workspace",))) as b:
-        for running in (a, b):
-            running.app.sync.host = "127.0.0.1"
+    sync = {"KITTY_SYNC": "on", "KITTY_SYNC_PORT": "0", "KITTY_SYNC_DISCOVERY": "off"}
+    for name, value in sync.items():
+        monkeypatch.setenv(name, value)
+    # `b` runs behind rika-server, which owns its windows' live sockets (server/src/live/).
+    with site(make_root(tmp_path / "a", ("workspace",))) as a, front_site(make_root(tmp_path / "b", ("workspace",)), env=sync) as b:
+        a.app.sync.host = "127.0.0.1"
         yield a, b
 
 
