@@ -175,10 +175,17 @@ def save_calendar(conn, body):
     return _get_calendar(conn, ident)
 
 
+def require_writable(conn, calendar_id):
+    """409 for a calendar imported from an outside account (`calendar_remote`): it is read-only here."""
+    if conn.execute('SELECT 1 FROM calendar_remote WHERE calendar_id=?', (calendar_id,)).fetchone():
+        fail('This calendar comes from Outlook and is read-only in rika!; change it in Outlook', 409)
+
+
 def delete_calendar(conn, body):
     cal = _get_calendar(conn, body.get('id'))
     if cal['id'] == 'personal':
         fail('Personal is the default calendar and cannot be deleted')
+    require_writable(conn, cal['id'])
     if body.get('revision') != cal['revision']:
         fail('Calendar changed; reload before deleting', 409)
     if conn.execute('SELECT 1 FROM calendar_events WHERE calendar_id=? AND deleted=0 LIMIT 1', (cal['id'],)).fetchone():
@@ -332,6 +339,7 @@ def _update(conn, ident, data, deleted=False, manual=True):
 
 def create_event(conn, body):
     data = normalize_event(conn, body)
+    require_writable(conn, data['calendar_id'])
     with transaction(conn):
         if data['source_key']:
             row = conn.execute('SELECT id FROM calendar_events WHERE source_key=?', (data['source_key'],)).fetchone()
@@ -480,6 +488,8 @@ def edit_event(conn, ident, body):
     changes = body.get('changes', {})
     if not isinstance(changes, dict) or set(changes) - EVENT_FIELDS:
         fail('Invalid event changes')
+    for calendar_id in (current['calendar_id'], changes.get('calendar_id', current['calendar_id'])):
+        require_writable(conn, calendar_id)
     if 'source_key' in changes and changes['source_key'] != current.get('source_key'):
         fail('Stable source linkage cannot be edited')
     scope = body.get('scope', 'all')
@@ -996,6 +1006,7 @@ def import_reviewed(conn, items):
             _, key = _assert_occurrence(data, ex.get('occurrence', ''))
             exceptions.append((key, normalize_event(conn, ex['event']) if ex.get('event') else None))
         normalized.append((data, exceptions))
+        require_writable(conn, data['calendar_id'])
     created, duplicates, undo_ids = [], [], []
     with transaction(conn):
         for data, exceptions in normalized:
