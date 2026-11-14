@@ -107,6 +107,7 @@
     flex: none;
     display: grid;
     gap: 10px;
+    margin-bottom: 14px;
     padding: 2px 0 2px 14px;
     border-left: 2px solid var(--ink);
   }

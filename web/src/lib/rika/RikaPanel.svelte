@@ -30,8 +30,9 @@
 
 <div class="rika-panel" data-tutorial="rika">
   <HomeWidget {id} title="Rika" eyebrow={waiting ? `${waiting} waiting` : ""} fill>
+    <!-- Home's line stays in view; only the conversation scrolls beneath it. -->
+    {#if lead}<div class="lead">{@render lead()}</div>{/if}
     <div class="scroll">
-      {@render lead?.()}
       <RikaConversation brief={active} />
     </div>
     <div class="foot"><RikaInput bind:this={field} /></div>
@@ -55,6 +56,9 @@
     overscroll-behavior: contain;
     scrollbar-width: thin;
     scrollbar-color: var(--hairline) transparent;
+  }
+  .lead {
+    flex: none;
   }
   .foot {
     flex: none;

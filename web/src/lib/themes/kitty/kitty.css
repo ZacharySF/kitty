@@ -83,3 +83,8 @@
   -webkit-backdrop-filter: none;
   padding-inline: 0;
 }
+
+/* Design labs (Type): page titles in the text face at regular weight; size carries the hierarchy. */
+:root[data-theme="kitty"] body h1 {
+  font-weight: 400;
+}
