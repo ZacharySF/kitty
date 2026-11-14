@@ -7,7 +7,6 @@ import stat
 from contextlib import closing
 from pathlib import Path
 
-import httpx
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -433,43 +432,6 @@ def test_history_keeps_only_the_newest_builds(root):
     assert len(entries) == store.HISTORY_KEEP and entries[0]["name"] == f"n{store.HISTORY_KEEP + 2}"
     with pytest.raises(store.BuildStoreError):
         store.history_text(root, "../../config/build")
-
-
-def public(host, *_args, **_kwargs):
-    return [(2, 1, 6, "", ("140.82.112.3" if host != "evil.internal" else "127.0.0.1", 443))]
-
-
-def transport(routes: dict[str, httpx.Response]) -> httpx.MockTransport:
-    return httpx.MockTransport(lambda request: routes[str(request.url)])
-
-
-def test_fetching_a_build_link_follows_only_https_and_caps_its_size():
-    good = '{"schema": 1, "name": "gist"}'
-    routes = {
-        "https://gist.githubusercontent.com/u/1/raw/kitty-build.json": httpx.Response(200, text=good),
-        "https://github.com/u/r/raw/main/kitty-build.json": httpx.Response(
-            302, headers={"location": "https://raw.githubusercontent.com/u/r/main/kitty-build.json"}),
-        "https://raw.githubusercontent.com/u/r/main/kitty-build.json": httpx.Response(200, text=good),
-        "https://gist.githubusercontent.com/u/2/raw": httpx.Response(301, headers={"location": "http://plain.example/x"}),
-        "https://gist.githubusercontent.com/u/3/raw": httpx.Response(200, content=b"x" * (document.MAX_BYTES + 1)),
-        "https://gist.githubusercontent.com/u/4/raw": httpx.Response(404),
-        **{f"https://loop.example/{n}": httpx.Response(302, headers={"location": f"https://loop.example/{n + 1}"})
-           for n in range(6)},
-    }
-    fetch = lambda url: share.fetch(url, transport=transport(routes), resolver=public)  # noqa: E731
-    assert fetch("https://gist.githubusercontent.com/u/1/raw/kitty-build.json") == good
-    assert fetch("https://github.com/u/r/raw/main/kitty-build.json") == good
-    for url, reason in (("http://gist.githubusercontent.com/u/1/raw", "https"),
-                        ("https://gist.githubusercontent.com/u/2/raw", "non-https"),
-                        ("https://gist.githubusercontent.com/u/3/raw", "limited"),
-                        ("https://gist.githubusercontent.com/u/4/raw", "404"),
-                        ("https://loop.example/0", "redirects more than"),
-                        ("https://user:pw@gist.githubusercontent.com/x", "user name"),
-                        ("https://evil.internal/build.json", "public https address"),
-                        ("file:///etc/passwd", "https")):
-        with pytest.raises(share.ShareError) as refused:
-            fetch(url)
-        assert reason in str(refused.value), (url, str(refused.value))
 
 
 def test_a_new_workspace_gets_an_owner_only_build_with_every_module(tmp_path):

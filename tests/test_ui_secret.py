@@ -120,6 +120,10 @@ def test_the_terminal_token_cannot_be_minted_without_the_secret(running):
 @pytest.mark.parametrize("session, socket", [("/api/live/session", "/api/live/socket"),
                                              ("/api/terminal/session", "/api/terminal/socket")])
 def test_websocket_upgrades_need_the_secret_as_a_subprotocol(running, session, socket):
+    if session == "/api/live/session" and not isinstance(running, FrontSite):
+        # The live channel is the front's (server/src/live/): the Python server has no such route.
+        assert running.request(session, {})[0] == 404
+        return
     token = running.request(session, {})[1]["token"]
     path = f"{socket}?token={token}"
     protocol = "Sec-WebSocket-Protocol"

@@ -602,7 +602,7 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
 
   The legacy tables stay readable and refuse writes (triggers) for one release. A runner directive (`-- python: module:function`) lets a numbered migration call a Python conversion in the same transaction.
 - **Existing UI:** every Notes, Documents and Quick notes endpoint keeps its request and response shape. They now read the projection and write through transactions; a whole-page save becomes the smallest diff (`convert.sync_tree`). Deleting a page or quick note moves it to Trash.
-- **WebSocket transactions and live push** (`src/kitty/web_live.py` since builds, which made the channel part of the always-on core; `web/src/lib/live.ts`):
+- **WebSocket transactions and live push** (`server/src/live/` in rika-server since the Rust core's milestone 2, `src/kitty/web_live.py` before; `web/src/lib/live.ts`):
   - A window gets a single-use token from `POST /api/live/session`, then opens `/api/live/socket` (`/api/blocks/session` and `/api/blocks/socket` before builds). The socket has the same exact Host and Origin guard as the terminal; the RFC 6455 code is now shared in `web_socket.py`.
   - `{"type":"txn","ops","base"}` is applied by the server and answered with `ack` (sequence numbers and revisions) or `reject` (status and error) to the sender only.
   - Every committed `op_log` row is pushed to every window as a `change`. This includes rows written by the HTTP adapters, background imports and other processes: one thread follows the log and starts with the first window.
@@ -686,9 +686,11 @@ Peer sync (Q16) on Loro (Q5). Code: `src/kitty/core/blocks/crdt.py` (Loro page d
 ## Builds (Q8/Q9): what was built
 
 Code: `src/kitty/core/builds/` (`document`, `css`, `store`, `project`, `share` and the published
-schema `kitty-build.schema.json`), migration `041_builds.sql`, `src/kitty/web_build.py`,
-`src/kitty/web_live.py`, `web/src/lib/build.svelte.ts`, `buildCore.ts`, `BuildEditor.svelte`,
-`BuildSettings.svelte`, `BuildStatus.svelte`. Dependency added with uv: `jsonschema` 4.26 (MIT;
+schema `kitty-build.schema.json`), migration `041_builds.sql`, rika-server's `server/src/builds/`
+(the build routes, the watcher and push, the projection, link fetching; docs/rust-core-design.md),
+`src/kitty/web_build.py` (the worker's `build_applied` hooks), `web/src/lib/build.svelte.ts`,
+`buildCore.ts`, `BuildEditor.svelte`, `BuildSettings.svelte`, `BuildStatus.svelte`. Dependency
+added with uv: `jsonschema` 4.26 (MIT;
 already in the lock through `mcp`).
 
 - **Where the active build lives: `config/build.json`.** It sits beside the YAML a person edits
@@ -759,7 +761,7 @@ already in the lock through `mcp`).
   then deletes those keys. No localStorage fallback remains.
 - **Live (Q9).** The live channel moved from the workspace module to the always-on core
   (`/api/live/session`, `/api/live/socket`; block transactions still need the workspace
-  module). A watcher (a stat every 250 ms, acting once a file has stood still for one tick)
+  module). A watcher in rika-server (a stat every 250 ms, acting once a file has stood still for one tick)
   projects each valid save and pushes `{"type": "build", ...}` to every window, whoever saved
   it: the build editor, a Settings screen, an install, another process or any text editor. An
   invalid save changes nothing: every window gets the problems, shows a notice with the line and
@@ -799,11 +801,14 @@ already in the lock through `mcp`).
   compatibility, token values, 11 allowed and 30 refused CSS cases, what an export never holds,
   the modules.yaml and settings-row migration, projection, invalid file keeping the last good
   build and starting on it, Settings writes through the file, symlinks refused, diff and holds,
-  atomic install and rollback, a failed write changing nothing, history pruning, link fetching);
-  `tests/test_web_build.py` (two live sockets: editor saves and external edits reach both, an
-  invalid edit keeps the last good build and blocks Settings writes, preferences, the one-time
-  local move, install/rollback, export, https-only links, the build without the workspace
-  module, safe mode, the Tern plugin switch); `web/tests/builds.test.mjs` (pure client logic);
+  atomic install and rollback, a failed write changing nothing, history pruning);
+  `tests/test_web_build.py`, through rika-server (two live sockets: editor saves and external
+  edits reach both, an invalid edit keeps the last good build and blocks Settings writes,
+  preferences, the one-time local move, install/rollback, export and its link ticket, https-only
+  links, the build without the workspace module, safe mode, the Tern plugin switch, and every
+  write path's file, history and rows compared with Python's `project`, previews and checks with
+  `share` and `document`); link fetching is unit-tested in `server/src/builds/fetch.rs`;
+  `web/tests/builds.test.mjs` (pure client logic);
   `web/tests/builds.browser.test.mjs` (two real windows on a real server: a token edited in the
   editor and an external save restyle both, invalid saves marked at their line, import diff with
   restart flag, install, rollback, safe mode by shortcut and URL over hostile CSS).

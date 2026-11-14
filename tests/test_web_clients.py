@@ -6,7 +6,7 @@ import re
 import json
 
 import pytest
-from terminal_support import make_root, site
+from terminal_support import front_site, make_root, site
 from test_web_blocks import Client
 
 from kitty.core import endpoint
@@ -214,7 +214,13 @@ def test_cors_answers_only_the_recorded_extension_origin(running):
     assert preflight(running, "/api/ingress/notes", EXTENSION)[0] == 403
 
 
-def test_captures_land_in_the_op_log_and_push_to_open_windows(running):
+def test_captures_land_in_the_op_log_and_push_to_open_windows(tmp_path):
+    # The front owns the windows' live sockets (server/src/live/); the ingress is forwarded.
+    with front_site(make_root(tmp_path, ("workspace",))) as running:
+        captures_push_to_open_windows(running)
+
+
+def captures_push_to_open_windows(running):
     client, token = pair(running, scopes=("capture", "read"))
     window = Client(running)
     try:

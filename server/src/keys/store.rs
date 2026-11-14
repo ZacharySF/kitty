@@ -7,7 +7,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use crate::private::{self, Mode};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
@@ -123,7 +123,7 @@ fn temporary_file(folder: &Path) -> Result<(File, PathBuf)> {
         getrandom::fill(&mut random).map_err(internal)?;
         let name: String = random.iter().map(|b| TEMPORARY[*b as usize % TEMPORARY.len()] as char).collect();
         let path = folder.join(format!(".key-{name}"));
-        match OpenOptions::new().read(true).write(true).create_new(true).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(&path) {
+        match private::no_follow(OpenOptions::new().read(true).write(true).create_new(true).mode(0o600)).open(&path) {
             Ok(file) => return Ok((file, path)),
             Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
             Err(_) => return Err(Error::Internal),
@@ -162,7 +162,7 @@ impl Keys<'_> {
     fn read_file(&self, name: &str) -> Result<Option<String>> {
         let path = self.file_path(name);
         self.refuse_links(&path)?;
-        let file = match OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(&path) {
+        let file = match private::no_follow(OpenOptions::new().read(true)).open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(refuse(409, "Cannot read a private key file")),
@@ -171,11 +171,10 @@ impl Keys<'_> {
         if !info.file_type().is_file() {
             return Err(refuse(409, "A private key path is not a regular file"));
         }
-        if info.mode() & 0o077 != 0 {
+        if !private::owner_only(&info) {
             return Err(refuse(409, "Private key files must be owner-only (chmod 600)"));
         }
-        // SAFETY: getuid has no preconditions and cannot fail.
-        if info.uid() != unsafe { libc::getuid() } {
+        if !private::owned_by_me(&info) {
             return Err(refuse(409, "Private key files must belong to you"));
         }
         let mut raw = Vec::new();
@@ -195,7 +194,7 @@ impl Keys<'_> {
         self.refuse_links(&path)?;
         let (mut file, temporary) = temporary_file(folder)?;
         let written = (|| {
-            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            private::set_mode(&temporary, 0o600)?;
             file.write_all(value.as_bytes())?;
             file.flush()?;
             file.sync_all()?;
@@ -363,8 +362,10 @@ impl Keys<'_> {
     }
 }
 
-#[cfg(test)]
+// The tests set and read Unix modes.
+#[cfg(all(test, unix))]
 mod tests {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use super::*;
 
     const VALUE: &str = "synthetic-key-value-0123456789";

@@ -1,12 +1,24 @@
-//! Build files (`kitty.core.builds`): the reader, ported with Python-identical results.
+//! Build files (`kitty.core.builds`): the reader, ported with Python-identical results, the
+//! store, the SQLite projection, sharing, and the live build's routes and watcher.
 
+mod clock;
 mod css;
 pub mod document;
+mod failure;
+mod fetch;
 pub mod json;
+mod project;
 mod regex;
+mod routes;
 mod schema;
+pub mod service;
+mod share;
+mod store;
+mod tasks;
 mod unicode;
 pub mod value;
+
+pub use routes::route;
 
 use std::io::{Read, Write};
 
@@ -52,7 +64,7 @@ pub fn check_build_command() -> i32 {
 }
 
 /// UTF-8 that may encode surrogate code points (each on its own, as `surrogatepass` does).
-fn decode(bytes: &[u8]) -> Option<Vec<u32>> {
+pub(crate) fn decode(bytes: &[u8]) -> Option<Vec<u32>> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {

@@ -1,17 +1,23 @@
 """The live build over HTTP and the live channel: every window sees every valid save at once."""
 from __future__ import annotations
 
+import copy
+import http.client
 import json
+import re
 import socket
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
-import terminal_support
+from kitty import web_auth
+from kitty.core.builds import document, project, share, store
+from kitty.core.workspace import open_workspace
+from kitty.db import connect
 from kitty.settings import Settings
-from kitty.web_server import WebApplication
-from terminal_support import FrameReader, send_frame, site, websocket
+from terminal_support import FrameReader, front_site, send_frame, site, websocket
 
 SOCKET = "/api/live/socket"
 
@@ -64,7 +70,7 @@ def workspace(tmp_path: Path, modules: list[str], **extra) -> Settings:
 
 @pytest.fixture
 def running(tmp_path):
-    with site(workspace(tmp_path, ["workspace"])) as server:
+    with front_site(workspace(tmp_path, ["workspace"])) as server:
         yield server
 
 
@@ -228,7 +234,7 @@ def test_a_build_link_must_be_https(running):
 
 
 def test_block_transactions_need_the_workspace_module_but_the_build_is_live_without_it(tmp_path):
-    with site(workspace(tmp_path, [])) as running:
+    with front_site(workspace(tmp_path, [])) as running:
         window = Window(running)
         try:
             window.send({"type": "txn", "txn_id": "t1", "ops": []})
@@ -240,13 +246,8 @@ def test_block_transactions_need_the_workspace_module_but_the_build_is_live_with
             window.close()
 
 
-def test_safe_mode_is_announced_to_every_window(tmp_path, monkeypatch):
-    class Safe(WebApplication):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs, safe=True)
-
-    monkeypatch.setattr(terminal_support, "WebApplication", Safe)
-    with site(workspace(tmp_path, ["workspace"])) as running:
+def test_safe_mode_is_announced_to_every_window(tmp_path):
+    with front_site(workspace(tmp_path, ["workspace"]), args=("--safe",)) as running:
         window = Window(running)
         try:
             assert running.request("/api/build")[1]["safe"] is True
@@ -261,7 +262,11 @@ def test_the_tern_plugin_setting_gates_its_pairing(running):
     body = {"name": "kitty Tern plugin", "kind": "tern-plugin", "scopes": ["capture"]}
     assert running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})[0] == 202
     edit_file(running, lambda data: data.update(settings={"tern": {"plugin": False}}))
-    running.app.builds.refresh()  # the watcher would within a quarter second
+    # The build watcher projects the edit within a quarter second. Waiting on the active build,
+    # not on more pairing requests: only three may wait at once, so polling them would be refused first.
+    deadline = time.time() + 5
+    while running.request("/api/build")[1]["build"]["settings"]["tern"]["plugin"] and time.time() < deadline:
+        time.sleep(.05)
     status, answer = running.request(path, body, headers={"Origin": None, "X-Kitty-Request": None})
     assert status == 403 and "Tern plugin is turned off" in answer["error"]
 
@@ -270,3 +275,175 @@ def test_the_page_opens_with_safe_in_its_address_and_nothing_else(running):
     assert running.request("/?safe")[0] == 200
     assert running.request("/?safe=1")[0] == 200
     assert running.request("/?theme=x")[0] == 400
+
+
+def test_export_reached_through_a_link_ticket_is_an_attachment_once(running):
+    url = running.request(web_auth.LINK_PATH, {"path": "/api/build/export"})[1]["url"]
+    client = http.client.HTTPConnection("127.0.0.1", running.port, timeout=10)
+    try:
+        client.request("GET", url, headers={"Origin": running.server.origin})
+        response = client.getresponse()
+        exported = response.read()
+    finally:
+        client.close()
+    assert response.status == 200 and response.getheader("Content-Disposition") == 'attachment; filename="kitty-build.json"'
+    active = document.require((running.app.settings.root / "config" / "build.json").read_text())
+    assert exported.decode() == share.export_text(active)
+    assert running.request(url, headers={web_auth.HEADER: None})[0] == 401, "single use"
+    assert running.request("/api/build/export?x=1")[0] == 400
+
+
+def test_the_worker_s_tasks_and_internal_routes_stay_where_they_are(running):
+    assert running.request(f"/api/tasks/{'a' * 32}") == (404, {"error": "Background operation not found"})
+    assert running.request("/api/internal/build/applied", {"build": {}}) == (404, {"error": "API route not found"})
+    assert running.request("/api/build/nothing") == (404, {"error": "API route not found"})
+    assert running.request("/api/build/nothing", {}) == (404, {"error": "API route not found"})
+
+
+# Parity: the front's answers and rows against Python's kitty.core.builds -----------------------
+
+#: The projected rows (build_state's clock, and next_run, compared by shape).
+TABLES = ("ai_settings", "note_preferences", "study_settings", "study_timer", "opportunity_settings", "tag_settings",
+          "build_state")
+CLOCK = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{6})?\+00:00")
+
+
+def rows(settings: Settings) -> dict:
+    with closing(connect(settings.db_path)) as conn:
+        found = {table: dict(conn.execute(f"SELECT * FROM {table} WHERE id=1").fetchone()) for table in TABLES}
+    for table, column in (("build_state", "applied_at"), ("opportunity_settings", "next_run")):
+        value = found[table][column]
+        found[table][column] = None if value is None else bool(CLOCK.fullmatch(value))
+    return found
+
+
+def merge(target: dict, patch: dict, *, missing_only: bool = False) -> None:
+    """What `POST /api/build/preferences` (and `/local`) merge into the document."""
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            merge(target[key], value, missing_only=missing_only)
+        elif not missing_only or key not in target:
+            target[key] = copy.deepcopy(value)
+
+
+def history(root: Path) -> list[dict]:
+    return [{key: entry[key] for key in ("reason", "name", "valid", "revision")} for entry in store.list_history(root)]
+
+
+def test_the_front_projects_builds_with_python_s_writes(tmp_path):
+    """Every write path, through the front and through Python's kitty.core.builds on a twin
+    workspace, leaves the same file, history and settings rows."""
+    initial = {"settings": {"study": {"focus_seconds": 1500}}}
+    front_settings = workspace(tmp_path / "front", ["workspace"], **initial)
+    twin = workspace(tmp_path / "python", ["workspace"], **initial)
+    with open_workspace(twin):
+        pass
+    file = lambda settings: (settings.root / "config" / "build.json").read_text()  # noqa: E731
+
+    with front_site(front_settings) as running, closing(connect(twin.db_path)) as conn:
+        def same(step: str) -> None:
+            assert file(front_settings) == file(twin), step
+            assert rows(front_settings) == rows(twin), step
+            assert history(front_settings.root) == history(twin.root), step
+
+        same("start")
+        # replace: the build editor's save (budget rounding, the idle timer, monitoring's next run)
+        saved = json.dumps({"schema": 1, "modules": ["workspace"], "name": "Desk \u00e9\U0001F600",
+                            "settings": {"ai": {"model": "synthetic/model", "daily_budget_usd": 2.675, "routing": "latency"},
+                                         "study": {"focus_seconds": 1800, "sound": False},
+                                         "opportunities": {"monitoring": True, "interval_hours": 12},
+                                         "tags": {"mode": "always"}, "history": {"retention_days": 7},
+                                         "tern": {"plugin": False}, "notes": {"allow_ai": True}}}, indent=1)
+        base = running.request("/api/build")[1]["revision"]
+        assert running.request("/api/build/save", {"text": saved, "base": base}) == (200, {"ok": True})
+        project.replace(conn, twin.root, saved)
+        same("save")
+        # editing: a Settings screen's preferences
+        # In the route's own order (name, author, description, then ui and theme): new keys land in that order.
+        patch = {"author": "Someone", "ui": {"graph": {"look": "3d"}}, "theme": {"base": "nord"}}
+        assert running.request("/api/build/preferences", patch) == (200, {"ok": True})
+        with project.editing(conn, twin.root) as build:
+            merge(build, patch)
+        same("preferences")
+        # sync: an external editor
+        edited = json.loads(file(twin))
+        edited["settings"]["study"]["short_break_seconds"] = 600
+        edited["settings"]["opportunities"]["monitoring"] = False
+        for settings in (front_settings, twin):
+            (settings.root / "config" / "build.json").write_text(json.dumps(edited, indent=2))
+        running.request("/api/build")
+        project.sync(conn, twin.root)
+        same("external edit")
+        # replace with history: an install holding back the sensitive changes
+        incoming = json.dumps({"schema": 1, "name": "Shared", "modules": ["workspace", "terminal"],
+                               "settings": {"ai": {"model": "expensive/model", "daily_budget_usd": 50},
+                                            "opportunities": {"monitoring": True}, "tags": {"mode": "suggest"}}})
+        preview = running.request("/api/build/preview", {"text": incoming})[1]
+        status, done = running.request("/api/build/install", {"text": incoming, "base": preview["base"],
+                                                              "accept_sensitive": False, "source": "file"})
+        plan = share.resolve(project.sync(conn, twin.root).build, incoming, accept_sensitive=False)
+        project.replace(conn, twin.root, document.dump(plan["build"]), history=("install", "file"))
+        assert status == 200 and done == {"ok": True, "restart": plan["restart"], "held": plan["held"], "changes": plan["changes"]}
+        same("install")
+        # rollback
+        status, rolled = running.request("/api/build/rollback", {})
+        entry = store.list_history(twin.root)[0]["id"]
+        project.replace(conn, twin.root, store.history_text(twin.root, entry), history=("rollback", f"replaced by {entry}"))
+        assert status == 200 and rolled["ok"] and rolled["restored"] == store.list_history(front_settings.root)[1]["id"]
+        same("rollback")
+        # sync's one-time move of settings rows into a build that does not mention them
+        for settings in (front_settings, twin):
+            with closing(connect(settings.db_path)) as other:
+                other.execute("UPDATE build_state SET applied_hash=NULL WHERE id=1")
+                other.execute("UPDATE ai_settings SET model='moved/model', daily_budget_usd='3.5' WHERE id=1")
+                other.execute("UPDATE tag_settings SET mode='always' WHERE id=1")
+            (settings.root / "config" / "build.json").write_text('{"schema": 1, "modules": ["workspace"]}\n')
+        running.request("/api/build")
+        project.sync(conn, twin.root)
+        assert json.loads(file(twin))["settings"]["ai"]["model"] == "moved/model"
+        same("one-time move")
+
+
+INCOMING = (
+    {"schema": 1, "name": "Stranger", "author": "someone", "modules": ["workspace", "terminal"],
+     "theme": {"base": "nord", "tokens": {"ink": "#ffeeff"}, "css": ".tabs { gap: 2px }"},
+     "settings": {"notes": {"allow_ai": True}, "ai": {"model": "expensive/model", "daily_budget_usd": 50},
+                  "opportunities": {"monitoring": True}, "tags": {"mode": "always"}}},
+    {"schema": 1, "settings": {"ai": {"daily_budget_usd": 0.5, "rika_fast_model": ""}}},
+    {"schema": 1, "name": "\ud800 lone", "description": "\U0001F600", "x-unknown": 1, "theme": {"base": "aurora"},
+     "ui": {"graph": {"look": "3d"}, "planner": {"zoom": 2}}},
+    {"schema": 1, "theme": {"css": "@import 'x';"}},
+    {"schema": 2},
+)
+
+
+@pytest.mark.parametrize("incoming", INCOMING)
+def test_previews_and_checks_answer_as_share_and_document_do(running, incoming):
+    text = json.dumps(incoming, indent=2)
+    current = running.request("/api/build")[1]
+    checked = document.check(text)
+    assert running.request("/api/build/check", {"text": text}) == (200, {
+        "ok": checked.ok, "build": checked.build, "problems": [problem.as_dict() for problem in checked.problems]})
+    status, preview = running.request("/api/build/preview", {"text": text})
+    try:
+        plan = share.resolve(current["build"], text, accept_sensitive=True)
+    except share.ShareError as refused:
+        assert (status, preview) == (refused.status, {"error": str(refused),
+                                                      "problems": [problem.as_dict() for problem in refused.problems]})
+        return
+    assert status == 200 and preview == {"base": current["active_revision"], "about": plan["about"], "changes": plan["changes"],
+                                         "restart": plan["restart"], "warnings": plan["warnings"]}
+
+
+def test_the_worker_runs_its_build_applied_hooks_when_the_front_says_so(tmp_path, monkeypatch):
+    """The internal route the front calls when the active build changes (kitty.web_build)."""
+    from kitty import web_opportunities
+
+    applied = []
+    monkeypatch.setattr(web_opportunities, "build_applied", lambda app, build: applied.append(build))
+    with site(workspace(tmp_path, ["workspace"])) as python:
+        build = document.normalize({"schema": 1})
+        assert python.request("/api/internal/build/applied", {"build": build}) == (200, {"ok": True})
+        assert applied == [build]
+        assert python.request("/api/internal/build/applied", {"build": 1})[0] == 400
+        assert python.request("/api/build")[0] == 404, "the page routes are the front's"

@@ -28,6 +28,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 from kitty import web_auth
 from kitty.core.workspace import open_workspace
@@ -450,11 +451,14 @@ class FrontSite(Site):
     announced one-time code; the secret never appears in the front's output.
     """
 
-    def __init__(self, settings: Settings, env: dict[str, str] | None = None, worker: list[str] | None = None):
+    def __init__(self, settings: Settings, env: dict[str, str] | None = None, worker: list[str] | None = None,
+                 args: tuple[str, ...] = ()):
         import pytest
 
         if not RIKA_SERVER.is_file():
             pytest.skip(f"rika-server is not built ({RIKA_SERVER}); run cargo build --release in server/")
+        #: The workspace it serves, where tests of the Python server read `running.app.settings`.
+        self.app = SimpleNamespace(settings=settings)
         static = settings.root / "dist"
         static.mkdir(exist_ok=True)
         (static / "index.html").write_text("<!doctype html><title>Synthetic</title>")
@@ -468,7 +472,7 @@ class FrontSite(Site):
         # program and its arguments.
         program, *arguments = worker or [sys.executable, "-c", "from kitty.web_server import main; main()"]
         self.process = subprocess.Popen(
-            [str(RIKA_SERVER), "--port", "0", "--root", str(settings.root), "--static-dir", str(static),
+            [str(RIKA_SERVER), "--port", "0", "--root", str(settings.root), "--static-dir", str(static), *args,
              "--worker-program", program, *(item for argument in arguments for item in ("--worker-arg", argument))],
             stdout=subprocess.PIPE, text=True, env={**os.environ, **isolated, **(env or {})})
         self.lines: queue.Queue[str] = queue.Queue()
@@ -503,8 +507,10 @@ class FrontSite(Site):
 
 
 @contextmanager
-def front_site(settings: Settings, env: dict[str, str] | None = None, worker: list[str] | None = None):
-    running = FrontSite(settings, env, worker)
+def front_site(settings: Settings, env: dict[str, str] | None = None, worker: list[str] | None = None,
+               args: tuple[str, ...] = ()):
+    """`worker`: another worker program and its arguments; `args`: more rika-server options, such as `--safe`."""
+    running = FrontSite(settings, env, worker, args)
     try:
         yield running
     finally:

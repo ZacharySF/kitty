@@ -17,6 +17,7 @@ mod builds;
 mod effects;
 mod front;
 mod keys;
+mod live;
 mod migrations;
 mod modules;
 mod packs;
@@ -158,6 +159,8 @@ async fn run(options: Options) -> Result<(), String> {
     keys::start(database.paths.root.clone(), database.demo.is_some());
     effects::start(database.paths.db_path.clone(), worker.ui_session.clone());
 
+    live::start(&front, database.paths.db_path.clone());
+    builds::service::start(front.clone(), database.paths.db_path.clone(), database.paths.root.clone(), options.safe || options.launch.args.iter().any(|arg| arg == "--safe"));
     if options.desktop {
         // The shell's readiness contract (desktop/src/owner.rs `readiness`): it injects this
         // secret into rika!'s own windows. This pipe is private to the shell.

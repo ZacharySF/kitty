@@ -208,6 +208,11 @@ impl Dict {
         Some(&mut self.entries[i].1)
     }
 
+    pub fn get_mut(&mut self, key: &[u32]) -> Option<&mut Value> {
+        let i = *self.index.get(key)?;
+        Some(&mut self.entries[i].1)
+    }
+
     pub fn contains(&self, key: &[u32]) -> bool {
         self.index.contains_key(key)
     }
@@ -309,7 +314,7 @@ fn identical(a: &Value, b: &Value) -> bool {
 }
 
 /// `PyObject_RichCompareBool(a, b, Py_EQ)`: `==` with the identity shortcut.
-fn py_eq(a: &Value, b: &Value) -> bool {
+pub fn py_eq(a: &Value, b: &Value) -> bool {
     if identical(a, b) {
         return true;
     }
@@ -681,6 +686,128 @@ pub fn dump(v: &Value, out: &mut String) {
             out.push('}');
         }
     }
+}
+
+/// `json.dumps(value, sort_keys=True)`'s text, compared to tell whether a document changed.
+pub fn dump_sorted(v: &Value, out: &mut String) {
+    match v {
+        Value::List(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                dump_sorted(item, out);
+            }
+            out.push(']');
+        }
+        Value::Dict(d) => {
+            let mut entries: Vec<(&Text, &Value)> = d.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            out.push('{');
+            for (i, (k, item)) in entries.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                dump_str(k, out);
+                out.push(':');
+                dump_sorted(item, out);
+            }
+            out.push('}');
+        }
+        other => dump(other, out),
+    }
+}
+
+/// `document.dump`: `json.dumps(value, indent=2, ensure_ascii=False) + "\n"`.
+pub fn dump_document(v: &Value) -> Text {
+    let mut out = Text::new();
+    pretty(v, 0, &mut out);
+    out.push(u32::from('\n'));
+    out
+}
+
+fn pretty(v: &Value, level: usize, out: &mut Text) {
+    let indent = |out: &mut Text, level: usize| {
+        out.push(u32::from('\n'));
+        out.extend(std::iter::repeat_n(u32::from(' '), level * 2));
+    };
+    match v {
+        Value::List(items) if !items.is_empty() => {
+            out.push(u32::from('['));
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(u32::from(','));
+                }
+                indent(out, level + 1);
+                pretty(item, level + 1, out);
+            }
+            indent(out, level);
+            out.push(u32::from(']'));
+        }
+        Value::Dict(d) if d.len() > 0 => {
+            out.push(u32::from('{'));
+            for (i, (key, item)) in d.iter().enumerate() {
+                if i > 0 {
+                    out.push(u32::from(','));
+                }
+                indent(out, level + 1);
+                unescaped_str(key, out);
+                push(out, ": ");
+                pretty(item, level + 1, out);
+            }
+            indent(out, level);
+            out.push(u32::from('}'));
+        }
+        Value::List(_) => push(out, "[]"),
+        Value::Dict(_) => push(out, "{}"),
+        Value::Str(s) => unescaped_str(s, out),
+        other => {
+            let mut plain = String::new();
+            dump(other, &mut plain);
+            push(out, &plain);
+        }
+    }
+}
+
+/// A JSON string as `ensure_ascii=False` writes it: only `"`, `\` and controls are escaped.
+fn unescaped_str(s: &[u32], out: &mut Text) {
+    out.push(u32::from('"'));
+    for &c in s {
+        match c {
+            0x22 => push(out, "\\\""),
+            0x5c => push(out, "\\\\"),
+            0x0a => push(out, "\\n"),
+            0x0d => push(out, "\\r"),
+            0x09 => push(out, "\\t"),
+            0x08 => push(out, "\\b"),
+            0x0c => push(out, "\\f"),
+            0..=0x1f => push(out, &format!("\\u{c:04x}")),
+            _ => out.push(c),
+        }
+    }
+    out.push(u32::from('"'));
+}
+
+/// `str.encode("utf-8", "surrogatepass")`.
+pub fn utf8_surrogatepass(t: &[u32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(t.len());
+    for &c in t {
+        match c {
+            0..=0x7f => out.push(c as u8),
+            0x80..=0x7ff => out.extend([0xc0 | (c >> 6) as u8, 0x80 | (c & 0x3f) as u8]),
+            0x800..=0xffff => out.extend([0xe0 | (c >> 12) as u8, 0x80 | ((c >> 6) & 0x3f) as u8, 0x80 | (c & 0x3f) as u8]),
+            _ => out.extend([
+                0xf0 | (c >> 18) as u8, 0x80 | ((c >> 12) & 0x3f) as u8, 0x80 | ((c >> 6) & 0x3f) as u8, 0x80 | (c & 0x3f) as u8,
+            ]),
+        }
+    }
+    out
+}
+
+/// A `str` as Rust text, or None when it holds a lone surrogate (Python's UTF-8 codec refuses it).
+pub fn scalar(t: &[u32]) -> Option<String> {
+    t.iter().map(|&c| char::from_u32(c)).collect()
 }
 
 #[cfg(test)]
