@@ -238,7 +238,7 @@ describe("settings pages", () => {
       assert.equal(await toggle.count(), 1);
     }
     assert.doesNotMatch(text, /Not active now|Active now/, "the running state still prints as a sentence per row");
-    const save = modules.getByRole("button", { name: "Save modules" });
+    const save = modules.getByRole("button", { name: "Save", exact: true });
     const discard = modules.getByRole("button", { name: /^Discard/ });
     assert.equal(await save.isDisabled(), true);
     const toggle = modules.getByRole("switch", { name: available.at(-1).label, exact: true });

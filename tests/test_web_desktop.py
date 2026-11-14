@@ -109,7 +109,7 @@ def test_state_reflects_the_shells_last_report(desktop):
     assert desktop.request("/api/desktop")[1]["keep_running"] is True
 
 
-@pytest.mark.parametrize("command", ["check-updates", "new-quick-note", "quit"])
+@pytest.mark.parametrize("command", ["check-updates", "new-quick-note", "quit", "restart"])
 def test_fixed_commands_reach_the_owner_pipe_verbatim(desktop, command):
     assert desktop.request("/api/desktop/command", {"command": command}) == (200, {"ok": True})
     assert desktop.shell.lines == [json.dumps({"command": command})]

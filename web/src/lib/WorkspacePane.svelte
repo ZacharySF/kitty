@@ -115,7 +115,7 @@
     <!-- The module is on but its pack is not loaded: its routes answer 409; say how to get it. -->
     <PackMissing id={view} label={navigation.find(item => item.id === view)?.label ?? view} {onview} />
   {:else if view === "today"}
-    <Home bind:this={home} {revision} {onview} />
+    <Home bind:this={home} {revision} counts={workspace?.counts} {onview} />
   {:else if view === "brain"}
     <GraphNavigator bind:this={atlas} {revision} {onview} />
   {:else if view === "goals"}

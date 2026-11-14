@@ -5,6 +5,9 @@ fixed set of commands to the shell that started it over the private owner pipe
 (stdout); the shell reports its keep-running preference back on stdin. A plain
 ``kitty-web`` website has no owner and answers ``{"available": false}``.
 
+``restart`` saves, stops the backend and reopens rika!, so a saved module selection
+applies (Settings → Modules' Restart now; the first run does it by itself).
+
 One command carries an argument: ``{"command": "open-skill", "path"}`` opens one agent
 skill's SKILL.md with the desktop opener. Only kitty.web_agent_skills sends it, for a
 path it listed itself; the shell accepts only an absolute path to an existing file named
@@ -17,7 +20,7 @@ import threading
 from collections.abc import Callable
 
 #: The only lines that ever reach the desktop shell, each as ``{"command": name}``.
-COMMANDS = ("check-updates", "new-quick-note", "keep-running-on", "keep-running-off", "quit")
+COMMANDS = ("check-updates", "new-quick-note", "keep-running-on", "keep-running-off", "quit", "restart")
 KEEP_RUNNING = {"keep-running-on": True, "keep-running-off": False}
 STATE_KEYS = frozenset({"keep_running", "keep_running_available"})
 

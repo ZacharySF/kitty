@@ -185,7 +185,10 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "look": {"enum": ["brain", "2d"], "description": "Home shows the Brain or the 2D atlas.", "default": "brain"}
+            "look": {"enum": ["brain", "2d"], "description": "Home shows the Brain or the 2D atlas.", "default": "brain"},
+            "columns": {"type": "array", "maxItems": 3, "items": {"type": "array", "maxItems": 24, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}}, "description": "Home's widgets, column by column. A widget whose module is off is kept and not drawn.", "default": [["agenda", "note"], ["next", "agents"]]},
+            "hidden": {"type": "array", "maxItems": 24, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}, "description": "Widgets taken off home.", "default": []},
+            "template_offered": {"type": "boolean", "description": "Rika has offered a home template once.", "default": false}
           }
         },
         "brain": {
