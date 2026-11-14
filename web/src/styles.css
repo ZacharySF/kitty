@@ -283,17 +283,29 @@ details[open] > summary {
   height: 100dvh;
   min-height: min-content;
 }
+/* Design lab top bar C: one row. Brand (and a breadcrumb inside nested schemas) left,
+   the groups centred like signage, the tab switcher and search right. */
 .system-bar {
-  min-height: 44px;
-  display: flex;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   padding: 0 12px;
   gap: 16px;
-  flex-wrap: wrap;
   border: 1px solid var(--border);
   background: var(--chrome);
   border-radius: 10px;
   flex-shrink: 0;
+}
+.bar-start, .bar-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.bar-end {
+  justify-content: flex-end;
+  gap: 6px;
 }
 .wordmark {
   text-decoration: none;
@@ -343,38 +355,28 @@ details[open] > summary {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   min-width: 0;
-  flex: 1 1 220px;
   white-space: nowrap;
   overflow-x: auto;
-  scrollbar-width: thin;
-  padding: 5px 0;
+  scrollbar-width: none;
 }
-.breadcrumb:empty { display: none; }
-.schema-tab, .schema-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 32px;
-  flex: 0 0 auto;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--chrome);
+.schema-tab {
+  display: inline-block;
+  flex: 0 1 auto;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
   font: inherit;
-  text-decoration: none;
 }
-button.schema-tab, .schema-back { cursor: pointer; }
-.schema-tab { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
-.schema-back { font-size: 18px; padding: 2px 8px; }
-.schema-tab:hover, .schema-back:hover { color: var(--ink); border-color: var(--accent); }
-.schema-tab.current-schema {
-  color: var(--ink);
-  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-}
+button.schema-tab { cursor: pointer; }
+button.schema-tab:hover { color: var(--ink); }
+.schema-tab.current-schema { color: var(--ink); }
 .separator {
   color: var(--subtle);
   font-weight: 400;
@@ -402,20 +404,19 @@ button.schema-tab, .schema-back { cursor: pointer; }
   flex-shrink: 0;
 }
 .system-command {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: var(--control-h);
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  padding: 0 12px;
-  font-size: 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
 }
 .system-command:hover {
-  border-color: var(--gold-border);
   color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
 }
 .icon-button {
   width: var(--control-h);
@@ -774,9 +775,6 @@ kbd {
   padding-bottom: 18px;
   line-height: 1.6;
 }
-.demo-notice .badge {
-  color: var(--warning);
-}
 .page-footer {
   display: flex;
   justify-content: space-between;
@@ -936,25 +934,14 @@ main .notes-workspace {
   }
   .system-bar {
     padding: 0 8px;
-    min-height: 48px;
-    gap: 10px;
+    gap: 8px;
   }
   .system-state,
   .help-link {
     display: none;
   }
-  .system-command {
-    margin-left: auto;
-    min-height: 38px;
-  }
-  .system-command > span {
-    display: none;
-  }
   .breadcrumb {
-    order: 10;
-    flex-basis: 100%;
-    margin: 0;
-    padding-top: 0;
+    display: none;
   }
   main {
     padding: 18px 6px 0;
@@ -1211,11 +1198,11 @@ main > :is(.panel, .br-panel, .br-card) {
   select option:focus-visible { background: var(--wash); }
 }
 
-.workspace-groups { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 7px; }
-.workspace-groups button { border: 1px solid transparent; background: transparent; color: var(--muted); padding: 5px 8px; font: 500 11px var(--br-font-body); white-space: nowrap; }
-.workspace-groups button[aria-current="page"] { color: var(--ink); border-color: color-mix(in srgb, var(--violet) 35%, var(--border)); background: var(--wash); }
-.workspace-groups button:hover { color: var(--ink); background: var(--surface-raised); }
-@media (max-width: 760px) { .workspace-groups { order: 9; overflow-x: auto; } }
+.workspace-groups { display: flex; gap: 4px; }
+.workspace-groups button { border: 0; border-radius: 999px; background: transparent; color: var(--muted); padding: 6px 14px; font: 400 15px var(--font-ui); white-space: nowrap; }
+.workspace-groups button[aria-current="page"] { color: var(--ink); background: var(--wash); }
+.workspace-groups button:hover { color: var(--ink); }
+@media (max-width: 760px) { .workspace-groups button { padding: 6px 8px; } }
 
 /* Settings → Appearance (lib/appearance.ts) mirrors its choices onto <html data-*>. */
 @media (prefers-reduced-motion: reduce) {
@@ -1322,12 +1309,12 @@ main > :is(.panel, .br-panel, .br-card) {
 :root body :is(.eyebrow, .br-section-title) {
   color: var(--violet);
 }
-/* Data chrome stays mono: counts, badges and key caps. */
-:root body :is(.count-pill, .demo-notice .badge, kbd) {
-  font-family: var(--font-mono);
+/* Counts and key caps are set in the text face like everything else (no mono, no tracked caps). */
+:root body :is(.count-pill, kbd) {
+  font-family: var(--font-ui);
   font-size: var(--fs-chrome);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 :root body :is(.br-btn:not([data-variant="link"]), .button, .pill, .text-button, .br-tab) {
   font-family: var(--font-ui);
@@ -1340,7 +1327,7 @@ main > :is(.panel, .br-panel, .br-card) {
 /* Q1: every control sits on the 28px line; the one or two primary actions of a page
    (Bracket size="lg", or .page-action) step up to 32px. One radius per control type:
    buttons, toggles and segments are pills; fields are --r-field. */
-:root body :is(.br-btn, .br-icon-btn, .button, .pill, .system-command):not(svg *) {
+:root body :is(.br-btn, .br-icon-btn, .button, .pill):not(svg *) {
   height: var(--control-h);
   white-space: nowrap;
 }
@@ -1349,7 +1336,7 @@ main > :is(.panel, .br-panel, .br-card) {
   min-height: var(--control-h-lg);
   padding-inline: 14px;
 }
-:root body :is(.br-btn, .br-icon-btn, .button, .pill, .system-command, .schema-tab, .schema-back, .icon-button) {
+:root body :is(.br-btn, .br-icon-btn, .button, .pill, .icon-button) {
   border-radius: var(--r-control);
 }
 /* Pills with hairlines; primary is LearnHarness's light-on-dark inversion. */
@@ -1405,7 +1392,7 @@ main > :is(.panel, .br-panel, .br-card) {
   border-bottom: 1px solid var(--hairline);
   border-radius: 0;
   background: transparent;
-  padding: 2px 4px 10px;
+  padding: 0 4px;
 }
 /* Wordmark: rounded lowercase beside the cat in a filled pastel squircle. */
 :root body .wordmark {
@@ -1420,36 +1407,29 @@ main > :is(.panel, .br-panel, .br-card) {
   color: var(--solid-void, var(--br-void));
   overflow: hidden;
 }
+/* The groups read like signage: words, no box; the current one is a quiet fill. */
 :root body .workspace-groups {
-  border-color: var(--hairline);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
+  display: flex;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 :root body .workspace-groups button {
+  border: 0;
   border-radius: 999px;
-  padding: 5px 12px;
-  font: 500 12px var(--font-ui);
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--muted);
+  font: 400 15px var(--font-ui);
+}
+:root body .workspace-groups button:hover {
+  background: transparent;
+  color: var(--ink);
 }
 :root body .workspace-groups button[aria-current="page"] {
-  border-color: transparent;
   background: var(--select-fill, color-mix(in srgb, var(--ink) 12%, transparent));
   color: var(--select-ink, var(--ink));
-}
-:root body :is(.schema-tab, .schema-back) {
-  min-height: 28px;
-  border-color: var(--hairline);
-  background: transparent;
-  font: 12px var(--font-ui);
-}
-:root body .schema-tab.current-schema {
-  background: color-mix(in srgb, var(--ink) 9%, transparent);
-  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
-}
-:root body .system-command {
-  border-color: var(--hairline);
-  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
-  font: 11px var(--font-mono);
-  letter-spacing: 0.04em;
 }
 :root body kbd {
   border-radius: 6px;
@@ -1519,13 +1499,19 @@ hr.rule {
   border-color: var(--hairline);
   background: color-mix(in srgb, var(--solid-inset, #111) 45%, transparent);
 }
+/* A quiet one-line strip, not a card: muted words under the bar and a text button. */
 :root body .demo-notice {
-  border-radius: 999px;
-  border: 1px solid var(--hairline);
-  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
-  padding: 6px 14px;
-  width: fit-content;
-  font-size: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 10px;
+  width: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+:root body .demo-notice .text-button {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 /* Overlays keep text legible over translucent content. */
@@ -1548,9 +1534,8 @@ hr.rule {
   z-index: 40;
   display: flex;
   flex-direction: column;
-  gap: 10px;
   margin: -10px -16px 0;
-  padding: 10px 16px 0;
+  padding: 0 16px;
   background: color-mix(in srgb, var(--solid-void, #141414) 78%, transparent);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);

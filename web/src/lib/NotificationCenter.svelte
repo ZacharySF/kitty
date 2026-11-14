@@ -20,13 +20,13 @@
   }
   function outside(event: PointerEvent) {
     const target = event.target as Element;
-    if (notifier.drawer && !drawer?.contains(target) && !target.closest?.("[data-notification-bell]")) notifier.drawer = false;
+    if (notifier.drawer && !drawer?.contains(target) && !target.closest?.("[data-notification-anchor]")) notifier.drawer = false;
   }
   function key(event: KeyboardEvent) {
     if (event.key !== "Escape" || !notifier.drawer) return;
     event.preventDefault();
     notifier.drawer = false;
-    document.querySelector<HTMLElement>("[data-notification-bell]")?.focus();
+    document.querySelector<HTMLElement>("[data-notification-anchor]")?.focus();
   }
   const when = (notice: Notice) => {
     const due = new Date(notice.due);

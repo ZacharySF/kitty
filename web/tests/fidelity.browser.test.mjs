@@ -155,21 +155,24 @@ for (const theme of ["kitty", "liquid-glass"]) {
 }
 
 describe("shared chrome controls", () => {
-  test("workspace tabs and the system bar hold 28px controls; status reports as a dot on the tab", async () => {
+  test("the system bar holds 28px or 32px controls; status reports as a dot on the tab", async () => {
     const { page, problems, context } = await open("notes", "kitty");
     await page.locator(".notes-workspace").first().waitFor();
     const heights = await page.evaluate(() =>
-      [...document.querySelectorAll(".system-bar .br-btn, .workspace-tabbar .br-btn, .system-bar .pill, .system-bar .icon-button")]
+      [...document.querySelectorAll(".system-bar .br-btn, .system-bar .pill, .system-bar .icon-button, .tab-trigger, .system-command")]
         .filter((node) => node.getBoundingClientRect().height)
         .map((node) => [node.getAttribute("aria-label") || node.textContent.trim(), node.getBoundingClientRect().height]),
     );
     for (const [label, height] of heights) assert.ok(height === 28 || height === 32, `${label} is ${height}px`);
-    // Notes reports its save state to its tab; nothing prints "Saved locally".
-    const tab = page.getByRole("tab", { selected: true });
+    // Notes reports its save state to its tab in the switcher; nothing prints "Saved locally".
+    await page.locator(".tab-trigger").click();
+    const tab = page.getByRole("dialog", { name: "Open tabs" }).locator('.tab-row[aria-current="page"]');
     const dot = tab.getByRole("img", { name: "Saved" });
     await dot.waitFor();
     assert.deepEqual(await dot.evaluate((node) => [node.getBoundingClientRect().width, node.getBoundingClientRect().height]), [6, 6]);
     assert.equal(await page.getByText("Saved locally", { exact: true }).count(), 0);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "Open tabs" }).waitFor({ state: "detached" });
     // Shared components draw themed dropdowns, never the browser's own select.
     await page.getByRole("button", { name: "More page actions", exact: true }).click();
     await page.getByRole("menuitem", { name: "Import PDF or Markdown…", exact: true }).click();

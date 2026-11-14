@@ -468,29 +468,43 @@ describe("command palette", () => {
   });
 });
 
-describe("workspace tabs", () => {
-  test("underline tabs: icon per tab, the active tab underlined in its group colour, close shown on hover", async () => {
+describe("top bar", () => {
+  test("one row: brand left, groups centred without Settings, a tab switcher and a search icon; no tab strip, bell, theme or refresh", async () => {
     const { page, problems, context } = await open("calendar");
-    const bar = page.getByRole("navigation", { name: "Workspace tabs" });
-    await bar.waitFor();
+    const bar = page.locator(".system-bar");
+    const groups = page.getByRole("navigation", { name: "Workspace groups" });
+    await groups.waitFor();
+    assert.deepEqual(await groups.getByRole("button").allTextContents(), ["Brain", "Plan", "Study", "Job search"]);
+    assert.equal(await bar.getByRole("button", { name: /Theme|Refresh|^Notifications/ }).count(), 0, "the bar still carries theme, refresh or the bell");
+    assert.ok(!/Search anything/.test(await bar.innerText()), "the search button still has words");
+    assert.equal(await page.locator('.workbench-top [role="tab"], .workbench-top [role="tablist"]').count(), 0, "a tab strip is still drawn");
+    const boxes = await page.evaluate(() => [".wordmark", ".workspace-groups", ".tab-trigger", ".system-command"]
+      .map((selector) => document.querySelector(selector).getBoundingClientRect().toJSON()));
+    const middles = boxes.map((box) => box.top + box.height / 2);
+    assert.ok(Math.max(...middles) - Math.min(...middles) <= 2, `the bar is not one row: ${middles}`);
+    const centre = boxes[1].left + boxes[1].width / 2;
+    assert.ok(Math.abs(centre - DEFAULT.width / 2) <= 24, `the groups are not centred (${centre})`);
+    const trigger = page.getByRole("button", { name: "1 open tab" });
     await page.keyboard.press("Control+t");
-    await page.waitForFunction(() => document.querySelectorAll('[role="tab"]').length === 2);
-    const tabs = bar.locator(".tab");
-    const [first, second] = [tabs.nth(0), tabs.nth(1)];
-    assert.equal(await second.getAttribute("class").then((c) => c.includes("active")), true, "new tab is not active");
-    for (const tab of [first, second]) assert.equal(await tab.locator("svg").count(), 1, "tab has no icon");
-    const underline = (tab) => tab.evaluate((node) => {
-      const after = getComputedStyle(node, "::after");
-      return { height: after.height, color: after.backgroundColor, tone: getComputedStyle(node).getPropertyValue("--tone").trim() };
-    });
-    const active = await underline(second);
-    assert.equal(active.height, "2px", "active tab has no underline");
-    assert.notEqual(active.tone, "", "active tab has no group tone");
-    assert.notEqual((await underline(first)).height, "2px", "inactive tab is underlined");
-    const close = first.locator(".close-tab");
-    assert.equal(await close.evaluate((node) => getComputedStyle(node).visibility), "hidden", "inactive close button shows at rest");
-    await first.hover();
-    assert.equal(await close.evaluate((node) => getComputedStyle(node).visibility), "visible", "close button does not show on hover");
+    await page.getByRole("button", { name: "2 open tabs" }).click();
+    const list = page.getByRole("dialog", { name: "Open tabs" });
+    await list.waitFor();
+    assert.deepEqual((await list.locator(".tab-name").allTextContents()), ["Calendar", "Home"]);
+    assert.equal(await list.locator('.tab-row[aria-current="page"] .tab-name').textContent(), "Home");
+    await list.locator(".tab-pick").first().click();
+    await page.waitForFunction(() => location.hash === "#calendar");
+    await page.getByRole("button", { name: "2 open tabs" }).click();
+    await list.getByRole("button", { name: "Close Home tab" }).click();
+    // The list stays open after a close, so more tabs can go in one visit.
+    await trigger.waitFor();
+    assert.equal(await list.locator(".tab-row").count(), 1);
+    await list.getByRole("button", { name: /^Settings/ }).click();
+    await page.waitForFunction(() => location.hash.startsWith("#settings"));
+    await page.keyboard.press("Control+k");
+    await page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox").fill("theme");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Theme"));
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash === "#settings/appearance");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -3322,14 +3336,14 @@ describe("notifications", () => {
     await context.close();
   });
 
-  test("the bell counts unread notifications and opens a center with All/Unread, sources and mark all read", async () => {
+  test("the tab menu counts unread notifications and opens a center with All/Unread, sources and mark all read", async () => {
     const { page, problems, context } = await open("settings", {
       setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
     });
-    const bell = page.getByRole("button", { name: "Notifications, 2 unread" });
-    await bell.waitFor();
-    assert.equal((await bell.textContent()).trim(), "2");
-    await bell.click();
+    await page.getByRole("button", { name: "1 open tab" }).click();
+    const entry = page.getByRole("dialog", { name: "Open tabs" }).getByRole("button", { name: "Notifications 2 unread" });
+    await entry.waitFor();
+    await entry.click();
     const center = page.getByRole("dialog", { name: "Notification center" });
     await center.waitFor();
     const items = center.getByRole("listitem");
@@ -3343,13 +3357,19 @@ describe("notifications", () => {
     await center.getByRole("tab", { name: /Unread/ }).click();
     assert.equal(await items.count(), 2);
     await center.getByRole("button", { name: "Mark all read" }).click();
-    await page.getByRole("button", { name: "Notifications, 0 unread" }).waitFor();
     await center.getByText("You're all caught up.").waitFor();
     await center.getByRole("tab", { name: "All" }).click();
     assert.equal(await items.count(), 2);
-    // Read state survives a reload.
+    // Read state survives a reload; search opens the center too.
     await page.reload();
-    await page.getByRole("button", { name: "Notifications, 0 unread" }).waitFor();
+    await page.locator(".wordmark").waitFor();
+    await page.keyboard.press("Control+k");
+    await page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox").fill("notif");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Notifications"));
+    await page.keyboard.press("Enter");
+    await center.waitFor();
+    await center.getByRole("tab", { name: /Unread/ }).click();
+    await center.getByText("You're all caught up.").waitFor();
     await page.keyboard.press("Escape");
     assert.deepEqual(problems, []);
     await context.close();
@@ -3374,7 +3394,9 @@ describe("notifications", () => {
     assert.match(await until.getAttribute("aria-valuetext"), /^\d\d:\d\d$/);
     assert.match(await from.getAttribute("aria-valuetext"), /^\d\d:\d\d$/);
     // Held: nothing toasts, yet the center lists both as held and unread.
-    await page.getByRole("button", { name: "Notifications, 2 unread" }).waitFor();
+    await page.getByRole("button", { name: "1 open tab" }).click();
+    await page.getByRole("dialog", { name: "Open tabs" }).getByRole("button", { name: "Notifications 2 unread" }).waitFor();
+    await page.keyboard.press("Escape");
     assert.equal(await page.locator('[aria-label="New notifications"] > li').count(), 0, "a reminder toasted during quiet hours");
     await panel.getByText("Held now: 1 calendar · 1 job search").waitFor();
     // Pull the end of the window back past now: the held reminders arrive together as the digest.
