@@ -38,7 +38,7 @@
     hasUnsavedChanges: () => boolean;
     focusGroup: (label: string) => void;
     focusSearch: () => void;
-    createCanvasTab: () => Promise<boolean>;
+    createCanvasPage: () => Promise<boolean>;
     handleKey: (event: KeyboardEvent) => Promise<boolean>;
   };
   type WorkspaceTab = {
@@ -47,10 +47,15 @@
     epoch: number;
     initialJobId: number | null;
     scrollY: number;
+    /** One tab system: a Notes tab shows one page, and is named after it. */
+    page: { id: number; title: string } | null;
     pane?: PaneHandle;
   };
   let nextTab = 1;
-  let tabs = $state<WorkspaceTab[]>([{ id: "workspace-1", view: "today", epoch: 0, initialJobId: null, scrollY: 0 }]);
+  function makeTab(id = `workspace-${++nextTab}`, view: View = "today", page: WorkspaceTab["page"] = null): WorkspaceTab {
+    return { id, view, epoch: 0, initialJobId: null, scrollY: 0, page };
+  }
+  let tabs = $state<WorkspaceTab[]>([makeTab("workspace-1")]);
   let activeId = $state("workspace-1");
   const activeTab = $derived(tabs.find(tab => tab.id === activeId) ?? tabs[0]);
   const view = $derived(activeTab.view);
@@ -78,7 +83,8 @@
   const title = $derived(navigation.find(item => item.id === view)?.label || "Workspace");
   const tabLabels = $derived(tabs.map(tab => ({
     id: tab.id,
-    label: tab.view === "today" ? "Home" : navigation.find(item => item.id === tab.view)?.label || "Workspace",
+    label: tab.view === "today" ? "Home" : tab.view === "notes" && tab.page ? tab.page.title || "Untitled"
+      : navigation.find(item => item.id === tab.view)?.label || "Workspace",
     icon: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.icon || "atlas",
     status: tab.pane?.saveStatus() ?? null,
   })));
@@ -120,13 +126,20 @@
       window.scrollTo(0, target.scrollY);
     } catch (cause) { error = (cause as Error).message; }
   }
-  async function newTab() {
+  /** A page already open in another tab: that tab comes forward (true) instead of a second copy. */
+  function focusNotePage(from: string, page: number) {
+    const showing = tabs.find(tab => tab.id !== from && tab.view === "notes" && tab.page?.id === page);
+    if (!showing) return false;
+    void selectTab(showing.id);
+    return true;
+  }
+  async function newTab(view: View = "today", page: WorkspaceTab["page"] = null) {
     tabBar?.close(false);
     panelFullscreen?.exit();
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       activeTab.scrollY = window.scrollY;
-      const tab: WorkspaceTab = { id: `workspace-${++nextTab}`, view: "today", epoch: 0, initialJobId: null, scrollY: 0 };
+      const tab = makeTab(undefined, view, page);
       tabs = [...tabs, tab];
       activeId = tab.id;
       route(tab);
@@ -142,7 +155,7 @@
     const wasActive = id === activeId;
     tabs = tabs.filter(tab => tab.id !== id);
     if (!tabs.length) {
-      const tab: WorkspaceTab = { id: `workspace-${++nextTab}`, view: "today", epoch: 0, initialJobId: null, scrollY: 0 };
+      const tab = makeTab();
       tabs = [tab];
       activeId = tab.id;
     } else if (wasActive) activeId = tabs[Math.min(index, tabs.length - 1)].id;
@@ -168,6 +181,7 @@
     moduleNotice = "";
     activeTab.view = next;
     activeTab.initialJobId = null;
+    activeTab.page = null;
     activeTab.epoch += 1;
     activeTab.scrollY = 0;
     route(activeTab);
@@ -261,8 +275,11 @@
     // A link to one page opens Notes on it, the way rika!'s own links between views do.
     const linkedPage = notePageLink(hash);
     if (linkedPage !== null) {
-      try { sessionStorage.setItem("kitty.notes.open-page", String(linkedPage)); } catch { /* The event still opens it. */ }
       window.history.replaceState(window.history.state, "", "#notes");
+      // A page already open in a tab: that tab comes forward instead of a second copy.
+      const showing = tabs.find(tab => tab.view === "notes" && tab.page?.id === linkedPage);
+      if (showing) { activeId = showing.id; route(showing, true); return; }
+      try { sessionStorage.setItem("kitty.notes.open-page", String(linkedPage)); } catch { /* The event still opens it. */ }
       window.dispatchEvent(new CustomEvent("kitty-open-note", { detail: { page_id: linkedPage } }));
     }
     const view = hash.split("/")[0];
@@ -280,6 +297,7 @@
       if (!mayLeaveEditor(target)) { route(activeTab, true); return; }
       target.view = next;
       target.initialJobId = null;
+      target.page = null;
       target.epoch += 1;
       target.scrollY = 0;
     }
@@ -360,7 +378,8 @@
       if (event.repeat) return;
       tabBar?.close(false);
       try {
-        if (!await activeTab.pane?.createCanvasTab()) await newTab();
+        // In a fullscreen canvas (no top bar), Ctrl T starts a new page there instead of a tab.
+        if (!await activeTab.pane?.createCanvasPage()) await newTab();
       } catch (cause) { error = (cause as Error).message; }
       return;
     }
@@ -484,12 +503,15 @@
         <WorkspacePane
           bind:this={tab.pane} tabId={tab.id} view={tab.view}
           active={tab.id === activeId} {workspace} {revision}
-          epoch={tab.epoch} initialJobId={tab.initialJobId}
+          epoch={tab.epoch} initialJobId={tab.initialJobId} notePage={tab.page?.id ?? null}
           onchange={refresh}
           onview={next => { if (tab.id === activeId) navigate(next); }}
           onopenjob={id => { if (tab.id === activeId) openJob(id); }}
           onadd={() => { if (tab.id === activeId && applyai) addJob = true; }}
           onguide={() => { if (tab.id === activeId) showGuide(); }}
+          onnotepage={(id, title) => { tab.page = id ? { id, title } : null; }}
+          onfocusnotepage={id => focusNotePage(tab.id, id)}
+          onnotepagetab={id => void newTab("notes", { id, title: "" })}
         />
         {/if}
       </div>

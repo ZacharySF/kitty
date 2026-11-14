@@ -10,7 +10,7 @@
   import AI from "./AI.svelte";
   import Loader from "./Loader.svelte";
 
-  let { tabId, view, active, workspace, revision, epoch, initialJobId, onchange, onadd, onview, onopenjob, onguide }: {
+  let { tabId, view, active, workspace, revision, epoch, initialJobId, notePage, onchange, onadd, onview, onopenjob, onguide, onnotepage, onfocusnotepage, onnotepagetab }: {
     tabId: string;
     view: View;
     active: boolean;
@@ -18,11 +18,16 @@
     revision: number;
     epoch: number;
     initialJobId: number | null;
+    /** The note page this tab shows; Notes opens it on mount. */
+    notePage: number | null;
     onchange: () => Promise<void>;
     onadd: () => void;
     onview: (next: View) => void;
     onopenjob: (id: number) => void;
     onguide: () => void;
+    onnotepage: (id: number | null, title: string) => void;
+    onfocusnotepage: (id: number) => boolean;
+    onnotepagetab: (id: number) => void;
   } = $props();
   const trail = $state<WorkspaceTrail>({ section: null, root: null, nodes: [] });
   let status = $state<SaveStatus | null>(null);
@@ -45,6 +50,10 @@
     setStatus: (next) => {
       status = next;
     },
+    get notePage() { return notePage; },
+    setNotePage: (id, title) => onnotepage(id, title),
+    focusNotePage: (id) => onfocusnotepage(id),
+    openNotePageTab: (id) => onnotepagetab(id),
   });
 
   let home: { focusSearch: () => void } | undefined = $state();
@@ -59,7 +68,7 @@
   let notes: {
     hasUnsavedChanges: () => boolean;
     isCanvasFullscreen: () => boolean;
-    newCanvasTab: () => Promise<void>;
+    newCanvasPage: () => Promise<void>;
   } | undefined = $state();
   let maps: { hasUnsavedChanges: () => boolean } | undefined = $state();
 
@@ -81,9 +90,9 @@
     if (view === "today") home?.focusSearch();
     else if (view === "brain") atlas?.focusSearch();
   }
-  export async function createCanvasTab(): Promise<boolean> {
+  export async function createCanvasPage(): Promise<boolean> {
     if (!active || !notes?.isCanvasFullscreen()) return false;
-    await notes.newCanvasTab();
+    await notes.newCanvasPage();
     return true;
   }
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {

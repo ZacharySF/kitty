@@ -1792,14 +1792,18 @@ describe("calendar redesign", () => {
   });
 });
 
-describe("notes tabs and floating outline", () => {
-  test("browser-style page tabs, the library slides over the page, and 'On this page' jumps to blocks", async () => {
+describe("notes pages as app tabs and floating outline", () => {
+  test("each open page is an app tab (no strip inside Notes), the library slides over the page, and 'On this page' jumps to blocks", async () => {
     const { page, problems, context } = await open("notes");
     const title = page.getByRole("textbox", { name: "Page title" });
     await title.waitFor();
-    const tabs = page.getByRole("navigation", { name: "Open note pages" });
-    assert.equal(await tabs.locator('[aria-current="page"]').count(), 1, "the open page is not the current tab");
-    assert.equal(await tabs.getByRole("button", { name: "New page" }).count(), 1, "tab strip has no + new page");
+    assert.equal(await page.locator(".notes-workspace .note-tabs").count(), 0, "Notes still draws its own tab strip");
+    assert.equal(await page.locator(".notes-heading").getByRole("button", { name: "New page", exact: true }).count(), 1, "the header has no new page");
+    const switcher = page.getByRole("dialog", { name: "Open tabs" });
+    const current = await title.inputValue();
+    await page.locator(".tab-trigger").click();
+    assert.deepEqual(await switcher.locator(".tab-name").allTextContents(), [current || "Untitled"], "the tab is not named after its page");
+    await page.keyboard.press("Escape");
     // The library is a drawer: hidden at rest, sliding over the page without moving it.
     const library = page.getByRole("navigation", { name: "Folders, notebooks and pages" });
     assert.equal(await library.isVisible(), false, "the library is open at rest");
@@ -1812,6 +1816,27 @@ describe("notes tabs and floating outline", () => {
     assert.deepEqual(await rect(title), before, "opening the library moved the page");
     await page.keyboard.press("Escape");
     await library.waitFor({ state: "hidden" });
+    // A new page replaces this tab's page; Ctrl click opens the first page in a new app tab, and
+    // opening it again from the first tab brings that tab forward instead of a second copy.
+    const shows = (name) => page.waitForFunction((name) => [...document.querySelectorAll('[aria-label="Page title"]')].some((node) => node.offsetParent && node.value === name), name);
+    await page.locator(".notes-heading").getByRole("button", { name: "New page", exact: true }).click();
+    await page.waitForFunction((name) => [...document.querySelectorAll('[aria-label="Page title"]')].some((node) => node.offsetParent && node.value !== name), current);
+    await title.fill("Second page");
+    await page.keyboard.press("Control+s");
+    await toggle.click();
+    await library.locator(".page-item", { hasText: current }).first().click({ modifiers: ["Control"] });
+    await page.getByRole("button", { name: "2 open tabs" }).waitFor();
+    await shows(current);
+    await page.keyboard.press("Control+Tab");
+    await shows("Second page");
+    await toggle.click();
+    await library.locator(".page-item", { hasText: current }).first().click();
+    await shows(current);
+    assert.equal(await page.getByRole("button", { name: "2 open tabs" }).count(), 1, "opening an open page made a second copy");
+    await page.locator(".tab-trigger").click();
+    assert.deepEqual(await switcher.locator(".tab-name").allTextContents(), ["Second page", current]);
+    assert.equal(await switcher.locator('.tab-row[aria-current="page"] .tab-name').textContent(), current);
+    await page.keyboard.press("Escape");
     // Write three blocks; the floating outline lists them and jumps to one. The block editor
     // offers "Start writing…" on a page without blocks, else its first block takes the caret.
     const first = page.getByRole("button", { name: /^Start writing/ }).or(page.getByRole("textbox", { name: "Block 1", exact: true })).first();
@@ -2589,7 +2614,7 @@ describe("one mind-map editor", () => {
     await create.click();
     const root = schema.locator("svg.stage [data-node].root");
     await root.waitFor();
-    const tab = (await page.getByRole("navigation", { name: "Open note pages" }).locator('[aria-current="page"]').textContent()).trim();
+    const tab = await page.getByRole("textbox", { name: "Page title", includeHidden: true }).inputValue();
     assert.equal((await root.locator("text.label").textContent()).replace(/^▤ /, ""), tab, "the map is not the page's");
     // The same editor (its pill and topic bar), but the page keeps its own header: no second top bar.
     await schema.getByRole("toolbar", { name: "Map tools" }).waitFor();
