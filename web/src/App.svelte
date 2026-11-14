@@ -197,11 +197,15 @@
     if (navigate("settings") && page) window.history.replaceState(window.history.state, "", `#settings/${page}`);
   }
   function openModuleSettings() { openSettings("modules"); }
+  /** Where a group opens: its first page other than home (the brand mark is home). */
+  function groupLanding(group: { views: View[] }) {
+    return group.views.find(item => item !== "today") ?? group.views[0];
+  }
   /** A group's shortcut opens it as its header button does; on the Brain it finds the group on the map. */
   function focusGroup(label: string) {
     if (view === "brain") { activeTab.pane?.focusGroup(label); return; }
     const group = groups.find(item => item.label === label);
-    if (group && group.views[0] !== view) navigate(group.views[0]);
+    if (group && groupLanding(group) !== view) navigate(groupLanding(group));
   }
   function schemaRoot() {
     if (ownsTrail && trail.root) trail.root();
@@ -456,7 +460,7 @@
         onclick={() => navigate("brain")}>Brain</button>{/if}
       {#each barGroups as group}<button aria-current={sectionGroup === group.label && view !== "brain" && view !== "today" ? "page" : undefined}
         title={`${group.label} (${group.shortcut})`}
-        onclick={() => navigate(group.views[0])}>{group.label}</button>{/each}
+        onclick={() => navigate(groupLanding(group))}>{group.label}</button>{/each}
     </nav>
     <div class="bar-end">
       {#if studyTools}<StudyFocusBar {revision} demo={workspace?.demo ?? true} />{/if}

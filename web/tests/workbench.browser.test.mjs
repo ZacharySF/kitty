@@ -1088,13 +1088,17 @@ describe("home dashboard", () => {
       const board = page.getByRole("region", { name: "Home widgets" });
       const panel = page.locator(".home").getByRole("region", { name: "Rika" });
       await Promise.all([board.waitFor(), panel.waitFor()]);
-      await board.getByRole("region", { name: "Morning brief" }).waitFor();
+      await board.getByRole("region", { name: "Up next" }).waitFor();
       const [b, r, home] = await Promise.all([rect(board), rect(panel), rect(page.locator(".home"))]);
+      // Home keeps the page's side margins (its padding); Rika fills the right-hand column inside them.
+      const pad = await page.locator(".home").evaluate((node) => { const s = getComputedStyle(node); return { right: parseFloat(s.paddingRight), top: parseFloat(s.paddingTop) }; });
       assert.ok(b.right <= r.left, `the widgets and Rika overlap: ${b.left}-${b.right} | ${r.left}-${r.right}`);
-      assert.ok(Math.abs(r.right - home.right) <= 1 && Math.abs(r.top - home.top) <= 1 && Math.abs(r.bottom - home.bottom) <= 1, "Rika does not fill the right-hand column");
+      assert.ok(Math.abs(r.right - (home.right - pad.right)) <= 1 && Math.abs(r.top - (home.top + pad.top)) <= 1 && Math.abs(r.bottom - home.bottom) <= 1, "Rika does not fill the right-hand column");
       assert.ok(r.width >= 300, `the Rika panel is only ${r.width}px wide`);
+      // Design review: fewer, larger widgets. The brief is Rika's chip, sections are in search,
+      // agents show only while a session runs (the demo has none).
       const titles = await board.locator(".home-widget > header h3").allInnerTexts();
-      assert.deepEqual(titles, ["Morning brief", "Today", "Quick note", "Up next", "Agents", "Sections"]);
+      assert.deepEqual(titles, ["Today", "Quick note", "Up next"]);
       // Two columns of widgets when there is room, one when there is not.
       const lefts = new Set(await board.locator(".column").evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().left))));
       assert.equal(lefts.size, viewport.width >= 1200 ? 2 : 1, `${lefts.size} widget columns at ${viewport.width}px`);
@@ -1110,13 +1114,10 @@ describe("home dashboard", () => {
     });
   }
 
-  test("Sections lists every page the modules provide and opens them; Ctrl K still finds them", async () => {
+  test("home has no Sections link wall; Ctrl K finds every section", async () => {
     const { page, problems, context } = await open("today");
-    const sections = page.getByRole("navigation", { name: "Workspace sections" });
-    await sections.getByRole("link", { name: "Calendar" }).click();
-    await page.waitForFunction(() => location.hash === "#calendar");
-    await page.goto(new URL("#today", page.url()).href);
-    assert.ok(await sections.getByRole("link", { name: "Brain" }).isVisible(), "the Brain is not listed");
+    await page.getByRole("region", { name: "Home widgets" }).waitFor();
+    assert.equal(await page.getByRole("navigation", { name: "Workspace sections" }).count(), 0, "home still lists every section");
     await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog", { name: "Search rika!" });
     await palette.getByRole("combobox").fill("Flash");
@@ -1150,7 +1151,9 @@ describe("home dashboard", () => {
     await page.keyboard.press("Control+j");
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Ask Rika");
     assert.equal(await page.getByRole("dialog", { name: "Rika" }).count(), 0, "Ctrl + J opened the drawer over the panel");
-    await page.getByRole("navigation", { name: "Workspace sections" }).getByRole("link", { name: "Calendar" }).click();
+    await page.getByRole("navigation", { name: "Workspace groups" }).getByRole("button", { name: "Plan" }).click();
+    await page.waitForFunction(() => location.hash === "#goals");
+    await page.evaluate(() => (location.hash = "calendar"));
     await page.waitForFunction(() => location.hash === "#calendar");
     await page.keyboard.press("Control+j");
     const drawer = page.getByRole("dialog", { name: "Rika" });
@@ -1196,7 +1199,7 @@ describe("home widgets", () => {
     const agents = left.getByRole("region", { name: "Agents" });
     await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
 
-    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, any tag on the right.
+    // Q19 hairline minimal: no fill or box, a rule above, a large title in the text face (design review), any tag on the right.
     for (const widget of [agenda, note, agents]) {
       const frame = await widget.evaluate((node) => {
         const style = getComputedStyle(node);
@@ -1211,8 +1214,8 @@ describe("home widgets", () => {
       assert.equal(frame.fill, "rgba(0, 0, 0, 0)", "widget has a fill");
       assert.equal(frame.top, "1px");
       assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
-      assert.match(frame.font, /Inter/);
-      assert.ok(frame.size <= 14, `title is ${frame.size}px`);
+      assert.doesNotMatch(frame.font, /Mono|Fraunces/);
+      assert.ok(frame.size >= 20, `title is only ${frame.size}px`);
       if (frame.eyebrow) assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
     }
     // Q9 purpose check: the shortcut is the Save button's tooltip, not a tag; the agents' state is the tag.
@@ -1359,20 +1362,20 @@ describe("appearance settings", () => {
     const titleFont = () => page.getByRole("heading", { level: 1, name: "Settings" }).evaluate((node) => getComputedStyle(node).fontFamily);
     const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
 
-    // Defaults: Kitty, Fraunces titles, compact 13px, full motion, a Brain home, 2D section graphs, blossoms, nebula.
-    for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
+    // Defaults: Kitty, titles in the text face, Standard text size (16px in Kitty), full motion, a Brain home, 2D section graphs, nebula.
+    for (const name of ["Kitty", "Plain", "Standard", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
     assert.equal(await panel.getByRole("group", { name: "Home" }).getByRole("radio").count(), 2, "home offers Brain and 2D only");
     await radio("2D map").check();
     await prefIs(() => prefs.ui?.home?.look, "2d", "home look not saved to the build");
     await radio("Brain").check();
     await prefIs(() => prefs.ui?.home?.look, "brain", "home look not saved to the build");
     assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), true);
-    assert.match(await titleFont(), /Fraunces/);
-    assert.equal(await bodySize(), "13px");
+    assert.doesNotMatch(await titleFont(), /Fraunces/);
+    assert.equal(await bodySize(), "16px");
 
     // A preset sets every control at once, the app and the preview follow.
     await panel.getByRole("button", { name: /^Minimal/ }).click();
-    for (const name of ["Harness", "Plain", "Compact · 13px", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
+    for (const name of ["Harness", "Plain", "Standard", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
     assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), false);
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "true");
     assert.equal(await root("theme"), "harness");
@@ -1383,7 +1386,7 @@ describe("appearance settings", () => {
     assert.equal(prefs.theme?.base, "harness");
 
     // Any single setting still changes afterwards; the preset no longer matches.
-    await radio("Comfortable · 14px").check();
+    await radio("Larger").check();
     assert.equal(await bodySize(), "14px");
     assert.equal(await preview.getAttribute("data-density"), "comfortable");
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "false");
