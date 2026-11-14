@@ -3,15 +3,20 @@ actions skip the model). In the demo they are the whole scripted responder, so t
 works offline; anything else gets a scripted reply there and goes to the model live.
 
 A phrase must match completely, so a longer request never half-runs as a command.
+
+A task or event may end with its date as it is spoken ("next Friday at 4"): the words
+ride along as ``said`` beside their first reading (:mod:`~kitty.core.rika.when`), and the
+loop asks before adding when they are not clear (:mod:`~kitty.core.rika.slots`).
 """
 from __future__ import annotations
 
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from kitty.core.rika import when
 from kitty.core.rika.workspace_tools import view_for
 
 DEMO_REPLY = ("I'm Rika. In the demo I work offline and follow simple phrases only. Try “add a node Photosynthesis”, "
@@ -33,9 +38,8 @@ def _(pattern: str) -> re.Pattern:
 PATTERNS = (
     ("terminal", _(r"open (?:a |the |new |a new )?(?:terminal|tern(?: window)?)")),
     ("view", _(r"(?:open|go to|show(?: me)?) (?:the |my )?(?P<view>[\w &-]{2,40}?)(?: view| page)?")),
-    ("task", _(r"add (?:a |an )?(?:todo|task)(?: to)? (?P<title>.+?)(?: (?P<day>today|tomorrow))?")),
-    ("event", _(r"add (?:an? )?event (?P<title>.+?)(?: (?P<day>today|tomorrow))?"
-                r"(?: at (?P<hour>\d{1,2})(?::(?P<minute>\d{2}))? ?(?P<half>am|pm)?)?")),
+    ("task", _(r"add (?:a |an )?(?:todo|task)(?: to)? (?P<title>.+)")),
+    ("event", _(r"add (?:an? )?event (?P<title>.+)")),
     ("node", _(r"add (?:a |an )?(?:canvas )?(?:node|sticky(?: note)?) (?P<text>.+)")),
     ("connect_nodes", _(r"connect (?:the )?nodes? (?P<a>.+?) (?:to|and|with) (?P<b>.+)")),
     ("topic", _(r"add (?:a |an )?topic (?P<label>.+?)(?: under (?P<parent>.+))?")),
@@ -62,10 +66,13 @@ def _clean(text: str) -> str:
     return " ".join(text.strip().rstrip(".!").split())
 
 
-def _day(conn: sqlite3.Connection, word: str | None) -> datetime:
-    tz = ZoneInfo(conn.execute("SELECT timezone FROM calendar_calendars WHERE id='personal'").fetchone()["timezone"])
-    today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-    return today + timedelta(days=1) if word == "tomorrow" else today
+def _dated(conn: sqlite3.Connection, text: str) -> tuple[str, str | None, when.Reading | None]:
+    """A title, the date words it ended with and their first reading."""
+    zone = ZoneInfo(conn.execute("SELECT timezone FROM calendar_calendars WHERE id='personal'").fetchone()["timezone"])
+    now = datetime.now(timezone.utc)
+    title, said = when.split(text, now=now, zone=zone)
+    found = when.readings(said, now=now, zone=zone).readings if said else []
+    return title, said, found[0] if found else None
 
 
 def parse(text: str, conn: sqlite3.Connection, tools: dict) -> Plan | None:
@@ -91,21 +98,24 @@ def _plan(name: str, match: re.Match, conn: sqlite3.Connection) -> Plan | None:
         view = view_for(group["view"])
         return Plan([("open_view", {"view": view})]) if view else None
     if name == "task":
-        args = {"title": group["title"]}
-        if group["day"]:
-            args["due"] = _day(conn, group["day"]).date().isoformat()
+        title, said, reading = _dated(conn, group["title"])
+        args = {"title": title}
+        if reading is not None:
+            args.update(said=said, due=reading.day.isoformat() if reading.time is None
+                        else f"{reading.day.isoformat()}T{reading.time:%H:%M}")
         return Plan([("create_task", args)])
     if name == "event":
-        day = _day(conn, group["day"])
-        if group["hour"] is None:
-            return Plan([("create_event", {"title": group["title"], "start": day.date().isoformat(), "all_day": True})])
-        hour = int(group["hour"])
-        if group["half"]:
-            hour = hour % 12 + (12 if group["half"].lower() == "pm" else 0)
-        if not 0 <= hour <= 23 or int(group["minute"] or 0) > 59:
-            return Plan(reply="That time does not exist; say it like 4pm or 16:30")
-        start = day.replace(hour=hour, minute=int(group["minute"] or 0))
-        return Plan([("create_event", {"title": group["title"], "start": start.isoformat(timespec="minutes")})])
+        title, said, reading = _dated(conn, group["title"])
+        if reading is None:
+            if re.search(r" at \d[\d:.]*(?: ?[ap]m)?$", title, re.I):
+                return Plan(reply="That time does not exist; say it like 4pm or 16:30")
+            today = datetime.now(ZoneInfo(conn.execute(
+                "SELECT timezone FROM calendar_calendars WHERE id='personal'").fetchone()["timezone"])).date()
+            return Plan([("create_event", {"title": title, "start": today.isoformat(), "all_day": True})])
+        if reading.time is None:
+            return Plan([("create_event", {"title": title, "start": reading.day.isoformat(), "all_day": True, "said": said})])
+        return Plan([("create_event", {"title": title, "said": said,
+                                       "start": f"{reading.day.isoformat()}T{reading.time:%H:%M}"})])
     if name == "node":
         return Plan([("add_canvas_node", {"text": group["text"]})])
     if name == "connect_nodes":

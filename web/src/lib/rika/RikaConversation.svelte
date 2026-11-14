@@ -3,6 +3,7 @@
   import BriefChip from "../goals/BriefChip.svelte";
   import Select from "../ui/Select.svelte";
   import RikaAgents from "./RikaAgents.svelte";
+  import RikaConfirm from "./RikaConfirm.svelte";
   import RikaPlan from "./RikaPlan.svelte";
   import RikaMark from "./RikaMark.svelte";
   import { activeModules } from "../modules.svelte";
@@ -13,7 +14,8 @@
    * Q2 D, Q7 A, Q13, Q16 B, Q19 A, Q20 A: what the home panel and the drawer show.
    * Conversation holds every request and reply (with its tokens and cost readout) and the
    * actions they ran (Undo), the approvals they wait on (Approve / Reject, with what will
-   * happen and what it may cost), brain-dump plans and every reply email Rika drafted or
+   * happen and what it may cost), brain-dump plans, the questions Rika asks about a date
+   * and its check-ins on tasks whose day passed, and every reply email Rika drafted or
    * sent (a held send counts down with Undo send); Agents holds the live worker cards. A
    * brain dump's live transcript runs at the end until Make plan. `brief` shows the morning
    * brief's chip (only on the copy in view, so Ctrl K opens one popover).
@@ -108,6 +110,8 @@
               <p>{entry.summary}</p>
               {#if entry.reversible && entry.status === "done"}<div class="decide"><button class="pill" onclick={() => rika.undo(entry.id)}>Undo</button></div>{/if}
             </article>
+          {:else if entry.kind === "plan" && (entry.plan_kind === "confirm" || entry.plan_kind === "checkin")}
+            <RikaConfirm plan={entry} />
           {:else if entry.kind === "plan"}
             <RikaPlan plan={entry} />
           {:else if entry.kind === "mail"}

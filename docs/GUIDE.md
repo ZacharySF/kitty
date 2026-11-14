@@ -479,6 +479,22 @@ Rika reply ends with its readout (tier, tool path, tokens and cost; **Direct** w
 model ran), and each email Rika drafted or holds for sending is a card with **Send**,
 **Undo send** and its countdown, or **Discard**.
 
+**When a date is not clear, Rika asks first.** A task, event or study task with a clear
+date ("tomorrow", "Friday at 4pm") is added at once with Undo. When the words can mean
+more than one day or time ("next Friday", "at 4"), when an event has a day but no time,
+when the date has passed, or when the date Rika worked out is not what you said, the
+reply is one question with a chip for each reading, for example "Is “Lab report” on
+Fri 20 Nov or Fri 27 Nov?". Pick a chip (arrow keys move, Enter adds) or **Another
+date**, then **Add**; the item is added with Undo. **Not now** adds nothing. Nothing
+else waits while the question is open.
+
+**Check-ins.** For a dated task Rika added, it asks in the conversation at 18:00 on the
+due day (or at the due time, if later): "Did you finish “X”?". **Done** marks it done,
+**Tomorrow** and **Another day** move it and book the next check-in, **Drop** cancels
+it (a study task is removed); each applies at once with Undo. **Not now** leaves the
+task alone. Rika asks once per due date, never about a task that is already done,
+dropped or deleted, and follows a task you moved yourself.
+
 When today's morning brief exists, a **Morning brief · N** chip sits beside the
 Conversation and Agents switch; its popover lists the day's finds and **Open Goals**,
 and opening it marks the brief seen.
@@ -1549,7 +1565,9 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   - `add a node X`, `connect nodes X to Y`
   - `add a topic X [under Y]`, `rename topic X to Y`, `connect topics X to Y`
   - `new card front / back`
-  - `add a task X [today|tomorrow]`, `add an event X [tomorrow] [at 4pm]`
+  - `add a task X [when]`, `add an event X [when]`, where *when* is a spoken date at the
+    end: `today`, `tomorrow`, `Friday`, `next Friday`, `the 20th`, `20 Nov`, `in 3 days`,
+    `end of the month`, each with an optional time (`at 4pm`, `16:30`, `morning`)
   - `new page X`, `append text to Page`
   - `new subject X`, `study task X [for Subject]`
   - `find X`
@@ -1569,6 +1587,7 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   - add flashcards;
   - create calendar events and tasks;
   - add study subjects and tasks;
+  - mark a task or study task done, move it to another day, or drop it;
   - create goals, link items to them and update their measures;
   - save preferences it should remember;
   - draft email replies;
@@ -1710,12 +1729,16 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   scripted agents, and an approved start adds one more. No process starts. It is
   seeded with two synthetic goals, six synthetic emails in a fake mailbox (sends are
   recorded, never delivered), a few learned routes with one shortcut and two
-  preferences; its morning brief runs whenever it starts.
+  preferences; its morning brief runs whenever it starts. One seeded task was due
+  yesterday, so the conversation opens with a check-in; `add a task Lab report next
+  Friday` shows a date question.
 - **API.** These routes are header-protected like the rest of the site, and none
   is an ingress route:
   - `POST /api/rika/messages {text, tier?, spoken?}`
   - `POST /api/rika/dumps {transcript, segments, duration}`
   - `POST /api/rika/plans/<id> {decision: approve, items, choices?}` or `{decision: dismiss}`
+    (a date question or check-in is a plan too; there a choice may be another date,
+    `{item id: {date, time?}}`)
   - `GET /api/rika/history?before=`
   - `POST /api/rika/approvals/<id> {decision}`
   - `POST /api/rika/actions/<id>/undo`
