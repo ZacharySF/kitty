@@ -10,7 +10,8 @@ Windows build needs, what is done, and how to see the rest on a real Windows mac
   thing on Unix and the Windows equivalent (or nothing, where Windows has no such notion)
   on Windows. The build-file lock is a `.lock` file inside `config/` on Windows, because
   Windows cannot open a folder as a file; `kitty.core.builds.store.locked` takes the same
-  lock there.
+  lock there. It type-checks for `x86_64-pc-windows-gnu` (`cargo check --target`, from
+  Linux, C dependencies included); it has not been run on Windows.
 - **Windows check** (`.github/workflows/windows-check.yml`, run by hand from the Actions
   tab): builds and tests rika-server, imports and tests the Python base, and compiles the
   desktop shell on `windows-latest`. The last two are expected to fail until the work
