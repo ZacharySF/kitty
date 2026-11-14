@@ -27,9 +27,9 @@
 <p align="center"><b>A little less scattered. A lot more connected.</b></p>
 
 <p align="center">
-  <img src="docs/screenshots/readme/welcome.jpg" width="100%" alt="The rika! welcome card: a glowing neural-network brain above the words 'Welcome to rika!', with Continue with Google and Start locally buttons">
+  <img src="docs/screenshots/readme/home.jpg" width="100%" alt="The rika! home dashboard: a morning brief, today and a quick note on the left; up next, agents and every section in the middle; and the Rika panel on the right with drafted email replies and an Ask Rika box">
 </p>
-<p align="center"><sub>Your first hello: the Brain, and one button to start locally.</sub></p>
+<p align="center"><sub>Home: what's next, everything you've got, and Rika on the right with your replies already drafted.</sub></p>
 
 <br>
 
@@ -64,7 +64,7 @@ neural-network map of everything you've written, studied and planned. Prefer
 flat ground? Switch to the **2D** map. Same records, different ways to find
 your bearings.
 
-<img src="docs/screenshots/readme/brain.jpg" width="100%" alt="The Brain view: a luminous neural-network brain with pink, green and blue threads, above a legend counting applications, jobs, reminders, calendar events and flashcards">
+<img src="docs/screenshots/readme/brain.jpg" width="100%" alt="The Brain view: a glowing neural-network brain threaded in red, orange, green and blue, above a legend counting applications, jobs, reminders, notes, calendar events and flashcards">
 <p align="center"><sub>The Brain as its own view. Demo workspace, synthetic data.</sub></p>
 
 <br>
@@ -110,6 +110,11 @@ The [module guide](docs/MODULES.md) explains the format and how to publish one.
 
 **Just want the desktop app?** [Download the latest Linux release](https://github.com/ZacharySF/kitty-releases/releases/latest).
 Choose the AppImage or .deb; signed updates are built in.
+
+<p align="center">
+  <img src="docs/screenshots/readme/welcome.jpg" width="62%" alt="The rika! welcome card: a glowing neural-network brain above the words 'Welcome to rika!', with Continue with Google and Start locally buttons">
+</p>
+<p align="center"><sub>First launch: one button to start locally. No account needed.</sub></p>
 
 ### Run from source
 
