@@ -21,10 +21,10 @@
   --wash: color-mix(in srgb, var(--br-structure) 9%, var(--br-panel));
   --violet: var(--br-structure);
   --font-ui: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
-  /* Q5: three faces, one job each. Fraunces sets the page title (h1, --font-title
-     below), Inter everything else in the UI, JetBrains Mono the navigation chrome,
-     key caps, code and tabular figures; Fredoka is the wordmark only. */
+  /* Design labs (Type): no monospace in the interface. The fixed-width face is for code blocks
+     (code, pre, samp, code editors) and the terminal only; everything else is --font-ui.
+     Fraunces is an optional page-title face (Settings → Titles); Fredoka is the wordmark only. */
+  --font-code: "JetBrains Mono Variable", ui-monospace, monospace;
   --font-wordmark: "Fredoka Variable", var(--font-ui);
   --br-font-ui: var(--font-ui);
   --br-font-display: var(--font-ui);
@@ -83,10 +83,9 @@ summary {
 }
 code,
 pre,
-kbd,
 samp,
 .br-code {
-  font-family: var(--font-mono);
+  font-family: var(--font-code);
 }
 button:not([class*="br-"]),
 input:not([class*="br-"]),
@@ -448,7 +447,7 @@ main.atlas-main {
   flex-direction: column;
   gap: 8px;
 }
-main.atlas-main > [role="tabpanel"]:not([hidden]) {
+main.atlas-main > [data-kitty-panel="view"]:not([hidden]) {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -710,7 +709,7 @@ h1 {
   outline: 0;
 }
 kbd {
-  font: 11px var(--font-mono);
+  font: 11px var(--font-ui);
   border: 1px solid var(--border);
   padding: 2px 4px;
   border-radius: 3px;

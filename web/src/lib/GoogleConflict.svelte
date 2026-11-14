@@ -144,7 +144,7 @@
     left: -40px;
     top: -7px;
     color: var(--subtle);
-    font: 400 10px var(--font-mono);
+    font: 400 10px var(--font-ui);
   }
   .blk {
     position: absolute;
@@ -191,7 +191,7 @@
     opacity: 0.3;
   }
   .blk small {
-    font: 9px var(--font-mono);
+    font: 9px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
     opacity: 0.72;
@@ -232,7 +232,7 @@
   .changes li > span {
     grid-row: span 2;
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }

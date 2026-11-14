@@ -2683,7 +2683,7 @@
     font: 500 var(--fs-control) / 1.3 var(--font-ui);
     text-align: left;
   }
-  .switch-item small { margin: 0; color: var(--subtle); font: 500 var(--fs-chrome) / 1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
+  .switch-item small { margin: 0; color: var(--subtle); font: 500 var(--fs-chrome) / 1 var(--font-ui); text-transform: uppercase; letter-spacing: 0.08em; }
   .switch-item:hover,
   .menu-item:hover,
   .menu-item:focus-visible { background: var(--wash); }
@@ -2782,7 +2782,7 @@
   .graph-node.root .label { fill: var(--solid-void); font: 600 13px var(--font-ui); }
   .graph-node .fold circle { fill: color-mix(in srgb, var(--b) 40%, var(--solid-panel)); }
   .graph-node.root .fold circle { fill: var(--solid-void); }
-  .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-mono); pointer-events: none; }
+  .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-ui); pointer-events: none; }
   .graph-node.root.painted .pill { fill: var(--b); }
   .graph-node.drop-target .pill {
     stroke: var(--accent);
@@ -3023,7 +3023,7 @@
   }
   .z.fit { padding: 0 7px; font-size: 11.5px; }
   .z:hover:not(:disabled) { background: var(--wash); color: var(--ink); }
-  .pct { min-width: 38px; color: var(--muted); font: 500 var(--fs-chrome) / 1 var(--font-mono); text-align: center; }
+  .pct { min-width: 38px; color: var(--muted); font: 500 var(--fs-chrome) / 1 var(--font-ui); text-align: center; }
   .corner .vr { height: 14px; margin: 0 2px; }
 
   /* The pill's ⋯ panel: small forms and searches. */
@@ -3100,7 +3100,7 @@
   .branches a { margin: 0; color: var(--ink); text-decoration: none; }
   .branches a:hover,
   .branches a:focus-visible { color: var(--accent); }
-  .ref-kind { display: block; margin-bottom: 2px; color: var(--violet); font: 500 var(--fs-chrome) / 1.2 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+  .ref-kind { display: block; margin-bottom: 2px; color: var(--violet); font: 500 var(--fs-chrome) / 1.2 var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
   code { color: var(--violet); }
   @media (max-width: 900px) {
     .views,

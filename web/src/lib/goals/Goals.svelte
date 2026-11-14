@@ -233,7 +233,7 @@
     opacity: 0.7;
   }
   .mini {
-    font: 600 9.5px var(--font-mono);
+    font: 600 9.5px var(--font-ui);
   }
   .what {
     display: grid;
@@ -258,7 +258,7 @@
     border: 1px solid color-mix(in srgb, var(--c2) 55%, transparent);
     border-radius: 999px;
     background: color-mix(in srgb, var(--c2) 14%, transparent);
-    font: 500 10px/1.5 var(--font-mono);
+    font: 500 10px/1.5 var(--font-ui);
     white-space: nowrap;
   }
   .detail {

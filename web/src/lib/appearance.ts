@@ -10,9 +10,9 @@ import { buildStore, setPreferences } from "./build.svelte";
  * keep their own keys; presets set all three in one change.
  */
 export type Appearance = {
-  /** Fraunces page titles, or plain Inter. */
+  /** Fraunces page titles, or titles in the text face. */
   titleFont: "fraunces" | "plain";
-  /** Q11: compact 13px body, or comfortable 14px. */
+  /** Text size (design labs, Type): "compact" is Standard, "comfortable" is Larger, one step up. */
   density: "compact" | "comfortable";
   motion: "full" | "reduced";
   /** The theme's motif layer (bullets, ticks, dividers, ornaments); off keeps its surfaces. */

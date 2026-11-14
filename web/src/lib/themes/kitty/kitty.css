@@ -20,6 +20,39 @@
   --font-ui: "TeX Gyre Heros", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --br-font-ui: var(--font-ui);
   --br-font-display: var(--font-ui);
+  /* Design labs (Type): bigger, more readable sizes; controls keep their 28px line. */
+  --br-text-xs: 12px;
+  --br-text-sm: 14px;
+  --fs-title: 32px;
+  --fs-heading: 19px;
+  --fs-subheading: 16px;
+  --fs-label: 13.5px;
+  --fs-control: 14px;
+  --fs-chrome: 12px;
+}
+:root[data-theme="kitty"] body {
+  font-size: 16px;
+  line-height: 1.45;
+}
+/* Text size: Larger is one step up from Standard. */
+:root[data-theme="kitty"][data-density="comfortable"] {
+  --br-text-xs: 13px;
+  --br-text-sm: 15px;
+  --fs-title: 36px;
+  --fs-heading: 21px;
+  --fs-subheading: 17.5px;
+  --fs-label: 15px;
+  --fs-control: 15px;
+  --fs-chrome: 13px;
+}
+:root[data-theme="kitty"][data-density="comfortable"] body {
+  font-size: 18px;
+}
+/* Taste (design labs): no tracked-caps labels ("CALENDAR / JOB / SOON"). Words keep their own case
+   and normal spacing; the terminal and code keep theirs. */
+:root[data-theme="kitty"] body :where(*:not(code, pre, samp, .xterm, .xterm *)) {
+  text-transform: none !important;
+  letter-spacing: normal !important;
 }
 
 /* The one frosted surface: the top bar, over whatever scrolls beneath it. */

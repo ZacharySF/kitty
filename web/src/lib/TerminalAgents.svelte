@@ -117,7 +117,7 @@
 </div>
 
 <style>
-  .agent-tools { flex: none; padding: 3px 8px; border-bottom: 1px solid var(--hairline); font: 10.5px var(--font-mono); color: var(--muted); }
+  .agent-tools { flex: none; padding: 3px 8px; border-bottom: 1px solid var(--hairline); font: 10.5px var(--font-ui); color: var(--muted); }
   .agent-actions, .row, .field, .notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   form { display: grid; gap: 4px; padding: 4px 0; }
   p { margin: 4px 0; }

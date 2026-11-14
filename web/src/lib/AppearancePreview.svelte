@@ -148,7 +148,7 @@
     padding: 2px;
     border: 1px solid var(--hairline);
     border-radius: 999px;
-    font: 500 7px var(--font-mono);
+    font: 500 7px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -231,6 +231,6 @@
   em {
     margin-left: auto;
     color: var(--muted);
-    font: normal 8px var(--font-mono);
+    font: normal 8px var(--font-ui);
   }
 </style>

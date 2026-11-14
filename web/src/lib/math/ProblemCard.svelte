@@ -120,7 +120,7 @@
   }
   .eyebrow {
     color: var(--subtle);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -143,7 +143,7 @@
   }
   .actions :global(kbd) {
     color: inherit;
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     opacity: 0.7;
   }
   .error {

@@ -124,7 +124,7 @@
     display: grid;
     place-items: center;
     color: var(--subtle);
-    font: 500 0.55rem var(--font-mono);
+    font: 500 0.55rem var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -216,6 +216,6 @@
   }
   .bar span {
     color: var(--subtle);
-    font: 500 0.55rem var(--font-mono);
+    font: 500 0.55rem var(--font-ui);
   }
 </style>

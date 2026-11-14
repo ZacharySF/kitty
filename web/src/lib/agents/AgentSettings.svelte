@@ -297,11 +297,11 @@
   }
   .mono,
   code {
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
   }
   .num {
     color: var(--muted);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   ul,
@@ -354,10 +354,10 @@
     display: block;
     margin-top: 1px;
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
   }
   .n {
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     font-variant-numeric: tabular-nums;
     text-align: right;
     white-space: nowrap;
@@ -414,7 +414,7 @@
     display: inline-flex;
     flex-wrap: wrap;
     gap: 0 10px;
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
   }
   .mode {
     color: var(--ink);
@@ -431,7 +431,7 @@
     overflow: hidden;
     border: 1px solid var(--border-fine, var(--border));
     border-radius: var(--r-field, 8px);
-    font: 12.5px / 20px var(--font-mono);
+    font: 12.5px / 20px var(--font-code);
   }
   .gutter {
     flex: none;

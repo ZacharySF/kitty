@@ -621,7 +621,7 @@
 <style>
   .decision-id {
     overflow-wrap: anywhere;
-    font: 12px monospace;
+    font: 12px var(--font-ui);
     color: var(--muted);
   }
   .library {

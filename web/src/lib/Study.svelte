@@ -676,7 +676,7 @@
   }
   .edge .count {
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   .left-open .edge.left {
     left: var(--drawer-w);

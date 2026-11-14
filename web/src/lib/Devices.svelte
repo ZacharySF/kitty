@@ -241,8 +241,8 @@
   .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: .75rem; }
   .pair-side { display: grid; align-content: start; gap: .5rem; padding: .65rem .75rem; border: 1px solid var(--border-fine, var(--border)); border-radius: 8px; }
   .pair-side label { display: grid; gap: .2rem; font-size: .8rem; }
-  .big-code { font-family: var(--font-mono, monospace); font-size: 2rem; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
-  .mono { font-family: var(--font-mono, monospace); font-variant-numeric: tabular-nums; }
+  .big-code { font-family: var(--font-ui); font-size: 2rem; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
   .nearby { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
   .nearby small { color: var(--muted); }
   :global(.explain) p { margin: 0; max-width: 36rem; font-size: 12px; line-height: 1.7; color: var(--muted); }

@@ -2042,7 +2042,7 @@
   .weekday-label {
     padding: 0.55rem 0.4rem 0.3rem;
     text-align: center;
-    font: 600 0.7rem var(--font-mono);
+    font: 600 0.7rem var(--font-ui);
     color: var(--subtle);
   }
   .selecting {
@@ -2565,7 +2565,7 @@
     color: var(--ink);
   }
   .stepper b {
-    font: 600 0.8rem var(--font-mono);
+    font: 600 0.8rem var(--font-ui);
   }
   .steppers .arrow {
     color: var(--subtle);

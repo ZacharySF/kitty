@@ -139,7 +139,7 @@
   }
   .where {
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -158,13 +158,13 @@
     min-width: 0;
     overflow: hidden;
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   time,
   .off {
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
   }
   .off {
     color: var(--subtle);
@@ -184,7 +184,7 @@
     padding: 0 5px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--ink) 16%, transparent);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-style: normal;
   }
   .now-row {
@@ -219,7 +219,7 @@
   .count {
     margin-left: auto;
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
   }
   .all {
     justify-self: end;

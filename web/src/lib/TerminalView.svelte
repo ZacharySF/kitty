@@ -53,7 +53,7 @@
     const term = new Terminal({
       allowTransparency: true,
       theme: terminalTheme(getTheme("harness").roles),
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "monospace",
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-code").trim() || "monospace",
       fontSize: 13,
       cursorBlink: true,
       scrollback: 0,
@@ -120,8 +120,6 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--solid-void, #141414) 80%, transparent);
     color: var(--muted);
-    font: 10.5px var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font: 12px var(--font-ui);
   }
 </style>

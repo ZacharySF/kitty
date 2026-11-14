@@ -56,7 +56,7 @@
   .gl,
   .xl {
     fill: var(--subtle);
-    font: 7.5px var(--font-mono);
+    font: 7.5px var(--font-ui);
   }
   .gl {
     text-anchor: end;
@@ -91,7 +91,7 @@
     gap: 4px;
     margin: 8px 0 0;
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
   }
   .legend i {
     width: 8px;

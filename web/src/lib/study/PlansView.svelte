@@ -207,7 +207,7 @@
   .count {
     margin-left: 4px;
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   .plan-form {
     display: grid;

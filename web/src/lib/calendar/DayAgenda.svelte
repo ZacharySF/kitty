@@ -69,7 +69,7 @@
     background: color-mix(in srgb, var(--cal) 12%, transparent);
   }
   .time {
-    font: 500 0.7rem/1.35 var(--font-mono);
+    font: 500 0.7rem/1.35 var(--font-ui);
   }
   .time small {
     color: var(--subtle);

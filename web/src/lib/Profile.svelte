@@ -920,7 +920,7 @@
     resize: vertical;
   }
   .code-editor {
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-code);
     font-size: 0.83rem;
     line-height: 1.55;
   }
@@ -960,7 +960,7 @@
     color: var(--success);
   }
   kbd {
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 0.75rem;
     color: inherit;
   }

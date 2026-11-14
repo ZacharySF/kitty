@@ -62,7 +62,7 @@
   }
   .zs text {
     fill: var(--violet);
-    font: 600 11px var(--font-mono);
+    font: 600 11px var(--font-ui);
     animation: kitty-z 3.6s ease-in-out infinite;
   }
   .zs .z2 {

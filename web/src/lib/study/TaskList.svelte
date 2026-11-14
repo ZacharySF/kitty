@@ -87,7 +87,7 @@
     flex: none;
     margin-left: auto;
     color: var(--muted);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
   }
   .flag {
     color: var(--warning);

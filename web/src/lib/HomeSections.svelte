@@ -202,7 +202,7 @@
   }
   .total {
     color: var(--muted);
-    font: 500 10.5px/1 var(--font-mono);
+    font: 500 10.5px/1 var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   .drop {
@@ -318,7 +318,7 @@
   }
   .count {
     color: var(--accent);
-    font: 500 10.5px/1 var(--font-mono);
+    font: 500 10.5px/1 var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   /* ⋯ shows on the row the pointer or focus is on, and while its menu is open. */

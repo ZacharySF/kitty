@@ -157,7 +157,7 @@
   }
   .hour {
     fill: var(--subtle);
-    font: 8px var(--font-mono);
+    font: 8px var(--font-ui);
     text-anchor: middle;
   }
   .arc {
@@ -181,7 +181,7 @@
   }
   .sub {
     fill: var(--muted);
-    font: 8.5px var(--font-mono);
+    font: 8.5px var(--font-ui);
     letter-spacing: 0.08em;
     text-anchor: middle;
   }

@@ -1099,7 +1099,7 @@
   .editable:empty::before { content: attr(data-placeholder); color: var(--muted); opacity: .55; pointer-events: none; }
   .type-text .editable:empty:not(:focus)::before { content: ""; }
   .editable.checked { color: var(--muted); text-decoration: line-through; }
-  .editable :global(code) { font-family: var(--font-mono); font-size: .88em; padding: .1em .3em; border-radius: 4px; background: var(--surface-raised); }
+  .editable :global(code) { font-family: var(--font-code); font-size: .88em; padding: .1em .3em; border-radius: 4px; background: var(--surface-raised); }
   .editable :global(a) { color: var(--accent); text-decoration: underline; }
   .type-heading_1 .editable { font-family: var(--heading); font-size: 28px; font-weight: 700; line-height: 1.35; margin-top: 18px; }
   .type-heading_2 .editable { font-family: var(--heading); font-size: 22px; font-weight: 650; line-height: 1.4; margin-top: 14px; }
@@ -1107,7 +1107,7 @@
   .type-quote .line { border-left: 3px solid var(--ink); padding-left: 12px; }
   .type-callout .line { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
   .type-code .line { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
-  .type-code .editable { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; white-space: pre; overflow-x: auto; overflow-wrap: normal; }
+  .type-code .editable { font-family: var(--font-code); font-size: 13px; line-height: 1.6; white-space: pre; overflow-x: auto; overflow-wrap: normal; }
   .language { margin-top: 4px; font: inherit; font-size: 11px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 1px 6px; width: 120px; }
   .language:hover, .language:focus { border-color: var(--border); }
   .divider { display: block; width: 100%; padding: 10px 0; background: none; border: 0; cursor: pointer; }
@@ -1119,7 +1119,7 @@
   .popover { position: fixed; z-index: 95; display: flex; flex-direction: column; min-width: 200px; max-height: 320px; overflow: auto; padding: 6px; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--overlay-shadow, 0 8px 24px #0003); }
   .popover button { display: flex; justify-content: space-between; gap: 16px; font: inherit; font-size: 13px; text-align: left; color: inherit; background: none; border: 0; border-radius: 5px; padding: 6px 8px; cursor: pointer; }
   .popover button:hover, .popover button.active { background: var(--surface-raised); }
-  .popover kbd { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+  .popover kbd { font-family: var(--font-ui); font-size: 11px; color: var(--muted); }
   .menu-title { margin: 2px 8px 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .popover hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
   .danger { color: var(--error) !important; }

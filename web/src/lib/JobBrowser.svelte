@@ -860,7 +860,7 @@
   .total {
     margin-top: 4px;
     color: var(--muted);
-    font: 500 var(--fs-chrome, 10.5px) / 1 var(--font-mono);
+    font: 500 var(--fs-chrome, 10.5px) / 1 var(--font-ui);
     letter-spacing: 0.06em;
   }
   .tools {
@@ -972,7 +972,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--ink) 12%, transparent);
     color: var(--ink);
-    font: 600 10px/1 var(--font-mono);
+    font: 600 10px/1 var(--font-ui);
   }
   /* The filters popover: label column + control column, then the checkboxes. */
   :global(.kitty-popover.job-filters) {

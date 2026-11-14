@@ -51,7 +51,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--c2) 12%, transparent);
     color: var(--ink);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.08em;
     white-space: nowrap;
     cursor: pointer;

@@ -2421,7 +2421,7 @@
   .page-toc li button:hover { color: var(--ink); }
   .page-toc li button.on { color: var(--ink); background: var(--wash); }
   .page-toc li button.on::before { background: var(--accent); }
-  .toc-words { margin-top: 6px; padding: 6px 8px 0; border-top: 1px solid var(--hairline); color: var(--subtle); font: 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+  .toc-words { margin-top: 6px; padding: 6px 8px 0; border-top: 1px solid var(--hairline); color: var(--subtle); font: 10px var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; }
 
   /* Map (Q19): the one mind-map editor, full-bleed in the stage. */
   .map-stage { display: flex; flex-direction: column; height: var(--stage-h); min-height: 0; overflow: hidden; }

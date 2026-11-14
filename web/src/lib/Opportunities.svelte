@@ -1008,7 +1008,7 @@
     padding: 1px 5px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--ink) 12%, transparent);
-    font: 500 10.5px/1.4 var(--font-mono);
+    font: 500 10.5px/1.4 var(--font-ui);
     text-align: center;
   }
   :global(.kitty-popover.opportunity-filters) {
@@ -1065,7 +1065,7 @@
   }
   .field textarea.json {
     min-height: 220px;
-    font: 12px/1.5 var(--font-mono);
+    font: 12px/1.5 var(--font-code);
   }
   .check {
     display: inline-flex;
@@ -1220,7 +1220,7 @@
   .due {
     flex-shrink: 0;
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -1272,7 +1272,7 @@
   }
   .kind {
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     text-transform: uppercase;
   }
   .item-notes {
@@ -1320,7 +1320,7 @@
     min-width: 0;
   }
   .source .status {
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
   }
   .url-row {
     display: flex;

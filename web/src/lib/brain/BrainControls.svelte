@@ -422,7 +422,7 @@
     width: 74px;
     height: 20px;
     padding: 0 5px;
-    font: 10.5px/1 var(--font-mono, ui-monospace, monospace);
+    font: 10.5px/1 var(--font-ui);
     color: var(--brain-ink);
     background: transparent;
     border: 1px solid var(--brain-edge);
