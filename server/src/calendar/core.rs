@@ -6,13 +6,13 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
-use rusqlite::types::Value as Sql;
+use rusqlite::types::{Value as Sql, ValueRef};
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::rrule::{Invalid, Rule, DAILY};
-use crate::ported::db::{self, bind, exists, row, rows, transaction};
+use crate::ported::db::{bind, exists, row, rows, transaction};
 use crate::ported::py;
 use crate::ported::time::{now_iso, Date, Dt, Zone, DAY, MINUTE, SECOND};
 use crate::ported::{fail, internal, Done};
@@ -251,11 +251,21 @@ pub fn save_calendar(conn: &Connection, body: &Obj) -> Done<Obj> {
     calendar(conn, &ident)
 }
 
+/// `require_writable`: a calendar imported from an outside account (`calendar_remote`) is
+/// read-only here.
+fn require_writable(conn: &Connection, calendar_id: &Value) -> Done<()> {
+    if exists(conn, "SELECT 1 FROM calendar_remote WHERE calendar_id=?", [bind(calendar_id)?])? {
+        return Err(fail(409, "This calendar comes from Outlook and is read-only in rika!; change it in Outlook"));
+    }
+    Ok(())
+}
+
 pub fn delete_calendar(conn: &Connection, body: &Obj) -> Done<Value> {
     let cal = calendar(conn, body.get("id").unwrap_or(&Value::Null))?;
     if cal["id"] == "personal" {
         return Err(bad("Personal is the default calendar and cannot be deleted"));
     }
+    require_writable(conn, &cal["id"])?;
     if !py::eq(body.get("revision").unwrap_or(&Value::Null), &cal["revision"]) {
         return Err(fail(409, "Calendar changed; reload before deleting"));
     }
@@ -506,6 +516,7 @@ fn with(base: &Obj, changes: &[(&str, Value)]) -> Obj {
 
 pub fn create_event(conn: &Connection, body: &Obj) -> Done<Obj> {
     let data = normalize_event(conn, body)?;
+    require_writable(conn, &data["calendar_id"])?;
     let created = transaction(conn, false, || {
         if !data["source_key"].is_null() {
             if let Some(found) = row(conn, "SELECT id FROM calendar_events WHERE source_key=?", [bind(&data["source_key"])?])? {
@@ -601,36 +612,41 @@ pub fn occurrences(conn: &Connection, start: &Value, end: &Value, range: &Range)
         None => rows(conn, &sql, [])?,
     };
     let needle = py::casefold(range.search);
+    let mut overrides = conn.prepare("SELECT occurrence,data FROM calendar_exceptions WHERE event_id=?")?;
     let mut output: Vec<(Dt, Obj)> = Vec::new();
     for event in found {
         if !range.applyai && applyai_sourced(&event["source_key"]) {
             continue;
         }
         let data: Obj = serde_json::from_str(event["data"].as_str().ok_or_else(internal)?)?;
-        let haystack = py::casefold(&[str_of(&data, "title"), str_of(&data, "description"), str_of(&data, "location")].join(" "));
-        if !haystack.contains(&needle) {
-            continue;
+        if !needle.is_empty() {
+            let haystack = py::casefold(&[str_of(&data, "title"), str_of(&data, "description"), str_of(&data, "location")].join(" "));
+            if !haystack.contains(&needle) {
+                continue;
+            }
         }
         let all_day = flag(&data, "all_day");
         let length = duration(&data)?;
         let mut exceptions: Vec<(String, Option<Obj>)> = Vec::new();
-        for item in rows(conn, "SELECT * FROM calendar_exceptions WHERE event_id=?", [bind(&event["id"])?])? {
-            let replacement = match item["data"].as_str() {
-                Some(text) if !text.is_empty() => Some(serde_json::from_str(text)?),
+        let mut listed = overrides.query([bind(&event["id"])?])?;
+        while let Some(item) = listed.next()? {
+            let key: String = item.get(0)?;
+            let replacement = match item.get_ref(1)? {
+                ValueRef::Text(text) if !text.is_empty() => Some(serde_json::from_slice(text)?),
                 _ => None,
             };
-            let key = item["occurrence"].as_str().ok_or_else(internal)?.to_owned();
             match exceptions.iter_mut().find(|(seen, _)| *seen == key) {
                 Some(slot) => slot.1 = replacement,
                 None => exceptions.push((key, replacement)),
             }
         }
+        // Equal keys are adjacent: the starts come in order.
         let mut candidates: Vec<(String, Dt)> = Vec::new();
         for dt in starts(&data, &lower.add(-length)?.add(-2 * DAY)?, &upper)? {
             let key = stamp(&dt, all_day);
-            match candidates.iter_mut().find(|(seen, _)| *seen == key) {
-                Some(slot) => slot.1 = dt,
-                None => candidates.push((key, dt)),
+            match candidates.last_mut() {
+                Some(last) if last.0 == key => last.1 = dt,
+                _ => candidates.push((key, dt)),
             }
         }
         for (key, _) in &exceptions {
@@ -641,7 +657,7 @@ pub fn occurrences(conn: &Connection, start: &Value, end: &Value, range: &Range)
         }
         let exdates = data.get("exdates").cloned().unwrap_or(Value::Null);
         for (key, dt) in candidates {
-            if exdates.as_array().is_some_and(|items| items.iter().any(|item| item == &s(&key))) {
+            if exdates.as_array().is_some_and(|items| items.iter().any(|item| item.as_str() == Some(key.as_str()))) {
                 continue;
             }
             let exception = exceptions.iter().find(|(seen, _)| *seen == key);
@@ -771,6 +787,8 @@ pub fn edit_event(conn: &Connection, ident: &Value, body: &Obj) -> Done<Obj> {
         Value::Object(map) if map.keys().all(|key| EVENT_FIELDS.contains(&key.as_str())) => map.clone(),
         _ => return Err(bad("Invalid event changes")),
     };
+    require_writable(conn, &current["calendar_id"])?;
+    require_writable(conn, changes.get("calendar_id").unwrap_or(&current["calendar_id"]))?;
     if let Some(key) = changes.get("source_key") {
         if !py::eq(key, current.get("source_key").unwrap_or(&Value::Null)) {
             return Err(bad("Stable source linkage cannot be edited"));
@@ -965,10 +983,12 @@ pub fn tasks(conn: &Connection, search: &str) -> Done<Vec<Obj>> {
     let mut output = Vec::new();
     for found in rows(conn, "SELECT * FROM calendar_tasks WHERE deleted=0 ORDER BY updated_at DESC", [])? {
         let item = task_output(&found)?;
-        let mut words = vec![str_of(&item, "title").to_owned(), str_of(&item, "description").to_owned(), str_of(&item, "project").to_owned()];
-        for tag in item.get("tags").and_then(Value::as_array).cloned().unwrap_or_default() {
-            words.push(tag.as_str().unwrap_or("").to_owned());
+        if needle.is_empty() {
+            output.push(item);
+            continue;
         }
+        let mut words = vec![str_of(&item, "title"), str_of(&item, "description"), str_of(&item, "project")];
+        words.extend(item.get("tags").and_then(Value::as_array).into_iter().flatten().map(|tag| tag.as_str().unwrap_or("")));
         if py::casefold(&words.join(" ")).contains(&needle) {
             output.push(item);
         }
@@ -1210,14 +1230,17 @@ pub fn availability(events: &[Obj], start: &Value, end: &Value, exclude_id: &Val
     }
     busy.sort_by_key(|item| item.0);
     let mut merged: Vec<(Dt, Dt, Vec<Value>)> = Vec::new();
-    let mut conflicts = Vec::new();
+    // A conflict's `with` is the block's own list in Python, so it ends up naming every
+    // event of the block, the conflicting one and later ones included.
+    let mut conflicts: Vec<(Value, usize, String, String)> = Vec::new();
     for (_, a, b, ident) in busy {
         if b.le(&a) {
             continue;
         }
+        let block = merged.len().wrapping_sub(1);
         if let Some(last) = merged.last_mut() {
             if utc(&a)?.wall < utc(&last.1)?.wall {
-                conflicts.push(json!({"event_id": ident, "with": last.2, "start": a.isoformat(), "end": last.1.clone().min(b.clone()).isoformat()}));
+                conflicts.push((ident.clone(), block, a.isoformat(), b.clone().min(last.1.clone()).isoformat()));
             }
             if utc(&a)?.wall <= utc(&last.1)?.wall {
                 last.1 = b.max(last.1.clone());
@@ -1227,6 +1250,8 @@ pub fn availability(events: &[Obj], start: &Value, end: &Value, exclude_id: &Val
         }
         merged.push((a, b, vec![ident]));
     }
+    let conflicts: Vec<Value> = conflicts.into_iter()
+        .map(|(ident, block, start, end)| json!({"event_id": ident, "with": merged[block].2, "start": start, "end": end})).collect();
     let mut free = Vec::new();
     let mut cursor = lower;
     for (a, b, _) in &merged {
@@ -1460,6 +1485,7 @@ pub fn import_reviewed(conn: &Connection, items: &Value) -> Done<Value> {
             };
             exceptions.push((key, replacement));
         }
+        require_writable(conn, &data["calendar_id"])?;
         normalized.push((data, exceptions));
     }
     let (mut created, mut duplicates, mut undo_ids) = (Vec::new(), Vec::new(), Vec::new());
@@ -1483,8 +1509,4 @@ pub fn import_reviewed(conn: &Connection, items: &Value) -> Done<Value> {
         Ok(())
     })?;
     Ok(json!({"created": created, "duplicates": duplicates, "undo_ids": undo_ids}))
-}
-
-pub(crate) fn db_row(conn: &Connection, sql: &str, value: &Value) -> Done<Option<Obj>> {
-    db::row(conn, sql, [bind(value)?])
 }

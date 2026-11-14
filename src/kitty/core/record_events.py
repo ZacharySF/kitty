@@ -58,7 +58,7 @@ SKIP = tuple(re.compile(pattern) for pattern in (
     r"/api/notes/(preferences|cleanup)",          # notes settings, unused reference-file cleanup
     r"/api/flashcards/(review|reveal|export|media)",  # practice controls, export, media upload
     r"/api/flashcards/(grade|undo)",              # flash_reviews is their history
-    r"/api/calendar/(time|availability|import/preview|reminders/dismiss)",  # computed answers, dismissal
+    r"/api/calendar/import/preview",              # a computed answer
     r"/api/calendar/google/.*",                   # provider credentials and sync controls
     r"/api/study/(timer|settings)",               # timer controls (study_sessions keeps the result), settings
     r"/api/documents/(prepare|topics)",           # extraction preview, topic suggestions
@@ -105,13 +105,6 @@ def _singular(word: str) -> str:
     return word[:-1] if word.endswith("s") and not word.endswith("ss") else word
 
 
-def _calendar_undone(conn, match, body, result):
-    if conn is None or type(body.get("id")) is not int:
-        return None
-    row = conn.execute("SELECT entity, entity_id FROM calendar_history WHERE id = ?", (body["id"],)).fetchone()
-    return (row[0], row[1]) if row else None
-
-
 def _single_id(conn, match, body, result):
     ids = body.get("ids")
     return ids[0] if isinstance(ids, list) and len(ids) == 1 else None
@@ -146,13 +139,6 @@ ROUTES = (
            else "card", _body_action()),
     _route(r"/api/flashcards/import", "deck", "import",
            ident=lambda conn, match, body, result: body.get("deck_id")),
-    _route(r"/api/calendar/calendars/delete", "calendar", "delete"),
-    _route(r"/api/calendar/calendars", "calendar", "save"),
-    _route(r"/api/calendar/events/(?P<id>[A-Za-z0-9_-]{1,100})", "event", "save"),
-    _route(r"/api/calendar/events", "event", "create"),
-    _route(r"/api/calendar/tasks", "task", "save"),
-    _route(r"/api/calendar/undo", "event", "undo", ident=_calendar_undone),
-    _route(r"/api/calendar/import(-jobs)?", "event", "import"),
     _route(r"/api/study/(subjects|projects|targets|tasks|exams|plan)",
            lambda match, body: _singular(match[1]), _body_action()),
     _route(r"/api/study/sessions", "session", _body_action(), logged=lambda body: body.get("id") is None),
@@ -227,10 +213,7 @@ def classify(path: str, body: Any, result: Any, conn: sqlite3.Connection | None 
         action = route.action if isinstance(route.action, str) else route.action(match, body)
         path_id = match.groupdict().get("id")
         if route.ident:
-            found = route.ident(conn, match, body, result)
-            if isinstance(found, tuple):
-                entity, found = found
-            ident = _token(found)
+            ident = _token(route.ident(conn, match, body, result))
         else:
             ident = path_id or _result_id(result) or _token(body.get("id"))
     if action == "save" and path_id is None and body.get("id") is None:

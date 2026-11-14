@@ -4,12 +4,14 @@ from __future__ import annotations
 import http.client
 import re
 import json
+from contextlib import closing
 
 import pytest
 from terminal_support import make_root, site
 from test_web_blocks import Client
 
-from kitty.core import endpoint
+from kitty.core import calendar, endpoint
+from kitty.db import connect
 
 EXTENSION = "chrome-extension://" + "b" * 32
 OTHER_EXTENSION = "chrome-extension://" + "c" * 32
@@ -302,7 +304,8 @@ def test_the_kitty_tern_plugin_request_sequence(running):
     assert status == 200 and isinstance(saved["page"], int)
     status, note, _ = call(running, "POST", "/api/ingress/notes", {"text": "typed in Tern"}, token=token, headers=tern)
     assert status == 200 and isinstance(note["id"], int)
-    assert running.request("/api/calendar/tasks", {"title": "Synthetic task", "due": "2026-11-05"})[0] == 200
+    with closing(connect(running.app.settings.db_path)) as conn:  # the task route is rika-server's
+        calendar.save_task(conn, {"title": "Synthetic task", "due": "2026-11-05"})
     status, recent, _ = call(running, "GET", "/api/ingress/recent?limit=20", token=token, headers=tern)
     assert status == 200 and recent["inbox"] == saved["page"]
     assert all(isinstance(page["number"], int) and isinstance(page["title"], str) for page in recent["pages"])

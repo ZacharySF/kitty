@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from kitty import web_brain
-from kitty.core import blocks, flashcards
+from kitty.core import blocks, calendar, flashcards, record_events
 from kitty.web_server import APIError, WebApplication
 
 NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
@@ -30,6 +30,15 @@ def brain(app, conn, **query):
 
 def by_id(result):
     return {node["id"]: node for node in result["nodes"]}
+
+
+def calendar_event(conn, title):
+    """A calendar event as rika-server makes one (server/src/calendar/): the event and its
+    history through the same core function, and the `record_events` row the front appends."""
+    event = calendar.create_event(conn, {"title": title, "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
+                                         "timezone": "UTC", "all_day": False})
+    record_events.append(conn, record_events.Event("calendar", "event", event["id"], "create"), "/api/calendar/events")
+    return event
 
 
 def assert_contract(result):
@@ -58,9 +67,7 @@ def seed(app, conn):
     app.mutate(conn, f"/api/notes/pages/{page['id']}", {
         "revision": page["revision"], "title": "Standing waves", "document": page["document"]})
     note = app.mutate(conn, "/api/quick-notes/create", {"body": "Private scratch body"})
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab session", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
+    event = calendar_event(conn, "Lab session")
     subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
@@ -146,9 +153,7 @@ def test_historical_logs_become_edits(app, workspace):
 
 def test_calendar_history_before_capture_began_is_kept_without_double_counting(app, workspace):
     conn = workspace.conn
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
+    event = calendar_event(conn, "Lab")
     conn.execute("INSERT INTO calendar_history(entity, entity_id, before_json, after_json, created_at)"
                  " VALUES ('event', ?, '{}', '{}', '2001-01-01T00:00:00+00:00')", (event["id"],))
     result = brain(app, conn)
