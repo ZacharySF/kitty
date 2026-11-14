@@ -95,8 +95,6 @@ pub struct Hub {
     tokens: Mutex<HashMap<String, Instant>>,
     state: Mutex<State>,
     wake: (Mutex<bool>, Condvar),
-    /// The active build's revision as the worker reported it.
-    build: Mutex<Option<String>>,
 }
 
 /// Open the workspace database as the front's other readers do.
@@ -114,7 +112,6 @@ pub fn start(front: &Front, db_path: PathBuf) {
         tokens: Mutex::new(HashMap::new()),
         state: Mutex::new(State { seq: 0, device_id: String::new(), started: false, next: 0, windows: HashMap::new() }),
         wake: (Mutex::new(false), Condvar::new()),
-        build: Mutex::new(None),
     });
     if HUB.set(hub.clone()).is_ok() {
         tokio::spawn(worker::follow(hub));
@@ -144,18 +141,16 @@ impl Hub {
     /// One event from the worker's stream.
     fn event(&self, payload: &[u8]) {
         let Ok(event) = serde_json::from_slice::<Value>(payload) else { return };
-        match event.get("type").and_then(Value::as_str) {
-            Some("nudge") => self.nudge(),
-            Some("hello" | "build") => {
-                let revision = event.get("build").and_then(Value::as_str).map(str::to_owned);
-                *self.build.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = revision;
-            }
-            _ => {}
+        if event.get("type").and_then(Value::as_str) == Some("nudge") {
+            self.nudge();
+            // A Settings screen of the worker may have written the build file (`web_build.mutated`).
+            tokio::task::spawn_blocking(crate::builds::service::refresh);
         }
     }
 
+    /// The active build's revision every window's hello carries (crate::builds::service).
     fn build_revision(&self) -> Option<String> {
-        self.build.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        crate::builds::service::active_revision()
     }
 
     fn issue(&self) -> String {

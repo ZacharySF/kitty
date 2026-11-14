@@ -21,6 +21,7 @@ const COLOR_TOKENS: [&str; 23] = [
 /// dropping them recurses.
 const STACK: usize = 256 * 1024 * 1024;
 
+#[derive(Clone)]
 pub struct Problem {
     pub message: Text,
     pub line: usize,
@@ -296,10 +297,21 @@ fn merge(base: &Value, over: &Value) -> Value {
 
 /// `Decimal(str(x)).quantize(Decimal("0.01"), ROUND_HALF_UP)` as a float.
 fn cents(value: &Value) -> f64 {
+    let Some(written) = cents_text(value) else { return 0.0 };
+    let (negative, number) = match written.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, written.as_str()),
+    };
+    let exact: f64 = number.parse().unwrap_or(0.0);
+    if negative { -exact } else { exact }
+}
+
+/// `str(Decimal(str(x)).quantize(Decimal("0.01"), ROUND_HALF_UP))` (`project._budget`), for a number.
+pub fn cents_text(value: &Value) -> Option<String> {
     let written = match value {
         Value::Int(i) => i.decimal(),
-        Value::Float(f) => float_repr(*f),
-        _ => return 0.0,
+        Value::Float(f) if f.is_finite() => float_repr(*f),
+        _ => return None,
     };
     let (negative, written) = match written.strip_prefix('-') {
         Some(rest) => (true, rest.to_owned()),
@@ -342,9 +354,13 @@ fn cents(value: &Value) -> f64 {
     if hundredths.is_empty() {
         hundredths.push(0);
     }
-    let number: String = hundredths.iter().map(|d| char::from(b'0' + d)).collect();
-    let exact: f64 = format!("{number}e-2").parse().unwrap_or(0.0);
-    if negative { -exact } else { exact }
+    let mut number: String = hundredths.iter().map(|d| char::from(b'0' + d)).collect();
+    while number.len() < 3 {
+        number.insert(0, '0');
+    }
+    let (whole, fraction) = number.split_at(number.len() - 2);
+    let whole = whole.trim_start_matches('0');
+    Some(format!("{}{}.{fraction}", if negative { "-" } else { "" }, if whole.is_empty() { "0" } else { whole }))
 }
 
 /// `normalize`: the complete build a valid document describes.

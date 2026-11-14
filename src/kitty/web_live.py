@@ -7,11 +7,10 @@ pages):
 
 GET  /api/internal/live/events   (WebSocket upgrade)
     The front's subscription to this worker. A binary frame ``{"type": "nudge"}`` follows
-    every committed mutation (the front pushes it now instead of at its next poll); each
-    text frame is one message another extension sends to every window (``broadcast``:
-    the build, the page mirror's frames), forwarded as it is. The first binary frame is
-    ``{"type": "hello", "build"}``, the active build's revision every window's hello carries,
-    and each build message updates it.
+    every committed mutation (the front pushes it now instead of at its next poll, and
+    syncs the build a Settings screen may have written); each text frame is one message
+    another extension sends to every window (``broadcast``: the page mirror's frames),
+    forwarded as it is.
 POST /api/internal/live/txn  {"type": "txn", "txn_id"?, "ops", "base"?}
     One window's block transaction (kitty.core.blocks.transact as the person at this
     device): ``{"type": "ack", ...}`` or ``{"type": "reject", "txn_id", "status", "error"}``.
@@ -84,8 +83,6 @@ class Live:
     def broadcast(self, message: dict) -> None:
         """Send one message (not a block change) to every open window now."""
         self._put(1, json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode())
-        if message.get("type") == "build":
-            self._put(2, json.dumps({"type": "build", "build": message.get("active_revision")}).encode())
 
     def subscribe(self) -> Subscriber:
         subscriber = Subscriber()
@@ -158,8 +155,6 @@ def _serve(connection, app, subscriber: Subscriber) -> None:
     reader = Reader()
     code = 1000
     try:
-        builds = getattr(app, "builds", None)
-        connection.sendall(frame(2, json.dumps({"type": "hello", "build": builds.active_revision if builds else None}).encode()))
         while not app.streams_closed.is_set():
             ready, _, _ = select.select([connection, subscriber.wake_read], [], [], 0.25)
             if subscriber.wake_read in ready:
