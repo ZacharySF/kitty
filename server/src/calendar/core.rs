@@ -6,7 +6,7 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
-use rusqlite::types::Value as Sql;
+use rusqlite::types::{Value as Sql, ValueRef};
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -612,36 +612,41 @@ pub fn occurrences(conn: &Connection, start: &Value, end: &Value, range: &Range)
         None => rows(conn, &sql, [])?,
     };
     let needle = py::casefold(range.search);
+    let mut overrides = conn.prepare("SELECT occurrence,data FROM calendar_exceptions WHERE event_id=?")?;
     let mut output: Vec<(Dt, Obj)> = Vec::new();
     for event in found {
         if !range.applyai && applyai_sourced(&event["source_key"]) {
             continue;
         }
         let data: Obj = serde_json::from_str(event["data"].as_str().ok_or_else(internal)?)?;
-        let haystack = py::casefold(&[str_of(&data, "title"), str_of(&data, "description"), str_of(&data, "location")].join(" "));
-        if !haystack.contains(&needle) {
-            continue;
+        if !needle.is_empty() {
+            let haystack = py::casefold(&[str_of(&data, "title"), str_of(&data, "description"), str_of(&data, "location")].join(" "));
+            if !haystack.contains(&needle) {
+                continue;
+            }
         }
         let all_day = flag(&data, "all_day");
         let length = duration(&data)?;
         let mut exceptions: Vec<(String, Option<Obj>)> = Vec::new();
-        for item in rows(conn, "SELECT * FROM calendar_exceptions WHERE event_id=?", [bind(&event["id"])?])? {
-            let replacement = match item["data"].as_str() {
-                Some(text) if !text.is_empty() => Some(serde_json::from_str(text)?),
+        let mut listed = overrides.query([bind(&event["id"])?])?;
+        while let Some(item) = listed.next()? {
+            let key: String = item.get(0)?;
+            let replacement = match item.get_ref(1)? {
+                ValueRef::Text(text) if !text.is_empty() => Some(serde_json::from_slice(text)?),
                 _ => None,
             };
-            let key = item["occurrence"].as_str().ok_or_else(internal)?.to_owned();
             match exceptions.iter_mut().find(|(seen, _)| *seen == key) {
                 Some(slot) => slot.1 = replacement,
                 None => exceptions.push((key, replacement)),
             }
         }
+        // Equal keys are adjacent: the starts come in order.
         let mut candidates: Vec<(String, Dt)> = Vec::new();
         for dt in starts(&data, &lower.add(-length)?.add(-2 * DAY)?, &upper)? {
             let key = stamp(&dt, all_day);
-            match candidates.iter_mut().find(|(seen, _)| *seen == key) {
-                Some(slot) => slot.1 = dt,
-                None => candidates.push((key, dt)),
+            match candidates.last_mut() {
+                Some(last) if last.0 == key => last.1 = dt,
+                _ => candidates.push((key, dt)),
             }
         }
         for (key, _) in &exceptions {
@@ -652,7 +657,7 @@ pub fn occurrences(conn: &Connection, start: &Value, end: &Value, range: &Range)
         }
         let exdates = data.get("exdates").cloned().unwrap_or(Value::Null);
         for (key, dt) in candidates {
-            if exdates.as_array().is_some_and(|items| items.iter().any(|item| item == &s(&key))) {
+            if exdates.as_array().is_some_and(|items| items.iter().any(|item| item.as_str() == Some(key.as_str()))) {
                 continue;
             }
             let exception = exceptions.iter().find(|(seen, _)| *seen == key);
@@ -978,10 +983,12 @@ pub fn tasks(conn: &Connection, search: &str) -> Done<Vec<Obj>> {
     let mut output = Vec::new();
     for found in rows(conn, "SELECT * FROM calendar_tasks WHERE deleted=0 ORDER BY updated_at DESC", [])? {
         let item = task_output(&found)?;
-        let mut words = vec![str_of(&item, "title").to_owned(), str_of(&item, "description").to_owned(), str_of(&item, "project").to_owned()];
-        for tag in item.get("tags").and_then(Value::as_array).cloned().unwrap_or_default() {
-            words.push(tag.as_str().unwrap_or("").to_owned());
+        if needle.is_empty() {
+            output.push(item);
+            continue;
         }
+        let mut words = vec![str_of(&item, "title"), str_of(&item, "description"), str_of(&item, "project")];
+        words.extend(item.get("tags").and_then(Value::as_array).into_iter().flatten().map(|tag| tag.as_str().unwrap_or("")));
         if py::casefold(&words.join(" ")).contains(&needle) {
             output.push(item);
         }

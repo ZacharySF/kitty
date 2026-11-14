@@ -438,36 +438,28 @@ pub struct Occurrences<'a> {
 }
 
 impl Occurrences<'_> {
-    fn dayset(&self) -> (Vec<Option<usize>>, usize, usize) {
+    /// The days of the year (0-based, half-open) this period covers: `_iterinfo`'s `ydayset`,
+    /// `mdayset`, `wdayset` or `ddayset`. A week may run into the next year's first days.
+    fn span(&self) -> (usize, usize) {
         let info = &self.info;
+        let today = || (Date { year: self.year, month: self.month, day: self.day as u32 }.days() - info.yearday0) as usize;
         match self.rule.freq {
-            YEARLY => ((0..info.yearlen).map(Some).collect(), 0, info.yearlen),
-            MONTHLY => {
-                let (start, end) = (info.mrange[self.month as usize - 1], info.mrange[self.month as usize]);
-                let mut set = vec![None; info.yearlen];
-                for i in start..end {
-                    set[i] = Some(i);
-                }
-                (set, start, end)
-            }
+            YEARLY => (0, info.yearlen),
+            MONTHLY => (info.mrange[self.month as usize - 1], info.mrange[self.month as usize]),
             WEEKLY => {
-                let mut set = vec![None; info.yearlen + 7];
-                let mut i = (Date { year: self.year, month: self.month, day: self.day as u32 }.days() - info.yearday0) as usize;
-                let start = i;
+                let start = today();
+                let mut end = start;
                 for _ in 0..7 {
-                    set[i] = Some(i);
-                    i += 1;
-                    if info.wdaymask[i] == self.rule.wkst {
+                    end += 1;
+                    if info.wdaymask[end] == self.rule.wkst {
                         break;
                     }
                 }
-                (set, start, i)
+                (start, end)
             }
             _ => {
-                let mut set = vec![None; info.yearlen];
-                let i = (Date { year: self.year, month: self.month, day: self.day as u32 }.days() - info.yearday0) as usize;
-                set[i] = Some(i);
-                (set, i, i + 1)
+                let start = today();
+                (start, start + 1)
             }
         }
     }
@@ -494,18 +486,13 @@ impl Occurrences<'_> {
 
     /// The candidates of one period, then the step to the next (`rrule._iter`'s loop body).
     fn period(&mut self) {
-        let (mut set, start, end) = self.dayset();
-        for i in start..end {
-            if set[i].is_some() && self.excluded(i) {
-                set[i] = None;
-            }
-        }
+        let (start, end) = self.span();
         let rule = self.rule;
         let base = self.info.yearday0;
-        let mut candidates = Vec::new();
         if !rule.bysetpos.is_empty() && !rule.timeset.is_empty() {
-            let days: Vec<usize> = set[start..end].iter().flatten().copied().collect();
+            let days: Vec<usize> = (start..end).filter(|day| !self.excluded(*day)).collect();
             let times = rule.timeset.len() as i64;
+            let mut candidates = Vec::with_capacity(rule.bysetpos.len());
             for &pos in &rule.bysetpos {
                 let (daypos, timepos) = if pos < 0 { (pos.div_euclid(times), pos.rem_euclid(times)) } else { ((pos - 1).div_euclid(times), (pos - 1).rem_euclid(times)) };
                 let index = if daypos < 0 { days.len() as i64 + daypos } else { daypos };
@@ -516,31 +503,49 @@ impl Occurrences<'_> {
                 }
             }
             candidates.sort_unstable();
-        } else {
-            for day in set[start..end].iter().flatten() {
-                for time in &rule.timeset {
-                    candidates.push((base + *day as i64) * DAY + time);
+            for wall in candidates {
+                if !self.take(wall) {
+                    return;
                 }
             }
-        }
-        for wall in candidates {
-            let at = Dt { wall, zone: rule.dtstart.zone.clone(), fold: false };
-            if rule.until.as_ref().is_some_and(|until| at.compare(until).is_gt()) {
-                self.done = true;
-                return;
-            }
-            if at.compare(&rule.dtstart).is_ge() {
-                if let Some(left) = &mut self.left {
-                    *left -= 1;
-                    if *left < 0 {
-                        self.done = true;
+        } else {
+            for day in start..end {
+                if self.excluded(day) {
+                    continue;
+                }
+                for &time in &rule.timeset {
+                    if !self.take((base + day as i64) * DAY + time) {
                         return;
                     }
                 }
-                self.queue.push_back(wall);
             }
         }
         self.step();
+    }
+
+    /// One candidate against UNTIL, DTSTART and COUNT: queued when it is an occurrence, and
+    /// false once the rule has ended.
+    fn take(&mut self, wall: i64) -> bool {
+        let rule = self.rule;
+        if let Some(until) = &rule.until {
+            let at = Dt { wall, zone: rule.dtstart.zone.clone(), fold: false };
+            if at.compare(until).is_gt() {
+                self.done = true;
+                return false;
+            }
+        }
+        // The candidate carries DTSTART's tzinfo: Python compares the two wall times.
+        if wall >= rule.dtstart.wall {
+            if let Some(left) = &mut self.left {
+                *left -= 1;
+                if *left < 0 {
+                    self.done = true;
+                    return false;
+                }
+            }
+            self.queue.push_back(wall);
+        }
+        true
     }
 
     fn step(&mut self) {

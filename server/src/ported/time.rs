@@ -296,7 +296,7 @@ impl Dt {
         match (&self.zone, &other.zone) {
             (Some(a), Some(b)) if !a.same(b) => {
                 let (mine, theirs) = (self.utcoffset().unwrap_or(0), other.utcoffset().unwrap_or(0));
-                if mine == theirs { self.wall.cmp(&other.wall) } else { self.utc().cmp(&other.utc()) }
+                if mine == theirs { self.wall.cmp(&other.wall) } else { (self.wall - mine).cmp(&(other.wall - theirs)) }
             }
             _ => self.wall.cmp(&other.wall),
         }
