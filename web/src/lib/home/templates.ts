@@ -20,13 +20,13 @@ export interface Template {
 
 export const TEMPLATES: Template[] = [
   { id: "student", name: "Student", use: "Studying", modules: ["workspace", "math"],
-    home: { columns: [["next", "focus", "note"], ["agenda"]], hidden: ["agents"] } },
+    home: { columns: [["next", "focus", "note"], ["agenda"]], hidden: ["agents", "session"] } },
   { id: "job-search", name: "Job search", use: "Finding a job", modules: ["applyai", "workspace"],
-    home: { columns: [["agenda", "next"], ["note"]], hidden: ["agents", "focus"] } },
+    home: { columns: [["agenda", "next"], ["note"]], hidden: ["agents", "focus", "session"] } },
   { id: "builder", name: "Builder", use: "Building with agents", modules: ["terminal", "workspace", "brain"],
-    home: { columns: [["agents", "note"], ["agenda", "next"]], hidden: ["focus"] } },
+    home: { columns: [["agents", "session", "note"], ["agenda", "next"]], hidden: ["focus"] } },
   { id: "minimal", name: "Minimal", use: "Notes and a calendar", modules: ["workspace"],
-    home: { columns: [["agenda", "note"]], hidden: ["next", "agents", "focus"] } },
+    home: { columns: [["agenda", "note"]], hidden: ["next", "agents", "focus", "session"] } },
 ];
 
 /** The modules the pressed answers want, each once. */

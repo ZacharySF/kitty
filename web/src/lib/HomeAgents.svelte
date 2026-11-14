@@ -4,6 +4,7 @@
   import HomeWidget from "./HomeWidget.svelte";
   import type { AgentState, TerminalActivity } from "./terminal";
   import type { View } from "./workspace";
+  import { usageLine } from "./usage/usage";
 
   /**
    * Q20: what each herdr workspace agent is doing now, how long it has been in
@@ -62,6 +63,9 @@
           <span class="what">
             <strong>{space.label}</strong>
             <small>{doing(space)}</small>
+            {#each space.agents as agent (agent.pane)}
+              {#if agent.usage}<small class="usage">{space.agents.length > 1 ? `${agent.name} · ` : ""}{usageLine(agent.usage)}</small>{/if}
+            {/each}
           </span>
           {#if space.status === "blocked"}
             <button class="pill primary" aria-label={`Approve ${space.label} in herdr`} onclick={() => onview("herdr")}>Approve</button>

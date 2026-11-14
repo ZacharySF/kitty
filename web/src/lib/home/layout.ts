@@ -10,6 +10,7 @@ export const HOME_WIDGETS = [
   { id: "focus", title: "Focus", modules: ["workspace"], column: 0 },
   { id: "next", title: "Up next", modules: ["workspace", "applyai"], column: 1 },
   { id: "agents", title: "Agents", modules: ["terminal"], column: 1 },
+  { id: "session", title: "Agent session", modules: ["terminal"], column: 1 },
 ] as const satisfies readonly { id: string; title: string; modules: readonly ModuleId[]; column: number }[];
 export type HomeWidgetId = (typeof HOME_WIDGETS)[number]["id"];
 export type HomeLayout = { columns: string[][]; hidden: string[] };

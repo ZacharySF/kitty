@@ -106,8 +106,10 @@ def test_starting_an_agent_waits_for_approval_then_joins_the_scripted_roster(dem
     status, roster = demo.request("/api/rika/agents")
     assert status == 200 and len(roster["agents"]) == 5
     assert {agent["status"] for agent in roster["agents"]} == {"working", "blocked", "idle", "done"}
-    assert all(set(agent) == {"id", "kind", "name", "status", "task", "line", "since", "where", "now", "guarantee"}
+    assert all(set(agent) == {"id", "kind", "name", "status", "task", "line", "since", "where", "now", "usage", "guarantee"}
                for agent in roster["agents"])
+    # The demo's cards carry invented usage (kitty.web_usage); no log is opened.
+    assert all(agent["usage"]["agent"] == agent["kind"] and agent["usage"]["new_tokens"] > 0 for agent in roster["agents"])
     # Every guarantee level shows on a demo card (Settings → Agents names them).
     assert {agent["guarantee"] for agent in roster["agents"]} == {"full", "attribution", "none"}
     # Agent skills are off by default: no agent's now state is read.

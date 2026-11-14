@@ -72,14 +72,18 @@ def get(app, conn, path, query):
                 "cwd": str(app.settings.root), "default": "omp", "kinds": list(CODING_AGENTS)}
     if path == "/api/terminal/activity":
         try:
-            activity = app.terminal.runtime.activity()
+            activity = app.terminal.runtime.activity(signals=True)
         except TerminalUnavailable as exc:
             raise _error(503, str(exc)) from None
-        # Each card names the guarantee of the newest launch in its pane (Settings → Agents).
+        # Each card names the guarantee of the newest launch in its pane (Settings → Agents)
+        # and, while usage is on for its kind, its session's usage (kitty.web_usage). The
+        # signals that find the session stay here.
         guarantees = agent_sessions.pane_guarantees(conn, "herdr")
         for space in activity["workspaces"]:
             for agent in space["agents"]:
+                signals = agent.pop("signals")
                 agent["guarantee"] = guarantees.get(agent["pane"], "none")
+                agent["usage"] = app.usage.card({"id": f"herdr:{agent['pane']}", "kind": agent["kind"], **signals})
         return activity
 
 

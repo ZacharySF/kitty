@@ -4,6 +4,7 @@
   import AIReview from "./AIReview.svelte";
   import { activeModules } from "./modules.svelte";
   import RikaVoiceSettings from "./rika/RikaVoiceSettings.svelte";
+  import UsageSection from "./usage/UsageSection.svelte";
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
   type Model = {
@@ -129,9 +130,6 @@
         <span class="badge"
           >{status.configured ? "KEY SAVED" : "NOT CONNECTED"}</span
         >
-        Reserved/reported today (UTC): ${status.spent_today.toFixed(4)} / ${status.daily_budget_usd.toFixed(
-          2,
-        )}
       </p>
       <label
         >Private API key<input
@@ -248,6 +246,7 @@
     >
     <AIReview {purpose} {text} {demo} />
   </section>{/if}
+  {#if status}<div class="usage-slot"><UsageSection today={status.spent_today} cap={status.daily_budget_usd} /></div>{/if}
 </div>
 
 <style>
@@ -255,6 +254,11 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr));
     gap: 1.2rem;
+  }
+  .usage-slot {
+    grid-column: 1 / -1;
+    min-width: 0;
+    container-type: inline-size;
   }
   .ai-panel {
     padding: 1.3rem;
