@@ -3,43 +3,43 @@
     {
       "id": "applyai",
       "label": "ApplyAI",
-      "description": "Job discovery, sources, companies, resumes, preparation, applications, follow-ups, mail and career reports.",
+      "description": "Find jobs and track applications",
       "packs": ["discovery"]
     },
     {
       "id": "workspace",
       "label": "Workspace",
-      "description": "Notes, documents, canvas, schema maps, backlinks, flashcards, study, calendar, tasks and opportunities.",
+      "description": "Write notes, plan your days and review cards on a schedule",
       "packs": []
     },
     {
       "id": "math",
       "label": "Math",
-      "description": "Topics, lessons, sprints and answer checking.",
+      "description": "Learn math with checked answers",
       "packs": ["math"]
     },
     {
       "id": "learnharness",
       "label": "LearnHarness",
-      "description": "The LearnHarness study app, run on this machine.",
+      "description": "Run LearnHarness inside rika!",
       "packs": ["learnharness"]
     },
     {
       "id": "terminal",
       "label": "Terminal",
-      "description": "rika!'s own herdr terminal session: workspaces, tabs, splits and agents, streamed into the window; plus your installed Stencil Tern, if any.",
+      "description": "Run terminals and coding agents",
       "packs": ["herdr"]
     },
     {
       "id": "voice",
       "label": "Voice",
-      "description": "Talk to Rika: on-device speech to text.",
+      "description": "Talk to Rika and hear it answer",
       "packs": ["voice"]
     },
     {
       "id": "brain",
       "label": "Brain",
-      "description": "The atlas home: your workspace as a 3D brain or a 2D map, and the 3D look of section and schema graphs.",
+      "description": "See your workspace as a map or brain",
       "packs": ["brain"]
     }
   ],

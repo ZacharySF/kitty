@@ -76,7 +76,8 @@
       return;
     }
     if (listening) {
-      if (event.key.length === 1 || event.key === "Enter" || event.key === "Backspace") event.preventDefault();
+      // Typing is held while Rika listens; Ctrl / ⌘ chords (copy, paste, select all) still work.
+      if (!event.ctrlKey && !event.metaKey && (event.key.length === 1 || event.key === "Enter" || event.key === "Backspace")) event.preventDefault();
       return;
     }
     if (event.key !== "Enter" || event.shiftKey) return;

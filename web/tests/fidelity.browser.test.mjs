@@ -1,7 +1,7 @@
 // The real app's type system (design Q4/Q5) in a real browser against the disposable
 // synthetic backend (`kitty-web --demo`); no private workspace is read. On every
-// audited screen and on Kitty and Liquid Glass: no italic chrome, at most three faces
-// (Fraunces page titles, Inter UI, JetBrains Mono chrome) plus the Fredoka wordmark,
+// audited screen and on Kitty and Liquid Glass: no italic chrome, at most two faces
+// (the theme's text face for titles and UI, JetBrains Mono inside code only) plus the Fredoka wordmark,
 // and the retired faces are not bundled.
 // Run from web/ with Node >=22, uv and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
@@ -18,7 +18,8 @@ import { announcement, authorize, exchange } from "./kittyServer.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
-const FACES = ["Fraunces Variable", "Inter Variable", "JetBrains Mono Variable"];
+// Each theme has one text face; mono appears only inside code. Kitty, the default, is set in an open Helvetica.
+const TEXT_FACE = { kitty: "TeX Gyre Heros", "liquid-glass": "Inter Variable" };
 
 let backend;
 let secret;
@@ -130,9 +131,10 @@ const SCREENS = [
 ];
 
 for (const theme of ["kitty", "liquid-glass"]) {
+  const FACES = [TEXT_FACE[theme], "JetBrains Mono Variable"];
   describe(`type system on ${theme}`, () => {
     for (const [screen, ready] of SCREENS) {
-      test(`${screen}: no italic chrome, at most three faces plus the wordmark`, async () => {
+      test(`${screen}: no italic chrome, the theme's text face (and mono in code) plus the wordmark`, async () => {
         const { page, problems, context } = await open(screen, theme);
         await ready(page);
         await page.waitForTimeout(600);
@@ -141,8 +143,8 @@ for (const theme of ["kitty", "liquid-glass"]) {
         const italic = items.filter((item) => item.italic);
         assert.deepEqual(italic, [], "italic chrome");
         const faces = new Set(items.filter((item) => !item.wordmark).map((item) => item.family));
-        assert.ok(faces.size <= 3, `${faces.size} faces: ${[...faces].join(", ")}`);
-        for (const face of faces) assert.ok(FACES.includes(face), `${face} is not one of the three faces (${items.find((item) => item.family === face && !item.wordmark)?.text})`);
+        assert.ok(faces.size <= 2, `${faces.size} faces: ${[...faces].join(", ")}`);
+        for (const face of faces) assert.ok(FACES.includes(face), `${face} is not ${theme}'s text face or mono (${items.find((item) => item.family === face && !item.wordmark)?.text})`);
         const wordmark = items.filter((item) => item.wordmark);
         for (const item of wordmark) assert.ok(item.family === "Fredoka Variable" || FACES.includes(item.family));
         assert.ok(items.filter((item) => item.family === "Fredoka Variable").every((item) => item.wordmark), "Fredoka outside the wordmark");
@@ -155,21 +157,24 @@ for (const theme of ["kitty", "liquid-glass"]) {
 }
 
 describe("shared chrome controls", () => {
-  test("workspace tabs and the system bar hold 28px controls; status reports as a dot on the tab", async () => {
+  test("the system bar holds 28px or 32px controls; status reports as a dot on the tab", async () => {
     const { page, problems, context } = await open("notes", "kitty");
     await page.locator(".notes-workspace").first().waitFor();
     const heights = await page.evaluate(() =>
-      [...document.querySelectorAll(".system-bar .br-btn, .workspace-tabbar .br-btn, .system-bar .pill, .system-bar .icon-button")]
+      [...document.querySelectorAll(".system-bar .br-btn, .system-bar .pill, .system-bar .icon-button, .tab-trigger, .system-command")]
         .filter((node) => node.getBoundingClientRect().height)
         .map((node) => [node.getAttribute("aria-label") || node.textContent.trim(), node.getBoundingClientRect().height]),
     );
     for (const [label, height] of heights) assert.ok(height === 28 || height === 32, `${label} is ${height}px`);
-    // Notes reports its save state to its tab; nothing prints "Saved locally".
-    const tab = page.getByRole("tab", { selected: true });
+    // Notes reports its save state to its tab in the switcher; nothing prints "Saved locally".
+    await page.locator(".tab-trigger").click();
+    const tab = page.getByRole("dialog", { name: "Open tabs" }).locator('.tab-row[aria-current="page"]');
     const dot = tab.getByRole("img", { name: "Saved" });
     await dot.waitFor();
     assert.deepEqual(await dot.evaluate((node) => [node.getBoundingClientRect().width, node.getBoundingClientRect().height]), [6, 6]);
     assert.equal(await page.getByText("Saved locally", { exact: true }).count(), 0);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "Open tabs" }).waitFor({ state: "detached" });
     // Shared components draw themed dropdowns, never the browser's own select.
     await page.getByRole("button", { name: "More page actions", exact: true }).click();
     await page.getByRole("menuitem", { name: "Import PDF or Markdown…", exact: true }).click();

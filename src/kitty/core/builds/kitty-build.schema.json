@@ -185,7 +185,12 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "look": {"enum": ["brain", "2d"], "description": "Home shows the Brain or the 2D atlas.", "default": "brain"}
+            "look": {"enum": ["brain", "2d"], "description": "Home shows the Brain or the 2D atlas.", "default": "brain"},
+            "columns": {"type": "array", "maxItems": 3, "items": {"type": "array", "maxItems": 24, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}}, "description": "Home's widgets, column by column. A widget whose module is off is kept and not drawn.", "default": [["agenda", "note"], ["next", "agents"]]},
+            "hidden": {"type": "array", "maxItems": 24, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}, "description": "Widgets taken off home.", "default": []},
+            "widths": {"type": "array", "maxItems": 3, "items": {"type": "number", "minimum": 0.5, "maximum": 1.5}, "description": "Each widget column's share of the room, column by column (1 is an even share).", "default": [1, 1]},
+            "rika": {"type": "number", "minimum": 0, "maximum": 0.45, "description": "Rika's share of home's width; 0 keeps the usual width.", "default": 0},
+            "template_offered": {"type": "boolean", "description": "Rika has offered a home template once.", "default": false}
           }
         },
         "brain": {
@@ -197,7 +202,7 @@
             "group_by": {"enum": ["section", "group", "type"], "default": "section"},
             "labels": {"enum": ["off", "sections", "hover"], "default": "hover"},
             "turning": {"type": "boolean", "default": true},
-            "speed": {"type": "number", "minimum": 0, "maximum": 3, "default": 1},
+            "speed": {"type": "number", "minimum": 0, "maximum": 3, "default": 0.5},
             "lines": {"type": "boolean", "default": false},
             "scaffold": {"type": "boolean", "default": true},
             "point_size": {"type": "number", "minimum": 0.25, "maximum": 3, "default": 1},

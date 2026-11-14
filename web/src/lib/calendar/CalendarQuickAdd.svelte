@@ -88,6 +88,6 @@
     white-space: nowrap;
   }
   .when b {
-    font: 600 var(--fs-control) var(--font-mono);
+    font: 600 var(--fs-control) var(--font-ui);
   }
 </style>

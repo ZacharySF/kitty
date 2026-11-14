@@ -1,7 +1,9 @@
 import { api, socketProtocols } from "../api";
 import { activeModules } from "../modules.svelte";
+import { notifier } from "../notifications.svelte";
+import { NOTICE_EVENT, sendSystem } from "../systemNotify";
 import { Mic, MicError } from "./mic";
-import { mergeEntries, rikaSocketUrl, voiceEnabled, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
+import { askedAt, mergeEntries, rikaSocketUrl, voiceEnabled, type Entry, type History, type Id, type PlanChoice, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
 
 /** How long a finished reply's toast stays before it leaves for the drawer. */
 export const RIKA_TOAST_MS = 9000;
@@ -82,7 +84,27 @@ export class RikaSession {
     void this.connect();
     void this.loadHistory();
     void this.loadAgents();
-    return () => this.stop();
+    // A click on an agent's system notification opens that agent.
+    const clicked = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key ?? "";
+      const agent = key.startsWith("agent:") ? this.agents.find((item) => `agent:${item.id}` === key) : undefined;
+      if (agent) void this.open(agent);
+    };
+    window.addEventListener(NOTICE_EVENT, clicked);
+    return () => {
+      window.removeEventListener(NOTICE_EVENT, clicked);
+      this.stop();
+    };
+  }
+
+  /** An agent that starts waiting for you is the one agent event that reaches the system's notifications. */
+  private watchAgents(next: RikaAgent[]) {
+    for (const agent of next) {
+      const before = this.agents.find((item) => item.id === agent.id);
+      if (agent.status === "blocked" && before && before.status !== "blocked" && notifier.system)
+        void sendSystem({ key: `agent:${agent.id}`, title: `${agent.name} is waiting for you`, body: agent.line || agent.task, actions: false });
+    }
+    this.agents = next;
   }
 
   stop() {
@@ -176,7 +198,7 @@ export class RikaSession {
         this.approval(event.approval);
         break;
       case "agents":
-        this.agents = event.agents;
+        this.watchAgents(event.agents);
         break;
       case "navigate":
         this.onnavigate(event.view);
@@ -345,8 +367,8 @@ export class RikaSession {
     }
   }
 
-  /** Approve the ticked items of a plan (with the chosen answer to its question) or dismiss it. */
-  async decidePlan(id: Id, decision: "approve" | "dismiss", items: string[] = [], choices: Record<string, number> = {}) {
+  /** Approve the ticked items of a plan (with the chosen answer to each question) or dismiss it. */
+  async decidePlan(id: Id, decision: "approve" | "dismiss", items: string[] = [], choices: Record<string, PlanChoice> = {}) {
     try {
       const body = decision === "approve" ? { decision, items, choices } : { decision };
       const { plan } = await api<{ plan: RikaPlan }>(`/rika/plans/${encodeURIComponent(String(id))}`, body);
@@ -454,8 +476,10 @@ export class RikaSession {
 
   /** Q20 A: a brain dump's plan opens the drawer by itself too, and deciding it closes what that opened. */
   private plan(plan: RikaPlan) {
-    this.upsert({ kind: "plan", ...plan });
-    if (plan.status === "pending") this.openAuto();
+    this.upsert({ kind: "plan", ...plan, created_at: askedAt(plan, this.message(plan.message_id)) });
+    // A plan or a date question answers something you just asked: it opens the drawer. A
+    // check-in is Rika's own question; it waits in the conversation and never opens anything.
+    if (plan.status === "pending" && plan.plan_kind !== "checkin") this.openAuto();
     else this.releaseAuto();
   }
 
@@ -467,7 +491,8 @@ export class RikaSession {
   /** Closes a drawer that opened by itself once nothing in it waits for the user. */
   private releaseAuto() {
     const dumping = this.listening && this.voice.mode === "dump";
-    if (this.drawer.open && this.drawer.auto && !this.pending.length && !this.pendingPlans.length && !dumping) this.closeDrawer();
+    const asked = this.pendingPlans.some((plan) => plan.plan_kind !== "checkin");
+    if (this.drawer.open && this.drawer.auto && !this.pending.length && !asked && !dumping) this.closeDrawer();
   }
 
   /** Q6 C: a reply to something said aloud is spoken back as a short summary, when a local engine can. */

@@ -144,7 +144,7 @@ describe("brain stage", () => {
     assert.equal(Number(await drawn(page).getAttribute("data-shown")), jobs, "only the jobs are shown");
     const legend = page.getByRole("list", { name: "Legend" });
     assert.ok(await legend.locator('[data-key="record:job"]').count(), "the legend lists the group's kinds");
-    assert.match(await stage(page).innerText(), /JOBS BY KIND/);
+    assert.match(await stage(page).innerText(), /Jobs by kind/);
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.querySelector("[data-brain-stage]")?.hasAttribute("data-isolated"));
     assert.equal(Number(await drawn(page).getAttribute("data-shown")), BRAIN.nodes.length);
@@ -235,7 +235,7 @@ describe("brain stage", () => {
     await brainReady(page);
     const legend = page.getByRole("list", { name: "Legend" });
     await assert.doesNotReject(legend.waitFor());
-    assert.match(await page.locator("[data-brain-stage]").innerText(), /BY SECTION/);
+    assert.match(await page.locator("[data-brain-stage]").innerText(), /By section/);
     await legend.getByRole("button", { name: /more/ }).click().catch(() => {});
     for (const section of BRAIN.sections) {
       const item = legend.locator(`[data-key="${section.id}"]`);
@@ -290,19 +290,19 @@ describe("brain stage", () => {
     await page.getByRole("group", { name: "Group by" }).getByRole("button", { name: "Type" }).click();
     await page.getByRole("switch", { name: "Lines" }).click();
     await page.getByRole("slider", { name: "Point size" }).fill("2");
-    assert.match(await page.locator("[data-brain-stage]").innerText(), /BY TYPE/);
+    assert.match(await page.locator("[data-brain-stage]").innerText(), /By type/);
     const changed = await stored(page);
     assert.deepEqual([changed.layout, changed.groupBy, changed.lines, changed.pointSize], ["wheel", "type", true, 2]);
     await page.getByRole("button", { name: "Reset", exact: true }).click();
     const reset = await stored(page);
     assert.deepEqual(
       { ...reset, panel: undefined },
-      { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 1, lines: false, scaffold: true, pointSize: 1, background: "transparent", panel: undefined },
+      { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 0.5, lines: false, scaffold: true, pointSize: 1, background: "transparent", panel: undefined },
     );
     assert.equal(await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Brain" }).getAttribute("aria-pressed"), "true");
     assert.equal(await page.getByRole("switch", { name: "Lines" }).getAttribute("aria-checked"), "false");
     assert.equal(await page.getByRole("slider", { name: "Point size" }).inputValue(), "1");
-    assert.match(await page.locator("[data-brain-stage]").innerText(), /BY SECTION/);
+    assert.match(await page.locator("[data-brain-stage]").innerText(), /By section/);
     await context.close();
   });
 

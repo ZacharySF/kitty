@@ -155,7 +155,7 @@
   .step-head { display: flex; align-items: center; gap: .5rem; min-height: 24px; }
   .step-head input { width: auto; margin: 0; padding: 0; accent-color: var(--accent); }
   .step-head label { flex: 1; display: flex; gap: .5rem; align-items: baseline; margin: 0; font-size: 12.5px; line-height: 1.35; cursor: pointer; }
-  .number { width: 14px; flex: none; color: var(--subtle, var(--muted)); font: 500 10px var(--font-mono); text-align: right; }
+  .number { width: 14px; flex: none; color: var(--subtle, var(--muted)); font: 500 10px var(--font-ui); text-align: right; }
   .mini { flex: none; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); font-size: 13px; }
   .mini:hover:not(:disabled), .mini[aria-pressed="true"] { border-color: var(--hairline, var(--border)); color: var(--ink); }
   .mini:disabled { opacity: .35; }

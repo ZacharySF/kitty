@@ -255,7 +255,7 @@
     margin-left: auto;
   }
   .meta {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: var(--fs-chrome);
     color: var(--muted);
   }
@@ -272,7 +272,7 @@
     color: var(--muted);
   }
   .figure {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: var(--fs-subheading);
     color: var(--ink);
@@ -304,7 +304,7 @@
     color: var(--ink);
   }
   td {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     color: var(--ink);
   }

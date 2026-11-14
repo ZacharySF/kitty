@@ -60,7 +60,7 @@
     flex: none;
     width: 56px;
     color: var(--subtle);
-    font: 500 9.5px/1.6 var(--font-mono);
+    font: 500 9.5px/1.6 var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -91,7 +91,7 @@
     border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
     border-radius: 999px;
     color: var(--warning);
-    font: 500 9.5px/1.4 var(--font-mono);
+    font: 500 9.5px/1.4 var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }

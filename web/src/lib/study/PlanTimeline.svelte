@@ -88,7 +88,7 @@
     justify-items: center;
     transform: translateX(-50%);
     color: var(--muted);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
   }
   .tick b {
     color: var(--subtle);
@@ -180,7 +180,7 @@
     right: 8px;
     top: 50%;
     color: var(--muted);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
     transform: translateY(-50%);
   }
   .returns {

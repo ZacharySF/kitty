@@ -128,7 +128,7 @@
     flex: none;
     width: 58px;
     color: var(--subtle);
-    font: 500 9.5px/1.6 var(--font-mono);
+    font: 500 9.5px/1.6 var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }

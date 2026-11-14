@@ -140,9 +140,9 @@ describe("Find jobs", () => {
     assert.equal(await views.getByRole("button", { name: "Map", exact: true }).getAttribute("aria-pressed"), "true");
     assert.equal(await views.getByRole("button", { name: "List", exact: true }).getAttribute("aria-pressed"), "false");
 
-    // The page title is a Fraunces H1 with its count; Add a job link is the 32px primary, last.
+    // The page title is an H1 in the text face with its count; Add a job link is the 32px primary, last.
     const title = page.getByRole("heading", { level: 1, name: /Find jobs/ });
-    assert.match(await title.evaluate((node) => getComputedStyle(node).fontFamily), /Fraunces/);
+    assert.equal(await title.evaluate((node) => getComputedStyle(node).fontFamily === getComputedStyle(document.body).fontFamily), true, "the title is not in the text face");
     const add = page.getByRole("button", { name: "Add a job link" });
     assert.equal(Math.round((await add.boundingBox()).height), 32);
     assert.equal(await add.evaluate((node) => {

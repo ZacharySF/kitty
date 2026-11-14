@@ -162,7 +162,7 @@
   }
   .unit {
     fill: var(--subtle);
-    font: 7.5px var(--font-mono);
+    font: 7.5px var(--font-ui);
     letter-spacing: 0.1em;
     text-anchor: middle;
     text-transform: uppercase;
@@ -175,7 +175,7 @@
   }
   .path {
     color: var(--d);
-    font: 9.5px var(--font-mono);
+    font: 9.5px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     white-space: nowrap;
@@ -198,7 +198,7 @@
     align-items: end;
     gap: 2px 8px;
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.15s ease;
@@ -252,7 +252,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--d) 16%, transparent);
     color: var(--ink);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }

@@ -35,7 +35,7 @@
   path.filled { stroke: var(--c1); }
   text { fill: var(--ink); text-anchor: middle; }
   .number { font: 700 34px var(--font-ui); }
-  .unit { fill: var(--muted); font: 500 8.5px var(--font-mono); letter-spacing: .16em; }
+  .unit { fill: var(--muted); font: 500 8.5px var(--font-ui); letter-spacing: .16em; }
   .streak div { display: grid; gap: 4px; }
   strong { font-size: 14px; }
   p { margin: 0; color: var(--muted); font-size: 12px; }

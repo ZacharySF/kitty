@@ -152,7 +152,7 @@ Settings → Build edits the build's name, author and description, exports it as
 `kitty-build.json`, imports one from a file or an `https` link with a diff of what changes
 (module changes are marked as needing a restart; privacy and cost changes apply only when
 you tick *Also apply privacy and cost changes*), and lists earlier builds with one-click
-rollback. *Open build editor* (or *Edit build* in Ctrl+K) docks the file at the right of
+rollback. *Open build editor* (or *Edit build* in Ctrl Space) docks the file at the right of
 the window: problems are marked at their lines, theme tokens and CSS show in that window
 as you type, and valid text saves itself (Ctrl+S saves at once).
 
@@ -185,7 +185,7 @@ seconds and is issued only by the header- and secret-protected `POST
 binary>`; `KITTY_HERDR_SESSION` overrides the session name.
 
 **Terminals.** There is no terminal dock. Terminals open as native Tern windows: **Open terminal** in
-Ctrl K, or ask Rika ("open a terminal"). Without a usable Tern, Open terminal
+Ctrl Space, or ask Rika ("open a terminal"). Without a usable Tern, Open terminal
 shows the **Tern** view, which says why. **herdr** under Plan (Sections on home)
 opens the whole herdr session in the workspace tab, in a transparent terminal drawn
 in the Harness colours. In a terminal, bare keys (including `f`) go to the shell;
@@ -258,7 +258,7 @@ These act only on rika!'s own daemon and its `kitty` session
 drawer (**Agents**) shows a **now: skill · tool** chip, what the agent is using right
 now (for example "now: lavish · read"; "now: —" until something answers), and a
 **Skills (N)** button that lists that agent's skills in the drawer.
-**All agent skills**, under Plan beside Tern (also in Ctrl K, or ask Rika to open
+**All agent skills**, under Plan beside Tern (also in Ctrl Space, or ask Rika to open
 "agent skills"), catalogues every agent kind's **Agent skills**, **Tools (MCP)** and
 **Plugins**, even with no agent running, with the running agents and their now
 chips in a strip above. Each skill row has **Copy path** and, in the desktop app,
@@ -305,6 +305,44 @@ shell accepts only an absolute path to a file named `SKILL.md` that rika! listed
   `-c 'skills.config=[{name="x",enabled=false}]'`. Rika's `start_worker` takes the
   same list as `skills_off`, and its approval card names the skills switched off.
   Your own agent configuration files are never edited.
+
+### Agent usage
+
+**Settings → AI → Usage** shows what was spent over the last 30 days: the total
+cost, new tokens and cache reads, one stacked bar a day (point at a bar, or use the
+arrow keys, to read the day), a table of models, and the sessions used last. Rika's
+replies and reviewed AI requests are always there, read from rika!'s own records.
+
+- **Coding agents are off until you turn them on, per agent.** The three switches
+  (omp, Claude Code, Codex) are saved owner-only in `.private/agents/usage.json`.
+  While a kind is on, rika! reads that agent's own session logs on this computer
+  (`~/.omp/agent/sessions`, `~/.claude/projects` or `$CLAUDE_CONFIG_DIR`,
+  `~/.codex/sessions` or `$CODEX_HOME`; logs untouched for 90 days are left alone),
+  including sessions you started outside rika!. Turning a kind off deletes what was
+  read from its logs.
+- **Numbers only.** Kept per session: tokens (new input, cache reads, cache writes,
+  output) per five minutes and model, how full the context was at the last request,
+  tool calls, the count of files its edit tools named (the paths are kept only as
+  hashes), the model ids, the session id and the working directory. No prompt,
+  reply, title or tool argument is stored, and the page gets a session only as an
+  opaque key and its folder's name.
+- **Cost.** omp's logs carry its own cost. Claude Code and Codex are estimated at
+  list price from a table shipped with rika! (`src/kitty/core/agent_prices.json`)
+  and marked **≈**; a model the table does not know shows no cost. On a
+  subscription plan the estimate is not what you pay.
+- **When it reads.** Only while a page asks (`GET /api/usage`,
+  `GET /api/usage/session`), from where it stopped last time and at most every five
+  seconds; a long history is read in steps while the page says "Reading agent logs…".
+  A log line rika! cannot read is skipped and counted. Log formats change between
+  agent releases; Codex's was written from its published protocol, not from a log.
+- **On agent cards.** With a kind on, each running agent's card in home's **Agents**
+  widget and in Rika's Agents section adds one line: context used, new tokens, cache
+  reads, tool calls, files changed and cost.
+- **On home.** The **Agent session** widget shows one session: its context in large
+  type, a line of its new tokens over time, and the rest on one line. It follows the
+  session used last; **Pin** beside a session in Settings → AI → Usage keeps it on
+  that one, and **Follow latest** on the widget lets go. The widget shows only once a
+  session has been read.
 
 
 ## Try it on fake data first
@@ -460,7 +498,7 @@ under **Rika** in the AI settings section below. On home it fills the right-hand
 column: the conversation above, **Ask Rika…** at its foot; type a request and press
 Enter. While Rika writes its reply its mark turns and the field's edge takes the
 theme's accent (under Reduce motion the mark stays still). Elsewhere **Ctrl+J** (from
-anywhere but a terminal) or **Rika** in Ctrl K opens the same conversation in a drawer
+anywhere but a terminal) or **Rika** in Ctrl Space opens the same conversation in a drawer
 on the right, with the field focused; on home Ctrl+J and `/` focus the panel's field.
 Away from home each reply also lands as a toast in the reminder toasts' look, with the
 reply, its tier chip (**Fast**, **Standard** or **Deep**: the model size Rika chose) and
@@ -479,6 +517,24 @@ Rika reply ends with its readout (tier, tool path, tokens and cost; **Direct** w
 model ran), and each email Rika drafted or holds for sending is a card with **Send**,
 **Undo send** and its countdown, or **Discard**.
 
+**When a date is not clear, Rika asks first.** A task, event or study task with a clear
+date ("tomorrow", "Friday at 4pm") is added at once with Undo. When the words can mean
+more than one day or time ("next Friday", "at 4"), when an event has a day but no time,
+when the date has passed, or when the date Rika worked out is not what you said, the
+reply is one question with a chip for each reading, for example "Is “Lab report” on
+Fri 20 Nov or Fri 27 Nov?". Pick a chip (arrow keys move, Enter adds) or **Another
+date**, then **Add**; the item is added with Undo. **Not now** adds nothing. Nothing
+else waits while the question is open.
+
+**Check-ins.** For a dated task Rika added, it asks in the conversation at 18:00 on the
+due day (or at the due time, if later): "Did you finish “X”?". **Done** marks it done,
+**Tomorrow** and **Another day** move it and book the next check-in, **Drop** cancels
+it (a study task is removed); each applies at once with Undo. **Not now** leaves the
+task alone. Rika asks once per due date, never about a task that is already done,
+dropped or deleted, and follows a task you moved yourself. A check-in waits in the
+conversation (home's Rika panel counts it as waiting); unlike a date question, it never
+opens the drawer by itself.
+
 When today's morning brief exists, a **Morning brief · N** chip sits beside the
 Conversation and Agents switch; its popover lists the day's finds and **Open Goals**,
 and opening it marks the brief seen.
@@ -494,7 +550,7 @@ first lead the spoken request). While it listens the mark turns and the field sh
 the words as they are heard; **Escape** drops them and nothing is sent. No Space
 keycap or hint is drawn. Keep holding
 for 8 s and it becomes a **brain dump**, which keeps listening after you let go;
-press Space again to finish. **Brain dump** beside Rika's field or in Ctrl K starts
+press Space again to finish. **Brain dump** beside Rika's field or in Ctrl Space starts
 one directly. A dump's transcript grows live in the conversation (away from home the
 drawer opens by itself); **Make plan** ends it (Cancel drops it). Rika then puts **one
 plan** in the conversation, grouped by area (notes, tasks, calendar, cards, jobs, agents), every item
@@ -662,6 +718,162 @@ extensions. Make these calls from the extension's side panel, popup or backgroun
 page; content scripts run in the web page and are not supported (Chrome's Local
 Network Access rules). Web page origins are always refused.
 
+### Phone (iPhone, Siri Shortcuts)
+
+An iPhone can add to rika! and ask Rika without an app, through Apple's Shortcuts.
+rika! opens a second, separate listener for phones, off until you turn it on in
+**Settings → Connected apps → Phone**:
+
+- **Off**, **This Wi-Fi** (this computer's address on your network) or **Tailscale**
+  (its tailnet address, which also works away from home). It listens on port 8771;
+  allow that port in the firewall (on NixOS:
+  `networking.firewall.allowedTCPPorts = [ 8771 ];`). On plain Wi-Fi a phone's token
+  travels unencrypted, so prefer Tailscale.
+- **Add a phone**: name it and choose what it may do: add to the Inbox; also ask Rika;
+  also show today. rika! shows a short address (for five minutes) to open in Safari on
+  the phone. That page shows the phone's address and token once, to copy into the
+  shortcut. **Remove** ends a phone's token at once.
+
+The listener answers only these, to a phone's own token (`Authorization: Bearer …`),
+and 404 for everything else; web pages are refused:
+
+| Route | Needs | Does |
+| --- | --- | --- |
+| `POST /phone/v1/capture` `{text}` or `{url, title?}` | Add to the Inbox | A line in the Inbox page; answers `{"say": "Added to your Inbox"}` |
+| `POST /phone/v1/rika` `{text}` | Ask Rika | One Rika request; `say` is Rika's reply, or "Rika is on it" after 8 seconds (the reply is then in rika!) |
+| `GET /phone/v1/today` | Show today | The next events and open tasks, for a widget |
+
+Each phone may make 30 requests a minute; five wrong tokens from one address make it
+wait a minute. Tokens and bodies are never logged.
+
+**The "Add to Rika" shortcut** (build it once in the Shortcuts app):
+
+1. *Dictate Text* (or *Ask for Input*); to use it from the Share Sheet too, turn on
+   **Show in Share Sheet** and use *Shortcut Input* when there is one.
+2. *Get Contents of URL*: URL `http://<address>:8771/phone/v1/capture` (or
+   `/phone/v1/rika` to ask Rika), Method **POST**, Headers `Authorization` =
+   `Bearer <token>`, Request Body **JSON** with `text` = the dictated text.
+3. *Get Dictionary Value* `say`, then *Speak Text*.
+
+Name it "Add to Rika" and say "Hey Siri, add to Rika". The shortcut also runs from
+the Home Screen, the Lock Screen, Control Center and the Action button.
+
+**A "today" widget** with the free Scriptable app: a script that requests
+`/phone/v1/today` with the same header and lists `events` and `tasks` shows the day
+on the Home Screen (the phone needs the "also show today" choice).
+
+### GitHub backup
+
+**Settings → Devices → GitHub backup** keeps a copy of your notes in a private GitHub
+repository you choose. It is off until you connect one. Unlike device sync, this copy
+leaves your devices: it is stored on GitHub, unencrypted, so GitHub can read it.
+
+- **Connect**: paste the repository as `owner/name` or its GitHub address. Create it
+  first, as a private and empty repository. rika! asks GitHub's API about it before every
+  push and refuses a public one; if the repository is made public later, the backup
+  pauses and says so. With a key named `GITHUB` in Settings → Keys the check uses it
+  (otherwise GitHub answers "not found" for a private repository, which counts as not
+  public).
+- **Pushing** uses the `git` on this computer with the sign-in it already has: a
+  credential helper over HTTPS, then your SSH key. rika! stores no GitHub password.
+- **What is copied**, and nothing else: `pages/<page id>.md` (the page as readable text),
+  `pages/<page id>.loro` (its exact snapshot), `build.json` and `rika-sync.json` (format,
+  app version, device name, time). Never `.private/`, `.env`, the database, resumes,
+  `config/*.yaml`, jobs, applications, mail or tokens. The copy is built in
+  `.private/reposync/` with its own Git directory; your workspace's own `.git` is never
+  touched.
+- **When**: ten minutes after your last change, at the latest an hour after the first
+  change that is not backed up, and on **Sync now**. A run that fails waits 5, 10, 20,
+  40 and then 60 minutes before the next. Each device pushes its own branch,
+  `devices/<device id>`, and only ever fast-forwards it; commit messages name the pages
+  ("3 pages: Lecture 7, Groceries, +1").
+- **Pause** stops the schedule; **Disconnect** also removes the local copy and leaves
+  what is on GitHub.
+- If GitHub rejects a push (its branch has changes this device lacks), nothing is
+  overwritten and the backup stops with that problem; **Sync now** tries again.
+  Restoring from the backup is not built yet.
+
+Rika can tell you how the backup is doing and start a run (`sync_status`, `sync_now`),
+and mentions it in the morning brief and as an alert only when something is wrong: the
+repository became public, a push was rejected, or nothing has worked for three days
+while changes wait. Rika never connects a repository and never turns the backup on.
+
+Routes (`src/kitty/web_reposync.py`): `GET /api/reposync`, `POST /api/reposync/repo`
+`{repo}`, `/now`, `/pause` `{paused}`, `/disconnect`.
+
+### Microsoft (Outlook) and Slack
+
+**Settings → Account** has a **Microsoft** and a **Slack** section under Google.
+Both are read-only: rika! sends no mail, changes no calendar and posts nothing to
+Slack. Each uses an app that you create yourself, as a public client: rika! needs
+the app's **client ID** and never a client secret. Sign-in opens in your browser
+and finishes on a listener on this computer (authorization code with PKCE). The
+tokens are kept in owner-only files, `.private/microsoft_token.json` and
+`.private/slack_token.json`, like the Google Calendar token; **Disconnect** deletes
+them. Connections are off in the demo. A connected account syncs when it connects,
+on **Sync now**, and every five minutes while rika! runs.
+
+**Microsoft: what you get.** Every Outlook calendar appears in Calendar as
+"<name> (Outlook)" with the events from 30 days back to 180 days ahead (repeating
+events as their single occurrences). These calendars are read-only: an edit is
+refused, and each sync adds, updates and removes events to match Outlook. Inbox
+mail of the last three days joins Rika's mail (the brief, "what needs a reply",
+Rika's memory search). Rika does not draft replies to Outlook mail yet.
+Disconnecting removes the Outlook calendars from rika!; mail Rika already read stays.
+
+**Create the Microsoft app registration** (once, free, any Microsoft account):
+
+1. Open <https://entra.microsoft.com> → **Applications → App registrations → New
+   registration** (a personal account without a directory can use
+   <https://portal.azure.com> → **App registrations**).
+2. Name it (for example "rika"). Under **Supported account types** choose
+   **Accounts in any organizational directory and personal Microsoft accounts**.
+3. Under **Redirect URI** choose the platform **Public client/native (mobile &
+   desktop)** and enter `http://localhost`. Press **Register**.
+4. Open **Authentication** and set **Allow public client flows** to **Yes**; save.
+5. Open **API permissions → Add a permission → Microsoft Graph → Delegated
+   permissions** and add `Calendars.Read`, `Mail.Read`, `offline_access` and
+   `User.Read`. None needs admin consent. Do not create a client secret.
+6. On **Overview**, copy **Application (client) ID**, paste it into **Settings →
+   Account → Microsoft → Client ID**, press **Save**, then **Connect** and **Open
+   Microsoft sign-in**.
+
+A work or school tenant can forbid its users from consenting to apps; then an
+administrator has to approve the app, or you register it inside that tenant. If
+rika! was closed for about 90 days the sign-in expires and the section asks you to
+connect again.
+
+**Slack: what you get.** Add the chosen reaction (📌 `pushpin` unless you change
+**Reaction**) to any message, and at the next sync it becomes a task in Calendar →
+Tasks: the title is the message's first line, the description is the link back to
+the message, the tag is `slack`. Each message makes one task, once. rika! keeps
+only the link and the first 200 characters, and asks Slack for one permission,
+`reactions:read` (your own reactions). Reactions that were already there when you
+connected, or when you changed the reaction, make no task.
+
+**Create the Slack app** (once per Slack workspace; you need permission to install
+apps there):
+
+1. In **Settings → Account → Slack** press **Copy manifest**.
+2. Open <https://api.slack.com/apps> → **Create New App → From a manifest**, pick
+   your workspace, choose the JSON tab, paste the manifest and press **Create**.
+   The manifest turns on PKCE and token rotation, asks for the user scope
+   `reactions:read`, adds no bot, and registers the redirect
+   `http://localhost:47813/slack/callback`.
+3. On the app's **Basic Information** page copy **Client ID** (not the client
+   secret), paste it into **Settings → Account → Slack → Client ID** and **Save**.
+4. Press **Connect**, then **Open Slack sign-in**, and allow the app. Slack sends
+   the browser back to port 47813 on this computer, so that port must be free
+   while you sign in.
+
+Because the app is your workspace's own, it keeps Slack's normal rate limits. A
+workspace that requires approved apps needs its admin to approve it first. If
+rika! was closed for 30 days the Slack sign-in expires; connect again.
+
+Routes: `GET /api/connect`, and `POST /api/connect/{microsoft|slack}/{config,
+start, poll, cancel, sync, disconnect}` (`src/kitty/web_connect.py`; the clients
+are in `src/kitty/core/connect/`).
+
 ### Keys (API keys)
 
 rika! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:
@@ -750,7 +962,7 @@ seeded generator (`src/kitty/core/math/templates/`) whose exact answer key is
 cross-checked by enumeration, exact algebra (SymPy) or Monte Carlo over 240 seeds
 in the test suite. Topics and generators are original and MIT-licensed. Two book
 sources sit beside them: Grinstead & Snell's *Introduction to Probability* and
-problems from your own books. The view itself (drawers, Ctrl K, Up next) is
+problems from your own books. The view itself (drawers, Ctrl Space, Up next) is
 described under **Math** in *Start here*; this section covers how it grades and
 schedules.
 
@@ -852,7 +1064,7 @@ newest edits fill the rest (`truncated: true`; `total` counts everything).
 
 ### Search and the search index
 
-**Ctrl K** searches sections and commands by name and, from the full-text index, every
+**Ctrl Space** (or Ctrl K: input methods such as fcitx5 take Ctrl Space inside text fields) searches sections and commands by name and, from the full-text index, every
 note page, document, quick note, tag (name, keywords, aliases), study subject, project
 and task, calendar event and task, flashcard deck and card, and (with ApplyAI) job:
 titles and contents, with the matched words marked. Each word you type matches the
@@ -1075,7 +1287,7 @@ Suspend, Bury, Edit, Archive and Delete. Its top row adds cards inline: type the
 front, Tab, the back, and Enter saves it into the deck in scope (with All decks in
 scope the row has its own deck picker) and leaves the front ready for the next card.
 **Quick add** works from any page: press N on Flashcards (outside a text field) or
-choose **New card** in Ctrl K to open a small front/back popover over the current
+choose **New card** in Ctrl Space to open a small front/back popover over the current
 page with the deck in view, or the last one you used, preselected. Enter or
 Ctrl+Enter saves and readies the next card; Esc closes it. Both refuse an empty
 front or back and flag a front already in that deck; Enter again adds it anyway.
@@ -1165,13 +1377,13 @@ third miss. After a wrong answer, **Explain my mistake** takes your working and
 sends it through the reviewed AI flow: you see the model, the maximum cost and the
 exact text, approve, and the explanation appears as a bubble. It points at the
 first faulty step and never gives the answer; the checker still grades.
-Launchers: Ctrl K **Mental math sprint** and **Next math lesson**, and the home **Up
+Launchers: Ctrl Space **Mental math sprint** and **Next math lesson**, and the home **Up
 next** rows **Math: next lesson** (or **Math: review due**) and, on a day without a
 sprint yet, the sprint-streak nudge. While a Study cycle runs, the Math header shows
 its phase, subject and time ("Focus · Math · 18:02").
 
 **Mind maps** have one editor, reached from Notes → **Map** (the page's own map),
-Study → **Mind map** and the **Mind maps** view; Ctrl K finds any map by its title and
+Study → **Mind map** and the **Mind maps** view; Ctrl Space finds any map by its title and
 offers **New mind map**. Its slim top bar holds the map switcher (**Maps ▾**, with
 **All maps, merged** for the network of every map), **+** for a new map, the title
 (edit it in place), the linked subject, **Layout ▾** (tree, radial, force), the
@@ -1306,15 +1518,21 @@ conflicts list the differing name, timezone and colour.
 The standalone **Reminders → When** dropdown offers Today, Tomorrow, one/two
 weeks, 30 days or a custom date picker; no date-syntax memorization is required.
 
-**Notifications.** Due calendar reminders, job-search reminders and Rika's urgent
-goal matches (**Rika · strong match**, see **Rika** below) arrive as one
-stack of glass toasts in the bottom-right corner. Hovering (or tabbing into) the
-stack fans it out and pauses every countdown. **Snooze** brings a calendar
-reminder back in ten minutes and moves a job-search reminder a day; **Open**
-jumps to the calendar, the job or Reminders. A toast that times out is not lost:
-the bell in the top bar counts unread notifications and opens the notification
-center, with All/Unread tabs, a source filter, **Mark all read**, and
-**Dismiss**/**Done** on each item. Its footer switches system alerts on or off.
+**Notifications.** Due calendar reminders, job-search reminders, Rika's urgent
+goal matches (**Rika · strong match**, see **Rika** below) and the end of a study
+phase arrive as Linux notifications in the desktop app: the shell sends them to
+your desktop's own notification server, so they look and behave like every other
+app's, your desktop's Do Not Disturb holds them, and nothing is ever marked
+critical. Clicking one raises rika! and opens the calendar, the job or Reminders;
+its **Snooze** button brings a calendar reminder back in ten minutes and moves a
+job-search reminder a day. In a browser tab, or with **System alerts** switched
+off, the same notices arrive as a stack of toasts in the bottom-right corner
+instead (hovering or tabbing into the stack fans it out and pauses every
+countdown). Either way nothing is lost: **Notifications** in Ctrl Space or the tab
+menu opens the notification center, with All/Unread tabs, a source filter,
+**Mark all read**, and **Dismiss**/**Done** on each item. Its footer switches
+system alerts on or off (on by default in the desktop app; a browser asks its
+permission first).
 **Settings → Quiet hours** sets a window on a 24-hour dial (drag either end, or
 use the arrow keys for 15-minute steps). Inside it nothing toasts; reminders are
 held (shown as Held in the center), calendar events can be let through, and when
@@ -1374,7 +1592,26 @@ already copied to the calendar shows once; a row opens its page; at most six row
 show, with the total beside the title), **Agents** (what each herdr workspace agent is
 doing; **Approve** opens herdr on a blocked one) and **Sections**, every page the
 active modules provide, by group. With every module off, one line says so and leads
-to Settings → Modules. Ctrl K also finds every section.
+to Settings → Modules. Ctrl Space also finds every section.
+
+**Focus** is the study timer on one line: the phase, the time left and one button
+(Start, Pause, or Resume and Stop) over a rule that drains as the phase runs. It is
+the same timer as Study's and the top bar's, so starting it in one place starts it in
+all. **Agent session** shows one coding-agent session's usage (see Agent usage under
+the Terminal module); it appears once usage is on for an agent.
+
+**Edit** under the widgets (or **Edit home** in Ctrl Space) unlocks home: drag a
+widget by its handle to another place or column (or focus the handle and use the
+arrow keys), **Remove** it, or **Add** one from the **Widgets** list that takes
+Rika's place while you edit. Two thin splitters set the widths: one between the
+two widget columns and one before Rika's column (drag them, or focus one and use
+the arrow keys; a double-click resets it). **Done** saves the arrangement and the
+widths to the build (`ui.home`).
+
+Loading shows a small turning brain made of points with a line that names what is
+loading; there are no placeholder rows. The Brain itself stays still while you work
+and starts to turn slowly after 30 seconds untouched (View → **Turning** turns that
+off, **Speed** sets it).
 
 The **Brain** is its own view (the **Brain** entry in the header, or Sections), there
 when the Brain module is on: every record and edit in the workspace as a point in a
@@ -1387,8 +1624,12 @@ map, Enter again opens it) and the grouped section list. Each row's ⋯ opens th
 section, shows it on the map, or hides it from (or shows it on) the 2D atlas;
 hidden rows stay listed, dimmed. On the 2D atlas, drop a node on **Sections** to
 hide it and drag a dimmed row onto the graph to show it again. On the Brain view
-the group shortcuts (Ctrl+Alt, Ctrl+X, Ctrl+C) find their group on the map; elsewhere
-they open the group.
+Ctrl+Alt finds Plan on the map; elsewhere it opens Plan.
+The 2D look is a constellation: every node is a point sized by how many links it
+has, a node with four or more links carries a four-point spike, and each group is one
+lightness step of a single hue. Lines join nodes inside a group; lines across groups
+and names appear only for the node under the pointer (or the selected one) and its
+neighbours, while the rest dims.
 The full job-search brief (reminders, deadlines and weekly goals) lives in **Find
 jobs**. Section graphs and schemas draw in 2D or 3D (their own switch, or Settings →
 Appearance); every schema starts in Tree, and an explicit layout preference can
@@ -1477,7 +1718,9 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   - `add a node X`, `connect nodes X to Y`
   - `add a topic X [under Y]`, `rename topic X to Y`, `connect topics X to Y`
   - `new card front / back`
-  - `add a task X [today|tomorrow]`, `add an event X [tomorrow] [at 4pm]`
+  - `add a task X [when]`, `add an event X [when]`, where *when* is a spoken date at the
+    end: `today`, `tomorrow`, `Friday`, `next Friday`, `the 20th`, `20 Nov`, `in 3 days`,
+    `end of the month`, each with an optional time (`at 4pm`, `16:30`, `morning`)
   - `new page X`, `append text to Page`
   - `new subject X`, `study task X [for Subject]`
   - `find X`
@@ -1497,6 +1740,7 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   - add flashcards;
   - create calendar events and tasks;
   - add study subjects and tasks;
+  - mark a task or study task done, move it to another day, or drop it;
   - create goals, link items to them and update their measures;
   - save preferences it should remember;
   - draft email replies;
@@ -1638,12 +1882,16 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   scripted agents, and an approved start adds one more. No process starts. It is
   seeded with two synthetic goals, six synthetic emails in a fake mailbox (sends are
   recorded, never delivered), a few learned routes with one shortcut and two
-  preferences; its morning brief runs whenever it starts.
+  preferences; its morning brief runs whenever it starts. One seeded task was due
+  yesterday, so the conversation opens with a check-in; `add a task Lab report next
+  Friday` shows a date question.
 - **API.** These routes are header-protected like the rest of the site, and none
   is an ingress route:
   - `POST /api/rika/messages {text, tier?, spoken?}`
   - `POST /api/rika/dumps {transcript, segments, duration}`
   - `POST /api/rika/plans/<id> {decision: approve, items, choices?}` or `{decision: dismiss}`
+    (a date question or check-in is a plan too; there a choice may be another date,
+    `{item id: {date, time?}}`)
   - `GET /api/rika/history?before=`
   - `POST /api/rika/approvals/<id> {decision}`
   - `POST /api/rika/actions/<id>/undo`
@@ -1724,10 +1972,9 @@ re-import a deleted source posting. Selection is limited to 10,000 results.
 Notes pages/blocks, flashcard notes, map nodes and calendar items also have
 confirmed right-click deletion; removing a map node does not delete its source.
 
-**Keyboard:** Ctrl+Alt opens Plan, Ctrl+X Study, Ctrl+C Job search and Ctrl+V
-Settings outside editors, selections and dialogs. Native cut/copy/paste remains
-unchanged while editing. F1–F10 navigation is removed. Ctrl/⌘K opens command and
-job search; Ctrl+J opens or closes Rika's history; `?` shows contextual shortcuts. Arrow keys navigate
+**Keyboard:** Ctrl+Alt opens Plan outside editors, selections and dialogs. Ctrl+X,
+Ctrl+C and Ctrl+V are always cut, copy and paste. F1–F10 navigation is removed.
+Ctrl+Space (or Ctrl/⌘K) opens command and job search; Ctrl+J opens or closes Rika's history; `?` shows contextual shortcuts. Arrow keys navigate
 jobs/pipeline; Space marks; Enter opens details. Job actions include `t` tier,
 `k` queue state, `R` resume, `e` notes, `s` status, `u` undo, `d` deadline,
 `n` next action and `o` posting. In Prepare applications, `a` records a submission,
@@ -2048,10 +2295,15 @@ window. Wayland gives GTK no DPI setting, and WebKitGTK turns that into a negati
 device-pixel ratio (a blank, compressed page), so the app sets a neutral 96 DPI when
 none is present; a DPI you set yourself is kept. An explicit `GDK_BACKEND` is respected.
 The window has no native menu strip. **Settings → Desktop** provides **Check for
-updates**, **Keep running on close**, **New quick note** and **Quit rika!** (which
-saves and stops workers). All remain in the system-tray menu,
-along with **Show rika!**. Without a system tray, keeping the app running on close
-is unavailable. A browser-only website explains that desktop controls are unavailable.
+updates**, **Keep running on close**, **Start at login**, **New quick note** and
+**Quit rika!** (which saves and stops workers). All but Start at login remain in the
+system-tray menu, along with **Show rika!**. Without a system tray, keeping the app
+running on close is unavailable. **Start at login** writes a systemd user unit
+(`~/.config/systemd/user/rika.service`, wanted by `graphical-session.target`) that
+opens rika! with its window hidden in the tray (`--background`), and turns Keep
+running on close on, so reminders and notifications arrive with the window closed;
+switching it off removes the unit. It needs a system tray and a systemd session.
+A browser-only website explains that desktop controls are unavailable.
 The page uses the protected backend API and a fixed command allowlist over the
 shell's private owner pipe; it receives no Tauri IPC permissions.
 
@@ -2892,7 +3144,7 @@ The same server reads and writes my notes as blocks (`kitty.core.block_api`):
 |---|---|
 | `list_pages(query?, kind?, limit?)` | note pages, documents and quick notes, newest edit first |
 | `get_page(page)` | one page as a block tree: `id`, `type`, `text`, `props`, `tags`, `order`, `children`, `cite` |
-| `search_blocks(query, limit?)` | full-text index (as Ctrl K), one hit per block, matches in `**bold**` |
+| `search_blocks(query, limit?)` | full-text index (as Ctrl Space), one hit per block, matches in `**bold**` |
 | `get_backlinks(target)` | `((references))`, `[[links]]`, unlinked title mentions, tagged blocks |
 | `list_tags()` | every tag with its keywords, aliases and count |
 | `create_page(title, notebook?, blocks?)` | a note page, optionally with blocks |

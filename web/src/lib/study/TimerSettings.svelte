@@ -2,6 +2,7 @@
   import Icon from "../Icon.svelte";
   import Popover from "../ui/Popover.svelte";
   import Select from "../ui/Select.svelte";
+  import { inDesktopApp } from "../systemNotify";
   import type { Settings } from "./types";
 
   /**
@@ -25,8 +26,9 @@
   function save(patch: Partial<Settings>) {
     void onsave({ ...settings, ...patch });
   }
+  /** A browser tab asks its permission first; the desktop app sends through Linux and needs none. */
   async function notifications(on: boolean) {
-    if (on && "Notification" in window && Notification.permission !== "granted"
+    if (on && !(await inDesktopApp()) && "Notification" in window && Notification.permission !== "granted"
       && (await Notification.requestPermission()) !== "granted") return;
     save({ notifications: on });
   }

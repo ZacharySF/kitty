@@ -109,7 +109,7 @@
       conic-gradient(var(--accent) calc(var(--p) * 360deg), color-mix(in srgb, var(--ink) 10%, transparent) 0);
   }
   .ring b {
-    font: 600 0.65rem var(--font-mono);
+    font: 600 0.65rem var(--font-ui);
   }
   .split {
     display: grid;
@@ -126,7 +126,7 @@
     position: absolute;
     left: -26px;
     color: var(--subtle);
-    font: 500 0.6rem var(--font-mono);
+    font: 500 0.6rem var(--font-ui);
     transform: translateY(-40%);
   }
   .blk {
@@ -172,7 +172,7 @@
     right: 0;
     top: -13px;
     color: var(--c1);
-    font: 600 0.6rem var(--font-mono);
+    font: 600 0.6rem var(--font-ui);
     font-style: normal;
   }
   .tasks {
@@ -220,7 +220,7 @@
   }
   .meta small {
     color: var(--subtle);
-    font: 500 0.6rem var(--font-mono);
+    font: 500 0.6rem var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -234,7 +234,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--ink);
-    font: 500 0.62rem var(--font-mono);
+    font: 500 0.62rem var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;

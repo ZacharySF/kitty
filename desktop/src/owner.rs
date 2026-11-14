@@ -32,9 +32,23 @@ pub enum Command {
     CheckUpdates,
     NewQuickNote,
     KeepRunning(bool),
+    /// Start at login, hidden in the tray (autostart.rs).
+    Autostart(bool),
     Quit,
+    /// Save, stop the backend and reopen: a module change applies (Settings → Modules, first run).
+    Restart,
     /// One agent skill's SKILL.md for the desktop opener (kitty.web_agent_skills).
     OpenSkill(PathBuf),
+    /// A system notification (kitty.web_desktop `/api/desktop/notify`); `actions` adds its
+    /// Snooze and Done buttons.
+    Notify { key: String, title: String, body: String, actions: bool },
+    /// Take down the notifications under these keys.
+    CloseNotices(Vec<String>),
+}
+
+/// A notice's key: 1 to 200 characters, none of them control characters.
+fn notice_key(text: &str) -> bool {
+    (1..=200).contains(&text.chars().count()) && !text.chars().any(char::is_control)
 }
 
 /// Accept only the page's fixed command envelope. The one argument is `open-skill`'s
@@ -47,13 +61,33 @@ pub fn parse(line: &str) -> Option<Command> {
         if object.len() != 2 { return None; }
         return skill_file(object.get("path")?.as_str()?).map(Command::OpenSkill);
     }
+    if command == "notify" {
+        if object.len() != 5 { return None; }
+        let key = object.get("key")?.as_str()?;
+        let title = object.get("title")?.as_str()?;
+        let body = object.get("body")?.as_str()?;
+        let actions = object.get("actions")?.as_bool()?;
+        let sound = notice_key(key) && (1..=120).contains(&title.chars().count()) && !title.chars().any(char::is_control)
+            && body.chars().count() <= 400 && !body.chars().any(|c| c.is_control() && c != '\n');
+        return sound.then(|| Command::Notify { key: key.into(), title: title.into(), body: body.into(), actions });
+    }
+    if command == "notify-close" {
+        if object.len() != 2 { return None; }
+        let keys = object.get("keys")?.as_array()?;
+        if keys.is_empty() || keys.len() > 50 { return None; }
+        let keys: Option<Vec<String>> = keys.iter().map(|key| key.as_str().filter(|key| notice_key(key)).map(String::from)).collect();
+        return keys.map(Command::CloseNotices);
+    }
     if object.len() != 1 { return None; }
     match command {
         "check-updates" => Some(Command::CheckUpdates),
         "new-quick-note" => Some(Command::NewQuickNote),
         "keep-running-on" => Some(Command::KeepRunning(true)),
         "keep-running-off" => Some(Command::KeepRunning(false)),
+        "autostart-on" => Some(Command::Autostart(true)),
+        "autostart-off" => Some(Command::Autostart(false)),
         "quit" => Some(Command::Quit),
+        "restart" => Some(Command::Restart),
         _ => None,
     }
 }
@@ -64,10 +98,12 @@ fn skill_file(text: &str) -> Option<PathBuf> {
     (path.is_absolute() && plain && !text.contains('\0') && path.file_name()? == "SKILL.md").then(|| path.to_path_buf())
 }
 
-pub fn state_line(keep_running: bool, keep_running_available: bool) -> String {
+pub fn state_line(keep_running: bool, keep_running_available: bool, autostart: bool, autostart_available: bool) -> String {
     let mut line = serde_json::json!({
         "keep_running": keep_running,
         "keep_running_available": keep_running_available,
+        "autostart": autostart,
+        "autostart_available": autostart_available,
     }).to_string();
     line.push('\n');
     line
@@ -83,14 +119,17 @@ mod tests {
         assert_eq!(parse(r#"{"command": "new-quick-note"}"#), Some(Command::NewQuickNote));
         assert_eq!(parse(r#"{"command":"keep-running-on"}"#), Some(Command::KeepRunning(true)));
         assert_eq!(parse(r#"{"command":"keep-running-off"}"#), Some(Command::KeepRunning(false)));
+        assert_eq!(parse(r#"{"command":"autostart-on"}"#), Some(Command::Autostart(true)));
+        assert_eq!(parse(r#"{"command":"autostart-off"}"#), Some(Command::Autostart(false)));
         assert_eq!(parse("{\"command\":\"quit\"}\n"), Some(Command::Quit));
+        assert_eq!(parse(r#"{"command":"restart"}"#), Some(Command::Restart));
     }
 
     #[test]
     fn anything_outside_the_fixed_allowlist_is_ignored() {
         for line in ["", "quit", "\"quit\"", "[\"quit\"]", r#"{"origin":"http://127.0.0.1:1"}"#,
                      r#"{"origin":"http://127.0.0.1:1","secret":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}"#,
-                     r#"{"command":"open-url"}"#, r#"{"command":"QUIT"}"#, r#"{"command":" quit"}"#,
+                     r#"{"command":"open-url"}"#, r#"{"command":"QUIT"}"#, r#"{"command":"restart","now":true}"#, r#"{"command":" quit"}"#,
                      r#"{"command":"quit","url":"https://example.invalid"}"#, r#"{"command":["quit"]}"#,
                      r#"{"command":null}"#, "Traceback (most recent call last):",
                      r#"{"command":"open-skill"}"#, r#"{"command":"open-skill","path":"SKILL.md"}"#,
@@ -110,11 +149,33 @@ mod tests {
     }
 
     #[test]
+    fn a_notice_carries_a_key_a_title_a_body_and_whether_it_has_buttons() {
+        assert_eq!(parse(r#"{"command":"notify","key":"calendar:12","title":"Standup in 10 minutes","body":"Room 4\nBring notes","actions":true}"#),
+                   Some(Command::Notify { key: "calendar:12".into(), title: "Standup in 10 minutes".into(), body: "Room 4\nBring notes".into(), actions: true }));
+        assert_eq!(parse(r#"{"command":"notify-close","keys":["calendar:12","rika:7"]}"#),
+                   Some(Command::CloseNotices(vec!["calendar:12".into(), "rika:7".into()])));
+        let long_title = format!(r#"{{"command":"notify","key":"a","title":"{}","body":"","actions":false}}"#, "t".repeat(121));
+        let long_body = format!(r#"{{"command":"notify","key":"a","title":"t","body":"{}","actions":false}}"#, "b".repeat(401));
+        for line in [r#"{"command":"notify","key":"a","title":"t","body":""}"#,
+                     r#"{"command":"notify","key":"","title":"t","body":"","actions":false}"#,
+                     r#"{"command":"notify","key":"a","title":"","body":"","actions":false}"#,
+                     r#"{"command":"notify","key":"a","title":"two\nlines","body":"","actions":false}"#,
+                     r#"{"command":"notify","key":"a","title":"t","body":"bell\u0007","actions":false}"#,
+                     r#"{"command":"notify","key":"a","title":"t","body":"","actions":"yes"}"#,
+                     r#"{"command":"notify","key":"a","title":"t","body":"","actions":false,"icon":"/tmp/x.png"}"#,
+                     long_title.as_str(), long_body.as_str(),
+                     r#"{"command":"notify-close"}"#, r#"{"command":"notify-close","keys":[]}"#,
+                     r#"{"command":"notify-close","keys":["a",7]}"#, r#"{"command":"notify-close","keys":"a"}"#] {
+            assert_eq!(parse(line), None, "{line}");
+        }
+    }
+
+    #[test]
     fn state_report_is_one_exact_json_line() {
-        let line = state_line(true, false);
+        let line = state_line(true, false, false, true);
         assert!(line.ends_with('\n') && !line[..line.len() - 1].contains('\n'));
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(value, serde_json::json!({"keep_running": true, "keep_running_available": false}));
+        assert_eq!(value, serde_json::json!({"keep_running": true, "keep_running_available": false, "autostart": false, "autostart_available": true}));
     }
 
     const SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

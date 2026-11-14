@@ -248,7 +248,7 @@
   }
   .when {
     color: var(--subtle);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -286,7 +286,7 @@
   }
   .goal-num {
     color: var(--ink);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
   }
   .strip-action {
     display: inline-flex;

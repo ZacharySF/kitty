@@ -116,7 +116,7 @@
     padding: 0;
     border-radius: 999px;
     color: var(--muted);
-    font: 600 0.7rem var(--font-mono);
+    font: 600 0.7rem var(--font-ui);
   }
   .letter.on {
     background: var(--ink);
@@ -131,7 +131,7 @@
     border: 1px solid var(--accent);
     border-radius: 6px;
     color: var(--accent);
-    font: 600 0.68rem var(--font-mono);
+    font: 600 0.68rem var(--font-ui);
     opacity: 0;
     transform: translateY(3px);
     transition: opacity 160ms ease, transform 160ms ease;

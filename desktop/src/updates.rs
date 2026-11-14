@@ -39,11 +39,23 @@ pub fn check(app: &AppHandle) {
     });
 }
 
+/// The AppImage this copy runs from, when it is one (Linux only).
+fn appimage(app: &AppHandle) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    return app.env().appimage.map(std::path::PathBuf::from);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 async fn run(app: &AppHandle) -> Result<(), String> {
-    let appimage = app.env().appimage.map(std::path::PathBuf::from);
+    let appimage = appimage(app);
+    // The packages that can replace themselves: the .deb and the AppImage on Linux, the installer on Windows.
     if appimage.is_none() && !matches!(tauri::utils::platform::bundle_type(),
-        Some(tauri::utils::config::BundleType::Deb)) {
-        let open = app.dialog().message("This copy was not installed from a supported Linux .deb or AppImage package, so it cannot replace itself safely. Download the current desktop installer from the public releases page; your existing workspace stays in place.")
+        Some(tauri::utils::config::BundleType::Deb | tauri::utils::config::BundleType::Nsis)) {
+        let open = app.dialog().message("This copy was not installed from a supported package (the Linux .deb or AppImage, or the Windows installer), so it cannot replace itself safely. Download the current desktop installer from the public releases page; your existing workspace stays in place.")
             .title("rika! desktop installers")
             .buttons(MessageDialogButtons::OkCancelCustom("Open downloads".into(), "Cancel".into()))
             .blocking_show();
@@ -113,11 +125,16 @@ async fn run(app: &AppHandle) -> Result<(), String> {
         message(app, format!("The update could not be installed. Your workspace was saved and its workers stopped safely.\n\n{error}\n\nrika! will now restart to reopen the installed application. If it does not reopen, launch rika! from your desktop menu, or download the installer again from https://github.com/ZacharySF/rika/releases/latest . Your workspace has not been deleted. For .deb updates, administrator authentication and working package dependencies are required; for AppImage updates, check directory permissions and free space."), MessageDialogKind::Error);
     }
     app.state::<Desktop>().lifecycle.lock().restart();
-    if appimage.is_some() && std::env::var_os("KITTY_DESKTOP_LAUNCHER").is_some() {
+    relaunch(app);
+    Ok(())
+}
+
+/// Reopen rika! once its backend has stopped (after an update, or the page's Restart now).
+pub fn relaunch(app: &AppHandle) {
+    if appimage(app).is_some() && std::env::var_os("KITTY_DESKTOP_LAUNCHER").is_some() {
         // The launcher waits outside appimage-run/bubblewrap. Relaunch there,
         // not inside the old extracted AppImage with its inherited library paths.
         app.exit(42);
-        Ok(())
     } else {
         app.restart();
     }

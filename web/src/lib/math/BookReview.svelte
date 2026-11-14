@@ -103,7 +103,7 @@
   }
   .eyebrow {
     color: var(--subtle);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -128,7 +128,7 @@
     font-size: 13.5px;
   }
   .previous b {
-    font: 600 14px var(--font-mono);
+    font: 600 14px var(--font-ui);
   }
   .field {
     display: grid;

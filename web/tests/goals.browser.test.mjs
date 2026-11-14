@@ -134,7 +134,7 @@ describe("Goals view", () => {
       assert.equal(await found(page).getByRole("article").count(), internship.suggestions_count);
     }
     // The breadcrumb names the goal.
-    assert.ok(await page.getByRole("navigation", { name: "Schema tabs" }).getByText(INTERNSHIP).isVisible());
+    assert.ok(await page.getByRole("navigation", { name: "Schema path" }).getByText(INTERNSHIP).isVisible());
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -258,17 +258,14 @@ describe("Goals view", () => {
 });
 
 describe("Morning brief", () => {
-  test("home shows today's brief; the Rika panel's chip opens a popover that lists it, marks it seen and opens a goal", async () => {
+  test("the Rika panel's chip on home carries today's brief: a popover that lists it, marks it seen and opens a goal", async () => {
     const { brief } = await call("/rika/brief");
     assert.ok(brief.items.length > 0, "the demo brief has no items");
     const { page, problems, context } = await open("#today");
-    const widget = page.getByRole("region", { name: "Home widgets" }).getByRole("region", { name: "Morning brief" });
-    await widget.waitFor({ timeout: 60_000 });
-    // Compact on home: three one-line items, then a link to the rest on Goals.
-    assert.equal(await widget.getByRole("list").getByRole("link").count(), Math.min(3, brief.items.length));
-    if (brief.items.length > 3) assert.ok(await widget.getByRole("link", { name: `${brief.items.length - 3} more in Goals` }).isVisible());
-    assert.ok(await widget.getByText(brief.items[0].title).first().isVisible());
+    // Design review: home has no separate brief widget; the chip is the one place.
     const chip = page.locator(".home").getByRole("region", { name: "Rika" }).getByRole("button", { name: /^Morning brief, / });
+    await chip.waitFor({ timeout: 60_000 });
+    assert.equal(await page.getByRole("region", { name: "Home widgets" }).getByRole("region", { name: "Morning brief" }).count(), 0, "home still has a brief widget");
     assert.equal(await chip.textContent(), `Morning brief · ${brief.items.length}`);
     // Keyboard: focus the chip and open it with Enter.
     await chip.focus();
@@ -340,7 +337,7 @@ describe("Rika alerts", () => {
     const minute = new Date().getHours() * 60 + new Date().getMinutes();
     const quiet = { enabled: true, from: (minute + 1380) % 1440, to: (minute + 60) % 1440, letCalendar: true, digest: true };
     const { page, problems, context } = await open("#today", { quiet });
-    await page.getByRole("button", { name: /^Notifications, / }).waitFor({ timeout: 60_000 });
+    await page.locator(".wordmark").waitFor({ timeout: 60_000 });
     await page.waitForFunction((key) => JSON.parse(localStorage.getItem("kitty.notify.ledger") ?? "{}").held?.includes(key), alerts[0].key, { timeout: 30_000 });
     assert.equal(await page.getByText("Rika · strong match").count(), 0, "an alert toasted during quiet hours");
     assert.deepEqual(problems, []);

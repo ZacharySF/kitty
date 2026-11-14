@@ -290,34 +290,32 @@ describe("3d atmosphere", () => {
   });
 });
 
-describe("2d cards", () => {
-  test("2D nodes are cards: the whole card is the hit area, and the focused card lifts", async () => {
+describe("2d points", () => {
+  test("2D nodes are points: hit a little beyond their edge, never far from it", async () => {
     const { page, problems } = await harness();
     await call(page, "mount", "2d");
     await call(page, "focus", "view:library");
     await call(page, "settled");
     const centre = await call(page, "point", "view:library");
-    // A dot is ~10px across; a card is ~110px wide, so 35px right of centre is still on it.
-    assert.equal(await call(page, "nodeAt", centre.x + 35, centre.y), "view:library", "card body is not hit-testable");
-    assert.equal(await call(page, "nodeAt", centre.x - 35, centre.y + 8), "view:library", "card body is not hit-testable");
-    assert.notEqual(await call(page, "nodeAt", centre.x + 120, centre.y), "view:library", "hit area extends past the card");
+    assert.equal(await call(page, "nodeAt", centre.x, centre.y), "view:library", "the point itself is not hit-testable");
+    assert.equal(await call(page, "nodeAt", centre.x + 8, centre.y - 4), "view:library", "a near miss does not count");
+    assert.notEqual(await call(page, "nodeAt", centre.x + 60, centre.y), "view:library", "the hit area reaches far past the point");
     assert.deepEqual(problems, []);
     await page.close();
   });
 });
 
 describe("2d links", () => {
-  test("links at rest are solid, legible lines rather than faint hairlines", async () => {
+  test("links at rest are thin lines that still read against the page", async () => {
     const { page, problems } = await harness();
     await call(page, "mount", "2d");
     await call(page, "focus", null);
     await call(page, "settled");
     await page.mouse.move(1, 690);
-    // Midpoint of the Study hub → Notes arc, from the renderer's arc formula (linear under zoom).
+    // Midpoint of the straight Study hub → Notes line.
     const a = await call(page, "point", "group:Study");
     const b = await call(page, "point", "view:notes");
-    const c = { x: (a.x + b.x) / 2 - (b.y - a.y) * 0.2, y: (a.y + b.y) / 2 + (b.x - a.x) * 0.2 };
-    const mid = { x: 0.25 * a.x + 0.5 * c.x + 0.25 * b.x, y: 0.25 * a.y + 0.5 * c.y + 0.25 * b.y };
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     const line = await page.evaluate(({ x, y }) => {
       const canvas = document.querySelector("#stage canvas");
       const rect = canvas.getBoundingClientRect();
@@ -345,8 +343,8 @@ describe("2d links", () => {
       return { contrast: best, solidCssPx2: solid / (scale * scale) };
     }, mid);
     const seen = `contrast ${line.contrast.toFixed(2)}, ${line.solidCssPx2.toFixed(1)} solid CSS px² in a 17px window`;
-    assert.ok(line.contrast >= 4.5, `link core is too faint against the background (${seen})`);
-    assert.ok(line.solidCssPx2 >= 24, `link is a hairline (${seen})`);
+    assert.ok(line.contrast >= 2.5, `link core is too faint against the background (${seen})`);
+    assert.ok(line.solidCssPx2 >= 14, `link is thinner than a pixel (${seen})`);
     assert.deepEqual(problems, []);
     await page.close();
   });

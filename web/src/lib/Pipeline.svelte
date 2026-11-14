@@ -429,7 +429,7 @@
     gap: 7px;
     padding: 0 4px 4px;
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -453,7 +453,7 @@
   }
   .lane-head small {
     color: var(--muted);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -559,7 +559,7 @@
     flex-wrap: wrap;
     gap: 4px 8px;
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }

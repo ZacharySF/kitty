@@ -168,7 +168,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--s) 12%, transparent);
     color: var(--s);
-    font: 500 9px/16px var(--font-mono);
+    font: 500 9px/16px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     white-space: nowrap;
@@ -195,7 +195,7 @@
   }
   .side {
     color: var(--subtle);
-    font: 9.5px var(--font-mono);
+    font: 9.5px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
@@ -226,12 +226,12 @@
   }
   .name {
     color: var(--subtle);
-    font: 9px var(--font-mono);
+    font: 9px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
   .memory b {
-    font: 600 15px var(--font-mono);
+    font: 600 15px var(--font-ui);
   }
   .track {
     height: 3px;
@@ -279,7 +279,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--solid-panel) 60%, transparent);
     color: var(--ink);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }

@@ -238,13 +238,13 @@ def owner_line(process, timeout=10):
 def test_settings_desktop_commands_travel_the_owner_pipe(backend):
     process, origin, _root, secret = backend
     local = {"Origin": origin.geturl().rstrip("/"), "Content-Type": "application/json", "X-Kitty-Request": "1"}
-    process.stdin.write(json.dumps({"keep_running": False, "keep_running_available": True}) + "\n")
+    process.stdin.write(json.dumps({"keep_running": False, "keep_running_available": True, "autostart": False, "autostart_available": True}) + "\n")
     process.stdin.flush()
     for _ in range(50):
         status, _headers, body = request(origin, path="/api/desktop", secret=secret)
         if json.loads(body)["keep_running"] is False:
             break
-    assert status == 200 and json.loads(body) == {"available": True, "keep_running": False, "keep_running_available": True}
+    assert status == 200 and json.loads(body) == {"available": True, "keep_running": False, "keep_running_available": True, "autostart": False, "autostart_available": True}
     assert request(origin, "POST", "/api/desktop/command", local, '{"command":"new-quick-note"}', secret=secret)[0] == 200
     assert owner_line(process) == {"command": "new-quick-note"}
     # A request without the local header never reaches the shell.
@@ -259,7 +259,7 @@ def test_settings_desktop_commands_travel_the_owner_pipe(backend):
         request(origin, "POST", "/api/desktop/command", local, '{"command":"keep-running-on"}', secret=secret)))
     worker.start()
     assert owner_line(process) == {"command": "keep-running-on"}
-    process.stdin.write(json.dumps({"keep_running": True, "keep_running_available": True}) + "\n")
+    process.stdin.write(json.dumps({"keep_running": True, "keep_running_available": True, "autostart": False, "autostart_available": True}) + "\n")
     process.stdin.flush()
     worker.join(timeout=10)
     status, _headers, body = results[0]

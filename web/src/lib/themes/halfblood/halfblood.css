@@ -70,7 +70,7 @@
   background: var(--hb-bone);
   color: var(--hb-navy);
 }
-:root[data-theme="halfblood"] body :is(.schema-tab, .schema-back, .system-command) {
+:root[data-theme="halfblood"] body :is(.schema-tab, .system-command) {
   border: 1.5px solid color-mix(in srgb, var(--hb-bone) 60%, transparent);
   border-radius: 8px;
   background: var(--hb-navy);
@@ -80,15 +80,7 @@
   border-color: var(--hb-sun);
   color: var(--hb-sun);
 }
-:root[data-theme="halfblood"] body .workspace-tabbar {
-  border-bottom: 2px solid var(--hb-bone);
-}
-:root[data-theme="halfblood"] body .workspace-tabbar .tab.active::after {
-  height: 4px;
-  border-radius: 0;
-  background: var(--hb-red);
-  box-shadow: none;
-}
+
 :root[data-theme="halfblood"] body :is(.demo-notice, .error-banner) {
   border: 2px solid var(--hb-bone);
   background: var(--hb-navy);

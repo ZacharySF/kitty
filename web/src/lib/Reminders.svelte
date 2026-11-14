@@ -292,7 +292,7 @@
     max-width: none;
     margin: 0 0 8px;
     color: var(--subtle);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -328,7 +328,7 @@
     align-items: center;
     gap: 6px;
     padding: 0 16px;
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }

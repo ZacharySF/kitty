@@ -93,7 +93,7 @@
   }
   pre {
     margin: 4px 0 0;
-    font: 12px/1.6 var(--font-mono);
+    font: 12px/1.6 var(--font-code);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     max-height: 350px;

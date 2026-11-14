@@ -20,6 +20,7 @@ mod keys;
 mod migrations;
 mod modules;
 mod packs;
+mod private;
 mod settings;
 mod startup;
 mod target;
@@ -91,11 +92,7 @@ async fn announce_links(front: Arc<Front>, mut code: String) {
 }
 
 async fn stopped() {
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = terminate.recv() => {}
-    }
+    private::stop_requested().await;
 }
 
 async fn run(options: Options) -> Result<(), String> {

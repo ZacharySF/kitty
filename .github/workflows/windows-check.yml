@@ -1,0 +1,61 @@
+name: Windows check (manual)
+
+# rika! ships for Linux. This job is the first step of a Windows build: it shows, on a real
+# Windows machine, which parts build and pass today. Run it by hand from the Actions tab;
+# it publishes nothing. See docs/windows-port.md for what is left.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: rika-server builds and passes its tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - name: Build and test
+        working-directory: server
+        run: cargo test --release
+
+  backend:
+    name: Python backend (base modules) under Windows
+    runs-on: windows-latest
+    # Expected to fail until the port is done: the log is the list of what to fix.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Import the web application
+        run: uv run python -c "import kitty.web_server"
+      - name: Tests of the base
+        run: uv run pytest -q -p no:randomly tests/test_builds.py tests/test_keys.py tests/test_migrations.py tests/test_phone.py
+
+  shell:
+    name: Desktop shell compiles
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            server
+            desktop
+      - name: Build rika-server (the shell's bundled sidecar)
+        working-directory: server
+        run: cargo build --release
+      - name: Stage the sidecar where the bundle expects it
+        shell: bash
+        run: |
+          mkdir -p desktop/binaries
+          cp server/target/release/rika-server.exe desktop/binaries/rika-server-x86_64-pc-windows-msvc.exe
+      # Its unit tests still assume Linux paths; compiling is what this job proves.
+      - name: Check
+        working-directory: desktop
+        run: cargo check

@@ -83,7 +83,7 @@
     gap: 3px;
     margin-left: auto;
     color: var(--muted);
-    font: 500 0.6rem var(--font-mono);
+    font: 500 0.6rem var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -104,7 +104,7 @@
     margin: 0 0 5px;
     padding-bottom: 3px;
     color: var(--muted);
-    font: 500 0.68rem var(--font-mono);
+    font: 500 0.68rem var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -126,7 +126,7 @@
   }
   .grid b {
     color: var(--subtle);
-    font: 500 0.5rem var(--font-mono);
+    font: 500 0.5rem var(--font-ui);
     text-align: center;
   }
   .d {
@@ -178,7 +178,7 @@
   }
   footer span {
     color: var(--muted);
-    font: 500 0.68rem var(--font-mono);
+    font: 500 0.68rem var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }

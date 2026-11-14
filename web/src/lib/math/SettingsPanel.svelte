@@ -60,6 +60,6 @@
   }
   .check b {
     width: 12px;
-    font: 600 13px var(--font-mono);
+    font: 600 13px var(--font-ui);
   }
 </style>

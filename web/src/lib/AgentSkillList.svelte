@@ -47,7 +47,7 @@
   }
   .name {
     color: var(--ink);
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-ui);
     overflow-wrap: anywhere;
   }
   em {
@@ -56,7 +56,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--violet) 22%, transparent);
     color: var(--ink);
-    font: 500 9px/1.6 var(--font-mono);
+    font: 500 9px/1.6 var(--font-ui);
     font-style: normal;
     letter-spacing: 0.1em;
     text-transform: uppercase;

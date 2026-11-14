@@ -309,7 +309,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--ink) 10%, transparent);
     color: var(--muted);
-    font: 500 9.5px/1 var(--font-mono);
+    font: 500 9.5px/1 var(--font-ui);
   }
 
   /* Open: the app's overlay glass, a check on the current item, a wash on the active row. */

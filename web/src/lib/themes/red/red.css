@@ -180,14 +180,7 @@
   mask: url("./swash.svg") left top / 100% 100% no-repeat;
 }
 
-/* The current tab and group: a white bar, and blood running off it. */
-:root[data-theme="red"]:not([data-motif="off"]) .workspace-tabbar .tab.active::after {
-  height: 3px;
-  border-radius: 0;
-  background: var(--red-paper);
-  box-shadow: none;
-}
-:root[data-theme="red"]:not([data-motif="off"]) .workspace-tabbar .tab.active::before,
+/* The current group: blood running off it. */
 :root[data-theme="red"]:not([data-motif="off"]) body .workspace-groups button[aria-current="page"]::before {
   content: "";
   position: absolute;

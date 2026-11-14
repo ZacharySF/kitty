@@ -330,7 +330,7 @@
     height: 26px;
     border: 1px solid currentColor;
     border-radius: 999px;
-    font: 600 12px var(--font-mono);
+    font: 600 12px var(--font-ui);
   }
   .past .n {
     border-color: var(--success);
@@ -361,7 +361,7 @@
   }
   .eyebrow {
     color: var(--subtle);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -396,7 +396,7 @@
   }
   .placeholder {
     color: var(--subtle);
-    font: 500 14px var(--font-mono);
+    font: 500 14px var(--font-ui);
   }
   .blank-form {
     display: contents;
@@ -408,7 +408,7 @@
     border-radius: 8px;
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--ink);
-    font: 600 17px var(--font-mono);
+    font: 600 17px var(--font-ui);
     text-align: center;
     outline: none;
   }
@@ -421,7 +421,7 @@
   }
   .got {
     color: var(--success);
-    font: 600 17px var(--font-mono);
+    font: 600 17px var(--font-ui);
   }
   .foot {
     display: flex;
@@ -431,7 +431,7 @@
   }
   .foot :global(kbd) {
     color: inherit;
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     opacity: 0.7;
   }
   .note {
@@ -447,7 +447,7 @@
   }
   .echo {
     color: var(--subtle);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .solo-head {
     display: flex;
@@ -481,12 +481,12 @@
   .misses {
     margin-left: auto;
     color: var(--warning);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
   }
   .result {
     margin: 0;
     color: var(--ink);
-    font: 600 40px/1.1 var(--font-mono);
+    font: 600 40px/1.1 var(--font-ui);
   }
   .muted {
     color: var(--muted);
@@ -523,7 +523,7 @@
   .book .label {
     min-width: 52px;
     color: var(--ink);
-    font: 600 13px var(--font-mono);
+    font: 600 13px var(--font-ui);
   }
   .book .what {
     flex: 1;
@@ -532,11 +532,11 @@
   }
   .book .kind {
     color: var(--subtle);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
   }
   .book .due {
     color: var(--warning);
-    font: 600 11px var(--font-mono);
+    font: 600 11px var(--font-ui);
   }
   .book > :global(.br-btn) {
     justify-self: start;

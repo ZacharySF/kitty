@@ -176,23 +176,3 @@
 :root[data-theme="c"]:not([data-motif="off"]) hr.rule::before {
   top: 0;
 }
-
-/* The current workspace tab: a red hairline tipped with a diamond. */
-:root[data-theme="c"]:not([data-motif="off"]) .workspace-tabbar .tab.active::after {
-  height: 1px;
-  border-radius: 0;
-  background: var(--c-red);
-  box-shadow: none;
-}
-:root[data-theme="c"]:not([data-motif="off"]) .workspace-tabbar .tab.active::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -3px;
-  width: 7px;
-  height: 7px;
-  translate: -50% 0;
-  rotate: 45deg;
-  background: var(--c-red);
-  box-shadow: 0 0 0 1.5px var(--c-black);
-}

@@ -139,11 +139,11 @@ const nestedBoxes = (locator) => locator.evaluate((scope) => {
 });
 
 describe("settings index", () => {
-  test("a Fraunces title, a sentence-case grouped index of the derived pages, and one page at a time", async () => {
+  test("a title in the text face, a sentence-case grouped index of the derived pages, and one page at a time", async () => {
     const { page, problems, context } = await open("settings");
     await index(page).waitFor();
     const title = page.getByRole("heading", { level: 1, name: "Settings" });
-    assert.match(await title.evaluate((node) => getComputedStyle(node).fontFamily), /Fraunces/);
+    assert.equal(await title.evaluate((node) => getComputedStyle(node).fontFamily === getComputedStyle(document.body).fontFamily), true, "the title is not in the text face");
     const items = index(page).locator("a, button");
     await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 18);
     assert.deepEqual(await items.allTextContents().then((texts) => texts.map((text) => text.trim())),
@@ -155,7 +155,7 @@ describe("settings index", () => {
     }));
     assert.deepEqual(groups.map((group) => group.text), ["General", "Workspace", "Connections", "Careers & AI", "Apply", "Rika"]);
     for (const group of groups) {
-      assert.match(group.family, /^"?Inter/, `${group.text} is not Inter`);
+      assert.match(group.family, /^"?TeX Gyre Heros/, `${group.text} is not in the text face`);
       assert.equal(group.weight, "600");
       assert.equal(group.transform, "none");
       assert.equal(group.italic, "normal");
@@ -238,7 +238,7 @@ describe("settings pages", () => {
       assert.equal(await toggle.count(), 1);
     }
     assert.doesNotMatch(text, /Not active now|Active now/, "the running state still prints as a sentence per row");
-    const save = modules.getByRole("button", { name: "Save modules" });
+    const save = modules.getByRole("button", { name: "Save", exact: true });
     const discard = modules.getByRole("button", { name: /^Discard/ });
     assert.equal(await save.isDisabled(), true);
     const toggle = modules.getByRole("switch", { name: available.at(-1).label, exact: true });
@@ -246,8 +246,8 @@ describe("settings pages", () => {
     await toggle.click();
     assert.notEqual(await toggle.getAttribute("aria-checked"), before);
     assert.equal(await save.isDisabled(), false);
-    // Unsaved state is the tab's dot, not a sentence.
-    await page.getByRole("tab", { selected: true }).getByRole("img", { name: /Unsaved/ }).waitFor();
+    // Unsaved state is a dot beside the tab switcher, not a sentence.
+    await page.locator(".tab-switcher").getByRole("img", { name: /Unsaved/ }).waitFor();
     assert.equal(await modules.getByText("Unsaved selection.").count(), 0);
     await discard.click();
     assert.equal(await toggle.getAttribute("aria-checked"), before);
@@ -319,7 +319,7 @@ describe("settings pages", () => {
     await context.close();
   });
 
-  test("every page is one surface with hairline sections, no nested boxes and no native select", async () => {
+  test("every page sits on the page ground with hairline sections, no boxes and no native select", async () => {
     const { page, problems, context } = await open("settings");
     await index(page).waitFor();
     for (const name of [...PAGES, ...APPLY_PAGES, ...RIKA_PAGES]) {
@@ -333,8 +333,9 @@ describe("settings pages", () => {
         const style = getComputedStyle(node);
         return { border: parseFloat(style.borderTopWidth), radius: parseFloat(style.borderTopLeftRadius) };
       });
-      assert.ok(surface.border > 0 && surface.radius > 0, `${name} is not drawn as a surface`);
-      assert.deepEqual(await nestedBoxes(shown), [], `${name} nests boxes inside its surface`);
+      // In Kitty a view is part of the app: no card around a settings page (one-row pass).
+      assert.ok(surface.border === 0, `${name} is drawn in its own card`);
+      assert.deepEqual(await nestedBoxes(shown), [], `${name} draws boxes`);
       assert.equal(await page.locator(".settings-workspace select, main select").count(), 0, `${name} renders a native select`);
       assert.equal(await shown.locator("details").count(), 0, `${name} keeps a fold-out`);
     }

@@ -260,7 +260,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    font: 10.5px/1.4 var(--font-mono);
+    font: 10.5px/1.4 var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: color-mix(in srgb, var(--ink) 68%, transparent);

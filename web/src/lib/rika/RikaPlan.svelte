@@ -139,13 +139,13 @@
   .kind,
   .area-head {
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
   .state {
     color: var(--tone);
-    font: 500 9.5px var(--font-mono);
+    font: 500 9.5px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
