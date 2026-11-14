@@ -159,8 +159,8 @@ def preparation_blocker(job: Job, *, eligibility_override: EligibilityOverride |
 def _outcome_cause(report: FillReport) -> OutcomeCause:
     """Classify existing statuses and boundary prefixes without changing their evidence."""
     note = (report.note or "").casefold()
-    if note.startswith("closed:"):
-        return "unavailable"
+    if note.startswith(("closed:", "site_error:")):
+        return "unavailable"            # a closed posting, or an employer site that is down
     if note.startswith("ineligible:"):
         return "ineligible"
     if report.status == "ready":

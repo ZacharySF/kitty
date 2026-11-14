@@ -754,7 +754,7 @@ def _guarded_click(
     target = frame.node("""(...args) => {
       const target = (""" + target_js + r""")(...args);
       if (!target || target.nodeType !== 1) return null;
-      target.scrollIntoView({block: 'center', inline: 'nearest'});
+      target.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});
       return target;
     }""", *args)
     if target is None:

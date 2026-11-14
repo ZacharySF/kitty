@@ -693,8 +693,18 @@ GUARD_JS = r"""(lease) => {
     if (keys && target !== keys.el && !(event.type === 'keyup' && rules.textEntry(target)))
       return veto(event, 'focus_moved', target, !!keys);
     if (event.key === 'Enter') {
-      if (!(keys && keys.intent === 'list_commit' && target === keys.el &&
-            (event.type !== 'keydown' || rules.listCommitReady(target)))) veto(event, 'enter', target, !!keys);
+      if (keys && keys.intent === 'list_commit' && target === keys.el &&
+          (event.type !== 'keydown' || rules.listCommitReady(target))) return;
+      // The release of kitty's own list-commit Enter after the page moved the
+      // focus into the next text box (Greenhouse: Country -> Phone). Releasing
+      // Enter activates nothing; it is still cancelled so no page keyup handler
+      // sees it, but it is not a veto of what kitty did.
+      if (keys && keys.intent === 'list_commit' && event.type === 'keyup' && rules.textEntry(target)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      veto(event, 'enter', target, !!keys);
       return;
     }
     if ((event.key === ' ' || event.key === 'Spacebar') && rules.buttonLike(target)) veto(event, 'space', target, !!keys);

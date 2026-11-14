@@ -2626,6 +2626,12 @@ kitty apply resolve 12 34              # just these jobs, and write the changes
 kitty apply resolve --queued --top 50  # also --track T and --json
 ```
 
+- **Employer site down.** A posting page whose own HTTP status is 500 or higher
+  (for example Workday behind Cloudflare answering 521 "Web server is down") stops
+  at once with a `site_error:` note (cause `site_error`, outcome failed). It is
+  never marked closed and never counted as an unsupported page; the job is simply
+  tried again on a later run. Only the top document's status counts; error wording
+  on a page that loaded normally is not a site error.
 - **Closed postings** are marked closed with the usual posting-verification fields,
   so they leave the queues (a later open observation reopens them). The markers: the
   posting answers HTTP 404 or 410; its title, heading or alert says it is closed ("no

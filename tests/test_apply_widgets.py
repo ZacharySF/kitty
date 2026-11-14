@@ -275,6 +275,39 @@ def test_other_comboboxes_are_committed_by_pointer_never_by_enter(page, space): 
     _quiet(page)
 
 
+def test_react_select_that_moves_focus_to_the_next_box_on_commit_still_commits(page, space):  # noqa: F811
+    # Greenhouse's Country select focuses Phone inside its Enter keydown handler,
+    # so the release of kitty's own Enter lands on the phone box.
+    _serve(page, _REACT_SELECT.replace("__ID__", "react-select-3-input") +
+           '<label for="next">Phone</label><input id="next" type="tel">',
+           _REACT_SELECT_JS + '''
+      window.nextEnters=0;
+      const next=document.querySelector('#next');
+      next.addEventListener('keyup',e=>{if(e.key==='Enter')window.nextEnters++;});
+      input.addEventListener('keydown',e=>{if(e.key==='Enter'&&window.commits.length)next.focus();});''')
+    field = _field(page, element_id="react-select-3-input")
+    config = _with_answers(space, AnswerEntry(question="Preferred office", answer="Boston"))
+    assert _apply_plan([page.main], field, plan_for(field, config))
+    assert _js(page, "() => window.commits") == [["key", "Boston"]]
+    assert _js(page, "() => document.activeElement.id") == "next"
+    assert _js(page, "() => window.nextEnters") == 0          # the page never sees the stray release
+    assert _js(page, "() => document.querySelector('#next').value") == ""
+    _quiet(page)
+
+
+def test_enter_release_on_another_box_is_still_vetoed_without_kittys_list_commit(page, space):  # noqa: F811
+    _serve(page, '<label for="a">Name</label><input id="a"><label for="b">Phone</label><input id="b" type="tel">', '''
+      window.bEnters=0;document.querySelector('#b').addEventListener('keyup',e=>{if(e.key==='Enter')window.bEnters++;});''')
+    owner_frame = page.main
+    b = owner_frame.node("() => document.querySelector('#b')")
+    owner_frame.call("() => document.querySelector('#b').focus()")
+    from submit_trap import owner_keys
+    owner_keys(owner_frame, "\ue007")                           # the owner's own Enter, no kitty keys bound
+    assert _js(page, "() => window.bEnters") == 0
+    assert [(entry["kind"], entry["reason"]) for entry in page.new_vetoes()] == [("keydown", "enter"), ("keyup", "enter")]
+    assert _forms_trap().writes() == [] and _js(page, "() => window.submitted") == 0
+
+
 # ------------------------------------------------------------ typeahead locations
 
 
@@ -391,6 +424,42 @@ def test_intl_tel_input_never_guesses_among_countries_sharing_a_code(page, space
     plan, region = _phone_plan(space, field, "+44 20 7946 0000", None)
     assert not _apply_plan([page.main], field, plan, region=region)
     assert _js(page, "() => [window.countryClicks, document.querySelector('#phone').value]") == [[], ""]
+    _quiet(page)
+
+
+# ------------------------------------------------------------ smooth-scrolling pages
+
+# Greenhouse's job board (2026-11 trial) sets `html {scroll-behavior: smooth}`:
+# a plain scrollIntoView then scrolls asynchronously, so a pointer hit test taken
+# right after it still sees the control far below the viewport. Widgets below the
+# fold on such a page must still be reachable and committed.
+_SMOOTH = '<style>html{scroll-behavior:smooth}</style><div style="height:2400px">Earlier questions</div>'
+
+
+@pytest.mark.parametrize("element_id,how", [("react-select-2-input", "key"), ("office", "click")])
+def test_comboboxes_below_the_fold_of_a_smooth_scrolling_page_commit(page, space, element_id, how):  # noqa: F811
+    _serve(page, _SMOOTH + _REACT_SELECT.replace("__ID__", element_id), _REACT_SELECT_JS)
+    field = _field(page, element_id=element_id)
+    config = _with_answers(space, AnswerEntry(question="Preferred office", answer="Boston"))
+    assert _apply_plan([page.main], field, plan_for(field, config))
+    assert _js(page, "() => window.commits") == [[how, "Boston"]]
+    assert _js(page, "() => document.querySelector('.select__single-value').textContent") == "Boston"
+    _quiet(page)
+
+
+def test_intl_tel_country_below_the_fold_of_a_smooth_scrolling_page_commits(page, space):  # noqa: F811
+    trap = _forms_trap()
+    field = _intl_tel(page)
+    # Same widget, now below the fold of a smooth-scrolling page.
+    trap.pages["/widget"] = trap.pages["/widget"].replace("<form method=post action=/trap/submit>",
+                                                          "<form method=post action=/trap/submit>" + _SMOOTH, 1)
+    page.goto(trap.url("/widget"))
+    settle(page)
+    field = _field(page, element_id="phone")
+    plan, region = _phone_plan(space, field, "+44 20 7946 0000", "United Kingdom")
+    assert _apply_plan([page.main], field, plan, region=region)
+    assert _js(page, "() => window.countryClicks") == ["gb"]
+    assert _js(page, "() => document.querySelector('#phone').value") == "20 7946 0000"
     _quiet(page)
 
 

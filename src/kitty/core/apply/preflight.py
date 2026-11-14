@@ -415,6 +415,11 @@ _SNAPSHOT = r"""
   if (!document.body?.childElementCount) primaryNotices.push(body);
   const unavailable = primaryNotices.some(value =>
     /\b(?:this (?:job|position|posting) (?:is (?:no longer (?:available|posted)|closed)|has (?:closed|been (?:closed|filled)))|no longer accepting applications|(?:job|job posting|posting|position) (?:has expired|not found|no longer exists|is no longer available|has been removed)|page (?:not found|(?:cannot|could not) be found)|page you are looking for (?:doesn[’']t|does not) exist)\b/i.test(value));
+  // The page itself failed: an HTTP 5xx document (Workday behind Cloudflare's 521
+  // "Web server is down", 2026-11-14) is an employer outage, never a closed posting
+  // or an unsupported page. Only the top document's own status counts.
+  const navigation = window.top === window ? performance.getEntriesByType('navigation')[0] : null;
+  const serverError = navigation?.responseStatus >= 500 ? navigation.responseStatus : 0;
   let blocker = null;
   // Some ATSs (Eightfold) put autocomplete=one-time-code on ordinary answers to
   // suppress autofill. Only code-named fields, or a page of nothing but such
@@ -426,7 +431,10 @@ _SNAPSHOT = r"""
   const otpOnly = otpInputs.length > 0 &&
     all('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=file]), textarea, select')
       .every(e => otpInputs.includes(e));
-  if (unavailable)
+  if (serverError)
+    blocker = 'site_error: the employer site answered HTTP ' + serverError +
+      ' (server error); nothing was filled. Try again later.';
+  else if (unavailable)
     blocker = 'closed: the primary page notice says this posting is unavailable';
   else if (otpInputs.some(codeNamed) || otpOnly ||
       has('input[name=otp], input[name=verificationCode], input[id^="pin-code-"][inputmode=numeric]') ||
