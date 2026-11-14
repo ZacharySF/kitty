@@ -407,6 +407,83 @@ selection: base only.
    ApplyAI last (their workers are replaced, or stay as packs). Each module's
    Python tests become its parity tests before its Python is deleted.
 
+   *Built (calendar):* the calendar's local routes are answered by rika-server
+   (`server/src/calendar/`): `GET /api/calendar`, `GET /api/calendar/events/{id}`,
+   `GET /api/calendar/reminders` and `POST /api/calendar/{calendars, calendars/delete, events,
+   events/{id}, tasks, undo, reminders/dismiss, time, import-jobs, import, availability}`, with
+   `kitty.core.calendar`'s values, stored rows (the same `json.dumps` text and source
+   fingerprints), order of checks and refusals, including the 409 for Outlook's read-only
+   calendars (`calendar_remote`) on create, edit, delete, move and import. `dateutil.rrule` is
+   ported for the frequencies the calendar accepts (`rrule.rs`: the per-year masks, nth
+   weekdays, week numbers, Easter, BYSETPOS, COUNT and UNTIL). It stands on a base every module
+   port shares, `server/src/ported/`: one registration in `front.rs` for all route groups, the
+   module guard and its 403, the workspace connection kept open between answers,
+   `WebApplication.mutate`'s `record_events` capture, Python's value semantics (`==`,
+   truthiness, `strip`, `casefold`, `json.dumps`, `float.__repr__`) and Python's `datetime`
+   (the C `fromisoformat` grammar, `isoformat`, PEP 495 folds, mixed-zone comparison,
+   `datetime_exists`) over the IANA database compiled in with jiff.
+
+   Stay on Python, forwarded: `/api/calendar/google/*` (OAuth, Google's API and previews that
+   propose effects in the worker's window session), `GET /api/calendar/export` and
+   `POST /api/calendar/import/preview` (the `icalendar` library and the CSV reader; a reviewed
+   preview is then written by the front's `/api/calendar/import`). `web_calendar.py` keeps only
+   those; the five core functions nothing else called (`wall_instant`, `delete_calendar`,
+   `availability`, `dismiss_reminder`, `import_reviewed`) and the calendar entries of
+   `record_events.ROUTES` are deleted. The rest of `kitty.core.calendar` stays for Rika's tools,
+   the phone and atlas views, Google and Outlook sync, the previews and the export, and is the
+   reference in `tests/test_calendar.py`, which drives every route through the front: the former
+   core tests as requests (`KITTY_TEST_NOW` is the front's test clock), 18 recurrence rules
+   expanded and stored exactly as Python does, a sequence of this/future/all edits and their
+   undo compared row by row with `edit_event` and `undo` on a copy of the database, task and
+   calendar saves against `save_task` and `save_calendar`, the snapshot, reminders and source
+   dates against `occurrences`, `tasks`, `activity`, `due_reminders` and `import_jobs` with and
+   without ApplyAI, wall times against `datetime` itself, the read-only refusals against
+   `create_event` and `edit_event`, and the `record_events` rows. The calendar tests of
+   `web/tests/workbench.browser.test.mjs` (the one calendar suite that starts a real server)
+   pass through the front.
+
+   Deliberate differences: zones are the database compiled into the binary (jiff-tzdb, 2026f
+   now), not the one Python reads (the system's, else its `tzdata` package), and a name must
+   be an exact IANA key (the system's `posix/` and `right/` copies are refused). Checked on this
+   machine, whose system database is 2026c: of 609 zones, twelve wall times each, both folds,
+   the front and Python agree on all but the November 2026 change of six zones the two
+   releases date differently (Winnipeg and its two aliases, Inuvik, Havana and its alias).
+   Until the remaining Python calendar code moves, the worker and the front can so disagree
+   on an offset near a transition a newer release moved. Search folds case as `str.casefold`
+   does for the letters of common text (ß, ς, ligatures and the like) and as lower case for
+   the rest (Cherokee, Greek with iota subscript).
+
+   Measured on one synthetic workspace (60 events, 10 repeating series, 30 tasks; a six-week
+   answer of 232 occurrences; median of 300 fresh-connection GETs, the base commit `0ad43f6`
+   and this branch as release builds run alternately twice, on a machine at load 12 running
+   other agents' builds, so the absolute values are high): `GET /api/calendar` went from 71.2 /
+   75.8 ms (forwarded to Python) to 36.1 / 36.4 ms, `GET /api/calendar/reminders` from 42.5 /
+   43.5 ms to 13.4 / 13.6 ms, while a still-forwarded route (`/api/calendar/google/status`)
+   stayed at 13.1-13.7 ms: under that load a reminders answer costs what a request costs at
+   all. The release binary grew from 10.82 to 11.70 MB (jiff with its zone database). Start-up
+   and memory were not measured for this change. Not yet looked at: `instant` resolves its
+   zone by name on every call, which the snapshot does several times per occurrence.
+
+   *Built (search):* `GET /api/search` is answered by rika-server (`server/src/search/`). The
+   index's documents are made from their source rows as `kitty.core.search` and
+   `blocks.searchdocs` make them, with the same SQL and order, and `search.sync` folds the
+   `search_pending` queue into `search_docs` the same way (`docs.rs`), so either writer gives
+   the same rows and rowids. Queries are answered as Python answers them (`query.rs`), over
+   Python's `str` operations with CPython's Unicode facts (`text.rs`, and `tables.rs`,
+   generated by `tests/search_tables.py`). The front answers the route itself (`front.rs`), so
+   a search no longer waits for the worker. The Python route is deleted; `kitty.core.search`
+   stays for the callers that have not moved (notes, backlinks, the atlas, the CLI and the
+   TUI). `tests/test_search_parity.py` compares the two implementations on the same
+   workspace, and the existing search tests run through the front.
+
+   Measured on one synthetic workspace (the script's notes, tasks and events; median of fresh-
+   connection GETs, the base commit and this branch as release builds run alternately twice, on
+   a machine at load 20 to 25 running other builds and tests, so the absolute values are high):
+   `GET /api/search?q=alpha` (30 hits) went from 25.9 / 27.5 ms (forwarded to Python) to 9.7 /
+   10.8 ms, a two-word query with `limit=50` from 43.5 / 40.9 ms to 30.1 / 32.1 ms, while a
+   still-forwarded route (`/api/quick-notes`) stayed at 26 to 31 ms. Start-up, memory and
+   binary size were not measured for this change.
+
 ## Rules for every step
 
 - The Python suite and the browser suites pass against whatever mix serves the

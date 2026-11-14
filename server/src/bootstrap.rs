@@ -68,6 +68,19 @@ impl Bootstrap {
         Self { db_path, root, demo, digest, connection: Mutex::new(None) }
     }
 
+    /// The workspace database, root and demo flag, for the other ported routes (crate::ported).
+    pub fn db_path(&self) -> &std::path::Path {
+        &self.db_path
+    }
+
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    pub fn demo(&self) -> bool {
+        self.demo
+    }
+
     pub fn answer(&self, workspace: &Workspace) -> Result<Value, Failure> {
         let mut result = Map::new();
         result.insert("demo".into(), Value::Bool(self.demo));

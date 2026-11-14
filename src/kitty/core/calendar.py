@@ -1,7 +1,12 @@
-"""Local calendars, RFC5545 recurrence, revisioned editing and reviewed imports.
+"""Local calendars, RFC5545 recurrence, revisioned editing and import previews.
 
 Dates are exclusive-end RFC5545 dates; times carry offsets and a separate IANA
 zone. Source-linked items never write back to applications or opportunities.
+
+The window's calendar routes are answered by rika-server (server/src/calendar/core.rs, the
+same rules over the same tables). What stays here is what other Python code calls (Rika's
+tools, the phone and atlas views, Google and Outlook sync, the ICS and CSV previews and the
+export) and the reference tests/test_calendar.py compares the front's answers with.
 """
 from __future__ import annotations
 
@@ -75,22 +80,6 @@ def instant(value, tz='UTC', all_day=False):
         return parsed.astimezone(zone(tz))
     except ValueError:
         fail('Invalid ISO8601 date or timestamp')
-
-
-def wall_instant(value, tz, fold=0):
-    """Resolve direct local input. Reject DST gaps; caller chooses ambiguous fold."""
-    try:
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is not None:
-            return instant(value, tz).isoformat()
-        dt = dt.replace(tzinfo=zone(tz), fold=int(fold))
-        if not datetime_exists(dt):
-            fail('This local time does not exist during the DST transition')
-        if fold not in (0, 1):
-            fail('DST fold must be 0 or 1')
-        return dt.isoformat()
-    except (ValueError, TypeError):
-        fail('Invalid local date/time')
 
 
 def stamp(dt, all_day):
@@ -179,21 +168,6 @@ def require_writable(conn, calendar_id):
     """409 for a calendar imported from an outside account (`calendar_remote`): it is read-only here."""
     if conn.execute('SELECT 1 FROM calendar_remote WHERE calendar_id=?', (calendar_id,)).fetchone():
         fail('This calendar comes from Outlook and is read-only in rika!; change it in Outlook', 409)
-
-
-def delete_calendar(conn, body):
-    cal = _get_calendar(conn, body.get('id'))
-    if cal['id'] == 'personal':
-        fail('Personal is the default calendar and cannot be deleted')
-    require_writable(conn, cal['id'])
-    if body.get('revision') != cal['revision']:
-        fail('Calendar changed; reload before deleting', 409)
-    if conn.execute('SELECT 1 FROM calendar_events WHERE calendar_id=? AND deleted=0 LIMIT 1', (cal['id'],)).fetchone():
-        fail('Move or delete this calendar’s events before deleting it', 409)
-    if conn.execute('SELECT 1 FROM calendar_tasks WHERE deleted=0 AND json_extract(data, \'$.calendar_id\')=? LIMIT 1', (cal['id'],)).fetchone():
-        fail('Move or delete this calendar’s tasks before deleting it', 409)
-    conn.execute('UPDATE calendar_calendars SET deleted=1,revision=revision+1,updated_at=? WHERE id=?', (now(), cal['id']))
-    return {'ok': True}
 
 
 def normalize_event(conn, body):
@@ -740,32 +714,6 @@ def save_task(conn, body):
     return {**_task_output(after), 'undo_id': undo_id, 'next_task': next_task}
 
 
-def availability(events, start, end, *, exclude_id=None):
-    lower, upper = instant(start), instant(end)
-    busy = sorted([(max(lower, instant(e['start'], e['timezone'], e['all_day'])), min(upper, instant(e['end'], e['timezone'], e['all_day'])), e['id'])
-                   for e in events if e['busy'] and e['id'] != exclude_id], key=lambda v: v[0].astimezone(UTC))
-    merged, conflicts = [], []
-    for a, b, ident in busy:
-        if b <= a:
-            continue
-        if merged and a.astimezone(UTC) < merged[-1][1].astimezone(UTC):
-            conflicts.append({'event_id': ident, 'with': merged[-1][2], 'start': a.isoformat(), 'end': min(b, merged[-1][1]).isoformat()})
-        if merged and a.astimezone(UTC) <= merged[-1][1].astimezone(UTC):
-            merged[-1][1] = max(b, merged[-1][1])
-            merged[-1][2].append(ident)
-        else:
-            merged.append([a, b, [ident]])
-    free = []
-    cursor = lower
-    for a, b, _ in merged:
-        if cursor < a:
-            free.append({'start': cursor.isoformat(), 'end': a.isoformat()})
-        cursor = max(cursor, b)
-    if cursor < upper:
-        free.append({'start': cursor.isoformat(), 'end': upper.isoformat()})
-    return {'busy': [{'start': a.isoformat(), 'end': b.isoformat(), 'events': ids} for a, b, ids in merged], 'free': free, 'conflicts': conflicts}
-
-
 def due_reminders(conn, *, at=None, applyai=True):
     at = at or datetime.now(UTC)
     events = occurrences(conn, (at - timedelta(days=1)).isoformat(), (at + timedelta(days=29)).isoformat(), applyai=applyai)
@@ -778,16 +726,6 @@ def due_reminders(conn, *, at=None, applyai=True):
             if at - timedelta(days=1) <= due <= at and (e['id'], e['occurrence'], minutes) not in dismissed:
                 output.append({'event_id': e['id'], 'occurrence': e['occurrence'], 'minutes': minutes, 'title': e['title'], 'due': due.isoformat()})
     return output
-
-
-def dismiss_reminder(conn, body):
-    _event(conn, body.get('event_id'))
-    occurrence = text(body.get('occurrence', ''), 'Occurrence', 100)
-    minutes = body.get('minutes')
-    if type(minutes) is not int or not 0 <= minutes <= 40320:
-        fail('Invalid reminder minutes')
-    conn.execute('INSERT OR IGNORE INTO calendar_reminder_dismissals VALUES(?,?,?)', (body['event_id'], occurrence, minutes))
-    return {'ok': True}
 
 
 def activity(conn, start, end, tz='UTC', *, applyai=True):
@@ -990,36 +928,6 @@ def preview_ics(conn, content, tz='UTC', calendar_id='personal'):
         except Exception:
             output.append({'error': 'Invalid recurrence exception'})
     return {'items': output, 'notice': 'Review every row. Existing UID-linked events are skipped; private ICS contents remain local.'}
-
-
-def import_reviewed(conn, items):
-    if not isinstance(items, list) or len(items) > 5000:
-        fail('Import must contain at most 5000 reviewed items')
-    # Validate the entire selected import before making any changes.
-    normalized = []
-    for item in items:
-        if not isinstance(item, dict) or not isinstance(item.get('event'), dict):
-            fail('Each reviewed item requires an event')
-        data = normalize_event(conn, item['event'])
-        exceptions = []
-        for ex in item.get('exceptions', []):
-            _, key = _assert_occurrence(data, ex.get('occurrence', ''))
-            exceptions.append((key, normalize_event(conn, ex['event']) if ex.get('event') else None))
-        normalized.append((data, exceptions))
-        require_writable(conn, data['calendar_id'])
-    created, duplicates, undo_ids = [], [], []
-    with transaction(conn):
-        for data, exceptions in normalized:
-            existing = conn.execute('SELECT id FROM calendar_events WHERE source_key=?', (data['source_key'],)).fetchone() if data['source_key'] else None
-            if existing:
-                duplicates.append(existing['id'])
-                continue
-            ident = _insert(conn, data)
-            for key, replacement in exceptions:
-                conn.execute('INSERT INTO calendar_exceptions VALUES(?,?,?)', (ident, key, json.dumps(replacement) if replacement else None))
-            undo_ids.append(_history(conn, 'event', ident, None, _snapshot(conn, ident)))
-            created.append(ident)
-    return {'created': created, 'duplicates': duplicates, 'undo_ids': undo_ids}
 
 
 def export_ics(conn, calendar_id=None, *, applyai=True):

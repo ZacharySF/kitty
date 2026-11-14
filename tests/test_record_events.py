@@ -1,4 +1,6 @@
-"""record_events: the append-only history of browser mutations through WebApplication.mutate."""
+"""record_events: the append-only history of browser mutations through WebApplication.mutate.
+
+The calendar's mutations are answered and recorded by rika-server (tests/test_calendar.py)."""
 from __future__ import annotations
 
 import logging
@@ -48,13 +50,6 @@ def _flashcards(app, conn):
     return ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck")
 
 
-def _calendar(app, conn):
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
-    return ("calendar", "event", event["id"], "create", "/api/calendar/events")
-
-
 def _study(app, conn):
     subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
     return ("study", "subject", str(subject["id"]), "create", "/api/study/subjects")
@@ -83,7 +78,7 @@ def _reminders(app, conn):
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes, _flashcards, _calendar, _study,
+@pytest.mark.parametrize("case", [_notes, _flashcards, _study,
                                   _schema, _opportunities, _jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
@@ -121,18 +116,9 @@ def test_edits_and_deletes_resolve_the_entity_from_path_result_or_body(app, work
     ]
 
 
-def test_calendar_undo_is_attributed_to_the_undone_event(app, workspace):
-    conn = workspace.conn
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Seminar", "start": "2030-01-03T09:00:00Z", "end": "2030-01-03T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
-    app.mutate(conn, "/api/calendar/undo", {"id": event["undo_id"]})
-    assert events(conn)[-1] == ("calendar", "event", event["id"], "undo", "/api/calendar/undo")
-
-
 def test_non_content_and_failed_mutations_are_not_captured(app, workspace):
     conn = workspace.conn
-    app.mutate(conn, "/api/calendar/time", {"value": "2030-01-01T09:00", "timezone": "UTC"})
+    app.mutate(conn, "/api/calendar/import/preview", {"format": "csv", "content": "title,date\nLab,2030-01-01\n"})
     revision = app.get_json(conn, "/api/study", {})["settings"]["revision"]
     app.mutate(conn, "/api/study/settings", {"revision": revision, "sound": False})
     with pytest.raises(APIError):
