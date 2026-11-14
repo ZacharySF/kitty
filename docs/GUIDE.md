@@ -760,6 +760,45 @@ the Home Screen, the Lock Screen, Control Center and the Action button.
 `/phone/v1/today` with the same header and lists `events` and `tasks` shows the day
 on the Home Screen (the phone needs the "also show today" choice).
 
+### GitHub backup
+
+**Settings → Devices → GitHub backup** keeps a copy of your notes in a private GitHub
+repository you choose. It is off until you connect one. Unlike device sync, this copy
+leaves your devices: it is stored on GitHub, unencrypted, so GitHub can read it.
+
+- **Connect**: paste the repository as `owner/name` or its GitHub address. Create it
+  first, as a private and empty repository. rika! asks GitHub's API about it before every
+  push and refuses a public one; if the repository is made public later, the backup
+  pauses and says so. With a key named `GITHUB` in Settings → Keys the check uses it
+  (otherwise GitHub answers "not found" for a private repository, which counts as not
+  public).
+- **Pushing** uses the `git` on this computer with the sign-in it already has: a
+  credential helper over HTTPS, then your SSH key. rika! stores no GitHub password.
+- **What is copied**, and nothing else: `pages/<page id>.md` (the page as readable text),
+  `pages/<page id>.loro` (its exact snapshot), `build.json` and `rika-sync.json` (format,
+  app version, device name, time). Never `.private/`, `.env`, the database, resumes,
+  `config/*.yaml`, jobs, applications, mail or tokens. The copy is built in
+  `.private/reposync/` with its own Git directory; your workspace's own `.git` is never
+  touched.
+- **When**: ten minutes after your last change, at the latest an hour after the first
+  change that is not backed up, and on **Sync now**. A run that fails waits 5, 10, 20,
+  40 and then 60 minutes before the next. Each device pushes its own branch,
+  `devices/<device id>`, and only ever fast-forwards it; commit messages name the pages
+  ("3 pages: Lecture 7, Groceries, +1").
+- **Pause** stops the schedule; **Disconnect** also removes the local copy and leaves
+  what is on GitHub.
+- If GitHub rejects a push (its branch has changes this device lacks), nothing is
+  overwritten and the backup stops with that problem; **Sync now** tries again.
+  Restoring from the backup is not built yet.
+
+Rika can tell you how the backup is doing and start a run (`sync_status`, `sync_now`),
+and mentions it in the morning brief and as an alert only when something is wrong: the
+repository became public, a push was rejected, or nothing has worked for three days
+while changes wait. Rika never connects a repository and never turns the backup on.
+
+Routes (`src/kitty/web_reposync.py`): `GET /api/reposync`, `POST /api/reposync/repo`
+`{repo}`, `/now`, `/pause` `{paused}`, `/disconnect`.
+
 ### Keys (API keys)
 
 rika! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:

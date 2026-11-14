@@ -56,7 +56,7 @@
     <ul>
       {#each items as notice (notice.key)}
         {@const unread = !notifier.ledger.read.includes(notice.key)}
-        {@const clearLabel = notice.source === "job" ? "Done" : notice.source === "rika" ? "Not relevant" : "Dismiss"}
+        {@const clearLabel = notice.source === "job" ? "Done" : notice.target.kind === "rika" && notice.target.goal_id !== null ? "Not relevant" : "Dismiss"}
         <li class:unread data-source={notice.source}>
           <button class="item" onclick={() => open(notice)}>
             <span class="meta">

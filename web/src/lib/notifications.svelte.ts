@@ -22,6 +22,7 @@ export const TOAST_MS = 8000;
 const MAX_TOASTS = 4;
 const POLL_MS = 30_000;
 const CALENDAR_SNOOZE_MS = 10 * 60_000;
+const PROBLEM_SNOOZE_MS = 24 * 60 * 60_000;
 
 class Notifier {
   visible = $state<Notice[]>([]);
@@ -151,11 +152,12 @@ class Notifier {
     }
   }
 
-  /** Dismisses a calendar reminder, marks a job-search reminder done, or marks a Rika match not relevant. */
+  /** Dismisses a calendar reminder, marks a job-search reminder done, or marks a Rika match not relevant; a backup problem comes back in a day while it lasts. */
   async clear(notice: Notice) {
     const { target } = notice;
     try {
       if (target.kind === "job") await api(`/reminders/${target.id}/complete`, {});
+      else if (target.kind === "rika" && target.goal_id === null) this.save({ ...this.ledger, snoozed: { ...this.ledger.snoozed, [notice.key]: new Date(Date.now() + PROBLEM_SNOOZE_MS).toISOString() } });
       else if (target.kind === "rika") await api(`/goals/matches/${encodeURIComponent(String(target.id))}`, { decision: "dismiss" });
       else await api("/calendar/reminders/dismiss", { event_id: target.event_id, occurrence: target.occurrence, minutes: target.minutes });
       this.toasts = this.toasts.filter(toast => toast.notice?.key !== notice.key);

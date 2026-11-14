@@ -19,10 +19,12 @@ launch, :class:`Scheduler` runs :func:`sweep`. The sweep
 
 A match that is strong and time-sensitive (a deadline, start or mail asking for today
 or tomorrow within 48 hours) is urgent: it is also an alert, which the page's notifier
-delivers under quiet hours like any other source.
+delivers under quiet hours like any other source. A problem with the GitHub backup
+(kitty.core.reposync) is an alert and a line of the brief too; a healthy backup is neither.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -34,7 +36,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from kitty.core import goals
+from kitty.core import goals, reposync
 from kitty.core.rika import followups, llm, router, store
 from kitty.dates import parse as parse_instant
 from kitty.db import connect
@@ -113,9 +115,11 @@ def mark_seen(conn, at: datetime | None = None) -> dict[str, Any]:
 
 
 def alerts(conn, at: datetime | None = None) -> list[dict[str, Any]]:
-    """Urgent new matches of active goals whose moment has not passed."""
+    """Urgent new matches of active goals whose moment has not passed, and problems with the GitHub backup."""
     at = at or datetime.now(timezone.utc)
-    output = []
+    output = [{"id": "backup", "key": "rika:backup:" + hashlib.sha256(problem["text"].encode()).hexdigest()[:12],
+               "title": "GitHub backup", "body": problem["text"], "due_at": None, "goal_id": None, "view": "settings",
+               "created_at": problem["at"]} for problem in reposync.problems(conn, at)]
     for row in conn.execute(goals.MATCH_SELECT + " WHERE m.urgent=1 AND m.status='new' AND g.status='active'"
                             " ORDER BY m.created_at DESC,m.id DESC LIMIT 50"):
         due = parse_instant(row["due_at"])
@@ -370,6 +374,7 @@ def sweep(app, conn, now: datetime | None = None, *, lock=None) -> dict[str, Any
         log.exception("The brief's mail check failed")
         notes.append("I couldn't check your email this time.")
     notes.extend(checked.get("notes", []))
+    notes.extend(problem["text"] for problem in reposync.problems(conn, at))
 
     previous = conn.execute("SELECT created_at FROM rika_briefs WHERE day<? ORDER BY day DESC LIMIT 1", (day,)).fetchone()
     since = parse_instant(previous["created_at"]) if previous else at - LOOKBACK
