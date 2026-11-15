@@ -1050,7 +1050,7 @@
     padding: 8px 10px 8px 20px;
     border: 1px solid var(--border);
     border-radius: 999px;
-    background: var(--raised);
+    background: var(--surface-raised);
     box-shadow: 0 18px 50px rgb(0 0 0 / 0.55);
     font-size: var(--text-small, 14px);
     transform: translateX(-50%);

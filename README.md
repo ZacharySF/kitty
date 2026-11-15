@@ -101,7 +101,7 @@ your goals. Press Done and the page stays that way.
 Home goes further: eighteen templates to start from, widgets in the order you
 like, and six quiet colours to tell them apart.
 
-<img src="docs/screenshots/readme/edit.jpg" width="100%" alt="Edit mode on a page: a dashed outline around one block with a grip and resize handles, the Widgets menu open above a small bar at the bottom of the window that ends in Done.">
+<img src="docs/screenshots/readme/edit.jpg" width="100%" alt="Edit mode on the Find jobs page: a clock and a quick note dragged onto the page, a dashed outline with a grip around the quick note, and a small bar at the bottom with Widgets, Remove widget, Reset page and Done.">
 <p align="center"><sub>Edit any page: move it, size it, drag a widget in.</sub></p>
 
 ### Black by default. Loud when you want it.
