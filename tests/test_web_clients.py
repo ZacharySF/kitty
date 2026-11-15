@@ -10,7 +10,7 @@ import pytest
 from terminal_support import front_site, make_root, site
 from test_web_blocks import Client
 
-from kitty.core import calendar, endpoint
+from kitty.core import calendar, endpoint, quick_notes
 from kitty.db import connect
 
 EXTENSION = "chrome-extension://" + "b" * 32
@@ -151,11 +151,11 @@ def test_a_token_reaches_only_its_scopes_and_never_the_rest_of_the_api(running):
     # Every other route refuses a client token, even with the page headers forged.
     forged = {"Origin": running.server.origin, "X-Kitty-Request": "1"}
     for token in (capture, reader):
-        assert call(running, "GET", "/api/quick-notes", token=token, headers=forged)[0] == 403
         assert call(running, "GET", "/api/clients", token=token, headers=forged)[0] == 403
         assert call(running, "POST", "/api/quick-notes/create", {"body": "x"}, token=token, headers=forged)[0] == 403
         assert call(running, "POST", "/api/clients/revoke", {"id": "x"}, token=token, headers=forged)[0] == 403
-    assert running.request("/api/quick-notes")[1]["notes"][0]["body"] == "from the plugin"
+    with closing(connect(running.app.settings.db_path)) as conn:  # reading quick notes is rika-server's
+        assert quick_notes.list_notes(conn)[0]["body"] == "from the plugin"
 
 
 def test_revoking_a_client_ends_its_token(running):
@@ -168,12 +168,12 @@ def test_revoking_a_client_ends_its_token(running):
 
 
 def test_the_browser_origin_guard_is_unchanged_for_normal_routes(running):
-    assert running.request("/api/quick-notes")[0] == 200
+    assert running.request("/api/clients")[0] == 200
     assert running.request("/api/quick-notes/create", {"body": "page"})[0] == 200
     assert running.request("/api/quick-notes/create", {"body": "x"}, headers={"X-Kitty-Request": None})[0] == 403
-    assert running.request("/api/quick-notes", headers={"Origin": "https://attacker.example"})[0] == 403
-    assert running.request("/api/quick-notes", headers={"Origin": EXTENSION})[0] == 403
-    assert call(running, "OPTIONS", "/api/quick-notes", origin=EXTENSION,
+    assert running.request("/api/clients", headers={"Origin": "https://attacker.example"})[0] == 403
+    assert running.request("/api/clients", headers={"Origin": EXTENSION})[0] == 403
+    assert call(running, "OPTIONS", "/api/clients", origin=EXTENSION,
                 headers={"Access-Control-Request-Method": "POST"})[0] == 405
 
 

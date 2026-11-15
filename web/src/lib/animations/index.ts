@@ -177,10 +177,10 @@ export function start(): void {
     ghost.className = "anim-ghost";
     ghost.inert = true;
     ghost.setAttribute("aria-hidden", "true");
-    ghost.style.top = `${window.scrollY - scrolled}px`;
     // A strip both pages share (the job steps, a section's tabs) stays where it is: the old
     // one is left out of the ghost and the new one does not arrive, so only its marker moves.
-    const shared = (a: Element, b: Element) => a.tagName === b.tagName && a.className === b.className && !!a.className && (a.matches("nav, header") || !!a.querySelector(":scope > nav"));
+    const plain = (item: Element) => [...item.classList].filter((name) => !name.startsWith("anim-")).join(" ");
+    const shared = (a: Element, b: Element) => a.tagName === b.tagName && !!plain(a) && plain(a) === plain(b) && a.matches("nav, header");
     const arrived = [...panel.children].filter((child) => !child.classList.contains("anim-ghost"));
     for (const node of removed) {
       const twin = arrived.find((child) => shared(node, child));
@@ -194,6 +194,13 @@ export function start(): void {
       if (!node.matches("iframe, video, audio")) ghost.append(node);
     }
     panel.classList.add("anim-host");
+    // The ghost lies exactly where the old page lay: where the first arriving piece that is
+    // not a kept strip now starts (layout offsets, so the arrival's own transform does not count).
+    const first = arrived.find((child): child is HTMLElement => child instanceof HTMLElement && !child.classList.contains("anim-keep"));
+    const pad = getComputedStyle(panel);
+    ghost.style.top = `${(first ? first.offsetTop : parseFloat(pad.paddingTop)) + window.scrollY - scrolled}px`;
+    ghost.style.left = `${first ? first.offsetLeft : parseFloat(pad.paddingLeft)}px`;
+    ghost.style.width = `${first ? first.offsetWidth : panel.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight)}px`;
     panel.append(ghost);
     const origin = `${press.x - rect.left}px ${press.y - rect.top + (scrolled - window.scrollY)}px`;
     const leave: Record<Turn, Keyframe[]> = {

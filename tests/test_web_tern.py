@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import closing
 import shutil
 import stat
 import time
@@ -19,7 +20,9 @@ import pytest
 from tern_support import FakeTern, alive, listening
 from terminal_support import make_root, site
 
+from kitty.core import quick_notes
 from kitty.core.tern import MAX_CAPTURE_BYTES, TRIMMED, parse_event, plain_text
+from kitty.db import connect
 
 STATUS_KEYS = {"install_url", "installed", "path", "source", "override", "version", "problem",
                "workspace", "socket", "running", "windows", "sessions", "activity", "quick_notes"}
@@ -71,6 +74,12 @@ def sandbox(tmp_path, tern, monkeypatch):
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("XAUTHORITY", raising=False)
     return tern
+
+
+def saved_note(running, number):
+    """One quick note, read from the workspace (the read route is rika-server's)."""
+    with closing(connect(running.app.settings.db_path)) as conn:
+        return quick_notes.get(conn, number)
 
 
 def mode(path: Path) -> int:
@@ -426,8 +435,8 @@ def test_run_and_capture_save_a_kitty_pane_as_a_quick_note_on_kittys_daemon_only
         assert pane["title"] == "echo kitty-42" and pane["exited"] is None
         code, saved = running.request("/api/terminal/tern/capture", {"block": block["id"]})
         assert code == 200 and saved == {"note_id": saved["note_id"], "block": block["id"], "truncated": False}
-        code, note = running.request(f"/api/quick-notes/{saved['note_id']}")
-    assert code == 200 and note["tint"] == "sky"
+        note = saved_note(running, saved["note_id"])
+    assert note["tint"] == "sky"
     header, blank, *text = note["body"].split("\n")
     assert header.startswith(f"Tern capture · kitty/{block['id']} · ") and blank == ""
     # Terminal controls stripped, trailing blank lines dropped.
@@ -536,7 +545,7 @@ def test_a_long_capture_keeps_the_newest_output_within_a_quick_note(tmp_path, te
         code, saved = running.request("/api/terminal/tern/capture", {"block": block["id"]})
         tern.mode("")
         assert code == 200 and saved["truncated"] is True
-        body = running.request(f"/api/quick-notes/{saved['note_id']}")[1]["body"]
+        body = saved_note(running, saved["note_id"])["body"]
     text = body.split("\n", 2)[2]
     assert len(text.encode()) <= MAX_CAPTURE_BYTES
     head, *kept = text.split("\n")

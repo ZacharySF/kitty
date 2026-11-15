@@ -39,7 +39,7 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
-    background: #04140f;
+    background: #050a0b;
   }
   .still {
     position: absolute;
@@ -57,7 +57,7 @@
   .shade {
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, rgb(0 0 0 / 0.5), rgb(0 0 0 / 0.34) 30%, rgb(0 0 0 / 0.56));
+    background: linear-gradient(180deg, rgb(0 0 0 / 0.58), rgb(0 0 0 / 0.46) 30%, rgb(0 0 0 / 0.64));
   }
   /* The page's name runs down the gutter beside the page, like the spine of a sleeve. */
   .word {

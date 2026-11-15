@@ -264,9 +264,9 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
     const shown = [...nodes].sort((a, b) => order(a) - order(b) || sizeOf(b) - sizeOf(a)).slice(0, NAMED);
     for (const node of shown) {
       const main = node.id === focus;
-      ctx.font = main ? `600 15px ${font}` : `400 13px ${font}`;
+      ctx.font = main ? `600 16px ${font}` : `400 14px ${font}`;
       const text = node.data.label.length > 30 ? `${node.data.label.slice(0, 29)}…` : node.data.label;
-      const w = ctx.measureText(text).width + 10, h = main ? 22 : 18;
+      const w = ctx.measureText(text).width + 10, h = main ? 23 : 20;
       const [nx, ny] = at.get(node.id)!;
       const half = sizeOf(node) * (node.spiked ? 2.8 : 1.25) + 4;
       let spot: Box | null = null;
