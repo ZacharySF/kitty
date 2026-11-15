@@ -2,6 +2,7 @@
 //! or folder is made; Windows has no mode bits, and what rika! writes lives under the
 //! user's own profile, which other accounts cannot read, so the same calls are no-ops
 //! there. Call sites keep the Unix spelling (`.mode(0o600)`) through the `Mode` trait.
+use std::future::Future;
 use std::{fs, io, path::Path};
 
 pub trait Mode {
@@ -135,18 +136,27 @@ pub fn owner_only_from_now() {
     }
 }
 
-/// Resolves when the process is asked to stop: Ctrl+C everywhere, SIGTERM on Unix.
-pub async fn stop_requested() {
+/// Resolves when the process is asked to stop: Ctrl+C everywhere, SIGTERM on Unix. The
+/// handlers are installed by this call, not when the future is first awaited: a signal that
+/// arrives in between is still seen, instead of ending the process before its clean-up
+/// (the demo workspace's removal, the worker's drain).
+pub fn stop_requested() -> impl Future<Output = ()> {
     #[cfg(unix)]
     {
-        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = terminate.recv() => {}
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut interrupt = signal(SignalKind::interrupt()).expect("SIGINT handler");
+        let mut terminate = signal(SignalKind::terminate()).expect("SIGTERM handler");
+        async move {
+            tokio::select! {
+                _ = interrupt.recv() => {}
+                _ = terminate.recv() => {}
+            }
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        async {
+            let _ = tokio::signal::ctrl_c().await;
+        }
     }
 }

@@ -101,12 +101,11 @@ async fn announce_links(front: Arc<Front>, mut code: String) {
     }
 }
 
-async fn stopped() {
-    private::stop_requested().await;
-}
-
 async fn run(options: Options) -> Result<(), String> {
     const UNAVAILABLE: &str = "Unable to open the local website. Check the port, workspace configuration and public example files with the CLI.";
+    // Installed first: a stop asked for during start-up still removes a demo workspace and
+    // drains the worker, instead of ending the process at once.
+    let stopped = private::stop_requested();
     let listener = TcpListener::bind(("127.0.0.1", options.port)).await.map_err(|_| UNAVAILABLE.to_owned())?;
     let port = listener.local_addr().map_err(|_| UNAVAILABLE.to_owned())?.port();
     let origin = format!("http://127.0.0.1:{port}");
@@ -201,7 +200,7 @@ async fn run(options: Options) -> Result<(), String> {
     };
     let outcome = tokio::select! {
         () = serving => Ok(()),
-        () = stopped() => Ok(()),
+        () = stopped => Ok(()),
         // The shell's quit reaches the worker through the owner pipe: a clean exit ends the front too.
         status = worker.exited() => match status {
             Ok(status) if status.success() => Ok(()),
