@@ -290,7 +290,7 @@
 
 <section class="panel pipeline" aria-label="Application pipeline">
   <div class="panel-heading">
-    <h2>Application pipeline</h2>
+    <h2>Track</h2>
     <div class="controls">
       {#if moved}<div class="undo-pill" role="status">
           <span

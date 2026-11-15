@@ -1,10 +1,5 @@
-<script lang="ts" module>
-  /** Map/List chosen from Saved jobs: the Find jobs view that opens next shows it. */
-  let presentationHandoff: "map" | "list" | null = null;
-</script>
-
 <script lang="ts">
-  import { onMount, tick, untrack } from "svelte";
+  import { onMount, tick } from "svelte";
   import { api, dateLabel, safeUrl, type Bootstrap, type Job } from "./api";
   import Icon from "./Icon.svelte";
   import JobDetail from "./JobDetail.svelte";
@@ -87,20 +82,8 @@
   const preparationIds = $derived(
     marked.length ? marked : selected !== null ? [selected] : jobs[cursor] ? [jobs[cursor].id] : [],
   );
-  let presentation = $state<"map" | "list">(untrack(() => {
-    const handoff = presentationHandoff;
-    presentationHandoff = null;
-    return initialJobId ? "list" : view === "jobs" ? (handoff ?? "map") : "list";
-  }));
-  /** Map and List switch presentation here; from Saved jobs they open Find jobs. */
-  function present(next: "map" | "list") {
-    if (view === "jobs") {
-      presentation = next;
-      return;
-    }
-    presentationHandoff = next;
-    onview("jobs");
-  }
+  /** The list is where a job is picked; Find jobs can also show them as a map. */
+  let presentation = $state<"map" | "list">("list");
   let graphFocus = $state<string | null>(null);
   let graphLabel = $state("");
   function rootSchema() {
@@ -179,6 +162,8 @@
   let searchInput: HTMLInputElement | undefined = $state();
   let bulkAction = $state("state");
   let bulkValue = $state("");
+  /** A rank in plain words (the filter and the detail keep the letter beside it). */
+  const FIT: Record<string, string> = { A: "Top match", B: "Good match", C: "Low match" };
   const RANK_HELP = "A is highest priority, B is worth considering, C is lower priority or filtered out. Read the reason in each job; rank does not guarantee eligibility.";
   const RANKS: Record<string, string> = { A: "Highest priority", B: "Worth considering", C: "Lower priority / filtered out" };
   const choices = (values: string[], none?: string): SelectOption[] => [
@@ -186,7 +171,7 @@
     ...values.map((value) => ({ value, label: label(value) })),
   ];
   const trackOptions = $derived<SelectOption[]>([
-    { value: "", label: "All job types / tracks" },
+    { value: "", label: "All types" },
     ...(workspace?.tracks || []).map((item) => ({ value: item.name, label: item.label })),
   ]);
   const orderOptions: SelectOption[] = [
@@ -230,11 +215,11 @@
       : view === "inbox"
         ? "New jobs"
         : view === "queue"
-          ? "Prepare applications"
+          ? "Apply"
           : view === "applications"
             ? "Application list"
             : view === "favorites"
-              ? "Saved jobs"
+              ? "Saved"
               : "Find jobs",
   );
 
@@ -573,14 +558,10 @@
         <span class="total" title={`${total.toLocaleString()} matching`}>{total.toLocaleString()}</span>
         <div class="tools">
           {#if view === "jobs" && graphFocus}<button type="button" class="text-button all-types" onclick={rootSchema}>All job types</button>{/if}
-          {#if view === "jobs" || view === "favorites"}
+          {#if view === "jobs"}
             <nav class="jobs-views" aria-label="Jobs view">
-              <button type="button" aria-pressed={view === "jobs" && presentation === "map"} onclick={() => present("map")}>Map</button>
-              <button type="button" aria-pressed={view === "jobs" && presentation === "list"} onclick={() => present("list")}>List</button>
-              <button type="button" aria-current={view === "favorites" ? "page" : undefined} onclick={() => onview("favorites")}>Saved</button>
-              <button type="button" onclick={() => onview("pipeline")}>Applications</button>
-              <button type="button" onclick={() => onview("resumes")}>Resumes</button>
-              <button type="button" onclick={() => onview("sources")}>Sources</button>
+              <button type="button" aria-pressed={presentation === "map"} onclick={() => (presentation = "map")}>Map</button>
+              <button type="button" aria-pressed={presentation === "list"} onclick={() => (presentation = "list")}>List</button>
             </nav>
           {/if}
           <button type="button" class="pill primary page-action" onclick={onadd}><Icon name="plus" size={14} />Add a job link</button>
@@ -655,7 +636,7 @@
         <label class="inline-check"
           ><input
             type="checkbox"
-            aria-label="Select this batch"
+            aria-label="Select all shown"
             disabled={busy || loading}
             checked={jobs.length > 0 &&
               jobs.every((job) => markedSet.has(job.id))}
@@ -667,14 +648,13 @@
               }
               marked = [...next];
             }}
-          />Select this batch</label
-        ><button
+          />Select all</label
+        >{#if total > jobs.length}<button
           class="text-button"
-          disabled={busy || loading || !total}
+          disabled={busy || loading}
           onclick={selectAll}
-          >Select all {total.toLocaleString()} matching</button
-        ><span class="muted">{marked.length} selected</span
-        >{#if marked.length}<button
+          >All {total.toLocaleString()}</button
+        >{/if}{#if marked.length}<span class="muted">{marked.length} selected</span><button
             class="text-button"
             onclick={() => (marked = [])}>Clear selection</button
           >{/if}
@@ -714,17 +694,18 @@
         {/if}
         <PostingAvailability
           jobIds={marked.length ? marked : jobs.map(job => job.id)}
-          label={marked.length ? "Check selected" : "Check this batch"}
+          label={marked.length ? "Check selected" : "Check they are still open"}
           demo={workspace?.demo ?? true}
           oncomplete={checkedAvailability}
         />
-        <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Preparation</button>
-        {#if marked.length}<span class="muted">Fill stops before submission; you submit each one.</span>{/if}
+        <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Progress</button>
+        
         <button
           class="button primary"
           disabled={busy || loading || (!marked.length && selected === null && !jobs[cursor])}
           onclick={prepareSelected}
-        >Fill {marked.length ? `${marked.length} selected` : selected !== null ? "opened job" : "focused job"} for review <kbd>Shift+F</kbd></button>
+          title="Fills the forms and stops before submitting: you send each one"
+        >Fill in {marked.length > 1 ? `${marked.length} forms` : "the form"} <kbd>Shift+F</kbd></button>
       </div>
     {/if}
     <div bind:this={results} class="job-list" class:dense={view !== "today"} role="region" aria-label="Job results" aria-busy={loading}>
@@ -784,7 +765,7 @@
                   >{job.status
                     ? label(job.status)
                     : job.tier
-                      ? `Rank ${job.tier}`
+                      ? FIT[job.tier] ?? `Rank ${job.tier}`
                       : "Not ranked"}</span
                 ><Icon name="arrow" size={17} /></span
               >

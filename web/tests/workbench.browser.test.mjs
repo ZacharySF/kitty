@@ -343,7 +343,10 @@ describe("selected job views stay readable", () => {
         const views = page.getByRole("navigation", { name: "Jobs view" });
         const map = views.getByRole("button", { name: "Map", exact: true });
         const list = views.getByRole("button", { name: "List", exact: true });
-        await assertSelection(page, map, list, `${themeName} ${viewport.width} initial`);
+        await assertSelection(page, list, map, `${themeName} ${viewport.width} initial`);
+        await map.click();
+        await page.mouse.move(0, 0);
+        await assertSelection(page, map, list, `${themeName} ${viewport.width} after choosing Map first`);
         await list.focus();
         await page.keyboard.press("Enter");
         await page.waitForFunction(() => document.querySelector('nav[aria-label="Jobs view"] button:nth-child(2)')?.getAttribute("aria-pressed") === "true");

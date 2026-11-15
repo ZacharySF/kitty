@@ -207,7 +207,7 @@
           "Location not provided"}
       </p>
       <div class="tag-row">
-        <span class="badge">{job.tier ? `Rank ${job.tier}` : "Not ranked"}</span
+        <span class="badge" title={job.tier ? `Rank ${job.tier}` : undefined}>{job.tier ? ({ A: "Top match", B: "Good match", C: "Low match" }[job.tier] ?? `Rank ${job.tier}`) : "Not ranked"}</span
         ><span class="badge">{label(job.eligibility)}</span><span class="badge"
           >{label(job.status || job.queue_state)}</span
         >

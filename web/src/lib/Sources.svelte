@@ -250,7 +250,7 @@
     </div>
     <div class="controls">
       <button class="button" onclick={refresh} disabled={loading || busy}
-        >{loading ? "Refreshing…" : "Refresh status"}</button
+        >{loading ? "Refreshing…" : "Refresh"}</button
       ><button
         class="button primary"
         onclick={() => discover()}
@@ -259,11 +259,6 @@
     </div>
   </header>
   <div class="body">
-    <p class="muted">
-      {demo
-        ? "External requests are disabled in demo mode; local source configuration changes are permitted."
-        : "Only explicitly requested, enabled free sources run. Paid web search is excluded. No applications are submitted."}
-    </p>
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
     <TaskStatus {task} oncomplete={complete} />
@@ -280,10 +275,6 @@
             {discovery.error}
           </p>{/if}{#if discovery.result}<p>{discovery.result}</p>{/if}
       </div>{/if}
-    <p class="muted">
-      Keyboard: j/k select · e enable/disable · s/Enter run selected · d
-      discover · r refresh status. All mutations require confirmation.
-    </p>
     {#if !loading && sources.length === 0}<EmptyState level={3} title="No configured sources">
         <p>Add source configuration in Profile. An empty list is not evidence of a successful discovery run.</p>
       </EmptyState>{/if}
@@ -342,7 +333,7 @@
             ><button
               class="button primary"
               disabled={demo || running || !source.enabled || !source.runnable}
-              onclick={() => discover(source)}>Run only this source</button
+              onclick={() => discover(source)}>Run</button
             >{#if !source.runnable}<span class="muted"
                 >No permitted free web adapter; manual records remain available.</span
               >{/if}

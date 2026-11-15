@@ -114,16 +114,10 @@
       class="button"
       onclick={confirmCollect}
       disabled={demo || busy || task?.status === "running"}
-      >Collect queue questions</button
+      >Collect from my queue</button
     >
   </header>
-  <p class="muted">
-    Answers are yours to write in Profile → Answers. Unknown questions stay
-    blank; nothing generates applicant facts.
-  </p>
-  {#if demo}<p class="muted">
-      Public form collection is disabled in demo mode.
-    </p>{/if}
+  <p class="muted">Questions employers ask. You write the answers in Profile.</p>
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   <TaskStatus
     {task}
@@ -168,7 +162,7 @@
     /></label
   >
   <button class="button" onclick={download}
-    >Download filtered questions JSON</button
+    >Download</button
   >
   {#if !shown.length}<p class="muted">
       No questions in this view. This does not prove that every application is

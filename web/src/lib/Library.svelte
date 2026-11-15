@@ -308,18 +308,10 @@
       >Refresh</button
     >
   </header>
-  {#if demo}<p class="muted inset">
-      Synthetic workspace. Registration and resume decisions affect only this
-      local demo.
-    </p>{/if}
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   {#if notice}<p class="inset" role="status">{notice}</p>{/if}
   <section class="inset">
-    <h3>Upload resume PDF</h3>
-    <p class="muted">
-      Start with your current resume. Give it a label you will recognize when
-      choosing a resume for a job.
-    </p>
+    <h3>Add a resume</h3>
     <form
       onsubmit={(event) => {
         event.preventDefault();
@@ -328,14 +320,14 @@
     >
       <div class="grid">
         <label
-          >Resume label (your own name for this PDF)<input
+          >Name<input
             bind:value={label}
             required
             maxlength="200"
             placeholder="My general resume"
           /></label
         ><label
-          >Description (optional)<input
+          >Note (optional)<input
             bind:value={description}
             maxlength="4096"
           /></label
@@ -359,7 +351,7 @@
           back to upload.
         </p>{/if}
       {#if mode === "upload"}<label
-          >Choose resume PDF (maximum 8 MiB)<input
+          >PDF (up to 8 MB)<input
             type="file"
             accept=".pdf,application/pdf"
             bind:files
@@ -373,13 +365,11 @@
           /></label
         >{/if}
       <p class="muted">
-        A copy is saved in your local resume library. To replace a resume that
-        has already been chosen or reviewed, use a new label unless the PDF is
-        identical. Uploading does not change job-category defaults.
+        Saved on this computer. To replace a resume, add it under a new name.
       </p>
       <button class="button primary" disabled={busy}
         >{mode === "upload"
-          ? "Review & upload PDF"
+          ? "Upload"
           : "Review & register local PDF"}</button
       >
     </form>
