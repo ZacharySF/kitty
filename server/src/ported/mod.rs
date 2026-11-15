@@ -85,6 +85,7 @@ pub struct Group {
 static GROUPS: &[&Group] = &[
     &crate::calendar::GROUP,
     &crate::quick_notes::GROUP,
+    &crate::goals::GROUP,
 ];
 
 fn groups() -> impl Iterator<Item = &'static Group> {

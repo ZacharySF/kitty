@@ -15,6 +15,7 @@ mod auth;
 mod bootstrap;
 mod builds;
 mod calendar;
+mod goals;
 mod quick_notes;
 mod effects;
 mod front;

@@ -484,6 +484,25 @@ selection: base only.
    still-forwarded route (`/api/quick-notes`) stayed at 26 to 31 ms. Start-up, memory and
    binary size were not measured for this change.
 
+   *Built (quick notes, reads):* `GET /api/quick-notes` and `GET /api/quick-notes/<id>` are
+   answered by rika-server (`server/src/quick_notes/`) from the `quick_note` root blocks, in
+   Python's order and shape. The writes stay on Python: every change is a block transaction
+   (`kitty.core.blocks`), and the block engine has not moved. The route test moved onto the
+   front, with a check of the front's answers against `kitty.core.quick_notes`
+   (`tests/test_quick_notes.py`). Not measured.
+
+   *Built (goals):* every `/api/goals` route is answered by rika-server (`server/src/goals/`):
+   the list, one goal with its links and suggestions, the search for things to link, create,
+   edit, delete, link, unlink, a manual measure's value and a suggestion's decision. Measures
+   computed from linked data, progress (Python's `round`), days left in the calendar's zone,
+   the validation and every refusal follow `kitty.core.goals`; `measures_json` is written as
+   `json.dumps` writes it. The Python handlers are deleted. The morning brief
+   (`/api/rika/brief*`, `/api/rika/alerts`) stays on Python (its sweep classifies with a model
+   and runs on the worker's scheduler), and `kitty.core.goals` stays for Rika's tools, the
+   brief and the demo seed. `tests/test_goals_parity.py` compares the front with the Python
+   core on the same workspace (reads, then each write and the rows it leaves), and
+   `tests/test_web_goals.py` runs through the front. Not measured.
+
 ## Rules for every step
 
 - The Python suite and the browser suites pass against whatever mix serves the
