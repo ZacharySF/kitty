@@ -378,6 +378,10 @@
   }
   /* A colour-coded widget sits on a pane of its tone mixed into the page colour: dark glass
      with a lit top edge, no outline. The widget's own top rule goes; the pane is its frame. */
+  /* A widget with nothing to show right now (Agents with no session) keeps no empty pane. */
+  .board:not(.editing) .slot.toned:not(:has(:global(.home-widget))) {
+    display: none;
+  }
   .slot.toned {
     margin: 8px 0;
     padding: 2px 20px 16px;

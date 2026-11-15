@@ -157,6 +157,9 @@ export function start(): void {
 
   // ── Pages turn: the old one leaves as a ghost while the new one arrives.
   let view = viewOf(location.hash), clear = 0;
+  // The page that is open when the module starts arrives too.
+  root.dataset.nav = "open";
+  clear = window.setTimeout(() => delete root.dataset.nav, 1400);
   const turn = (panel: HTMLElement, removed: Element[]) => {
     const next = viewOf(location.hash);
     if (next === view) return;
@@ -166,7 +169,7 @@ export function start(): void {
     root.dataset.nav = kind;
     panel.style.setProperty("--nav-origin", `${press.x - rect.left}px ${press.y - rect.top}px`);
     window.clearTimeout(clear);
-    clear = window.setTimeout(() => delete root.dataset.nav, 900);
+    clear = window.setTimeout(() => delete root.dataset.nav, 1400);
     // The new page's markers slide from where the old page's were.
     for (const item of panel.querySelectorAll(ACTIVE)) follow(item);
     if (!removed.length) return;
@@ -175,7 +178,17 @@ export function start(): void {
     ghost.inert = true;
     ghost.setAttribute("aria-hidden", "true");
     ghost.style.top = `${window.scrollY - scrolled}px`;
+    // A strip both pages share (the job steps, a section's tabs) stays where it is: the old
+    // one is left out of the ghost and the new one does not arrive, so only its marker moves.
+    const shared = (a: Element, b: Element) => a.tagName === b.tagName && a.className === b.className && !!a.className && (a.matches("nav, header") || !!a.querySelector(":scope > nav"));
+    const arrived = [...panel.children].filter((child) => !child.classList.contains("anim-ghost"));
     for (const node of removed) {
+      const twin = arrived.find((child) => shared(node, child));
+      if (twin) {
+        twin.classList.add("anim-keep");
+        window.setTimeout(() => twin.classList.remove("anim-keep"), 1400);
+        continue;
+      }
       // A frame would reload and media would play again: leave them out of the ghost.
       node.querySelectorAll("iframe, video, audio").forEach((item) => item.remove());
       if (!node.matches("iframe, video, audio")) ghost.append(node);

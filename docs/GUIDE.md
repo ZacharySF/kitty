@@ -147,14 +147,25 @@ Without the Themes pack a chosen theme still recolours the app; only its art is 
 ### Animations module
 
 Settings → Modules → **Animations** (`ui.animations.on` in the build, off by default). With
-it on, a view fades up a few pixels as it arrives, home's widgets and list rows follow one
-another in, anything pressable gives a little under the pointer and springs back, dialogs,
-menus and toasts grow in, a loader waits a beat before showing, and a mind map's zoom
-buttons glide (the wheel stays direct). Only `transform` and `opacity` move, nothing
-lasts longer than 260 ms, and all of it stops under Settings → Appearance → Reduce motion
-or the system's reduced-motion setting. The module's code is one stylesheet and a tween
-(`web/src/lib/animations/`); the base reaches it through `web/src/lib/motion.ts` and loads
-it only when the switch is on.
+it on:
+
+- **Pages turn.** The page you leave slides away while the next arrives, in the top bar's
+  own order (from the right for a later section, from the left for an earlier one); a page
+  opened from a widget or a row grows out of where you pressed; going home steps back.
+  Pages of one section (Find, Saved, Apply) step sideways.
+- **The marker of where you are slides** from the old item to the new one, in the top bar,
+  step bars and segmented controls.
+- **A press** leaves a ring where the pointer was, and what you pressed gives and springs back.
+- **Home's widgets** lean a degree or two toward the pointer and carry its light.
+- **Rows and widgets** arrive one after another while a page opens (not afterwards: a row
+  added later is simply there); dialogs, menus, toasts and the selection bar spring in; a
+  loader waits a beat before showing; a mind map's zoom buttons glide (the wheel stays direct).
+
+Only `transform` and `opacity` move, nothing blocks input, and all of it stops under
+Settings → Appearance → Reduce motion or the system's reduced-motion setting. The module's
+code is `web/src/lib/animations/` (a stylesheet, `index.ts` for the page turns, markers,
+ring and light, `turns.ts` for which way a page turns); the base reaches it through
+`web/src/lib/motion.ts` and loads it only when the switch is on.
 
 ### Page edit mode
 
@@ -400,7 +411,17 @@ matte paper with grain, flat sheets, or square double-ruled frames), its focus
 ring (a plain ring, a soft glow, petal corners or corner brackets), how selected
 options, tabs and segments look, its motion style (calm, fluid, snappy or none)
 and its backdrop. Typefaces never change with the theme.
-- **Kitty** (the default): frosted pink glass over a soft blossom backdrop, a
+- **Black** (the default): pure black, white type, hairlines instead of boxes, no
+  accent colour and no blur anywhere but the top bar.
+- **Kitty**: a record sleeve from about 1999. One of three film stills sits behind the
+  page (a train leaving a platform, a green corridor, a car park against a blue dusk:
+  cross-processed, grainy, drawn by `scripts/kitty-theme-scenes.py` rather than
+  photographed), framed differently on every load. Flat square panes in the still's
+  own cast, heavy tight type with page titles and the top bar in capitals, tube yellow
+  for what is active and for primary buttons, the page's name down the gutter in signal
+  orange or yellow and the camera's date stamp in the corner. A loader of three smeared
+  bars; two orange squares for empty states.
+- **Blossom**: frosted pink glass over a soft blossom backdrop, a
   sakura accent apart from the dusty structural pink, and six distinct data
   colours (sakura, lavender, sky, mint, peach, butter). Its motif: list dots
   become blossoms, ticked checkboxes bloom into a sakura, section rules part

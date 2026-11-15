@@ -11,7 +11,8 @@
   --surface-fill: var(--aero-pane);
   --surface-border: rgb(243 247 238 / 0.16);
   --surface-blur: blur(9px);
-  --surface-shadow: none;
+  /* One hairline of light along the top edge, as a pane of glass has; nothing else. */
+  --surface-shadow: inset 0 1px 0 rgb(243 247 238 / 0.12);
   /* A pressed toggle is a white label with dark type, as on the sleeve. */
   --press-fill: #f3f7ee;
   --press-ink: #04140f;
@@ -81,7 +82,8 @@
 }
 
 /* Home's widgets sit on panes too: over a photograph, bare text would not hold. */
-:root[data-theme="aero"] .board:not(.editing) .slot:not(.toned) {
+/* (A widget with nothing to show right now, such as Agents with no session, gets no pane.) */
+:root[data-theme="aero"] .board:not(.editing) .slot:not(.toned):has(.home-widget) {
   margin: 8px 0;
   padding: 2px 20px 16px;
   border-radius: 3px;

@@ -46,6 +46,11 @@
   border-color: transparent !important;
 }
 
+/* A strip two pages share does not arrive with the page (index.ts). */
+:root body [data-kitty-panel="view"] > .anim-keep {
+  animation: none !important;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   /* ── Pages arrive. The view's root is re-made on every switch, so these play by themselves;
      index.ts sets data-nav just before the first frame to say from where. */
@@ -72,23 +77,24 @@
     animation: anim-settle 560ms var(--anim-glide) backwards;
   }
 
-  /* ── Rows and widgets follow one another in. */
-  :root[data-anim="on"]:not([data-motion="reduced"]) :is(.board:not(.editing) .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)) {
+  /* ── Rows and widgets follow one another in, while a page is arriving (data-nav) and not
+     afterwards: a row added later, or a line typed into a list, is simply there. */
+  :root[data-anim="on"][data-nav]:not([data-motion="reduced"]) :is(.board:not(.editing) .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody):not([contenteditable] *) > :is(li, tr)) {
     animation: anim-row 560ms var(--anim-spring) backwards;
-    animation-delay: calc(120ms + var(--anim-i, 12) * 42ms);
+    animation-delay: calc(120ms + var(--anim-i, 11) * 42ms);
   }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(1) { --anim-i: 0; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(2) { --anim-i: 1; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(3) { --anim-i: 2; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(4) { --anim-i: 3; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(5) { --anim-i: 4; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(6) { --anim-i: 5; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(7) { --anim-i: 6; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(8) { --anim-i: 7; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(9) { --anim-i: 8; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(10) { --anim-i: 9; }
-  :root[data-anim="on"] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(11) { --anim-i: 10; }
-  :root[data-anim="on"] .board .column:nth-child(2) .slot { animation-delay: calc(200ms + var(--anim-i, 12) * 42ms); }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(1) { --anim-i: 0; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(2) { --anim-i: 1; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(3) { --anim-i: 2; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(4) { --anim-i: 3; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(5) { --anim-i: 4; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(6) { --anim-i: 5; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(7) { --anim-i: 6; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(8) { --anim-i: 7; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(9) { --anim-i: 8; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(10) { --anim-i: 9; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(11) { --anim-i: 10; }
+  :root[data-anim="on"][data-nav] .board .column:nth-child(2) .slot { animation-delay: calc(200ms + var(--anim-i, 11) * 42ms); }
 
   /* ── Pressing: what you press gives and springs back. */
   :root[data-anim="on"]:not([data-motion="reduced"]) :is(button, .button, .pill, [role="button"], [role="tab"], [role="switch"], [data-job-id]) {
