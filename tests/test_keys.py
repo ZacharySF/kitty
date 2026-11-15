@@ -523,7 +523,7 @@ def test_keys_routes_report_unsafe_files_and_account_passwords_like_python(runni
     assert status == 200 and VALUE not in json.dumps(listed) and OTHER not in json.dumps(listed)
     assert listed == keys.for_settings(settings).status()
     rows = {row["name"]: row for row in listed["keys"]}
-    assert list(rows) == ["OPENROUTER", "ANTHROPIC", "USAJOBS", "BRAVE", "ZED_TOOL"]
+    assert list(rows) == ["OPENROUTER", "ANTHROPIC", "USAJOBS", "BRAVE", "GITHUB", "ZED_TOOL"]
     assert rows["BRAVE"]["error"] == "Private key files must be owner-only (chmod 600)"
     assert rows["USAJOBS"]["error"] == "A private key file is not plain text"
     assert listed["account_passwords"] == {"count": 1, "in_file": 1}
@@ -542,7 +542,7 @@ def test_keys_routes_fall_back_to_the_environment_and_dotenv(tmp_path, clean_env
     assert status == 200 and VALUE not in json.dumps(listed) and OTHER not in json.dumps(listed)
     rows = {row["name"]: row for row in listed["keys"]}
     assert rows["ANTHROPIC"]["backend"] == "env" and rows["USAJOBS"]["backend"] == "env"
-    assert rows["OPENROUTER"]["set"] is False and list(rows) == ["OPENROUTER", "ANTHROPIC", "USAJOBS", "BRAVE"]
+    assert rows["OPENROUTER"]["set"] is False and list(rows) == ["OPENROUTER", "ANTHROPIC", "USAJOBS", "BRAVE", "GITHUB"]
     assert listed["account_passwords"] == {"count": 0, "in_file": 0}
 
 

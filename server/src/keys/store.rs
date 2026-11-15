@@ -18,6 +18,8 @@ const KNOWN: &[(&str, &str, &str, Option<&str>)] = &[
     ("ANTHROPIC", "Anthropic API key", "ANTHROPIC_API_KEY", None),
     ("USAJOBS", "USAJOBS API key", "USAJOBS_API_KEY", None),
     ("BRAVE", "Brave Search API key", "BRAVE_SEARCH_API_KEY", None),
+    // Only for installing modules from private repositories (kitty.core.external_modules).
+    ("GITHUB", "GitHub token", "GITHUB_TOKEN", None),
 ];
 pub const DEFAULT_SERVICE: &str = "kitty";
 const ACCOUNT_PREFIX: &str = "APPLY_PW_";
@@ -537,10 +539,10 @@ mod tests {
         let status = keys.status().unwrap();
         assert!(!status.to_string().contains(VALUE));
         let names: Vec<_> = status["keys"].as_array().unwrap().iter().map(|row| row["name"].as_str().unwrap().to_owned()).collect();
-        assert_eq!(names, ["OPENROUTER", "ANTHROPIC", "USAJOBS", "BRAVE", "DUMMY", "ZED_TOOL"]);
+        assert_eq!(names, ["OPENROUTER", "ANTHROPIC", "USAJOBS", "BRAVE", "GITHUB", "DUMMY", "ZED_TOOL"]);
         assert_eq!(status["keys"][3]["error"], "Private key files must be owner-only (chmod 600)");
-        assert_eq!(status["keys"][4]["backend"], "file");
-        assert_eq!(status["keys"][5]["backend"], "keyring");
+        assert_eq!(status["keys"][5]["backend"], "file");
+        assert_eq!(status["keys"][6]["backend"], "keyring");
         assert_eq!(status["account_passwords"], json!({"count": 1, "in_file": 1}));
         assert_eq!(status["warnings"], json!([ACCOUNT_FILE_WARNING]));
         assert_eq!((status["keyring_label"].as_str(), status["store"].as_str()), (Some(KEYRING_LABEL), Some("keyring")));
