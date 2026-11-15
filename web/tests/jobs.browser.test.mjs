@@ -120,6 +120,7 @@ describe("Find jobs", () => {
 
     // Find jobs lists the jobs first: something to pick is on screen without a press.
     const views = page.getByRole("navigation", { name: "Jobs view" });
+    await views.waitFor();
     assert.deepEqual(await views.getByRole("button").allInnerTexts(), ["Map", "List"]);
     assert.equal(await views.getByRole("button", { name: "List", exact: true }).getAttribute("aria-pressed"), "true");
     await page.getByRole("region", { name: "Job results" }).locator("[data-job-id]").first().waitFor();
