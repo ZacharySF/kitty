@@ -532,11 +532,11 @@ pub fn fromisoformat(text: &str) -> Option<Dt> {
     let chars: Vec<char> = text.chars().collect();
     let split = separator(&chars)?;
     let date = parse_date(chars.get(..split)?)?;
-    // The separator itself may be any character.
+    // The separator itself may be any character; a time must follow it.
     let rest: &[char] = chars.get(split + 1..).unwrap_or(&[]);
     let mut wall = date.days() * DAY;
     let mut zone = None;
-    if !rest.is_empty() {
+    if chars.len() > split {
         let tz_at = rest.iter().position(|c| matches!(c, 'Z' | '+' | '-')).unwrap_or(rest.len());
         let ([hour, minute, second, micro], more) = parse_clock(rest, tz_at)?;
         if hour > 23 || minute > 59 || second > 59 {
@@ -609,6 +609,8 @@ mod tests {
             ("2026-10-26T09:00+0530", Some("2026-10-26T09:00:00+05:30")),
             ("2026-10-26T09", Some("2026-10-26T09:00:00")),
             ("2026-10-26T9", None),
+            ("2026-10-26T", None),
+            ("2026-10-26", Some("2026-10-26T00:00:00")),
         ] {
             assert_eq!(fromisoformat(text).map(|dt| dt.isoformat()).as_deref(), expected, "{text}");
         }
