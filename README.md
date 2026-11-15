@@ -1,31 +1,211 @@
-# rika!
+<p align="center">
+  <img src="docs/assets/rika-hero.svg" width="846" alt="rika! — a home for your beautifully tangled mind. A local-first workspace for connected ideas.">
+</p>
 
-A local-first desktop workspace. Notes, documents, study tools and planning live
-in one SQLite database on your machine and are connected in a navigable
-knowledge atlas. A bundled terminal and an optional job-application assistant
-plug in as modules.
+<p align="center">
+  Notes become connections. Connections become something you can build.<br>
+  A local-first desktop workspace for your notes, documents, study and plans.
+</p>
 
-![rika! demo: the atlas home, writing a note and finding it again](docs/media/demo.gif)
+<p align="center">
+  <b><a href="https://github.com/ZacharySF/kitty-releases/releases/latest">Download for Linux ↗</a></b>
+  &nbsp; / &nbsp; <a href="#quick-start">Take it for a spin</a>
+  &nbsp; / &nbsp; <a href="docs/GUIDE.md">Read the field guide</a><br>
+  <sub>AppImage + .deb · Signed updates · MIT licensed</sub>
+</p>
 
-**[Download for Linux](https://github.com/ZacharySF/rika/releases/latest)**
-(signed AppImage and .deb with in-app updates) ·
-**[Full guide](docs/GUIDE.md)** · **[Behaviour spec](docs/SPEC.md)**
+<p align="center">
+  <a href="#your-workspace">Your workspace</a> ·
+  <a href="#rika">Rika</a> ·
+  <a href="#make-it-yours">Make it yours</a> ·
+  <a href="#modules">Modules</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#reference">Reference</a>
+</p>
 
-## What it does
+<br>
 
-| Module | What you get |
+<p align="center"><b>A little less scattered. A lot more connected.</b></p>
+
+<p align="center">
+  <img src="docs/screenshots/readme/home.jpg" width="100%" alt="The rika! home dashboard on black: today, a quick note and a focus timer on the left; up next and an agent session in the middle; and the Rika panel on the right with three drafted replies waiting for Send.">
+</p>
+<p align="center"><sub>Home: today, what's next, and Rika on the right with your replies already drafted.</sub></p>
+
+<br>
+
+## Your workspace
+
+### Your mind isn't a filing cabinet.
+
+A paragraph can belong to a project, a question and next Tuesday's study session.
+rika! gives those connections somewhere to live: one SQLite database on your
+machine, with an atlas instead of another pile of tabs.
+
+### 01 &nbsp; Catch the thought
+
+Write in blocks. Link a page with `[[wiki]]` links or refer to the exact passage
+with `((block))` references. Follow backlinks, spread an idea across a canvas,
+or turn it into a mind map.
+
+Documents, PDFs and floating quick notes stay in the same workspace.
+You don't have to know where an idea belongs before you write it down.
+
+### 02 &nbsp; Give it somewhere to go
+
+Keep flashcards and study beside the material you're learning. Put the next
+step on your calendar or task list, set a goal and watch what moves it.
+Open another tab, or use the command palette to move without losing your place.
+
+<img src="docs/screenshots/readme/calendar.jpg" width="100%" alt="The calendar's week view: one header row with the range, Today, and Day, Week, Month, Agenda, Year and Plan; a hairline grid with soft colour-barred events, today's date in a filled circle and a line marking the time now; a small month and the selected day's agenda on the right.">
+<p align="center"><sub>The calendar: one quiet row of controls, a line for now, and the day you picked beside it.</sub></p>
+
+### 03 &nbsp; Follow the thread
+
+Every record and every edit becomes a glowing point in the **Brain**: a
+neural-network map of everything you've written, studied and planned. Prefer
+flat ground? Switch to the **2D** map, where every point carries its name.
+Same records, different ways to find your bearings.
+
+<img src="docs/screenshots/readme/brain.jpg" width="100%" alt="The Brain view: a glowing neural-network brain threaded in red, orange, green and blue, above a legend counting applications, jobs, reminders, notes, calendar and more.">
+<p align="center"><sub>The Brain as its own view. Demo workspace, synthetic data.</sub></p>
+
+<br>
+
+## Rika
+
+### Someone to hand the loose ends to.
+
+Rika reads what changed overnight and tells you in a few lines. She drafts the
+replies; **you** press Send. Ask her for something by typing, or by talking if
+you turn Voice on.
+
+She has a page of her own for everything else: the coding agents working for
+you (what each is doing, how full its context is, what it has cost), the skills
+you can drag onto one, what she remembers, and what all of it has used.
+
+<img src="docs/screenshots/readme/rika.jpg" width="100%" alt="Rika's page: the conversation with three drafted email replies on the left, and on the right four coding agents with their task, context, tokens, cost and state.">
+<p align="center"><sub>Rika's page: the conversation on the left, your agents on the right.</sub></p>
+
+<br>
+
+## Make it yours
+
+### Your desk, not ours.
+
+Press **Ctrl + Shift + Space** on any page. Drag a block where you want it, pull
+an edge to resize it, and open **Widgets** to drag in a clock, a quick note or
+your goals. Press Done and the page stays that way.
+
+Home goes further: eighteen templates to start from, widgets in the order you
+like, and six quiet colours to tell them apart.
+
+<img src="docs/screenshots/readme/edit.jpg" width="100%" alt="Edit mode on a page: a dashed outline around one block with a grip and resize handles, the Widgets menu open above a small bar at the bottom of the window that ends in Done.">
+<p align="center"><sub>Edit any page: move it, size it, drag a widget in.</sub></p>
+
+### Black by default. Loud when you want it.
+
+rika! opens in **Black**: white type, hairlines, nothing glowing. Turn Themes on
+for seventeen more, from Nord and Gruvbox to **Kitty**, a record sleeve from
+about 1999 with a different film still behind it every time you open it.
+
+Turn **Animations** on and pages turn instead of blinking: they slide in the
+order of the bar, grow out of what you pressed, and the marker of where you are
+glides over. Everything stops if your system asks for less motion.
+
+<img src="docs/screenshots/readme/kitty.jpg" width="100%" alt="The Kitty theme: the same home in heavy capitals and tube yellow over a green, grainy film still of a corridor, with the page's name running down the edge.">
+<p align="center"><sub>The Kitty theme. Same home, different night.</sub></p>
+
+<br>
+
+## Modules
+
+### A workspace, not a fixed collection of tools.
+
+Keep the parts you use. Turn off the parts you don't.
+Add a terminal when you're building, enable ApplyAI when you're looking for work,
+or download the Brain when you want to see it all at once.
+
+<p align="center">
+  <img src="docs/screenshots/readme/modules.jpg" width="72%" alt="Settings › Modules: switches for ApplyAI, Workspace, Math, LearnHarness, Terminal, Voice, Brain, Themes, Animations and Icons, each with one line saying what it does.">
+</p>
+
+| Module | What it brings |
 | --- | --- |
-| **Workspace** | Block-based notes with stable block IDs, `((block))` references and `[[wiki]]` links, backlinks, canvas, mind maps, documents and PDFs, flashcards, study, calendar, tasks, quick notes in floating windows |
-| **Terminal** | A pinned [herdr](https://github.com/herdrdev/herdr) session in a resizable dock, streamed into the window over a same-origin WebSocket; open omp, Claude or Codex coding agents in labelled tabs with live activity; optionally drive a separately installed [Stencil Tern](https://stencil.so/tern) on rika!'s own Tern session: pane list with live and exited state in the dock, run a command line, focus a pane, capture a pane to a quick note |
-| **ApplyAI** (optional) | Job discovery from public boards, triage, application preparation, a tracker and reports. It fills forms but **never submits an application** and never invents facts about the applicant |
-| **Core** (always on) | A Brain home (every record and edit as a glowing point in a neural-network brain) or a 2D atlas, tabs, command palette, themes, settings, module selection |
+| **Workspace** | Notes and block references, documents and PDFs, canvas, mind maps, flashcards, study, calendar, tasks, goals and floating quick notes. |
+| **Terminal** | A pinned [herdr](https://github.com/herdrdev/herdr) session in a resizable dock. Open omp, Claude or Codex in labelled agent tabs with live activity. |
+| **ApplyAI** · optional | Job search in four steps: Find, Saved, Apply, Track. It fills forms but **never submits an application** and never invents facts about the applicant. |
+| **Math**, **LearnHarness**, **Voice** · download | Checked math practice, the LearnHarness app inside Study, and talking to Rika. Each fetches what it needs when you turn it on. |
+| **Brain** · download | Your workspace as a 3D brain or a 2D map, as its own view. |
+| **Themes**, **Animations** · download | Seventeen more looks, and motion for pages, widgets and menus. Off until you ask. |
+| **Icons** | An icon beside every name, if you like them there. |
+| **Core** · always on | Home, Rika, tabs, command palette, settings and module selection. |
 
-Modules can be turned on or off; disabled modules disappear from navigation,
-routes, workers and MCP tools while their data stays intact.
+### Small to install. Yours to grow.
 
-![The Brain home: every record and edit as a glowing point in a neural-network brain](docs/screenshots/kitty-brain/brain.png)
+The installer carries the window, Rika and the core. Everything heavier is a
+**pack**: downloaded from the release when you switch its module on, checked
+against a signed list, and removed again when you switch it off and say so.
 
-![The 2D knowledge atlas](docs/screenshots/kitty-graph-2d/atlas-2d.png)
+### From a thought to a terminal
+
+The Terminal module streams herdr into the window over a same-origin WebSocket.
+Keep a session in the dock or open the full herdr view, with coding agents in
+their own tabs.
+
+If you separately install [Stencil Tern](https://stencil.so/tern), rika! can
+also drive its own Tern session: list live and exited panes, run a command,
+focus a pane, or capture one to a quick note.
+
+### Looking for work? Four steps, one bar.
+
+<img src="docs/screenshots/readme/jobs.jpg" width="100%" alt="The Apply page of job search: Find, Saved, Apply and Track across the top, a list of ranked jobs with two ticked, and a small bar at the bottom offering Save, Change, Check and Fill in 2 forms.">
+<p align="center"><sub>Tick the jobs, press Fill. rika! stops before Submit, every time.</sub></p>
+
+### Leave the clutter. Keep the data.
+
+Disabled modules disappear from navigation, routes, workers and MCP tools;
+**their data stays intact**.
+
+<br>
+
+## Quick start
+
+**Just want the desktop app?** [Download the latest Linux release](https://github.com/ZacharySF/kitty-releases/releases/latest).
+Choose the AppImage or .deb; signed updates are built in.
+
+<p align="center">
+  <img src="docs/screenshots/readme/welcome.jpg" width="62%" alt="The rika! welcome card: a glowing neural-network brain above the words 'Welcome to rika!', with Continue with Google and Start locally buttons">
+</p>
+<p align="center"><sub>First launch: one button to start locally. No account needed.</sub></p>
+
+### Run from source
+
+Requirements: Git, Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22+ and Rust (cargo).
+
+```bash
+git clone https://github.com/ZacharySF/kitty.git
+cd kitty
+uv sync
+npm --prefix web ci
+npm --prefix web run build
+cargo build --release --manifest-path server/Cargo.toml   # rika-server, the local front
+uv run kitty-web --demo
+```
+
+The demo uses a **disposable workspace with synthetic data**. Open the printed
+`http://127.0.0.1:…` address, not `localhost`: the server checks the exact Host.
+
+For a real workspace:
+
+```bash
+uv run kitty init
+uv run kitty-web
+```
+
+The [full guide](docs/GUIDE.md) covers modules, the desktop build, configuration
+and every command. The repository and CLI still use the `kitty` name.
 
 ## Architecture
 
@@ -35,28 +215,35 @@ flowchart LR
     Updater["Signed updates"]
   end
   UI["Svelte 5 + TypeScript UI"]
-  Server["Loopback HTTP + WebSocket adapter"]
+  Front["rika-server (Rust)<br/>loopback HTTP + WebSocket,<br/>the routes already moved"]
+  Worker["Python worker<br/>the routes still to move"]
   CLI["CLI (Typer)"]
   TUI["TUI (Textual)"]
   MCP["MCP server"]
-  Core["Python core<br/>(all behaviour, no UI imports)"]
+  Core["Python core<br/>(no UI imports)"]
   DB[("SQLite<br/>numbered migrations")]
   Herdr["herdr sidecar"]
+  Packs["Signed module packs<br/>(release downloads)"]
 
   Desktop --> UI
-  Desktop -->|"PyInstaller sidecar"| Server
-  UI --> Server
-  Server --> Core
+  Desktop --> Front
+  UI --> Front
+  Front --> DB
+  Front -->|"everything else"| Worker
+  Front -.->|"on request"| Packs
+  Worker --> Core
   CLI --> Core
   TUI --> Core
   MCP --> Core
   Core --> DB
-  Server -->|"terminal socket"| Herdr
+  Worker -->|"terminal socket"| Herdr
 ```
 
-One rule holds the layout together: nothing under `src/kitty/core/` imports a UI
+Two rules hold the layout together. Nothing under `src/kitty/core/` imports a UI
 framework, so the website, desktop app, CLI, TUI and MCP server all call the
-same functions against the same database.
+same functions against the same database. And the core is moving to Rust one
+route at a time: a route moves only with a test that it answers exactly as the
+Python it replaces ([how, and what stays in Python](docs/rust-core-design.md)).
 
 ## Engineering notes
 
@@ -72,39 +259,41 @@ same functions against the same database.
   exact Host and Origin, requires a custom header on every mutation, and requires
   a per-launch secret only rika!'s own windows hold on every API call and
   WebSocket, so a local program that forges the headers still gets nothing.
+- **Rust where it pays.** Calendar, search, goals, study, flashcards, mind maps
+  and settings are answered by rika-server; the flashcard scheduler is an exact
+  port, checked against the Python one card by card. What leans on Python's own
+  libraries (math checking, job scraping, form filling) stays there.
+- **Downloads are checked twice.** A pack is fetched only from the release of the
+  running version, against a list signed with the updater key, then against its
+  size and SHA-256; a failed download changes nothing.
 - **It ships.** Tauri builds signed Linux installers in CI and the app updates
   itself, including through an `appimage-run` launcher on NixOS.
 - **Browser automation without a framework.** ApplyAI drives Firefox through its
   own WebDriver BiDi client and stops at every human boundary: sign-in
   challenges, consent, unknown answers and the final submit.
 
-## Run it
-
-Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22+, Rust (cargo).
-
-```bash
-uv sync
-npm --prefix web ci && npm --prefix web run build
-cargo build --release --manifest-path server/Cargo.toml   # rika-server, the local front
-uv run kitty-web --demo        # disposable workspace with synthetic data
-```
-
-`kitty-web` starts rika-server (`server/`, the Rust front) with the Python backend
-behind it; it stops with the build command above when the binary is missing
-(`KITTY_RIKA_SERVER` names another one). Open the printed `http://127.0.0.1:…`
-address (not `localhost`: the server checks the exact Host). To use a real
-workspace, run `uv run kitty init` and `uv run kitty-web`. The [guide](docs/GUIDE.md)
-covers modules, the desktop build, configuration and every command.
-
 ## Develop
 
 ```bash
-uv run pytest -n auto          # Python core, web adapter, TUI and browser tests (~6 min)
-npm --prefix web run check     # svelte-check / TypeScript
-cargo test --manifest-path desktop/Cargo.toml
+uv run pytest -n auto                           # Python core, web adapter, TUI
+cargo test --manifest-path server/Cargo.toml    # rika-server
+cargo test --manifest-path desktop/Cargo.toml   # the desktop shell
+npm --prefix web run check                      # svelte-check / TypeScript
 ```
 
-CI runs the Python tests, the frontend check and the web unit tests on every pull request.
+The browser tests in `web/tests/*.browser.test.mjs` drive a real Chromium against
+the demo; run them one file at a time. CI runs the Python tests, the frontend
+check and the web unit tests on every pull request.
+
+## Reference
+
+| Looking for… | Start here |
+| --- | --- |
+| Setup, configuration and everyday use | [Full guide](docs/GUIDE.md) |
+| Exact behaviour and contracts | [Behaviour spec](docs/SPEC.md) |
+| The move to Rust: rules, what is built, what stays | [Rust core design](docs/rust-core-design.md) |
+| Rika: how she is put together | [Rika design](docs/rika-design.md) |
+| Linux installers and release notes | [Desktop releases](https://github.com/ZacharySF/kitty-releases/releases/latest) |
 
 ## Built on
 
@@ -123,6 +312,9 @@ their features belongs to their authors.
 - [Tauri](https://tauri.app), [Svelte](https://svelte.dev),
   [Textual](https://textual.textualize.io) and
   [3d-force-graph](https://github.com/vasturiano/3d-force-graph).
+
+The README wordmark uses [Fraunces](https://fraunces.undercase.xyz), by Undercase
+Type, with a subset embedded under the [SIL Open Font License](docs/assets/OFL-Fraunces.txt).
 
 ## License
 
